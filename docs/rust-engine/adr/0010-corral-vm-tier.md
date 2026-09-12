@@ -98,6 +98,54 @@ it does mean the tier's first job is not "test the Rust launcher".
   every font, theme and Bluefin update. Screenshots are evidence for humans; `--require-paint` is
   the only pixel assertion gated on.
 
+## What the first working run measured
+
+Stood up in #20. Everything below is from CI, not from documentation:
+
+| | |
+|---|---|
+| Boot | **26.8 s** guest boot; ~8 min total job with a warm runtime cache, ~35 min cold |
+| Image | Bluefin 44.20260908, kernel 7.1.8-200.fc44, installed to disk with `bootc install` |
+| Display | `gdm.service` starts every run |
+| Painting | frames 1280×800, **stddev ≈ 0.36** against corral's 0.02 blank threshold |
+
+So the two questions this ADR called open are answered: a GNOME desktop **does**
+boot and **does** paint under QEMU on a free hosted runner.
+
+Six things had to be fixed to get there, each a real defect rather than a
+misconfiguration, and each invisible from reading documentation:
+
+1. `vmtest` is in no corral release — `@latest` installs a corral without it.
+2. corral `podman create`s a bootc image to probe its filesystem, and a bootc
+   image has no CMD, so it fails on exactly the Universal Blue images the probe
+   was written for. Worked around in `packaging/vmtest/Containerfile.bluefin`.
+3. Moving podman's graphroot by `storage.conf` hides the image from
+   `bootc install`'s privileged container. The bytes must move by bind mount,
+   the path must stay canonical.
+4. The readiness marker was case-wrong (`Reached target Graphical` vs systemd's
+   lowercase unit name).
+5. **`graphical.target` is never reached on this image.** `plymouth-quit-wait.service`
+   starts and never finishes without a real display, and it gates the target.
+   Readiness gates on `Started .*gdm\.service` instead. This is normal here, not
+   a fault, and any future marker work should start from this fact.
+6. Two of my own diagnostics were unreadable — an ANSI-blind grep that
+   under-reported which targets had come up, and a verdict buried under an
+   expanded serial-console tail. Both are fixed; the verdict now prints last.
+
+### Stability is not yet established
+
+One caveat, stated because it would be easy to present this as cleaner than it
+is: the run immediately before the green one used the **same** corral invocation
+and failed. The difference between them was a change to a diagnostic step that
+runs *after* corral exits, which should not be able to affect the result, and I
+have not explained it.
+
+Until that is understood, or until the job has simply run green many times, the
+tier's reliability is unproven. That is precisely why this ADR says nightly
+first and merge-queue only after a couple of stable weeks — a VM job that flakes
+into the merge queue blocks everyone. If it proves unstable, the `pull_request`
+trigger comes off before anything else.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through
