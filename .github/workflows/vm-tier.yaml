@@ -99,7 +99,19 @@ jobs:
           "$HOME/go/bin/corral" vmtest --help >/dev/null
           echo "corral installed at ${CORRAL_REF} and vmtest is present"
 
-      - name: Boot stock Bluefin
+      # See packaging/vmtest/Containerfile.bluefin for why this indirection is
+      # needed. Short version: corral `podman create`s the image to probe its
+      # filesystem, and a bootc OS image has no CMD for podman to accept.
+      - name: Add a CMD so podman will create a container from the image
+        run: |
+          sudo podman build \
+            -t localhost/bluefin-testable:ci \
+            -f packaging/vmtest/Containerfile.bluefin \
+            packaging/vmtest
+          sudo podman image inspect localhost/bluefin-testable:ci \
+            --format 'Cmd={{.Config.Cmd}}  Size={{.Size}}'
+
+      - name: Boot Bluefin
         env:
           # corral has no CORRAL_HOME: `qemu.VMHome()` is `os.UserHomeDir()` +
           # .local/share/corral/vms, and on Unix that reads $HOME. Overriding HOME
@@ -110,7 +122,7 @@ jobs:
         run: |
           mkdir -p /mnt/corral
           sudo -E "$(which corral)" vmtest bluefin \
-            --bootc ghcr.io/ublue-os/bluefin:stable \
+            --bootc localhost/bluefin-testable:ci \
             --ready-marker 'Reached target Graphical' \
             --require-paint \
             --video \
@@ -125,6 +137,9 @@ jobs:
       - name: What the run reported
         if: always()
         run: |
+          # corral ran under sudo, so everything it wrote is root-owned and
+          # upload-artifact cannot even scandir it (EACCES on vmtest-out/ssh).
+          sudo chown -R "$USER" vmtest-out 2>/dev/null || true
           if [ -f vmtest-out/result.json ]; then
             python3 -c "
           import json
