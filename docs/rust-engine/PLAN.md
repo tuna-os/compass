@@ -336,12 +336,27 @@ Two mechanisms stop this becoming an 18-month branch that never ships.
 **(a) The engine switch.** From Phase 1 both engines are installed and selectable:
 
 ```
-vicinae --engine=cpp    # default until Phase 7
+vicinae --engine=cpp
 vicinae --engine=rust
 COMPASS_ENGINE=rust     # env override for CI and dogfooding
 ```
 
-Same socket path, same config, same SQLite file. Users and CI can flip back mid-migration.
+Same config and same SQLite file, so users and CI can flip back mid-migration.
+
+Two details this section originally got wrong, corrected once the CLI existed:
+
+*Which default, and whose.* "Default `cpp` until Phase 7" is a property of the **dispatcher** — the
+thing installed at `/usr/bin/vicinae` that decides which engine to exec. It is not a property of the
+Rust binary, which cannot exec the C++ one: defaulting *that* to `cpp` would make every invocation
+fail. So `crates/vicinae` defaults to `rust`, and `--engine=cpp` there parses, is reported by
+`doctor` as a warning, and makes engine-dependent commands refuse with exit 1 rather than silently
+doing the Rust thing. The `cpp` default lives with the dispatcher when one exists.
+
+*The name collision.* Both engines want to be `vicinae`, and both want the same socket. Whoever does
+Phase 6 packaging has to resolve that — a dispatcher that execs one of two differently-named
+binaries is the obvious shape, but it is unbuilt and unspecified. Note the socket filename already
+differs (`ipc.sock` versus the C++ `vicinae.sock`), deliberately, so the two cannot meet on one
+socket and produce a confusing decode failure instead of a clear error.
 
 **(b) The parity ledger.** `docs/rust-engine/PARITY.md` — a checked-in table of every service,
 builtin and CLI command with columns `C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓`. Nothing
