@@ -121,6 +121,21 @@ jobs:
 
 
   build-appimage:
+    # Disabled 2026-09-12 alongside build-appimage.yaml: AppImage is not a channel
+    # we distribute through, and the ghcr build-env image this pulls is not
+    # published, so the job could only fail at `docker pull ... manifest unknown`.
+    #
+    # It was blocking more than itself. `publish-npm` and `publish-release` both
+    # listed it in `needs:`, so a failure here skipped them -- releases were
+    # already impossible, not merely missing an AppImage. Gating the job and
+    # dropping it from those two `needs:` lists restores releases; it does mean a
+    # release no longer ships a .AppImage, which is the point rather than a
+    # side effect.
+    #
+    # To restore: set `if: true` here, publish the build-env image by dispatching
+    # build-appimage-image.yaml once, and put `build-appimage` back into the
+    # `needs:` of publish-npm and publish-release below.
+    if: false
     needs: build-binary
     runs-on: ${{ matrix.target.runner }}
     container:
@@ -203,7 +218,8 @@ jobs:
       commit: ${{ needs.build-binary.outputs.commit }}
 
   publish-npm:
-    needs: [build-binary, build-appimage, build-macos-dmg]
+    # build-appimage removed from needs while it is gated off; see the note there.
+    needs: [build-binary, build-macos-dmg]
     permissions:
       id-token: write
       contents: read
@@ -212,7 +228,8 @@ jobs:
       tag: ${{ needs.build-binary.outputs.tag }}
 
   publish-release:
-    needs: [build-binary, build-appimage, build-macos-dmg, publish-npm]
+    # build-appimage removed from needs while it is gated off; see the note there.
+    needs: [build-binary, build-macos-dmg, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

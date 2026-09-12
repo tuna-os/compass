@@ -1,13 +1,14 @@
 name: Build AppImage build-env image
 
+# Disabled 2026-09-12: this publishes the build-env image that build-appimage.yaml
+# consumes, and AppImage is not a channel we distribute through. The weekly
+# schedule in particular would burn hours of runner time rebuilding GCC 15.2 and
+# Qt 6.10 from source for an artefact nobody consumes.
+#
+# Disabled, not deleted. `workflow_dispatch` is kept precisely so that re-enabling
+# AppImage is one manual run followed by restoring the triggers in
+# build-appimage.yaml.
 on:
-  schedule:
-    - cron: "0 5 * * 1"
-  push:
-    branches: [main]
-    paths:
-      - scripts/runners/appimage/AppImageBuilder.Dockerfile
-      - .github/workflows/build-appimage-image.yaml
   workflow_dispatch:
 
 concurrency:

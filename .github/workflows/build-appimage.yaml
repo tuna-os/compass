@@ -1,10 +1,17 @@
 name: Build AppImage
 
+# Disabled 2026-09-12: AppImage is not a channel we distribute through, so the
+# ghcr build-env image these jobs pull is deliberately not published and every
+# run failed at `docker pull ... manifest unknown`. Permanently red checks are
+# how a team learns to ignore CI, so the automatic triggers are removed rather
+# than the failures tolerated.
+#
+# Disabled, not deleted: the workflow and scripts/runners/appimage/ still work.
+# To bring it back, restore the `push`/`pull_request` triggers below AND publish
+# the build-env image by dispatching build-appimage-image.yaml once (it compiles
+# GCC 15.2 and Qt 6.10 from source, so expect hours). Re-enabling the triggers
+# alone just restores the red.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:

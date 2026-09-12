@@ -182,14 +182,28 @@ Rows marked **out of scope** are not "not yet" — the Rust engine will never im
 
 ## Deprioritised
 
-**AppImage.** Not a distribution channel we plan to use, so the AppImage build is not being chased.
-Its CI jobs currently fail because `ghcr.io/tuna-os/compass/build-env:appimage-*` was never
-published after the move off Depot, and nobody is going to publish it.
+**AppImage — disabled, not deleted.** Not a distribution channel we plan to use, so the AppImage
+build is not being chased. Its jobs could only ever fail: `ghcr.io/tuna-os/compass/build-env:appimage-*`
+was never published after the move off Depot, and nobody is going to publish it.
 
-Consequence to decide on: `Build AppImage` stays red on every PR, which is exactly how a team learns
-to ignore CI. Either remove `build-appimage.yaml`, `build-appimage-image.yaml`, the `build-appimage`
-job in `release.yml` and `scripts/runners/appimage/`, or leave them and accept a permanent red.
-Leaving it undecided is the only bad option.
+Rather than accept a permanently red check — which is how a team learns to ignore CI — the automatic
+triggers are gone:
+
+| Where | State |
+|---|---|
+| `build-appimage.yaml` | `workflow_dispatch` only; `push`/`pull_request` removed |
+| `build-appimage-image.yaml` | `workflow_dispatch` only; weekly `schedule` and `push` removed |
+| `build-appimage` job in `release.yml` | `if: false`, and dropped from the `needs:` of `publish-npm` and `publish-release` |
+| `scripts/runners/appimage/` | untouched |
+
+That last row mattered more than the others. Both publish jobs listed `build-appimage` in `needs:`,
+so its failure skipped them — **releases were already impossible**, not merely missing an AppImage.
+Ungating them is a fix, not a regression; the cost is that a release no longer ships a `.AppImage`,
+which is the intent rather than a side effect.
+
+To restore: publish the build-env image by dispatching `build-appimage-image.yaml` once (it compiles
+GCC 15.2 and Qt 6.10 from source, so expect hours), then restore the triggers and the `needs:`
+entries. Restoring the triggers alone just brings the red back.
 
 Bluefin is the first target and is Flatpak-only, so the Flatpak manifest in `packaging/flatpak/` is
 the channel that matters.
