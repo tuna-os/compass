@@ -172,6 +172,20 @@ Rows marked **out of scope** are not "not yet" — the Rust engine will never im
   Flatpak on our first target. ADR-0008 sets out the three ways round that and deliberately does not
   pick one.
 
+## Deprioritised
+
+**AppImage.** Not a distribution channel we plan to use, so the AppImage build is not being chased.
+Its CI jobs currently fail because `ghcr.io/tuna-os/compass/build-env:appimage-*` was never
+published after the move off Depot, and nobody is going to publish it.
+
+Consequence to decide on: `Build AppImage` stays red on every PR, which is exactly how a team learns
+to ignore CI. Either remove `build-appimage.yaml`, `build-appimage-image.yaml`, the `build-appimage`
+job in `release.yml` and `scripts/runners/appimage/`, or leave them and accept a permanent red.
+Leaving it undecided is the only bad option.
+
+Bluefin is the first target and is Flatpak-only, so the Flatpak manifest in `packaging/flatpak/` is
+the channel that matters.
+
 ## Declared divergences
 
 Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
