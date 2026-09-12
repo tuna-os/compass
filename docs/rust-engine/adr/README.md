@@ -15,3 +15,4 @@ drifting away from a recorded decision is not.
 | [0005](./0005-rhai-seam-now-tier-later.md) | Build the extension-API seam now; defer the Rhai tier | Accepted |
 | [0006](./0006-fuzzy-coherence-classifier.md) | Reconstruct fzf's coherence signal over nucleo's indices | Accepted |
 | [0007](./0007-fork-posture-and-platform-scope.md) | Hard fork in practice; `vicinae` names kept; Linux-first | Accepted |
+| [0008](./0008-browser-control-is-an-extension.md) | Browser control is an extension, not part of the port | Accepted |

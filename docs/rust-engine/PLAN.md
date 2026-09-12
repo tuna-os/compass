@@ -53,7 +53,8 @@ Hand-written C++ to be replaced is ≈ **100k LOC**:
 | `src/file-indexer/` | 5,646 | standalone daemon, already isolated |
 | `src/lib/xdgpp/` | 4,235 | desktop entry / MIME / locale, **10 test files** |
 | `src/lib/figura/` | 2,875 | in-tree IPC code generator |
-| `src/cli/`, `src/lib/fuzzy/`, `src/data-control-server/`, `src/snippet/`, `src/browser-extension/` | 5,700 | |
+| `src/cli/`, `src/lib/fuzzy/`, `src/data-control-server/`, `src/snippet/` | 5,450 | |
+| `src/browser-extension/` | 250 | **out of scope** — becomes an extension, ADR-0008 |
 
 Assets the rewrite inherits rather than invents: Wayland protocol XML
 (`wlr-layer-shell`, `wlr-foreign-toplevel-management`, `xx-hotkey-v1`, `vicinae-hotkey-v1`);
@@ -436,8 +437,15 @@ dependency graph — the cheap mechanical proof that the seam is real.
 Three tracks that do not block each other:
 
 *Track A — builtins:* calculator · clipboard · emoji/glyph · file search (+ `file-indexer`) · font ·
-media control · power management · shortcuts · snippets · system · theme · browser tabs ·
-script commands · dmenu · store front-ends · window/workspace · developer tools.
+media control · power management · shortcuts · snippets · system · theme · script commands ·
+dmenu · store front-ends · window/workspace · developer tools.
+
+**Browser tab search and switching is not in this list.** It is out of scope for the port and
+becomes an extension — see [ADR-0008](./adr/0008-browser-control-is-an-extension.md). It is a
+browser feature surfaced in a launcher, with no coupling to the compositor, clipboard or index, and
+its churn (manifest v2 → v3, per-browser layouts, store review) is not churn we control. Note the
+consequence: if no extension exists by Phase 7, this is a **feature regression at cutover** and
+belongs in the release notes next to the macOS/Windows narrowing.
 
 *Track B — compositor #2 (wlroots — Hyprland/Sway/niri):* add `wlr-layer-shell` via
 [`iced_layershell`](https://crates.io/crates/iced_layershell), `ext-foreign-toplevel-list-v1` +
@@ -780,6 +788,7 @@ The questions that were open when this plan was written have been decided and re
 | Is the Rhai tier worth it? | Build the seam now; the tier is a product go/no-go at the end of Phase 4 | [0005](./adr/0005-rhai-seam-now-tier-later.md) |
 | The fuzzy coherence gap | Reconstruct the signal over nucleo's indices, rather than raising the gate or accepting looser matching | [0006](./adr/0006-fuzzy-coherence-classifier.md) |
 | Fork posture, branding, platform scope, GNOME versions | Hard fork acknowledged; `vicinae` user-facing names kept; Linux-first with macOS/Windows on the C++ engine; GNOME 50 **and** 51 in CI | [0007](./adr/0007-fork-posture-and-platform-scope.md) |
+| Does browser control belong in the core? | No — it becomes an extension and leaves the port's scope entirely | [0008](./adr/0008-browser-control-is-an-extension.md) |
 
 ### Still genuinely open
 

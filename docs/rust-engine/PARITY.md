@@ -68,7 +68,7 @@ and the divergences below. 🟡 means implemented but not to the full scope of t
 | `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/browser-extension` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 
 ## Services
 
@@ -79,7 +79,7 @@ and the divergences below. 🟡 means implemented but not to the full scope of t
 | `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/autostart` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/browser-extension` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/calculator-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/clipboard` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
@@ -125,7 +125,7 @@ and the divergences below. 🟡 means implemented but not to the full scope of t
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/builtins/browser` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/clipboard` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -155,6 +155,22 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 - the `DesktopFile` layer — `fromId`, `relativeId`, directory search. `from_file` and
   `ParseOptions::{id,path}` exist, but id computation and lookup are a separate pass;
 - the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
+
+## Out of scope for the port
+
+Rows marked **out of scope** are not "not yet" — the Rust engine will never implement them.
+
+- **Browser tab search and switching** (`src/browser-extension`, `src/services/browser-extension`,
+  `src/builtins/browser`) becomes an extension rather than a builtin, per
+  [ADR-0008](./adr/0008-browser-control-is-an-extension.md). The C++ implementation keeps working
+  for C++-engine users and is not deleted by the port. If no extension exists by Phase 7, this is a
+  feature regression at cutover and must be in the release notes.
+
+  Note for whoever builds it: native messaging does not simply move into a TypeScript extension. A
+  browser spawns a native host **binary by absolute path** from a manifest in a fixed location, and
+  a Raycast-compatible extension is a TS bundle spawned by the launcher with no such path — inside a
+  Flatpak on our first target. ADR-0008 sets out the three ways round that and deliberately does not
+  pick one.
 
 ## Declared divergences
 
