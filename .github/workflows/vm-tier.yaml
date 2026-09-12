@@ -150,18 +150,29 @@ jobs:
         #   2 this host cannot run it   6 guest never became ready
         #   4 the disk build failed     9 the guest painted nothing
 
+      # Ordering matters and I got it wrong: the 40-line serial tail is expanded by
+      # ANSI into hundreds of log lines, so the verdict scrolled off the end and
+      # three separate attempts to read the exit code came back showing only the
+      # boot. The verdict now prints LAST, so it is the final thing in the job log.
       - name: What the run reported
         if: always()
         run: |
           # corral ran under sudo, so everything it wrote is root-owned and
           # upload-artifact cannot even scandir it (EACCES on vmtest-out/ssh).
           sudo chown -R "$USER" vmtest-out 2>/dev/null || true
+          # Deliberately not the whole document: the frame list is ~20 entries and
+          # buries the fields that decide what to do next.
           if [ -f vmtest-out/result.json ]; then
-            python3 -c "
+            python3 - <<'PY'
           import json
           r = json.load(open('vmtest-out/result.json'))
-          print(json.dumps(r, indent=2)[:4000])
-          "
+          frames = r.pop('frames', [])
+          print(json.dumps(r, indent=2)[:3000])
+          if frames:
+              devs = [f.get('stddev', 0) for f in frames]
+              print(f"\nframes: {len(frames)}  stddev min={min(devs):.4f} max={max(devs):.4f}"
+                    f"  (corral calls <=0.02 blank)")
+          PY
           else
             echo "no result.json — the run died before writing one"
           fi
@@ -189,6 +200,22 @@ jobs:
           fi
           echo '--- serial console tail ---'
           tail -40 vmtest-out/serial.log 2>/dev/null || echo "no serial.log"
+
+          # Last line of the job, so it survives any amount of log truncation.
+          echo '=============================================================='
+          if [ -f vmtest-out/result.json ]; then
+            python3 -c "
+          import json
+          r = json.load(open('vmtest-out/result.json'))
+          print('VERDICT:', r.get('status'), '| exit', r.get('exitCode'),
+                '| ready', r.get('ready'), '| bootSeconds', r.get('bootSeconds'))
+          if r.get('failure'):
+              print('FAILURE:', str(r['failure']).splitlines()[-1][:400])
+          "
+          else
+            echo 'VERDICT: no result.json'
+          fi
+          echo '=============================================================='
 
       - name: Upload the evidence
         if: always()
