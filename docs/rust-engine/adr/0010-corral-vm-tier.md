@@ -81,9 +81,16 @@ it does mean the tier's first job is not "test the Rust launcher".
 
 ## Costs
 
-- **A dependency on a young tool.** Mitigated by it being the same organisation's, and by the fact
-  that its input (a bootc image) and its outputs (exit codes, PNGs, JSON) are all standard — if
-  corral went away, the image and the assertions survive and only the driver is rewritten.
+- **A dependency on a young tool, at an unreleased commit.** `vmtest` is not in any tagged corral
+  release: v0.6.0 (2026-08-06) has no `cmd/vmtest.go`, and the command exists only on `main`. Our CI
+  therefore pins a specific commit, and `go install ...@latest` is *wrong* here — it silently
+  installs a corral that fails with `unknown command "vmtest"`, which is how this job failed on its
+  first run. The pin should become a tag as soon as one contains the command.
+
+  Mitigated by it being the same organisation's tool, and by its input (a bootc image) and outputs
+  (exit codes, PNGs, JSON) all being standard — if corral went away, the image and the assertions
+  survive and only the driver is rewritten. But depending on an unreleased feature is a real cost
+  and worth stating rather than discovering.
 - **llvmpipe software rendering** makes a GNOME session slow and its timing variable. Any assertion
   phrased "within N seconds" will flake; assertions must key off markers.
 - **`sudo` in CI**, because `bootc install` partitions a disk and installs a bootloader.

@@ -80,11 +80,24 @@ jobs:
         with:
           go-version: '1.26'
 
+      # Pinned to a commit, not @latest, for two reasons. `vmtest` is NOT IN ANY
+      # TAGGED RELEASE -- v0.6.0 (Aug 6) has no cmd/vmtest.go -- so @latest
+      # resolves to a corral that fails with `unknown command "vmtest"`, which is
+      # exactly how this job failed the first time. And a moving dependency would
+      # let our CI change behaviour without a commit of ours, which is the thing
+      # pinning exists to prevent.
+      #
+      # Bump deliberately. When corral cuts a release containing vmtest, this
+      # should become that tag.
       - name: Install corral
+        env:
+          CORRAL_REF: 81529beffa1d108dd18fbc116c0afb90f0a5c630
         run: |
-          go install github.com/tuna-os/corral@latest
+          go install "github.com/tuna-os/corral@${CORRAL_REF}"
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
-          "$HOME/go/bin/corral" --version || true
+          # Fail here rather than 20 minutes later if the pin ever loses vmtest.
+          "$HOME/go/bin/corral" vmtest --help >/dev/null
+          echo "corral installed at ${CORRAL_REF} and vmtest is present"
 
       - name: Boot stock Bluefin
         env:
