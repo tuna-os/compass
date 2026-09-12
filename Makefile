@@ -155,17 +155,25 @@ appimage-build-env-push:
 	docker push $(APPIMAGE_BUILD_ENV_IMAGE_TAG)
 .PHONY: appimage-build-env-push
 
-depot-push-arch:
-	depot build --save --save-tag arch-latest --platform linux/amd64 -f scripts/runners/arch/base.Dockerfile scripts/runners/arch
-.PHONY: depot-push-arch
+# Build-environment images. CI builds and pushes these itself
+# (.github/workflows/build-{arch,appimage}-image.yaml); these targets are for
+# doing it by hand. Requires `docker login ghcr.io` with a token carrying
+# write:packages.
+BUILD_ENV_IMAGE := ghcr.io/tuna-os/compass/build-env
 
-depot-push-appimage-amd64:
-	depot build --save --save-tag appimage-amd64-latest --platform linux/amd64 -f scripts/runners/appimage/AppImageBuilder.Dockerfile scripts/runners/appimage
-.PHONY: depot-push-appimage-amd64
+push-arch-image:
+	docker buildx build --push --tag $(BUILD_ENV_IMAGE):arch-latest --platform linux/amd64 -f scripts/runners/arch/base.Dockerfile scripts/runners/arch
+.PHONY: push-arch-image
 
-depot-push-appimage-arm64:
-	depot build --save --save-tag appimage-arm64-latest --platform linux/arm64 -f scripts/runners/appimage/AppImageBuilder.Dockerfile scripts/runners/appimage
-.PHONY: depot-push-appimage-arm64
+# Builds GCC and Qt from source: expect hours, and build each architecture on
+# a machine of that architecture rather than under QEMU.
+push-appimage-image-amd64:
+	docker buildx build --push --tag $(BUILD_ENV_IMAGE):appimage-amd64-latest --platform linux/amd64 -f scripts/runners/appimage/AppImageBuilder.Dockerfile scripts/runners/appimage
+.PHONY: push-appimage-image-amd64
+
+push-appimage-image-arm64:
+	docker buildx build --push --tag $(BUILD_ENV_IMAGE):appimage-arm64-latest --platform linux/arm64 -f scripts/runners/appimage/AppImageBuilder.Dockerfile scripts/runners/appimage
+.PHONY: push-appimage-image-arm64
 
 NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 CLANG_FORMAT := $(shell command -v clang-format 2>/dev/null || echo /opt/homebrew/opt/llvm/bin/clang-format)

@@ -12,8 +12,18 @@ concurrency:
 
 jobs:
   format:
-    runs-on: depot-ubuntu-24.04
-    container: registry.depot.dev/dwd5s9sq7d:arch-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/${{ github.repository }}/build-env:arch-latest
+      # ghcr packages are private until published publicly; GITHUB_TOKEN
+      # can pull the ones this repository owns. Once the package is made
+      # public these credentials and the packages:read scope can go.
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout code

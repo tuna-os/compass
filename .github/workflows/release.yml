@@ -16,10 +16,18 @@ concurrency:
 
 jobs:
   build-binary:
-    runs-on: depot-ubuntu-24.04-16
-    container: registry.depot.dev/dwd5s9sq7d:arch-latest
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository }}/build-env:arch-latest
+      # ghcr packages are private until published publicly; GITHUB_TOKEN
+      # can pull the ones this repository owns. Once the package is made
+      # public these credentials and the packages:read scope can go.
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     permissions:
       contents: read
+      packages: read
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       commit: ${{ steps.commit.outputs.commit }}
@@ -111,18 +119,26 @@ jobs:
   build-appimage:
     needs: build-binary
     runs-on: ${{ matrix.target.runner }}
-    container: registry.depot.dev/dwd5s9sq7d:${{ matrix.target.tag }}
+    container:
+      image: ghcr.io/${{ github.repository }}/build-env:${{ matrix.target.tag }}
+      # ghcr packages are private until published publicly; GITHUB_TOKEN
+      # can pull the ones this repository owns. Once the package is made
+      # public these credentials and the packages:read scope can go.
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     permissions:
       contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
         target:
           - arch: amd64
-            runner: depot-ubuntu-24.04-16
+            runner: ubuntu-24.04
             tag: appimage-amd64-latest
           - arch: arm64
-            runner: depot-ubuntu-24.04-arm-16
+            runner: ubuntu-24.04-arm
             tag: appimage-arm64-latest
     name: build-appimage (${{ matrix.target.arch }})
     env:
