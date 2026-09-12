@@ -68,13 +68,22 @@ jobs:
           ffmpeg -version | head -1
 
           # The Bluefin OCI image is several GB and `bootc install` runs podman as
-          # root, whose graphroot defaults to /var/lib/containers on the small root
-          # filesystem. Move it before anything pulls. Written with printf rather
-          # than a heredoc: an indented heredoc terminator does not close.
-          sudo mkdir -p /mnt/containers/storage /mnt/containers/run
-          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/containers/storage"\nrunroot = "/mnt/containers/run"\n' \
-            | sudo tee /etc/containers/storage.conf
-          sudo podman info --format '{{.Store.GraphRoot}}'
+          # root, whose graphroot defaults to /var/lib/containers/storage on the
+          # small root filesystem.
+          #
+          # Move the BYTES, not the PATH. Pointing graphroot at /mnt via
+          # storage.conf looks equivalent and is not: `bootc install to-disk` runs
+          # in a privileged container that bind-mounts the *default* location, so
+          # the image it was told to install becomes invisible to it and the run
+          # dies after partitioning with
+          #   OpenImage: reference "[overlay@/var/lib/containers/storage+...]"
+          #   does not resolve to an image ID
+          # A bind mount satisfies both: the path stays canonical, the space is /mnt's.
+          sudo mkdir -p /mnt/containers/storage /var/lib/containers/storage
+          sudo mount --bind /mnt/containers/storage /var/lib/containers/storage
+          findmnt -no SOURCE,TARGET,FSTYPE /var/lib/containers/storage
+          sudo podman info --format 'graphroot={{.Store.GraphRoot}}'
+          df -h /var/lib/containers/storage | tail -1
 
       - uses: actions/setup-go@v5
         with:
