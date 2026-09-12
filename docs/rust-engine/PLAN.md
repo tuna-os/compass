@@ -453,9 +453,14 @@ discovery and hot reload; and first-party example scripts with authoring docs. T
 when the examples are good enough that someone can copy one and be productive — an empty tier is
 worse than no tier.
 
-**Gate:** parity ledger ≥ 95% green; every ported group's Catch2 tests ported to Rust (§8.3) and its
-`src/` directory deleted in the same PR that turns the row green. For Track C: the Rhai sandbox
-negative tests (§8.2) all fail closed, and at least four first-party example scripts ship with docs.
+**Gate:** parity ledger ≥ 95% green, with every ported group's Catch2 tests ported to Rust (§8.3).
+For Track C: the Rhai sandbox negative tests (§8.2) all fail closed, and at least four first-party
+example scripts ship with docs.
+
+Note that a row going green does **not** mean its C++ directory is deleted. An earlier draft of this
+plan said it did, which was simply wrong: both engines ship side by side until Phase 7, so the C++
+engine still needs its own matcher, IPC and parsers however complete the Rust ones are. Deletion is
+Phase 8 work, and `PARITY.md` marks such rows `⏳`.
 
 ### Phase 6 — Packaging breadth (≈2 weeks)
 

@@ -11,12 +11,36 @@ Columns:
 - **parity test ✓** — covered by a Suite 0 differential case (#12) or, where a differential is not
   meaningful, by ported tests from the C++ suite (`PLAN.md` §8.3). A checked box here means a test
   would *fail* if the two engines diverged.
-- **C++ deleted ✓** — the C++ source is gone. Only legal once the three boxes to its left are ticked.
+- **C++ deleted ✓** — the C++ source is gone. `⏳` means "green, but the C++ engine still needs this
+  code because it is still the shipping engine". **Deletion cannot happen before the Phase 7
+  cutover, no matter how green the row is** — see the note below.
 
 A row may go green with a **declared divergence** instead of exact parity: record it in the
 Divergences section below with a rationale. Divergences are declared, never discovered.
 
 Update this file in the same PR that changes a box. It is meant to be read in standup.
+
+### A correction to the plan's deletion rule
+
+`PLAN.md` §6 Phase 5 said each ported group's `src/` directory is deleted "in the same PR that turns
+the row green". That cannot be right, and following it would break the build: both engines ship side
+by side until Phase 7, so the C++ engine still needs its own matcher, IPC and parsers no matter how
+complete the Rust replacements are.
+
+The rule is therefore: **a row goes green in the PR that ports it and proves parity; the `C++
+deleted` column is worked at Phase 8, after cutover.** `⏳` marks rows that are done but waiting on
+that. The plan has been corrected.
+
+### Progress at a glance
+
+| Crate | Tests | State |
+|---|---|---|
+| `compass-xdg` | 110 | desktop entries, locale, exec, reader — scope gaps listed below |
+| `compass-search` | 52 | fuzzy, plus an exact port of fzf's coherence rule |
+| `compass-ipc` | 57 | framing, transport, single-instance |
+| `compass-core` | 71 | app index, frecency, config |
+| `compass-testkit` | 5 | corpora |
+| **Total** | **~296** | all green under fmt, clippy `-D warnings`, doctests |
 
 ## Progress
 
@@ -31,12 +55,12 @@ and the divergences below. 🟡 means implemented but not to the full scope of t
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
-| `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ✅ | 🟡 | ❌ |
+| `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
 | `src/lib/crypto` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
-| `src/lib/figura` | `compass-ipc` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
+| `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ✅ | 🟡 | ⏳ |
+| `src/lib/figura` | `compass-ipc` | Phase 2 | ✅ | n/a | n/a | ⏳ |
 | `src/lib/common` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/linux-utils` | `compass-platform` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/soulver` | `—` | n/a (macOS) | ✅ | ❌ | ❌ | ❌ |
@@ -51,7 +75,7 @@ and the divergences below. 🟡 means implemented but not to the full scope of t
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/services/app-runtime` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/app-service` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/app-service` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ⏳ |
 | `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/autostart` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -81,7 +105,7 @@ and the divergences below. 🟡 means implemented but not to the full scope of t
 | `src/services/permissions` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/power-manager` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | 🟡 | ⏳ |
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
