@@ -655,17 +655,89 @@ flatpak run com.vicinae.Vicinae -- doctor --check-only
 
 ### 8.8 CI wiring
 
+Four tiers, ordered by how real the environment is and how much it costs. A tier only exists if the
+tier below it cannot catch the bug.
+
+**Tier 1 — per PR, no display server.** Pure logic; seconds to minutes.
+
 | Job | Trigger | Budget |
 |---|---|---|
-| build + clippy + unit | every PR | < 8 min |
+| build + clippy + fmt + unit | every PR | < 8 min |
 | Suite 0 parity (fast corpus) | every PR touching `crates/` | < 5 min |
-| Suite 3a mock Shell bus | every PR touching `compass-shell` | < 3 min |
+| Suite 3a mock GNOME Shell bus | every PR touching `compass-shell` | < 3 min |
 | Suite 1 TS conformance | every PR touching `src/typescript` or `compass-worker-host` | < 10 min |
-| Flatpak build + Bluefin smoke | every PR (from Phase 1) | < 12 min |
 | Suite 4 benches | every PR informational; **blocking on `main`** | < 10 min |
-| Suite 0 full corpus, Suite 3b headless GNOME 50 + 51, Suite 5 | nightly | unbounded |
 
-`sccache` + `cargo-nextest` keep the per-PR budget honest; reuse the existing Depot runners.
+**Tier 2 — per PR, headless GNOME in a container.** `gnome-shell --headless --virtual-monitor` in a
+Fedora 44/45 container gives real Mutter and a real `xdg-desktop-portal-gnome` without a VM, so it
+catches most integration bugs at container cost. Reach for this before reaching for QEMU.
+
+| Job | Trigger | Budget |
+|---|---|---|
+| Flatpak build | every PR from Phase 1 | < 12 min |
+| Headless GNOME session smoke | every PR from Phase 1 | < 10 min |
+
+**Tier 3 — merge queue, a real Bluefin VM.** See §8.9. The only tier that tests what users install.
+
+**Tier 4 — nightly, unbounded.** Suite 0 full corpus; the GNOME 50 **and** 51 matrix; Suite 5
+packaging; the wlroots compositor matrix from Phase 5; perf and RSS trends.
+
+`sccache` + `cargo-nextest` keep the per-PR budget honest.
+
+### 8.9 The merge-queue tier: a real Bluefin VM under QEMU
+
+Tiers 1 and 2 never boot the operating system we ship on. A launcher is a system-integration
+product — portals, session, compositor, Flatpak sandbox, Shell extension — so the things most
+likely to break are exactly the things a container cannot exercise. The merge queue is the right
+home for that: it runs after review, on the merged result, so a slow boot costs throughput rather
+than iteration speed.
+
+**Substrate.** Bluefin ships as a bootc OCI image (`ghcr.io/ublue-os/bluefin:stable`).
+[`bootc-image-builder`](https://github.com/osbuild/bootc-image-builder) converts it to a `qcow2` —
+the same two-stage path Bluefin uses to produce its own installable media. The VM under test is
+therefore not an approximation of the target; it is the target, built the way the target is built.
+
+**Trigger.** GitHub Actions' `merge_group` event. Tiers 1 and 2 stay on `pull_request`.
+
+**Shape of a run:**
+
+1. Build the Flatpak (reuse the Tier-2 artifact).
+2. `bootc-image-builder` → `qcow2`, cached per Bluefin image digest so most runs skip the build.
+3. Boot under QEMU with a virtual display; autologin into a GNOME session.
+4. Provision over SSH: install the Flatpak, install the Shell extension, restart the session.
+5. Drive a scripted session and assert:
+   - `vicinae doctor --check-only` exits 0 and reports the capabilities we expect;
+   - the GlobalShortcuts portal binds, including the first-run permission dialog;
+   - the launcher opens, filters, and launches a host RPM app, a Flatpak app and a Homebrew binary;
+   - window switching and clipboard history work **with** the Shell extension;
+   - **and everything still works with the extension uninstalled**, degrading exactly as `doctor`
+     claims. That is the §3.5.1 promise, and a VM is the only place it can be checked.
+6. Capture screenshots and the journal as artifacts on failure.
+
+**Assert over IPC, not over pixels.** Drive assertions through our own IPC socket and `doctor`, and
+keep a handful of screenshots as human-readable artifacts only. Pixel-scraping a desktop session is
+the classic way to build an e2e suite everyone learns to ignore.
+
+**The KVM problem, which is the real constraint.** GitHub-hosted runners expose no `/dev/kvm` and
+[do not support nested virtualisation](https://github.com/orgs/community/discussions/8305), so QEMU
+there falls back to TCG emulation — roughly an order of magnitude slower, which turns a desktop boot
+into many minutes. Options, in preference order:
+
+1. **Depot CI sandboxes**, where `/dev/kvm` is enabled by default. We already use Depot for the C++
+   builds, so this is the smallest change — but their *standard* GitHub Actions runners are not the
+   same product as their CI sandboxes, so confirm this before designing around it.
+2. A **self-hosted runner** on bare metal or a nested-virt-capable cloud instance.
+3. **Unaccelerated TCG**, accepted as slow. Viable precisely because this tier is out of the PR
+   loop, and a reasonable way to start before committing to infrastructure.
+
+**Promote it; do not start with it.** A flaky VM job in the merge queue blocks merges for everyone,
+and desktop-session e2e is the most flake-prone thing we will build. Run it nightly first and move
+it into the merge queue only once it has been stable for a couple of weeks. Then hold it to the same
+rule as everything else: a failure is a bug until proven otherwise, and "flake" is not a root cause.
+
+Fedora solves this problem at scale with [openQA](https://openqa.fedoraproject.org/), worth knowing
+about if our own harness starts to sprawl — but it is a much heavier commitment and not where we
+should start.
 
 ---
 

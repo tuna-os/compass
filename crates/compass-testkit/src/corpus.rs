@@ -77,7 +77,12 @@ pub fn desktop_entries() -> Vec<CorpusEntry> {
                 .expect("corpus file has a stem")
                 .to_string_lossy()
                 .into_owned();
-            CorpusEntry { id, path, provenance, bytes }
+            CorpusEntry {
+                id,
+                path,
+                provenance,
+                bytes,
+            }
         })
         .collect();
     entries.sort_by(|a, b| a.id.cmp(&b.id));
@@ -92,13 +97,10 @@ pub fn desktop_entries() -> Vec<CorpusEntry> {
 /// immediately rather than silently skipping.
 pub fn desktop_entry(id: &str) -> CorpusEntry {
     let all = desktop_entries();
-    all.iter()
-        .find(|e| e.id == id)
-        .cloned()
-        .unwrap_or_else(|| {
-            let available: Vec<&str> = all.iter().map(|e| e.id.as_str()).collect();
-            panic!("no desktop-entry fixture {id:?}; available: {available:?}")
-        })
+    all.iter().find(|e| e.id == id).cloned().unwrap_or_else(|| {
+        let available: Vec<&str> = all.iter().map(|e| e.id.as_str()).collect();
+        panic!("no desktop-entry fixture {id:?}; available: {available:?}")
+    })
 }
 
 #[cfg(test)]
@@ -114,7 +116,11 @@ mod tests {
             entries.len()
         );
         assert!(entries.iter().any(|e| e.provenance == Provenance::Real));
-        assert!(entries.iter().any(|e| e.provenance == Provenance::Synthetic));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.provenance == Provenance::Synthetic)
+        );
     }
 
     #[test]
@@ -126,7 +132,10 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(ids.len(), sorted.len(), "duplicate fixture ids: {ids:?}");
-        assert_eq!(ids, second.iter().map(|e| e.id.as_str()).collect::<Vec<_>>());
+        assert_eq!(
+            ids,
+            second.iter().map(|e| e.id.as_str()).collect::<Vec<_>>()
+        );
     }
 
     /// The encodings are the point of these two fixtures. If git normalises them on checkout the
@@ -148,7 +157,10 @@ mod tests {
 
     #[test]
     fn real_fixtures_look_like_desktop_entries() {
-        for entry in desktop_entries().iter().filter(|e| e.provenance == Provenance::Real) {
+        for entry in desktop_entries()
+            .iter()
+            .filter(|e| e.provenance == Provenance::Real)
+        {
             let text = entry.to_string_lossy();
             assert!(
                 text.contains("[Desktop Entry]"),
