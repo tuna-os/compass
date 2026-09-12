@@ -1,0 +1,134 @@
+# The VM tier: boot the real target and prove the screen painted.
+#
+# ADR-0010. Tiers 1 and 2 never boot the OS we ship on, and a launcher is a
+# system-integration product — portals, session, compositor, Flatpak sandbox —
+# so the things most likely to break are exactly the things a container cannot
+# exercise.
+#
+# THIS RUN DELIBERATELY TESTS STOCK BLUEFIN, with none of our software in it.
+# The riskiest unknown is whether a GNOME desktop boots and paints under QEMU on
+# a hosted runner at all. Layering compass in at the same time would mean a
+# failure could be either half. Once this is green, #18 step 2 adds our Flatpak
+# on top and the failure is unambiguous.
+#
+# KVM was measured, not assumed: ubuntu-24.04 has /dev/kvm with nested=1 and
+# QEMU offers the kvm accelerator (PLAN.md §8.9). arm64 does not, so x86_64 only.
+name: VM tier
+
+on:
+  schedule:
+    # Nightly. ADR-0010: promote to the merge queue only after it has been
+    # stable for a couple of weeks, never straight in.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+  # Runs on a PR only when something that affects it changes — which includes
+  # this file, so the job is exercised by the PR that introduces or edits it
+  # rather than shipped unverified and discovered broken at 3am.
+  pull_request:
+    paths:
+      - .github/workflows/vm-tier.yaml
+      - packaging/flatpak/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boot-bluefin:
+    name: Stock Bluefin boots and paints
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # `bootc install to-disk` writes a full OS image, and the Bluefin OCI image
+      # is several GB before that. The default runner has ~14 GB free on /, which
+      # is not enough; /mnt has far more.
+      - name: Make room
+        run: |
+          echo "before:"; df -h / /mnt | sed 's/^/  /'
+          sudo rm -rf /opt/hostedtoolcache /usr/local/lib/android /usr/share/dotnet
+          sudo mkdir -p /mnt/corral /mnt/containers
+          sudo chown -R "$USER" /mnt/corral /mnt/containers
+          echo "after:"; df -h / /mnt | sed 's/^/  /'
+
+      - name: Confirm KVM is actually usable
+        # Not a formality. If this silently degrades to TCG the boot takes an
+        # order of magnitude longer and times out looking like an image problem.
+        run: |
+          ls -l /dev/kvm
+          sudo apt-get update -qq && sudo apt-get install -y -qq cpu-checker qemu-system-x86
+          kvm-ok
+          qemu-system-x86_64 -accel help | grep -qw kvm
+
+      - name: Install podman and ffmpeg, with storage on /mnt
+        run: |
+          sudo apt-get install -y -qq podman ffmpeg
+          podman --version
+          ffmpeg -version | head -1
+
+          # The Bluefin OCI image is several GB and `bootc install` runs podman as
+          # root, whose graphroot defaults to /var/lib/containers on the small root
+          # filesystem. Move it before anything pulls. Written with printf rather
+          # than a heredoc: an indented heredoc terminator does not close.
+          sudo mkdir -p /mnt/containers/storage /mnt/containers/run
+          printf '[storage]\ndriver = "overlay"\ngraphroot = "/mnt/containers/storage"\nrunroot = "/mnt/containers/run"\n' \
+            | sudo tee /etc/containers/storage.conf
+          sudo podman info --format '{{.Store.GraphRoot}}'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install corral
+        run: |
+          go install github.com/tuna-os/corral@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          "$HOME/go/bin/corral" --version || true
+
+      - name: Boot stock Bluefin
+        env:
+          # corral has no CORRAL_HOME: `qemu.VMHome()` is `os.UserHomeDir()` +
+          # .local/share/corral/vms, and on Unix that reads $HOME. Overriding HOME
+          # is therefore the actual lever for putting a 30 GB disk image somewhere
+          # with room for it. `sudo -E` preserves it.
+          HOME: /mnt/corral
+          TMPDIR: /mnt/corral
+        run: |
+          mkdir -p /mnt/corral
+          sudo -E "$(which corral)" vmtest bluefin \
+            --bootc ghcr.io/ublue-os/bluefin:stable \
+            --ready-marker 'Reached target Graphical' \
+            --require-paint \
+            --video \
+            --cpu 4 --mem 8G --disk 30G \
+            --timeout 30m \
+            --artifacts "$GITHUB_WORKSPACE/vmtest-out" \
+            --rm
+        # Exit codes are per failure class (ADR-0010):
+        #   2 this host cannot run it   6 guest never became ready
+        #   4 the disk build failed     9 the guest painted nothing
+
+      - name: What the run reported
+        if: always()
+        run: |
+          if [ -f vmtest-out/result.json ]; then
+            python3 -c "
+          import json
+          r = json.load(open('vmtest-out/result.json'))
+          print(json.dumps(r, indent=2)[:4000])
+          "
+          else
+            echo "no result.json — the run died before writing one"
+          fi
+          echo '--- serial console tail ---'
+          tail -60 vmtest-out/serial.log 2>/dev/null || echo "no serial.log"
+
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vmtest-bluefin
+          path: vmtest-out/
+          retention-days: 14
+          if-no-files-found: warn
