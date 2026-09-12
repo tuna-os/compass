@@ -24,6 +24,7 @@ the protocol-support evidence behind §3.
 | UI toolkit | **Iced 0.14** (rustcast already ships a working Iced launcher) over Slint | Medium — contained in `compass-ui` |
 | Surface strategy | plain `xdg_toplevel` first (**GNOME has no layer-shell**); `wlr-layer-shell` added in Phase 5 | Easy |
 | Extension runtime | Keep `src/typescript/` (Raycast-compat SDK) **unchanged**; only its host is rewritten | Easy |
+| Third extension tier | **Rhai** scripts in-process, behind the same capability layer as the TS host (§2.2) | Easy — drop it if the seam doesn't materialise |
 | Crate prefix | `compass-*`, binary stays `vicinae` for CLI/config/socket compatibility | Trivial |
 | Licence | Compass is GPL-3.0, rustcast is MIT; MIT → GPL-3.0 is one-way compatible, so rustcast code may be incorporated with its copyright header plus a provenance note | N/A |
 
@@ -114,11 +115,15 @@ not a base to bolt features onto. Schedule accordingly.
 | `compass-portals` | `ashpd`: GlobalShortcuts, OpenURI, FileChooser, Screenshot, Secret | C++ `services/{global-shortcuts,file-chooser,permissions}` |
 | `compass-ipc` | UDS at `$XDG_RUNTIME_DIR/vicinae/ipc.sock`, length-prefixed frames | C++ `lib/vicinae-ipc`, `lib/figura` |
 | `compass-xdg` | desktop entries, MIME, icon theme, locale | C++ `lib/xdgpp` |
-| `compass-worker-host` | worker lifecycle, Landlock + seccomp, cgroups v2, state dirs | C++ `server/src/extension/node-runtime` |
+| `compass-extension-api` | **front-end-agnostic seam**: capability registry, view tree, action dispatch. Knows nothing about Node or Rhai | new — see §2.2 |
+| `compass-worker-host` | Node worker lifecycle, Landlock + seccomp, cgroups v2, state dirs | C++ `server/src/extension/node-runtime` |
+| `compass-script` | in-process [Rhai](https://rhai.rs) host: engine per script, capability-gated registration, operation budget | new — see §2.2 |
 | `compass-ui` | Iced views, theming, tiles, pages | rustcast `app/*`, `styles.rs` |
 | `compass-platform` | process exec (incl. `flatpak-spawn`), file indexing, clipboard | C++ `file-indexer`, `services/{clipboard,paste}` |
 
 ### 2.1 Three deliberate departures from the gist spec
+
+(A fourth, the Rhai tier, is additive rather than a departure and is described in §2.2.)
 
 1. **postcard, not Cap'n Proto.** The spec wants Cap'n Proto zero-copy on the core socket. We already
    have a working framed protocol and an in-tree generator (`figura`); a second wire format buys
@@ -134,6 +139,74 @@ not a base to bolt features onto. Schedule accordingly.
    window management, clipboard history, or paste. The spec's headline goal ("eliminate reliance on
    GNOME Shell private APIs") is not achievable on our first target, and pretending otherwise would
    design us into a corner. The realistic goal is restated in §3.5.
+
+### 2.2 A third extension tier: Rhai scripts
+
+Compass has two extensibility tiers today and they leave a gap in the middle:
+
+| Tier | Power | Cost to the author | Cost to us |
+|---|---|---|---|
+| Raycast TS/React extensions | full | Node, npm, a bundler, React | a sandboxed worker process, ~256 MB ceiling, tens of ms to spawn |
+| Script commands (shell, python, …) | one-shot output | trivial | arbitrary process execution, no sandbox, no interactive view |
+| **← the gap →** | **interactive, stateful, sandboxed, no runtime dependency** | | |
+
+[Rhai](https://rhai.rs) fills it. A forty-line `.rhai` file dropped in a folder gets a filterable list
+view with actions, at the cost of parsing an AST (microseconds) rather than spawning Node. On an
+immutable Flatpak target where Node has to be bundled, that matters for our own SLAs in §8.5.
+
+**Rhai's sandbox is stronger than the Node one, and for a structural reason.** Rhai's standard
+library is pure computation — no filesystem, no network, no process. The host registers every
+capability a script can reach, so a script that did not declare `net` cannot make an HTTP call
+because the function does not exist in its scope. That is capability-based security by
+construction, versus the Node worker where we start from full access and subtract with Landlock and
+seccomp. Verified limit APIs: `set_max_operations`, `set_max_call_levels`, `set_max_string_size`,
+`set_max_array_size`, `set_max_expr_depths`, `set_max_modules`, and `on_progress` for
+budget-exhaustion termination.
+
+**One sharp edge:** `Engine::new` installs `FileModuleResolver` by default, so `import` reads
+`.rhai` files off disk. Use `Engine::new_raw()` with an explicit package, or
+`DummyModuleResolver`, or a resolver scoped to the script's own bundle. This must be a test, not a
+code review note.
+
+Sketch of the shape, illustrative and not settled:
+
+```rhai
+fn metadata() {
+    #{ title: "Jira Issues", icon: "jira", mode: "list", capabilities: ["net"] }
+}
+
+fn search(query) {
+    http::get_json(`https://example.invalid/search?q=${query}`).map(|i| #{
+        title: i.summary,
+        subtitle: i.key,
+        actions: [ #{ title: "Open", run: || shell::open(i.url) } ],
+    })
+}
+```
+
+**The architectural consequence, and the reason this is written down now rather than in Phase 6.**
+A third extension tier is only affordable if it is a second *front-end* onto one capability layer,
+not a parallel stack. Otherwise every new host capability — clipboard read, window list, storage,
+OAuth — has to be exposed three times and will drift. So `compass-extension-api` is carved out as
+a seam in **Phase 4**, when we are designing the TS host's view protocol anyway, and Rhai becomes a
+consumer of it in Phase 5. Getting that seam wrong is what makes this expensive; getting it right
+makes Rhai mostly a binding exercise.
+
+Two honest counterpoints, recorded so nobody is surprised later:
+
+- **The ecosystem is zero.** The Raycast store is why people choose Vicinae. Nobody has written a
+  Rhai launcher extension, and we would have to seed the tier with first-party examples and real
+  docs. This is a product bet, not a technical one — see §10.9.
+- **Rhai is synchronous and in-process**, so a script can hang the UI. Every script runs on
+  `tokio::task::spawn_blocking`, never the render thread, with an operation budget and a wall-clock
+  timeout. Host functions that do I/O block from the script thread into the runtime, which bounds
+  how many can be in flight.
+
+Alternatives considered: `mlua` (Lua — bigger ecosystem, but a C dependency and a weaker sandbox
+story), `wasmtime` + WASI (strongest isolation and any source language, but a heavy lift and a poor
+fit for forty-line scripts), and `rquickjs` / `boa_engine` (JS in-process — tempting since authors
+already know JS, but owning a second JS runtime with a *different* API surface from the TS tier is
+worse than Rhai's honest separateness). Recorded as ADR-0005.
 
 ---
 
@@ -290,7 +363,8 @@ Each phase has a blocking, checkable exit gate.
   `src/platform/macos/`; get `compass-ui` compiling as a library rendering a static list.
 - `crates/compass-testkit` skeleton; empty `PARITY.md`.
 - ADR-0001 Iced over Slint · ADR-0002 postcard over Cap'n Proto · ADR-0003 fluent-rs i18n ·
-  **ADR-0004 GNOME Shell extension posture and distribution** (§3.5, §10.7).
+  **ADR-0004 GNOME Shell extension posture and distribution** (§3.5, §10.7) ·
+  ADR-0005 Rhai as a third extension tier (§2.2, §10.9).
 
 **Gate:** `cargo test --workspace` and `clippy -D warnings` green in CI; a Flatpak bundle builds and
 launches a blank window on a Bluefin VM.
@@ -338,7 +412,12 @@ interchangeably; extension-absent and version-mismatch paths both tested; a week
 
 ### Phase 4 — Extension host (≈6–8 weeks, the hard one)
 
-- `compass-worker-host` spawns `vicinae-worker-ts` per extension over UDS with JSON-RPC 2.0.
+- **Carve out `compass-extension-api` first**, before the Node host is written against it: the
+  capability registry, the view tree and action dispatch, with no knowledge of Node, JSON-RPC or
+  Rhai. This is the seam that makes the Rhai tier (§2.2) a binding exercise instead of a parallel
+  stack. It costs perhaps three days now and saves weeks in Phase 5.
+- `compass-worker-host` spawns `vicinae-worker-ts` per extension over UDS with JSON-RPC 2.0,
+  consuming `compass-extension-api` rather than defining its own view model.
 - **`src/typescript/` is not rewritten.** The React reconciler and `@raycast/api` shim keep working;
   only the host changes. Any change forced on the SDK is a design smell — escalate it.
 - Sandbox: **Landlock** for the filesystem boundary (unprivileged, no bind mounts — a better fit for
@@ -348,24 +427,35 @@ interchangeably; extension-absent and version-mismatch paths both tested; a week
 - OAuth, local-storage, toast and navigation host APIs.
 
 **Gate:** Suite 1 (§8.2) — top 25 Raycast store extensions plus every Vicinae store extension run
-unmodified **inside the Flatpak**; every negative sandbox test fails closed.
+unmodified **inside the Flatpak**; every negative sandbox test fails closed; and
+`compass-extension-api` compiles and passes its tests with `compass-worker-host` removed from the
+dependency graph — the cheap mechanical proof that the seam is real.
 
 ### Phase 5 — Breadth, and the second compositor (≈8–10 weeks, parallelisable)
 
-Two tracks that do not block each other:
+Three tracks that do not block each other:
 
-*Builtins:* calculator · clipboard · emoji/glyph · file search (+ `file-indexer`) · font ·
+*Track A — builtins:* calculator · clipboard · emoji/glyph · file search (+ `file-indexer`) · font ·
 media control · power management · shortcuts · snippets · system · theme · browser tabs ·
 script commands · dmenu · store front-ends · window/workspace · developer tools.
 
-*Compositor #2 (wlroots — Hyprland/Sway/niri):* add `wlr-layer-shell` via
+*Track B — compositor #2 (wlroots — Hyprland/Sway/niri):* add `wlr-layer-shell` via
 [`iced_layershell`](https://crates.io/crates/iced_layershell), `ext-foreign-toplevel-list-v1` +
 `wlr-foreign-toplevel-management`, `wlr-data-control` clipboard, and the `xx-hotkey-v1` backend from
 #1936 (necessary because `xdg-desktop-portal-wlr` ships **no** GlobalShortcuts backend). KDE is a
 third target after that.
 
+*Track C — Rhai extension tier (§2.2).* Independent of both, once `compass-extension-api` exists:
+`compass-script` with a hardened engine (`Engine::new_raw()`, explicit package, no
+`FileModuleResolver`, the full set of `set_max_*` limits, `on_progress` budget termination); the
+capability-gated function registry; `spawn_blocking` execution with a wall-clock timeout; script
+discovery and hot reload; and first-party example scripts with authoring docs. The tier ships only
+when the examples are good enough that someone can copy one and be productive — an empty tier is
+worse than no tier.
+
 **Gate:** parity ledger ≥ 95% green; every ported group's Catch2 tests ported to Rust (§8.3) and its
-`src/` directory deleted in the same PR that turns the row green.
+`src/` directory deleted in the same PR that turns the row green. For Track C: the Rhai sandbox
+negative tests (§8.2) all fail closed, and at least four first-party example scripts ship with docs.
 
 ### Phase 6 — Packaging breadth (≈2 weeks)
 
@@ -459,8 +549,17 @@ Suite-0 case.
   extension, installed and driven headlessly through one command each, snapshotting the first frame.
   **Run this inside the Flatpak**, not on a mutable host — extensions that shell out are precisely
   what the sandbox breaks.
-- **Negative sandbox tests:** an extension attempting `fork`, raw sockets, writes outside its state
-  dir, or a 512 MB allocation must fail closed with a diagnostic, not crash the core.
+- **Negative sandbox tests (Node):** an extension attempting `fork`, raw sockets, writes outside its
+  state dir, or a 512 MB allocation must fail closed with a diagnostic, not crash the core.
+- **Negative sandbox tests (Rhai), from Phase 5:** a script that did not declare a capability cannot
+  reach it — the function is simply absent from its scope. Plus `import` resolves nothing (the
+  default `FileModuleResolver` must not be installed); an infinite loop is terminated by the
+  `on_progress` operation budget; a script exceeding the wall-clock timeout is killed without
+  stalling the render thread; and `set_max_string_size` / `set_max_array_size` /
+  `set_max_call_levels` / `set_max_expr_depths` each reject their overflow case.
+- **Shared-seam test:** the same fixture extension expressed once in TypeScript and once in Rhai
+  must produce the same view tree through `compass-extension-api`. This is the regression test that
+  keeps the two tiers from drifting.
 
 `npm --prefix src/typescript test -- --filter=raycast-api-conformance`
 
@@ -584,6 +683,9 @@ flatpak run com.vicinae.Vicinae -- doctor --check-only
 | Divergence from upstream vicinaehq/vicinae becomes unmergeable | High | Medium | Accept it: after Phase 1 this is a hard fork in practice. Decide deliberately in Phase 1, not by drift |
 | A 100k-LOC rewrite never finishes | Medium | Fatal | The parity ledger + engine switch mean partial completion is still shippable value |
 | Sandbox breaks legitimate extensions | Medium | Medium | Ship log-only filters first, enforce a release later |
+| A third extension API surface (Rhai) drifts from the TS one | Medium | Medium | `compass-extension-api` as a single capability layer, carved out in Phase 4 and proven by the dependency-graph gate. If that seam does not materialise, **drop the Rhai tier** rather than maintain two stacks |
+| Rhai tier ships into an empty ecosystem and nobody uses it | Medium | Low | Cheap if the seam exists; gate the tier on four good first-party examples and treat §10.9 as a real go/no-go |
+| A Rhai script hangs the UI | Medium | Medium | `spawn_blocking` only, operation budget via `on_progress`, wall-clock timeout, bounded blocking-thread pool |
 
 ---
 
@@ -603,6 +705,11 @@ flatpak run com.vicinae.Vicinae -- doctor --check-only
    Phase 0.**
 8. **GNOME 50 vs 51 support window** — do we support both, or track 51 only? Affects the CI matrix
    and how much extension-compat code we carry.
+9. **Is the Rhai tier a product bet we want to make?** (§2.2) The engineering cost is modest *if*
+   `compass-extension-api` exists, but a third extension API is a permanent documentation, support
+   and example-maintenance burden against a zero-sized ecosystem. The technical answer is yes; the
+   product answer needs an owner. Decide before Phase 4 ends — the seam is worth building either
+   way, the tier is not.
 
 ---
 

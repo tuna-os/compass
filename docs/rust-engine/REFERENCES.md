@@ -78,6 +78,43 @@ patched around it.
 | [`deno_core`](https://crates.io/crates/deno_core) | 0.411.0 | Embed V8 directly in Rust. Attractive because Deno's permission model gives a *second* sandbox layer inside the process, and it removes the Node dependency. But it means re-implementing the Node API surface that Raycast extensions rely on. A Phase-5+ investigation, not a Phase-4 commitment. |
 | [`rustyscript`](https://crates.io/crates/rustyscript) | 0.12.3 | Friendlier wrapper over `deno_core`. Small user base (67k downloads) — evaluate, don't depend. |
 
+### Scripting runtimes (the Rhai tier — PLAN.md §2.2)
+
+| Crate | Version | Role |
+|---|---|---|
+| [`rhai`](https://crates.io/crates/rhai) | 1.26.1 | **The choice.** Pure Rust, no C dependency, embeds cleanly in a Flatpak. Very actively maintained (11.4M downloads; last release 2026-09-10). An optional bytecode compiler ("Rhai Grain") claims 1.8–2× over the AST walker if we ever need it. |
+| [`mlua`](https://crates.io/crates/mlua) | 0.12.1 | Lua. Bigger author ecosystem, but a C dependency and a weaker sandboxing story — Lua's stdlib gives you `io` and `os` unless you strip them, i.e. subtracting rather than granting. |
+| [`wasmtime`](https://crates.io/crates/wasmtime) + [`wasmtime-wasi`](https://crates.io/crates/wasmtime-wasi) | 48.0.2 | Strongest isolation and any source language. Wrong shape for forty-line scripts, and a large lift. Revisit only if the extension tier grows into something that needs real multi-language support. |
+| [`rquickjs`](https://crates.io/crates/rquickjs) / [`boa_engine`](https://crates.io/crates/boa_engine) | 0.13.0 / 0.22.0 | In-process JS. Tempting — authors already know JS — but owning a second JS runtime with a *different* API surface from the Raycast tier is worse than Rhai's honest separateness. |
+
+**Why Rhai's sandbox is structurally better than the Node one.** Rhai's standard library is pure
+computation: no filesystem, no network, no process spawn. Every capability a script can reach is one
+the host explicitly registered, so a script that did not declare `net` cannot make an HTTP call
+because the function does not exist in its scope. That is capability-based security by construction.
+The Node worker is the opposite: full access, subtracted with Landlock and seccomp.
+
+**Limit APIs, all verified in [the Rhai book](https://rhai.rs/book/safety/):**
+
+| API | Guards against |
+|---|---|
+| `Engine::set_max_operations` | runaway scripts / infinite loops |
+| `Engine::on_progress` | the termination hook — return a value to abort mid-run |
+| `Engine::set_max_call_levels` | deep recursion, stack exhaustion |
+| `Engine::set_max_string_size` | memory blowups via string building |
+| `Engine::set_max_array_size` | memory blowups via arrays |
+| `Engine::set_max_expr_depths` | deeply nested expressions at parse time |
+| `Engine::set_max_modules` | `import` in a loop hammering the filesystem |
+
+**The sharp edge:** `Engine::new` installs `FileModuleResolver` by default, which loads `.rhai`
+files from disk — so `import` is a filesystem read the script author never had to ask for. Close it
+with `Engine::new_raw()` plus an explicit `StandardPackage`, or `DummyModuleResolver`, or a resolver
+scoped to the script's own bundle directory. Make it a test, not a review note.
+
+**No async.** Rhai is synchronous and host functions must be sync
+([rhaiscript/rhai#215](https://github.com/rhaiscript/rhai/issues/215)). Run every script on
+`tokio::task::spawn_blocking` and have I/O host functions block from that thread into the runtime.
+Bound the blocking pool and set a wall-clock timeout, or a slow HTTP call becomes a stuck thread.
+
 ### Testing and tooling
 
 | Crate | Version | Role |
