@@ -68,6 +68,12 @@ impl Listener {
                     return Err(Error::AlreadyRunning { path });
                 }
 
+                // Known narrow race: two engines starting at the same moment can both observe a
+                // stale socket, both unlink it, and both bind -- leaving the loser listening on an
+                // unlinked inode that no client can reach. Not fixed here because the window is a
+                // few microseconds after a crash, the failure is recoverable by restarting, and the
+                // real fix (an O_EXCL lock file gating the reclaim) is a design change rather than
+                // a patch. Tracked rather than silently tolerated.
                 tracing::info!(path = %path.display(), "reclaiming stale ipc socket");
                 std::fs::remove_file(&path).map_err(Error::Io)?;
                 let inner = UnixListener::bind(&path).map_err(Error::Io)?;
