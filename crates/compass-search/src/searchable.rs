@@ -141,10 +141,18 @@ pub fn score_weighted_with(
             let mut max_weighted: u64 = 0;
             let mut max_raw: u64 = 0;
             for field in fields {
-                let Some(raw) = matcher.score_folded(field.text, &variant.text) else {
+                let Some((raw, coherent)) =
+                    matcher.score_folded_coherent(field.text, &variant.text)
+                else {
                     continue;
                 };
-                max_raw = max_raw.max(u64::from(raw));
+                // Only coherent alignments count towards `quality`, exactly as
+                // in the C++ `score_query`: an incoherent match still ranks
+                // (it contributes to `weighted`/`score`) but cannot clear the
+                // `MIN_QUALITY` gate on its own.
+                if coherent {
+                    max_raw = max_raw.max(u64::from(raw));
+                }
                 let weighted = (raw as f32 * field.weight) as u64;
                 max_weighted = max_weighted.max(weighted);
             }

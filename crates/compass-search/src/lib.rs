@@ -10,12 +10,14 @@
 
 #![deny(missing_docs)]
 
+mod coherence;
 mod matcher;
 mod query;
 mod rank;
 mod searchable;
 mod translit;
 
+pub use coherence::is_coherent;
 pub use matcher::{MatchResult, Matcher};
 pub use query::{Query, Variant, Word};
 pub use rank::{Scored, rank, rank_indices, rank_indices_with_query, rank_with_query};

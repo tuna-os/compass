@@ -795,7 +795,58 @@ they are not re-litigated: `nucleo` over hand-rolling a matcher; a caller-owned 
 results are deterministic; and raw bytes rather than `String` in the corpus API, because part of the
 corpus is deliberately not valid UTF-8.
 
-## 11. Immediate next steps
+## 11. Current state
+
+Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledger and
+[`adr/`](./adr/) for the decisions.
+
+### Done
+
+- **Workspace and CI.** Six crates, pinned 1.94.1, edition 2024, `unsafe_code` forbidden and
+  `clippy::all` denied workspace-wide. Rust CI workflow, Makefile targets kept separate from the C++
+  ones. Verified in a clean worktree checkout, not just in the dirty tree.
+- **Corpora.** 8 real `.desktop` entries plus 19 synthetic edge cases, and a harvester script for
+  growing the real half on a machine that has applications installed. Corpus files are `-text` in
+  `.gitattributes`, with a test that fails loudly if a checkout ever normalises the CRLF and
+  Latin-1 fixtures into fixtures that test nothing.
+- **`compass-xdg`** — desktop-entry, locale, value, reader and exec layers, with all 47 in-scope
+  C++ cases ported verbatim.
+- **`compass-search`** — fuzzy matching on `nucleo`, with the C++ ordering suite ported.
+- **ADRs 0001–0007**, including the two that were blocking: how a Flatpak installs the Shell
+  extension, and how to close the fuzzy coherence gap.
+- **Flatpak manifest** for the Bluefin target — syntax-validated only; never built.
+- **i18n converter** — 7,347 messages across 7 locales, all parsing with the real `fluent-syntax`
+  crate. ADR-0003's claim that the donated translations survive is now demonstrated rather than
+  asserted.
+
+### What the dev container cannot verify
+
+Worth stating plainly, because "the tests pass" means less than it sounds like until these are
+covered. The container has no display server, no `flatpak`, no `qemu`, and no `/dev/kvm`:
+
+- the Wayland surface and anything in `compass-ui`;
+- the GlobalShortcuts portal path — an `ashpd` call needs a portal implementation on the bus;
+- the Flatpak build, and therefore every claim in `packaging/flatpak/`;
+- the Tier-3 VM tier in §8.9.
+
+It *can* run a real DBus session bus (`dbus-run-session` works), so the GNOME Shell integration and
+its mock-bus suite are genuinely testable here. That is why Phase 3's testing is further along than
+Phase 1's, which inverts the plan's order — deliberately, because verified work beats sequenced
+work.
+
+### Blocked on someone with access
+
+- **GitHub Actions is not enabled on this fork.** No checks run on any PR. Every claim above was
+  verified locally, which does not scale past one person. This is the single highest-value
+  unblocking action available.
+- **Run the corpus harvester on a real Bluefin box.** The synthetic corpus is a model of the spec,
+  not of reality.
+- **Phase 0 spikes A and B** (portal hotkey on real GNOME; Landlock + seccomp inside a real
+  Flatpak) both need an environment this container cannot provide, and Phase 4 should not be
+  designed further until B is answered.
+
+## 12. Immediate next steps
+
 
 1. Answer §10.7 (extension distribution) and §10.1–2 (fork posture, branding) — they change file
    names and architecture, so they are cheap now and expensive later.

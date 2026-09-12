@@ -9,6 +9,21 @@
 //! Assertions that could not be ported faithfully are marked `PORT-DEFERRED`
 //! and the divergences that motivated them are marked `DIVERGENCE`, together
 //! with a test pinning the behaviour we actually have.
+//!
+//! Still deferred:
+//!
+//! * `REQUIRE(m.score_query("Łódź Express", Query{"lodz"}).weighted)` — nucleo
+//!   does not fold Latin Extended-A. See
+//!   `diverges_latin_extended_a_is_not_folded`.
+//! * `expectRankedOrder({"Spotify", "Reload Script Directories", "Sysprog"},
+//!   "Spo")` — nucleo's bonus structure orders the last two the other way. See
+//!   `diverges_ordering_issue_946_spo`.
+//!
+//! No longer deferred: the whole of `TEST_CASE("match: coherence separates
+//! ...")` and `REQUIRE(scattered.quality == 0)`, both now ported against
+//! `compass_search::is_coherent`. What is left of that divergence is recorded
+//! in `diverges_coherence_depends_on_nucleos_alignment` and is not observable
+//! anywhere in this corpus.
 
 use compass_search::{
     MIN_QUALITY, Matcher, Query, TranslitScheme, WeightedField, frecency, needs_transliteration,
@@ -215,14 +230,22 @@ fn sparse_matches() {
         ("Keyboard Settings", "kbd stg"),
         ("System Info Event Log", "evlog sinfo"),
         ("Minecraft", "mcft"),
-        ("Create Issue For Myself", "cisfmyslf"),
     ] {
         let m = score_one(text, query);
         assert!(m.weighted > 0, "{text:?} / {query:?} should match");
-        // Stronger than the C++ assertion, and it holds: every one of these
-        // also clears the filtering gate.
+        // Stronger than the C++ assertion, and it holds for all but the last
+        // case: these also clear the filtering gate.
         assert!(m.accepted(), "{text:?} / {query:?} should clear the gate");
     }
+
+    // "Create Issue For Myself" / "cisfmyslf" is a sparse *match* but not an
+    // accepted one: "My[s]el[f]" starts a run mid-word, so the C++ backtracker
+    // marks the alignment incoherent too (verified against a harness built from
+    // `src/lib/fuzzy`: `coherent == false`). The C++ test only asserts
+    // `weighted`, which still holds on both sides.
+    let sparse_but_incoherent = score_one("Create Issue For Myself", "cisfmyslf");
+    assert!(sparse_but_incoherent.weighted > 0);
+    assert!(!sparse_but_incoherent.accepted());
 
     for (text, query) in [("Minecraft", "avi"), ("System Info Event Log", "kbd")] {
         assert_eq!(
@@ -479,9 +502,11 @@ fn query_score_quality_and_field_weights() {
 
     let scattered = score_weighted(&anki, &Query::new("time in"));
     assert!(scattered.weighted > 0);
-    // PORT-DEFERRED: `REQUIRE(scattered.quality == 0)`. See
-    // `diverges_no_coherence_signal` below — the C++ quality is zeroed by the
-    // fzf backtracker's coherence flag, which nucleo does not expose.
+    // Ported: the word "time" only matches the description, and only
+    // incoherently ("memory [t]ra[in]ing" and the like), so it contributes a
+    // zero to the per-word minimum. See
+    // `match_coherence_separates_substrings_abbreviations_acronyms`.
+    assert_eq!(scattered.quality, 0);
 
     let keyword_only = score_weighted(&anki, &Query::new("memory"));
     assert_eq!(keyword_only.quality, 100);
@@ -543,58 +568,132 @@ fn frecency_bounded_and_monotonic() {
 //            scattered matches")
 // ---------------------------------------------------------------------------
 
-/// PORT-DEFERRED, whole test case: every `REQUIRE(...coherent)` /
-/// `REQUIRE_FALSE(...coherent)` assertion.
-///
-/// `fzf::Result::coherent` is produced by the C++ backtracking pass, which
-/// classifies an alignment as incoherent when it spreads across several words
-/// *and* some run of consecutive matched characters starts mid-word ("time" in
-/// "S[t]art [I]nput [Me]thod"). nucleo's matcher exposes neither the DP matrix
-/// nor a comparable flag, and the matched indices alone are not enough to
-/// reconstruct it (it depends on the per-position boundary bonuses the C++
-/// matrix carries). Reimplementing the classifier over nucleo's indices would
-/// be a new heuristic, not a port, so it is deliberately left out.
-///
-/// Two consequences are pinned below as DIVERGENCEs: without the coherence
-/// signal, scattered matches are neither excluded from `quality` nor rejected
-/// by the `MIN_QUALITY` gate.
+/// Ported in full. `fzf::Result::coherent` is produced by the C++ backtracking
+/// pass; `compass_search::is_coherent` reconstructs it from the matched
+/// indices and the haystack alone, which turns out to be enough — the flag only
+/// ever consults the *sign* of the per-position boundary bonus `B[j]`, and that
+/// is a function of two adjacent characters, not of the DP matrix. See the
+/// `coherence` module docs for the derivation and for how it was validated
+/// against a harness built from `src/lib/fuzzy`.
 #[test]
-fn diverges_no_coherence_signal() {
-    // The coherent cases all match and clear the gate, as in C++.
-    for (text, needle) in [
-        ("Runtime Settings", "time"),
-        ("Keyboard", "kbd"),
-        ("Start Input Method", "sim"),
-        ("Event Log", "evlog"),
-        ("Firefox Developer Edition", "fdev"),
-        ("Café Bar", "cafba"),
-    ] {
-        assert!(
-            score_one(text, needle).accepted(),
-            "{text:?} / {needle:?} should be an accepted (coherent) match"
-        );
-    }
+fn match_coherence_separates_substrings_abbreviations_acronyms() {
+    Matcher::with_thread_local(|m| {
+        // Substrings, in-word abbreviations and acronyms are coherent.
+        for (text, needle) in [
+            ("Runtime Settings", "time"),
+            ("Keyboard", "kbd"),
+            ("Start Input Method", "sim"),
+            ("Event Log", "evlog"),
+            ("Firefox Developer Edition", "fdev"),
+            ("Café Bar", "cafba"),
+        ] {
+            let r = m
+                .match_(text, needle)
+                .unwrap_or_else(|| panic!("{text:?} / {needle:?} should match"));
+            assert!(r.coherent, "{text:?} / {needle:?} should be coherent");
+        }
 
-    // DIVERGENCE: C++ marks these incoherent, which zeroes their quality and so
-    // rejects them. We accept them.
+        // Matches that cross a word boundary with a run starting mid-word are
+        // not.
+        for (text, needle) in [
+            ("Play this game on Steam", "time"),
+            ("Start Input Method", "time"),
+            (
+                "An intelligent spaced-repetition memory training program",
+                "time",
+            ),
+        ] {
+            let r = m
+                .match_(text, needle)
+                .unwrap_or_else(|| panic!("{text:?} / {needle:?} should still match"));
+            assert!(!r.coherent, "{text:?} / {needle:?} should be incoherent");
+        }
+    });
+
+    // ... and incoherence is what the quality gate acts on.
+    assert!(!score_one("Play this game on Steam", "time").accepted());
+    assert!(score_one("Play this game on Steam", "steam").accepted());
+}
+
+/// The coherence gate is what stops a short query from being "found" inside a
+/// long unrelated description — the false positive a launcher hits constantly.
+///
+/// Not from the C++ suite; these are the cases the divergence this test file
+/// used to pin was actually costing us. Each one still *matches* (so it can
+/// contribute to ranking when some other field also matches), it just cannot
+/// clear [`MIN_QUALITY`] on its own.
+#[test]
+fn short_queries_do_not_false_positive_into_long_descriptions() {
     for (text, needle) in [
         ("Play this game on Steam", "time"),
-        ("Start Input Method", "time"),
         (
             "An intelligent spaced-repetition memory training program",
-            "time",
+            "ny",
         ),
+        ("Browse the World Wide Web", "browser"),
+        ("Reload Script Directories", "spo"),
+        ("Donate to vicinae", "avi"),
+        ("OpenJDK Java 17 Console", "konsole"),
+        ("Rofi.code-workspace", "esp"),
+        ("profile editor", "file"),
     ] {
         let m = score_one(text, needle);
         assert!(
-            m.accepted(),
-            "expected the known divergence: {text:?} / {needle:?} is accepted \
-             here but rejected as incoherent by the C++ matcher"
+            m.weighted > 0,
+            "{text:?} / {needle:?} should still be a match"
         );
-        // It is at least ranked below a real match of the same query length.
-        assert!(m.score < score_one("Runtime Settings", "time").score + 10);
+        assert!(
+            !m.accepted(),
+            "{text:?} / {needle:?} is an incoherent match and must not clear the gate"
+        );
+        assert_eq!(m.quality, 0, "{text:?} / {needle:?}");
     }
 
-    // This one survives the divergence: a real substring match is accepted.
-    assert!(score_one("Play this game on Steam", "steam").accepted());
+    // The genuine article, in the same haystacks, is unaffected.
+    for (text, needle) in [
+        ("Play this game on Steam", "steam"),
+        (
+            "An intelligent spaced-repetition memory training program",
+            "memory",
+        ),
+        ("Browse the World Wide Web", "world"),
+        ("Reload Script Directories", "script"),
+        ("OpenJDK Java 17 Console", "console"),
+        ("Rofi.code-workspace", "rofi"),
+        ("profile editor", "profile"),
+    ] {
+        assert!(
+            score_one(text, needle).accepted(),
+            "{text:?} / {needle:?} should still be accepted"
+        );
+    }
+}
+
+/// DIVERGENCE (residual): coherence is a property of an *alignment*, and nucleo
+/// does not always pick the same alignment as fzf-v2. The classifier itself is
+/// exact — fed the C++ matcher's own positions it reproduces
+/// `fzf::Result::coherent` on 100% of a 3537-case random corpus — but fed
+/// nucleo's positions it agrees with the C++ flag on 99.6% of that corpus
+/// (13 disagreements, every one of them a case where the two matchers aligned
+/// the needle differently). Every case in this file and in `main.cpp` is in the
+/// agreeing 99.6%.
+///
+/// This is the one part of the coherence divergence that cannot be closed
+/// without replacing nucleo's DP, and it is recorded here rather than pinned as
+/// a behavioural assertion because it has no observable instance in the ported
+/// corpus.
+#[test]
+fn diverges_coherence_depends_on_nucleos_alignment() {
+    Matcher::with_thread_local(|m| {
+        // "Settings System" / "stem": the C++ aligns S(0) t(2) e(13) m(14) and
+        // calls it incoherent; nucleo aligns S(9) t(12) e(13) m(14) — "Sys[tem]"
+        // — which is coherent, and arguably the better read of the two.
+        let r = m.match_("Settings System", "stem").expect("matches");
+        assert_eq!(
+            r.indices,
+            vec![9, 12, 13, 14],
+            "nucleo's alignment changed; recheck the coherence divergence"
+        );
+        assert!(r.coherent);
+    });
 }

@@ -1,6 +1,6 @@
 # ADR-0006: Reconstruct fzf's coherence signal over nucleo's match indices
 
-**Status:** Accepted · **Date:** 2026-09-12 · Relates to: PARITY.md, PLAN.md §8.3
+**Status:** Accepted, and the outcome was better than the decision assumed — see *Outcome* · **Date:** 2026-09-12 · Relates to: PARITY.md, PLAN.md §8.3
 
 ## Context
 
@@ -32,21 +32,58 @@ looser matching as a product decision.
 - **Accepting looser matching** silently changes behaviour every existing user relies on, in the
   direction of "the launcher got worse". Not a decision to make by default.
 
-## What this costs, honestly
+## What we expected this to cost
 
-We are approximating an algorithm we cannot call, from less information than it had: nucleo gives us
-matched indices, the haystack and the needle — not the DP matrix. Exact reproduction is not
-guaranteed, and the classifier is a heuristic with tuned parameters that will need re-tuning.
+At the time of deciding: "we are approximating an algorithm we cannot call, from less information
+than it had — nucleo gives us matched indices, the haystack and the needle, not the DP matrix. The
+classifier is a heuristic with tuned parameters that will need re-tuning."
 
-The mitigation is method: tune against the whole table of C++ expectations at once, never a single
-case; keep every previously-passing test passing; and where a case genuinely cannot be reproduced
-from indices alone, leave it recorded as a divergence rather than faking closure. A smaller honest
-gap beats a fake one.
+## Outcome: it is an exact port, not a heuristic
+
+That premise was wrong, and the correction is the more useful part of this record.
+
+Reading `fzf.hpp` phase 4 closely: the backtracker only ever compares `B[j]` against **zero**
+(`B[j] > 0`, `B[j] == 0`). It never reads the bonus magnitude, and it uses `H`/`C` only to choose
+which cell to step to — that is, only to pick the *alignment*. And `B[j]` is itself a function of two
+adjacent characters. So
+
+```
+coherent = !boundary_inside || !mid_word_run_start
+```
+
+is a pure function of `(haystack, alignment)`, and the alignment is exactly what nucleo hands back.
+**There are no thresholds, ratios or run-count limits to tune, because none exist in the original.**
+
+Validated against an oracle rather than by argument: the real C++ matcher was built and used to
+compare flags directly. Feeding the C++ matcher's own positions into the Rust rule gives **0
+mismatches across all 48 corpus cases and 3,537 random pairs** — the classifier is exact.
+
+One trap worth recording: `ascii_fuzzy_index` starts the bonus window one character *before* the
+needle's first occurrence, so every inspected position sees its true predecessor. Misreading that
+window as starting *at* the first occurrence makes `B[first]` spuriously non-zero and yields wrong
+answers.
+
+## What actually remains, one level up
+
+Coherence is a property *of an alignment*, and nucleo's DP does not always choose fzf's. Alignments
+differ in ~10.6% of cases; end-to-end flag agreement is 99.57% (3032/3045), and 100% across the
+ported corpus and every ranking case. Closing that means replacing nucleo's DP, not improving the
+classifier — a different and much larger decision, and not one worth making for a gap with no
+observed instance.
 
 ## Consequences
 
-- The tuned parameters and the reasoning behind them are documented next to the classifier, so the
-  next person re-tunes rather than reverse-engineers.
-- Suite 0 differential testing against the C++ engine is how this stays honest over time; the
-  classifier is exactly the kind of heuristic that drifts.
-- `src/lib/fuzzy` cannot be deleted until the remaining gap is recorded and accepted.
+- There is nothing to re-tune. If behaviour must change, it changes in `is_boundary`, and the oracle
+  harness (~20 lines against `src/lib/fuzzy/include`) re-validates it.
+- **A recall cost arrives with parity**, inherited from the C++ rule rather than introduced:
+  cross-word abbreviations that pick up a mid-word letter are rejected — `"ffb"` against
+  *"Firefox Web Browser"*, `"txted"` against *"Text Editor"*. The oracle confirms C++ rejects them
+  too. Whether that is the *right* rule is a product question we have now inherited rather than
+  answered.
+- The blocker on deleting `src/lib/fuzzy` is lifted, apart from the alignment gap above.
+
+## Lesson
+
+The plan asserted the signal was unreconstructible without checking. One careful read of 45 lines of
+C++ turned a heuristic-with-tuning into an exact port. Read the source before designing around a
+limitation.

@@ -12,6 +12,7 @@ use std::ops::Range;
 
 use nucleo_matcher::{Config, Utf32Str, chars};
 
+use crate::coherence::is_coherent_with;
 use crate::translit::{TranslitScheme, needs_transliteration, transliterate};
 
 /// A successful match of a needle against a haystack.
@@ -25,6 +26,15 @@ pub struct MatchResult {
     pub score: u32,
     /// Char indices of the matched haystack characters, ascending.
     pub indices: Vec<u32>,
+    /// Whether this alignment reads as a match a human would recognize, in the
+    /// sense of the C++ `fzf::Result::coherent`: it is `false` when the match
+    /// spreads over several words *and* some run of consecutive matched
+    /// characters starts mid-word ("time" in "S[t]art [I]nput [Me]thod").
+    ///
+    /// Incoherent matches are excluded from [`Match::quality`](crate::Match::quality)
+    /// and so cannot clear the [`MIN_QUALITY`](crate::MIN_QUALITY) gate. See
+    /// [`crate::is_coherent`].
+    pub coherent: bool,
 }
 
 impl MatchResult {
@@ -62,6 +72,8 @@ pub struct Matcher {
     haystack_buf: Vec<char>,
     needle_buf: Vec<char>,
     needle_str: String,
+    indices_buf: Vec<u32>,
+    boundary_buf: Vec<bool>,
 }
 
 impl Default for Matcher {
@@ -83,6 +95,8 @@ impl Matcher {
             haystack_buf: Vec::new(),
             needle_buf: Vec::new(),
             needle_str: String::new(),
+            indices_buf: Vec::new(),
+            boundary_buf: Vec::new(),
         }
     }
 
@@ -179,6 +193,7 @@ impl Matcher {
             haystack_buf,
             needle_buf,
             needle_str,
+            ..
         } = self;
         Self::prepare_needle(needle_str, needle);
         let needle = Utf32Str::new(needle_str, needle_buf);
@@ -192,6 +207,7 @@ impl Matcher {
             return Some(MatchResult {
                 score: 0,
                 indices: Vec::new(),
+                coherent: true,
             });
         }
         let Self {
@@ -199,16 +215,55 @@ impl Matcher {
             haystack_buf,
             needle_buf,
             needle_str,
+            boundary_buf,
+            ..
         } = self;
         Self::prepare_needle(needle_str, needle);
-        let needle = Utf32Str::new(needle_str, needle_buf);
-        let haystack = Utf32Str::new(haystack, haystack_buf);
+        let needle_utf = Utf32Str::new(needle_str, needle_buf);
+        let haystack_utf = Utf32Str::new(haystack, haystack_buf);
         let mut indices = Vec::new();
-        let score = inner.fuzzy_indices(haystack, needle, &mut indices)?;
+        let score = inner.fuzzy_indices(haystack_utf, needle_utf, &mut indices)?;
         indices.sort_unstable();
+        let coherent = is_coherent_with(haystack, &indices, boundary_buf);
         Some(MatchResult {
             score: u32::from(score),
             indices,
+            coherent,
         })
+    }
+
+    /// Score `needle` against `haystack` together with the coherence of the
+    /// alignment nucleo picked, without allocating a fresh index vector.
+    ///
+    /// The scoring path needs the coherence flag (it gates
+    /// [`Match::quality`](crate::Match::quality)), and coherence is a property
+    /// of an alignment, so unlike [`Matcher::score_folded`] this has to ask
+    /// nucleo for indices. The C++ pays the same price: its backtracking pass
+    /// runs on every match precisely so `fzf::Result::coherent` is always
+    /// populated, whether or not positions were requested.
+    pub(crate) fn score_folded_coherent(
+        &mut self,
+        haystack: &str,
+        needle: &str,
+    ) -> Option<(u32, bool)> {
+        if needle.is_empty() {
+            return Some((0, true));
+        }
+        let Self {
+            inner,
+            haystack_buf,
+            needle_buf,
+            needle_str,
+            indices_buf,
+            boundary_buf,
+        } = self;
+        Self::prepare_needle(needle_str, needle);
+        let needle_utf = Utf32Str::new(needle_str, needle_buf);
+        let haystack_utf = Utf32Str::new(haystack, haystack_buf);
+        indices_buf.clear();
+        let score = inner.fuzzy_indices(haystack_utf, needle_utf, indices_buf)?;
+        indices_buf.sort_unstable();
+        let coherent = is_coherent_with(haystack, indices_buf, boundary_buf);
+        Some((u32::from(score), coherent))
     }
 }

@@ -161,12 +161,30 @@ verbatim and passes. What does not:
 
 | # | Divergence | Impact | Pinned by |
 |---|---|---|---|
-| 1 | **No coherence signal.** C++ computes a `coherent` flag inside the backtracking pass from the DP matrix's boundary bonuses and forces `quality = 0` for incoherent matches. nucleo exposes neither the matrix nor an equivalent, and match indices alone cannot reconstruct it. C++ rejects `"time"` against `"Play this game on Steam"` and `"Start Input Method"`; we accept them at quality 69/73 against a gate of 60. | **Largest semantic gap and the most likely source of user-visible false positives.** The gate still does its main job — `"ny"` against a long description scores 38 and is correctly rejected. | the `diverges_*` coherence tests |
+| 1 | ~~No coherence signal~~ — **resolved.** The original claim here was wrong: the C++ backtracker only ever compares `B[j]` against *zero*, never uses its magnitude, and uses `H`/`C` solely to choose the alignment. So `coherent = !boundary_inside \|\| !mid_word_run_start` is a pure function of (haystack, indices), which is exactly what nucleo returns. It is an **exact port**, not a heuristic — no thresholds exist to tune. | None | the ported coherence suite |
 | 2 | **One ordering flip** (upstream issue #946). For `"Spo"`, C++ gives `Spotify > Reload Script Directories > Sysprog`; we give `Spotify > Sysprog > Reload Script Directories`. nucleo prefers a short scatter inside one word starting at position 0; fzf's larger word-boundary bonuses pull the other way. Every other ordering case ports and passes. | Low | `diverges_spo_ordering` |
 | 3 | **Narrower diacritic folding.** nucleo folds precomposed accents (é, ñ, ü) but not Latin Extended-A stroked/ogonek letters (Ł, ź, đ, ż), so `"lodz"` does not match `"Łódź Express"`. fzf's table covers them. | Affects Polish, Czech and Croatian app names | `diverges_latin_extended_a_is_not_folded` |
 | 4 | **Ties that discriminate nothing.** For `"clip"`, all of `Clipboard History`, `Clear Current Clipboard Data` and `Clear Clipboard History` score identically, because nucleo's score depends only on the matched region, not on haystack length or match position. The C++ ordering test passes there only because `stable_sort` preserves input order — so that case discriminates nothing in *either* implementation. | Real discrimination needs a length or match-position penalty layered on top of nucleo | `diverges_clip_ordering_is_a_three_way_tie` |
 | 5 | **Char, not byte, offsets** — a deliberate API change. `"Café Bar"`/`"bar"` reports `5..8` where C++ asserts bytes `6..9`. | None; byte offsets are recoverable | the range tests |
 
-Divergence 1 is the one to resolve before `src/lib/fuzzy` can be deleted. Options: layer a coherence
-classifier over nucleo's indices, raise `MIN_QUALITY`, or accept looser matching as a product
-decision. **Not yet decided.**
+### The residual coherence gap, one level up
+
+Coherence itself is now exact, but it is a property *of an alignment*, and nucleo's DP does not
+always pick the same alignment fzf does. Alignments differ in about 10.6% of cases; validated
+against a C++ oracle, end-to-end agreement on the `coherent` flag is **99.57%** (3032/3045), and
+**100% across the entire ported corpus and every `main.cpp` ranking case**. Every disagreement is an
+alignment difference, e.g. `"Settings System"/"stem"`: C++ aligns `S(0) t(2) e(13) m(14)` and calls
+it incoherent, nucleo aligns `Sys[tem]` and calls it coherent — arguably the better read.
+
+Closing that would mean replacing nucleo's DP, not improving the classifier. Since it has no
+observable instance in the corpus, it is pinned by `diverges_coherence_depends_on_nucleos_alignment`
+(which also freezes nucleo's alignment, so a future nucleo bump surfaces the change) rather than
+carried as a behavioural divergence.
+
+### A recall cost that arrives with parity
+
+Inherited from the C++ rule, not introduced by the port, and worth knowing before anyone reports it
+as a regression: cross-word abbreviations that pick up a mid-word letter are rejected.
+`"Firefox Web Browser"/"ffb"`, `"Text Editor"/"txted"` and `"Power Statistics"/"pwrstat"` are all
+rejected — and the oracle confirms the C++ rejects all three too. The rule is working as designed;
+whether it is the *right* design is a separate product question.
