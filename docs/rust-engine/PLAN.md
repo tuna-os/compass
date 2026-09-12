@@ -712,60 +712,76 @@ packaging; the wlroots compositor matrix from Phase 5; perf and RSS trends.
 
 `sccache` + `cargo-nextest` keep the per-PR budget honest.
 
-### 8.9 The merge-queue tier: a real Bluefin VM under QEMU
+### 8.9 The VM tier: a real Bluefin VM, driven by corral
 
-Tiers 1 and 2 never boot the operating system we ship on. A launcher is a system-integration
-product — portals, session, compositor, Flatpak sandbox, Shell extension — so the things most
-likely to break are exactly the things a container cannot exercise. The merge queue is the right
-home for that: it runs after review, on the merged result, so a slow boot costs throughput rather
-than iteration speed.
+Tiers 1 and 2 never boot the operating system we ship on. A launcher is a system-integration product
+— portals, session, compositor, Flatpak sandbox, Shell extension — so the things most likely to break
+are exactly the things a container cannot exercise.
 
-**Substrate.** Bluefin ships as a bootc OCI image (`ghcr.io/ublue-os/bluefin:stable`).
-[`bootc-image-builder`](https://github.com/osbuild/bootc-image-builder) converts it to a `qcow2` —
-the same two-stage path Bluefin uses to produce its own installable media. The VM under test is
-therefore not an approximation of the target; it is the target, built the way the target is built.
+**Substrate: [`tuna-os/corral`](https://github.com/tuna-os/corral), not a hand-rolled harness.** Its
+`corral vmtest` builds a bootc image into a disk, boots it under QEMU, waits for the guest, runs
+assertions, and writes the evidence — serial console, per-interval screenshots, a timelapse `.webm`,
+`result.json`, failed units and `bootc status`. Bluefin *is* a bootc image, so the VM under test is
+the target built the way the target is built. See [ADR-0010](./adr/0010-corral-vm-tier.md) for why
+this is adopted rather than built.
 
-**Trigger.** GitHub Actions' `merge_group` event. Tiers 1 and 2 stay on `pull_request`.
+Three of its properties are the reason it is worth adopting rather than approximating:
+
+- **`--require-paint`.** It measures the standard deviation of the final frame's luminance and fails
+  when nothing was drawn. A desktop that boots to a black screen is exactly the failure an SSH probe
+  reports as success, and it is the single most likely way a launcher breaks.
+- **One exit code per failure class.** Code 2 is "this host cannot run it" — distinct from code 6,
+  "the guest never became ready", and code 9, "painted nothing". A red pipeline that cannot tell a
+  broken runner from a broken image is a red pipeline people learn to ignore.
+- **Console keyboard injection.** `corral key <vm> meta_l spc` sends Super+Space at QEMU's emulated
+  keyboard over QMP, and `corral screenshot` grabs the framebuffer. That is the only way to test a
+  global hotkey, because a hotkey that works when synthesised by the test harness has not been
+  tested at all.
+
+**The KVM question is settled, and the previous answer here was wrong.** This section used to assert
+that GitHub-hosted runners expose no `/dev/kvm`, citing a 2022 community discussion, and designed
+around Depot sandboxes and self-hosted runners on that basis. A probe run on this branch
+([run 34686387919](https://github.com/tuna-os/compass/actions/runs/34686387919)) measured it instead:
+
+| Runner | `/dev/kvm` | `kvm-ok` | QEMU accelerators |
+|---|---|---|---|
+| `ubuntu-24.04` (x86_64) | present, `nested=1` | "KVM acceleration can be used" | `tcg kvm` |
+| `ubuntu-24.04-arm` | **absent** | "does not exist" | `kvm tcg` compiled in, unusable |
+
+So the tier runs accelerated on the x86_64 hosted runners we already have, at no additional
+infrastructure cost, and none of the Depot/self-hosted machinery this section used to propose is
+needed. On arm64 it would fall back to TCG, so the tier is **x86_64 only** — acceptable, since
+Bluefin's own primary target is x86_64.
 
 **Shape of a run:**
 
 1. Build the Flatpak (reuse the Tier-2 artifact).
-2. `bootc-image-builder` → `qcow2`, cached per Bluefin image digest so most runs skip the build.
-3. Boot under QEMU with a virtual display; autologin into a GNOME session.
-4. Provision over SSH: install the Flatpak, install the Shell extension, restart the session.
-5. Drive a scripted session and assert:
-   - `vicinae doctor --check-only` exits 0 and reports the capabilities we expect;
-   - the GlobalShortcuts portal binds, including the first-run permission dialog;
-   - the launcher opens, filters, and launches a host RPM app, a Flatpak app and a Homebrew binary;
-   - window switching and clipboard history work **with** the Shell extension;
-   - **and everything still works with the extension uninstalled**, degrading exactly as `doctor`
-     claims. That is the §3.5.1 promise, and a VM is the only place it can be checked.
-6. Capture screenshots and the journal as artifacts on failure.
+2. Build a test image: `FROM ghcr.io/ublue-os/bluefin:stable`, plus our Flatpak, the Shell
+   extension, and GDM autologin. `corral vmtest` accepts a locally built image, so this needs no
+   registry round trip.
+3. `corral vmtest --ready-marker 'Reached target Graphical' --require-paint --video`.
+4. Assert over SSH: `vicinae doctor --check-only`, the IPC socket, the app index against the guest's
+   real `.desktop` files.
+5. Drive the hotkey path through the console keyboard, screenshotting each step.
+6. Upload the artifact directory unconditionally.
 
-**Assert over IPC, not over pixels.** Drive assertions through our own IPC socket and `doctor`, and
-keep a handful of screenshots as human-readable artifacts only. Pixel-scraping a desktop session is
-the classic way to build an e2e suite everyone learns to ignore.
+**Assert over IPC, not over pixels.** Screenshots are evidence for humans; `--require-paint` is the
+one pixel assertion worth gating on, because "did anything draw" is a question no other probe
+answers. Everything else goes through our own IPC socket and `doctor`. Pixel-scraping a desktop
+session is the classic way to build an e2e suite everyone learns to ignore.
 
-**The KVM problem, which is the real constraint.** GitHub-hosted runners expose no `/dev/kvm` and
-[do not support nested virtualisation](https://github.com/orgs/community/discussions/8305), so QEMU
-there falls back to TCG emulation — roughly an order of magnitude slower, which turns a desktop boot
-into many minutes. Options, in preference order:
+**Two things this tier will be bad at, stated up front.** Under llvmpipe software rendering a GNOME
+session is slow and its timing is variable, so any assertion phrased as "within N seconds" will
+flake; phrase them as "after this marker appears". And a screenshot diff against a stored reference
+will break on every font, theme and Bluefin update — which is why none is proposed here.
 
-1. **Depot CI sandboxes**, where `/dev/kvm` is enabled by default. We already use Depot for the C++
-   builds, so this is the smallest change — but their *standard* GitHub Actions runners are not the
-   same product as their CI sandboxes, so confirm this before designing around it.
-2. A **self-hosted runner** on bare metal or a nested-virt-capable cloud instance.
-3. **Unaccelerated TCG**, accepted as slow. Viable precisely because this tier is out of the PR
-   loop, and a reasonable way to start before committing to infrastructure.
-
-**Promote it; do not start with it.** A flaky VM job in the merge queue blocks merges for everyone,
-and desktop-session e2e is the most flake-prone thing we will build. Run it nightly first and move
-it into the merge queue only once it has been stable for a couple of weeks. Then hold it to the same
-rule as everything else: a failure is a bug until proven otherwise, and "flake" is not a root cause.
+**Promote it; do not start with it.** Run it nightly first and move it into the merge queue only once
+it has been stable for a couple of weeks. Then hold it to the same rule as everything else: a
+failure is a bug until proven otherwise, and "flake" is not a root cause.
 
 Fedora solves this problem at scale with [openQA](https://openqa.fedoraproject.org/), worth knowing
-about if our own harness starts to sprawl — but it is a much heavier commitment and not where we
-should start.
+about if our own harness starts to sprawl — but corral covers the ground we need and openQA is a
+much heavier commitment.
 
 ---
 
@@ -889,7 +905,11 @@ covered. The container has no display server, no `flatpak`, no `qemu`, and no `/
 - the Wayland surface and anything in `compass-ui`;
 - the GlobalShortcuts portal path — an `ashpd` call needs a portal implementation on the bus;
 - the Flatpak build, and therefore every claim in `packaging/flatpak/`;
-- the Tier-3 VM tier in §8.9.
+- the VM tier in §8.9 itself.
+
+Every one of those is now reachable **in CI** even though it is unreachable *here*, via the corral
+VM tier (ADR-0010). The distinction matters: the container's limits are no longer the project's
+limits, and nothing in this list is waiting on a human with a laptop any more.
 
 It *can* run a real DBus session bus (`dbus-run-session` works), so the GNOME Shell integration and
 its mock-bus suite are genuinely testable here. That is why Phase 3's testing is further along than
@@ -899,10 +919,14 @@ work.
 ### Blocked on someone with access
 
 - **Run the corpus harvester on a real Bluefin box.** The synthetic corpus is a model of the spec,
-  not of reality.
-- **Phase 0 spikes A and B** (portal hotkey on real GNOME; Landlock + seccomp inside a real
-  Flatpak) both need an environment this container cannot provide, and Phase 4 should not be
-  designed further until B is answered.
+  not of reality. (Or take it from the VM tier below, which boots one.)
+
+**Spikes A and B are no longer blocked.** They were filed here as needing hardware this container
+cannot provide. [ADR-0010](./adr/0010-corral-vm-tier.md) removes that: `corral vmtest` boots a real
+Bluefin VM on the x86_64 hosted runners we already have — measured, not assumed, see §8.9 — with a
+real GNOME session, a real portal, a real Flatpak sandbox and console keyboard injection for the
+hotkey. Both spikes become CI jobs. Phase 4's design was explicitly waiting on Spike B; it no longer
+has to.
 
 ## 12. Immediate next steps
 
@@ -920,14 +944,23 @@ can verify it.
 3. Grow the mock-bus suite in `compass-shell` toward the full surface the Shell extension exposes,
    since a real session bus is the one piece of the desktop this container does have.
 
-**Blocked on hardware, and blocking Phase 4's design:**
+**Newly unblocked by the corral VM tier (ADR-0010), and the highest-value work available:**
 
-4. **Spike A:** Iced app in a Flatpak on Bluefin, binding Super+Space through the GlobalShortcuts
-   portal and raising itself with `xdg-activation-v1`. Answers "does the GNOME path work at all".
-   `compass-portals` is written to make the answer legible — it reports availability as a
-   three-state outcome — but it cannot tell whether a bind would be permitted, whether the trigger
-   requested is the one granted, or whether the compositor delivers the keypress. Only the spike can.
-5. **Spike B:** Landlock + seccomp around a Node child process *inside* a Flatpak. Phase 4's
-   sandbox design is unproven until this is answered, and nothing should be built on it first.
+4. **Stand up the VM tier.** One workflow: build the Flatpak, layer it onto
+   `ghcr.io/ublue-os/bluefin:stable` with the Shell extension and GDM autologin, `corral vmtest
+   --require-paint`. Everything below depends on it, and it is also the first time
+   `packaging/flatpak/` gets built rather than syntax-checked.
+5. **Spike A**, now a CI job: bind Super+Space through the GlobalShortcuts portal, send `meta_l spc`
+   at the emulated keyboard with `corral key`, and screenshot the result. `compass-portals` cannot
+   tell whether a bind is permitted, whether the trigger granted is the one requested, or whether
+   the compositor delivers the keypress; this can.
+6. **Spike B**, likewise: Landlock + seccomp around a child process inside a real Flatpak. Phase 4's
+   sandbox design is unproven until this answers, and nothing should be built on it first.
+7. **Capture the C++ baseline on the target.** With the tier up, run the *existing* C++ engine in the
+   VM and record what it actually does. Today's parity suites compare the Rust port against our
+   reading of the C++ source; this compares it against the C++ behaviour on the real OS, which is
+   the difference between a port that matches the code and one that matches the product.
 
-Each spike is timeboxed to a week and they are independent, so they run in parallel.
+The spikes are independent and run in parallel once (4) exists. Note what this does **not** unblock:
+the Rust engine has no UI, so the tier's first subject is the C++ engine and the portal/sandbox
+questions, not the Rust launcher.

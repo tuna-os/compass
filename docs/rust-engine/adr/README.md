@@ -17,3 +17,4 @@ drifting away from a recorded decision is not.
 | [0007](./0007-fork-posture-and-platform-scope.md) | Hard fork in practice; `vicinae` names kept; Linux-first | Accepted |
 | [0008](./0008-browser-control-is-an-extension.md) | Browser control is an extension, not part of the port | Accepted |
 | [0009](./0009-controlled-input-echo-counter.md) | A controlled input's value carries the edit it answers | Accepted |
+| [0010](./0010-corral-vm-tier.md) | The VM test tier is corral, on hosted runners | Accepted |
