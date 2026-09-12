@@ -52,3 +52,6 @@ BACKUP/
 
 # Rust
 /target
+
+/build-flatpak
+/.flatpak-builder

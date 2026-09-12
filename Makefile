@@ -281,3 +281,19 @@ check-format-rust:
 # Everything CI runs for the Rust workspace, in the same order.
 check-rust: check-format-rust lint-rust test-rust
 .PHONY: check-rust
+
+FLATPAK_MANIFEST := packaging/flatpak/com.vicinae.Vicinae.yaml
+
+# Regenerate the offline dependency manifest Flathub builds require. Needs
+# flatpak-cargo-generator.py from flatpak/flatpak-builder-tools on PATH.
+flatpak-sources:
+	flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+.PHONY: flatpak-sources
+
+flatpak-rust:
+	flatpak-builder --user --install --force-clean build-flatpak $(FLATPAK_MANIFEST)
+.PHONY: flatpak-rust
+
+flatpak-run: flatpak-rust
+	flatpak run com.vicinae.Vicinae -- doctor --check-only
+.PHONY: flatpak-run
