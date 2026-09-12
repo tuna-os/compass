@@ -1,6 +1,7 @@
 //! The rendered tree, its id assignment pass and its flattening.
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -75,9 +76,32 @@ impl Visit {
 ///
 /// Construct with [`ViewTree::new`]; that is the only way ids get stamped, and it is a
 /// pure function of the tree's shape and keys.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+///
+/// Deserialising re-runs that assignment rather than trusting the ids in the payload.
+/// The derivation is idempotent, so a tree built by [`ViewTree::new`] round-trips
+/// unchanged; what the pass buys is that ids in *every* `ViewTree` that exists are ones
+/// this crate derived. A stale, hand-written or hostile payload cannot smuggle in a
+/// duplicate id and make the diff misattribute one node's fields to another.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct ViewTree {
     root: View,
+}
+
+impl<'de> Deserialize<'de> for ViewTree {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Same shape on the wire as the derive would produce -- a one-field struct -- so
+        // this is a validation pass, not a format change.
+        #[derive(Deserialize)]
+        #[serde(rename = "ViewTree")]
+        struct Wire {
+            root: View,
+        }
+
+        Wire::deserialize(deserializer).map(|w| ViewTree::new(w.root))
+    }
 }
 
 impl ViewTree {
@@ -134,24 +158,75 @@ impl ViewTree {
 // identity assignment
 // ---------------------------------------------------------------------------
 
+/// Hands out sibling ids within one slot of one parent, guaranteeing they are distinct.
+///
+/// Nothing stops an extension emitting `key: "row"` on two items in the same list, and
+/// two siblings with the same key derive the same [`NodeId`]. Left alone that corrupts
+/// the diff: [`ViewDiff::between`](crate::ViewDiff::between) matches by id, so one
+/// sibling's fingerprint is compared against the other's and the UI patches the wrong
+/// row -- a tree even reports changes against *itself*.
+///
+/// So the first claimant of a key keeps the derived id, and any later sibling claiming
+/// the same key falls back to its ordinal. The fallback cannot itself collide:
+/// `NodeKey::Index(i)` is only reachable by the sibling at position `i`, and a slot has
+/// exactly one of those.
+///
+/// This is a repair, not a feature. A duplicate key still costs the author what keys buy
+/// -- the demoted sibling's id now shifts when the list is reordered, exactly as a keyless
+/// item's would. Correct output for an incorrect input, which is the most a pure derivation
+/// can offer without a channel to complain on.
+struct Slot<'a> {
+    parent: NodeId,
+    name: &'a str,
+    taken: BTreeSet<NodeId>,
+}
+
+impl<'a> Slot<'a> {
+    fn new(parent: NodeId, name: &'a str) -> Self {
+        Self {
+            parent,
+            name,
+            taken: BTreeSet::new(),
+        }
+    }
+
+    /// The id for the sibling at `index` carrying `key`.
+    fn id_for(&mut self, key: Option<&str>, index: usize) -> NodeId {
+        let derived = self.parent.child_keyed(self.name, key, index);
+        if self.taken.insert(derived) {
+            return derived;
+        }
+
+        let ordinal = self
+            .parent
+            .child(self.name, crate::id::NodeKey::Index(index));
+        let fresh = self.taken.insert(ordinal);
+        debug_assert!(
+            fresh,
+            "ordinal fallback collided, which position uniqueness should make impossible"
+        );
+        ordinal
+    }
+}
+
 fn assign_panel(panel: &mut ActionPanel, parent: NodeId) {
     panel.id = parent.child("actions", crate::id::NodeKey::Index(0));
+    let mut slot = Slot::new(panel.id, "sections");
     for (si, section) in panel.sections.iter_mut().enumerate() {
-        section.id = panel
-            .id
-            .child_keyed("sections", section.title.as_deref(), si);
+        section.id = slot.id_for(section.title.as_deref(), si);
         assign_items(&mut section.items, section.id);
     }
 }
 
 fn assign_items(items: &mut [ActionItem], parent: NodeId) {
+    let mut slot = Slot::new(parent, "items");
     for (i, item) in items.iter_mut().enumerate() {
         match item {
             ActionItem::Action(a) => {
-                a.id = parent.child_keyed("items", a.key.as_deref(), i);
+                a.id = slot.id_for(a.key.as_deref(), i);
             }
             ActionItem::Submenu(s) => {
-                s.id = parent.child_keyed("items", s.key.as_deref(), i);
+                s.id = slot.id_for(s.key.as_deref(), i);
                 let sid = s.id;
                 assign_items(&mut s.items, sid);
             }
@@ -175,14 +250,12 @@ fn assign_detail(detail: &mut Detail, id: NodeId) {
 
 fn assign_list(view: &mut ListView, id: NodeId) {
     view.id = id;
+    let mut sections = Slot::new(id, "sections");
     for (si, section) in view.sections.iter_mut().enumerate() {
-        section.id = id.child_keyed(
-            "sections",
-            section.key.as_deref().or(section.title.as_deref()),
-            si,
-        );
+        section.id = sections.id_for(section.key.as_deref().or(section.title.as_deref()), si);
+        let mut items = Slot::new(section.id, "items");
         for (ii, item) in section.items.iter_mut().enumerate() {
-            item.id = section.id.child_keyed("items", item.key.as_deref(), ii);
+            item.id = items.id_for(item.key.as_deref(), ii);
             let iid = item.id;
             if let Some(d) = &mut item.detail {
                 assign_detail(d, iid.child("detail", crate::id::NodeKey::Index(0)));
@@ -202,14 +275,12 @@ fn assign_list(view: &mut ListView, id: NodeId) {
 
 fn assign_grid(view: &mut GridView, id: NodeId) {
     view.id = id;
+    let mut sections = Slot::new(id, "sections");
     for (si, section) in view.sections.iter_mut().enumerate() {
-        section.id = id.child_keyed(
-            "sections",
-            section.key.as_deref().or(section.title.as_deref()),
-            si,
-        );
+        section.id = sections.id_for(section.key.as_deref().or(section.title.as_deref()), si);
+        let mut items = Slot::new(section.id, "items");
         for (ii, item) in section.items.iter_mut().enumerate() {
-            item.id = section.id.child_keyed("items", item.key.as_deref(), ii);
+            item.id = items.id_for(item.key.as_deref(), ii);
             let iid = item.id;
             if let Some(p) = &mut item.actions {
                 assign_panel(p, iid);
@@ -226,15 +297,15 @@ fn assign_grid(view: &mut GridView, id: NodeId) {
 
 fn assign_form(view: &mut FormView, id: NodeId) {
     view.id = id;
+    let mut slot = Slot::new(id, "items");
     for (i, item) in view.items.iter_mut().enumerate() {
         match item {
-            FormItem::Field(f) => f.id = id.child("items", crate::id::NodeKey::Stable(&f.name)),
-            FormItem::Description { id: did, .. } => {
-                *did = id.child("items", crate::id::NodeKey::Index(i));
-            }
-            FormItem::Separator { id: sid } => {
-                *sid = id.child("items", crate::id::NodeKey::Index(i));
-            }
+            // A field's `name` is its key: it is what the submitted value map is keyed by,
+            // so two fields sharing one is already an author error the form layer reports.
+            // Identity still has to stay distinct so the UI can render both.
+            FormItem::Field(f) => f.id = slot.id_for(Some(&f.name), i),
+            FormItem::Description { id: did, .. } => *did = slot.id_for(None, i),
+            FormItem::Separator { id: sid } => *sid = slot.id_for(None, i),
         }
     }
     if let Some(p) = &mut view.actions {

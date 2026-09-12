@@ -8,6 +8,24 @@ use std::collections::HashSet;
 use compass_core::{AppIndex, Config, FrecencyRecord, JsonFrecencyStore};
 use proptest::prelude::*;
 
+/// Where a counterexample gets written so it can be replayed.
+///
+/// proptest's default `SourceParallel` persistence looks for `lib.rs` or `main.rs` beside
+/// the test file. An integration test under `tests/` has neither, so proptest prints
+/// "failed to find lib.rs or main.rs" and *discards the seed*. A property that fails on
+/// one seed in a few hundred is then unreplayable -- and that is precisely the failure
+/// worth keeping, since it will not reproduce on the next run. Writing the seed to a
+/// checked-in file turns each such find into a permanent regression case.
+fn regressions(cases: u32, file: &'static str) -> ProptestConfig {
+    ProptestConfig {
+        cases,
+        failure_persistence: Some(Box::new(
+            proptest::test_runner::FileFailurePersistence::Direct(file),
+        )),
+        ..ProptestConfig::default()
+    }
+}
+
 fn index_of(files: &[(String, Vec<u8>)]) -> (tempfile::TempDir, AppIndex) {
     let dir = tempfile::tempdir().expect("tempdir");
     for (name, bytes) in files {
@@ -38,7 +56,7 @@ fn file_bytes() -> impl Strategy<Value = Vec<u8>> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(regressions(256, "tests/regressions/properties.txt"))]
 
     /// Indexing arbitrary file contents never panics, and every file is accounted for.
     #[test]

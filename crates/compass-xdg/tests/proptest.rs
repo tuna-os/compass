@@ -4,7 +4,26 @@
 use compass_xdg::{DesktopEntry, ExecParser, Locale, ParseOptions, Reader, value};
 use proptest::prelude::*;
 
+/// Where a counterexample gets written so it can be replayed.
+///
+/// proptest's default `SourceParallel` persistence looks for `lib.rs` or `main.rs` beside
+/// the test file. An integration test under `tests/` has neither, so proptest prints
+/// "failed to find lib.rs or main.rs" and *discards the seed*. A property that fails on
+/// one seed in a few hundred is then unreplayable -- and that is precisely the failure
+/// worth keeping, since it will not reproduce on the next run. Writing the seed to a
+/// checked-in file turns each such find into a permanent regression case.
+fn regressions(cases: u32, file: &'static str) -> ProptestConfig {
+    ProptestConfig {
+        cases,
+        failure_persistence: Some(Box::new(
+            proptest::test_runner::FileFailurePersistence::Direct(file),
+        )),
+        ..ProptestConfig::default()
+    }
+}
+
 proptest! {
+    #![proptest_config(regressions(256, "tests/regressions/proptest.txt"))]
     #[test]
     fn parsing_never_panics(s in "\\PC*") {
         let _ = DesktopEntry::parse(&s);
@@ -12,6 +31,7 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(regressions(256, "tests/regressions/proptest.txt"))]
     #[test]
     fn parsing_arbitrary_lines_never_panics(s in "(\\PC|\n){0,400}") {
         let _ = DesktopEntry::parse(&s);
@@ -20,6 +40,7 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(regressions(256, "tests/regressions/proptest.txt"))]
     #[test]
     fn parsing_desktop_shaped_input_never_panics(
         s in "(\\[[^\n]{0,20}\\]\n|[A-Za-z-]{0,10}(\\[[^\n\\]]{0,10}\\])?[ \t]*=?[^\n]{0,20}\n|#[^\n]{0,20}\n|\n){0,60}"
@@ -38,6 +59,7 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(regressions(256, "tests/regressions/proptest.txt"))]
     #[test]
     fn locale_parsing_never_panics(s in "\\PC*") {
         let locale = Locale::parse(&s);
@@ -47,6 +69,7 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(regressions(256, "tests/regressions/proptest.txt"))]
     #[test]
     fn exec_expansion_never_panics(s in "\\PC*") {
         let _ = ExecParser::new("name")
@@ -57,6 +80,7 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(regressions(256, "tests/regressions/proptest.txt"))]
     #[test]
     fn value_conversions_never_panic(s in "\\PC*") {
         let _ = value::as_string(&s);
@@ -67,6 +91,7 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(regressions(256, "tests/regressions/proptest.txt"))]
     /// A value with no escape or separator round-trips through the file format.
     #[test]
     fn plain_values_round_trip(value in "[a-zA-Z0-9 _.+/-]{1,40}") {
@@ -85,6 +110,7 @@ proptest! {
 }
 
 proptest! {
+    #![proptest_config(regressions(256, "tests/regressions/proptest.txt"))]
     /// Escaping then unescaping a list is the identity.
     #[test]
     fn string_lists_round_trip(

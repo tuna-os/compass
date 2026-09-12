@@ -5,6 +5,24 @@ use compass_search::{
 };
 use proptest::prelude::*;
 
+/// Where a counterexample gets written so it can be replayed.
+///
+/// proptest's default `SourceParallel` persistence looks for `lib.rs` or `main.rs` beside
+/// the test file. An integration test under `tests/` has neither, so proptest prints
+/// "failed to find lib.rs or main.rs" and *discards the seed*. A property that fails on
+/// one seed in a few hundred is then unreplayable -- and that is precisely the failure
+/// worth keeping, since it will not reproduce on the next run. Writing the seed to a
+/// checked-in file turns each such find into a permanent regression case.
+fn regressions(cases: u32, file: &'static str) -> ProptestConfig {
+    ProptestConfig {
+        cases,
+        failure_persistence: Some(Box::new(
+            proptest::test_runner::FileFailurePersistence::Direct(file),
+        )),
+        ..ProptestConfig::default()
+    }
+}
+
 /// Text drawn from ASCII, Latin-1 accents, Cyrillic, Greek, CJK and emoji, so
 /// the normalization, transliteration and multi-byte paths all get exercised.
 fn text() -> impl Strategy<Value = String> {
@@ -29,7 +47,7 @@ impl FuzzySearchable for Item {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(512))]
+    #![proptest_config(regressions(512, "tests/regressions/properties.txt"))]
 
     #[test]
     fn matching_never_panics(haystack in text(), needle in text()) {

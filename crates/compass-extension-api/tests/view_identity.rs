@@ -240,3 +240,128 @@ fn keys_and_indices_are_different_namespaces() {
         "slot and key must be framed so they cannot run together"
     );
 }
+
+// ---------------------------------------------------------------------------
+// duplicate keys
+//
+// Nothing stops an extension emitting the same key on two siblings. Until the ordinal
+// fallback in `Slot` these tests all failed: the two rows derived one id, and the diff
+// -- which matches by id -- attributed one row's fields to the other. Found by the
+// `arbitrary_titles_and_keys_produce_unique_stable_ids` property test, which shrank to
+// two items whose only shared feature was an empty key.
+// ---------------------------------------------------------------------------
+
+fn two_rows_sharing_a_key(key: &str) -> View {
+    View::List(ListView {
+        sections: vec![ListSection::untitled(vec![
+            ListItem::new("alpha").with_key(key),
+            ListItem::new("beta").with_key(key),
+        ])],
+        ..ListView::default()
+    })
+}
+
+#[test]
+fn siblings_sharing_a_key_still_get_distinct_ids() {
+    for key in ["", "row", "\u{e000}"] {
+        let tree = ViewTree::new(two_rows_sharing_a_key(key));
+        let mut seen = std::collections::BTreeSet::new();
+        for node in tree.nodes() {
+            assert!(
+                seen.insert(node.id),
+                "key {key:?}: id {} used twice ({})",
+                node.id,
+                node.kind
+            );
+        }
+    }
+}
+
+#[test]
+fn a_tree_with_duplicate_keys_does_not_differ_from_itself() {
+    // The symptom that made the collision visible: two distinct rows sharing an id meant
+    // one was compared against the other's fingerprint, so a tree reported a change
+    // against an identical copy of itself and the UI repainted the wrong row.
+    let a = ViewTree::new(two_rows_sharing_a_key("row"));
+    let b = ViewTree::new(two_rows_sharing_a_key("row"));
+    assert_eq!(a.nodes(), b.nodes());
+    assert!(
+        ViewDiff::between(&a, &b).is_empty(),
+        "identical trees differ: {:?}",
+        ViewDiff::between(&a, &b).changes
+    );
+}
+
+#[test]
+fn the_first_claimant_of_a_key_keeps_the_derived_id() {
+    // The demotion has to fall on the *later* sibling, or inserting a duplicate would
+    // move an existing row's id and cost the UI its selection.
+    let unique = ViewTree::new(View::List(ListView {
+        sections: vec![ListSection::untitled(vec![
+            ListItem::new("alpha").with_key("row"),
+        ])],
+        ..ListView::default()
+    }));
+    let duplicated = ViewTree::new(two_rows_sharing_a_key("row"));
+    assert_eq!(unique.nodes()[2].id, duplicated.nodes()[2].id);
+}
+
+fn named_field(name: &str, title: &str) -> FormField {
+    FormField {
+        id: NodeId::ROOT,
+        name: name.into(),
+        title: Some(title.into()),
+        error: None,
+        info: None,
+        autofocus: false,
+        value: None,
+        on_change: None,
+        kind: FieldKind::Text { placeholder: None },
+    }
+}
+
+#[test]
+fn form_fields_sharing_a_name_still_get_distinct_ids() {
+    let tree = ViewTree::new(View::Form(FormView {
+        items: vec![
+            FormItem::Field(Box::new(named_field("dupe", "First"))),
+            FormItem::Field(Box::new(named_field("dupe", "Second"))),
+        ],
+        ..FormView::default()
+    }));
+    let ids = ids(&tree);
+    let unique: std::collections::BTreeSet<_> = ids.iter().collect();
+    assert_eq!(ids.len(), unique.len(), "form field ids collided: {ids:?}");
+}
+
+#[test]
+fn decoding_a_tree_re_derives_its_ids() {
+    // `ViewTree`'s fields carry ids, so a payload can name any id it likes. Deserialising
+    // re-runs assignment, which is what keeps "every id in a ViewTree was derived by this
+    // crate" true rather than merely conventional -- a forged duplicate would otherwise
+    // reach the diff and misattribute one node's fields to another.
+    let honest = ViewTree::new(View::List(list_view()));
+    let json = serde_json::to_string(&honest).unwrap();
+
+    let forged = json.replace(
+        &honest.nodes()[2].id.raw().to_string(),
+        &honest.nodes()[3].id.raw().to_string(),
+    );
+    assert_ne!(forged, json, "the forgery did not change the payload");
+
+    let decoded: ViewTree = serde_json::from_str(&forged).unwrap();
+    assert_eq!(
+        ids(&decoded),
+        ids(&honest),
+        "decoding trusted the ids in the payload"
+    );
+}
+
+#[test]
+fn decoding_round_trips_a_tree_unchanged() {
+    for view in every_view() {
+        let a = ViewTree::new(view);
+        let b: ViewTree = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        assert_eq!(a, b);
+    }
+}
