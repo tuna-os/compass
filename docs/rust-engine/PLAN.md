@@ -28,7 +28,7 @@ the protocol-support evidence behind §3.
 | Crate prefix | `compass-*`, binary stays `vicinae` for CLI/config/socket compatibility | Trivial |
 | Licence | Compass is GPL-3.0, rustcast is MIT; MIT → GPL-3.0 is one-way compatible, so rustcast code may be incorporated with its copyright header plus a provenance note | N/A |
 
-Open questions: §10.
+Decisions are recorded as ADRs in [`adr/`](./adr/); §10 summarises them and lists what is still open.
 
 ---
 
@@ -761,29 +761,39 @@ should start.
 
 ---
 
-## 10. Open questions
+## 10. Decisions and remaining questions
 
-1. **Fork posture** — is compass tracking upstream vicinae, or is this a hard fork? Affects naming,
-   store compatibility, and whether anything gets upstreamed.
-2. **Branding** — keep `vicinae` binary/socket/config paths, or rename to `compass` with a shim?
-   The plan assumes the former.
-3. **macOS/Windows** — follow-up project, or permanently Linux-only?
-4. **Team size** — §7 swings between 4 and 7 months on this alone.
-5. **rustcast relationship** — one-time seed (assumed), or an ongoing sync? The latter constrains the
-   crate split in §2.
-6. **Cap'n Proto** — accept postcard (ADR-0002), or is zero-copy a hard requirement up front?
-7. **Shell extension distribution on Bluefin** (§3.6) — extensions.gnome.org, a Flatpak filesystem
-   hole, or bake it into the Bluefin image? **This one blocks Phase 3 and should be answered in
-   Phase 0.**
-8. **GNOME 50 vs 51 support window** — do we support both, or track 51 only? Affects the CI matrix
-   and how much extension-compat code we carry.
-9. **Is the Rhai tier a product bet we want to make?** (§2.2) The engineering cost is modest *if*
-   `compass-extension-api` exists, but a third extension API is a permanent documentation, support
-   and example-maintenance burden against a zero-sized ecosystem. The technical answer is yes; the
-   product answer needs an owner. Decide before Phase 4 ends — the seam is worth building either
-   way, the tier is not.
+The questions that were open when this plan was written have been decided and recorded as ADRs in
+[`adr/`](./adr/). Summary:
 
----
+| Was | Decided | ADR |
+|---|---|---|
+| Iced or Slint? | Iced 0.14 | [0001](./adr/0001-iced-over-slint.md) |
+| Cap'n Proto or something simpler? | postcard now, Cap'n Proto held in reserve behind the 0.5 ms SLA | [0002](./adr/0002-postcard-over-capnproto.md) |
+| i18n, absent from the spec | fluent-rs, with the Qt Linguist catalogue converted rather than lost | [0003](./adr/0003-fluent-for-i18n.md) |
+| **How does a Flatpak install the Shell extension?** | extensions.gnome.org **and** baked into the Bluefin image; explicitly **not** a `--filesystem` hole into GNOME's directory | [0004](./adr/0004-gnome-shell-extension-distribution.md) |
+| Is the Rhai tier worth it? | Build the seam now; the tier is a product go/no-go at the end of Phase 4 | [0005](./adr/0005-rhai-seam-now-tier-later.md) |
+| The fuzzy coherence gap | Reconstruct the signal over nucleo's indices, rather than raising the gate or accepting looser matching | [0006](./adr/0006-fuzzy-coherence-classifier.md) |
+| Fork posture, branding, platform scope, GNOME versions | Hard fork acknowledged; `vicinae` user-facing names kept; Linux-first with macOS/Windows on the C++ engine; GNOME 50 **and** 51 in CI | [0007](./adr/0007-fork-posture-and-platform-scope.md) |
+
+### Still genuinely open
+
+1. **Team size.** The schedule in §7 swings between four and seven months on this work alone. Nobody
+   can answer this from inside the plan.
+2. **rustcast relationship** — one-time seed (what the plan assumes and what the crate split
+   reflects), or an ongoing sync? The latter would constrain the crate boundaries in §2 and cost
+   design freedom. Assumed one-time until someone says otherwise.
+3. **Whether to report the six C++ desktop-entry bugs upstream.** ADR-0007 says we should as a
+   courtesy; someone has to actually do it. See PARITY.md for the list, one of which is an unbounded
+   loop reachable from any malformed `.desktop` file on disk.
+
+### Decided by doing, not by discussion
+
+Some things in the original list resolved themselves once code existed, and are recorded here so
+they are not re-litigated: `nucleo` over hand-rolling a matcher; a caller-owned buffer in
+`FuzzySearchable` rather than returning `Vec` or a GAT-flavoured iterator; total-order ranking so
+results are deterministic; and raw bytes rather than `String` in the corpus API, because part of the
+corpus is deliberately not valid UTF-8.
 
 ## 11. Immediate next steps
 
