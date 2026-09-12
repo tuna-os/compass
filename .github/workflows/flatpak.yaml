@@ -79,15 +79,20 @@ jobs:
             org.freedesktop.Sdk//24.08 \
             org.freedesktop.Sdk.Extension.rust-stable//24.08
 
-      # Reported before the build so that a toolchain mismatch is legible in the log
-      # rather than inferred from a compile error 40 minutes later. rust-toolchain.toml
-      # pins our version; the SDK extension ships whatever it ships, and the two are
-      # not required to agree — but if the build fails on an unstable feature or an
-      # edition, this is the line to look at first.
+      # This step earned its keep on the very first run: the build failed with
+      # "rustc 1.89.0 is not supported ... requires rustc 1.94" after vendoring all
+      # 161 crates, and this line is what made that a one-minute diagnosis.
+      #
+      # The three versions are deliberately different things. `rust-toolchain.toml`
+      # is what we develop on. `rust-version` in Cargo.toml is the minimum we
+      # promise, and it is set by the SDK because the SDK is the binding constraint.
+      # If the SDK's rustc ever drops below our declared MSRV, this is the line that
+      # says so.
       - name: What Rust does the SDK actually ship?
         run: |
-          echo "repo pin:  $(grep -oP 'channel\s*=\s*"\K[^"]+' rust-toolchain.toml || echo 'none')"
-          echo -n "SDK ships: "
+          echo "dev pin (rust-toolchain.toml): $(grep -oP 'channel\s*=\s*"\K[^"]+' rust-toolchain.toml || echo 'none')"
+          echo "declared MSRV (Cargo.toml):    $(grep -m1 '^rust-version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          echo -n "SDK ships:                     "
           flatpak run --user --command=sh --devel org.freedesktop.Sdk//24.08 \
             -c 'PATH=/usr/lib/sdk/rust-stable/bin:$PATH rustc --version' || echo "could not query"
 
