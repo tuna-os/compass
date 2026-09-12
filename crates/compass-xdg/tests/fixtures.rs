@@ -188,3 +188,37 @@ fn a_fixture_read_through_parse_matches_the_one_read_from_disk() {
     assert_eq!(from_data.path(), None);
     assert_eq!(from_file.path(), Some(path.as_path()));
 }
+
+/// A desktop file is supposed to be UTF-8, and real ones are not always.
+///
+/// `from_file` used to `read_to_string`, so a single Latin-1 byte anywhere in the file -- typically
+/// an accented character in a `Comment` -- returned `Error::Io(InvalidData)` and the application
+/// vanished from the launcher entirely, with no diagnostic the user could act on. Found while
+/// building the application index in `compass-core`, which had to work around it by reading bytes
+/// itself.
+#[test]
+fn a_non_utf8_byte_does_not_lose_the_whole_entry() {
+    let dir = std::env::temp_dir().join(format!("compass-xdg-latin1-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("latin1.desktop");
+
+    // "Caf\xe9" -- Latin-1, not UTF-8.
+    let mut bytes = b"[Desktop Entry]\nType=Application\nName=Cafe App\nComment=Caf".to_vec();
+    bytes.push(0xe9);
+    bytes.extend_from_slice(b"\nExec=cafe %U\n");
+    std::fs::write(&path, &bytes).unwrap();
+    assert!(
+        String::from_utf8(bytes).is_err(),
+        "fixture must not be valid UTF-8"
+    );
+
+    let entry = compass_xdg::DesktopEntry::from_file(&path)
+        .expect("a bad byte in Comment must not lose the application");
+
+    // The fields that matter are intact; only the undecodable byte is replaced.
+    assert_eq!(entry.name(), "Cafe App");
+    assert_eq!(entry.exec(), Some("cafe %U"));
+    assert!(entry.comment().unwrap().starts_with("Caf"));
+
+    std::fs::remove_dir_all(&dir).ok();
+}

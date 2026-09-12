@@ -278,10 +278,17 @@ impl DesktopEntry {
         opts: &ParseOptions,
     ) -> Result<DesktopEntry, Error> {
         let path = path.as_ref();
-        let data = std::fs::read_to_string(path).map_err(|source| Error::Io {
+        let bytes = std::fs::read(path).map_err(|source| Error::Io {
             path: path.to_path_buf(),
             source,
         })?;
+
+        // Decoded lossily on purpose. The spec says desktop files are UTF-8, but we are scanning a
+        // system we do not control, and real ones are not always. Rejecting the file would lose the
+        // whole application over one bad byte in a Comment nobody reads -- a much worse outcome for
+        // a launcher than showing a replacement character. Strict decoding is a validator's policy,
+        // not a scanner's.
+        let data = String::from_utf8_lossy(&bytes);
 
         DesktopEntry::parse_with(
             &data,
