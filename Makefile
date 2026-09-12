@@ -155,15 +155,15 @@ appimage-build-env-push:
 	docker push $(APPIMAGE_BUILD_ENV_IMAGE_TAG)
 .PHONY: appimage-build-env-push
 
-# Build-environment images. CI builds and pushes these itself
-# (.github/workflows/build-{arch,appimage}-image.yaml); these targets are for
-# doing it by hand. Requires `docker login ghcr.io` with a token carrying
+# The AppImage build-environment image. CI builds and pushes it itself
+# (.github/workflows/build-appimage-image.yaml); these targets are for doing
+# it by hand. Requires `docker login ghcr.io` with a token carrying
 # write:packages.
+#
+# There is no equivalent for Arch: those jobs run on plain archlinux:latest
+# and install dependencies from scripts/runners/arch/install-deps.sh, so no
+# image needs building or publishing.
 BUILD_ENV_IMAGE := ghcr.io/tuna-os/compass/build-env
-
-push-arch-image:
-	docker buildx build --push --tag $(BUILD_ENV_IMAGE):arch-latest --platform linux/amd64 -f scripts/runners/arch/base.Dockerfile scripts/runners/arch
-.PHONY: push-arch-image
 
 # Builds GCC and Qt from source: expect hours, and build each architecture on
 # a machine of that architecture rather than under QEMU.

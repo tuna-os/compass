@@ -17,17 +17,12 @@ concurrency:
 jobs:
   build-binary:
     runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/${{ github.repository }}/build-env:arch-latest
-      # ghcr packages are private until published publicly; GITHUB_TOKEN
-      # can pull the ones this repository owns. Once the package is made
-      # public these credentials and the packages:read scope can go.
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+    # Plain upstream Arch: the build deps are one pacman invocation, so a
+    # prebuilt image is not worth a registry dependency. Installed below
+    # from the same script the image Dockerfile uses.
+    container: archlinux:latest
     permissions:
       contents: read
-      packages: read
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       commit: ${{ steps.commit.outputs.commit }}
@@ -37,6 +32,12 @@ jobs:
       INSTALL_DIR: ${{ github.workspace }}/install
 
     steps:
+      # actions/checkout silently falls back to a REST tarball with no .git when
+      # git is missing, which breaks every later git step. The Depot image had
+      # git baked in; plain archlinux:latest does not.
+      - name: Bootstrap git
+        run: pacman -Sy --needed --noconfirm git
+
       - name: Resolve tag
         id: meta
         shell: bash
@@ -66,6 +67,9 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ steps.meta.outputs.tag }}
+
+      - name: Install build dependencies
+        run: ./scripts/runners/arch/install-deps.sh
 
       - name: Resolve commit
         id: commit
@@ -129,7 +133,6 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     permissions:
       contents: read
-      packages: read
     strategy:
       fail-fast: false
       matrix:
