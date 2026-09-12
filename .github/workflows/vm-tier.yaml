@@ -132,7 +132,7 @@ jobs:
           mkdir -p /mnt/corral
           sudo -E "$(which corral)" vmtest bluefin \
             --bootc localhost/bluefin-testable:ci \
-            --ready-marker 'Reached target Graphical' \
+            --ready-marker '(?i)reached target graphical' \
             --require-paint \
             --video \
             --cpu 4 --mem 8G --disk 30G \
@@ -158,8 +158,23 @@ jobs:
           else
             echo "no result.json — the run died before writing one"
           fi
+          # The targets the guest actually reached. This is the decisive diagnostic
+          # for a readiness timeout: the first run matched nothing because the
+          # marker was 'Reached target Graphical' while systemd prints the unit
+          # name lowercase ("Reached target graphical.target - Graphical
+          # Interface."). Printing the real lines means a second timeout is
+          # answered by reading, not by guessing again.
+          echo '--- targets reached, and the display-manager path ---'
+          if [ -f vmtest-out/serial.log ]; then
+            grep -aoE 'Reached target [a-z0-9.@-]+' vmtest-out/serial.log | sort -u || true
+            echo '--- gdm / plymouth / display ---'
+            grep -aiE 'gdm|plymouth|graphical|wayland|greeter' vmtest-out/serial.log \
+              | tail -40 || true
+          else
+            echo "no serial.log"
+          fi
           echo '--- serial console tail ---'
-          tail -60 vmtest-out/serial.log 2>/dev/null || echo "no serial.log"
+          tail -40 vmtest-out/serial.log 2>/dev/null || echo "no serial.log"
 
       - name: Upload the evidence
         if: always()
