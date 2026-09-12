@@ -250,3 +250,34 @@ re: clean release
 
 redev: clean dev
 .PHONY: redev
+
+# ---------------------------------------------------------------------------
+# Rust engine (crates/). See docs/rust-engine/PLAN.md.
+# These are deliberately separate from the C++ targets: building the C++ tree
+# must not require a Rust toolchain until the cutover in Phase 7.
+# ---------------------------------------------------------------------------
+
+build-rust:
+	cargo build --workspace
+.PHONY: build-rust
+
+test-rust:
+	cargo test --workspace --all-targets
+	cargo test --workspace --doc
+.PHONY: test-rust
+
+lint-rust:
+	cargo clippy --workspace --all-targets -- -D warnings
+.PHONY: lint-rust
+
+fmt-rust:
+	cargo fmt --all
+.PHONY: fmt-rust
+
+check-format-rust:
+	cargo fmt --all -- --check
+.PHONY: check-format-rust
+
+# Everything CI runs for the Rust workspace, in the same order.
+check-rust: check-format-rust lint-rust test-rust
+.PHONY: check-rust
