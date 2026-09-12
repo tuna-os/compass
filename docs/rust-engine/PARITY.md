@@ -20,15 +20,18 @@ Update this file in the same PR that changes a box. It is meant to be read in st
 
 ## Progress
 
-Nothing is green yet. Scaffolding, corpora and CI are in place; `compass-xdg` and `compass-search`
-are the first two ports in flight.
+Scaffolding, corpora and CI are in place. `compass-xdg` and `compass-search` have landed as the
+first two ports: 153 tests across the workspace, all green.
+
+Neither row is fully green, and neither C++ directory may be deleted yet — see the partial markers
+and the divergences below. 🟡 means implemented but not to the full scope of the C++ source.
 
 ## Libraries and standalone binaries
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
-| `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
+| `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
+| `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ✅ | 🟡 | ❌ |
 | `src/lib/crypto` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -116,9 +119,54 @@ are the first two ports in flight.
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 
+## Not-yet-ported scope
+
+Tracked here so a 🟡 does not quietly become a ✅.
+
+**`src/lib/xdgpp` → `compass-xdg`** — the desktop-entry, locale, value, reader and exec layers are
+ported (47 C++ cases, verbatim inputs). Still C++-only:
+
+- the `xdg-terminal-exec` draft extension (`X-TerminalArg*` typed accessors; the keys are readable
+  through `Reader` today);
+- the `DesktopFile` layer — `fromId`, `relativeId`, directory search. `from_file` and
+  `ParseOptions::{id,path}` exist, but id computation and lookup are a separate pass;
+- the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
+
 ## Declared divergences
 
-None yet. Format:
+Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
+the behaviour changes, so a future fix is loud rather than silent.
 
-| Row | Divergence | Why it is acceptable | Decided by |
+### `compass-xdg` — six C++ bugs deliberately **not** reproduced
+
+| # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
+| 1 | `parseRawLocale` loops `while (!isPeek(']'))`, and `isPeek` is false at EOF because `peek()` returns `0`. A truncated `Name[fr` at end of file appends NUL forever: an unbounded loop with unbounded allocation. | Terminate on `]`, newline, or EOF. | `a_truncated_locale_suffix_does_not_swallow_the_next_line` |
+| 2 | A key with no separator consumes the following character and, on mismatch, skips to the *next* newline — so when the consumed character *was* the newline, the next line is silently swallowed. | Skip only when the mismatched character is not the line terminator. | `a_key_with_no_separator_is_skipped` |
+| 3 | Field codes push directly into `args` while the in-progress word sits in `part`, so `Exec=prog --name=%c` yields `["prog", "MyFile", "--name="]` — the pending word lands *after* the expansion. `--file=%f` forms are common in the wild. | Substitute single-valued codes (`%f %u %c %k`) into the current word; flush the word before multi-valued ones (`%F %U %i`). Every C++ test result is unchanged, since they all use standalone codes. | `a_field_code_may_be_glued_to_the_rest_of_a_word` |
+| 4 | `asStringList` unescapes each element at a separator but pushes the trailing residue raw, so `Keywords=a;b\sc` yields a literal `b\sc`. | Unescape consistently. | `escapes_apply_to_an_unterminated_last_element` |
+| 5 | An unknown `Type` silently becomes `Application` (the if/else chain has no `else`). | `EntryType::Other(String)`; `is_application()` is false for `Type=ServiceType`. A *missing* `Type` still defaults to Application, matching C++. | ported `Type` cases |
+| 6 | `genericName()`, `version()` and `unlocalizedName()` return `std::optional` built from a plain `std::string`, so they are never `nullopt` — an absent key reads as `Some("")`. | Return `None`. | `unlocalized_name_is_absent_when_only_a_localized_name_exists` |
+
+Matched deliberately, for the record: field codes are not expanded inside quotes; unknown and
+deprecated field codes expand to nothing; a redeclared group replaces rather than merges; localized
+score ties resolve to the last declaration.
+
+### `compass-search` — nucleo is not fzf
+
+`nucleo-matcher` uses a different algorithm from the C++ fzf port, so absolute scores are on another
+scale and are never asserted. The normalized 0-100 `score`/`quality` values match the C++
+expectations closely: every `score == 100`, `score == 50` and `quality == 100` assertion ports
+verbatim and passes. What does not:
+
+| # | Divergence | Impact | Pinned by |
+|---|---|---|---|
+| 1 | **No coherence signal.** C++ computes a `coherent` flag inside the backtracking pass from the DP matrix's boundary bonuses and forces `quality = 0` for incoherent matches. nucleo exposes neither the matrix nor an equivalent, and match indices alone cannot reconstruct it. C++ rejects `"time"` against `"Play this game on Steam"` and `"Start Input Method"`; we accept them at quality 69/73 against a gate of 60. | **Largest semantic gap and the most likely source of user-visible false positives.** The gate still does its main job — `"ny"` against a long description scores 38 and is correctly rejected. | the `diverges_*` coherence tests |
+| 2 | **One ordering flip** (upstream issue #946). For `"Spo"`, C++ gives `Spotify > Reload Script Directories > Sysprog`; we give `Spotify > Sysprog > Reload Script Directories`. nucleo prefers a short scatter inside one word starting at position 0; fzf's larger word-boundary bonuses pull the other way. Every other ordering case ports and passes. | Low | `diverges_spo_ordering` |
+| 3 | **Narrower diacritic folding.** nucleo folds precomposed accents (é, ñ, ü) but not Latin Extended-A stroked/ogonek letters (Ł, ź, đ, ż), so `"lodz"` does not match `"Łódź Express"`. fzf's table covers them. | Affects Polish, Czech and Croatian app names | `diverges_latin_extended_a_is_not_folded` |
+| 4 | **Ties that discriminate nothing.** For `"clip"`, all of `Clipboard History`, `Clear Current Clipboard Data` and `Clear Clipboard History` score identically, because nucleo's score depends only on the matched region, not on haystack length or match position. The C++ ordering test passes there only because `stable_sort` preserves input order — so that case discriminates nothing in *either* implementation. | Real discrimination needs a length or match-position penalty layered on top of nucleo | `diverges_clip_ordering_is_a_three_way_tie` |
+| 5 | **Char, not byte, offsets** — a deliberate API change. `"Café Bar"`/`"bar"` reports `5..8` where C++ asserts bytes `6..9`. | None; byte offsets are recoverable | the range tests |
+
+Divergence 1 is the one to resolve before `src/lib/fuzzy` can be deleted. Options: layer a coherence
+classifier over nucleo's indices, raise `MIN_QUALITY`, or accept looser matching as a product
+decision. **Not yet decided.**
