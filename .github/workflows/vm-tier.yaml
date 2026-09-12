@@ -130,9 +130,16 @@ jobs:
           TMPDIR: /mnt/corral
         run: |
           mkdir -p /mnt/corral
+          # --ready-marker is 'Started .*gdm\.service', not a graphical.target
+          # match, because graphical.target is never reached on this image:
+          # plymouth-quit-wait.service starts and never finishes with no real
+          # display, and it gates the target. GDM itself starts fine, and the
+          # captured frames show stddev ~0.36 against corral's 0.02 blank
+          # threshold — the desktop is up and drawing. "Started" not "Starting":
+          # the latter appears a moment earlier and means only that it was asked to.
           sudo -E "$(which corral)" vmtest bluefin \
             --bootc localhost/bluefin-testable:ci \
-            --ready-marker '(?i)reached target graphical' \
+            --ready-marker 'Started .*gdm\.service' \
             --require-paint \
             --video \
             --cpu 4 --mem 8G --disk 30G \
@@ -166,9 +173,16 @@ jobs:
           # answered by reading, not by guessing again.
           echo '--- targets reached, and the display-manager path ---'
           if [ -f vmtest-out/serial.log ]; then
-            grep -aoE 'Reached target [a-z0-9.@-]+' vmtest-out/serial.log | sort -u || true
+            # Strip ANSI first. systemd colourises the unit name, so the escape
+            # sequence sits between "target " and "network.target" and an
+            # un-stripped grep silently reports only the early-boot lines — which
+            # is exactly how the previous run's diagnostic misled me.
+            sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b\][^\x07\x1b]*(\x07|\x1b\\\\)//g' \
+              vmtest-out/serial.log > /tmp/serial-plain.log 2>/dev/null || \
+              cp vmtest-out/serial.log /tmp/serial-plain.log
+            grep -aoE 'Reached target [A-Za-z0-9._@-]+' /tmp/serial-plain.log | sort -u || true
             echo '--- gdm / plymouth / display ---'
-            grep -aiE 'gdm|plymouth|graphical|wayland|greeter' vmtest-out/serial.log \
+            grep -aiE 'gdm|plymouth|graphical|wayland|greeter' /tmp/serial-plain.log \
               | tail -40 || true
           else
             echo "no serial.log"
