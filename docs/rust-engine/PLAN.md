@@ -831,22 +831,55 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-- **Workspace and CI.** Six crates, pinned 1.94.1, edition 2024, `unsafe_code` forbidden and
-  `clippy::all` denied workspace-wide. Rust CI workflow, Makefile targets kept separate from the C++
-  ones. Verified in a clean worktree checkout, not just in the dirty tree.
-- **Corpora.** 8 real `.desktop` entries plus 19 synthetic edge cases, and a harvester script for
-  growing the real half on a machine that has applications installed. Corpus files are `-text` in
+Nine crates, 569 tests. Every count below was verified in a clean `git worktree` checkout of the
+committed tree, not in the working tree — three commits early on built only because the dirty tree
+supplied files they had not committed, and that is now checked rather than assumed.
+
+- **Workspace and CI.** Pinned 1.94.1, edition 2024, `unsafe_code` forbidden and `clippy::all`
+  denied workspace-wide. Rust CI workflow, Makefile targets kept separate from the C++ ones. All
+  workflows migrated off Depot onto GitHub-hosted runners.
+- **Corpora.** 8 real `.desktop` entries plus 19 synthetic edge cases, and a harvester for growing
+  the real half on a machine that has applications installed. Corpus files are `-text` in
   `.gitattributes`, with a test that fails loudly if a checkout ever normalises the CRLF and
   Latin-1 fixtures into fixtures that test nothing.
-- **`compass-xdg`** — desktop-entry, locale, value, reader and exec layers, with all 47 in-scope
-  C++ cases ported verbatim.
-- **`compass-search`** — fuzzy matching on `nucleo`, with the C++ ordering suite ported.
-- **ADRs 0001–0007**, including the two that were blocking: how a Flatpak installs the Shell
-  extension, and how to close the fuzzy coherence gap.
+- **`compass-xdg`** (110) — desktop-entry, locale, value, reader and exec layers, with all 47
+  in-scope C++ cases ported verbatim.
+- **`compass-search`** (52) — fuzzy matching on `nucleo`, with the C++ ordering suite ported and
+  fzf's coherence signal reconstructed exactly (ADR-0006).
+- **`compass-ipc`** (57) — length-prefixed postcard framing, with the length checked against
+  `MAX_FRAME_LEN` before any allocation.
+- **`compass-core`** (71) — app index with desktop-ID precedence, frecency, `vicinae.json`.
+- **`compass-shell`** (36) — GNOME Shell DBus client; 22 of its tests spawn a real `dbus-daemon`.
+- **`compass-portals`** (55) — XDG portals via `ashpd`, with availability a three-state outcome
+  rather than a boolean, version-property probing, and a timeout on every call.
+- **`compass-extension-api`** (60) — the view tree, derived identity, diffing, dispatch and the
+  capability registry, behind a mechanical seam gate that fails if host transport or runtime is
+  named anywhere in the crate. The gate was itself tested by injecting a violation.
+- **`vicinae`** (123) — CLI and an 11-check `doctor`.
+- **`compass-testkit`** (5) — corpus loader; entries expose raw bytes, not `String`.
+- **ADRs 0001–0008.**
 - **Flatpak manifest** for the Bluefin target — syntax-validated only; never built.
 - **i18n converter** — 7,347 messages across 7 locales, all parsing with the real `fluent-syntax`
-  crate. ADR-0003's claim that the donated translations survive is now demonstrated rather than
-  asserted.
+  crate. ADR-0003's claim that the donated translations survive is demonstrated, not asserted.
+
+### What testing has actually caught
+
+Recorded because the point of §8 is to find defects, and a testing plan that has never failed is
+not evidence of anything. In rough order of how quietly each would have shipped:
+
+- **Duplicate sibling keys collapsed two nodes onto one id** (`compass-extension-api`). A property
+  test failed on one clean-worktree run and passed on the previous one — proptest draws a fresh
+  seed per run. A UI patching on the resulting diff would repaint the wrong row. Fixed with an
+  ordinal fallback; the counterexample is now a checked-in regression seed.
+- **None of the five proptest suites could persist a counterexample.** The default persistence
+  looks for `lib.rs`/`main.rs` beside the test, finds neither under `tests/`, and discards the
+  seed — so a rare failure was unreplayable. Found by reading the output of the failure above.
+- **`from_file` decoded with `read_to_string`** (`compass-xdg`): one Latin-1 byte lost an entire
+  application from the index.
+- **The i18n converter's brace escaping corrupted 6 of 7 locales** — caught only because the
+  converter's output is validated by the real `fluent-syntax` parser rather than eyeballed.
+- **An unbounded loop in `parseRawLocale`** reachable from any malformed `.desktop` file, in
+  shipping C++, found while porting.
 
 ### What the dev container cannot verify
 
@@ -865,9 +898,6 @@ work.
 
 ### Blocked on someone with access
 
-- **GitHub Actions is not enabled on this fork.** No checks run on any PR. Every claim above was
-  verified locally, which does not scale past one person. This is the single highest-value
-  unblocking action available.
 - **Run the corpus harvester on a real Bluefin box.** The synthetic corpus is a model of the spec,
   not of reality.
 - **Phase 0 spikes A and B** (portal hotkey on real GNOME; Landlock + seccomp inside a real
@@ -876,15 +906,28 @@ work.
 
 ## 12. Immediate next steps
 
+Phase 0 is done: the workspace, CI, the Flatpak manifest, ADRs 0001–0008 and the parity ledger have
+all landed, and the corpus exists in synthetic form. What remains splits by whether this container
+can verify it.
 
-1. Answer §10.7 (extension distribution) and §10.1–2 (fork posture, branding) — they change file
-   names and architecture, so they are cheap now and expensive later.
-2. Land Phase 0 as one PR: workspace, CI, **Flatpak manifest**, ADRs 0001–0004, empty parity ledger.
-3. Build the Suite-0 corpus **before** writing Phase 1 code, harvesting `.desktop` files from a real
-   Bluefin image and ranking pairs from the existing Catch2 suites. A day of work that makes every
-   later phase verifiable.
-4. Run two Phase-0 spikes in parallel, each timeboxed to a week:
-   - **Spike A:** Iced app in a Flatpak on Bluefin, binding Super+Space through the GlobalShortcuts
-     portal and raising itself with `xdg-activation-v1`. Answers "does the GNOME path work at all".
-   - **Spike B:** Landlock + seccomp around a Node child process *inside* a Flatpak. Answers whether
-     Phase 4's sandbox design is viable before we build on it.
+**Verifiable here, so in progress:**
+
+1. `EventCounted<T>` in the extension-API seam. Controlled inputs have no sequence number, so a
+   stale echo from the host cannot be distinguished from a fresh edit. Phase 4 builds on this
+   boundary and should not do so until it is closed.
+2. Widen the parity port: `compass-core`'s index against the harvested corpus, and the remaining
+   Catch2 ordering cases into `compass-search`.
+3. Grow the mock-bus suite in `compass-shell` toward the full surface the Shell extension exposes,
+   since a real session bus is the one piece of the desktop this container does have.
+
+**Blocked on hardware, and blocking Phase 4's design:**
+
+4. **Spike A:** Iced app in a Flatpak on Bluefin, binding Super+Space through the GlobalShortcuts
+   portal and raising itself with `xdg-activation-v1`. Answers "does the GNOME path work at all".
+   `compass-portals` is written to make the answer legible — it reports availability as a
+   three-state outcome — but it cannot tell whether a bind would be permitted, whether the trigger
+   requested is the one granted, or whether the compositor delivers the keypress. Only the spike can.
+5. **Spike B:** Landlock + seccomp around a Node child process *inside* a Flatpak. Phase 4's
+   sandbox design is unproven until this is answered, and nothing should be built on it first.
+
+Each spike is timeboxed to a week and they are independent, so they run in parallel.

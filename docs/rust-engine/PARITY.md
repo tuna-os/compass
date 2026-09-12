@@ -39,16 +39,24 @@ that. The plan has been corrected.
 | `compass-search` | 52 | fuzzy, plus an exact port of fzf's coherence rule |
 | `compass-ipc` | 57 | framing, transport, single-instance |
 | `compass-core` | 71 | app index, frecency, config |
+| `compass-shell` | 36 | GNOME Shell DBus client; 22 tests spawn a real `dbus-daemon` |
+| `compass-portals` | 55 | XDG portals; availability is a three-state outcome, not a boolean |
+| `compass-extension-api` | 60 | view tree, derived identity, diff, dispatch, capabilities |
+| `vicinae` | 123 | CLI and an 11-check `doctor` |
 | `compass-testkit` | 5 | corpora |
-| **Total** | **~296** | all green under fmt, clippy `-D warnings`, doctests |
+| **Total** | **569** | all green under fmt, clippy `-D warnings`, doctests |
 
 ## Progress
 
-Scaffolding, corpora and CI are in place. `compass-xdg` and `compass-search` have landed as the
-first two ports: 153 tests across the workspace, all green.
+Scaffolding, corpora and CI are in place, and nine crates have landed: 569 tests across the
+workspace, all green, each count verified in a clean `git worktree` checkout of the committed tree
+rather than in the working tree.
 
-Neither row is fully green, and neither C++ directory may be deleted yet — see the partial markers
-and the divergences below. 🟡 means implemented but not to the full scope of the C++ source.
+Almost no row is fully green, and no C++ directory may be deleted yet — see the partial markers and
+the divergences below. 🟡 means implemented but not to the full scope of the C++ source. A green
+`Rust ✓` with a 🟡 `parity test ✓` means the code exists and is tested as far as this container can
+test it; `compass-portals` is the clearest case, since no amount of local testing can tell us
+whether a real GNOME session grants the shortcut we ask for.
 
 ## Libraries and standalone binaries
 
@@ -90,7 +98,7 @@ and the divergences below. 🟡 means implemented but not to the full scope of t
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/files-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/global-shortcuts` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/input-server` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
