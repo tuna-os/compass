@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::action::{HandlerId, Shortcut};
 use crate::capability::{Capability, Denial, ExtensionId};
 use crate::id::NodeId;
+use crate::input::Seq;
 use crate::tree::{ActionRef, ViewTree};
 use crate::view::FieldValue;
 
@@ -60,6 +61,21 @@ pub enum ActionPayload {
     SearchText(String),
     /// The selected item, when the action is view-level but acts on a selection.
     Selection(NodeId),
+    /// A controlled input changed.
+    ///
+    /// Distinct from [`ActionPayload::SearchText`] and [`ActionPayload::FormValues`],
+    /// which report state at the moment an action fired. This reports an *edit*, and
+    /// carries the [`Seq`] the extension must echo back in the value it renders — without
+    /// it the host cannot tell a current answer from one computed two keystrokes ago. See
+    /// [`crate::input`].
+    InputChanged {
+        /// The input that changed.
+        node: NodeId,
+        /// Its new value.
+        value: FieldValue,
+        /// The edit being reported.
+        seq: Seq,
+    },
 }
 
 /// One action, on its way to the extension.

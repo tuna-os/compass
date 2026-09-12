@@ -27,6 +27,13 @@
 //! from declarations and grants, never from ambient authority. A refusal is a [`Denial`]
 //! value naming the exact capability, not a panic and not a string. See [`capability`].
 //!
+//! ## Controlled inputs
+//!
+//! An extension that owns an input's value must be able to tell its own stale answer from
+//! a current one, or a slow render silently overwrites what the user has typed since. The
+//! [`input`] module holds that rule — an edit counter per node and the decision that uses
+//! it — as pure data, the same way capabilities are.
+//!
 //! ## Action dispatch
 //!
 //! An extension mints opaque [`HandlerId`] tokens for its actions; the UI reports one
@@ -42,6 +49,7 @@ pub mod capability;
 pub mod diff;
 pub mod dispatch;
 pub mod id;
+pub mod input;
 pub mod tree;
 pub mod view;
 
@@ -59,6 +67,7 @@ pub use dispatch::{
     InvocationId, InvocationSource, Pending, Stage, ToastStyle,
 };
 pub use id::{NodeId, NodeKey};
+pub use input::{Echo, EchoTracker, EventCounted, Seq};
 pub use tree::{ActionRef, NodeSummary, ViewTree};
 pub use view::{
     Accessory, AspectRatio, Color, DatePrecision, Detail, Dropdown, DropdownOption,

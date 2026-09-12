@@ -315,6 +315,7 @@ fn named_field(name: &str, title: &str) -> FormField {
         info: None,
         autofocus: false,
         value: None,
+        echo: None,
         on_change: None,
         kind: FieldKind::Text { placeholder: None },
     }

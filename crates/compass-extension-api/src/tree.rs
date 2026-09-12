@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, ActionItem, ActionPanel, HandlerId, Shortcut};
 use crate::id::{Fnv, NodeId};
-use crate::view::{Detail, EmptyState, FormItem, FormView, GridView, ListView, View};
+use crate::view::{Detail, EmptyState, FormItem, FormView, GridView, ListView, SearchBar, View};
 
 /// Hashes a small leaf value into `h`. Leaf values only — never a node with children,
 /// which would make the walk quadratic.
@@ -317,6 +317,31 @@ fn assign_form(view: &mut FormView, id: NodeId) {
 // flattening
 // ---------------------------------------------------------------------------
 
+/// A search bar's *painted* content, with the echo counters left out.
+///
+/// `echo` on a [`SearchBar`] or its accessory [`Dropdown`] is protocol bookkeeping (see
+/// [`crate::input`]), not something the user can see. Hashing it would make a render that
+/// only re-stamps the counter report as an update, so the two surfaces that nest a search
+/// bar project it through here first. Form fields get the same treatment for free, since
+/// their fingerprint enumerates fields rather than hashing the struct.
+fn search_content(s: &SearchBar) -> impl Serialize + '_ {
+    (
+        &s.placeholder,
+        &s.text,
+        s.host_filtering,
+        &s.on_change,
+        s.accessory.as_ref().map(|d| {
+            (
+                &d.value,
+                &d.placeholder,
+                &d.on_change,
+                &d.sections,
+                d.filtering,
+            )
+        }),
+    )
+}
+
 fn visit_panel(panel: &ActionPanel, parent: NodeId, v: &mut Visit) {
     v.push(
         panel.id,
@@ -402,7 +427,7 @@ fn visit_list(view: &ListView, parent: Option<NodeId>, v: &mut Visit) {
             view.show_detail,
             view.selected,
             view.on_selection_change,
-            view.search,
+            search_content(&view.search),
             view.pagination,
         ),
     );
@@ -457,7 +482,7 @@ fn visit_grid(view: &GridView, parent: Option<NodeId>, v: &mut Visit) {
             view.fit,
             view.selected,
             view.on_selection_change,
-            view.search,
+            search_content(&view.search),
             view.pagination,
         ),
     );

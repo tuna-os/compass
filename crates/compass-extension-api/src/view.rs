@@ -248,6 +248,12 @@ pub struct Dropdown {
     /// Currently selected value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// The edit this value answers, when it answers one.
+    ///
+    /// `None` means the extension is *setting* the value, not echoing the user's; see
+    /// [`crate::input`] for why the host must treat those differently.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echo: Option<crate::input::Seq>,
     /// Option groups.
     #[serde(default)]
     pub sections: Vec<DropdownSection>,
@@ -268,6 +274,12 @@ pub struct SearchBar {
     /// Current text, when the extension controls it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// The edit this value answers, when it answers one.
+    ///
+    /// `None` means the extension is *setting* the value, not echoing the user's; see
+    /// [`crate::input`] for why the host must treat those differently.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echo: Option<crate::input::Seq>,
     /// Whether the host filters items itself.
     #[serde(default)]
     pub host_filtering: bool,
@@ -691,6 +703,12 @@ pub struct FormField {
     /// Current value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<FieldValue>,
+    /// The edit this value answers, when it answers one.
+    ///
+    /// `None` means the extension is *setting* the value, not echoing the user's; see
+    /// [`crate::input`] for why the host must treat those differently.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echo: Option<crate::input::Seq>,
     /// Fired when the value changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_change: Option<HandlerId>,

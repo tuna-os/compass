@@ -102,6 +102,7 @@ pub fn search_bar() -> SearchBar {
     SearchBar {
         placeholder: Some("Search issues".into()),
         text: Some("bug".into()),
+        echo: None,
         host_filtering: true,
         on_change: Some(HandlerId::new("h.search")),
         accessory: Some(dropdown()),
@@ -112,6 +113,7 @@ pub fn dropdown() -> Dropdown {
     Dropdown {
         placeholder: Some("All".into()),
         value: Some("open".into()),
+        echo: None,
         sections: vec![DropdownSection {
             title: Some("State".into()),
             options: vec![
@@ -258,6 +260,7 @@ pub fn form_view() -> FormView {
                 info: Some("Short summary".into()),
                 autofocus: true,
                 value: Some(FieldValue::Text("Crash".into())),
+                echo: None,
                 on_change: Some(HandlerId::new("h.title")),
                 kind: FieldKind::Text {
                     placeholder: Some("Summary".into()),
@@ -271,6 +274,7 @@ pub fn form_view() -> FormView {
                 info: None,
                 autofocus: false,
                 value: None,
+                echo: None,
                 on_change: None,
                 kind: FieldKind::Password { placeholder: None },
             })),
@@ -282,6 +286,7 @@ pub fn form_view() -> FormView {
                 info: None,
                 autofocus: false,
                 value: Some(FieldValue::Empty),
+                echo: None,
                 on_change: None,
                 kind: FieldKind::TextArea {
                     placeholder: None,
@@ -296,6 +301,7 @@ pub fn form_view() -> FormView {
                 info: None,
                 autofocus: false,
                 value: Some(FieldValue::Bool(true)),
+                echo: None,
                 on_change: None,
                 kind: FieldKind::Checkbox {
                     label: Some("Urgent".into()),
@@ -309,6 +315,7 @@ pub fn form_view() -> FormView {
                 info: None,
                 autofocus: false,
                 value: Some(FieldValue::Values(vec!["open".into()])),
+                echo: None,
                 on_change: None,
                 kind: FieldKind::Dropdown(dropdown()),
             })),
@@ -320,6 +327,7 @@ pub fn form_view() -> FormView {
                 info: None,
                 autofocus: false,
                 value: None,
+                echo: None,
                 on_change: None,
                 kind: FieldKind::TagPicker {
                     options: vec![DropdownOption {
@@ -339,6 +347,7 @@ pub fn form_view() -> FormView {
                 info: None,
                 autofocus: false,
                 value: Some(FieldValue::Date("2026-09-12T00:00:00Z".into())),
+                echo: None,
                 on_change: None,
                 kind: FieldKind::DatePicker {
                     min: None,
@@ -354,6 +363,7 @@ pub fn form_view() -> FormView {
                 info: None,
                 autofocus: false,
                 value: Some(FieldValue::Paths(vec!["/tmp/a".into()])),
+                echo: None,
                 on_change: None,
                 kind: FieldKind::FilePicker {
                     allow_multiple: true,
@@ -369,6 +379,7 @@ pub fn form_view() -> FormView {
                 info: None,
                 autofocus: false,
                 value: Some(FieldValue::Integer(-3)),
+                echo: None,
                 on_change: None,
                 kind: FieldKind::Text { placeholder: None },
             })),
