@@ -67,7 +67,22 @@ runs:
         sudo mount --bind /mnt/containers/storage /var/lib/containers/storage
         findmnt -no SOURCE,TARGET,FSTYPE /var/lib/containers/storage
         sudo podman info --format 'graphroot={{.Store.GraphRoot}}'
-        df -h /var/lib/containers/storage | tail -1
+        # `sudo df`, not `df`, and the reason is not the graphroot's own mode.
+        # statfs needs search permission on every *parent* of its argument, and
+        # /var/lib/containers is root-only 0700 on this runner image — so an
+        # unprivileged df fails with
+        #   df: /var/lib/containers/storage: Permission denied
+        # even though the graphroot below it is world-readable. Measured, not
+        # guessed: with the parent at 0700 an unprivileged df on a 0700 child
+        # gets EACCES; with the parent at 0755 the same df succeeds.
+        #
+        # Because every step is `bash -e`, that took the whole job down 60
+        # seconds in, over a line that only prints a number. It is intermittent
+        # because it depends on whether /var/lib/containers already existed with
+        # that mode or was created here by `mkdir -p` under a 022 umask, and it
+        # is very likely the unexplained failure ADR-0010 records under
+        # "stability is not yet established".
+        sudo df -h /var/lib/containers/storage | tail -1
 
     - uses: actions/setup-go@v5
       with:

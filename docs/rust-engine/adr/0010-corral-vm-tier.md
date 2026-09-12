@@ -146,6 +146,23 @@ first and merge-queue only after a couple of stable weeks — a VM job that flak
 into the merge queue blocks everyone. If it proves unstable, the `pull_request`
 trigger comes off before anything else.
 
+**Update: this was almost certainly a real bug, not a flake.** It recurred, and
+the failing line was `df -h /var/lib/containers/storage` — a diagnostic that
+prints a number and nothing else, run unprivileged under `bash -e`. `statfs`
+needs search permission on every *parent* of its argument, and
+`/var/lib/containers` is root-only `0700`, so the df fails with `Permission
+denied` even though the graphroot beneath it is readable. Whether it fails
+depends on whether that parent already existed with that mode or was created by
+the job's own `mkdir -p` under a 022 umask, which is exactly the shape of an
+intermittent failure. Measured rather than reasoned: with the parent at 0700 an
+unprivileged `df` on a 0700 child gets EACCES; at 0755 the same `df` succeeds.
+It now runs under sudo.
+
+The lesson is not about df. It is that a diagnostic step inside `bash -e` has the
+same power to fail a 40-minute job as the assertion it was added to explain, and
+this one did — which is also why the earlier failure looked like it came from
+"a change to a step that runs after corral exits".
+
 ## Step 2: our software is now in the image
 
 The first job tests stock Bluefin and always will — it is the control, and it is
