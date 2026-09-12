@@ -847,7 +847,7 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-Nine crates, 583 tests. Every count below was verified in a clean `git worktree` checkout of the
+Nine crates, 597 tests, and an engine that runs. Every count below was verified in a clean `git worktree` checkout of the
 committed tree, not in the working tree — three commits early on built only because the dirty tree
 supplied files they had not committed, and that is now checked rather than assumed.
 
@@ -871,7 +871,11 @@ supplied files they had not committed, and that is now checked rather than assum
 - **`compass-extension-api`** (74) — the view tree, derived identity, diffing, dispatch and the
   capability registry, behind a mechanical seam gate that fails if host transport or runtime is
   named anywhere in the crate. The gate was itself tested by injecting a violation.
-- **`vicinae`** (123) — CLI and an 11-check `doctor`.
+- **`vicinae`** (137) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
+  indexes applications, ranks queries with frecency and answers over the IPC socket. Headless, and
+  the window commands refuse rather than answer `Ack`, so a client can tell "no window yet" from
+  "the window was shown". Eleven end-to-end tests spawn the real binary on its own socket with every
+  XDG variable pointed into a tempdir.
 - **`compass-testkit`** (5) — corpus loader; entries expose raw bytes, not `String`.
 - **ADRs 0001–0009.**
 - **Flatpak manifest** for the Bluefin target — syntax-validated only; never built.
@@ -936,12 +940,14 @@ can verify it.
 
 **Verifiable here, so in progress:**
 
-1. ~~`EventCounted<T>` in the extension-API seam.~~ Closed by ADR-0009: a controlled input's value
-   now carries the edit it answers, so a render computed two keystrokes ago no longer overwrites
-   what the user has typed since.
-2. Widen the parity port: `compass-core`'s index against the harvested corpus, and the remaining
+1. ~~`EventCounted<T>` in the extension-API seam.~~ Closed by ADR-0009.
+2. ~~An engine that runs.~~ `vicinae serve` landed: until then every crate was a library and every
+   subcommand was a client looking for a server that did not exist. It is headless — no `compass-ui`
+   yet — but it indexes, ranks and answers over the real socket, and it is the thing the VM tier
+   (#18) and the C++ behavioural baseline will be run against.
+3. Widen the parity port: `compass-core`'s index against the harvested corpus, and the remaining
    Catch2 ordering cases into `compass-search`.
-3. Grow the mock-bus suite in `compass-shell` toward the full surface the Shell extension exposes,
+4. Grow the mock-bus suite in `compass-shell` toward the full surface the Shell extension exposes,
    since a real session bus is the one piece of the desktop this container does have.
 
 **Newly unblocked by the corral VM tier (ADR-0010), and the highest-value work available:**

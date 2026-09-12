@@ -42,13 +42,13 @@ that. The plan has been corrected.
 | `compass-shell` | 36 | GNOME Shell DBus client; 22 tests spawn a real `dbus-daemon` |
 | `compass-portals` | 55 | XDG portals; availability is a three-state outcome, not a boolean |
 | `compass-extension-api` | 74 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
-| `vicinae` | 123 | CLI and an 11-check `doctor` |
+| `vicinae` | 137 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-testkit` | 5 | corpora |
-| **Total** | **583** | all green under fmt, clippy `-D warnings`, doctests |
+| **Total** | **597** | all green under fmt, clippy `-D warnings`, doctests |
 
 ## Progress
 
-Scaffolding, corpora and CI are in place, and nine crates have landed: 583 tests across the
+Scaffolding, corpora and CI are in place, and nine crates have landed: 597 tests across the
 workspace, all green, each count verified in a clean `git worktree` checkout of the committed tree
 rather than in the working tree.
 
@@ -72,7 +72,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/lib/common` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/linux-utils` | `compass-platform` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/soulver` | `—` | n/a (macOS) | ✅ | ❌ | ❌ | ❌ |
-| `src/cli` | `crates/vicinae` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
+| `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
