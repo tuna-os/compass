@@ -18,6 +18,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+compass-core.workspace = true
 compass-ipc.workspace = true
 anyhow.workspace = true
 clap.workspace = true
@@ -29,4 +30,5 @@ tracing-subscriber.workspace = true
 zbus.workspace = true
 
 [dev-dependencies]
+compass-testkit.workspace = true
 tempfile = "3"

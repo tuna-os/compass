@@ -79,6 +79,21 @@ pub async fn ping(socket: &SocketPath) -> Result<String> {
     }
 }
 
+/// Runs a query against the engine and returns the ranked hits.
+pub async fn query(socket: &SocketPath, text: &str) -> Result<Vec<compass_ipc::QueryHit>> {
+    match send(
+        socket,
+        Request::Query {
+            text: text.to_owned(),
+        },
+    )
+    .await?
+    {
+        Response::QueryResults { hits } => Ok(hits),
+        other => bail!("the engine answered Query with an unexpected {other:?}"),
+    }
+}
+
 fn describe(request: &Request) -> &'static str {
     match request {
         Request::Ping => "Ping",

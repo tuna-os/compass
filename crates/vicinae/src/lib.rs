@@ -15,12 +15,13 @@ pub mod cli;
 pub mod doctor;
 pub mod engine;
 pub mod ipc;
+pub mod serve;
 
 use std::process::ExitCode;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Parser;
-use compass_ipc::Request;
+use compass_ipc::{Request, Response};
 
 pub use cli::{Cli, Command};
 pub use engine::Engine;
@@ -47,11 +48,23 @@ pub fn main() -> ExitCode {
     }
 }
 
-/// Runs an already-parsed command line on a fresh current-thread runtime.
+/// Runs an already-parsed command line on a fresh runtime.
+///
+/// The client commands get a current-thread runtime: they open one connection,
+/// send one frame and exit, so a thread pool is pure startup cost on something
+/// a person has bound to a key. `serve` gets a multi-threaded one, because
+/// ranking a query is CPU work and on a single thread one slow query would
+/// stall every other connection.
 pub fn run(cli: Cli) -> Result<ExitCode> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+    let runtime = if matches!(cli.command, Command::Serve) {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+    };
     runtime.block_on(dispatch(cli))
 }
 
@@ -80,19 +93,77 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::from(EXIT_OK))
         }
 
-        Command::Toggle | Command::Show | Command::Hide => {
+        Command::Serve => {
             require_servable_engine(cli.engine)?;
-            let request = match cli.command {
-                Command::Toggle => Request::Toggle,
-                Command::Show => Request::Show,
-                Command::Hide => Request::Hide,
-                // `dispatch` matched these arms already.
-                Command::Ping | Command::Doctor { .. } => unreachable!(),
-            };
-            ipc::send_ack(&socket, request).await?;
+            serve::run(&socket).await?;
             Ok(ExitCode::from(EXIT_OK))
         }
+
+        Command::Shutdown => {
+            require_servable_engine(cli.engine)?;
+            match ipc::send(&socket, Request::Shutdown).await? {
+                Response::ShuttingDown => Ok(ExitCode::from(EXIT_OK)),
+                other => bail!("the engine answered {other:?} instead of shutting down"),
+            }
+        }
+
+        Command::Query { text, json } => {
+            require_servable_engine(cli.engine)?;
+            let hits = ipc::query(&socket, &text.join(" ")).await?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&hits)?);
+            } else {
+                print!("{}", render_hits(&hits));
+            }
+            Ok(ExitCode::from(EXIT_OK))
+        }
+
+        Command::Toggle => window_command(&socket, cli.engine, Request::Toggle).await,
+        Command::Show => window_command(&socket, cli.engine, Request::Show).await,
+        Command::Hide => window_command(&socket, cli.engine, Request::Hide).await,
     }
+}
+
+async fn window_command(
+    socket: &compass_ipc::SocketPath,
+    engine: Engine,
+    request: Request,
+) -> Result<ExitCode> {
+    require_servable_engine(engine)?;
+    ipc::send_ack(socket, request).await?;
+    Ok(ExitCode::from(EXIT_OK))
+}
+
+/// Renders query hits for a terminal.
+///
+/// Deliberately plain and column-aligned rather than decorated: this output is
+/// read by people debugging the index and piped into `grep` and `awk` at least
+/// as often as it is read directly.
+#[must_use]
+pub fn render_hits(hits: &[compass_ipc::QueryHit]) -> String {
+    if hits.is_empty() {
+        return "no matches\n".to_owned();
+    }
+
+    let width = hits
+        .iter()
+        .map(|h| h.title.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut out = String::new();
+    for hit in hits {
+        use std::fmt::Write as _;
+        let pad = width - hit.title.chars().count();
+        let _ = write!(out, "{:>3}  {}{:pad$}", hit.score, hit.title, "");
+        match &hit.subtitle {
+            Some(subtitle) => {
+                let _ = writeln!(out, "  {subtitle}");
+            }
+            None => out.push('\n'),
+        }
+    }
+    out
 }
 
 /// The exit code `doctor` reports.

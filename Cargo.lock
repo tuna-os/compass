@@ -1334,7 +1334,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "compass-core",
  "compass-ipc",
+ "compass-testkit",
  "serde",
  "serde_json",
  "tempfile",
