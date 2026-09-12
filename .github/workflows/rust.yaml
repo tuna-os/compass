@@ -13,7 +13,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+  # Deliberately no job-level `RUSTFLAGS: -D warnings`: RUSTFLAGS applies to
+  # dependencies too, so a new warning in any upstream crate would fail our
+  # build for something we cannot fix. The clippy step below carries
+  # `-D warnings`, which is scoped to our own code.
 
 jobs:
   check:
