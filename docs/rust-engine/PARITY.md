@@ -41,14 +41,14 @@ that. The plan has been corrected.
 | `compass-core` | 71 | app index, frecency, config |
 | `compass-shell` | 36 | GNOME Shell DBus client; 22 tests spawn a real `dbus-daemon` |
 | `compass-portals` | 55 | XDG portals; availability is a three-state outcome, not a boolean |
-| `compass-extension-api` | 60 | view tree, derived identity, diff, dispatch, capabilities |
+| `compass-extension-api` | 74 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
 | `vicinae` | 123 | CLI and an 11-check `doctor` |
 | `compass-testkit` | 5 | corpora |
-| **Total** | **569** | all green under fmt, clippy `-D warnings`, doctests |
+| **Total** | **583** | all green under fmt, clippy `-D warnings`, doctests |
 
 ## Progress
 
-Scaffolding, corpora and CI are in place, and nine crates have landed: 569 tests across the
+Scaffolding, corpora and CI are in place, and nine crates have landed: 583 tests across the
 workspace, all green, each count verified in a clean `git worktree` checkout of the committed tree
 rather than in the working tree.
 

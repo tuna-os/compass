@@ -831,7 +831,7 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-Nine crates, 569 tests. Every count below was verified in a clean `git worktree` checkout of the
+Nine crates, 583 tests. Every count below was verified in a clean `git worktree` checkout of the
 committed tree, not in the working tree — three commits early on built only because the dirty tree
 supplied files they had not committed, and that is now checked rather than assumed.
 
@@ -852,12 +852,12 @@ supplied files they had not committed, and that is now checked rather than assum
 - **`compass-shell`** (36) — GNOME Shell DBus client; 22 of its tests spawn a real `dbus-daemon`.
 - **`compass-portals`** (55) — XDG portals via `ashpd`, with availability a three-state outcome
   rather than a boolean, version-property probing, and a timeout on every call.
-- **`compass-extension-api`** (60) — the view tree, derived identity, diffing, dispatch and the
+- **`compass-extension-api`** (74) — the view tree, derived identity, diffing, dispatch and the
   capability registry, behind a mechanical seam gate that fails if host transport or runtime is
   named anywhere in the crate. The gate was itself tested by injecting a violation.
 - **`vicinae`** (123) — CLI and an 11-check `doctor`.
 - **`compass-testkit`** (5) — corpus loader; entries expose raw bytes, not `String`.
-- **ADRs 0001–0008.**
+- **ADRs 0001–0009.**
 - **Flatpak manifest** for the Bluefin target — syntax-validated only; never built.
 - **i18n converter** — 7,347 messages across 7 locales, all parsing with the real `fluent-syntax`
   crate. ADR-0003's claim that the donated translations survive is demonstrated, not asserted.
@@ -912,9 +912,9 @@ can verify it.
 
 **Verifiable here, so in progress:**
 
-1. `EventCounted<T>` in the extension-API seam. Controlled inputs have no sequence number, so a
-   stale echo from the host cannot be distinguished from a fresh edit. Phase 4 builds on this
-   boundary and should not do so until it is closed.
+1. ~~`EventCounted<T>` in the extension-API seam.~~ Closed by ADR-0009: a controlled input's value
+   now carries the edit it answers, so a render computed two keystrokes ago no longer overwrites
+   what the user has typed since.
 2. Widen the parity port: `compass-core`'s index against the harvested corpus, and the remaining
    Catch2 ordering cases into `compass-search`.
 3. Grow the mock-bus suite in `compass-shell` toward the full surface the Shell extension exposes,
