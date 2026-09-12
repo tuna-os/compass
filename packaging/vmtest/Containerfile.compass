@@ -1,0 +1,80 @@
+# Bluefin with compass in it: the image the VM tier actually tests.
+#
+# #18 step 2. The first VM job (Containerfile.bluefin) boots stock Bluefin and
+# proves only that a GNOME desktop comes up and paints under QEMU on a hosted
+# runner. That was deliberate — layering our software in at the same time would
+# have meant a failure could be either half. This file is the second half.
+#
+# Three things are added, and nothing else:
+#
+#   1. the compass Flatpak, as a single-file bundle built by the Flatpak
+#      workflow in the same CI run;
+#   2. GDM autologin, so the run reaches a real user session rather than a
+#      greeter — every interesting doctor check (session bus, portals, session
+#      type) is meaningless at a login screen;
+#   3. a CMD, for the same corral/podman reason as Containerfile.bluefin.
+#
+# The GNOME Shell extension that #18 also lists is NOT here: this repository
+# does not contain one yet (ADR-0004 — we speak to it, we never ship it), so
+# there is nothing to install. `doctor`'s gnome.shell-extension check will
+# report it absent, which is the honest answer.
+
+FROM ghcr.io/ublue-os/bluefin:stable
+
+# ── where the Flatpak goes, and why it is not the system installation ────────
+#
+# A bootc image's /var is not image content: it is copied in once at install
+# time and is machine state thereafter. The system Flatpak installation lives in
+# /var/lib/flatpak, so `flatpak install --system` at container-build time is
+# exactly the pattern Universal Blue avoids — it works, until a rebase, and then
+# the apps are silently the old ones. Their own images install Flatpaks from a
+# first-boot service for this reason.
+#
+# A first-boot service would need network in the guest and would race the
+# session we are trying to test. So instead the app goes in a *named extra
+# installation* under /usr, which is image content and is what bootc actually
+# versions. Flatpak reads these from /etc/flatpak/installations.d, `flatpak run`
+# finds apps in them without being told, and the systemd environment generator
+# adds their exports to XDG_DATA_DIRS so the desktop file is visible too.
+RUN mkdir -p /usr/lib/compass-flatpak /etc/flatpak/installations.d && \
+    printf '[Installation "compass"]\nPath=/usr/lib/compass-flatpak\nDisplayName=Compass (image)\n' \
+      > /etc/flatpak/installations.d/compass.conf
+
+# The bundle carries the app and nothing else, so the runtime still has to come
+# from somewhere. It comes from Flathub *here*, during the image build, where
+# there is network — never in the guest, which is offline by the time it matters.
+COPY com.vicinae.Vicinae.flatpak /tmp/com.vicinae.Vicinae.flatpak
+RUN flatpak remote-add --installation=compass --if-not-exists \
+      flathub https://flathub.org/repo/flathub.flatpakrepo && \
+    flatpak install --installation=compass --noninteractive --assumeyes \
+      flathub org.freedesktop.Platform//24.08 && \
+    flatpak install --installation=compass --noninteractive --assumeyes \
+      --bundle /tmp/com.vicinae.Vicinae.flatpak && \
+    rm -f /tmp/com.vicinae.Vicinae.flatpak && \
+    flatpak --installation=compass list --columns=ref,origin
+
+# ── autologin ────────────────────────────────────────────────────────────────
+#
+# The account itself is not created here. corral builds a thin layer on top of
+# this image for the run's users (`--user compass`), and that layer is what puts
+# the account in /etc/passwd and the SSH key in /var/home/compass. GDM only
+# needs the name to match, so the two halves are written independently and meet
+# at boot.
+#
+# WaylandEnable is spelled out rather than left to the default: the whole point
+# of this tier is that compass is Wayland-only, and a silent fallback to Xorg
+# would turn a real failure into a green run.
+RUN printf '[daemon]\nWaylandEnable=true\nAutomaticLoginEnable=True\nAutomaticLogin=compass\n' \
+      > /etc/gdm/custom.conf
+
+# ── the assertions ───────────────────────────────────────────────────────────
+#
+# Baked in rather than pushed over SSH so that they are a real file in the
+# repository: `bash -n` and a Python compile check run over them in tier 1,
+# before a 30-minute VM run finds a quoting mistake.
+COPY checks.sh /usr/libexec/compass-vmtest/checks.sh
+RUN chmod 0755 /usr/libexec/compass-vmtest/checks.sh
+
+# Never executed. See Containerfile.bluefin: corral `podman create`s the image
+# to probe its filesystem, and podman refuses an image with no CMD.
+CMD ["/bin/bash"]

@@ -146,6 +146,48 @@ first and merge-queue only after a couple of stable weeks — a VM job that flak
 into the merge queue blocks everyone. If it proves unstable, the `pull_request`
 trigger comes off before anything else.
 
+## Step 2: our software is now in the image
+
+The first job tests stock Bluefin and always will — it is the control, and it is
+what makes a failure in the second job attributable to us rather than to GNOME,
+QEMU or a hosted runner. Alongside it, `boot-compass` boots Bluefin with the
+compass Flatpak layered in and a user logged in.
+
+Three decisions in that image are worth recording, because each had an obvious
+alternative that is wrong:
+
+- **The Flatpak goes in a named extra installation under `/usr`, not the system
+  installation.** A bootc image's `/var` is not image content: it is seeded once
+  at install time and is machine state afterwards. `flatpak install --system` at
+  build time writes to `/var/lib/flatpak`, which works until a rebase and then
+  silently keeps the old app — which is why Universal Blue install Flatpaks from
+  a first-boot service instead. A first-boot service would need network in the
+  guest and would race the session under test, so the app lives in
+  `/usr/lib/compass-flatpak`, declared through `/etc/flatpak/installations.d`.
+  `flatpak run` finds it without being told.
+- **The runtime is pulled from Flathub during the image build, never in the
+  guest.** The bundle carries the app only. Resolving the runtime on the runner,
+  where there is network, keeps the VM offline at the point where a network
+  failure would look like a product bug.
+- **GDM autologin, not a greeter.** A greeter boots, answers SSH and paints, so
+  it passes `--require-paint` while telling us nothing: `session.type`,
+  `dbus.session` and `portal.desktop` are all meaningless at a login screen. The
+  account itself comes from corral's `--user compass` layer and GDM's config
+  comes from ours; the two halves are written independently and meet at boot.
+
+The assertions live in `packaging/vmtest/checks.sh`, baked into the image rather
+than pushed as `--check` one-liners, so that `bash -n`, shellcheck and a Python
+compile run over them in tier 1 (`.github/workflows/shell.yaml`) rather than
+30 minutes into a nightly VM run. Only three doctor checks are gated on —
+`session.type`, `dbus.session`, `portal.desktop` — because those are the facts
+about the target platform that no other tier can establish. Everything else,
+including `portal.global-shortcuts` (Spike A's subject) and
+`gnome.shell-extension` (we ship none, per ADR-0004), is recorded as evidence
+and gates nothing.
+
+Not done, and not pretended to be: the GNOME Shell extension #18 also lists does
+not exist in this repository, so there is nothing to install.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through
