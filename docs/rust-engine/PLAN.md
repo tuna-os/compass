@@ -1100,10 +1100,20 @@ Ordered by what unblocks the most:
    network access, which a runner has.
 
    The AppImage path stays disabled either way. Nothing here needs it.
-4. **Grow the corpus — this is now Phase 1's binding constraint (§11.2).** The gate names a
+4. **Grow the corpus — Phase 1's binding constraint (§11.2), and now unblocked.** The gate names a
    500-entry corpus for Suite 0 ranking parity; there are 27. Not the launcher, not the portal, not
-   the sandbox: the corpus. `scripts/harvest-desktop-corpus.sh` is the tool, and it wants a machine
-   with a real application set, which is the one input this session could not supply.
+   the sandbox: the corpus.
+
+   The harvester's own header asks for "a real desktop — ideally a Bluefin box, since that is the
+   first target and its RPM + Flatpak + Homebrew mix is what users actually have". **The VM tier
+   boots exactly that, every run.** The machine the script was waiting for has been in CI since the
+   tier existed, and nobody noticed — including this plan, which listed the corpus as blocked on
+   hardware nobody had.
+
+   The `launcher` job now runs it and publishes `corpus.tar.gz` as an artifact. What it does *not*
+   do is write into `crates/compass-testkit/corpus/`: a corpus shapes every ranking assertion the
+   project makes, and it must not grow by a job quietly appending to it. Reviewing and committing
+   the harvest is the next step, and it is a person's.
 
 5. **Widen the parity port.** Both halves of this item turned out to be nearly done when looked at,
    so what is left is now stated precisely rather than as a direction:

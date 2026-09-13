@@ -141,6 +141,27 @@ python3 scripts/vmtest/framediff.py \
   --min-percent 3 --expect-box 300 140 980 800
 
 echo
+echo "=== 3e. harvest a real desktop-entry corpus from this box ==="
+# Phase 1's gate wants ~500 real entries for Suite 0 ranking parity and the
+# corpus has 27, which §11.2 calls the binding constraint on the phase. The
+# harvester asks for "a real desktop — ideally a Bluefin box"; this VM is one,
+# booted fresh with a full GNOME application set on the target platform.
+#
+# It produces an artifact for a person to review and commit. It deliberately
+# does not write into the repository: a corpus shapes every ranking assertion
+# we make, and it should not grow by a job quietly appending to it.
+guest "$checks" harvest-corpus || true
+if "${ssh_argv[@]}" test -f /tmp/corpus.tar.gz 2>/dev/null; then
+  # `ssh cat > file` rather than scp: scp's protocol has been deprecated and
+  # removed in places, and this needs no second tool.
+  "${ssh_argv[@]}" cat /tmp/corpus.tar.gz > "$out/corpus.tar.gz" 2>/dev/null \
+    && echo "corpus.tar.gz retrieved ($(wc -c < "$out/corpus.tar.gz") bytes)" \
+    || echo "(could not retrieve the corpus tarball)"
+else
+  echo "(no corpus tarball in the guest)"
+fi
+
+echo
 echo "=== 4. is it still running? ==="
 # A launcher that dies on the first keystroke is a real bug, and without this
 # it would show up only as two screenshots that happen to look alike.

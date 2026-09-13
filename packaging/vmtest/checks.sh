@@ -24,6 +24,7 @@ UI_ERR=/tmp/compass-ui.err
 UI_DONE=/tmp/compass-ui.done
 CONTROL_ERR=/tmp/compass-control-app.err
 CONTROL_DONE=/tmp/compass-control-app.done
+KBD_CAP_DIR=/tmp
 KBD_CAP=/tmp/compass-kbd-capture.bin
 KBD_CAP_DONE=/tmp/compass-kbd-capture.done
 
@@ -638,6 +639,43 @@ sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=deb
     # Under llvmpipe the renderer keeps its own buffers, so a VM number is not
     # a hardware number. Said here so nobody reads it as one.
     echo 'note: software rendering, so this is an upper bound rather than the shipping figure'
+    ;;
+
+  # Harvest a real desktop-entry corpus from this Bluefin box.
+  #
+  # Phase 1's gate wants ~500 real entries for Suite 0 ranking parity and there
+  # are 27 (§11.2). The harvester's own header asks for "a real desktop —
+  # ideally a Bluefin box", and that is exactly what this VM is: a full GNOME
+  # application set on the target platform, booted fresh every run.
+  #
+  # It writes into a scratch directory rather than the repo's corpus path,
+  # because nothing here should look like it commits to the repository. The
+  # tarball goes out with the artifacts and a person decides what to keep — a
+  # corpus is test input that shapes every ranking assertion, and it should not
+  # grow by a job quietly appending to it.
+  harvest-corpus)
+    scratch=/tmp/compass-corpus
+    rm -rf "$scratch"; mkdir -p "$scratch"
+    /usr/libexec/compass-vmtest/harvest-desktop-corpus.sh --out "$scratch" || true
+
+    count=$(find "$scratch" -type f -name '*.desktop' | wc -l)
+    echo "harvested $count desktop entries from this image"
+    if [ "$count" -eq 0 ]; then
+      echo 'no entries harvested — the roots the script knows about are all empty' >&2
+      exit 1
+    fi
+
+    # Deterministic ordering and no timestamps, so re-running produces the same
+    # bytes and a diff of two harvests is a diff of the application set.
+    tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+      -czf "$KBD_CAP_DIR/corpus.tar.gz" -C "$scratch" . 2>/dev/null \
+      || tar -czf "$KBD_CAP_DIR/corpus.tar.gz" -C "$scratch" .
+    echo "wrote $KBD_CAP_DIR/corpus.tar.gz ($(wc -c < "$KBD_CAP_DIR/corpus.tar.gz") bytes)"
+
+    # A sample in the log, so the artifact is not the only way to see what came
+    # out and a wrong-looking harvest is obvious in the run itself.
+    echo '--- first 15 entries ---'
+    find "$scratch" -type f -name '*.desktop' -printf '  %f\n' | sort | head -15
     ;;
 
   # Assert the launcher is still up, and say what it printed.
