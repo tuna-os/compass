@@ -9,5 +9,5 @@
 pub mod app;
 pub mod message;
 
-pub use app::{AppFlags, LauncherApp};
-pub use message::Message;
+pub use app::{AppFlags, LauncherApp, next_selection};
+pub use message::{Direction, Message};
