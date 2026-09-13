@@ -456,6 +456,73 @@ input-source switcher to it by default, and a collision would present as
 that does not deliver. Those are different answers and the run should not have
 to guess between them.
 
+### The pre-seed worked, and the third question finally got asked
+
+First run with the seeded grant in the image:
+
+```json
+{
+  "portal": "available (interface v1)",
+  "requested_trigger": "LOGO+space",
+  "bind_outcome": "granted",
+  "bound": [{ "id": "compass.spike.toggle",
+              "trigger_description": "Press <Super>space" }],
+  "activated": false,
+  "waited_seconds": 120.0
+}
+```
+
+**`bind_outcome: granted`**, where every previous run said *the portal did not
+answer `BindShortcuts` within 30 s*. The dialog was skipped, the bind completed
+unattended, and a live binding for Super+Space existed in the session. The
+reading of gnome-control-center's source was right and the seed does what it
+was designed to do.
+
+So for the first time there was a binding for the injected key to trigger, and
+Spike A's headline question got asked rather than dodged. The answer is
+**`activated: false`** — and that is a real result now, not the "unknown" of
+every previous run.
+
+**The obvious explanation is ruled out.** `checks.sh spike-a-evidence`, which
+exists precisely for this, reported what else claims the chord:
+
+```
+switch-input-source          ['<Shift><Super>space']
+switch-input-source-backward ['']
+toggle-overview              @as []
+```
+
+GNOME on this image binds the input-source switcher to **Shift**+Super+Space
+and leaves plain Super+Space alone. There is no collision. The hypothesis this
+ADR recorded a section ago — that GNOME's own binding would eat the key — is
+wrong, and the evidence step is what proved it wrong rather than leaving it as
+a plausible story.
+
+Two explanations remain, and they are indistinguishable in the report:
+
+1. QEMU's injected key never reaches the Wayland session at all.
+2. It reaches it, and the compositor does not route the *grabbed* shortcut
+   through to the portal client.
+
+`scripts/vmtest/spike-a.sh` now presses **Super alone** before the real
+keypress, and screenshots either side. On GNOME that opens the Activities
+overview, which is an unmissable change to the framebuffer: if the frame
+changes, injection works and (2) is the answer; if it does not, (1) is, and no
+amount of portal work would have helped. This ADR's own "what would change our
+mind" already listed *"if corral's QMP key injection cannot produce Super+Space
+in practice — expected to work but not run yet"*. It has now been run once, and
+the control is what will say which half was at fault.
+
+One incidental fix the run paid for. `trigger_matches_request` reported **false**
+on a bind that granted exactly what was asked. GNOME does not return an
+accelerator, it returns a sentence: `"Press <Super>space"`. The normaliser split
+on `+`, `-` and space, so it compared `["press", "<super>space"]` against
+`["space", "super"]`. It now strips the lead-in and treats the angle brackets of
+GTK accelerator syntax as separators, with tests for both the sentence form and
+a genuine mismatch dressed in the same syntax — the second half mattering more
+than the first, since the easy fix here is one that turns a false negative into
+a false positive and reports every trigger as correct.
+
 ## Spike B's first answer
 
 Measured in the `Flatpak / build` job — a real bubblewrap sandbox on a hosted
