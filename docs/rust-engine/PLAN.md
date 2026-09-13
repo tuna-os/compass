@@ -578,16 +578,32 @@ as a JSON array. Measured against the real binaries:
 | `query` against the Rust engine | **needs a running engine.** It asks over the IPC socket, so every call returns *"no Compass engine is listening on /tmp/vicinae-default/ipc.sock"*. The harness starts nothing. |
 | `query` against the C++ engine | **the interface does not exist.** `src/cli` has no `--engine` flag and no `query` subcommand; its only `--json` is on the command-list subcommand. |
 
-So the remaining work on Suite 0 is three things, in order:
+A fifth problem only appeared once the first four were fixed and the thing actually ran: it passed
+`--engine <name>`, which is wrong in principle rather than in spelling. **Until the Phase 7 cutover
+(§5), the binary *is* the engine.** The Rust binary refuses `--engine cpp` by design, and the C++
+binary has no such flag at all, so passing it can only turn a working invocation into a failing
+one. Suite 0 picks an engine by choosing which path to exec — which is what `--cpp` and `--rust`
+are for.
 
-1. **Give the harness a live engine.** Either start `serve` per run and tear it down, or give the
-   engines a one-shot ranking path that needs no daemon. `vicinae ui` already indexes and ranks
-   in-process (ADR-0011), so the capability exists; it is the CLI surface that does not.
-2. **Give the C++ engine the interface §8.1 assumes**, or change §8.1 to diff through an interface
-   the C++ engine already has. The second is probably cheaper and is a real design question, not a
-   chore — this is a fork whose C++ tree we are deleting, and adding surface to it to support its
-   own replacement needs justifying.
-3. *Then* wire it into the VM tier, where the C++ binary now is.
+**The harness now runs.** `RunningEngine` starts a `serve` per side on its own socket, waits until
+`ping` answers — a state, not a sleep, per ADR-0010 — runs the queries, and shuts both down. Against
+the Rust engine on both sides it completes 378 queries and reports 378 identical.
+
+That number is an **identity control only**, and on its own it is indistinguishable from a
+comparison that never compares. So the comparison is separately controlled: perturbing one side
+(dropping its top hit) turns the same run into 105 regressions and a non-zero exit, and
+`compare_results` has unit tests for reordering, rescoring, a missing hit and an empty side. The
+JSON test asserts the old `{key, name, score, quality}` shape is *rejected*, so it would have caught
+the original mismatch rather than passing either way.
+
+What remains on Suite 0 is one thing, and it is a design question rather than a chore:
+
+1. **Give the C++ engine the interface §8.1 assumes, or change §8.1 to diff through an interface the
+   C++ engine already has.** The second is probably cheaper, and this is a fork whose C++ tree we
+   are deleting — adding surface to it in order to support its own replacement needs justifying.
+   This one is not decided here.
+2. *Then* wire it into the VM tier, where the C++ binary now is. That step is genuinely just
+   wiring, and it was not before.
 
 Three spellings of this harness's invocation were in the repository at once — `--cpp`/`--rust` in
 the code, `--engines cpp,rust` in §8.7, and `--cpp-engine` in §12 — which is what an interface with
