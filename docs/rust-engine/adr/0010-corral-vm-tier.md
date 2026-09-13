@@ -520,6 +520,56 @@ Three caveats, none of which change the verdict:
   that runtime detection makes sandboxing non-deterministic. A kernel offering
   more gives us no more. That is deliberate.
 
+## The tier finally points at the product
+
+Everything above tests the platform: does Bluefin boot, does GDM autologin, is
+there a Wayland session, a session bus, a portal, a sandbox that nests. All of
+it was necessary and none of it is the launcher, because until #29 there was no
+launcher to open — `compass-ui` was a library and nothing started a window.
+
+The `launcher` job opens one. It is a third VM job rather than a check inside
+`boot-compass`, for the same structural reason Spike A is: the only observer of
+the framebuffer is corral, on the host side of QEMU, and corral runs each
+`--check` over its own SSH connection with no way to interleave a host command.
+So the run leaves the VM up and `scripts/vmtest/launcher.sh` drives guest, host,
+guest — start the launcher over SSH, screenshot and type from the host, then ask
+the guest whether it is still alive.
+
+**What is gated is narrower than what is recorded, deliberately.** Gated: the
+launcher process starts and stays up, and the screen still passes corral's own
+blank test with the launcher open. Recorded but not gated: the three luminance
+deviations, before, open, and after typing.
+
+It is tempting to assert that opening a launcher raises the deviation, and it
+almost certainly does. But that has never been measured once, and this ADR
+already says that inventing a pixel threshold is how a tier starts flaking —
+the same reasoning that keeps `--require-paint` at corral's 0.02 rather than at
+a number we chose. Both spikes shipped gating on nothing but "produced a
+report", and both were more useful for it. Once a few runs have published
+numbers, the gate can be set from data; that is a two-line change to the driver.
+
+Two details carried over from earlier mistakes in this tier, because both cost a
+run to learn:
+
+- **The readiness predicate matches the process *name*.** The obvious
+  `pgrep -f` against something distinctive also matches the shell evaluating it,
+  so the predicate is true before the launcher has done anything — the same
+  reflexivity that made Spike A's collector time out 180 s every run. Verified
+  both directions locally: no match with nothing running, a match with a real
+  process of that name.
+- **"The process is alive" is not "a window is on screen"**, and nothing inside
+  the guest can tell the difference. That is why the host screenshot exists, and
+  why neither half is sufficient alone. The before-frame is the control: without
+  it, "the launcher drew" cannot be told from "the desktop always looked like
+  that".
+
+There is a side benefit worth stating, since it addresses a risk recorded above.
+The compass image passes `--require-paint` at **0.0254** against a 0.02
+threshold, because a GNOME desktop under llvmpipe is mostly flat dark pixels,
+and that margin is thin enough to flap. A launcher on screen is the honest way
+to widen it. The dishonest way is to move the line, which this ADR has already
+ruled out.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through
