@@ -136,7 +136,12 @@ PY
   # permission dialog, and a key sent before the bind lands proves nothing.
   spike-a-start)
     u="$(uid)"
-    rm -f "$SPIKE_OUT" "$SPIKE_ERR"
+    # Created empty rather than removed: the waiter greps the stderr file, and
+    # a file that does not exist yet makes grep print "No such file or
+    # directory" into a log where it reads like the failure rather than like
+    # the first poll of a loop that then succeeded.
+    : > "$SPIKE_OUT"
+    : > "$SPIKE_ERR"
     # setsid and all three fds redirected: without that, ssh waits for the
     # channel to close and this check never returns.
     setsid runuser -u "$SESSION_USER" -- env \

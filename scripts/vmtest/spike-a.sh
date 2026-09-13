@@ -57,7 +57,11 @@ echo "=== 2. press it at QEMU's emulated keyboard ==="
 # meta_l and spc are QEMU key names, passed through unvalidated by corral, and
 # `key` presses them together. This is the step the issue flagged as expected to
 # work but never run.
-sudo -E corral key "$vm" meta_l spc
+# `sudo -E "$(command -v corral)"`, not `sudo corral`. corral is on PATH via
+# GITHUB_PATH, and sudo replaces PATH with secure_path — so `sudo corral` is
+# "command not found" while every other step in this workflow, which resolves
+# the absolute path first, works. That is exactly how this failed the first time.
+sudo -E "$(command -v corral)" key "$vm" meta_l spc
 echo "sent: meta_l spc"
 
 echo

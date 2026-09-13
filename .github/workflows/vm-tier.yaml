@@ -254,6 +254,18 @@ jobs:
         if: always()
         run: scripts/vmtest/report.sh vmtest-out
 
+      # report.sh dumps an ANSI-expanded serial console, which is hundreds of
+      # log lines and buries whatever came before it — the same burial that
+      # already cost this tier three unreadable diagnostics. The answer this job
+      # exists to produce therefore prints again, last.
+      - name: Spike A, last so it survives the serial dump
+        if: always()
+        run: |
+          echo '=============================================================='
+          sed -n '/^--- report ---$/,$p' vmtest-out/spike-a.txt 2>/dev/null \
+            || echo 'no spike report — see the step output above'
+          echo '=============================================================='
+
       # The runner is thrown away either way, but a 30 GB disk image left behind
       # can starve the artifact upload of space.
       - name: Delete the VM

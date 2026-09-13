@@ -297,6 +297,20 @@ requires those to be relatable, so the comparison normalises case, separators
 and the usual synonyms and can be fooled. Both strings are in the report
 verbatim so a reader never has to trust it.
 
+### The paint margin is thin, and that is worth watching
+
+The compass image passes `--require-paint`, but not by much: the ready frame in
+the Spike A run measured **0.0254** against corral's 0.02 blank threshold, with
+the boot frames spanning 0.0227–0.0487. A GNOME session under llvmpipe is mostly
+flat dark pixels, so there is far less margin here than the 0.36 an earlier note
+in this ADR cited — and that figure has already been shown to have been luck
+rather than measurement.
+
+No action yet, and deliberately not a threshold tweak: the blank check is
+corral's and lowering it would defeat the one pixel assertion the tier has. But
+if `--require-paint` starts flapping on the compass image, this is why, and the
+fix is to give the session something to draw rather than to move the line.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through
