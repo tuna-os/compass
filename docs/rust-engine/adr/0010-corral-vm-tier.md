@@ -207,6 +207,31 @@ corral, on the other side of QEMU, and it exposes no wait for it. Ten seconds is
 slack after a state, not an assertion phrased as a duration. If a real paint
 gate ever becomes available, it replaces this.
 
+### The readiness marker worked; sshd was not running
+
+The first run with the new marker did exactly what it was built to do — logind
+reported a session 2s after the unit started, it settled, and the run reached
+ready at 52.8s with **`--require-paint` passing**. So a GNOME desktop with our
+Flatpak in it boots and paints under QEMU on a hosted runner, which is the whole
+premise of the tier.
+
+It then failed at exit 8: *the checks could not run: SSH never answered*. The
+error underneath, in both jobs, was
+
+    kex_exchange_identification: read: Connection reset by peer
+
+which reads like a broken sshd and is not one. Bluefin is a desktop image and
+does not enable sshd; QEMU's user-mode hostfwd accepts the connection on the
+host and the guest resets it because nothing holds port 22. "Refused" would have
+said it plainly — the reset is an artifact of the forward, and it is why this
+looked like a protocol problem for two runs.
+
+Both test images now enable sshd, and `wait-graphical.sh` reports sshd's enabled
+and active state and what is listening on 22 to the console *before* the marker.
+That ordering is the point: everything corral can ask the guest goes over SSH,
+and its last copy of the serial log is taken before it waits for SSH — so when
+SSH is the thing that is broken, the answer has to already be in the log.
+
 ## Step 2: our software is now in the image
 
 The first job tests stock Bluefin and always will — it is the control, and it is

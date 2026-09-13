@@ -73,4 +73,14 @@ done
 
 say "COMPASS-VMTEST: graphical session after ${SECONDS}s, settling ${SETTLE}s"
 sleep "$SETTLE"
+
+# Printed BEFORE the marker, deliberately. Everything corral does over SSH —
+# the checks and the diagnostics bundle — happens after readiness, so when SSH
+# does not answer there is no way to ask the guest anything: the only channel
+# left is the console, and corral's last copy of the serial log is taken before
+# it waits for SSH. So the answer has to already be in the log by the time the
+# marker appears.
+say "COMPASS-VMTEST: sshd enabled=$(systemctl is-enabled sshd.service 2>&1) active=$(systemctl is-active sshd.service 2>&1)"
+say "COMPASS-VMTEST: listening on 22: $(ss -Htln 'sport = :22' 2>&1 | tr '\n' ';')"
+
 say "$MARKER"

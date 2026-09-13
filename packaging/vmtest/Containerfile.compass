@@ -104,6 +104,23 @@ COPY compass-vmtest-graphical.service /usr/lib/systemd/system/compass-vmtest-gra
 RUN chmod 0755 /usr/libexec/compass-vmtest/wait-graphical.sh && \
     systemctl enable compass-vmtest-graphical.service
 
+# ── sshd ─────────────────────────────────────────────────────────────────────
+#
+# corral's checks and diagnostics all arrive over SSH, and `bootc install
+# --root-ssh-authorized-keys` puts the run's key in root's authorized_keys — but
+# a key is no use if nothing is listening. Bluefin is a desktop image and does
+# not enable sshd, so both VM jobs failed with
+#
+#   kex_exchange_identification: read: Connection reset by peer
+#
+# which reads like a broken sshd and is not one: QEMU's user-mode hostfwd
+# accepts the connection on the host and the guest resets it because no process
+# holds port 22. "Refused" would have been the clearer message; the reset is an
+# artifact of the forward.
+#
+# Enabling it is a test-image change and nothing more — it is off in what ships.
+RUN systemctl enable sshd.service
+
 # ── the assertions ───────────────────────────────────────────────────────────
 #
 # Baked in rather than pushed over SSH so that they are a real file in the
