@@ -485,12 +485,30 @@ retired.
 
 Three caveats, none of which change the verdict:
 
-- **This is one kernel, not the target's.** `6.17.0-1022-azure` is the hosted
-  runner's. The VM job runs the same spike on Bluefin's kernel, and Landlock's
-  ABI is a kernel property, so the two are not interchangeable — the second
-  measurement is the one that speaks about the shipping platform.
+- ~~**This is one kernel, not the target's.**~~ **Settled by the VM run.** The
+  first measurement was on the hosted runner's `6.17.0-1022-azure`, and since
+  Landlock's ABI is a kernel property that said nothing about the platform we
+  ship to. The compass VM job has now run the same spike on **Bluefin's own
+  `7.1.8-200.fc44.x86_64`**, inside the real Flatpak, in a real GNOME session,
+  and returned the same verdict with the same four rows green:
+
+  ```
+  inside a Flatpak:      yes
+  kernel:                7.1.8-200.fc44.x86_64
+  Landlock (asked for): V1
+    ruleset:             fully enforced
+    reads inside allow:  yes           (control: must stay yes)
+    reads outside deny:  yes           (the assertion)
+  seccomp filter:        installed
+    blocked call denied: yes           (the assertion)
+    other calls allowed: yes           (the control)
+  ```
+
+  Two kernels, two Flatpak sandboxes, one answer. This is the row that lets
+  Phase 4 be designed rather than guessed at.
 - **`seccomp_mode` came back `null` in the JSON**, despite the filter
-  demonstrably working. The field is read from `/proc/self/status`, which the
+  demonstrably working. (The VM check runs the human-readable form, which does
+  not carry the field, so the VM run neither confirms nor contradicts this.) The field is read from `/proc/self/status`, which the
   Flatpak sandbox evidently does not expose the way an unsandboxed process sees
   it. So the kernel's own account of the filter — the field that caught the
   `SYS_mkdir`/`SYS_mkdirat` bug during development — is *unavailable in exactly

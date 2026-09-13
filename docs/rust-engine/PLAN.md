@@ -978,8 +978,11 @@ with a control, so a boundary that denies everything is not mistaken for one tha
 that denies nothing for a sandbox at all — and here both halves passed on both mechanisms. **Phase
 4's extension host may be designed on Landlock and seccomp**; the risk §6 flagged is retired.
 
-Three caveats travel with it: that is the runner's kernel and not Bluefin's, so the VM run is the
-one that speaks about the shipping platform; the Landlock ABI is requested at V1 and never detected,
+It has since run again in the VM on **Bluefin's own kernel, `7.1.8-200.fc44.x86_64`**, inside the
+real Flatpak in a real GNOME session, with the same verdict and the same four rows green. Two
+kernels, two sandboxes, one answer.
+
+Two caveats still travel with it: the Landlock ABI is requested at V1 and never detected,
 deliberately, since detection makes a security boundary non-deterministic across machines; and
 `seccomp_mode` read back `null` inside the Flatpak although the filter provably worked, which means
 `/proc/self/status` is not a usable self-check for confinement in the environment we ship into.
