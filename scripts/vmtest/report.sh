@@ -57,7 +57,7 @@ if [ -f "$out/serial.log" ]; then
     "$out/serial.log" > /tmp/serial-plain.log 2>/dev/null || cp "$out/serial.log" /tmp/serial-plain.log
   grep -aoE 'Reached target [A-Za-z0-9._@-]+' /tmp/serial-plain.log | sort -u || true
   echo '--- gdm / plymouth / display ---'
-  grep -aiE 'gdm|plymouth|graphical|wayland|greeter' /tmp/serial-plain.log | tail -40 || true
+  grep -aiE 'COMPASS-VMTEST|gdm|plymouth|graphical|wayland|greeter' /tmp/serial-plain.log | tail -40 || true
 else
   echo "no serial.log"
 fi

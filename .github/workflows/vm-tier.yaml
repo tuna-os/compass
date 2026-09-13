@@ -72,16 +72,18 @@ jobs:
           TMPDIR: /mnt/corral
         run: |
           mkdir -p /mnt/corral
-          # --ready-marker is 'Started .*gdm\.service', not a graphical.target
-          # match, because graphical.target is never reached on this image:
-          # plymouth-quit-wait.service starts and never finishes with no real
-          # display, and it gates the target. GDM itself starts fine, and the
-          # captured frames show stddev ~0.36 against corral's 0.02 blank
-          # threshold — the desktop is up and drawing. "Started" not "Starting":
-          # the latter appears a moment earlier and means only that it was asked to.
+          # The marker comes from a unit we install, not from systemd's own
+          # output, and the two obvious alternatives are both wrong here.
+          # graphical.target is never reached on this image: plymouth-quit-wait
+          # starts and never finishes with no real display, and it gates the
+          # target. 'Started .*gdm\.service' does fire — as GDM takes the DRM
+          # device and blanks it, several seconds before the greeter draws — so
+          # corral, which captures its final frame at readiness and does not
+          # retry, sampled a blank screen and --require-paint failed at
+          # deviation exactly 0.0000. See packaging/vmtest/wait-graphical.sh.
           sudo -E "$(which corral)" vmtest bluefin \
             --bootc localhost/bluefin-testable:ci \
-            --ready-marker 'Started .*gdm\.service' \
+            --ready-marker 'COMPASS-VMTEST: graphical session up' \
             --require-paint \
             --video \
             --cpu 4 --mem 8G --disk 30G \
@@ -150,14 +152,16 @@ jobs:
           # also how the checks get in, since corral injects its SSH key for the
           # accounts it creates.
           #
-          # The ready marker stays on gdm.service rather than moving to the user
-          # session: it is the earliest reliable point, and the checks below do
-          # their own waiting for the session with explicit timeouts, which is a
-          # better failure message than a readiness timeout would be.
+          # Same marker as the control job, for the same reason, and here it
+          # does double duty: it is satisfied by the autologin session rather
+          # than a greeter, so by the time the checks run there is a real user
+          # session to inspect. The checks still do their own waiting with
+          # explicit timeouts, because a named check timing out is a better
+          # failure message than a readiness timeout.
           sudo -E "$(which corral)" vmtest compass \
             --bootc localhost/bluefin-compass:ci \
             --user compass --password compass --sudo-user \
-            --ready-marker 'Started .*gdm\.service' \
+            --ready-marker 'COMPASS-VMTEST: graphical session up' \
             --require-paint \
             --video \
             --check '/usr/libexec/compass-vmtest/checks.sh installed' \

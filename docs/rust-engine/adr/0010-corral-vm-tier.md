@@ -163,6 +163,40 @@ same power to fail a 40-minute job as the assertion it was added to explain, and
 this one did — which is also why the earlier failure looked like it came from
 "a change to a step that runs after corral exits".
 
+### And the marker was racing GDM
+
+With the `df` fixed, the next run got all the way through and failed differently:
+`--require-paint` at a framebuffer deviation of **exactly 0.0000**, with
+readiness reached at 29s on `Started .*gdm\.service`.
+
+That number is the tell. corral captures its final frame at the instant of
+readiness and does not retry, and `Started gdm.service` fires as GDM takes the
+DRM device and blanks it — several seconds before the greeter composites
+anything. The boot frames in that run measured 0.0227–0.0487 (plymouth's text
+console); the ready frame measured zero. So the earlier green run, which this
+ADR cited above as "stddev ~0.36, the desktop is up and drawing", passed a race
+rather than an assertion. The measurement was real; the conclusion drawn from it
+was not safe.
+
+SSH also did not answer in the 60 seconds after that marker
+(`kex_exchange_identification: Connection reset by peer`), which matters more
+for step 2 than for the control: no SSH means no checks.
+
+Both are fixed by keying readiness off a **state** instead of a unit starting.
+`packaging/vmtest/wait-graphical.sh` is a systemd oneshot in both test images
+that waits until logind reports a session of type wayland or x11, settles, and
+prints `COMPASS-VMTEST: graphical session up` to the serial console. It is
+installed in the control image too — the one piece of OS content that image adds
+beyond stock Bluefin, and it observes rather than changes anything.
+
+The settle is the single duration in the tier, and it is deliberate rather than
+an oversight of this ADR's own "key off markers, never durations" rule: a
+session registers with logind before its compositor draws, and *nothing inside
+the guest can observe "has painted"* — the only observer of the framebuffer is
+corral, on the other side of QEMU, and it exposes no wait for it. Ten seconds is
+slack after a state, not an assertion phrased as a duration. If a real paint
+gate ever becomes available, it replaces this.
+
 ## Step 2: our software is now in the image
 
 The first job tests stock Bluefin and always will — it is the control, and it is
