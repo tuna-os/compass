@@ -82,8 +82,7 @@ int main(int argc, char **argv) {
   // a fixed order so that ties resolve identically on both sides. An unstable
   // sort here would make tie order an artifact of the algorithm rather than
   // something the diff can hold constant.
-  std::stable_sort(hits.begin(), hits.end(),
-                   [](Hit const &a, Hit const &b) { return a.score > b.score; });
+  std::stable_sort(hits.begin(), hits.end(), [](Hit const &a, Hit const &b) { return a.score > b.score; });
 
   for (auto const &h : hits) {
     std::cout << h.item->id << '\t' << h.score << '\t' << h.quality << '\n';
