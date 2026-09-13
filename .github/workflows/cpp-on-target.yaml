@@ -86,6 +86,20 @@ jobs:
           # So layer-shell-qt-devel is installed (Fedora has it, 6.7.5) and
           # qtkeychain is switched to the vendored copy explicitly with
           # -DUSE_SYSTEM_QT_KEYCHAIN=OFF, because Fedora has no Qt6 build of it.
+          #
+          # The rest of this list was ENUMERATED rather than discovered. Three
+          # red runs each found one missing package, which is a bad way to
+          # spend cycles even cheap ones, so the tree's own requirements were
+          # read out instead:
+          #
+          #   find_package: ECM, KF6SyntaxHighlighting, LayerShellQt, OpenSSL,
+          #                 PkgConfig, X11 (REQUIRED, with the xcb, xcb_keysyms
+          #                 and xcb_xkb components), plus glaze and numen which
+          #                 are fetched rather than packaged
+          #   and the vendored qtkeychain needs libsecret-1, which the
+          #   USE_SYSTEM_QT_KEYCHAIN option's own help text says outright —
+          #   "Note: still depends on system libsecret" — and which I quoted
+          #   here two revisions ago without acting on.
           podman run --rm -v "$PWD:/src:z" -w /src \
             ghcr.io/ublue-os/bluefin:stable bash -euxo pipefail -c '
               dnf install -y --setopt=install_weak_deps=False \
@@ -98,6 +112,8 @@ jobs:
                 layer-shell-qt-devel \
                 libqalculate-devel \
                 wayland-devel wayland-protocols-devel \
+                libsecret-devel openssl-devel \
+                libX11-devel libxcb-devel xcb-util-keysyms-devel \
                 nodejs npm
 
               echo "--- what Qt did we get? ---"
