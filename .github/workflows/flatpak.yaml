@@ -82,6 +82,14 @@ jobs:
         run: flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
 
       # Keyed on the manifest, since that is what names the runtime versions.
+      # Caches the runtime, and unavoidably the installed applications with it:
+      # ~/.local/share/flatpak holds both. Keyed on the manifest, which barely
+      # changes — so a com.vicinae.Vicinae installed by an earlier run comes
+      # back, and `flatpak install` finds it already present and does nothing.
+      # That is not hypothetical: this job spent a run testing a binary built
+      # before `spike` existed and reporting `unrecognized subcommand 'spike'`.
+      # See --reinstall and the commit assertion below, which are what make the
+      # cache safe to keep.
       - name: Cache the runtime
         uses: actions/cache@v4
         with:
@@ -126,7 +134,22 @@ jobs:
         # has no desktop, so checks will legitimately fail; the assertion is that the
         # binary runs and produces a report, not that the report is clean.
         run: |
-          flatpak install --user --noninteractive /tmp/repo com.vicinae.Vicinae
+          # --reinstall, not a plain install: see the cache step. Without it a
+          # cached copy wins and every assertion below is about the wrong build.
+          flatpak install --user --noninteractive --reinstall /tmp/repo com.vicinae.Vicinae
+
+          # And then prove it, rather than trusting the flag. These two commits
+          # must be equal; if they are not, the job is testing something other
+          # than what it just built, which is exactly the failure this guards.
+          built="$(ostree --repo=/tmp/repo rev-parse app/com.vicinae.Vicinae/$(flatpak --default-arch)/master)"
+          installed="$(flatpak info --user --show-commit com.vicinae.Vicinae)"
+          echo "built     $built"
+          echo "installed $installed"
+          if [ "$built" != "$installed" ]; then
+            echo "::error::the installed Flatpak is not the one this job built"
+            exit 1
+          fi
+
           flatpak run --user com.vicinae.Vicinae --socket /tmp/ci.sock doctor --json | tee /tmp/doctor.json
           python3 -c "
           import json, sys
