@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=LinLog
+GenericName=LinLogBook
+Comment=A ham radio logbook for linux
+Exec=linlogbook
+Icon=linlogbook
+Terminal=false
+Type=Application
+Categories=Network;HamRadio;
+Version=1.0
+X-Desktop-File-Install-Version=0.28

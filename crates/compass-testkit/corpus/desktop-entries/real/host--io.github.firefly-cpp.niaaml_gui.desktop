@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+
+Name=NiaAML-GUI
+Comment=A basic graphical user interface intended for users of the NiaAML Python package.
+Categories=Science;ArtificialIntelligence;
+
+Icon=niaaml-gui
+Exec=NiaAML-GUI
+Terminal=false
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Adanaxis GPL
+Comment=An action game in four spatial dimensions
+Exec=adanaxisgpl 
+Icon=adanaxisgpl
+Terminal=false
+Type=Application
+StartupNotify=false
+Categories=Game;ActionGame;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Screensaver
+Comment=Launch screensaver and locker program
+Exec=cinnamon-screensaver
+OnlyShowIn=X-Cinnamon;
+NoDisplay=true
+DBusActivatable=true
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,39 @@
+[Desktop Entry]
+Name[ca]=Blocatge de la pantalla
+Name[en_GB]=Screen Lock
+Name[et]=Ekraanilukustus
+Name[kk]=Экранды құлыптау
+Name[nl]=Schermvergrendeling
+Name[oc]=Ecran de verrolhathe
+Name[pl]=Blokada ekranu
+Name[zh_TW]=螢幕鎖定
+Name=Screen Lock
+Comment[ca]=Configureu els paràmetres del blocatge de la pantalla
+Comment[en_GB]=Configure screen lock settings
+Comment[et]=Seadista ekraanilukustust
+Comment[kk]=Экранды құлыптау параметрлерін баптау
+Comment[nl]=Instellingen voor schermvergrendeling configureren
+Comment[oc]=Configurar los paramètres de verrolhatge d'ecran
+Comment[pl]=Skonfiguruj ustawienia blokady ekranu
+Comment[zh_TW]=設定螢幕鎖定
+Comment=Configure screen lock settings
+Exec=budgie-control-center lock
+# Translators: Do NOT translate or transliterate this text (this is an icon file name)!
+Icon=system-lock-screen-symbolic
+Terminal=false
+Type=Application
+NoDisplay=true
+StartupNotify=true
+Categories=GNOME;GTK;Settings;DesktopSettings;X-GNOME-Settings-Panel;X-GNOME-PrivacySettings;
+OnlyShowIn=Budgie
+# Translators: Search terms to find the Screen Lock panel. Do NOT translate or localize the semicolons! The list MUST also end with a semicolon!
+Keywords[ca]=pantalla;bloqueig;blocatge;privadesa;seguretat;automàtic;retard;
+Keywords[en_GB]=screen;lock;privacy;security;automatic;delay;
+Keywords[et]=screen;lock;privacy;security;automatic;delay;ekraan;lukustus;lukustama;turvalisus;
+Keywords[kk]=screen;lock;privacy;security;automatic;delay;экран;құлыптау;жекелік;қауіпсіздік;автоматты;кешігу;
+Keywords[nl]=scherm;vergrendeling;privacy;beveiliging;automatisch;vertraging;
+Keywords[oc]=ecran;verrolhatge;vida privada;confidencialitat;relambi;
+Keywords[pl]=ekran;blokada;prywatność;bezpieczeństwo;automatyczne;opóźnienie;
+Keywords[zh_TW]=screen;lock;privacy;security;automatic;delay;螢幕;鎖定;私隱;安全;自動;延遲
+Keywords=screen;lock;privacy;security;automatic;delay;
+

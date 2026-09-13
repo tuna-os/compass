@@ -1,0 +1,10 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Avoision
+GenericName=Arcade style game of evade and capture
+Exec=avoision
+Icon=avoision
+StartupNotify=false
+Type=Application
+Categories=Game;ArcadeGame;
+X-Desktop-File-Install-Version=0.28

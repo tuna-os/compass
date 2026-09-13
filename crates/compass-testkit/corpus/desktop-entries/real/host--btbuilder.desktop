@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Bt Builder
+Comment=Turn based role-playing game builder and engine
+TryExec=btbuilder
+Exec=btbuilder %f
+Terminal=false
+Type=Application
+Icon=btbuilder
+Categories=Game;RolePlaying;
+X-Desktop-File-Install-Version=0.28
+

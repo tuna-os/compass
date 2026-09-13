@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Comment=A Model-Airplane Flight Simulation Program
+Comment[en_US]=A Model-Airplane Flight Simulation Program
+Exec=crrcsim
+Icon=/usr/share/crrcsim/icons/crrcsim.png
+Icon[en_US]=/usr/share/crrcsim/icons/crrcsim.png
+Name=CRRCsim
+Name[en_US]=CRRCsim
+Categories=Game;Simulation;
+Terminal=false
+X-Desktop-File-Install-Version=0.28
+
+

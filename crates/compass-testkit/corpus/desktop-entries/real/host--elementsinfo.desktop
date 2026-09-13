@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Elementsinfo
+Comment=Displaying the shell constants and X-ray emission branching ratios as function of photon excitation energy
+GenericName=Periodic table with Atomic Constants used by PyMca
+Exec=elementsinfo
+Icon=PyMca
+Terminal=false
+StartupNotify=true
+Type=Application
+Categories=Education;Science;DataVisualization;Physics;
+X-Desktop-File-Install-Version=0.28

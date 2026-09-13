@@ -1,0 +1,15 @@
+[Desktop Entry]
+Name=Crypto Bone SafeWebdrop 2.2
+Type=Application
+Icon=/usr/share/icons/default/cryptobone-safewebdrop.png
+Comment=Easy-to-use Secure Encrypted Messages
+TryExec=/usr/bin/cryptobone2
+Exec=/usr/bin/cryptobone2
+Terminal=true
+Categories=Network
+StartupNotify=false
+X-AppInstall-Package=cryptobone
+X-AppInstall-Section=main
+X-KDE-SubstituteUID=false
+X-KDE-Username=
+X-Desktop-File-Install-Version=0.28

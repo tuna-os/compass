@@ -1,0 +1,10 @@
+[Desktop Entry]
+Encoding=UTF-8
+Type=Application
+Name=AGIStudio
+Comment=Create and edit AGI games
+Exec=agistudio
+Icon=agistudio.xpm
+Terminal=false
+Categories=Game;AdventureGame;
+X-Desktop-File-Install-Version=0.28

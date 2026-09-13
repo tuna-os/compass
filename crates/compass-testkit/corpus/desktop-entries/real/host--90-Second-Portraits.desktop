@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=90 Second Portraits
+Comment=Frantic street painting game
+Exec=90-Second-Portraits
+Type=Application
+Categories=Game;ArcadeGame;
+Terminal=false
+Icon=90-Second-Portraits
+X-Desktop-File-Install-Version=0.28

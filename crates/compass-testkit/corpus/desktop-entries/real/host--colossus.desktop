@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Colossus
+GenericName=Strategy Game
+Comment=Multiplayer turned based fantasy game with AIs available
+Exec=colossus
+Icon=colossus
+Terminal=false
+Type=Application
+Categories=Game;StrategyGame;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=ALSA Mixer
+Comment=GUI version of alsamixer
+Exec=alsamixergui
+Icon=alsamixergui.png
+Categories=Application;AudioVideo;X-Fedora;
+Terminal=false
+Type=Application
+Encoding=UTF-8
+X-Desktop-File-Install-Version=0.28

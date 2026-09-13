@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Anarch (CSFML)
+Comment=Public domain, anarcho-pacifict, suckless Doom clone (CSFML version)
+Exec=anarch-csfml
+Icon=anarch-csfml
+Terminal=false
+Categories=Game;
+StartupNotify=false

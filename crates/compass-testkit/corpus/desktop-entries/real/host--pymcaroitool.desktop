@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=PyMcaROItool
+Comment=Handling datasets represented by three-dimensional arrays, like stacks of images or 2D maps of 1D spectra
+GenericName=Region of Interest imaging tool for XRF analysis
+Exec=pymcaroitool
+Icon=PyMca
+Terminal=false
+StartupNotify=true
+Type=Application
+Categories=Education;Science;DataVisualization;Physics;
+X-Desktop-File-Install-Version=0.28

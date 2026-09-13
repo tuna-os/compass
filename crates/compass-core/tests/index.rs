@@ -517,22 +517,55 @@ fn the_harvested_entries_index_and_no_display_is_read_as_a_value() {
 
     let index = builder().dir(dir.path()).build();
 
-    // Every one is Type=Application with an Exec, so none may be malformed,
-    // unreadable, or dropped without a reason.
+    // Nothing may be dropped without a reason, whatever that reason is.
     assert_eq!(
         index.skipped().len() + index.applications().count(),
         harvested.len(),
         "a harvested entry was dropped silently"
     );
+
+    // NotShown and NotAnApplication are the two legitimate reasons, and the
+    // second one is here because the corpus grew and proved the first version
+    // of this assertion wrong.
+    //
+    // It allowed NotShown alone, on the stated grounds that "harvested entries
+    // are all valid applications". That held for 96 entries harvested from one
+    // Bluefin image and stopped holding at 738: Fedora ships
+    // Singular-manual.desktop as Type=Link, and a real /usr/share/applications
+    // contains entries like it.
+    //
+    // The fix is to admit the reason rather than drop the fixture. A launcher
+    // has to skip a Type=Link entry, that path should be exercised by something
+    // real, and this is now the fixture that exercises it. Anything OTHER than
+    // these two is still a defect — a malformed or unreadable harvested entry
+    // means the harvester or the parser is wrong.
     for skip in index.skipped() {
         assert!(
-            matches!(skip.reason, SkipReason::NotShown),
-            "{}: harvested entries are all valid applications, so NotShown is \
-             the only legitimate reason to skip one; got {}",
+            matches!(
+                skip.reason,
+                SkipReason::NotShown | SkipReason::NotAnApplication
+            ),
+            "{}: a harvested entry may only be skipped as NotShown or \
+             NotAnApplication; got {}",
             skip.path.display(),
             skip.reason
         );
     }
+
+    // And the corpus must keep containing one of each, or the two paths above
+    // stop being exercised and the assertion quietly weakens to nothing.
+    let reasons: Vec<&SkipReason> = index.skipped().iter().map(|s| &s.reason).collect();
+    assert!(
+        reasons
+            .iter()
+            .any(|r| matches!(r, SkipReason::NotAnApplication)),
+        "no harvested entry exercises NotAnApplication any more; the corpus lost its \
+         non-application fixtures and this assertion now proves nothing"
+    );
+    assert!(
+        reasons.iter().any(|r| matches!(r, SkipReason::NotShown)),
+        "no harvested entry exercises NotShown any more"
+    );
 
     // NoDisplay=false is not NoDisplay. This is the whole point of the test, so
     // it is asserted before the aggregate: a parser with the presence bug fails

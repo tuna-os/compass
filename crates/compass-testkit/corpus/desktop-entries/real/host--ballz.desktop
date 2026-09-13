@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=B.A.L.L.Z.
+Name[fr]=B.A.L.L.Z.
+Comment=Platform/puzzle game where you control a rolling ball
+Comment[fr]=Jeu de plate-forme/puzzle où vous contrôlez une balle qui roule
+Exec=ballz
+Icon=ballz
+Terminal=false
+Type=Application
+Categories=Game;ArcadeGame;

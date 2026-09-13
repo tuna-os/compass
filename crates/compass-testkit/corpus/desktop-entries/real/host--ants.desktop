@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Ants!
+Comment=Guide your ants safely home before they drop of the cliff
+Exec=ants
+StartupNotify=false
+Terminal=false
+Type=Application
+Icon=ants.png
+Categories=Game;LogicGame;
+X-Desktop-File-Install-Version=0.28

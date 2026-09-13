@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Alex the Allegator 4
+Comment=Old school platform game
+Exec=alex4
+Icon=alex4.png
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;ArcadeGame;ActionGame;
+Keywords=Game;Arcade;Platform;Retro;
+X-Desktop-File-Install-Version=0.28

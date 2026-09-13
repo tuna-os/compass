@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Encoding=UTF-8
+Name=Berusky
+Comment=Rescue the bugs!
+Exec=berusky
+StartupNotify=false
+Terminal=false
+Type=Application
+Icon=berusky
+Categories=Game;LogicGame;
+X-Desktop-File-Install-Version=0.28

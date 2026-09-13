@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=cfdg-fe
+GenericName=cfdg-fe
+Comment=contextfee front end
+Exec=cfdg-fe
+Icon=cfdg-fe-icon
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Graphics;
+X-Desktop-File-Install-Version=0.28

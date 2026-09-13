@@ -1,0 +1,13 @@
+
+[Desktop Entry]
+Name=CardManager
+GenericName=Card-Manager
+Comment=This is free, opensource multiplatform (java) application which allows you to play ANY card game. 
+Exec=CardManager
+Icon=CardManager
+Terminal=false
+Type=Application
+Categories=Game;
+
+Name[en_US]=CardManager
+X-Desktop-File-Install-Version=0.28

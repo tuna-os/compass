@@ -1,0 +1,14 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=CDCollect
+Name[cs]=CDCollect
+Name[es]=CDCollect
+Comment=GNOME CD/DVD catalog application
+GenericName=CD/DVD Collector
+Exec=cdcollect
+Icon=cdcollect.png
+StartupNotify=true
+Terminal=false
+Type=Application
+Categories=GTK;GNOME;Utility;
+X-Desktop-File-Install-Version=0.28

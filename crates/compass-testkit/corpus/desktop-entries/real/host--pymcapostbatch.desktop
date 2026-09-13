@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=PyMcapostbatch
+Comment=PyMca batch result analysis application
+GenericName=Batch result analyzor
+Exec=pymcapostbatch
+Icon=PyMca
+Terminal=false
+StartupNotify=true
+Type=Application
+Categories=Education;Science;DataVisualization;Physics;
+X-Desktop-File-Install-Version=0.28

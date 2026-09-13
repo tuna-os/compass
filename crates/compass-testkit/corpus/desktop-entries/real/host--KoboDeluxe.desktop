@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Kobo Deluxe
+Comment=3'rd person scrolling 2D shooter
+Exec=kobodl
+Icon=KoboDeluxe
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;ArcadeGame;
+Keywords=Game;Arcade;Shooter;Scroller;Retro;
+X-Desktop-File-Install-Version=0.28

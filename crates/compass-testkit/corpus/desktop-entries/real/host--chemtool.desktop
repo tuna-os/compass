@@ -1,0 +1,14 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Chemtool
+Comment=The molecules drawing program (2D)
+Comment[cs]=Kreslení chemických vzorců
+Comment[de]=Moleküleditor
+Comment[pl]=Edytor molekuł
+Exec=chemtool 
+Icon=chemtool
+Terminal=false
+Type=Application
+MimeType=application/x-chemtool
+Categories=Application;Chemistry;Education;Science;
+X-Desktop-File-Install-Version=0.28

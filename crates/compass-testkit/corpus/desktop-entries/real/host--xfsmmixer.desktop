@@ -1,0 +1,12 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=xfsmmixer
+GenericName=xfsmmixer
+Comment=AX25-tools kernel soundcard radio modem driver mixer utility
+Exec=xfsmmixer
+Icon=ax25-tools
+Terminal=false
+Type=Application
+Categories=Network;HamRadio;
+Version=1.0
+X-Desktop-File-Install-Version=0.28

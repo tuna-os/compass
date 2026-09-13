@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=ClanBomber
+Comment=Bomberman-like multiplayer game
+Exec=clanbomber
+Icon=clanbomber
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;ArcadeGame;ActionGame;
+Keywords=game;bomberman;bomber;clanbomber;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=ccGo
+Comment=Play the game of Go
+TryExec=/usr/bin/ccgo
+Exec=/usr/bin/ccgo
+Icon=/usr/share/pixmaps/ccgo/ccgo.png
+Terminal=false
+Type=Application
+Categories=GNOME;Game;BoardGame;

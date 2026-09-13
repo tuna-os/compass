@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Crystal Stacker
+Comment=Match 3 or more crystals of the same color in a row
+Exec=crystal-stacker
+Icon=crystal-stacker
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;BlocksGame;
+Keywords=Game;Blocks;Columns;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Cell Broadcast Daemon
+Comment=Store Cell Broadcast messages
+Exec=/usr/libexec/cellbroadcastd
+Categories=System;
+NoDisplay=true
+Icon=dialog-warning-symbolic

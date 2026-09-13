@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=CM RGB
+Comment=Configure AMD Wraith Prism / CM RGB LED lighting
+Exec=cm-rgb-gui
+Icon=preferences-desktop-color
+Terminal=false
+Categories=Settings;HardwareSettings;
+StartupNotify=true

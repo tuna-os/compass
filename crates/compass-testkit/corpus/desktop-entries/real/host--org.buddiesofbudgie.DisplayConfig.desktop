@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Displays (New)
+Exec=org.buddiesofbudgie.DisplayConfig
+Icon=preferences-desktop-display
+Type=Application
+Terminal=false
+Categories=Utility

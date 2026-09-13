@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Macaulay2
+Exec=M2
+Icon=Macaulay2
+Terminal=true
+Type=Application
+Categories=ConsoleOnly;Education;Math;
+X-Desktop-File-Install-Version=0.28

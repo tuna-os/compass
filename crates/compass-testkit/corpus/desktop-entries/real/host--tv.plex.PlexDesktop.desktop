@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Plex
+Comment=Plex client for desktop computers
+Exec=PlexDesktop
+Icon=tv.plex.PlexDesktop
+Terminal=false
+Categories=AudioVideo;Player;X-Media;
+X-Flatpak=tv.plex.PlexDesktop

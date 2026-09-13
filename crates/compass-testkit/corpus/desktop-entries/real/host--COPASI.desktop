@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Name=CopasiUI
+Comment=Use COPASI by a Graphical User Interface
+Exec=CopasiUI --copasidir /usr
+Icon=/usr/share/icons/copasi/icons/Copasi48-Alpha.xpm
+Terminal=false
+Type=Application
+Categories=Science;

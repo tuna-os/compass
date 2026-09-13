@@ -1,0 +1,12 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=xfhdlcsd
+GenericName=xfhdlcsd
+Comment=AX25-tools kernel HDLC radio modem driver status display utility
+Exec=xfhdlcsd
+Icon=ax25-tools
+Terminal=false
+Type=Application
+Categories=Network;HamRadio;
+Version=1.0
+X-Desktop-File-Install-Version=0.28

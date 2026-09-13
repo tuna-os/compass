@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Thesaurus
+Comment=Lookup words in a thesaurus
+Exec=gaiksaurus
+Icon=aiksaurus.png
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=GNOME;Application;Utility;
+X-Desktop-File-Install-Version=0.28

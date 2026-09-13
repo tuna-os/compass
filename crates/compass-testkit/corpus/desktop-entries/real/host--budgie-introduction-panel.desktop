@@ -1,0 +1,37 @@
+[Desktop Entry]
+Name[ca]=Introducció
+Name[en_GB]=Introduction
+Name[et]=Sissejuhatus
+Name[kk]=Кіріспе
+Name[nl]=Introductie
+Name[oc]=Introduccion
+Name[pl]=Wstęp
+Name[zh_TW]=介紹
+Name=Introduction
+Comment[ca]=Comenceu a usar l'escriptori Budgie
+Comment[en_GB]=Get started with Budgie Desktop
+Comment[et]=Alusta Budgie töölaua kasutamist
+Comment[kk]=Budgie Desktop-пен жұмысты бастау
+Comment[nl]=Aan de slag met Budgie Desktop
+Comment[oc]=Començatz amb Budgie Desktop
+Comment[pl]=Rozpocznij korzystanie z Budgie Desktop
+Comment[zh_TW]=開始使用 Budgie 桌面環境
+Comment=Get started with Budgie Desktop
+Exec=budgie-control-center introduction
+Icon=preferences-system
+Terminal=false
+Type=Application
+NoDisplay=true
+StartupNotify=true
+Categories=GNOME;GTK;Settings;DesktopSettings;X-GNOME-Settings-Panel;X-GNOME-PersonalizationSettings;
+OnlyShowIn=Budgie;
+# Translators: Search terms to find the Introduction panel
+Keywords[ca]=benvinguda;primers passos;visita guiada;primera vegada;configuració;guia;
+Keywords[en_GB]=welcome;getting started;tour;first time;setup;guide;
+Keywords[et]=welcome;getting started;tour;first time;setup;guide;sissejuhatus;juhend;tere;tulemast;
+Keywords[kk]=welcome;getting started;tour;first time;setup;guide;қош келдіңіз;бастау;шолу;бірінші рет;орнату;нұсқаулық;
+Keywords[nl]=welkom;aan de slag;tour;eerste keer;instellingen;gids;
+Keywords[oc]=benvengut;benvenguda; paramètres; configuracion;començar;visita; primièr còp;installacion;guida;
+Keywords[pl]=Witamy; Pierwsze kroki; Wycieczka; Pierwszy raz; Konfiguracja; Przewodnik;
+Keywords[zh_TW]=welcome;getting started;tour;first time;setup;guide;歡迎;開始使用;導覽;第一次;設定;導引
+Keywords=welcome;getting started;tour;first time;setup;guide;

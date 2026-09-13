@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Peakidentifier
+Comment=Given an energy and a threshold, list all the elements emitting X-rays in the range
+GenericName=List the possible elements of a given photon energy
+Exec=peakidentifier
+Icon=PyMca
+Terminal=false
+StartupNotify=true
+Type=Application
+Categories=Education;Science;DataVisualization;Physics;
+X-Desktop-File-Install-Version=0.28

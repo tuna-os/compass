@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Bitmap
+GenericName=X Window Bitmaps Editor
+Comment=xBitmap editor for the X Window System
+Exec=bitmap
+Icon=bitmap
+Terminal=false
+Type=Application
+Categories=Utility;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=xfhdlcchpar
+GenericName=xfhdlcchpar
+Comment=AX25-tools kernel HDLC radio modem driver channel parameter utility
+Exec=xfhdlcchpar
+Icon=ax25-tools
+Terminal=false
+Type=Application
+Categories=Network;HamRadio;
+Version=1.0
+X-Desktop-File-Install-Version=0.28

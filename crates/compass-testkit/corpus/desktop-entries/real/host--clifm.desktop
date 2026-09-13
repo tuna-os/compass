@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Clifm
+Comment=The command-line file manager
+GenericName=File Manager
+Icon=clifm
+Terminal=true
+Exec=clifm %F
+Categories=ConsoleOnly;System;FileTools;FileManager
+MimeType=inode/directory;
+Keywords=File;Directory;Manager;Browser;Explorer;Launcher

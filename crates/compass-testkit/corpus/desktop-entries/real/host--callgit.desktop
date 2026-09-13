@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=CallGit
+GenericName=CallGit
+Exec=callgit
+Icon=/usr/share/pixmaps/Ham_Icon-1-48.png
+Terminal=false
+Type=Application
+Categories=Qt;Network;HamRadio;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Datovka
+GenericName=Datovka
+Terminal=false
+Exec=datovka
+Icon=datovka
+Comment=A free graphical user interface for Datove schranky
+Comment[cs]=Svobodné uživatelské rozhraní pro Datové schránky
+Categories=Office;
+Keywords=ISDS;
+Keywords[cs]=ISDS;datová;zpráva;pošta;

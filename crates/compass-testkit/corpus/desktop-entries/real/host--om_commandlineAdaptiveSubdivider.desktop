@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=OpenMesh commandlineAdaptiveSubdivider
+Exec=/usr/lib64/OpenMesh/commandlineAdaptiveSubdivider
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=Utility;Science
+X-Desktop-File-Install-Version=0.28

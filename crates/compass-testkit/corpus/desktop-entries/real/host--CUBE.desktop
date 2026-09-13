@@ -1,0 +1,11 @@
+[Desktop Entry]
+Comment=Performance profile browser CUBE
+Exec=/usr/bin/cube
+Icon=/usr/share/icons/cubegui/Cube.xpm
+InitialPreference=3
+MimeType=application/cube;
+Name=Cube (scalasca.org)
+Terminal=false
+Type=Application
+Categories=Science;ComputerScience;DataVisualization;
+X-Desktop-File-Install-Version=0.28

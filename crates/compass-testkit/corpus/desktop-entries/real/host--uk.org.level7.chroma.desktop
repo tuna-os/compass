@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Chroma
+Comment=Abstract puzzle game
+Exec=chroma
+Icon=chroma
+Terminal=false
+Categories=Game;
+StartupNotify=false

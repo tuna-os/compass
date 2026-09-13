@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Ball: Buster
+Comment=Move the paddle to bounce the ball and break all the bricks
+Exec=ballbuster-wrapper
+Icon=ballbuster
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;ArcadeGame;BlocksGame;
+Keywords=game;blocks;bricks;buster;
+X-Desktop-File-Install-Version=0.28

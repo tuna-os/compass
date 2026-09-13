@@ -1,0 +1,12 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=cave9
+GenericName=3d cave game.
+Comment=Sfcave goes 3d.
+Exec=cave9
+Icon=cave9.png
+Terminal=false
+Type=Application
+Categories=Game;ArcadeGame;
+X-Desktop-File-Install-Version=0.28
+

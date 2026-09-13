@@ -1,0 +1,30 @@
+[Desktop Entry]
+Exec=denemo %F
+Icon=org.denemo.Denemo
+StartupNotify=true
+Terminal=false
+Type=Application
+Categories=GNOME;Audio;AudioVideo;Music;Education;X-Notation;
+MimeType=audio/midi;application/denemo;
+
+Name=GNU Denemo
+Name[de]=GNU Denemo
+Name[en]=GNU Denemo
+Name[fr]=GNU Denemo
+Name[it]=GNU Denemo
+
+GenericName=Score Editor
+GenericName[de]=Notensatzprogramm
+GenericName[en]=Score Editor
+GenericName[fr]=Éditeur de partitions musicales
+GenericName[it]=Compositore per spartiti
+
+Comment=Edit musical scores
+Comment[de]=Partituren editieren
+Comment[en]=Edit musical scores
+Comment[fr]=Éditeur de partitions musicales
+Comment[it]=Compone gli spartiti musicali
+
+Keywords=music;notation;compose;transcribe;
+Keywords[de]=Musik;Notation;Komponieren;Transkribieren;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Servatrice
+Exec=servatrice
+Icon=servatrice
+Categories=Game;CardGame;
+Terminal=true
+Comment=Game server for Cockatrice
