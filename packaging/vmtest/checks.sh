@@ -22,6 +22,8 @@ SPIKE_ERR=/tmp/compass-spike-a.err
 SPIKE_DONE=/tmp/compass-spike-a.done
 UI_ERR=/tmp/compass-ui.err
 UI_DONE=/tmp/compass-ui.done
+CONTROL_ERR=/tmp/compass-control-app.err
+CONTROL_DONE=/tmp/compass-control-app.done
 
 # uid of the autologin user. Everything about a session is addressed by it.
 uid() { id -u "$SESSION_USER"; }
@@ -40,6 +42,21 @@ wait_for() {
     sleep 2
   done
   echo "$what: after ${SECONDS}s"
+}
+
+# True when some process is running the named binary, or when the sentinel says
+# it already exited. Compares the resolved /proc/PID/exe rather than matching a
+# command line, so it cannot match the shell that is doing the asking.
+exe_running() {
+  local want="$1" sentinel="$2" exe
+  [ -f "$sentinel" ] && return 0
+  for d in /proc/[0-9]*; do
+    exe="$(readlink "$d/exe" 2>/dev/null || true)"
+    case "$exe" in
+      */"$want") return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # The session's Wayland socket name. Read from the runtime directory rather than
@@ -434,6 +451,73 @@ sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=deb
   # Assert the launcher is still up, and say what it printed.
   #
   # Run after the host has screenshotted and typed at it. A launcher that
+  # The control this job should have had from the start: can ANY client draw
+  # in this session?
+  #
+  # Everything measured so far says our launcher does not put a window on
+  # screen. None of it distinguishes that from *nothing* putting a window on
+  # screen — a session where no client can render at all would produce exactly
+  # the same evidence, and would exonerate the launcher entirely. The desktop
+  # itself painting (deviation 0.1564) does not settle it: that is GNOME Shell
+  # compositing its own furniture, not a client surface.
+  #
+  # So: start a stock GNOME application and let the host screenshot. If it
+  # draws and ours does not, the fault is ours. If neither draws, the fault is
+  # the session, and every conclusion about the launcher is void.
+  #
+  # The application is chosen at runtime from what the image actually has,
+  # rather than guessed at here: a hard-coded name that is absent reads as
+  # "the control failed" when it means "the control never ran".
+  control-app-start)
+    u="$(uid)"
+    : > "$CONTROL_ERR"
+    rm -f "$CONTROL_DONE"
+
+    app=""
+    for candidate in gnome-text-editor nautilus gnome-calculator ptyxis gnome-terminal gedit; do
+      if command -v "$candidate" >/dev/null 2>&1; then app="$candidate"; break; fi
+    done
+    if [ -z "$app" ]; then
+      echo "no stock GNOME application found to use as a control" >&2
+      echo "tried: gnome-text-editor nautilus gnome-calculator ptyxis gnome-terminal gedit" >&2
+      exit 1
+    fi
+    echo "control application: $app"
+
+    setsid bash -c '
+      runuser -u "$1" -- env \
+        XDG_RUNTIME_DIR="/run/user/$2" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$2/bus" \
+        WAYLAND_DISPLAY="$3" \
+        XDG_SESSION_TYPE=wayland \
+        "$4" > "$5" 2>&1
+      echo "$?" > "$6"
+    ' _ "$SESSION_USER" "$u" "$(wayland_display)" "$app" \
+      "$CONTROL_ERR" "$CONTROL_DONE" \
+      < /dev/null >> "$CONTROL_ERR" 2>&1 &
+
+    # NOT pgrep. `-f "$app"` would match the shell evaluating it, because the
+    # app's name is in that shell's own command line — the same reflexivity
+    # that cost Spike A's collector 180s a run, and which I wrote again here
+    # before catching it. `-x` is no escape either: comm is truncated to 15
+    # characters, so `gnome-text-editor` is `gnome-text-edit` and an exact
+    # match silently never fires.
+    #
+    # Comparing /proc/PID/exe has neither problem: it is the resolved binary,
+    # not a string anyone typed, and it is not truncated. `exe_running` is a
+    # function, which works because wait_for invokes "$@" in this same shell.
+    wait_for "the control application to appear, or exit" 90 \
+      exe_running "$app" "$CONTROL_DONE"
+
+    if [ -f "$CONTROL_DONE" ]; then
+      echo "the control application exited $(cat "$CONTROL_DONE"); its output follows"
+      cat "$CONTROL_ERR"
+    else
+      echo "the control application is running"
+      cat "$CONTROL_ERR"
+    fi
+    ;;
+
   # crashed on the first keystroke is a real bug and would otherwise be visible
   # only as two screenshots that happen to look similar.
   launcher-status)

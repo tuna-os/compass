@@ -837,6 +837,49 @@ in the code rather than discovered in the guest: a *connected* AF_UNIX socket
 has an empty path column, so it names listening sockets and leaves client ends
 unnamed. Checked on this machine before shipping.
 
+### The control this job should have had from the start
+
+Every measurement so far says our launcher puts no window on screen. **None of
+them distinguishes that from nothing being able to.** A session in which no
+client can render at all would produce byte-for-byte the same evidence, and
+would exonerate the launcher completely.
+
+The desktop painting does not settle it. Deviation 0.1564 is GNOME Shell
+compositing its own furniture — a top bar, a wallpaper — not a client surface.
+No client application has been shown to draw in this session, ever, by any job
+in this tier.
+
+So `checks.sh control-app-start` launches a stock GNOME application and the
+host screenshots it. If it draws and ours does not, the fault is ours. If
+neither draws, the fault is the session and every conclusion about the launcher
+above is void. This is the same assertion-plus-control shape as Spike B and the
+Super-alone keypress, and it should have been here in the first version of the
+job rather than three runs later.
+
+The application is picked at runtime from what the image actually has, rather
+than hard-coded: a name that turns out to be absent reads as "the control
+failed" when it means "the control never ran", and those are opposite
+conclusions.
+
+**A note on the predicate, because this is the fourth time.** The obvious way to
+wait for that application is `pgrep -f "$app"`, and it is wrong for the same
+reason it was wrong in Spike A's collector: the app's name is in the command
+line of the shell doing the matching, so the predicate matches itself and is
+true immediately. `pgrep -x` is not the escape either — `comm` is truncated to
+15 characters, so `gnome-text-editor` is `gnome-text-edit` and an exact match
+silently never fires. The check compares the resolved `/proc/PID/exe` instead,
+which is neither a string anyone typed nor truncated. Tested three ways before
+shipping: absent binary, running binary, and the sentinel short-circuit.
+
+That failure mode has now appeared four times in this tier — `pgrep -f` in the
+collector, `ls /proc/*/fd | grep wayland-` in the first launcher predicate,
+`pgrep -c` in a throwaway wait loop, and `pgrep -f` again here. Three were
+caught by testing the predicate before trusting it. The one that was not cost
+seventy minutes of a loop that could never terminate. **A predicate that has
+not been run against both a true and a false case is not a predicate, it is a
+guess** — which is the same rule this ADR already applies to sandboxes and
+paint gates, arrived at from a different direction.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through
