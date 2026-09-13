@@ -138,6 +138,44 @@ jobs:
               print(f\"  {c['status']:5} {c['name']}\")
           "
 
+      # Spike B (#3), and the reason it lives here rather than only in the VM
+      # tier: the question is whether Landlock and seccomp nest inside
+      # bubblewrap's sandbox, and this is a real Flatpak — same bwrap, same
+      # dropped privileges, same pre-installed seccomp filter. It answers in
+      # three minutes where the VM takes twenty-five. The VM still runs it too,
+      # because the kernel differs and Landlock's ABI is a kernel property.
+      #
+      # Not gated. Every outcome is a finding, including "neither confines a
+      # process here" — which would be a fact about Phase 4's design rather than
+      # a broken build.
+      - name: "Spike B: does a sandbox nest inside the Flatpak?"
+        run: |
+          flatpak run --user com.vicinae.Vicinae spike sandbox | tee /tmp/spike-b.txt
+          flatpak run --user com.vicinae.Vicinae spike sandbox --json > /tmp/spike-b.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open('/tmp/spike-b.json'))
+          assert r['in_flatpak'], "not inside a Flatpak — this run answers the wrong question"
+          # The one thing worth failing on: a filter the kernel says is loaded
+          # while the call it blocks still succeeds means the spike is wrong,
+          # not the platform. That distinction is the whole value of the field.
+          if r['seccomp_applied'] and r['seccomp_denies_blocked_syscall'] is False:
+              print(f"::warning::seccomp loaded ({r['seccomp_mode']}) but inert — "
+                    "check the blocked syscall numbers before believing this")
+          print('verdict evidence:', json.dumps({k: r[k] for k in (
+              'kernel', 'landlock_status', 'landlock_denies_outside',
+              'seccomp_mode', 'seccomp_denies_blocked_syscall')}, indent=2))
+          PY
+
+      - name: Upload the Spike B report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-b-flatpak
+          path: /tmp/spike-b.*
+          retention-days: 14
+          if-no-files-found: warn
+
       # A single file, not the ostree repo. The VM tier consumes this through the
       # artifact store, and a repo is thousands of small files whose on-disk modes
       # an artifact round trip does not promise to preserve; a bundle is one blob
