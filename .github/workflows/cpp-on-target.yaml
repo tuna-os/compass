@@ -121,18 +121,37 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p ~/.cache/ccache
+          # The ccache mount lands on /ccache, not on the conventional
+          # /root/.cache/ccache. The first attempt used the latter and crun
+          # refused it:
+          #
+          #   creating `/root/.cache/ccache`: openat2 `root`: No such file or
+          #   directory
+          #
+          # The component that fails to resolve is `root` itself, so /root does
+          # not exist as a real directory in this image — bootc images point it
+          # at /var/roothome, which a container has no reason to populate.
+          # Asking podman to create a mount point beneath a dangling symlink is
+          # the bug; a top-level path with no such history avoids it.
           # Same image and same dependency list as the configure job above,
           # via the same script, so the two cannot drift apart. The expensive
           # half is deliberately gated on `needs: configure`: if a package name
           # is wrong, that job says so in a minute rather than this one saying
           # so in twenty.
           podman run --rm \
-            -v "$PWD:/src:z" -v "$HOME/.cache/ccache:/root/.cache/ccache:z" \
-            -e CCACHE_DIR=/root/.cache/ccache -e CCACHE_MAXSIZE=2G \
+            -v "$PWD:/src:z" -v "$HOME/.cache/ccache:/ccache:z" \
+            -e CCACHE_DIR=/ccache -e CCACHE_MAXSIZE=2G \
             -w /src \
             ghcr.io/ublue-os/bluefin:stable bash -euxo pipefail -c '
               ./scripts/runners/bluefin/install-deps.sh
               dnf install -y --setopt=install_weak_deps=False ccache
+
+              # Checked before the build rather than after it. ccache degrades
+              # silently when its directory is unwritable — every compile is a
+              # miss and the job simply takes twenty minutes every time — so a
+              # broken mount would otherwise look like success.
+              test -w "$CCACHE_DIR"
+              ccache --zero-stats
 
               cmake -S . -B /tmp/build -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
