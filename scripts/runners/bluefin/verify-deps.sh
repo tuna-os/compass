@@ -34,11 +34,27 @@ set -euo pipefail
 
 status=0
 
+# check_header <header> [prelude line...]
+#
+# The prelude matters, and its absence made this script's first run report a
+# false negative. A probe that says MISSING for a header that is installed is
+# worse than no probe at all: it blocks a build that would have worked, and it
+# points at the wrong fix. So a header is probed the way the TREE includes it,
+# not in isolation.
 check_header() {
-    if echo "#include <$1>" | c++ -fsyntax-only -x c++ - 2>/dev/null; then
-        echo "  header ok      $1"
+    local header="$1"
+    shift
+    local src=""
+    local line
+    for line in "$@"; do
+        src+="$line"$'\n'
+    done
+    src+="#include <$header>"$'\n'
+
+    if printf '%s' "$src" | c++ -fsyntax-only -x c++ - 2>/dev/null; then
+        echo "  header ok      $header"
     else
-        echo "  header MISSING $1"
+        echo "  header MISSING $header"
         status=1
     fi
 }
@@ -61,7 +77,14 @@ check_header wayland-client.h
 check_header xcb/xcb.h
 check_header xcb/xproto.h
 check_header xcb/xcb_keysyms.h
-check_header xcb/xkb.h
+# xcb/xkb.h declares a field called `explicit`, so it does not compile as C++
+# on its own. src/server/src/internal/keyboard/x11-layout-resolver.cpp:3-6
+# includes xcb/xcb.h and then #defines the keyword away before including it,
+# and this probe has to do the same. Probing it bare reported MISSING against a
+# Bluefin image that HAD the header — the previous full build compiled that
+# same file past line 6 and failed at line 8, which is how the false negative
+# was caught.
+check_header xcb/xkb.h '#include <xcb/xcb.h>' '#define explicit explicit_'
 check_header openssl/evp.h
 check_header openssl/kdf.h
 check_header openssl/rand.h
