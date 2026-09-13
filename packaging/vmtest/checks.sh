@@ -17,6 +17,8 @@ APP=com.vicinae.Vicinae
 INSTALLATION=compass
 SESSION_USER=compass
 REPORT=/tmp/compass-doctor.json
+SPIKE_OUT=/tmp/compass-spike-a.json
+SPIKE_ERR=/tmp/compass-spike-a.err
 
 # uid of the autologin user. Everything about a session is addressed by it.
 uid() { id -u "$SESSION_USER"; }
@@ -120,6 +122,50 @@ if bad:
     sys.exit('not ok in a real GNOME session: ' + ', '.join(bad))
 print('\nall gated checks ok:', ', '.join(required))
 PY
+    ;;
+
+  # ── Spike A ────────────────────────────────────────────────────────────────
+  #
+  # Two halves, because a host-side keypress has to happen between them. corral
+  # runs every --check over its own SSH connection and cannot interleave a host
+  # command, so Spike A is driven by scripts/vmtest/spike-a.sh after vmtest
+  # returns, against a VM left running.
+
+  # Start the spike detached and return once it says it is listening. Returning
+  # earlier would race: binding is a portal round trip and, on a first run, a
+  # permission dialog, and a key sent before the bind lands proves nothing.
+  spike-a-start)
+    u="$(uid)"
+    rm -f "$SPIKE_OUT" "$SPIKE_ERR"
+    # setsid and all three fds redirected: without that, ssh waits for the
+    # channel to close and this check never returns.
+    setsid runuser -u "$SESSION_USER" -- env \
+      XDG_RUNTIME_DIR="/run/user/$u" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$u/bus" \
+      WAYLAND_DISPLAY="$(wayland_display)" \
+      XDG_SESSION_TYPE=wayland \
+      flatpak run --installation="$INSTALLATION" "$APP" \
+        spike global-shortcut --trigger "${2:-SUPER+space}" --wait 120 --json \
+      > "$SPIKE_OUT" 2> "$SPIKE_ERR" < /dev/null &
+
+    wait_for "the spike to bind and start listening" 150 \
+      grep -q SPIKE-A-READY "$SPIKE_ERR"
+    cat "$SPIKE_ERR"
+    ;;
+
+  # Wait for the spike to finish — it exits on the first activation, or at its
+  # own deadline — and print the report. Deliberately does NOT assert that the
+  # shortcut fired: "GNOME refused to bind without a click nobody can give" is
+  # an answer to the question, not a broken run, and a gate here would turn the
+  # finding into a red X with no information in it.
+  spike-a-collect)
+    wait_for "the spike to finish" 180 bash -c '! pgrep -f "spike global-shortcut" >/dev/null'
+    echo '--- stderr ---'
+    cat "$SPIKE_ERR" 2>/dev/null || echo '(none)'
+    echo '--- report ---'
+    cat "$SPIKE_OUT"
+    python3 -c "import json,sys; json.load(open('$SPIKE_OUT'))" \
+      || { echo 'the spike produced no valid JSON report' >&2; exit 1; }
     ;;
 
   *)

@@ -274,6 +274,29 @@ and gates nothing.
 Not done, and not pretended to be: the GNOME Shell extension #18 also lists does
 not exist in this repository, so there is nothing to install.
 
+## Spike A is wired, and its answer is whatever GNOME says
+
+`vicinae spike global-shortcut` binds a shortcut through the GlobalShortcuts
+portal and waits; `scripts/vmtest/spike-a.sh` starts it in the guest, presses
+`meta_l spc` at QEMU's emulated keyboard from the host, and reads the report
+back. The job leaves the VM up (no `--rm`) because that host-side keypress
+cannot happen inside a corral `--check`, and a hotkey synthesised inside the
+session under test would prove nothing.
+
+**Nothing about the outcome is gated.** The job fails only if the spike produces
+no report. Every result it can record is an answer to the question #3 asks,
+including the one that is easiest to mistake for a broken run: GNOME may refuse
+to bind without a permission dialog that no CI can click. That would be a real
+finding about shipping a launcher on GNOME 50/51 — it belongs in the report, not
+behind a red X with no information in it.
+
+One judgement worth stating because it is a heuristic and not a fact:
+`trigger_matches_request` compares the wire syntax we send (`SUPER+space`) with
+the *display* text GNOME returns (`Super+Space`). Nothing in the specification
+requires those to be relatable, so the comparison normalises case, separators
+and the usual synonyms and can be fooled. Both strings are in the report
+verbatim so a reader never has to trust it.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through
