@@ -83,7 +83,7 @@ jobs:
                 qt6-qtshadertools-devel qt6-qttools-devel \
                 qt6-qtwayland-devel \
                 kf6-syntax-highlighting-devel extra-cmake-modules \
-                libqalculate-devel catch2-devel \
+                libqalculate-devel \
                 wayland-devel wayland-protocols-devel \
                 nodejs npm
 
@@ -91,11 +91,20 @@ jobs:
               qmake6 -query QT_VERSION || rpm -q qt6-qtbase
 
               echo "--- configure ---"
-              # Same flags as build-linux.yaml, so a difference here is the
-              # platform and not the options.
+              # BUILD_TESTS=OFF, unlike build-linux.yaml, and the first run of
+              # this job is why: Fedora 44 ships Catch2 2.13.10 and the tests
+              # require Catch2 3. There is no v3 package — checked, not assumed.
+              #
+              # That is the right answer rather than a workaround. Suite 0 diffs
+              # engine *behaviour* through `vicinae --engine=cpp --json`; it does
+              # not run the C++ unit tests. Those already run on Arch in
+              # build-linux.yaml, where Catch2 is v3, and building them again on
+              # Bluefin would prove nothing Suite 0 needs. Vendoring Catch2 3
+              # through FetchContent — as the build already does for qtkeychain,
+              # layer-shell and cmark-gfm — is available if that ever changes.
               cmake -S . -B /tmp/build -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
-                -DBUILD_TESTS=ON \
+                -DBUILD_TESTS=OFF \
                 -DUSE_SYSTEM_CMARK_GFM=OFF
             '
 

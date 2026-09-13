@@ -1037,6 +1037,23 @@ compiling 144k lines. About a minute against twenty-plus, and it answers the
 riskiest unknown — whether Fedora's packages cover what Arch's do — before the
 expensive half is written.
 
+It answered on its first run, and the answer is mostly yes:
+
+- **Every Qt6 component resolves.** Configure reached
+  `src/lib/script-command/CMakeLists.txt:26` before failing, which is well past
+  `find_package(Qt6 6.9 REQUIRED …)` and past `src/server`'s eleven components
+  including `GuiPrivate`. Fedora's Qt6 packaging covers what the engine needs.
+- **Catch2 does not.** Fedora 44 ships 2.13.10 and the tests require Catch2 3.
+  There is no v3 package — checked against Fedora's package database, not
+  assumed.
+
+The fix is `-DBUILD_TESTS=OFF` and it is the right answer rather than a
+workaround: Suite 0 diffs engine *behaviour* through
+`vicinae --engine=cpp --json`, not by running the C++ unit tests, and those
+already run on Arch in `build-linux.yaml` where Catch2 is v3. If they ever need
+to run on Bluefin, Catch2 3 can be vendored through `FetchContent` exactly as
+qtkeychain, layer-shell and cmark-gfm already are.
+
 Two further things this scoring makes concrete, which "the gate cannot be
 evaluated" hid:
 
