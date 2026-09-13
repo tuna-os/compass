@@ -336,6 +336,53 @@ corral's and lowering it would defeat the one pixel assertion the tier has. But
 if `--require-paint` starts flapping on the compass image, this is why, and the
 fix is to give the session something to draw rather than to move the line.
 
+## Spike A's first answer
+
+Measured on Bluefin 44 under QEMU, in a real GNOME Wayland session with the
+compass Flatpak installed:
+
+```json
+{
+  "portal": "available (interface v1)",
+  "requested_trigger": "LOGO+space",
+  "bind_outcome": "error: the portal did not answer `BindShortcuts` within 30s",
+  "bound": [],
+  "activated": false,
+  "waited_seconds": 120.0
+}
+```
+
+**Two of the three questions are answered, and the third is not.**
+
+1. **Is the GlobalShortcuts portal there?** Yes — `org.freedesktop.portal.Desktop`
+   exposes GlobalShortcuts at interface version 1. The premise of
+   `compass-portals` holds on the target.
+2. **Is binding permitted unattended?** No. `BindShortcuts` did not return
+   within 30 seconds.
+3. **Does a keypress reach us?** **Unknown, and this run says nothing about
+   it.** `activated: false` is not evidence about the keyboard: there was no
+   binding for `meta_l spc` to trigger. Spike A did not get far enough to ask
+   its own headline question.
+
+The obvious explanation for (2) is `xdg-desktop-portal-gnome` showing a consent
+dialog that no CI can click, leaving the D-Bus call outstanding. That is the
+likely answer and it is **not yet proven** — a portal backend simply failing to
+respond in a software-rendered session would look identical from the client
+side. The next run captures the framebuffer at the moment of the keypress,
+which is the one observation that separates "waiting for a human" from "broken":
+if a dialog is on screen, it is in that frame.
+
+If the dialog is confirmed, the question becomes whether the permission can be
+pre-seeded in the image so the bind completes unattended — and that, not the
+keypress, is what actually blocks Spike A. Whether Super+Space is *granted as
+requested* also remains unanswered, because nothing was granted at all.
+
+One incidental finding worth keeping: the trigger went out as `LOGO+space`, not
+`SUPER+space`. `Trigger` renders the Super key with the XDG spec's modifier name
+`LOGO`, which is correct — and it is why `triggers_look_equivalent` normalises
+`logo`, `super`, `meta` and `win` onto one another. Had it not, a successful
+bind would have been reported as a mismatch.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through

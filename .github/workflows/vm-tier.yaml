@@ -251,8 +251,16 @@ jobs:
         # Teed to a file so the driver's own output survives report.sh's serial
         # dump and can be reprinted last. pipefail so the step's status is the
         # driver's and not tee's.
+        #
+        # The chown is not optional and its position is the point: corral runs
+        # under sudo and creates vmtest-out as root, and the shell opens tee's
+        # file BEFORE the driver runs — so the driver chowning the directory
+        # itself, as it does, is too late. Without this the run works perfectly,
+        # prints everything, and then fails on `tee: Permission denied`, which
+        # is a spectacular way to lose an answer you already have.
         run: |
           set -o pipefail
+          sudo chown -R "$(id -un)" vmtest-out
           scripts/vmtest/spike-a.sh vmtest-out spike-a 2>&1 \
             | tee vmtest-out/spike-a-driver.log
 
@@ -274,6 +282,11 @@ jobs:
           # still buried. Test for the marker, and fall back to the whole file.
           if [ -f vmtest-out/spike-a.txt ] && grep -q '^--- report ---$' vmtest-out/spike-a.txt; then
             sed -n '/^--- report ---$/,$p' vmtest-out/spike-a.txt
+            # And the driver's own trace, always. A report can be produced by a
+            # run that still failed somewhere — that is exactly what happened —
+            # and finding out where has cost this job several deep log reads.
+            echo '--- and how the driver got there ---'
+            cat vmtest-out/spike-a-driver.log 2>/dev/null || echo '(no driver log)'
           elif [ -f vmtest-out/spike-a-driver.log ]; then
             # No report, so the interesting thing is how the driver died. This
             # is here because four separate diagnoses of this job have had to

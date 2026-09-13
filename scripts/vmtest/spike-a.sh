@@ -53,6 +53,14 @@ echo "=== 1. bind the shortcut in the guest ==="
 guest "$checks" spike-a-start "$trigger"
 
 echo
+echo '=== 1b. what is on screen at the moment we press ==='
+# The direct test of why a bind might not complete. If GNOME is showing a
+# consent dialog, it is in this frame, and nothing else distinguishes "the
+# portal is waiting for a human" from "the portal is broken". Best-effort: a
+# spike must not lose its answer because a screenshot failed.
+sudo -E "$(command -v corral)" screenshot "$vm" -o "$out/at-keypress.png" || true
+
+echo
 echo "=== 2. press it at QEMU's emulated keyboard ==="
 # meta_l and spc are QEMU key names, passed through unvalidated by corral, and
 # `key` presses them together. This is the step the issue flagged as expected to
