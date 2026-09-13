@@ -101,6 +101,13 @@ echo "=== 3b. and is it blocked in the same place after the keystroke? ==="
 guest "$checks" launcher-diagnose || true
 
 echo
+echo "=== 3b2. what does the launcher cost at idle? (Phase 1 gate) ==="
+# Phase 1's gate says "idle RSS < 30 MB" and nobody had measured it, because
+# until the launcher drew there was nothing to measure. Taken here, after the
+# window is up and before the control application starts competing for memory.
+guest "$checks" launcher-rss || true
+
+echo
 echo "=== 3c. can ANY client draw in this session? (the control) ==="
 # The control this job should have had from the start. Everything above says
 # our launcher puts no window on screen; none of it distinguishes that from

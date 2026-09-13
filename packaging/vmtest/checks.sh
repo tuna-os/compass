@@ -424,6 +424,10 @@ PY
     as_session libinput list-devices 2>/dev/null | grep -iE 'Device:|Capabilities:' \
       || echo '(libinput not available in the session; the kernel list above is the evidence)'
 
+    echo '--- which GNOME this is (Phase 1 gates on 50 and 51) ---'
+    as_session gnome-shell --version 2>/dev/null || echo '(gnome-shell --version unavailable)'
+    grep -E '^(NAME|VERSION|VERSION_ID)=' /etc/os-release 2>/dev/null || true
+
     echo '--- who else wants Super+Space ---'
     # Not exhaustive and not meant to be: these are the two schemas whose
     # defaults actually collide on this combination. Anything else that claims
@@ -603,6 +607,37 @@ sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=deb
             "$(basename "$fd")" "$ino" "${path:-(not listed)}" ;;
       esac
     done
+    ;;
+
+  # Phase 1's gate says "idle RSS < 30 MB". Nobody had measured it, because
+  # until the launcher drew there was nothing to measure.
+  #
+  # Read after the window is up and the run has gone quiet, which is what
+  # "idle" means here: the renderer has an adapter, the first frame is done,
+  # and nothing is being typed. RSS is taken from the host's /proc — a Flatpak
+  # process is an ordinary process to the kernel, and VmRSS is the number the
+  # gate is phrased in.
+  #
+  # Reported, not gated. A number measured once is not a budget, and a memory
+  # gate set from a single sample on a software-rendered VM would be the
+  # deviation mistake again in a different costume. It goes in the log so the
+  # gate can be set from a distribution later.
+  launcher-rss)
+    pid="$(pgrep -u "$SESSION_USER" -x vicinae | head -1 || true)"
+    if [ -z "$pid" ]; then
+      echo "no launcher process to measure" >&2
+      exit 1
+    fi
+    rss_kb="$(awk '/^VmRSS:/{print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)"
+    hwm_kb="$(awk '/^VmHWM:/{print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)"
+    printf 'launcher pid %s: VmRSS %s kB (%s MB), peak VmHWM %s kB (%s MB)\n' \
+      "$pid" "$rss_kb" "$((rss_kb / 1024))" "$hwm_kb" "$((hwm_kb / 1024))"
+    printf 'Phase 1 gate is "idle RSS < 30 MB": this run is %s MB — %s\n' \
+      "$((rss_kb / 1024))" \
+      "$( [ "$((rss_kb / 1024))" -lt 30 ] && echo 'under' || echo 'OVER, and recorded as such' )"
+    # Under llvmpipe the renderer keeps its own buffers, so a VM number is not
+    # a hardware number. Said here so nobody reads it as one.
+    echo 'note: software rendering, so this is an upper bound rather than the shipping figure'
     ;;
 
   # Assert the launcher is still up, and say what it printed.
