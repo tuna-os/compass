@@ -1008,9 +1008,28 @@ Ordered by what unblocks the most:
    components and pre-seeded; what remains is to read the first run that gets a binding, and in
    particular whether Super+Space survives GNOME's own claim on it.
 3. **Capture the C++ baseline on the target.** Today's parity suites compare the port against *our
-   reading* of the C++ source; this compares it against the C++ behaviour on the real OS. Note the
-   prerequisite nobody has costed yet: getting a Qt6 build into the VM, which the disabled AppImage
-   path used to provide.
+   reading* of the C++ source; this compares it against the C++ behaviour on the real OS.
+
+   The prerequisite — getting a Qt6 build into the VM — is now costed, and it is much cheaper than
+   this item assumed. The assumption was that it meant reviving the AppImage path, whose build-env
+   image compiles GCC 15.2 and Qt 6.10 from source and takes hours. **That source build is
+   AppImage's portability requirement, not the engine's**: `build-linux.yaml` already builds the
+   whole C++ engine against distro Qt, in an `archlinux:latest` container, in about two minutes,
+   from a dep list of a dozen packages.
+
+   So the route is to build the C++ engine **inside the Bluefin image itself** — it is a container
+   image, so `podman run` it, `dnf install` the Qt6 devel packages and build there — and layer the
+   resulting binary into the test image. Building in the exact image the VM boots is not fussiness:
+   `src/server/CMakeLists.txt` links `Qt6::GuiPrivate`, so the binary is bound to a specific Qt
+   build, and a `fedora:44` container would drift from a pinned Bluefin tag with no warning until
+   something crashed at load. One dnf transaction, one build job of roughly the Arch job's cost,
+   and no toolchain compiled from source anywhere.
+
+   Two things to check when it is written, neither expected to bite: Fedora splits the private
+   headers into `qt6-qtbase-private-devel` where Arch ships them in `qt6-base`, and the C++ engine
+   requires Qt ≥ 6.9 while Bluefin 44 carries 6.10.
+
+   The AppImage path stays disabled either way. Nothing here needs it.
 4. **Widen the parity port** — `compass-core`'s index against the harvested corpus, and the
    remaining Catch2 ordering cases into `compass-search`.
 5. **Promote the VM tier to the merge queue** once it has been stable for a couple of weeks
