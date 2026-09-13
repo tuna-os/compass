@@ -596,13 +596,48 @@ comparison that never compares. So the comparison is separately controlled: pert
 JSON test asserts the old `{key, name, score, quality}` shape is *rejected*, so it would have caught
 the original mismatch rather than passing either way.
 
-What remains on Suite 0 is one thing, and it is a design question rather than a chore:
+#### The C++ side: decided, in two rungs
 
-1. **Give the C++ engine the interface §8.1 assumes, or change §8.1 to diff through an interface the
-   C++ engine already has.** The second is probably cheaper, and this is a fork whose C++ tree we
-   are deleting — adding surface to it in order to support its own replacement needs justifying.
-   This one is not decided here.
-2. *Then* wire it into the VM tier, where the C++ binary now is. That step is genuinely just
+The question was whether to add the interface §8.1 assumes to the C++ engine, or to re-aim §8.1 at
+an interface it already has. **The second is not available**, which is worth stating rather than
+leaving as an option:
+
+- `src/cli` has no command that emits ranked results. Its `-q/--query` flags on `toggle` and `open`
+  send a deeplink that opens the window with fallback text; nothing prints a ranking.
+- The IPC protocol (`figura/ipc.fig`) has no ranked-search method either. Its only query is
+  `fsQuery`, which searches **files**, not root items.
+
+So there is no existing surface to diff through. What there *is*, and what changes the cost
+completely:
+
+**`vicinae::fuzzy` is a header-only INTERFACE library with no Qt dependency.** All five of its
+public headers compile standalone under plain `g++ -std=c++23` with nothing but their own include
+directory — verified, not assumed. The C++ scorer is separable from the server, the IPC, the window
+and Qt entirely.
+
+That gives a first rung far cheaper than anything previously costed:
+
+1. **A test-only probe binary linking `vicinae::fuzzy`**, emitting the same JSON for a query over a
+   corpus. Seconds to build, no Qt, no 812-object link, no VM, and no product surface added to a
+   tree we are deleting — it dies with `src/`. Diffed against `compass-search`, it covers the part
+   of ranking most likely to drift silently and least likely to be noticed: the scorer's bonus
+   constants and tie-breaks. §8.3 already ports all 21 Catch2 cases, but those compare against
+   *our reading* of the algorithm; this compares against the algorithm.
+
+2. **The full pipeline still needs the engine.** The probe is not a substitute and must not be
+   described as one. `RootItemManager::searchGroupedByProvider` wraps the scorer in provider
+   bucketing, a separate provider-name score, favourite and enabled filtering, and per-item
+   `fuzzyScore` — so scorer parity is not ranking parity, and Phase 1's gate names ranking. Closing
+   that means giving the C++ engine a ranked-output path: an IPC method, a server handler and a CLI
+   command. That is real work in a tree being deleted, and it is justified only because Suite 0 is
+   the migration's safety net — §12 item 3 exists precisely because every other parity test we have
+   compares the port against our reading of the C++ source rather than its behaviour.
+
+**Rung 1 first**, because it may catch most of the drift for a small fraction of rung 2's cost, and
+because it is buildable today on any machine with a C++23 compiler. Rung 2 is scoped as its own
+item rather than folded in.
+
+3. *Then* wire it into the VM tier, where the C++ binary now is. That step is genuinely just
    wiring, and it was not before.
 
 Three spellings of this harness's invocation were in the repository at once — `--cpp`/`--rust` in
