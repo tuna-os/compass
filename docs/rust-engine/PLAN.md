@@ -694,6 +694,39 @@ match contiguity and scoring scale.
 **Which engine is right is still not decided here**, and at this scale it is a real question about
 search behaviour rather than a bug with an obvious side.
 
+#### Where the divergence actually is
+
+Both `score_query` implementations normalise identically — `raw * 100 / self`, same structure, same
+tie-breaks. **The raw matcher is what differs**, and comparing it directly on single strings gives a
+reproducer small enough to debug:
+
+| haystack | needle | C++ raw | Rust raw | |
+|---|---|---|---|---|
+| `3` | `3` | 36 | 36 | agree (this is `self`) |
+| `Appearance` | `A` | 36 | 36 | agree — match at index 0 |
+| `System` | `Sy` | 62 | 62 | agree — contiguous |
+| `a3` | `3` | **30** | **26** | C++ higher |
+| `LibreOffice` | `O` | **30** | **26** | C++ higher |
+| `System` | `Se` | **29** | **47** | **Rust** much higher |
+| `Appearance` | `Ac` | **29** | **43** | **Rust** much higher |
+
+Matches at index 0 and fully contiguous matches agree exactly. Everything else diverges, and these
+are **two separate defects pulling opposite ways**:
+
+1. **A single character not at the start** scores 30 in C++ and 26 in Rust — a constant offset in
+   whatever bonus applies to a non-boundary position. This is the one that made the small corpus
+   look one-directional, because a 115-entry stock GNOME set is mostly short single-word names
+   where this is the only case that arises.
+2. **A non-contiguous multi-character match** scores 29 in C++ and 43–47 in Rust. Rust is applying a
+   far weaker gap penalty, which is why it accepts `Se`/`System` and `Ac`/`Appearance` where C++
+   rejects them outright at `MIN_QUALITY`.
+
+Defect 2 is the larger effect and the one the enlarged corpus exposed: longer, multi-word
+application names give non-contiguous alignments a chance to occur at all.
+
+That is where a fix starts — `compass-search`'s `Matcher`, not `score_weighted`, and the gap
+penalty before the boundary bonus.
+
 Rung 2 stays scoped as its own item.
 
 3. *Then* wire it into the VM tier, where the C++ binary now is. That step is genuinely just
