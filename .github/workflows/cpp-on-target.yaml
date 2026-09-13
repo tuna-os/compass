@@ -76,6 +76,12 @@ jobs:
             ghcr.io/ublue-os/bluefin:stable bash -euxo pipefail -c '
               ./scripts/runners/bluefin/install-deps.sh
 
+              # Catches what configure structurally cannot: dependencies this
+              # tree links by bare name or includes with no find_package behind
+              # them. A missing libxkbcommon-devel configures perfectly and
+              # then fails at object 624 of 812.
+              ./scripts/runners/bluefin/verify-deps.sh
+
               echo "--- what Qt did we get? ---"
               qmake6 -query QT_VERSION || rpm -q qt6-qtbase
 
@@ -153,6 +159,7 @@ jobs:
             ghcr.io/ublue-os/bluefin:stable bash -euxo pipefail -c '
               ./scripts/runners/bluefin/install-deps.sh
               dnf install -y --setopt=install_weak_deps=False ccache
+              ./scripts/runners/bluefin/verify-deps.sh
 
               # What /root actually is, recorded rather than assumed. Both
               # failures above are explained by it; the log should say so.

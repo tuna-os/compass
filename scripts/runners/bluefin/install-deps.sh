@@ -31,6 +31,22 @@
 # the xcb, xcb_keysyms and xcb_xkb components — rather than discovered one red
 # CI run at a time, which is how the first four revisions of this list were
 # found and is a poor way to spend cycles even cheap ones.
+#
+# THAT ENUMERATION WAS STILL INCOMPLETE, and a full build proved it at object
+# 624 of 812:
+#
+#   fatal error: xkbcommon/xkbcommon-x11.h: No such file or directory
+#
+# find_package is not the whole story. This tree also links by bare name —
+# `list(APPEND LIBS xkbcommon xkbcommon-x11)` at src/server/CMakeLists.txt:990,
+# and `xkbcommon udev` at src/snippet/CMakeLists.txt:28 — which CMake never
+# looks for at configure time, so a missing package configures cleanly and
+# fails eighteen minutes into the compile. libxkbcommon-devel,
+# libxkbcommon-x11-devel and systemd-devel (for libudev) cover those; udev was
+# found by the same sweep and would otherwise have been the next red run.
+#
+# verify-deps.sh next door checks that whole class in about a second, and both
+# jobs run it. Read its header before adding anything here.
 set -euo pipefail
 
 dnf install -y --setopt=install_weak_deps=False \
@@ -43,6 +59,8 @@ dnf install -y --setopt=install_weak_deps=False \
     layer-shell-qt-devel \
     libqalculate-devel \
     wayland-devel wayland-protocols-devel \
+    libxkbcommon-devel libxkbcommon-x11-devel \
+    systemd-devel \
     libsecret-devel openssl-devel \
     libX11-devel libxcb-devel xcb-util-keysyms-devel \
     nodejs npm
