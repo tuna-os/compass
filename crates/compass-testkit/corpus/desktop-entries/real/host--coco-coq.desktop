@@ -1,0 +1,10 @@
+[Desktop Entry]
+Encoding=UTF-8
+Type=Application
+Name=Coco Coq in Grostesteing's base
+Comment=AGI adventure game
+Exec=coco-coq-wrapper.sh
+Icon=coco-coq.xpm
+Terminal=false
+Categories=Game;AdventureGame;
+X-Desktop-File-Install-Version=0.28

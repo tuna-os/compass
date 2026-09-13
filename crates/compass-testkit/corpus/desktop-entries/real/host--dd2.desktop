@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Dodgin' Diamond 2
+Comment=Shoot'em up arcade game
+Exec=dd2
+Icon=dd2.png
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;ArcadeGame;
+X-Desktop-File-Install-Version=0.28

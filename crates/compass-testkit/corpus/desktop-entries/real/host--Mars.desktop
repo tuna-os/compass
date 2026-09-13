@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=MARS
+GenericName=MIPS Assembly Language Programming Environment
+Comment=Develop in assembly language for the MIPS family of processors
+Exec=Mars
+Terminal=false
+Type=Application
+Categories=Development;
+X-Desktop-File-Install-Version=0.28

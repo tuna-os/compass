@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Crystal Stacker Theme Editor
+Comment=Create new Themes for Crystal Stacker
+Exec=crystal-stacker-theme-editor
+Icon=crystal-stacker-theme-editor
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;BlocksGame;
+X-Desktop-File-Install-Version=0.28

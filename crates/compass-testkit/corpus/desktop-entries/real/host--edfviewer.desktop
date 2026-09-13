@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=EDFviewer
+Comment=Tool to visualize image files which format has been wrapped as EDF into PyMca
+GenericName=Simple ESRF Data Format(EDF) file viewer
+Exec=edfviewer
+Icon=PyMca
+Terminal=false
+StartupNotify=true
+Type=Application
+Categories=Education;Science;DataVisualization;Physics;
+X-Desktop-File-Install-Version=0.28

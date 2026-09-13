@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=PySol Fan Club Edition
+Comment=More than 1000 solitaire card games
+Exec=pysol
+StartupWMClass=Pysol
+Terminal=false
+Type=Application
+Categories=Game;CardGame;
+Keywords=solitaire;patience;cards;pysolfc;klondike;
+Icon=pysol
+X-Desktop-File-Install-Version=0.28

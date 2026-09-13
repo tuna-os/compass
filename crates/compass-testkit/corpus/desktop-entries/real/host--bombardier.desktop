@@ -1,0 +1,13 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Bombardier
+GenericName=Bombardier
+Comment=The GNU bombing utility
+Exec=bombardier
+Icon=bombardier-logo.png
+Terminal=true
+StartupNotify=false
+Type=Application
+Categories=Game;ArcadeGame;
+Version=1.0
+X-Desktop-File-Install-Version=0.28

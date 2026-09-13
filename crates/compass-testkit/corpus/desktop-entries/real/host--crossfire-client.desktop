@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Crossfire
+GenericName=Crossfire Client
+Comment=Cooperative multi-player RPG and adventure game
+Exec=crossfire-client-gtk2
+Icon=crossfire-client
+Terminal=false
+Type=Application
+Categories=Game;AdventureGame;RolePlaying;
+X-Desktop-File-Install-Version=0.28

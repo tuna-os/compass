@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Curblaster
+GenericName=Curblaster
+Comment=NCURSES sidecroller
+Exec=curblaster
+Icon=curblaster-logo
+Terminal=true
+StartupNotify=false
+Type=Application
+Categories=Game;ArcadeGame;
+X-Desktop-File-Install-Version=0.28

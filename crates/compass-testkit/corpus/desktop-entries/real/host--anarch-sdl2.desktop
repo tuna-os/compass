@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Anarch (SDL2)
+Comment=Public domain, anarcho-pacifict, suckless Doom clone (SDL2 version)
+Exec=anarch-sdl2
+Icon=anarch-sdl2
+Terminal=false
+Categories=Game;
+StartupNotify=false

@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name[ca]=Inici de Compiz
+Name[en_GB]=Compiz Start
+Name[hr]=Pokretanje Compiza
+Name[ru]=Запуск Compiz
+Name=Compiz Start
+GenericName[ca]=Inicia Compiz
+GenericName[en_GB]=Start Compiz
+GenericName[hr]=Pokreni Compiz
+GenericName[ru]=Запустить Compiz
+GenericName=Start Compiz
+Comment[ca]=Inicieu o reinicieu Compiz
+Comment[en_GB]=Start or restart Compiz
+Comment[hr]=Pokreni ili ponovno pokreni Compiz
+Comment[ru]=Запустить или перезапустить Compiz
+Comment=Start or restart Compiz
+Exec=compiz ccp --replace
+Icon=compiz
+StartupNotify=true
+Categories=Utility;
+NotShowIn=MATE
+X-Desktop-File-Install-Version=0.28

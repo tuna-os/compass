@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=GoldenCheetah
+GenericName=GoldenCheetah
+Comment=Cycling Performance Software
+Exec=GoldenCheetah
+Icon=GoldenCheetah
+Terminal=false
+Type=Application
+Categories=Education;
+X-Desktop-File-Install-Version=0.28

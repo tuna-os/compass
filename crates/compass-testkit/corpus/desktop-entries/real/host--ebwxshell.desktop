@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Exec=ebwxshell
+Icon=ebicon
+StartupNotify=true
+Terminal=false
+Categories=Office;Finance;
+Name=EekBoek
+Comment=Bookkeeping program for small to medium sized companies
+GenericName=Bookkeeping
+Name[nl]=EekBoek
+Comment[nl]=Eigenzinnig boekhouden voor kleine en middelgrote bedrijven
+GenericName[nl]=Boekhouden
+X-Desktop-File-Install-Version=0.28

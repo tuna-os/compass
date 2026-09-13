@@ -1,0 +1,15 @@
+[Desktop Entry]
+Name=Ardour 8.12.0
+Comment=Record, mix and master audio
+Exec=ardour8
+Icon=ardour8
+Terminal=false
+MimeType=application/x-ardour;
+Type=Application
+Categories=AudioVideo;Audio;X-Recorders;X-Multitrack;X-Jack;X-AudioEditing;
+StartupWMClass=Ardour
+X-NSM-Capable=true
+X-NSM-Exec=ardour8
+X-Desktop-File-Install-Version=0.28
+GenericName=Digital Audio Workstation
+X-GNOME-FullName=Ardour v8.12.0 (Digital Audio Workstation)

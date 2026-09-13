@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Encoding=UTF-8
+Name=bastet
+Comment=An evil falling bricks game
+Exec=bastet
+Icon=bastet
+Terminal=true
+Type=Application
+Categories=Game;ArcadeGame;
+X-Desktop-File-Install-Version=0.28

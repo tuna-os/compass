@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Angband (SDL2)
+Type=Application
+Comment=A roguelike dungeon exploration game based on the books of J.R.R.Tolkien
+Exec=angband-sdl
+TryExec=angband-sdl
+Icon=angband
+Categories=Game;RolePlaying;
+X-Desktop-File-Install-Version=0.28

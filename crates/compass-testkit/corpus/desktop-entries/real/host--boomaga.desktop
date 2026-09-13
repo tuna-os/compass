@@ -1,0 +1,56 @@
+[Desktop Entry]
+Exec=boomaga %U
+Icon=boomaga
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=Qt;Office;
+MimeType=application/x-boomaga-boo;
+
+Name=Boomaga
+GenericName=Virtual printer
+Comment=Virtual printer for viewing and editing a document before printing.
+
+Name[cs]=Boomaga
+Name[de]=Boomaga
+Name[el]=Boomaga
+Name[eu]=Boomaga
+Name[fr]=Boomaga
+Name[hu_HU]=Boomaga
+Name[it]=Boomaga
+Name[lt]=Boomaga
+Name[nb_NO]=Boomaga
+Name[nl_NL]=Boomaga
+Name[ro]=Boomaga
+Name[ru]=Boomaga
+Name[uk_UA]=Boomaga
+Name[uz@Latn]=Boomaga
+
+Comment[cs]=Virtuální tiskárna pro prohlížení a upravování dokumentu před vytištěním.
+Comment[de]=Virtueller Drucker zum Anzeigen und Bearbeiten eines Dokuments vor dem Druck.
+Comment[el]=Εικονικός εκτυπωτής για την προβολή και επεξεργασία ενός εγγράφου πριν την εκτύπωση.
+Comment[eu]=Inprimagailu birtuala dokumentu bat ikusi eta editatzeko inprimatu baino lehen.
+Comment[fr]=Imprimante virtuelle pour visualiser et modifier un document avant impression
+Comment[hu_HU]=Virtuális nyomtató a dokumentumok nyomtatás előtti átnézésére és szerkesztésére.
+Comment[it]=Stampante virtuale per la visualizzazione e la modifica di un documento prima della stampa.
+Comment[lt]=Virtualus spausdintuvas, skirtas dokumentų peržiūrai ir redagavimui prieš spausdinimą.
+Comment[nb_NO]=Virtuell skriver for visning og redigering av dokumenter før utskrift.
+Comment[nl_NL]=Virtuele printer voor het bekijken en aanpassen van een documenten vóór het afdrukken
+Comment[ro]=Imprimantă virtuală pentru vizualizarea și editarea unui document înainte de imprimare.
+Comment[ru]=Виртуальный принтер, позволяет посмотреть и изменить документ перед печатью.
+Comment[uk_UA]=Віртуальний принтер, який дає змогу переглянути і відредагувати документ перед друком.
+
+GenericName[cs]=Virtuální tiskárna
+GenericName[de]=Virtueller Drucker
+GenericName[el]=Εικονικός εκτυπωτής
+GenericName[eu]=Inprimagailu birtuala
+GenericName[fr]=Imprimante virtuelle
+GenericName[hu_HU]=Virtuális nyomtató
+GenericName[it]=Stampante virtuale
+GenericName[lt]=Virtualus spasdintuvas
+GenericName[nb_NO]=Virtuell skriver
+GenericName[nl_NL]=Virtuele printer
+GenericName[ro]=Imprimantă virtuală
+GenericName[ru]=Виртуальный принтер
+GenericName[uk_UA]=Віртуальний принтер
+

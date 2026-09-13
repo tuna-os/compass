@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=PyMca
+GenericName=X-Ray Fluorescence Toolkit
+Comment=A collection of Python tools for visualization and analysis of energy-dispersive X-ray fluorescence data
+Exec=pymca
+Icon=PyMca
+Terminal=false
+Type=Application
+Categories=Education;Science;DataVisualization;Physics;
+X-Desktop-File-Install-Version=0.28

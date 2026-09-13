@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Maelstrom
+Comment=Space combat game
+Exec=Maelstrom
+Icon=maelstrom.png
+Terminal=false
+Type=Application
+Categories=Game;ArcadeGame;
+Keywords=game;arcade;space;shooter;asteroids;
+X-Desktop-File-Install-Version=0.28

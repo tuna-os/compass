@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Ants! level editor
+Comment=Editor to make your own custom Ants! levels
+Exec=ants_le
+StartupNotify=false
+Terminal=false
+Type=Application
+Icon=ants.png
+Categories=Game;LogicGame;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Signal
+GenericName=Messenger
+Comment=Signal Private Messenger
+Icon=Signal-Desktop
+Exec=signal-desktop --use-tray-icon
+Categories=Network
+StartupNotify=true
+MimeType=x-scheme-handler/sgnl;
+StartupWMClass=signal

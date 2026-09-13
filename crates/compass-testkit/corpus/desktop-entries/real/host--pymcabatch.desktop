@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=PyMcabatch
+Comment=Batch fitting of X-ray Fluorescence Spectra
+GenericName=Storing fitted parameters
+Exec=pymcabatch
+Icon=PyMca
+Terminal=false
+StartupNotify=true
+Type=Application
+Categories=Education;Science;DataVisualization;Physics;
+X-Desktop-File-Install-Version=0.28

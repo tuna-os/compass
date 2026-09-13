@@ -643,30 +643,56 @@ on stdin, so a disagreement about which `Name=` line to take cannot masquerade a
 divergence.
 
 **Its first run found six queries where the two scorers disagree**, out of 293 derived from the
-corpus. Every one is the same shape — the query matches NON-CONTIGUOUSLY, and the Rust port is more
-permissive than the C++ engine:
+115-entry corpus. Every one had the query matching NON-CONTIGUOUSLY with the C++ engine stricter,
+and this section originally generalised that to "the Rust port is systematically more permissive".
 
-| query | entry | C++ | Rust |
-|---|---|---|---|
-| `Ac` | Appearance | rejected | 69 |
-| `Se` | System, System Monitor, System Update, GNOME System Monitor (KDE) | rejected | 75 |
-| `B` | IBus LibBopomofo Preferences | 83 | 72 |
-| `O` | LibreOffice, LibreOffice XSLT based filters | 83 | 72 |
-| `P` | IBus LibPinyin Setup | 83 | 72 |
-| `Py` | IBus LibPinyin Setup | 67 | 61 |
+**Both the count and the generalisation were artefacts of a small corpus, and the next harvest
+destroyed them.** At 738 real entries the same harness reports:
 
-The control is contiguity: `Sy` ranks the System entries at 100 on both sides; `Se` (S…e) drops
-them on the C++ side alone. The other 287 queries agree exactly, which is also what rules out a
-parsing or ordering artifact.
+| | |
+|---|---|
+| queries | 1685 |
+| identical | 1333 |
+| **divergent queries** | **352 (20.8%)** |
+| **divergent (query, entry) pairs** | **1417** |
+
+And the direction is not one-way:
+
+| shape | count |
+|---|---|
+| C++ rejected, Rust accepted | 771 |
+| both accepted, C++ higher | 440 |
+| both accepted, **Rust** higher | **145** |
+| **Rust** rejected, C++ accepted | **61** |
+
+C++ stricter or higher in 1211 cases, Rust in 206. So "systematically more permissive" describes
+the dominant direction and is false as a rule — 206 cases go the other way, and the 115-entry
+corpus contained none of them. One distribution's stock application set is not a sample.
+
+**The scorers genuinely differ, on a fifth of realistic queries.** That is a defect in the port and
+the largest single parity gap this project has measured. Suite 0 was specified to catch exactly
+this, and it did, on the first corpus big enough to show it.
+
+#### Why the assertion is a ratchet
+
+Enumerating 1417 exceptions is not a declaration, it is surrender: nobody reads a list that long,
+and one that long hides a regression as well as no check at all. So `scorer-parity` pins the
+measured totals and fails when they get **worse** — the regression it exists to catch — and also
+when they get **better**, because a baseline nobody lowers rots into a rubber stamp. Either way
+someone has to look at what changed before moving the number.
+
+The ratchet caught its own baseline being wrong on the first run: the figures were copied from a
+run that reported divergences minus the ten then declared, so it failed at 352/1417 against
+351/1407. Both directions are control-tested.
+
+**The target is zero. The baseline is a defect being held still, not an accepted state.**
 
 These are **not** the two divergences §8.3 and `PARITY.md` already declare — Latin Extended-A
-folding and an ordering case from upstream #946. Those are unrelated; these are all ASCII and all
-about match contiguity.
+folding and an ordering case from upstream #946. Those are unrelated; these are ASCII and about
+match contiguity and scoring scale.
 
-**Which engine is right is not decided here.** They are recorded as declared divergences so CI is
-honest about the current state and any *seventh* fails loudly. The list pins both sides' values, so
-a declaration that stops matching — or stops occurring at all — fails too: the harness caught two
-wrong entry ids in its own list that way, on its first run.
+**Which engine is right is still not decided here**, and at this scale it is a real question about
+search behaviour rather than a bug with an obvious side.
 
 Rung 2 stays scoped as its own item.
 
@@ -1123,7 +1149,7 @@ answerable today.
 
 | Gate criterion | State | Evidence |
 |---|---|---|
-| Suite 0 parity for app-search ranking on the **500-entry corpus** | ❌ **not met, but moving** | the corpus is **115** entries — 19 synthetic, 96 harvested — after the VM harvest. Was 27. Still 23% of what the gate names. |
+| Suite 0 parity for app-search ranking on the **500-entry corpus** | 🟡 **corpus met, parity not** | the corpus is **757** entries — 19 synthetic, 738 harvested — past the 500 the gate names. Parity over it is not met: the two scorers differ on 20.8% of queries (§8.1a). |
 | Runs from a Flatpak on Bluefin with **GNOME 50 and 51** | 🟡 **half** | it runs from a Flatpak on Bluefin in CI on every change. One GNOME, not two, and the version was not recorded — the evidence check now prints `gnome-shell --version`. |
 | **Idle RSS < 30 MB** | 🟡 **now measured** | never measured before, because there was nothing running to measure. `checks.sh launcher-rss` reads `VmRSS` once the window is up. Reported, not gated. |
 | **Works with no Shell extension installed** | ✅ **met** | we ship none at all (ADR-0004), the VM has none, and `doctor` records `gnome.shell-extension` as evidence rather than gating on it. |
@@ -1136,7 +1162,7 @@ things, and the corpus is only one:
 
 | Suite 0 needs | state |
 |---|---|
-| the desktop corpus | **115 of ~500** — partial, and growing |
+| the desktop corpus | **757, past the gate's ~500** — met |
 | a runner that diffs the two engines | **exists as a file, and does not yet work** — see below |
 | a C++ engine runnable on the target | **missing** |
 
@@ -1292,7 +1318,13 @@ Ordered by what unblocks the most:
    **What is left is NOT just wiring.** An earlier revision of this item said it was — "layer the
    tarball into the VM test image and have `checks.sh` run `parity --cpp-engine`". That was wrong
    in two ways, and measuring the harness rather than reading it is what showed them. See §8.1a.
-4. **Grow the corpus — a real constraint, though not the binding one.** An earlier revision of
+4. ~~**Grow the corpus**~~ — **done: 757 entries, past the gate's 500.** `corpus-harvest.yaml`
+   produced 730 desktop entries from 419 Fedora packages in about three minutes; 642 were new, and
+   the real set went from 96 to 738. What that harvest also did was destroy this section's
+   headline finding about scorer parity — see §8.1a. The remaining text is kept because the
+   reasoning that got here was wrong twice and both corrections are worth having.
+
+   **Original heading: grow the corpus — a real constraint, though not the binding one.** An earlier revision of
    this item called it "Phase 1's binding constraint" and put the count at 27. Both are now wrong:
    §11.2 retracted the first (Suite 0 is differential, so item 3 above is the keystone) and the VM
    harvest answered the second. The gate names a 500-entry corpus for Suite 0 ranking parity, and

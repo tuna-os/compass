@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=mca2EDF
+Comment=Convert SPEC file format files to EDF format
+GenericName=EDF format converter
+Exec=mca2edf
+Icon=PyMca
+Terminal=false
+StartupNotify=true
+Type=Application
+Categories=Education;Science;DataVisualization;Physics;
+X-Desktop-File-Install-Version=0.28

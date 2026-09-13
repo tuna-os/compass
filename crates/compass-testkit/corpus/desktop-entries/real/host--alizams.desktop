@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=AlizaMS
+GenericName=DICOM Viewer
+Comment=Medical Imaging
+Exec=/usr/bin/alizams %F
+Icon=alizams
+Terminal=false
+Categories=Graphics;
+StartupNotify=true
+MimeType=application/dicom;

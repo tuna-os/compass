@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Chocolate Heretic setup
+Exec=chocolate-heretic-setup
+Icon=chocolate-setup
+Type=Application
+Comment=Setup tool for Chocolate Heretic
+Categories=Settings;
+Keywords=first;person;shooter;doom;heretic;hexen;strife;vanilla;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Alsa Modular Synth
+Comment=Real time MIDI controlled synthesizer
+Exec=ams --jack
+Icon=ams_32
+Terminal=false
+Type=Application
+StartupNotify=true
+Encoding=UTF-8
+X-Desktop-File-Install-Version=0.28
+Categories=Application;AudioVideo;Audio;X-MIDI;X-Jack;X-Synthesis;Midi;

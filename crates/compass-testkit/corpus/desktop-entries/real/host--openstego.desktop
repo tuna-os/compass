@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=OpenStego
+GenericName=Steganography program
+Comment=Free Steganography solution
+Exec=openstego
+Icon=/usr/share/pixmaps/openstego.svg
+Terminal=false
+Type=Application
+Categories=Utility;
+X-Desktop-File-Install-Version=0.28

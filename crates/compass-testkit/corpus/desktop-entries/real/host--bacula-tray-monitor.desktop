@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Bacula Monitor
+Comment=Notification Tray Monitor
+Icon=bacula-tray-monitor
+Exec=/usr/bin/bacula-tray-monitor -c /etc/bacula/bacula-tray-monitor.conf
+Terminal=false
+Type=Application
+X-Desktop-File-Install-Version=0.3
+Categories=System;Utility;

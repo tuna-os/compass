@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=DarkPlaces Quake
+Comment=Multiplayer, deathmatch oriented first person shooter
+Encoding=UTF-8
+Icon=darkplaces
+Exec=darkplaces-quake-sdl-wrapper
+Terminal=false
+Type=Application
+Categories=Game;ActionGame;
+X-Desktop-File-Install-Version=0.28

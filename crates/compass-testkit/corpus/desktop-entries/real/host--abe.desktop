@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Abe
+Comment="Abe's Amazing Adventure"
+Exec=abe
+Icon=abe
+Terminal=false
+Type=Application
+Categories=Game;ArcadeGame;
+X-Desktop-File-Install-Version=0.28

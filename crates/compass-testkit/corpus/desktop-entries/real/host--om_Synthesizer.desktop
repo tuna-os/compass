@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=OpenMesh Synthesizer
+Exec=/usr/lib64/OpenMesh/Synthesizer
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=Utility;Science
+X-Desktop-File-Install-Version=0.28

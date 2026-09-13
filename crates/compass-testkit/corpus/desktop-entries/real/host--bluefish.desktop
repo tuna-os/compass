@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Name=Bluefish Editor
+Comment=Code and text editor with many web and software development extras
+Keywords=programming;code;web;editor;development;html;php;python;
+Exec=bluefish %F
+Icon=bluefish
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=Development;IDE;WebDevelopment;TextEditor;GTK;GNOME;
+MimeType=text/html;text/css;text/x-javascript;text/x-python;text/x-perl;application/x-php;text/x-java;text/javascript;text/x-php;application/x-cgi;application/x-javascript;application/x-perl;application/x-python;application/xhtml+xml;text/mathml;text/x-csrc;text/x-chdr;text/x-dtd;text/x-sql;text/xml;application/x-bluefish-project;

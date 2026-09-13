@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=CenterIM
+Comment=Text-based Instant Messenging client
+Comment[cs]=Textový Instant Messenging klient
+Comment[sk]=Textový Instant Messenging klient
+GenericName=CenterIM Messenger
+Exec=centerim
+Icon=Centerim_b
+Terminal=true
+Type=Application
+Categories=Application;Network;InstantMessaging;IRCClient;ConsoleOnly;
+X-Desktop-File-Install-Version=0.28

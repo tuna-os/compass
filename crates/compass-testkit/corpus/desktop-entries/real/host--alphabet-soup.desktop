@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=Alphabet Soup
+Comment=Guide your worm through the soup to spell words
+Exec=alphabet-soup
+Icon=alphabet-soup.png
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;LogicGame;
+X-Desktop-File-Install-Version=0.28

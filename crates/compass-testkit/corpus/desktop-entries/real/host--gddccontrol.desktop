@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=DDC Control
+Name[cs]=Ovládání DDC
+GenericName=Monitor Settings
+GenericName[cs]=Nastavení monitoru
+GenericName[ru]=Параметры монитора
+Comment=Set your monitor preferences (contrast, brightness,...) and manage your profiles
+Comment[cs]=Přednastavení monitoru (kontrastu, jasu,...) a správa profilů
+Comment[ru]=Изменить параметры работы монитора (контраст, яркость, температура цвета) и переключиться между заводскими предустановками
+Exec=gddccontrol
+Icon=gddccontrol
+Terminal=false
+Type=Application
+Categories=GTK;Settings;HardwareSettings;

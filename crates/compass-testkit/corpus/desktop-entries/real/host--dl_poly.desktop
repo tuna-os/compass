@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=dl_poly
+GenericName=GUI for dl_poly molecular dynamics program
+Exec=dl_poly_gui
+Type=Application
+Categories=Chemistry;Biology;
+Terminal=false
+X-Desktop-File-Install-Version=0.28

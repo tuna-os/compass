@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Atari++
+GenericName=Emulator of 8-bit Atari personal computers
+Type=Application
+Exec=atari++
+Icon=atari2
+Categories=System;Emulator;
+X-Desktop-File-Install-Version=0.28

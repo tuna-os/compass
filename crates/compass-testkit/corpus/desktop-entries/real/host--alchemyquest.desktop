@@ -1,0 +1,17 @@
+[Desktop Entry]
+Encoding=UTF-8
+Type=Application
+Terminal=false
+Categories=Game;LogicGame;
+Exec=alchemyquest
+Icon=alchemyquest
+Name=Alchemy Quest
+Name[fr]=Alchemy Quest
+Name[de]=Alchemy Quest
+GenericName=Puzzle game
+GenericName[fr]=Jeu de réflexion
+GenericName[de]=Gedächtnisspiel
+Comment=Transmute the elements !
+Comment[fr]=Transmutez les éléments !
+Comment[de]=Wandeln Elemente !
+X-Desktop-File-Install-Version=0.28

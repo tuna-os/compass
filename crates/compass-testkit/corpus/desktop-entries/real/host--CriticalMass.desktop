@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Critical Mass
+Comment=SDL/OpenGL space shoot'em up game also known as critter
+Exec=critter-wrapper
+Icon=critter
+Type=Application
+Terminal=false
+Categories=Game;ArcadeGame;
+Keywords=game;arcade;space;shooter;critter;top-down;
+X-Desktop-File-Install-Version=0.28

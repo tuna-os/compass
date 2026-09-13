@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Asylum
+GenericName=Platform Game
+Comment=Game involving shooting anything that moves & collecting others
+Exec=asylum
+Icon=asylum
+Terminal=false
+Type=Application
+StartupNotify=false
+Categories=Game;ActionGame;
+X-Desktop-File-Install-Version=0.28

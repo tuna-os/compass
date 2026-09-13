@@ -1,0 +1,19 @@
+[Desktop Entry]
+Name=Bygfoot
+Categories=Game;SportsGame;
+Comment=A simple and addictive GTK2 football manager
+Comment[bg]=прост и пристрастяващ GTK2 футболен мениджър
+Comment[da]=En enkel og vanedannende GTK2-fodboldmanager
+Comment[de]=Ein einfacher Fußballmanager mit Suchtgefahr
+Comment[es]=Un manager de futbol en GTK simple y adictivo
+Comment[fr]=Un jeux de manager de football simple et accrocheur
+Comment[nl]=Een simpele en verslavende GTK2 voetbal manager
+Comment[pl]=Prosty, ale wciągający menedżer piłkarski
+Comment[ro]=Un simplu si captivant manager de fotbal bazat pe GTK2
+Comment[sv]=En enkel och vanebildande fotbollsmanager för GTK2
+Exec=/usr/bin/bygfoot
+Icon=/usr/share/bygfoot/support_files/pixmaps/bygfoot_icon.png
+Terminal=false
+Type=Application
+X-Desktop-File-Install-Version=0.28
+

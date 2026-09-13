@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Data Display Debugger
+Comment=Graphical debugger frontend
+Comment[fr]=Interface graphique pour débogueur
+Exec=ddd
+Terminal=false
+Type=Application
+Icon=ddd
+Categories=Development;X-Fedora;
+X-Desktop-File-Install-Version=0.28

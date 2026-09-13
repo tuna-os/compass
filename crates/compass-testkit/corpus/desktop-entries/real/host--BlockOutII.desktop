@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=BlockOut II
+Comment=BlockOut II is a free adaptation of the original BlockOut DOS game
+Exec=BlockOutII-wrapper
+Icon=BlockOutII
+Terminal=false
+Type=Application
+Categories=Game;BlocksGame;
+Keywords=game;falling;blocks;blockout;
+X-Desktop-File-Install-Version=0.28

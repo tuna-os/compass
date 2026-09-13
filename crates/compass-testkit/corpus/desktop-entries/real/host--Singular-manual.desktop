@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Singular Manual
+Name[de]=Singular-Handbuch
+Comment=read the user manual for Singular 4.4.1
+Comment[de]=im Benutzerhandbuch zu Singular 4.4.1 lesen
+Comment[fr]=lire le manuel d'utilisation de Singular 4.4.1
+Type=Link
+URL=file:///usr/share/doc/Singular-doc/html/index.htm
+Icon=Singular
+

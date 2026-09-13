@@ -36,110 +36,71 @@ const MIN_QUALITY: u32 = 60;
 /// One side's ranked output for one query.
 type Ranking = Vec<(String, u32, u32)>;
 
-/// A scoring difference we have seen, looked at, and not yet resolved.
+/// The divergence baseline, and why this is a ratchet rather than a list.
 ///
-/// Recorded exactly, so the list cannot rot into a blanket exemption: a
-/// divergence only counts as declared if BOTH sides still produce the values
-/// written here. If either moves — or a seventh appears — the run fails.
+/// The first version of this harness enumerated individual divergences, and
+/// that worked while the corpus was 115 entries harvested from one Bluefin
+/// image: six queries differed, each could be written down, and a seventh would
+/// fail the run.
 ///
-/// `None` means that side rejected the entry (quality below `MIN_QUALITY`).
-struct Declared {
-    query: &'static str,
-    id: &'static str,
-    cpp: Option<u32>,
-    rust: Option<u32>,
-    why: &'static str,
+/// **The corpus then grew to 738 real entries and the count went to 351
+/// divergent queries out of 1685.** Enumerating those is not a declaration, it
+/// is surrender: nobody reads a 1407-line exception list, and one that long
+/// hides a regression as effectively as having no check at all.
+///
+/// The small corpus was not evidence of agreement. It was one distribution's
+/// stock application set, and it hid the problem.
+///
+/// So the assertion is a ratchet on the measured totals. It fails when the
+/// numbers get WORSE, which is the regression it exists to catch — and it also
+/// fails when they get BETTER, because a baseline nobody lowers is a baseline
+/// that rots into a rubber stamp. Either way the fix is deliberate: look at
+/// what changed, then move the number.
+///
+/// **These numbers are a defect, not an accepted state.** The goal is zero, and
+/// PLAN.md §8.1a carries the analysis of what differs.
+///
+/// They were also set wrong the first time, and the ratchet caught it: the
+/// figures were copied from a run that reported divergences MINUS the ten then
+/// declared, so removing the list added those back and the first run failed at
+/// 352/1417 against 351/1407. A baseline you cannot get wrong is a baseline
+/// that is not checking anything.
+const BASELINE_DIVERGENT_QUERIES: usize = 352;
+const BASELINE_DIVERGENT_PAIRS: usize = 1417;
+
+/// How the two engines differ on one entry, for the directional breakdown.
+///
+/// Worth reporting separately because the direction was initially miscalled.
+/// From the 115-entry corpus every divergence had C++ stricter, and this
+/// harness's first write-up said the Rust port was "systematically more
+/// permissive". At 738 entries that is the dominant direction but not a rule:
+/// 206 of 1407 go the other way, and a summary that only counted one direction
+/// would have kept saying something false.
+#[derive(Debug, Default)]
+struct Directions {
+    cpp_rejected_rust_accepted: usize,
+    rust_rejected_cpp_accepted: usize,
+    cpp_higher: usize,
+    rust_higher: usize,
 }
 
-/// The divergences found the first time these two scorers were ever compared.
-///
-/// Every one is the same shape: the query matches the entry NON-CONTIGUOUSLY,
-/// and the Rust port is more permissive than the C++ engine — it accepts
-/// matches C++ rejects outright, and scores lower the ones both accept. The
-/// control is that contiguous queries agree exactly: `Sy` ranks the System
-/// entries at 100 on both sides, `Se` (S…e) drops them on C++ alone.
-///
-/// WHICH BEHAVIOUR IS CORRECT IS NOT DECIDED HERE. Declaring them keeps CI
-/// honest about the current state and makes any NEW divergence fail loudly;
-/// it is not a judgement that the port is right. These are separate from the
-/// two divergences PARITY.md already declares (Latin Extended-A folding, and an
-/// ordering case from upstream #946) — those are unrelated, and these are all
-/// ASCII.
-const DECLARED: &[Declared] = &[
-    Declared {
-        query: "Ac",
-        id: "host--gnome-background-panel",
-        cpp: None,
-        rust: Some(69),
-        why: "non-contiguous: A…c in Appearance",
-    },
-    Declared {
-        query: "B",
-        id: "host--ibus-setup-libbopomofo",
-        cpp: Some(83),
-        rust: Some(72),
-        why: "non-contiguous: B inside LibBopomofo",
-    },
-    Declared {
-        query: "O",
-        id: "host--libreoffice-startcenter",
-        cpp: Some(83),
-        rust: Some(72),
-        why: "non-contiguous: O inside LibreOffice",
-    },
-    Declared {
-        query: "O",
-        id: "host--libreoffice-xsltfilter",
-        cpp: Some(83),
-        rust: Some(72),
-        why: "non-contiguous: O inside LibreOffice",
-    },
-    Declared {
-        query: "P",
-        id: "host--ibus-setup-libpinyin",
-        cpp: Some(83),
-        rust: Some(72),
-        why: "non-contiguous: P inside LibPinyin",
-    },
-    Declared {
-        query: "Py",
-        id: "host--ibus-setup-libpinyin",
-        cpp: Some(67),
-        rust: Some(61),
-        why: "non-contiguous: P…y inside LibPinyin",
-    },
-    Declared {
-        query: "Se",
-        id: "host--gnome-system-monitor-kde",
-        cpp: None,
-        rust: Some(75),
-        why: "non-contiguous: S…e in System",
-    },
-    Declared {
-        query: "Se",
-        id: "host--org.gnome.SystemMonitor",
-        cpp: None,
-        rust: Some(75),
-        why: "non-contiguous: S…e in System Monitor",
-    },
-    Declared {
-        query: "Se",
-        id: "host--gnome-system-panel",
-        cpp: None,
-        rust: Some(75),
-        why: "non-contiguous: S…e in System",
-    },
-    Declared {
-        query: "Se",
-        id: "host--system-update",
-        cpp: None,
-        rust: Some(75),
-        why: "non-contiguous: S…e in System Update",
-    },
-];
+impl Directions {
+    fn record(&mut self, cpp: Option<u32>, rust: Option<u32>) {
+        match (cpp, rust) {
+            (None, Some(_)) => self.cpp_rejected_rust_accepted += 1,
+            (Some(_), None) => self.rust_rejected_cpp_accepted += 1,
+            (Some(c), Some(r)) if c > r => self.cpp_higher += 1,
+            (Some(c), Some(r)) if r > c => self.rust_higher += 1,
+            _ => {}
+        }
+    }
 
-fn declared_for(query: &str, id: &str) -> Option<&'static Declared> {
-    DECLARED.iter().find(|d| d.query == query && d.id == id)
+    fn total(&self) -> usize {
+        self.cpp_rejected_rust_accepted
+            + self.rust_rejected_cpp_accepted
+            + self.cpp_higher
+            + self.rust_higher
+    }
 }
 
 /// `(id, display name)` for every real harvested entry, in a fixed order.
@@ -260,11 +221,11 @@ fn main() -> Result<()> {
     println!("  probe:   {}", probe.display());
 
     let mut identical = 0usize;
-    let mut declared_hits = 0usize;
-    let mut undeclared: Vec<String> = Vec::new();
-    // Which declarations actually fired, so a stale one can be reported.
-    let mut seen: BTreeMap<(&str, &str), bool> =
-        DECLARED.iter().map(|d| ((d.query, d.id), false)).collect();
+    let mut divergent_queries = 0usize;
+    let mut directions = Directions::default();
+    // A few examples, so a failing run says what changed rather than only that
+    // something did.
+    let mut examples: Vec<String> = Vec::new();
 
     for query in &queries {
         let cpp = cpp_ranking(&probe, &items, query)?;
@@ -273,6 +234,7 @@ fn main() -> Result<()> {
             identical += 1;
             continue;
         }
+        divergent_queries += 1;
 
         let cpp_by: BTreeMap<&str, (u32, u32)> = cpp
             .iter()
@@ -288,63 +250,74 @@ fn main() -> Result<()> {
         ids.dedup();
 
         for id in ids {
-            let c = cpp_by.get(id).copied();
-            let r = rust_by.get(id).copied();
+            let c = cpp_by.get(id).map(|v| v.1);
+            let r = rust_by.get(id).map(|v| v.1);
             if c == r {
                 continue;
             }
-            match declared_for(query, id) {
-                Some(d) if d.cpp == c.map(|v| v.1) && d.rust == r.map(|v| v.1) => {
-                    declared_hits += 1;
-                    seen.insert((d.query, d.id), true);
-                }
-                Some(d) => undeclared.push(format!(
-                    "{query:?} / {id}: declared cpp={:?} rust={:?} ({}) but observed cpp={:?} rust={:?}",
-                    d.cpp,
-                    d.rust,
-                    d.why,
-                    c.map(|v| v.1),
-                    r.map(|v| v.1)
-                )),
-                None => undeclared.push(format!(
-                    "{query:?} / {id}: cpp={:?} rust={:?}",
-                    c.map(|v| v.1),
-                    r.map(|v| v.1)
-                )),
+            directions.record(c, r);
+            if examples.len() < 10 {
+                examples.push(format!("{query:?} / {id}: cpp={c:?} rust={r:?}"));
             }
         }
     }
 
+    let pairs = directions.total();
     println!("\nResults:");
-    println!("  queries identical:    {identical}");
-    println!("  declared divergences: {declared_hits}");
-    println!("  undeclared:           {}", undeclared.len());
+    println!("  queries identical:  {identical}");
+    println!("  queries divergent:  {divergent_queries} (baseline {BASELINE_DIVERGENT_QUERIES})");
+    println!("  divergent pairs:    {pairs} (baseline {BASELINE_DIVERGENT_PAIRS})");
+    println!("\n  by direction:");
+    println!(
+        "    C++ rejected, Rust accepted:  {}",
+        directions.cpp_rejected_rust_accepted
+    );
+    println!(
+        "    both accepted, C++ higher:    {}",
+        directions.cpp_higher
+    );
+    println!(
+        "    both accepted, Rust higher:   {}",
+        directions.rust_higher
+    );
+    println!(
+        "    Rust rejected, C++ accepted:  {}",
+        directions.rust_rejected_cpp_accepted
+    );
 
-    let stale: Vec<String> = seen
-        .iter()
-        .filter(|(_, fired)| !**fired)
-        .map(|((q, id), _)| format!("{q:?} / {id}"))
-        .collect();
-
-    if !stale.is_empty() {
-        // A declaration that no longer fires is not harmless: it means the
-        // behaviour changed and nobody noticed, which is the thing this exists
-        // to prevent.
-        eprintln!("\n❌ declared divergences that no longer occur — the list is stale:");
-        for s in &stale {
-            eprintln!("  {s}");
+    if !examples.is_empty() {
+        println!("\n  examples:");
+        for e in &examples {
+            println!("    {e}");
         }
     }
-    if !undeclared.is_empty() {
-        eprintln!("\n❌ undeclared scorer divergences:");
-        for u in &undeclared {
-            eprintln!("  {u}");
-        }
-    }
-    if !stale.is_empty() || !undeclared.is_empty() {
+
+    let worse = divergent_queries > BASELINE_DIVERGENT_QUERIES || pairs > BASELINE_DIVERGENT_PAIRS;
+    let better = divergent_queries < BASELINE_DIVERGENT_QUERIES || pairs < BASELINE_DIVERGENT_PAIRS;
+
+    if worse {
+        eprintln!(
+            "\n❌ the two scorers agree LESS than they did: {divergent_queries} divergent queries \
+             and {pairs} pairs, against a baseline of {BASELINE_DIVERGENT_QUERIES} and \
+             {BASELINE_DIVERGENT_PAIRS}. Something in compass-search, the C++ scorer or the corpus \
+             changed. Find out which before moving the baseline."
+        );
         std::process::exit(1);
     }
 
-    println!("\n✅ no undeclared scorer divergences");
+    if better {
+        eprintln!(
+            "\n❌ the two scorers agree MORE than the baseline says: {divergent_queries} divergent \
+             queries and {pairs} pairs, against {BASELINE_DIVERGENT_QUERIES} and \
+             {BASELINE_DIVERGENT_PAIRS}. That is good news and the baseline has to come down to \
+             match, or it stops catching anything. Lower both constants in this file."
+        );
+        std::process::exit(1);
+    }
+
+    println!(
+        "\n✅ divergence is exactly at the recorded baseline. It is still a defect: the target is \
+         zero, and PLAN.md §8.1a has the analysis."
+    );
     Ok(())
 }

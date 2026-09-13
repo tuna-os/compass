@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=External Crypto Bone Administration
+Type=Application
+Icon=/usr/share/icons/default/external-cryptobone-admin.png
+Comment=Easy-to-use Secure Encrypted Messages with a second linux system
+TryExec=external-cryptobone-admin
+Exec=external-cryptobone-admin
+Terminal=true
+Categories=Network
+StartupNotify=false
+X-AppInstall-Package=cryptobone
+X-AppInstall-Section=main
+X-Desktop-File-Install-Version=0.28

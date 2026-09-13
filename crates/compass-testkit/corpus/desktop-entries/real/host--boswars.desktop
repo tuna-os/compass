@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Bos Wars
+Comment=Bos Wars is a futuristic real-time strategy game
+Exec=boswars -d /usr/share/boswars
+Icon=boswars
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;StrategyGame;
+Keywords=game;real-time;strategy;rts;futuristic;
+X-Desktop-File-Install-Version=0.28

@@ -1,0 +1,18 @@
+[Desktop Entry]
+Categories=Application;Education;Science;Math;Qt;X-SuSE-Core-Education;X-Misc;
+Encoding=UTF-8
+Exec=algobox %F
+GenericName[fr]=Logiciel d'initiation à l'algorithmique
+GenericName=Logiciel d'initiation à l'algorithmique
+GenericName[fr_FR]=Logiciel d'initiation à l'algorithmique
+Icon=algobox
+MimeType=application/x-algobox;
+Name[fr]=AlgoBox
+Name=AlgoBox
+Name[POSIX]=AlgoBox
+Name[fr_FR]=AlgoBox
+StartupNotify=false
+Terminal=false
+TerminalOptions=
+Type=Application
+

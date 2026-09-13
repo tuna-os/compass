@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Bolzplatz 2006
+Comment=Slam Soccer 2006 is a funny football game in 3D-comic-style
+Comment[de]=Bolzplatz 2006 ist ein spaßiges Fußballspiel im 3D-Comic-Stil
+Comment[fr]=Coup de Foot 2006 est un jeu comique en 3D
+Exec=bolzplatz2006
+Icon=bolzplatz2006
+Terminal=false
+StartupNotify=false
+Type=Application
+Categories=Game;SportsGame;
+Keywords=game;soccer;football;bolzplatz;2006;
+X-Desktop-File-Install-Version=0.28

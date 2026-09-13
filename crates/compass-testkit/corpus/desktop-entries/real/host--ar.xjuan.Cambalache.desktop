@@ -1,0 +1,46 @@
+[Desktop Entry]
+Name[cs]=Cambalache
+Name[de]=Cambalache
+Name[es]=Cambalache
+Name[fi]=Cambalache
+Name[fr]=Cambalache
+Name[it]=Cambalache
+Name[nl]=Cambalache
+Name[pt_BR]=Bagunça
+Name[sv]=Cambalache
+Name[uk]=Cambalache
+Name[zh_CN]=Cambalache
+Name=Cambalache
+GenericName[cs]=Tvorba UI
+GenericName[de]=UI-Ersteller
+GenericName[es]=Constructor de UI
+GenericName[fi]=Käyttöliittymän Teko-ohjelma
+GenericName[fr]=Créateur d'interface utilisateur
+GenericName[it]=Costruttore di interfacce grafiche
+GenericName[nl]=UI-bouwer
+GenericName[pt_BR]=Criador de UI
+GenericName[sv]=UI-skapare
+GenericName[uk]=Створювач інтерфейсу користувача
+GenericName[zh_CN]=UI 设计器 
+GenericName=UI Maker
+Exec=cambalache %f
+Terminal=false
+Type=Application
+Categories=GNOME;GTK;Development;GUIDesigner;
+MimeType=application/x-cambalache-project;application/x-gtk-builder;application/x-glade;
+StartupNotify=true
+# TRANSLATORS: Don't translate this, its an icon name
+Icon=ar.xjuan.Cambalache
+# Translators: Search terms to find this application. Do NOT translate or localize the semicolons! The list MUST also end with a semicolon!
+Keywords[cs]=tvorba UI;GUI designer;uživatelské rozhraní;tvořič ui;
+Keywords[de]=UI-Ersteller;GUI-Designer;Benutzeroberfläche;UI-Builder;
+Keywords[es]=Constructor de UI;Diseñador de interfaces graficas;interfaces de usuario;
+Keywords[fi]=Käyttöliittymän Teko-ohjelma;GUI suunnitteluohjelma;käyttöliittymäkehitin;
+Keywords[fr]=UI Maker;GUI designer;user interface;ui builder;interface utilisateur;
+Keywords[it]=Costruttore di UI;Editor di interfacce grafiche;interfaccia utente;
+Keywords[nl]=UI-bouwer;GUI-ontwerper;gebruikersinterface;
+Keywords[pt_BR]=Criador de UI; designer de GUI; interface de usuário; construtor de UI;
+Keywords[sv]=UI-skapare;GUI-designer;användargränssnitt;ui-byggare;
+Keywords[uk]=Створювач ГІК;дизайнер ГІК;інтерфейс користувача;конструктор ГІК;
+Keywords[zh_CN]=UI 设计;UI 开发;UI 构建器;UI 设计工具;UI 制作器;GUI 设计;GUI 设计器;用户界面;界面设计;
+Keywords=UI Maker;GUI designer;user interface;ui builder;

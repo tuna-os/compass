@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Ansifilter
+GenericName=Escape code converter
+Comment=ANSI terminal escape code converter
+Exec=ansifilter-gui %f
+Icon=ansifilter
+Type=Application
+Terminal=false
+Categories=Utility;TextTools;FileTools;
+X-Desktop-File-Install-Version=0.28

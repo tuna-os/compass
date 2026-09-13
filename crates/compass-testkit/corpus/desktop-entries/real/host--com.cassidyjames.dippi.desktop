@@ -1,0 +1,26 @@
+[Desktop Entry]
+Name[en_AU]=Dippi
+Name[en_CA]=Dippi
+Name[en_GB]=Dippi
+Name[fr]=Dippi
+Name[ru]=Dippi
+Name=Dippi
+GenericName[en_AU]=Display information calculator
+GenericName[en_CA]=Display information calculator
+GenericName[en_GB]=Display information calculator
+GenericName[fr]=Calculateur d’informations d’affichage
+GenericName[ru]=Калькулятор информации о дисплее
+GenericName=Display information calculator
+Comment=Calculate display info like DPI
+Categories=Calculator;Utility;
+Exec=com.cassidyjames.dippi
+Icon=com.cassidyjames.dippi
+Terminal=false
+Type=Application
+X-GNOME-Gettext-Domain=com.cassidyjames.dippi
+Keywords[en_AU]=DPI;density;monitor;resolution;display;width;height;screen;HiDPI;loDPI;aspect;ratio;
+Keywords[en_CA]=DPI;density;monitor;resolution;display;width;height;screen;HiDPI;loDPI;aspect;ratio;
+Keywords[en_GB]=DPI;density;monitor;resolution;display;width;height;screen;HiDPI;loDPI;aspect;ratio;
+Keywords[fr]=DPI;densité;monitor;écran;résolution;affichage;largeur;hauteur;HiDPI;loDPI;aspect;ratio;calculateur;
+Keywords[ru]=DPI;плотность;монитор;разрешение;дисплей;ширина;высота;экран;HiDPI;loDPI;сторона;соотношение;
+Keywords=DPI;density;monitor;resolution;display;width;height;screen;HiDPI;loDPI;aspect;ratio;

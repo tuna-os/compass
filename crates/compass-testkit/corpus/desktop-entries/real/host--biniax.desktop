@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Name=biniax
+GenericName=A unique arcade logic game
+Comment=Requires just a minute to learn and you will get hours of gameplay
+Exec=biniax
+Icon=biniax
+Terminal=false
+Type=Application
+Categories=Game;ArcadeGame
+X-Desktop-File-Install-Version=0.28
