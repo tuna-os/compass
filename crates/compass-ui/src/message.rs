@@ -45,4 +45,10 @@ pub enum Message {
     PollShortcuts,
     /// Raw Iced event (for advanced handling).
     EventOccurred(Event),
+    /// A keyboard event that no widget consumed.
+    ///
+    /// Carries the whole event rather than a pre-digested action because the
+    /// text input takes the printable keys first; what reaches here is exactly
+    /// the set the launcher itself has to interpret.
+    Keyboard(iced::keyboard::Event),
 }

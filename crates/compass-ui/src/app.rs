@@ -114,6 +114,14 @@ impl LauncherApp {
         Theme::CatppuccinMocha
     }
 
+    /// Keyboard events the widgets did not consume.
+    ///
+    /// `listen` yields only events with `Status::Ignored`, so the text input
+    /// still gets every printable key and this sees the arrows and Escape.
+    pub fn subscription(&self) -> iced::Subscription<Message> {
+        iced::keyboard::listen().map(Message::Keyboard)
+    }
+
     /// Update the application state.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
@@ -168,6 +176,20 @@ impl LauncherApp {
             Message::WindowClosed => iced::exit(),
             Message::PollShortcuts => Task::none(),
             Message::EventOccurred(_) => Task::none(),
+            Message::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
+                use iced::keyboard::{Key, key::Named};
+                match key.as_ref() {
+                    Key::Named(Named::ArrowDown) => {
+                        self.update(Message::MoveSelection(Direction::Down))
+                    }
+                    Key::Named(Named::ArrowUp) => {
+                        self.update(Message::MoveSelection(Direction::Up))
+                    }
+                    Key::Named(Named::Escape) => self.update(Message::Dismiss),
+                    _ => Task::none(),
+                }
+            }
+            Message::Keyboard(_) => Task::none(),
         }
     }
 
