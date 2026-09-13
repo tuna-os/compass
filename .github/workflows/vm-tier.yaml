@@ -146,11 +146,14 @@ jobs:
           TMPDIR: /mnt/corral
         run: |
           mkdir -p /mnt/corral
-          # --user compass is not cosmetic. GDM's autologin in the image names
-          # that account (packaging/vmtest/Containerfile.compass), and corral
-          # creates it in a thin layer on top; the two halves meet at boot. It is
-          # also how the checks get in, since corral injects its SSH key for the
-          # accounts it creates.
+          # Deliberately no --user: that would make corral derive an image
+          # layer, and its layer builder pulls the base unconditionally, which
+          # cannot work for a localhost/ reference (exit 3, "pinging container
+          # registry localhost"). The compass account is created in the image
+          # instead — see packaging/vmtest/Containerfile.compass — and root SSH
+          # comes from `bootc install --root-ssh-authorized-keys` during the
+          # disk build, with no layer involved. So this job, like the control,
+          # tests the image exactly as built.
           #
           # Same marker as the control job, for the same reason, and here it
           # does double duty: it is satisfied by the autologin session rather
@@ -160,7 +163,6 @@ jobs:
           # failure message than a readiness timeout.
           sudo -E "$(which corral)" vmtest compass \
             --bootc localhost/bluefin-compass:ci \
-            --user compass --password compass --sudo-user \
             --ready-marker 'COMPASS-VMTEST: graphical session up' \
             --require-paint \
             --video \

@@ -128,7 +128,17 @@ misconfiguration, and each invisible from reading documentation:
    starts and never finishes without a real display, and it gates the target.
    Readiness gates on `Started .*gdm\.service` instead. This is normal here, not
    a fault, and any future marker work should start from this fact.
-6. Two of my own diagnostics were unreadable — an ANSI-blind grep that
+6. **corral's layer builder pulls a `localhost/` reference.** Asking for a test
+   user derives an image layer, and that builder pulls the base unconditionally
+   — so a locally built image dies at exit 3 against `https://localhost/v2/`.
+   corral already guards exactly this in `pkg/bootc/local.go` (`isLocalRef`,
+   with a comment saying a locally built image is the whole point); the guard is
+   missing from `pkg/vmtest/image.go`. Worked around by creating the account in
+   our own image: root SSH comes from
+   `bootc install --root-ssh-authorized-keys` with no layer involved, so nothing
+   is lost. Two-line upstream fix, and the second corral bug this tier has found
+   on locally built bootc images.
+7. Two of my own diagnostics were unreadable — an ANSI-blind grep that
    under-reported which targets had come up, and a verdict buried under an
    expanded serial-console tail. Both are fixed; the verdict now prints last.
 

@@ -53,14 +53,39 @@ RUN flatpak remote-add --installation=compass --if-not-exists \
     rm -f /tmp/com.vicinae.Vicinae.flatpak && \
     flatpak --installation=compass list --columns=ref,origin
 
-# ── autologin ────────────────────────────────────────────────────────────────
+# ── the session user, and autologin ──────────────────────────────────────────
 #
-# The account itself is not created here. corral builds a thin layer on top of
-# this image for the run's users (`--user compass`), and that layer is what puts
-# the account in /etc/passwd and the SSH key in /var/home/compass. GDM only
-# needs the name to match, so the two halves are written independently and meet
-# at boot.
+# The account is created HERE rather than by corral's `--user compass`, and that
+# is a workaround for an upstream bug rather than a preference.
 #
+# Asking corral for a user makes it derive a thin image layer, and its layer
+# builder pulls the base image unconditionally (pkg/vmtest/image.go, "the base
+# image has to be local before anything can be read out of it"). For a
+# localhost/ reference there is nothing to pull, so podman reads "localhost" as
+# a registry and the run dies at exit 3:
+#
+#   podman pull localhost/bluefin-compass:ci: ... pinging container registry
+#   localhost: Get "https://localhost/v2/": dial tcp [::1]:443: connection refused
+#
+# corral already knows this: pkg/bootc/local.go guards exactly this case with
+# `isLocalRef` before its own pull, with a comment explaining that a locally
+# built image is the whole point. The guard is simply missing from the layer
+# builder — a two-line upstream fix, and the second corral bug this tier has
+# found on locally built bootc images.
+#
+# Doing it ourselves costs nothing, because corral's layer was never how the
+# checks get in: `bootc install --root-ssh-authorized-keys` injects the run's
+# key for root during the disk build, with no layer involved, and the checks
+# already run as root and reach the user with runuser.
+#
+# /var/home, not /home: on a bootc system /home is a symlink into /var, and /var
+# from the image is seeded once at install time — so a home directory created
+# here reaches the installed system, while one created on first boot would not
+# survive a rebase.
+RUN mkdir -p /var/home && \
+    useradd --create-home --home-dir /var/home/compass --shell /bin/bash compass && \
+    id compass
+
 # WaylandEnable is spelled out rather than left to the default: the whole point
 # of this tier is that compass is Wayland-only, and a silent fallback to Xorg
 # would turn a real failure into a green run.
