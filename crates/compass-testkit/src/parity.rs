@@ -212,9 +212,31 @@ fn generate_test_queries(_corpus_dir: &Path) -> Result<Vec<String>> {
     Ok(queries)
 }
 
+/// Invoke one engine for one query.
+///
+/// THE ARGUMENT ORDER HERE IS LOAD-BEARING, and it was wrong until measured.
+/// This passed `--engine <name> --json query <text>`, which the Rust CLI
+/// rejects outright:
+///
+///   error: unexpected argument '--json' found
+///     tip: 'query --json' exists
+///
+/// `json` is a flag on the `query` subcommand, not a global, so it has to come
+/// after it. `crates/vicinae/src/cli.rs` carries a test that pins this exact
+/// argv, because nothing else would notice it drifting again — this harness has
+/// never run, so a wrong invocation here costs nothing until the day it does.
+///
+/// STILL UNRESOLVED, and not fixable here: `query` asks a *running* engine over
+/// its IPC socket, and this function execs the binary once per query with no
+/// engine started. Against the Rust engine every call therefore fails with "no
+/// Compass engine is listening". Suite 0 needs to start `serve` (or use an
+/// in-process path like `ui` takes) before it can diff anything. The C++ side
+/// is further off still: its CLI has no `--engine` flag and no `query`
+/// subcommand at all, so the interface §8.1 specifies exists on neither engine
+/// yet.
 fn run_search(engine_path: &Path, engine_name: &str, query: &str) -> Result<Vec<SearchResultItem>> {
     let output = Command::new(engine_path)
-        .args(["--engine", engine_name, "--json", "query", query])
+        .args(["--engine", engine_name, "query", "--json", query])
         .output()
         .with_context(|| format!("Failed to run {} engine", engine_name))?;
 

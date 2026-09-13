@@ -562,6 +562,37 @@ Plus two compatibility checks that matter because both engines coexist for month
 This is also how the ledger's "parity test ✓" column gets filled — a row cannot go green without a
 Suite-0 case.
 
+### 8.1a What Suite 0's harness actually does today
+
+`crates/compass-testkit/src/parity.rs` has existed since early in the port and **has never been
+run**. §11.2's first scoring called it "exists — and nothing has ever invoked it", which was
+generous: running it is how the following came to light, and none of it is visible from reading the
+file.
+
+It shells out once per query, as `<engine> --engine <name> --json query <text>`, and parses stdout
+as a JSON array. Measured against the real binaries:
+
+| | state |
+|---|---|
+| the argv it built | **rejected by clap** — `unexpected argument '--json' found; tip: 'query --json' exists`. `json` is a flag on the subcommand, not a global. Fixed, and pinned by a test in `crates/vicinae/src/cli.rs`. |
+| `query` against the Rust engine | **needs a running engine.** It asks over the IPC socket, so every call returns *"no Compass engine is listening on /tmp/vicinae-default/ipc.sock"*. The harness starts nothing. |
+| `query` against the C++ engine | **the interface does not exist.** `src/cli` has no `--engine` flag and no `query` subcommand; its only `--json` is on the command-list subcommand. |
+
+So the remaining work on Suite 0 is three things, in order:
+
+1. **Give the harness a live engine.** Either start `serve` per run and tear it down, or give the
+   engines a one-shot ranking path that needs no daemon. `vicinae ui` already indexes and ranks
+   in-process (ADR-0011), so the capability exists; it is the CLI surface that does not.
+2. **Give the C++ engine the interface §8.1 assumes**, or change §8.1 to diff through an interface
+   the C++ engine already has. The second is probably cheaper and is a real design question, not a
+   chore — this is a fork whose C++ tree we are deleting, and adding surface to it to support its
+   own replacement needs justifying.
+3. *Then* wire it into the VM tier, where the C++ binary now is.
+
+Three spellings of this harness's invocation were in the repository at once — `--cpp`/`--rust` in
+the code, `--engines cpp,rust` in §8.7, and `--cpp-engine` in §12 — which is what an interface with
+no caller looks like after a while. §8.7 now matches the code.
+
 ### 8.2 Suite 1 — Raycast extension API conformance
 
 - `@vicinae/test-harness` in `src/typescript/`: drives `<List>`, `<Detail>`, `<Form>`,
@@ -677,7 +708,7 @@ cargo test --all-targets --workspace
 cargo clippy --all-targets --workspace -- -D warnings
 cargo bench --bench slas -- --save-baseline pr
 npm --prefix src/typescript test
-cargo run -p compass-testkit --bin parity -- --corpus tests/corpus --engines cpp,rust
+cargo run -p compass-testkit --bin parity -- --cpp <path> --rust <path> --corpus crates/compass-testkit/corpus/desktop-entries
 flatpak run com.vicinae.Vicinae -- doctor --check-only
 ```
 
@@ -1022,7 +1053,7 @@ things, and the corpus is only one:
 | Suite 0 needs | state |
 |---|---|
 | the desktop corpus | **115 of ~500** — partial, and growing |
-| a runner that diffs the two engines | **exists** — `compass-testkit`'s `parity` bin, and nothing has ever invoked it |
+| a runner that diffs the two engines | **exists as a file, and does not yet work** — see below |
 | a C++ engine runnable on the target | **missing** |
 
 The third is the keystone. The corpus can grow to five hundred entries and
@@ -1172,9 +1203,9 @@ Ordered by what unblocks the most:
    is gated on `needs: configure` so a wrong package name costs a minute rather than twenty, and
    ccache is mounted in from the host so a rerun that changed only the workflow is cheap.
 
-   **What is left after that is the wiring, not the build**: layer the tarball into the VM test
-   image, and have `checks.sh` run `parity --cpp-engine` from inside the session. That is a
-   separate change, and it is the point at which Suite 0 runs for the first time.
+   **What is left is NOT just wiring.** An earlier revision of this item said it was — "layer the
+   tarball into the VM test image and have `checks.sh` run `parity --cpp-engine`". That was wrong
+   in two ways, and measuring the harness rather than reading it is what showed them. See §8.1a.
 4. **Grow the corpus — a real constraint, though not the binding one.** An earlier revision of
    this item called it "Phase 1's binding constraint" and put the count at 27. Both are now wrong:
    §11.2 retracted the first (Suite 0 is differential, so item 3 above is the keystone) and the VM
