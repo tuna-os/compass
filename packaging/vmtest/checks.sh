@@ -360,6 +360,25 @@ sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=deb
       bash -c 'pgrep -u "$1" -x vicinae >/dev/null || [ -f "$2" ]' \
       _ "$SESSION_USER" "$UI_DONE"
 
+    # And then wait for it to be READY, which is not the same thing and cost
+    # three runs and a wrong conclusion to learn.
+    #
+    # The process existing says nothing about whether anything is on screen.
+    # Under llvmpipe this launcher takes seconds to first paint and the spread
+    # is wide: one run had wgpu initialising 2.4s after start, another had not
+    # touched wgpu 8.1s in. Screenshotting at process-appear caught the second
+    # kind twice and produced "the launcher does not draw", which was wrong.
+    #
+    # ADR-0010's own rule is to key off a state and never a duration, and this
+    # check was breaking it. `Adapter AdapterInfo` in the launcher's own log is
+    # a real state: wgpu only reports a chosen adapter once it has a surface to
+    # render to. The settle after it is slack after a state, the same shape and
+    # the same justification as wait-graphical.sh.
+    wait_for "the renderer to choose an adapter, or the launcher to exit" 150 \
+      bash -c 'grep -q "Adapter AdapterInfo" "$1" || [ -f "$2" ]' \
+      _ "$UI_ERR" "$UI_DONE"
+    sleep 3
+
     if [ -f "$UI_DONE" ]; then
       echo "the launcher exited $(cat "$UI_DONE") instead of staying open; its output follows" >&2
       cat "$UI_ERR" >&2

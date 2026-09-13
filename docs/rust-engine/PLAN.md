@@ -1016,29 +1016,21 @@ that matters.
 
 Ordered by what unblocks the most:
 
-0. **The launcher does not draw a window on the target.** Found by the VM tier's first run against
-   it: `vicinae ui` starts in 2 s, stays alive, prints nothing, and its 640×480 centred window
-   never appears — the only region of the screen that changes is a 258×81 box at bottom-centre,
-   which is GNOME's own furniture, not ours. This outranks everything below it, because every other
-   item assumes a launcher that renders.
+0. ~~**The launcher does not draw a window on the target.**~~ **Retracted — it draws.** This item
+   was written from three VM runs that screenshotted before the launcher had painted. The run that
+   added a stock GNOME application as a control also delayed the shot by a few seconds, and the
+   launcher's window is plainly in it: 8.22% of pixels changed in a box at x 335–942, y 152–796,
+   against a window configured 640×480 centred (x 320–960, y 160–640). The same run carries 119
+   wgpu records where the previous had none — Vulkan through lavapipe, `llvmpipe (LLVM 19.1.7)`,
+   Mesa 26.1.8. Software rendering works.
 
-   The instrumented run has narrowed it and ruled out the obvious answer. With `wgpu`, `wgpu_hal`
-   and `iced_wgpu` all at debug the process logs **three records in 200 ms and then nothing** for
-   the rest of the run — and **not one of them is from wgpu**. So it never reaches wgpu
-   initialisation, and "no GPU in the VM" is not the explanation. The last thing logged is
-   `sctk-adwaita` timing out after 100 ms reading `color-scheme` from the XDG Settings portal,
-   inside `create_window` — and that is a **red herring**, settled from its source: both of that
-   crate's portal queries shell out to `dbus-send --reply-timeout=100` and take `.output()`, so
-   both are bounded and neither can block. The block is after it and before wgpu, with nothing
-   logging on the way. The kernel's own view now narrows it further: the main thread sits in
-   winit's Wayland event-loop poll (2 fds, infinite timeout), byte-identically before and after the
-   keystroke. That is *not* a deadlock — an idle Wayland app looks the same — but combined with
-   zero wgpu records and a window that never becomes visible (which `iced_winit` only does once a
-   renderer exists), it means the launcher is **waiting for a Wayland event that never arrives**,
-   window created and hidden, no renderer behind it. Why the compositor withholds it is still open:
-   a configure mutter never sends under llvmpipe, this window's own `transparent: true` +
-   `decorations: false` pair, or an iced/winit interaction specific to software rendering.
+   What was really wrong is that startup under llvmpipe is slow and variable — 2.4s to wgpu in one
+   run, not yet there at 8.1s in another — and `launcher-start` waited for the *process* to exist
+   rather than for the renderer to be up. That broke this plan's own rule, and ADR-0010's: key off
+   a state, never a moment. It now waits for `Adapter AdapterInfo` in the launcher's log, which
+   wgpu emits only once it has a surface.
 
+   Still true and unaffected: QMP key injection does not reach the session (below).
 1. **Wire the UI into the binary** (#4). A window that opens, a list that moves, and a selection
    that actually launches via `compass-platform`. Everything in Phase 1's gate is downstream.
 2. ~~**Settle Spike A's consent question**~~ — done (§11.1, ADR-0010). Traced through all three

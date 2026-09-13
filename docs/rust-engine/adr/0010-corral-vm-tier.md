@@ -880,6 +880,83 @@ not been run against both a true and a false case is not a predicate, it is a
 guess** — which is the same rule this ADR already applies to sandboxes and
 paint gates, arrived at from a different direction.
 
+## Retraction: the launcher draws. It was measured too early, twice.
+
+Three sections above say the launcher does not put a window on screen. **That
+is wrong, and the control added to catch exactly this kind of mistake is what
+caught it.**
+
+The run that added a stock GNOME application as a control also, incidentally,
+delayed the screenshot by the few seconds the diagnostic step takes. In that
+run the launcher's own window is plainly there:
+
+| | pixels changed | bounding box |
+|---|--:|---|
+| our launcher | 8.22% | x 335–942, y 152–796 |
+| nautilus (control) | 16.80% | x 166–1122, y 206–796 |
+
+The launcher's window is configured **640 × 480 centred**, which on this
+1280 × 800 display is x 320–960, y 160–640. The measured box is x 335–942,
+starting at y 152. That is our window.
+
+And the log carries **119 wgpu records** where the previous run had none:
+
+```
+wgpu_core::instance: Instance::new: created Vulkan backend
+wgpu_core::instance: Adapter AdapterInfo { name: "llvmpipe (LLVM 19.1.7, 256 bits)",
+                     device_type: Cpu, driver: "llvmpipe",
+                     driver_info: "Mesa 26.1.8", backend: Vulkan }
+```
+
+Software rendering works. Vulkan through lavapipe, Mesa 26.1.8. Everything the
+earlier sections treated as broken is fine.
+
+### What actually happened
+
+Startup under llvmpipe is slow and the spread is wide. Timestamps from the two
+runs, same image, same job:
+
+| | launcher started | wgpu initialising | window seen |
+|---|---|---|---|
+| earlier run | 13:23:47.0 | *not yet at 13:23:55.1* (8.1 s in) | no |
+| later run | 14:21:16.6 | 14:21:18.9 (2.4 s in) | 14:21:20.3 (3.7 s) |
+
+The job screenshotted as soon as the *process* existed. In the fast run that
+happened to be late enough; in the slow ones it was not. `launcher-start` was
+waiting on the wrong thing.
+
+### The rule I broke is this ADR's own
+
+"Key assertions off states, never off durations" is written near the top of this
+document, learned from `graphical.target` and from GDM blanking the framebuffer.
+Then `launcher-start` waited for a process to exist — which is a state, but not
+the state that matters — and everything downstream sampled a moment.
+
+`launcher-start` now waits for `Adapter AdapterInfo` in the launcher's own log:
+wgpu reports a chosen adapter only once it has a surface to render to, which is
+a real state and a much later one. The three-second settle after it is slack
+after a state, the same shape and justification as `wait-graphical.sh`.
+
+### What survives, and what does not
+
+**Does not survive:** "the launcher does not draw", the 258 × 81 bottom-centre
+box read as "GNOME's furniture, not ours" (it was the launcher not yet painted,
+plus a notification), and PLAN §12's item 0 as originally written.
+
+**Survives, and is still true:** QMP key injection does not reach this session
+(the Super-alone control frames are byte-identical, and that is independent of
+any of this); the deviation statistic is too coarse to answer "did a window
+appear" — 0.1564 to four decimal places across visibly different frames — and
+gating on it would still have been wrong, though for the opposite reason than
+the one recorded earlier; and the `sctk-adwaita` portal timeout is still a red
+herring, still bounded, still not the cause of anything.
+
+The habit that produced the error is worth naming as precisely as the error. I
+built a control for the *keypress* question and for the *sandbox* question, and
+did not build one for "is anything on screen" until three runs in — and the
+moment it existed it overturned the conclusion. A measurement with no control is
+a guess with a number attached, and it took a stock file manager to say so.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through
