@@ -309,7 +309,14 @@ identically. Matches at index 0 and fully contiguous matches agree exactly; `a3`
 against 26 (divergence #4, position is not scored), and `System`/`Se` scores 29 against 47
 (divergence #2, the word-boundary bonus).
 
-`scorer-parity` pins these totals as a ratchet: it fails if they get worse **and** if they get
+**But rank agreement is near-total.** Score equality is not what a user sees; over the same 1685
+queries the two engines pick the **same top result 100% of the time** — including all 920 queries
+that return more than one hit, so it is not the trivial single-candidate kind — the same top 3 in
+97.2%, and the same full order in 84.4%. The scoring difference is real and almost entirely
+absorbed by the ranking. `scorer-parity` therefore *asserts* top-1 agreement exactly, rather than
+ratcheting it.
+
+`scorer-parity` pins the score totals as a ratchet: it fails if they get worse **and** if they get
 better, so a nucleo bump cannot move what users see without someone looking at it. Driving them to
 zero would mean replacing nucleo, which PLAN §10 settles the other way.
 
