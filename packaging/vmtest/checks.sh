@@ -169,10 +169,20 @@ PY
       echo "$?" > "${9}"
     ' _ "$SESSION_USER" "$u" "$(wayland_display)" "$INSTALLATION" "$APP" \
       "${2:-SUPER+space}" "$SPIKE_OUT" "$SPIKE_ERR" "$SPIKE_DONE" \
-      < /dev/null > /dev/null 2>&1 &
+      < /dev/null >> "$SPIKE_ERR" 2>&1 &
 
-    wait_for "the spike to bind and start listening" 150 \
-      grep -q SPIKE-A-READY "$SPIKE_ERR"
+    # Wait for the marker OR the spike exiting, not the marker alone. A spike
+    # that cannot reach the portal writes its report and exits, and waiting only
+    # for the marker means sitting out the full timeout and then discarding an
+    # answer that already existed. (The spike now announces readiness on every
+    # path, so this is belt and braces — but the belt is what turns a hang into
+    # a report, and it costs one `-f` test.)
+    wait_for "the spike to bind and start listening, or exit" 150 \
+      bash -c 'grep -q SPIKE-A-READY "$1" || [ -f "$2" ]' _ "$SPIKE_ERR" "$SPIKE_DONE"
+
+    if ! grep -q SPIKE-A-READY "$SPIKE_ERR"; then
+      echo "the spike exited before announcing readiness; its report follows in the next step"
+    fi
     cat "$SPIKE_ERR"
     ;;
 

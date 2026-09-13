@@ -43,7 +43,31 @@ use compass_portals::{
 /// time-based would race: binding involves a portal round trip and, on a first
 /// run, a permission dialog, and under llvmpipe those take an unpredictable
 /// while (ADR-0010: key off states, never durations).
+///
+/// It means "I am as ready as I will ever be", NOT "everything worked". That
+/// distinction is load-bearing and was got wrong: the marker was printed only
+/// on the path where binding succeeded, so a spike that could not reach the
+/// portal wrote its report, exited, and left the harness waiting 150 seconds
+/// for a line that was never coming — and then discarding the answer it
+/// already had. On a failure path the answer is simply final sooner.
 pub const READY_MARKER: &str = "SPIKE-A-READY";
+
+/// Announces readiness exactly once, whatever path the spike takes out.
+#[derive(Debug, Default)]
+struct ReadyOnce(bool);
+
+impl ReadyOnce {
+    /// Prints the marker unless it has already been printed. Returns whether
+    /// this call was the one that printed it.
+    fn announce(&mut self) -> bool {
+        if self.0 {
+            return false;
+        }
+        self.0 = true;
+        eprintln!("{READY_MARKER}");
+        true
+    }
+}
 
 /// What to ask the desktop for.
 #[derive(Debug, Clone)]
@@ -228,9 +252,11 @@ pub fn triggers_look_equivalent(requested: &str, granted: &str) -> bool {
 /// report. A spike that exits non-zero because the portal was missing would
 /// tell a reader less than one that says so in a field.
 pub async fn global_shortcut(spike: &ShortcutSpike) -> ShortcutSpikeReport {
+    let mut ready = ReadyOnce::default();
     let portals = match Portals::connect(PortalConfig::default()).await {
         Ok(portals) => portals,
         Err(err) => {
+            ready.announce();
             return ShortcutSpikeReport::failed(
                 "unknown".to_owned(),
                 format!("could not reach the session bus: {err}"),
@@ -244,6 +270,7 @@ pub async fn global_shortcut(spike: &ShortcutSpike) -> ShortcutSpikeReport {
     let session = match portals.global_shortcuts().await {
         Ok(session) => session,
         Err(err) => {
+            ready.announce();
             return ShortcutSpikeReport::failed(portal, format!("no session: {err}"));
         }
     };
@@ -309,7 +336,7 @@ pub async fn global_shortcut(spike: &ShortcutSpike) -> ShortcutSpikeReport {
 
     // Only now is a keypress meaningful. The harness is watching stderr for
     // this and will not send the key before it appears.
-    eprintln!("{READY_MARKER}");
+    ready.announce();
 
     let started = Instant::now();
     let mut activated = false;
@@ -410,6 +437,19 @@ mod tests {
         assert!(!triggers_look_equivalent("SUPER+space", ""));
         assert!(!triggers_look_equivalent("", "Super+Space"));
         assert!(!triggers_look_equivalent("", ""));
+    }
+
+    #[test]
+    fn readiness_is_announced_once_and_only_once() {
+        // The harness treats the marker as "go", so a second one after a
+        // keypress has already been sent would be a lie about the state. And
+        // the first must happen on every path out, including the failures —
+        // a spike that exits without it leaves the harness waiting for a line
+        // that is never coming, which is exactly what happened.
+        let mut ready = ReadyOnce::default();
+        assert!(ready.announce(), "the first call should announce");
+        assert!(!ready.announce(), "the second call should not");
+        assert!(!ready.announce());
     }
 
     #[test]

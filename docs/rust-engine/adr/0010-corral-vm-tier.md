@@ -297,6 +297,18 @@ requires those to be relatable, so the comparison normalises case, separators
 and the usual synonyms and can be fooled. Both strings are in the report
 verbatim so a reader never has to trust it.
 
+### The ready marker has to mean "as ready as I will ever be"
+
+The spike printed `SPIKE-A-READY` only on the path where binding succeeded. So a
+spike that could not reach the portal wrote its report, exited, and left the
+harness waiting out its full 150-second timeout for a line that was never
+coming — and then throwing away the answer it already had.
+
+That is the failure mode a spike can least afford, because "the portal was not
+reachable" is *itself* one of the answers Spike A exists to record. The marker
+now goes out on every path, and the harness waits for the marker **or** the
+spike exiting. Either alone is enough to turn a hang into a report.
+
 ### A note on `pgrep` in a waiter
 
 Spike A's collector originally waited for `! pgrep -f "spike global-shortcut"`.

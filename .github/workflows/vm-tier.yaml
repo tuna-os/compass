@@ -248,7 +248,13 @@ jobs:
         env:
           HOME: /mnt/corral
           TMPDIR: /mnt/corral
-        run: scripts/vmtest/spike-a.sh vmtest-out spike-a
+        # Teed to a file so the driver's own output survives report.sh's serial
+        # dump and can be reprinted last. pipefail so the step's status is the
+        # driver's and not tee's.
+        run: |
+          set -o pipefail
+          scripts/vmtest/spike-a.sh vmtest-out spike-a 2>&1 \
+            | tee vmtest-out/spike-a-driver.log
 
       - name: What the boot reported
         if: always()
@@ -266,13 +272,17 @@ jobs:
           # nothing, so an `||` fallback stays silent — which is what happened:
           # two delimiters with nothing between them, and the actual failure
           # still buried. Test for the marker, and fall back to the whole file.
-          if [ ! -f vmtest-out/spike-a.txt ]; then
-            echo 'no spike transcript at all — the driver failed before collecting'
-          elif grep -q '^--- report ---$' vmtest-out/spike-a.txt; then
+          if [ -f vmtest-out/spike-a.txt ] && grep -q '^--- report ---$' vmtest-out/spike-a.txt; then
             sed -n '/^--- report ---$/,$p' vmtest-out/spike-a.txt
+          elif [ -f vmtest-out/spike-a-driver.log ]; then
+            # No report, so the interesting thing is how the driver died. This
+            # is here because four separate diagnoses of this job have had to
+            # page hundreds of lines back past an ANSI-expanded serial console
+            # to find one line of output.
+            echo 'no report; the driver said:'
+            cat vmtest-out/spike-a-driver.log
           else
-            echo 'the transcript has no report in it; all of it follows:'
-            cat vmtest-out/spike-a.txt
+            echo 'no report and no driver log — the step never ran'
           fi
           echo '=============================================================='
 
