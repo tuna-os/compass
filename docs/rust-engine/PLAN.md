@@ -887,6 +887,34 @@ The spec claims sub-30 MB but proposes no test for it; without a gate the claim 
 per commit, fail on >5% regression. **Measure inside the Flatpak** — sandbox overhead is real and
 the number users see is the sandboxed one.
 
+**"Enforced as CI failures, not advisory numbers" was not true of the IPC row, and the way it was
+untrue is worth recording.** `benches/ipc_bench.rs` timed a closure that created a Tokio runtime,
+bound a listener, **slept 10 ms**, connected a client, sent one request and tore it all down. It
+reported **11.9 ms** against a 0.5 ms SLA — a 24× miss on a stated gate, sitting in a benchmark
+nobody had read, because a criterion bench prints a number and exits zero whatever it says.
+
+The tell was in its own output: `concurrent_1` 12.03 ms against `concurrent_100` 13.08 ms, so
+ninety-nine extra in-flight requests cost about a millisecond between them. The per-request cost was
+always small; the harness was measuring its own scaffolding.
+
+With setup hoisted out of the timed region, one request on an established connection measures:
+
+| | |
+|---|---|
+| p50 | 30.6 µs |
+| p95 | 36.8 µs |
+| **p99** | **47.9 µs** |
+| max | 57.1 µs |
+
+**The SLA is met with about 10× headroom**, and it is now asserted rather than printed:
+`crates/compass-ipc/tests/roundtrip_budget.rs` fails the build if p99 crosses 500 µs. Control-tested
+by tightening the bound below the real p99.
+
+Two things this does **not** establish. The SLA says *inside Flatpak* and this is a host
+measurement, so it is necessary evidence and not the whole gate. And it measures `Ping`, the
+cheapest request there is; a `Query` round-trip over a real index is a different number that nothing
+yet records.
+
 Plus `insta` snapshot tests rendering views to a headless framebuffer. Keep these *few* and
 semantic (results list, empty state, detail view, form). Large pixel-snapshot suites get
 rubber-stamped and stop catching anything.
