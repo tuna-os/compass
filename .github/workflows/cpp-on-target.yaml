@@ -66,14 +66,26 @@ jobs:
       - name: Install the build dependencies and configure
         run: |
           set -o pipefail
-          # Arch's list translated, minus two: qtkeychain and layer-shell-qt are
-          # vendored through FetchContent unless USE_SYSTEM_* is set, and neither
-          # is on by default — which is why Fedora having no Qt6 qtkeychain does
-          # not matter here. cmark-gfm is vendored too (-DUSE_SYSTEM_CMARK_GFM=OFF).
+          # Arch's list translated. qt6-qtbase-private-devel is the one Arch has
+          # no separate package for — it ships private headers inside qt6-base,
+          # and src/server/CMakeLists.txt links Qt6::GuiPrivate.
           #
-          # qt6-qtbase-private-devel is the one Arch does not have as a separate
-          # package: it ships private headers inside qt6-base, and
-          # src/server/CMakeLists.txt links Qt6::GuiPrivate.
+          # A correction, paid for by two red runs. I first claimed qtkeychain
+          # and layer-shell-qt were "vendored through FetchContent and neither
+          # is on by default", and dropped both. That is backwards:
+          #
+          #   USE_SYSTEM_DEFAULT is ON, and OFF only for APPLE or WIN32
+          #   USE_SYSTEM_LAYER_SHELL is ON unconditionally (CMakeLists.txt:53)
+          #   USE_SYSTEM_QT_KEYCHAIN follows USE_SYSTEM_DEFAULT, so ON on Linux
+          #
+          # Vendoring happens only under PREFER_STATIC_LIBS, which is the
+          # AppImage path — that is where the FetchContent calls I had read come
+          # from. A normal Linux build links system libraries, exactly as the
+          # comment above those options says it prefers to.
+          #
+          # So layer-shell-qt-devel is installed (Fedora has it, 6.7.5) and
+          # qtkeychain is switched to the vendored copy explicitly with
+          # -DUSE_SYSTEM_QT_KEYCHAIN=OFF, because Fedora has no Qt6 build of it.
           podman run --rm -v "$PWD:/src:z" -w /src \
             ghcr.io/ublue-os/bluefin:stable bash -euxo pipefail -c '
               dnf install -y --setopt=install_weak_deps=False \
@@ -83,6 +95,7 @@ jobs:
                 qt6-qtshadertools-devel qt6-qttools-devel \
                 qt6-qtwayland-devel \
                 kf6-syntax-highlighting-devel extra-cmake-modules \
+                layer-shell-qt-devel \
                 libqalculate-devel \
                 wayland-devel wayland-protocols-devel \
                 nodejs npm
@@ -105,7 +118,8 @@ jobs:
               cmake -S . -B /tmp/build -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DBUILD_TESTS=OFF \
-                -DUSE_SYSTEM_CMARK_GFM=OFF
+                -DUSE_SYSTEM_CMARK_GFM=OFF \
+                -DUSE_SYSTEM_QT_KEYCHAIN=OFF
             '
 
       - name: What this proves, and what it does not

@@ -1134,12 +1134,23 @@ Ordered by what unblocks the most:
    the top-level `CMakeLists.txt` requires. (An earlier revision of this item said 6.10; that was
    wrong, and 6.11.2 is what Fedora 44 actually has.)
 
-   The two dependencies that looked like they might block it do not: `qtkeychain` and
-   `layer-shell-qt` are **vendored through `FetchContent`** unless `USE_SYSTEM_QT_KEYCHAIN` /
-   `USE_SYSTEM_LAYER_SHELL` are set, and neither is on by default. They appear in
-   `scripts/runners/arch/install-deps.sh` because Arch *can* supply them, not because the build
-   needs a distro to. The one consequence to remember is that the build container therefore needs
-   network access, which a runner has.
+   **A correction: an earlier revision of this item had the vendoring backwards**, and two red CI
+   runs paid for it. It claimed `qtkeychain` and `layer-shell-qt` are vendored through
+   `FetchContent` "and neither is on by default". The opposite is true on Linux:
+
+   - `USE_SYSTEM_DEFAULT` is `ON`, and `OFF` only for `APPLE OR WIN32`;
+   - `USE_SYSTEM_LAYER_SHELL` is `ON` unconditionally (`CMakeLists.txt:53`);
+   - `USE_SYSTEM_QT_KEYCHAIN` follows `USE_SYSTEM_DEFAULT`, so `ON` here.
+
+   The `FetchContent` calls I had read are reached only under `PREFER_STATIC_LIBS` — the AppImage
+   path. A normal Linux build links system libraries, which is exactly what the comment above those
+   options says it prefers. So the Arch list is not padding: it names what the build genuinely
+   wants.
+
+   For Fedora that means `layer-shell-qt-devel` is required and available (6.7.5), while
+   `qtkeychain` has no Qt6 build at all and has to be switched to the vendored copy explicitly with
+   `-DUSE_SYSTEM_QT_KEYCHAIN=OFF`. That flag makes the build fetch, so the build container needs
+   network — which a runner has.
 
    The AppImage path stays disabled either way. Nothing here needs it.
 4. **Grow the corpus — Phase 1's binding constraint (§11.2), and now unblocked.** The gate names a
