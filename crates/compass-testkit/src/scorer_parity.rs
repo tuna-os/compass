@@ -57,8 +57,19 @@ type Ranking = Vec<(String, u32, u32)>;
 /// that rots into a rubber stamp. Either way the fix is deliberate: look at
 /// what changed, then move the number.
 ///
-/// **These numbers are a defect, not an accepted state.** The goal is zero, and
-/// PLAN.md §8.1a carries the analysis of what differs.
+/// **These numbers are NOT a defect to drive to zero**, and an earlier version
+/// of this comment said they were. `PARITY.md`'s "compass-search — nucleo is
+/// not fzf" already records that the Rust matcher wraps `nucleo_matcher` while
+/// the C++ side is a vendored fzf, that absolute scores are on different
+/// scales, and that the normalized values match "closely". Both shapes counted
+/// here are already listed there — #4 (score ignores match position) and #2
+/// (nucleo prefers a short scatter where fzf's word-boundary bonuses do not).
+/// Choosing nucleo over hand-rolling a matcher is settled (PLAN §10).
+///
+/// What this adds is the number. "Closely" turns out to be 79.2% of queries
+/// over 738 real entries. The ratchet holds a KNOWN divergence still so a
+/// nucleo bump or a scoring change cannot move it unnoticed — zero would mean
+/// replacing nucleo, which is not this harness's call to force.
 ///
 /// They were also set wrong the first time, and the ratchet caught it: the
 /// figures were copied from a run that reported divergences MINUS the ten then
@@ -316,8 +327,8 @@ fn main() -> Result<()> {
     }
 
     println!(
-        "\n✅ divergence is exactly at the recorded baseline. It is still a defect: the target is \
-         zero, and PLAN.md §8.1a has the analysis."
+        "\n✅ divergence is exactly at the recorded baseline. This is the known nucleo-is-not-fzf \
+         divergence (PARITY.md), held still rather than driven to zero — see PLAN.md §8.1a."
     );
     Ok(())
 }

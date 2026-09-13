@@ -279,6 +279,40 @@ verbatim and passes. What does not:
 | 4 | **Ties that discriminate nothing.** For `"clip"`, all of `Clipboard History`, `Clear Current Clipboard Data` and `Clear Clipboard History` score identically, because nucleo's score depends only on the matched region, not on haystack length or match position. The C++ ordering test passes there only because `stable_sort` preserves input order — so that case discriminates nothing in *either* implementation. | Real discrimination needs a length or match-position penalty layered on top of nucleo | `diverges_clip_ordering_is_a_three_way_tie` |
 | 5 | **Char, not byte, offsets** — a deliberate API change. `"Café Bar"`/`"bar"` reports `5..8` where C++ asserts bytes `6..9`. | None; byte offsets are recoverable | the range tests |
 
+### How closely is "closely"? 79.2%
+
+The table above was written from a ported ordering suite over hand-written cases, which could say
+*that* nucleo and fzf differ but not *how much*. `compass-testkit`'s `scorer-parity` bin now
+measures it directly, against the real C++ scorer compiled from `src/lib/fuzzy` — that library is
+header-only with no Qt dependency, so it costs one translation unit.
+
+Over 738 harvested entries and 1685 queries derived from them:
+
+| | |
+|---|---|
+| identical | 1333 (79.2%) |
+| divergent queries | 352 |
+| divergent (query, entry) pairs | 1417 |
+
+| shape | count |
+|---|---|
+| C++ rejected, Rust accepted | 771 |
+| both accepted, C++ higher | 440 |
+| both accepted, **Rust** higher | 145 |
+| **Rust** rejected, C++ accepted | 61 |
+
+Both directions occur, which is what two different algorithms produce and what a smaller corpus
+hid: over the previous 115-entry set only six queries diverged and every one had C++ stricter.
+
+The divergence is entirely in the **raw matcher** — both `score_query` implementations normalise
+identically. Matches at index 0 and fully contiguous matches agree exactly; `a3`/`3` scores 30
+against 26 (divergence #4, position is not scored), and `System`/`Se` scores 29 against 47
+(divergence #2, the word-boundary bonus).
+
+`scorer-parity` pins these totals as a ratchet: it fails if they get worse **and** if they get
+better, so a nucleo bump cannot move what users see without someone looking at it. Driving them to
+zero would mean replacing nucleo, which PLAN §10 settles the other way.
+
 ### The residual coherence gap, one level up
 
 Coherence itself is now exact, but it is a property *of an alignment*, and nucleo's DP does not

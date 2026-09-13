@@ -669,9 +669,29 @@ C++ stricter or higher in 1211 cases, Rust in 206. So "systematically more permi
 the dominant direction and is false as a rule — 206 cases go the other way, and the 115-entry
 corpus contained none of them. One distribution's stock application set is not a sample.
 
-**The scorers genuinely differ, on a fifth of realistic queries.** That is a defect in the port and
-the largest single parity gap this project has measured. Suite 0 was specified to catch exactly
-this, and it did, on the first corpus big enough to show it.
+**This is not a new defect, and an earlier revision of this section wrongly called it one.**
+
+`PARITY.md`'s "`compass-search` — nucleo is not fzf" already records that the two use different
+algorithms, that absolute scores are on different scales and are never asserted, and that the
+normalized values "match the C++ expectations closely". Both shapes measured above are already
+listed there:
+
+- divergence **#4**, *"nucleo's score depends only on the matched region, not on haystack length or
+  match position"* — that is the single-character case, C++ 30 against Rust 26;
+- divergence **#2**, *"nucleo prefers a short scatter inside one word starting at position 0; fzf's
+  larger word-boundary bonuses pull the other way"* — that is the non-contiguous case.
+
+Choosing `nucleo` over hand-rolling a matcher is a settled decision (§10, "not re-litigated").
+
+**What is new is the number.** `PARITY.md` said "closely" and had no way to say more, because the
+only evidence was a ported ordering suite over hand-written cases. Against 738 real entries,
+"closely" means **79.2% of queries identical**, with the remainder localised to the raw matcher and
+counted in both directions. That is the contribution: a documented qualitative divergence turned
+into a measured one that cannot drift unnoticed.
+
+So the ratchet is not a defect being driven to zero. **Zero would mean replacing nucleo**, which
+§10 settles the other way. The ratchet exists so that this known divergence stays *exactly* as big
+as it is, and any change — a nucleo bump, a scoring tweak, a corpus edit — has to be looked at.
 
 #### Why the assertion is a ratchet
 
@@ -685,7 +705,9 @@ The ratchet caught its own baseline being wrong on the first run: the figures we
 run that reported divergences minus the ten then declared, so it failed at 352/1417 against
 351/1407. Both directions are control-tested.
 
-**The target is zero. The baseline is a defect being held still, not an accepted state.**
+**The target is not zero.** Zero means replacing nucleo, and §10 settles that the other way. The
+baseline holds a known, declared divergence still so that it cannot move unnoticed — which is what
+`PARITY.md`'s qualitative entries could not do on their own.
 
 These are **not** the two divergences §8.3 and `PARITY.md` already declare — Latin Extended-A
 folding and an ordering case from upstream #946. Those are unrelated; these are ASCII and about
@@ -724,8 +746,13 @@ are **two separate defects pulling opposite ways**:
 Defect 2 is the larger effect and the one the enlarged corpus exposed: longer, multi-word
 application names give non-contiguous alignments a chance to occur at all.
 
-That is where a fix starts — `compass-search`'s `Matcher`, not `score_weighted`, and the gap
-penalty before the boundary bonus.
+Both are `nucleo_matcher` behaviours, not arithmetic errors in this codebase:
+`compass-search`'s `Matcher` wraps `nucleo_matcher::Matcher` with `Config::DEFAULT`, while the C++
+side is a vendored fzf. Changing either number means configuring nucleo away from its defaults or
+replacing it — the decision §10 records as settled — rather than fixing a bug.
+
+The value of pinning it here is that a **nucleo version bump** now shows up as a ratchet failure
+with a number attached, instead of as a silent change in what users see.
 
 Rung 2 stays scoped as its own item.
 
