@@ -1027,9 +1027,10 @@ Ordered by what unblocks the most:
    the rest of the run — and **not one of them is from wgpu**. So it never reaches wgpu
    initialisation, and "no GPU in the VM" is not the explanation. The last thing logged is
    `sctk-adwaita` timing out after 100 ms reading `color-scheme` from the XDG Settings portal,
-   inside `create_window`. Whether that is the cause or just the last thing to log before the real
-   block is not yet established; a slow portal and a compositor that never sends the surface
-   configure produce identical evidence. `checks.sh launcher-diagnose` now reads the kernel's own
+   inside `create_window` — and that is a **red herring**, settled from its source: both of that
+   crate's portal queries shell out to `dbus-send --reply-timeout=100` and take `.output()`, so
+   both are bounded and neither can block. The block is after it and before wgpu, with nothing
+   logging on the way. `checks.sh launcher-diagnose` now reads the kernel's own
    view — per-thread `wchan`/`syscall` and the open sockets — before and after the keystroke,
    because the stuck code is not the code that logs.
 

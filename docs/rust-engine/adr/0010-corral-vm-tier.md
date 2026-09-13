@@ -748,11 +748,18 @@ earlier, inside or just after `create_window`.
 
 The one error on the way is `sctk-adwaita` — the client-side decoration
 provider — timing out after 100 ms reading `color-scheme` from the XDG Settings
-portal. Whether that timeout is the cause or merely the last thing that
-happened to log before the real block is **not established**, and the two
-readings are quite different: one is a slow portal in a software-rendered VM,
-the other is a compositor that never sends the surface configure Iced is
-waiting for. Both produce this exact evidence.
+portal. That timeout is **not** the hang, and this is settled from source rather than
+from another run. `sctk-adwaita 0.10.1`'s `config.rs` implements both of its
+portal queries by shelling out to `dbus-send --reply-timeout=100` and taking
+`.output()`. Both are bounded at 100 ms; neither can block. The logging is
+self-consistent too: the error only fires when `dbus-send` actually ran and
+returned empty stdout, so the binary exists in the runtime and simply timed
+out, and `prefer_dark()` then returns `false` and carries on.
+
+So the most visible error in the log is a red herring, and worth naming as one
+before somebody spends a day on the portal. What remains is that the process
+blocks somewhere after that and before wgpu — inside or just after
+`create_window` — with nothing logging on the way.
 
 Logs cannot settle it, because the code that is stuck is not the code that is
 logging. The kernel can. `checks.sh launcher-diagnose` reads
