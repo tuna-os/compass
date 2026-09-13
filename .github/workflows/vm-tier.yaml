@@ -262,8 +262,18 @@ jobs:
         if: always()
         run: |
           echo '=============================================================='
-          sed -n '/^--- report ---$/,$p' vmtest-out/spike-a.txt 2>/dev/null \
-            || echo 'no spike report — see the step output above'
+          # `sed` on a file that exists but lacks the marker exits 0 and prints
+          # nothing, so an `||` fallback stays silent — which is what happened:
+          # two delimiters with nothing between them, and the actual failure
+          # still buried. Test for the marker, and fall back to the whole file.
+          if [ ! -f vmtest-out/spike-a.txt ]; then
+            echo 'no spike transcript at all — the driver failed before collecting'
+          elif grep -q '^--- report ---$' vmtest-out/spike-a.txt; then
+            sed -n '/^--- report ---$/,$p' vmtest-out/spike-a.txt
+          else
+            echo 'the transcript has no report in it; all of it follows:'
+            cat vmtest-out/spike-a.txt
+          fi
           echo '=============================================================='
 
       # The runner is thrown away either way, but a 30 GB disk image left behind

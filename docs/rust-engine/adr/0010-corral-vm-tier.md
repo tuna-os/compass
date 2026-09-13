@@ -297,6 +297,19 @@ requires those to be relatable, so the comparison normalises case, separators
 and the usual synonyms and can be fooled. Both strings are in the report
 verbatim so a reader never has to trust it.
 
+### A note on `pgrep` in a waiter
+
+Spike A's collector originally waited for `! pgrep -f "spike global-shortcut"`.
+That predicate can never become true: `pgrep -f` matches full command lines, and
+the shell evaluating it has the pattern in its own. The wait timed out every
+time, 180 seconds after a spike that had already finished.
+
+It is written down because the shape recurs — any "wait until my process is
+gone" check written with `pgrep -f` and a distinctive-looking string has this
+bug, and it presents as a timeout rather than as a mistake. The collector now
+waits on a sentinel file the launcher writes, which also carries the exit
+status.
+
 ### The paint margin is thin, and that is worth watching
 
 The compass image passes `--require-paint`, but not by much: the ready frame in

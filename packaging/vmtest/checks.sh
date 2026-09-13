@@ -19,6 +19,7 @@ SESSION_USER=compass
 REPORT=/tmp/compass-doctor.json
 SPIKE_OUT=/tmp/compass-spike-a.json
 SPIKE_ERR=/tmp/compass-spike-a.err
+SPIKE_DONE=/tmp/compass-spike-a.done
 
 # uid of the autologin user. Everything about a session is addressed by it.
 uid() { id -u "$SESSION_USER"; }
@@ -142,16 +143,33 @@ PY
     # the first poll of a loop that then succeeded.
     : > "$SPIKE_OUT"
     : > "$SPIKE_ERR"
+    rm -f "$SPIKE_DONE"
+
     # setsid and all three fds redirected: without that, ssh waits for the
     # channel to close and this check never returns.
-    setsid runuser -u "$SESSION_USER" -- env \
-      XDG_RUNTIME_DIR="/run/user/$u" \
-      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$u/bus" \
-      WAYLAND_DISPLAY="$(wayland_display)" \
-      XDG_SESSION_TYPE=wayland \
-      flatpak run --installation="$INSTALLATION" "$APP" \
-        spike global-shortcut --trigger "${2:-SUPER+space}" --wait 120 --json \
-      > "$SPIKE_OUT" 2> "$SPIKE_ERR" < /dev/null &
+    #
+    # The wrapper exists to write $SPIKE_DONE when the spike exits. The obvious
+    # alternative — having the collector poll `pgrep -f "spike global-shortcut"`
+    # — cannot work, and failed exactly this way: pgrep matches full command
+    # lines, so the shell running the pgrep contains the pattern and matches
+    # itself. The predicate is then never true and the wait always times out.
+    # A sentinel file has no such reflexivity, and it carries the exit status.
+    #
+    # Arguments are passed positionally rather than interpolated, so nothing
+    # here depends on quoting surviving two levels of shell.
+    setsid bash -c '
+      runuser -u "$1" -- env \
+        XDG_RUNTIME_DIR="/run/user/$2" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$2/bus" \
+        WAYLAND_DISPLAY="$3" \
+        XDG_SESSION_TYPE=wayland \
+        flatpak run --installation="$4" "$5" \
+          spike global-shortcut --trigger "$6" --wait 120 --json \
+        > "$7" 2> "$8"
+      echo "$?" > "${9}"
+    ' _ "$SESSION_USER" "$u" "$(wayland_display)" "$INSTALLATION" "$APP" \
+      "${2:-SUPER+space}" "$SPIKE_OUT" "$SPIKE_ERR" "$SPIKE_DONE" \
+      < /dev/null > /dev/null 2>&1 &
 
     wait_for "the spike to bind and start listening" 150 \
       grep -q SPIKE-A-READY "$SPIKE_ERR"
@@ -164,7 +182,8 @@ PY
   # an answer to the question, not a broken run, and a gate here would turn the
   # finding into a red X with no information in it.
   spike-a-collect)
-    wait_for "the spike to finish" 180 bash -c '! pgrep -f "spike global-shortcut" >/dev/null'
+    wait_for "the spike to finish" 180 test -f "$SPIKE_DONE"
+    echo "the spike exited $(cat "$SPIKE_DONE")"
     echo '--- stderr ---'
     cat "$SPIKE_ERR" 2>/dev/null || echo '(none)'
     echo '--- report ---'
