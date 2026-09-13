@@ -410,8 +410,36 @@ installed** (§3.5.1).
   presence/version** (§3.5.4), with `--check-only` exit codes.
 - Single-instance handling and `$XDG_RUNTIME_DIR` socket lifecycle inside the sandbox.
 
-**Gate:** IPC round-trip p99 < 0.5 ms (criterion); `doctor` output diffed against the C++ build on
-the same machine; `doctor` correctly reports each degradation with the extension uninstalled.
+**Gate:** IPC round-trip p99 < 0.5 ms (criterion); ~~`doctor` output diffed against the C++ build on
+the same machine~~ — **not achievable as written, see below**; `doctor` correctly reports each
+degradation with the extension uninstalled.
+
+**Where this gate stands, measured rather than assumed:**
+
+- **IPC round-trip: met.** p99 **47.9 µs** against the 500 µs budget, ~10× headroom, now asserted by
+  `crates/compass-ipc/tests/roundtrip_budget.rs` rather than printed. §8.5 records how the previous
+  benchmark reported 11.9 ms by timing its own setup.
+
+- **`doctor` diffed against the C++ build: withdraw it.** The C++ engine has **no `doctor`
+  command** — its entire CLI is `launch app`, `ls`, `launch cmd`, `ping`, `toggle`, `open`, `close`,
+  `dmenu`, `version`, `deeplink`, `logs`. There is nothing to diff against, and this is the second
+  gate criterion found to assume a C++ interface that has never existed (the first was Suite 0's
+  `vicinae --engine=cpp --json query`, §8.1a). Both were written against an imagined C++ CLI rather
+  than the one in `src/cli`.
+
+  Worth noting even if someone built that command: **the diff would mostly prove nothing.** Nine of
+  `doctor`'s eleven checks — `dbus.session`, `session.type`, `xdg.runtime-dir`, `xdg.application-dirs`,
+  `desktop.environment`, `flatpak.sandbox`, `portal.desktop`, `portal.global-shortcuts`,
+  `gnome.shell-extension` — are probes of the *environment*. Two processes on one machine observe the
+  same environment by construction, so they would agree trivially, in the same way "same top result"
+  would be trivially 100% over single-hit queries. Only `engine.selected` and `ipc.socket` describe
+  the engine itself, and those map to the C++ `version` and `ping`.
+
+  **What the criterion actually wants is that `doctor`'s picture of the machine is accurate, and
+  that is already tested — non-differentially, against reality.** The VM tier runs
+  `checks.sh doctor` and `doctor-assert` inside a real GNOME session every run. Restate the
+  criterion as that, and keep the differential ambition for `version`/`ping`, where the two engines
+  genuinely have something to compare.
 
 ### Phase 3 — GNOME Shell integration (≈3 weeks)
 
