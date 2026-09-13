@@ -234,6 +234,17 @@ fn main() -> Result<()> {
     let mut identical = 0usize;
     let mut divergent_queries = 0usize;
     let mut directions = Directions::default();
+    // Rank agreement, which is what Phase 1's gate actually names: it asks for
+    // "ranking parity", and a user sees an ordered list, not a score. Two
+    // engines can disagree that `LibreOffice` scores 83 or 72 for "O" and still
+    // put the same entry first, in which case the divergence is invisible.
+    // Counted only over queries where at least one side returned anything.
+    let mut ranked_queries = 0usize;
+    let mut top1_agree = 0usize;
+    let mut top3_agree = 0usize;
+    let mut order_agree = 0usize;
+    let mut contested = 0usize;
+    let mut contested_top1_agree = 0usize;
     // A few examples, so a failing run says what changed rather than only that
     // something did.
     let mut examples: Vec<String> = Vec::new();
@@ -241,6 +252,34 @@ fn main() -> Result<()> {
     for query in &queries {
         let cpp = cpp_ranking(&probe, &items, query)?;
         let rust = rust_ranking(&items, query);
+
+        if !cpp.is_empty() || !rust.is_empty() {
+            ranked_queries += 1;
+            let ids =
+                |r: &Ranking| -> Vec<String> { r.iter().map(|(id, _, _)| id.clone()).collect() };
+            let (ci, ri) = (ids(&cpp), ids(&rust));
+            if ci.first() == ri.first() {
+                top1_agree += 1;
+            }
+            let n = 3.min(ci.len()).min(ri.len());
+            if ci.len().min(3) == ri.len().min(3) && ci[..n] == ri[..n] {
+                top3_agree += 1;
+            }
+            if ci == ri {
+                order_agree += 1;
+            }
+            // The control on the numbers above. "Same top result" over a corpus
+            // where most queries return one hit would be trivially 100% and
+            // would mean nothing, so record how many queries actually had a
+            // choice to get wrong.
+            if ci.len() > 1 || ri.len() > 1 {
+                contested += 1;
+                if ci.first() == ri.first() {
+                    contested_top1_agree += 1;
+                }
+            }
+        }
+
         if cpp == rust {
             identical += 1;
             continue;
@@ -278,6 +317,37 @@ fn main() -> Result<()> {
     println!("  queries identical:  {identical}");
     println!("  queries divergent:  {divergent_queries} (baseline {BASELINE_DIVERGENT_QUERIES})");
     println!("  divergent pairs:    {pairs} (baseline {BASELINE_DIVERGENT_PAIRS})");
+    let pct = |n: usize| {
+        if ranked_queries == 0 {
+            0.0
+        } else {
+            100.0 * n as f64 / ranked_queries as f64
+        }
+    };
+    println!(
+        "\n  rank agreement (what Phase 1's gate names), over {ranked_queries} queries with hits:"
+    );
+    println!(
+        "    same top result:    {top1_agree} ({:.1}%)",
+        pct(top1_agree)
+    );
+    println!(
+        "    same top 3:         {top3_agree} ({:.1}%)",
+        pct(top3_agree)
+    );
+    println!(
+        "    same full order:    {order_agree} ({:.1}%)",
+        pct(order_agree)
+    );
+    let cpct = if contested == 0 {
+        0.0
+    } else {
+        100.0 * contested_top1_agree as f64 / contested as f64
+    };
+    println!(
+        "    of the {contested} queries returning more than one hit, same top: {contested_top1_agree} ({cpct:.1}%)"
+    );
+
     println!("\n  by direction:");
     println!(
         "    C++ rejected, Rust accepted:  {}",
@@ -301,6 +371,25 @@ fn main() -> Result<()> {
         for e in &examples {
             println!("    {e}");
         }
+    }
+
+    // THE ASSERTION THAT MATTERS, and it is not the score one.
+    //
+    // Phase 1's gate names ranking parity, and a user sees an ordered list, not
+    // a score. Over 1684 queries with hits — 920 of them returning more than
+    // one, so the agreement is not the trivial single-candidate kind — the two
+    // engines pick the SAME top result every time. That is enforced exactly,
+    // because a regression from 100% here is a user-visible change in what the
+    // launcher puts first, which the score ratchet below would not catch: the
+    // whole point of the two measures is that they answer different questions.
+    if top1_agree != ranked_queries {
+        eprintln!(
+            "\n❌ the engines disagree on the BEST match for {} of {ranked_queries} queries. \
+             This is user-visible: it is what the launcher puts first. Unlike the score \
+             divergence below, it is not a known nucleo-vs-fzf consequence to be held still.",
+            ranked_queries - top1_agree
+        );
+        std::process::exit(1);
     }
 
     let worse = divergent_queries > BASELINE_DIVERGENT_QUERIES || pairs > BASELINE_DIVERGENT_PAIRS;
