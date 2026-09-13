@@ -1013,14 +1013,39 @@ answerable today.
 | **Idle RSS < 30 MB** | 🟡 **now measured** | never measured before, because there was nothing running to measure. `checks.sh launcher-rss` reads `VmRSS` once the window is up. Reported, not gated. |
 | **Works with no Shell extension installed** | ✅ **met** | we ship none at all (ADR-0004), the VM has none, and `doctor` records `gnome.shell-extension` as evidence rather than gating on it. |
 
-Two things this scoring makes concrete, which "the gate cannot be evaluated"
-hid:
+**A correction to this section's own first draft.** It said the corpus was the
+binding constraint on Phase 1. That is not right, and reading §8.1 properly is
+what showed it. Suite 0 is a **differential** harness — "run the operation
+against both engines and diff structured output" — so the gate needs three
+things, and the corpus is only one:
 
-- **The corpus is the binding constraint on Phase 1**, not the launcher and not
-  the portal. 27 entries against a gate that names 500 is the largest single
-  distance to close, and `scripts/harvest-desktop-corpus.sh` is how it closes.
-  That is a different kind of work from everything done this week and it is now
-  the top of the list.
+| Suite 0 needs | state |
+|---|---|
+| the desktop corpus | **115 of ~500** — partial, and growing |
+| a runner that diffs the two engines | **exists** — `compass-testkit`'s `parity` bin, and nothing has ever invoked it |
+| a C++ engine runnable on the target | **missing** |
+
+The third is the keystone. The corpus can grow to five hundred entries and
+Suite 0 still cannot run, because there is no second engine to diff against.
+That makes §12 item 3 — the C++ baseline — the real blocker on Phase 1's gate,
+and item 4 a necessary companion rather than the thing in front.
+
+`.github/workflows/cpp-on-target.yaml` takes the cheap half: it installs the
+Fedora dependencies inside the Bluefin image and runs `cmake` configure, which
+exercises every `find_package(Qt6 … COMPONENTS …)` in the tree without
+compiling 144k lines. About a minute against twenty-plus, and it answers the
+riskiest unknown — whether Fedora's packages cover what Arch's do — before the
+expensive half is written.
+
+Two further things this scoring makes concrete, which "the gate cannot be
+evaluated" hid:
+
+- **The corpus is a real constraint, just not the binding one.** 115 entries
+  against a gate that names 500 is a genuine distance, and one Bluefin image
+  yields 88, so closing it needs different machines rather than more runs.
+  §8.1 also asks for "host RPM apps, Flatpak exports and Homebrew entries
+  together"; the VM harvest produced only the first, because a freshly
+  installed bootc image has no user Flatpaks and an empty `/home/linuxbrew`.
 - **The RSS figure is an upper bound, not the shipping number.** It is taken
   under llvmpipe, where the renderer keeps buffers it would not need on
   hardware. It is reported rather than gated for the same reason the paint

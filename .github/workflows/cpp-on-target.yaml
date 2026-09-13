@@ -1,0 +1,110 @@
+name: C++ on the target
+
+# Phase 1's gate is Suite 0 parity, and Suite 0 is a *differential* harness:
+# §8.1 says "for each item, run the operation against both engines and diff
+# structured output". crates/compass-testkit/src/parity.rs exists and takes a
+# --cpp-engine path. It has never run, because there is no C++ engine on the
+# target to point it at.
+#
+# So the gate needs three things: the corpus (115 of ~500), the runner (exists,
+# dormant) and a C++ build on Bluefin (this). That last one is the keystone —
+# the corpus can grow forever and Suite 0 still cannot run without it.
+#
+# THIS JOB IS THE CHEAP HALF, DELIBERATELY. It installs the dependencies and
+# runs `cmake` configure, which exercises every find_package(Qt6 COMPONENTS …)
+# in the tree, and stops before compiling 144k lines of C++23. Configure is
+# about a minute; the full build is twenty-plus. The riskiest unknown here is
+# whether Fedora's package names cover what Arch's do, and configure answers
+# that for a twentieth of the cost.
+#
+# PLAN.md §12 item 3 costs the rest: build inside this same image rather than a
+# fedora:44 container, because src/server/CMakeLists.txt links Qt6::GuiPrivate
+# and a binary bound to private headers must be built against the exact Qt the
+# VM boots.
+
+on:
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'scripts/runners/**'
+      - '.github/workflows/cpp-on-target.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    name: The C++ engine configures against Bluefin's Qt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull the target image
+        run: |
+          # The same image the VM tier boots, so what configures here is what
+          # would build there.
+          podman pull ghcr.io/ublue-os/bluefin:stable
+          podman run --rm ghcr.io/ublue-os/bluefin:stable \
+            sh -c 'cat /etc/os-release | grep -E "^(NAME|VERSION)="'
+
+      - name: What Qt does the target actually have?
+        run: |
+          # Printed before the install, because "which Qt" is a fact worth
+          # having in the log even when the install below fails.
+          podman run --rm ghcr.io/ublue-os/bluefin:stable \
+            sh -c 'dnf -q list --available "qt6-qtbase*" 2>/dev/null | head -20' \
+            || echo '(listing failed; the install step will say why)'
+
+      - name: Install the build dependencies and configure
+        run: |
+          set -o pipefail
+          # Arch's list translated, minus two: qtkeychain and layer-shell-qt are
+          # vendored through FetchContent unless USE_SYSTEM_* is set, and neither
+          # is on by default — which is why Fedora having no Qt6 qtkeychain does
+          # not matter here. cmark-gfm is vendored too (-DUSE_SYSTEM_CMARK_GFM=OFF).
+          #
+          # qt6-qtbase-private-devel is the one Arch does not have as a separate
+          # package: it ships private headers inside qt6-base, and
+          # src/server/CMakeLists.txt links Qt6::GuiPrivate.
+          podman run --rm -v "$PWD:/src:z" -w /src \
+            ghcr.io/ublue-os/bluefin:stable bash -euxo pipefail -c '
+              dnf install -y --setopt=install_weak_deps=False \
+                gcc gcc-c++ cmake ninja-build git \
+                qt6-qtbase-devel qt6-qtbase-private-devel \
+                qt6-qtsvg-devel qt6-qtdeclarative-devel \
+                qt6-qtshadertools-devel qt6-qttools-devel \
+                qt6-qtwayland-devel \
+                kf6-syntax-highlighting-devel extra-cmake-modules \
+                libqalculate-devel catch2-devel \
+                wayland-devel wayland-protocols-devel \
+                nodejs npm
+
+              echo "--- what Qt did we get? ---"
+              qmake6 -query QT_VERSION || rpm -q qt6-qtbase
+
+              echo "--- configure ---"
+              # Same flags as build-linux.yaml, so a difference here is the
+              # platform and not the options.
+              cmake -S . -B /tmp/build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_TESTS=ON \
+                -DUSE_SYSTEM_CMARK_GFM=OFF
+            '
+
+      - name: What this proves, and what it does not
+        if: always()
+        run: |
+          echo 'Configure exercises every find_package(Qt6 COMPONENTS ...) in the'
+          echo 'tree against the Qt the target actually ships. It does NOT prove'
+          echo 'the code compiles or links there — that is PLAN.md §12 item 3, and'
+          echo 'it is the expensive half. This job exists so the expensive half'
+          echo 'starts from a known-good dependency set instead of discovering a'
+          echo 'missing package twenty minutes in.'
