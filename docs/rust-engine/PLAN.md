@@ -633,9 +633,42 @@ That gives a first rung far cheaper than anything previously costed:
    the migration's safety net — §12 item 3 exists precisely because every other parity test we have
    compares the port against our reading of the C++ source rather than its behaviour.
 
-**Rung 1 first**, because it may catch most of the drift for a small fraction of rung 2's cost, and
-because it is buildable today on any machine with a C++23 compiler. Rung 2 is scoped as its own
-item rather than folded in.
+**Rung 1 is built and running** (`src/lib/fuzzy/probe/main.cpp`, `compass-testkit`'s
+`scorer-parity` bin, and the `scorer-parity` job in `rust.yaml`). It compiles the C++ scorer with a
+bare `c++ -std=c++23 -Isrc/lib/fuzzy/include` — one translation unit, no CMake, no Qt — and diffs
+it against `compass-search` over the harvested corpus.
+
+Only one corpus parser exists, on the Rust side: the probe scores `id<TAB>text` lines handed to it
+on stdin, so a disagreement about which `Name=` line to take cannot masquerade as a scoring
+divergence.
+
+**Its first run found six queries where the two scorers disagree**, out of 293 derived from the
+corpus. Every one is the same shape — the query matches NON-CONTIGUOUSLY, and the Rust port is more
+permissive than the C++ engine:
+
+| query | entry | C++ | Rust |
+|---|---|---|---|
+| `Ac` | Appearance | rejected | 69 |
+| `Se` | System, System Monitor, System Update, GNOME System Monitor (KDE) | rejected | 75 |
+| `B` | IBus LibBopomofo Preferences | 83 | 72 |
+| `O` | LibreOffice, LibreOffice XSLT based filters | 83 | 72 |
+| `P` | IBus LibPinyin Setup | 83 | 72 |
+| `Py` | IBus LibPinyin Setup | 67 | 61 |
+
+The control is contiguity: `Sy` ranks the System entries at 100 on both sides; `Se` (S…e) drops
+them on the C++ side alone. The other 287 queries agree exactly, which is also what rules out a
+parsing or ordering artifact.
+
+These are **not** the two divergences §8.3 and `PARITY.md` already declare — Latin Extended-A
+folding and an ordering case from upstream #946. Those are unrelated; these are all ASCII and all
+about match contiguity.
+
+**Which engine is right is not decided here.** They are recorded as declared divergences so CI is
+honest about the current state and any *seventh* fails loudly. The list pins both sides' values, so
+a declaration that stops matching — or stops occurring at all — fails too: the harness caught two
+wrong entry ids in its own list that way, on its first run.
+
+Rung 2 stays scoped as its own item.
 
 3. *Then* wire it into the VM tier, where the C++ binary now is. That step is genuinely just
    wiring, and it was not before.
