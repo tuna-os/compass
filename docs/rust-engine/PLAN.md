@@ -1033,8 +1033,22 @@ Ordered by what unblocks the most:
    requires Qt ≥ 6.9 while Bluefin 44 carries 6.10.
 
    The AppImage path stays disabled either way. Nothing here needs it.
-4. **Widen the parity port** — `compass-core`'s index against the harvested corpus, and the
-   remaining Catch2 ordering cases into `compass-search`.
+4. **Widen the parity port.** Both halves of this item turned out to be nearly done when looked at,
+   so what is left is now stated precisely rather than as a direction:
+
+   - *`compass-core`'s index against the harvested corpus* — the corpus is exercised, but its floor
+     was `>= 19` against a corpus of 27, which is exactly the synthetic count: the eight entries
+     harvested from a real host were added later and the guard was never raised, so all eight could
+     have been deleted silently. The floors are now per-provenance and the harvested set has its
+     own test. `Provenance` had been defined in the testkit and used by no consumer at all.
+   - *The remaining Catch2 ordering cases in `compass-search`* — all 21 C++ `TEST_CASE`s are ported
+     across 26 tests. Two assertions remain deferred, and both are **declared divergences with
+     pinning tests**, not gaps: Latin Extended-A folding (nucleo does not fold `Ł`/`ź`) and one
+     ordering case from upstream issue #946. Neither can be closed without shipping our own fold
+     table or reproducing fzf's bonus constants, so neither is a to-do — they are decisions.
+
+   What genuinely remains under this heading is the corpus itself: 8 harvested entries from one
+   host is a thin sample, and `scripts/harvest-desktop-corpus.sh` is how it grows.
 5. **Promote the VM tier to the merge queue** once it has been stable for a couple of weeks
    (ADR-0010). It has three consecutive green runs; that is not two weeks.
 
