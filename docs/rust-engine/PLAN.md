@@ -1030,9 +1030,14 @@ Ordered by what unblocks the most:
    inside `create_window` — and that is a **red herring**, settled from its source: both of that
    crate's portal queries shell out to `dbus-send --reply-timeout=100` and take `.output()`, so
    both are bounded and neither can block. The block is after it and before wgpu, with nothing
-   logging on the way. `checks.sh launcher-diagnose` now reads the kernel's own
-   view — per-thread `wchan`/`syscall` and the open sockets — before and after the keystroke,
-   because the stuck code is not the code that logs.
+   logging on the way. The kernel's own view now narrows it further: the main thread sits in
+   winit's Wayland event-loop poll (2 fds, infinite timeout), byte-identically before and after the
+   keystroke. That is *not* a deadlock — an idle Wayland app looks the same — but combined with
+   zero wgpu records and a window that never becomes visible (which `iced_winit` only does once a
+   renderer exists), it means the launcher is **waiting for a Wayland event that never arrives**,
+   window created and hidden, no renderer behind it. Why the compositor withholds it is still open:
+   a configure mutter never sends under llvmpipe, this window's own `transparent: true` +
+   `decorations: false` pair, or an iced/winit interaction specific to software rendering.
 
 1. **Wire the UI into the binary** (#4). A window that opens, a list that moves, and a selection
    that actually launches via `compass-platform`. Everything in Phase 1's gate is downstream.

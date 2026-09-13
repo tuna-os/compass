@@ -403,9 +403,32 @@ sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=deb
     done
     [ "$found" = 1 ] || echo '(no sockets listed)'
     echo "--- and which of those the kernel can name ---"
-    # Matching the socket inodes against unix sockets gives the peer path, which
-    # is what distinguishes "waiting on Wayland" from "waiting on the portal".
-    ss -x -p 2>/dev/null | grep -F "pid=$pid" || echo '(ss unavailable or no match)'
+    # The first version of this printed "(ss unavailable or no match)", which
+    # conflates a missing tool with a tool that found nothing — and those want
+    # different fixes. It reported exactly that, uselessly. Say which.
+    if ! command -v ss >/dev/null 2>&1; then
+      echo '(ss is not in this image; falling back to /proc/net/unix below)'
+    elif ! ss -x -p 2>/dev/null | grep -F "pid=$pid"; then
+      echo '(ss ran and matched no socket for this pid)'
+    fi
+
+    # The fallback, which needs no tools at all. Note its limit up front: a
+    # *connected* AF_UNIX socket has an empty path column, so this names the
+    # listening sockets and leaves client ends as "(unnamed)". Verified on this
+    # machine before shipping rather than discovered in the guest.
+    echo '--- socket inodes against /proc/net/unix ---'
+    for fd in "/proc/$pid/fd"/*; do
+      [ -e "$fd" ] || continue
+      target="$(readlink "$fd" 2>/dev/null || true)"
+      case "$target" in
+        socket:*)
+          ino="${target#socket:[}"; ino="${ino%]}"
+          path="$(awk -v i="$ino" '$7==i {print ($8==""?"(unnamed — connected end)":$8)}' \
+                  /proc/net/unix 2>/dev/null)"
+          printf '  fd %s inode %s -> %s\n' \
+            "$(basename "$fd")" "$ino" "${path:-(not listed)}" ;;
+      esac
+    done
     ;;
 
   # Assert the launcher is still up, and say what it printed.

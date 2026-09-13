@@ -783,6 +783,60 @@ obvious explanation was wrong again. First the input-source collision that
 turned out to be `<Shift><Super>space`, now wgpu that turns out never to run.
 Both were caught by building the measurement before believing the story.
 
+### What the kernel said, and what it does not prove
+
+The probe ran, twice, and the two readings are **byte-identical** — same thread,
+same `wchan`, same syscall, same stack pointer, same arguments:
+
+```
+pid 4212   State: S (sleeping)   Threads: 13
+  tid 4212  wchan=poll_schedule_timeout   syscall: 7  (poll)  nfds=2  timeout=0xffffffff
+  tid 4225  wchan=ep_poll                 syscall: 281 (epoll_wait)
+  … eleven more, all futex_do_wait
+```
+
+So the main thread is parked in `poll()` on **two** file descriptors with an
+**infinite** timeout, and nothing moved between before-the-keystroke and
+after-it.
+
+**The tempting reading is wrong, and worth saying so before anyone repeats it.**
+"Blocked in an infinite poll" sounds like a deadlock, but a two-fd infinite poll
+is exactly what winit's Wayland event loop looks like when it is *idle* — the
+display fd plus calloop's eventfd. A perfectly healthy launcher sitting with
+nothing to do would show the same three lines. Identical stack pointers across
+probes prove only that it has not moved, which an idle event loop also has not.
+
+What makes it a fault is the combination with what is missing:
+
+| evidence | says |
+|---|---|
+| main thread in winit's event-loop poll | `create_window` returned; the loop is running |
+| **no wgpu log records at all** | `Compositor::new` never ran to the point of touching wgpu |
+| window never became visible | `iced_winit` only calls `set_visible(true)` after `window.renderer` exists |
+
+Reading `iced_winit 0.14.0` closes the loop: compositor creation happens inside
+`runtime.block_on(create_compositor)`, and the window is shown only once a
+renderer exists. So the launcher is not wedged in a syscall it cannot leave — it
+is **waiting for a Wayland event that never arrives**, with the window created,
+hidden, and no renderer behind it.
+
+That is as far as the evidence goes. What it does *not* establish is why the
+compositor never sends that event, and the honest list of candidates is still
+open: a surface configure that mutter withholds under llvmpipe, something about
+this window's own attributes (`transparent: true` with `decorations: false` is
+an unusual pair), or a winit/iced interaction specific to a software-rendered
+session. Picking one now would be the fourth guess in a row on this bug, and
+the previous three were all wrong.
+
+One diagnostic lesson, paid for immediately. The probe's socket step printed
+`(ss unavailable or no match)` — one message for two conditions that want
+completely different fixes, so it said nothing useful about either. It now
+distinguishes them, and falls back to matching fd inodes against
+`/proc/net/unix`, which needs no tools at all. That fallback's limit is stated
+in the code rather than discovered in the guest: a *connected* AF_UNIX socket
+has an empty path column, so it names listening sockets and leaves client ends
+unnamed. Checked on this machine before shipping.
+
 ## What would change our mind
 
 - If corral's QMP key injection cannot produce Super+Space in practice — `meta_l` is passed through
