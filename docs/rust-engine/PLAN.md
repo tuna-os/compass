@@ -923,7 +923,7 @@ the number users see is the sandboxed one.
 | IPC round-trip | one benchmark, which timed a sleep — see below |
 | Cold start to first frame | no benchmark |
 | Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
-| Peak RSS, 10k index + 3 extensions | no benchmark |
+| Peak RSS, 10k index + 3 extensions | no benchmark — **index half now measured**, see below |
 
 The workspace contained **exactly one benchmark**, `compass-ipc`'s. **No CI job ran `cargo bench`
 at all**, so no benchmark could have failed anything even had it been correct. And §8.7's
@@ -963,6 +963,31 @@ confident wrong numbers:
   statistic was the single worst sample of the run. Two consecutive release runs then read 1411 µs
   and 2800 µs, which looked like a flaky SLA and was a flaky statistic. A thousand samples puts ten
   above the p99, and the spread above narrowed accordingly.
+
+#### Peak RSS — the index costs 15.5 MB of the 150 MB budget
+
+`crates/compass-core/tests/index_memory.rs`. An index of 10,000 generated
+desktop entries, measured as the `VmHWM` delta across the build:
+
+| | |
+|---|---|
+| peak RSS growth | **15.4–15.6 MB** across release and debug |
+| per entry | ~1620 bytes |
+
+Stable to within 1% over repeated runs and near-identical between profiles,
+which is what one would expect of memory and is worth stating because the
+timing rows above are nothing like that stable.
+
+**This does not evaluate the SLA, and the test says so.** The row is "10k index
++ **3 extensions** < 150 MB", and the extension host does not exist — that is
+Phase 4. What the number gives is the remaining budget: the index takes about
+10%, leaving roughly **134 MB for three extensions** when there is something to
+measure.
+
+The test asserts a loose 100 MB ceiling rather than the 150 MB SLA. Asserting
+the SLA here would quietly convert a whole-system budget into an index-only one
+and report it met — the same error as reading a green tick on a check that
+measures the wrong thing.
 
 #### The IPC row
 
