@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Vicinae
+Name=Compass
 GenericName=Application Launcher
-Comment=A focused launcher for your desktop
+Comment=A fast, extensible command palette for Linux
 Exec=vicinae
 Icon=com.vicinae.Vicinae
 Terminal=false

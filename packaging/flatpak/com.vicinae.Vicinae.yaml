@@ -91,7 +91,7 @@ modules:
         /app/share/applications/com.vicinae.Vicinae.desktop
       - install -Dm644 packaging/flatpak/com.vicinae.Vicinae.metainfo.xml
         /app/share/metainfo/com.vicinae.Vicinae.metainfo.xml
-      - install -Dm644 extra/vicinae.svg /app/share/icons/hicolor/scalable/apps/com.vicinae.Vicinae.svg
+      - install -Dm644 extra/compass.svg /app/share/icons/hicolor/scalable/apps/com.vicinae.Vicinae.svg
     sources:
       - type: dir
         path: ../..

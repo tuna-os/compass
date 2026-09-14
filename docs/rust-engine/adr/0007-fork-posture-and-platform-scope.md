@@ -1,6 +1,6 @@
 # ADR-0007: Hard fork in practice, `vicinae` names kept, Linux-first
 
-**Status:** Accepted · **Date:** 2026-09-12 · Relates to: PLAN.md §10.1, §10.2, §10.3, §10.8
+**Status:** Accepted; naming decision superseded by ADR-0012 · **Date:** 2026-09-12 · Relates to: PLAN.md §10.1, §10.2, §10.3, §10.8
 
 ## Context
 

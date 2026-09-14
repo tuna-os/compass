@@ -1,96 +1,85 @@
-<div>
-  <p align="center">
-    <img
-      width="96"
-      src="extra/vicinae.png"
-      alt="Vicinae text logo"
-    />
+<div align="center">
+  <img width="112" src="extra/compass.svg" alt="Compass logo" />
+  <h1>Compass</h1>
+  <p><strong>A fast, extensible command palette for Linux—being rebuilt in Rust.</strong></p>
+  <p>
+    <a href="https://github.com/tuna-os/compass/actions/workflows/rust.yaml"><img src="https://github.com/tuna-os/compass/actions/workflows/rust.yaml/badge.svg" alt="Rust CI"></a>
+    <a href="https://github.com/tuna-os/compass/actions/workflows/flatpak.yaml"><img src="https://github.com/tuna-os/compass/actions/workflows/flatpak.yaml/badge.svg" alt="Flatpak CI"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/tuna-os/compass" alt="GPL-3.0 license"></a>
   </p>
-  
-  <h1 align="center"><b>Vicinae</b></h1>
-  <h4 align="center">A focused launcher for your desktop</h4>
-  
-  <p align="center">
-     <a href="https://vicinae.com"><img src="https://img.shields.io/badge/website-vicinae.com-black.svg" alt="Website"></a>
-    <a href="https://discord.gg/rP4ecD42p7"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
-  </p>
-  <img alt="Vicinae screenshot" src="extra/screenshot.png" />
 </div>
 
+![Compass launcher](docs/screenshots/launcher.png)
 
-**Vicinae** (pronounced _"vee-CHEE-nay"_) is a high-performance, native command palette for your desktop.
+<p align="center"><em>The feature-complete launcher UI. The Rust UI is replacing it incrementally behind parity gates.</em></p>
 
-Out of the box, Vicinae can be your:
+Compass puts applications, commands, clipboard history, snippets, files, calculations, emoji,
+windows and extensions behind one keyboard-first interface. It is a hard fork of
+[Vicinae](https://github.com/vicinaehq/vicinae), with the Linux engine and UI being migrated from
+C++/Qt to a modular Rust workspace.
 
-- app search
-- [clipboard history](https://docs.vicinae.com/clipboard)
-- [text expander (snippets)](https://docs.vicinae.com/snippets)
-- [file search](https://docs.vicinae.com/file-search)
-- [browser tab switcher](https://docs.vicinae.com/browser-extension)
-- [emoji picker](https://docs.vicinae.com/emoji)
-- [calculator](https://docs.vicinae.com/calculator)
-- [window/workspace switcher](https://docs.vicinae.com/window)
-- font browser
-- volume controller
+## Migration status
 
-When you need more, Vicinae can be extended in several ways:
+The Rust port is active and **not yet the default engine**. `main` currently carries both engines so
+behaviour can be compared before cutover. The public project name is Compass; the `vicinae` binary,
+Flatpak ID, socket, config paths and extension API names remain temporarily compatible with existing
+installations. See [ADR-0012](docs/rust-engine/adr/0012-compass-public-brand.md).
 
-- [React/Typescript extensions](https://docs.vicinae.com/extensions/introduction), compatible with the Raycast ecosystem. In-app integration with the [Vicinae store](https://www.vicinae.com/extensions) and the [Raycast store](https://www.raycast.com/store).
-- [Script commands](https://docs.vicinae.com/scripts/getting-started), also compatible with the Raycast feature of the same name, with special Vicinae additions.
-- [dmenu style menu creation](https://docs.vicinae.com/dmenu), the linux minimalist way!
+- [Transformation plan](docs/rust-engine/PLAN.md)
+- [Parity ledger](docs/rust-engine/PARITY.md)
+- [Roadmap epic](https://github.com/tuna-os/compass/issues/2)
+- [Architecture decisions](docs/rust-engine/adr/README.md)
 
-## Documentation
+The current Rust vertical slice opens a native Iced launcher, indexes desktop applications, ranks
+them with the ported fuzzy-search semantics, launches the selected result, exposes IPC and
+diagnostics, and is exercised in Flatpak and Bluefin VM CI. Clipboard, extension-host and builtin
+feature parity are still in progress; the parity ledger is the source of truth.
 
-Everything you need to know to get started with Vicinae is at [vicinae.com](https://vicinae.com). If you have any question, please feel free to come ask it on [discord](https://discord.gg/rP4ecD42p7)!
+## Try the Rust launcher
 
-## Sponsors
+Install the pinned Rust toolchain, then run:
 
-### Gold sponsors
+```sh
+cargo run -p vicinae -- ui
+```
 
-<table>
-  <tbody>
-    <tr>
-      <td align="center" valign="middle">
-        <a href="https://depot.dev/?utm_source=vicinae&utm_medium=readme" target="_blank">
-          <picture>
-            <source media="(prefers-color-scheme: light)" srcset="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-light@3x.png" />
-            <source media="(prefers-color-scheme: dark)" srcset="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-dark@3x.png" />
-            <img src="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-light@3x.png" width="450" alt="Depot logo" />
-          </picture>
-        </a>
-      </td>
-    </tr>
-  </tbody>
-</table>
+The launcher currently targets a graphical Linux session. To run the same checks as Rust CI:
 
-### Silver Sponsors
+```sh
+make check-rust
+```
 
-<table>
-  <tbody>
-    <tr>
-      <td align="center" valign="middle">
-        <a href="https://coderabbit.link/vicinaehq" target="_blank"><img src="https://avatars.githubusercontent.com/u/132028505?s=200&v=4" height="100" alt="CodeRabbit logo"></a>
-      </td>
-    </tr>
-  </tbody>
-</table>
+For the Bluefin/Flatpak development path, install `flatpak-builder` and the Freedesktop SDK, then:
 
-### Supporter sponsors
+```sh
+make flatpak-rust
+flatpak run com.vicinae.Vicinae -- ui
+```
 
-<table>
-  <tbody>
-    <tr>
-      <td align="center" valign="middle">
-        <a href="https://github.com/jaredallard" target="_blank"><img src="https://avatars.githubusercontent.com/u/2391349?v=4" height="60" alt="Jared Allard's pp"></a>
-      </td>
-    </tr>
-  </tbody>
-</table>
+The legacy identifiers in those commands are intentional migration compatibility, not the public
+brand.
 
----
+## Architecture
 
-[And all our other amazing sponsors!](https://github.com/sponsors/vicinaehq#sponsors)
+The workspace separates desktop-entry parsing, search, application state, IPC, platform services,
+Wayland/portal integration, GNOME Shell integration, UI and extension APIs into `compass-*` crates.
+The `vicinae` package is the compatibility CLI and binary while the cutover is underway.
 
-## Acknowledgments
+New Rust code must pass formatting, Clippy with warnings denied, workspace tests, doctests, minimum
+supported Rust, scorer/crypto parity, Flatpak source checks and the platform build matrix before it
+is merged.
 
-Special thanks to the [Soulver](https://soulver.app?utm_source=vicinae&utm_medium=readme) team for allowing us to ship SoulverCore as a calculator backend option on macOS.
+## Contributing
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the open
+[roadmap issues](https://github.com/tuna-os/compass/issues). Port work should preserve observable
+behaviour or update the parity ledger with evidence for an intentional difference. A C++ test may
+only be removed in the same change that adds its Rust replacement.
+
+## Project history
+
+Compass is derived from Vicinae and remains grateful to its maintainers, contributors and sponsors.
+The inherited C++ engine and TypeScript extension ecosystem are the behavioural reference during
+the migration. Special thanks also go to the
+[Soulver](https://soulver.app) team for allowing the project to ship SoulverCore as an optional
+calculator backend on macOS.

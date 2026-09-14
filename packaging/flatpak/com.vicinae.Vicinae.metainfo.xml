@@ -3,19 +3,19 @@
   <id>com.vicinae.Vicinae</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
-  <name>Vicinae</name>
-  <summary>A focused launcher for your desktop</summary>
+  <name>Compass</name>
+  <summary>A fast, extensible command palette for Linux</summary>
 
   <description>
     <p>
-      Vicinae is a native command palette: application search, clipboard history, snippets,
+      Compass is a native command palette: application search, clipboard history, snippets,
       file search, a calculator, an emoji picker and a window switcher, extensible with
       Raycast-compatible extensions and script commands.
     </p>
   </description>
 
   <launchable type="desktop-id">com.vicinae.Vicinae.desktop</launchable>
-  <url type="homepage">https://vicinae.com</url>
+  <url type="homepage">https://github.com/tuna-os/compass</url>
   <url type="bugtracker">https://github.com/tuna-os/compass/issues</url>
 
   <provides>
