@@ -194,3 +194,44 @@ fn control_the_extractor_finds_what_is_there_and_only_that() {
         "a marker with no following literal must yield nothing rather than panicking"
     );
 }
+
+/// The keyring storage format is a property of **qtkeychain v0.14.0**.
+///
+/// `keyring.rs` documents four attributes and one non-obvious encoding — the
+/// secret is base64, not raw bytes — all read out of that tag's
+/// `libsecret.cpp`. None of it is in qtkeychain's documentation, and none of
+/// it is guaranteed across versions: the schema, the attribute names, the
+/// `type` values and the base64 wrapping are all internal choices.
+///
+/// This machine has no keyring daemon, so the format cannot be re-verified
+/// here on demand. What *can* be checked, offline and in a second, is that the
+/// version whose source was read is still the version being built. If the pin
+/// moves, someone has to go and look again.
+#[test]
+fn the_qtkeychain_pin_still_matches_the_version_the_format_was_read_from() {
+    /// The tag whose `libsecret.cpp` was read to write `keyring.rs`.
+    const VERIFIED_AGAINST: &str = "v0.14.0";
+
+    let cmake = read("cmake/QtKeychain.cmake");
+
+    // GIT_TAG's argument is a bare token in CMake, so take the next
+    // whitespace-delimited word and strip any quotes rather than assuming
+    // either form. An earlier version of this test asked `literals_after`
+    // whether the tag was quoted, which cannot work: that helper finds the
+    // next quote ANYWHERE in the file, and this one has several further down.
+    let tag = cmake
+        .split("GIT_TAG")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(|token| token.trim_matches('"'))
+        .expect("cmake/QtKeychain.cmake should declare a GIT_TAG");
+
+    assert_eq!(
+        tag, VERIFIED_AGAINST,
+        "qtkeychain is pinned to {tag}, but compass-crypto::keyring's storage format was read \
+         out of {VERIFIED_AGAINST}'s libsecret.cpp. The attribute names, the `type` values and \
+         the base64 wrapping of the secret are all internal to qtkeychain and can change \
+         between releases. Re-read libsecret.cpp at {tag} and confirm — or correct — the \
+         contract in keyring.rs before moving this constant."
+    );
+}

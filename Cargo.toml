@@ -51,6 +51,8 @@ aes-gcm = "0.11"
 hkdf = "0.13"
 sha2 = "0.11"
 getrandom = "0.3"
+# Qt stores binary keyring entries base64-encoded; see crates/compass-crypto/src/keyring.rs.
+base64 = "0.22"
 
 # Spike B (docs/rust-engine issue #3): the sandbox primitives Phase 4 plans to
 # use. Both expose safe APIs, so `unsafe_code = "forbid"` still holds here.

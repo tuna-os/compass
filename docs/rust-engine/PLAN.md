@@ -997,6 +997,39 @@ Reading the keyring is deliberately not ported yet: it needs a Secret Service ba
 daemon to test against, and it is separable from the derivation, which is where the irreversible
 mistake lives.
 
+**What the keyring entry actually looks like, which is not what you would guess.** The C++ engine
+reaches the keyring through qtkeychain v0.14.0 (pinned in `cmake/QtKeychain.cmake`), which on Linux
+goes through libsecret. Compass has to find the *same* entry, and none of what that requires is
+documented anywhere — it was read out of that tag's `libsecret.cpp`:
+
+| | |
+|---|---|
+| attribute `user` | `vicinae-master-key` |
+| attribute `server` | `vicinae` |
+| attribute `type` | `base64` |
+| attribute `xdg:schema` | `org.qt.keychain`, added by libsecret itself |
+| the secret | **base64 text of the 32 raw bytes, not the bytes** |
+
+The encoding is the trap. `database-key.cpp` calls `setBinaryData`, and qtkeychain's binary mode
+does `password.toBase64()` on write and `QByteArray::fromBase64` on read. A port that stored 32 raw
+bytes would write an entry the C++ engine base64-decodes into garbage — and the failure is silent
+until a user's database will not open. The `keyring` crate's default attributes
+(`application`/`service`/`username`) miss on every count as well.
+
+A second subtlety: `findPassword` searches `type="plaintext"` **first**, and only retries
+`type="base64"` on a miss. So a text-mode entry shadows a binary-mode one, and Compass must write
+what the C++ engine *writes*, not what it looks for first.
+
+`compass-crypto::keyring` carries the contract and the encode/decode, with a test asserting the
+stored form is *not* the raw bytes — so "simplifying" it fails a test rather than a migration.
+The D-Bus client is not written: this machine has no `gnome-keyring-daemon`, no `libsecret` and no
+`secret-tool`, so it could only be tested against a mock written alongside it, which would prove the
+two agree with each other and nothing about the real thing. The VM tier boots a full GNOME session
+and is where that work belongs.
+
+Because the format is a property of **v0.14.0** and cannot be re-verified offline,
+`cpp_constants.rs` asserts the pin has not moved, and says what to do if it has.
+
 **(b) Headless GNOME session — nightly.** `gnome-shell --headless --virtual-monitor` in a Fedora
 44/45 container running a scripted 10-step session against both GNOME 50 and 51. This is the tier
 that catches real portal behaviour, the GlobalShortcuts permission dialog, and
