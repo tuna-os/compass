@@ -1,7 +1,9 @@
 //! Tests for the production ranking path: the [`FuzzySearchable`] trait, the
 //! quality gate, determinism, and plain ranking sanity on realistic app names.
 
-use compass_search::{FuzzySearchable, Query, WeightedField, rank, rank_indices, score_item};
+use compass_search::{
+    FuzzySearchable, Query, WeightedField, rank, rank_indices, rank_with_bias, score_item,
+};
 
 /// A launcher entry: name matters most, keywords less, description least.
 struct App {
@@ -118,6 +120,52 @@ fn empty_query_keeps_everything_in_input_order() {
 
     // Whitespace-only is the same as empty.
     assert_eq!(names("   "), ranked);
+}
+
+#[test]
+fn bias_breaks_a_fuzzy_tie_without_duplicating_the_ordering_rule() {
+    let items = ["Firefox", "Firewall"];
+    let ranked = rank_with_bias(
+        "fir",
+        &items,
+        |item| {
+            if *item == "Firewall" { 1.0 } else { 0.0 }
+        },
+    );
+
+    assert_eq!(ranked[0].item, &"Firewall");
+    assert_eq!(ranked[0].bias, 1.0);
+    assert_eq!(ranked[0].score, f64::from(ranked[0].match_score) + 1.0);
+}
+
+#[test]
+fn bias_cannot_resurrect_a_non_match() {
+    let items = ["Firefox", "Calculator"];
+    let ranked = rank_with_bias("firefox", &items, |item| {
+        if *item == "Calculator" {
+            1_000_000.0
+        } else {
+            0.0
+        }
+    });
+
+    assert_eq!(ranked.len(), 1);
+    assert_eq!(ranked[0].item, &"Firefox");
+}
+
+#[test]
+fn an_empty_query_is_ranked_by_bias_then_input_order() {
+    let items = ["first", "second", "third"];
+    let ranked = rank_with_bias("", &items, |item| if *item == "third" { 2.0 } else { 1.0 });
+    let values: Vec<_> = ranked.into_iter().map(|result| *result.item).collect();
+
+    assert_eq!(values, ["third", "first", "second"]);
+}
+
+#[test]
+#[should_panic(expected = "ranking bias must be finite")]
+fn non_finite_bias_is_rejected() {
+    let _ = rank_with_bias("", &["item"], |_| f64::NAN);
 }
 
 #[test]
