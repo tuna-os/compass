@@ -259,6 +259,28 @@ fn run(probe_path: &str) -> Result<Counts> {
         }
     }
 
+    // WHY THE SHIPPED PURPOSE LABELS ARE NOT DIFFED HERE
+    //
+    // The obvious next step is to derive with `compass_crypto::keys`'
+    // DATABASE_LABEL and CLIPBOARD_LABEL and compare. It was written, and it
+    // is a tautology: the label handed to the C++ probe would come from the
+    // Rust constant, so changing that constant changes what the probe is
+    // asked for and the two agree again. Control-tested by setting
+    // CLIPBOARD_LABEL to "vicinae-clipboard-v2" -- the run stayed green.
+    //
+    // The real claim decomposes into two checks that each CAN fail:
+    //
+    //   * the Rust labels equal the C++ SOURCE labels
+    //     -- compass-crypto/tests/cpp_constants.rs, which parses
+    //        database-key.cpp and was shown to fire on a renamed label, a
+    //        renamed keyring entry, and a third derived purpose appearing;
+    //   * HKDF agrees byte for byte for arbitrary labels
+    //     -- the loop above, over three masters and five labels.
+    //
+    // Together those give "Rust derives what C++ derives, for the label C++
+    // uses". Adding a third check that restates them without being able to
+    // fail would make the coverage look stronger and be worth nothing.
+
     // ---------------------------------------------------------------
     // 2. Cross-decryption, both directions.
     // ---------------------------------------------------------------

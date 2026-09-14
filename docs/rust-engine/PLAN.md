@@ -975,6 +975,28 @@ the probe rejected it as malformed. Empty labels and empty plaintexts are both l
 are in the corpus precisely because they sit on boundaries; the wire format now spells the empty
 string `-`. A corpus of only comfortable inputs would have left that hole in place.
 
+**Key derivation, and a tautology caught in the act.** One master key in the login keyring expands
+by HKDF into a SQLCipher key and a clipboard key, under the labels `vicinae-db` and
+`vicinae-clipboard`. Those labels and the keyring entry name `vicinae-master-key` are a *data
+format*: get one wrong and `database-key.cpp`'s own error message is what a user sees — *"the
+affected database files must be deleted to reset"*. `compass-crypto::keys` ports the derivation, and
+`compass-crypto/tests/cpp_constants.rs` parses the constants back out of `database-key.cpp`,
+`vicinae.hpp` and `aes-gcm.hpp` rather than trusting the copy. Shown to fire on a renamed label, a
+renamed keyring entry, and a third derived purpose appearing.
+
+The obvious companion check — have `crypto-parity` derive with the shipped labels and diff — **was
+written and is a tautology**, because the label handed to the C++ probe comes from the Rust
+constant, so changing that constant changes what the probe is asked for and the two agree again. It
+was caught by control-testing it: setting `CLIPBOARD_LABEL` to `vicinae-clipboard-v2` left the run
+green. It has been removed rather than kept as reassurance. The real claim decomposes into two
+checks that each *can* fail — the Rust labels equal the C++ source labels (`cpp_constants`), and
+HKDF agrees byte for byte for arbitrary labels (`crypto-parity`) — and together they give "Rust
+derives what C++ derives, for the label C++ uses".
+
+Reading the keyring is deliberately not ported yet: it needs a Secret Service backend and a running
+daemon to test against, and it is separable from the derivation, which is where the irreversible
+mistake lives.
+
 **(b) Headless GNOME session — nightly.** `gnome-shell --headless --virtual-monitor` in a Fedora
 44/45 container running a scripted 10-step session against both GNOME 50 and 51. This is the tier
 that catches real portal behaviour, the GlobalShortcuts permission dialog, and
