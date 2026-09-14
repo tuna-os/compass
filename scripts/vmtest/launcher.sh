@@ -136,9 +136,33 @@ echo "=== 3d. did a launcher window actually appear? (the gate) ==="
 # side — because the point is to catch "nothing was drawn", not to pin the
 # exact pixels of a theme. A tighter bound would break on the first font change
 # and teach everyone to ignore it.
+#
+# THE TOP BAR IS IGNORED, and that is not a loosening of the gate.
+#
+# --expect-box asserts the changed region lies WITHIN the box, which silently
+# also asserts that nothing else on the screen changed between the two frames.
+# That was never the intent, and it is not true: GNOME's top bar carries a
+# clock. It cost a red run to find out, and the two runs say exactly what
+# happened:
+#
+#   passing   84077 changed  box x 335..942  y 152..796
+#   failing   84172 changed  box x 335..942  y  10..796
+#
+# Ninety-five extra pixels, in the top bar, with the launcher's own footprint
+# identical to the pixel on both axes. A clock digit turning over dragged miny
+# from 152 to 10 and failed a gate about whether a window appeared. Two
+# calibration runs happened not to cross a minute boundary; this one did.
+#
+# So the shell's own furniture is excluded from the comparison rather than the
+# box being widened to swallow it. Widening would have made "the launcher
+# painted at the top of the screen" pass, which is a real failure this gate
+# should keep catching. Excluding y < 140 keeps the containment assertion sharp
+# for the whole region the launcher can legitimately occupy, and --min-percent
+# still requires a real window's worth of pixels inside it: a launcher that
+# painted only in the ignored strip would now change ~0% and fail there.
 python3 scripts/vmtest/framediff.py \
   "$out/launcher-00-before.png" "$out/launcher-01-open.png" \
-  --min-percent 3 --expect-box 300 140 980 800
+  --min-percent 3 --expect-box 300 140 980 800 --ignore-box 0 0 1279 139
 
 echo
 echo "=== 3e. harvest a real desktop-entry corpus from this box ==="

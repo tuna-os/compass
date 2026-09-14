@@ -121,3 +121,17 @@ jobs:
           printf '  %s\n' "${files[@]}"
           python3 -m py_compile "${files[@]}"
           echo "${#files[@]} file(s) compiled"
+
+      # Compiling is not running. framediff.py holds the VM tier's only real
+      # assertion -- "did a launcher window appear" -- and that assertion was
+      # changed to ignore GNOME's top bar after a clock tick failed a run in
+      # which the launcher had painted perfectly. An exclusion can quietly gut
+      # the thing it is added to, so the gate is exercised here on synthetic
+      # frames: it must still fail for a launcher that never drew, for one that
+      # drew in the wrong place, and for top-bar noise with no launcher at all.
+      #
+      # Here rather than in the VM tier because it needs no VM and takes about a
+      # second, and because a control that only runs inside the thing it is
+      # controlling is not much of a control.
+      - name: The launcher gate still fails when it should
+        run: python3 scripts/vmtest/framediff-selftest.py

@@ -64,7 +64,7 @@ whether a real GNOME session grants the shortcut we ask for.
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
 | `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
-| `src/lib/crypto` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
+| `src/lib/crypto` | `compass-crypto` | Phase 3 | ✅ | ✅ | ✅ | ⏳ |
 | `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ✅ | 🟡 | ⏳ |
@@ -263,6 +263,24 @@ the behaviour changes, so a future fix is loud rather than silent.
 Matched deliberately, for the record: field codes are not expanded inside quotes; unknown and
 deprecated field codes expand to nothing; a redeclared group replaces rather than merges; localized
 score ties resolve to the last declaration.
+
+### `compass-crypto` — one error variant the C++ API cannot express
+
+Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the
+next person does not "fix" it on one side only.
+
+`Crypto::AES256GCM::EncryptError` has exactly one value, `CipherError`, so C++ `encrypt` reports a
+wrong-sized key, an unavailable CSPRNG and a refusing cipher identically. `decrypt`'s error set, by
+contrast, *does* distinguish `InvalidKeySize`. `compass-crypto` mirrors both, including the
+asymmetry, because the parity harness compares error names and a more precise Rust variant would
+read as a divergence rather than as the improvement it is. Fixing it means changing both sides in
+the same commit.
+
+The reverse case is also worth naming: C++ `DecryptError` declares a `CipherError` variant that
+**no code path produces** — `gcmDecrypt` failure maps to `AuthFailed`. So the reachable C++ set is
+`{InvalidKeySize, DataTooShort, AuthFailed}`, which is exactly the Rust set. `aes-gcm` collapses
+every decryption failure into one opaque error by design, and that is the right call: telling
+"the cipher broke" apart from "the tag did not verify" is a padding-oracle-shaped invitation.
 
 ### `compass-search` — nucleo is not fzf
 
