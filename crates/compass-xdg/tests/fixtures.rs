@@ -108,7 +108,7 @@ fn vim_fixture() {
         entry.expand_exec_with(&["/tmp/a.txt", "/tmp/b.txt"], false, None),
         ["vim", "/tmp/a.txt", "/tmp/b.txt"]
     );
-    assert!(entry.should_show(&["GNOME"]));
+    assert!(entry.should_show(["GNOME"]));
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn libreoffice_fixture_has_actions() {
     assert_eq!(entry.name(), "LibreOffice");
     assert_eq!(entry.exec(), Some("libreoffice %U"));
     assert!(!entry.no_display());
-    assert!(entry.should_show(&["GNOME"]));
+    assert!(entry.should_show(["GNOME"]));
 
     let ids: Vec<&str> = entry
         .actions()
@@ -153,9 +153,9 @@ fn no_display_fixtures_are_not_shown() {
         let entry = load(name);
 
         assert!(entry.no_display(), "{name} sets NoDisplay=true");
-        assert!(!entry.should_show(&["GNOME"]), "{name} should not be shown");
+        assert!(!entry.should_show(["GNOME"]), "{name} should not be shown");
         assert!(
-            entry.matches_desktop(&["GNOME"]),
+            entry.matches_desktop(["GNOME"]),
             "{name} has no ShowIn restriction"
         );
     }

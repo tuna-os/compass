@@ -473,10 +473,18 @@ impl DesktopEntry {
     /// Checks only the `OnlyShowIn` and `NotShowIn` keys against
     /// `current_desktops`, which is what `$XDG_CURRENT_DESKTOP` holds.
     #[must_use]
-    pub fn matches_desktop(&self, current_desktops: &[&str]) -> bool {
+    pub fn matches_desktop<I, S>(&self, current_desktops: I) -> bool
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let current_desktops: Vec<S> = current_desktops.into_iter().collect();
         let matches = |list: &[String]| {
-            list.iter()
-                .any(|entry| current_desktops.contains(&entry.as_str()))
+            list.iter().any(|entry| {
+                current_desktops
+                    .iter()
+                    .any(|desktop| desktop.as_ref() == entry.as_str())
+            })
         };
 
         if !self.only_show_in.is_empty() && !matches(&self.only_show_in) {
@@ -493,7 +501,11 @@ impl DesktopEntry {
     /// Whether the entry should be shown in the current environment. Combines
     /// the `Hidden`, `NoDisplay`, `OnlyShowIn` and `NotShowIn` keys.
     #[must_use]
-    pub fn should_show(&self, current_desktops: &[&str]) -> bool {
+    pub fn should_show<I, S>(&self, current_desktops: I) -> bool
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         if self.hidden || self.no_display {
             return false;
         }

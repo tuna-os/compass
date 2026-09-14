@@ -50,7 +50,7 @@ proptest! {
             &ParseOptions { locale: Some(Locale::parse("de_DE@euro")), ..Default::default() },
         ) {
             let _ = entry.expand_exec_with(&["file:///tmp/a", "file:///tmp/b"], true, Some("env"));
-            let _ = entry.should_show(&["GNOME"]);
+            let _ = entry.should_show(["GNOME"]);
             for action in entry.actions() {
                 let _ = action.expand_exec();
             }

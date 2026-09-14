@@ -107,10 +107,33 @@ impl Locale {
     /// `LC_MESSAGES` then `LANG`, as `setlocale(LC_MESSAGES, "")` would.
     #[must_use]
     pub fn system() -> Locale {
-        for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
-            match std::env::var(var) {
-                Ok(value) if !value.is_empty() => return Locale::parse(&value),
-                _ => {}
+        let vars: Vec<_> = ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .into_iter()
+            .filter_map(|name| std::env::var(name).ok().map(|value| (name, value)))
+            .collect();
+
+        Locale::from_env_vars(&vars)
+    }
+
+    /// Resolves a locale from an injected environment snapshot.
+    ///
+    /// `LC_ALL`, `LC_MESSAGES`, then `LANG` are checked in that fixed precedence
+    /// order regardless of the order of `vars`. Missing and empty values are
+    /// ignored. This is the deterministic counterpart to [`Locale::system`]
+    /// for callers and tests that must not depend on the process environment.
+    #[must_use]
+    pub fn from_env_vars<K, V>(vars: &[(K, V)]) -> Locale
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        for name in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+            if let Some(value) = vars
+                .iter()
+                .find_map(|(key, value)| (key.as_ref() == name).then(|| value.as_ref()))
+                .filter(|value| !value.is_empty())
+            {
+                return Locale::parse(value);
             }
         }
 
