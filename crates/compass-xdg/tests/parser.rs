@@ -398,7 +398,6 @@ fn k_field_code_expands_to_the_entry_location() {
         &ParseOptions {
             locale: Some(Locale::parse("C")),
             path: Some("/usr/share/applications/n.desktop".into()),
-            ..Default::default()
         },
     )
     .unwrap();
