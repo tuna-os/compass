@@ -265,7 +265,9 @@ fn app_index_exposes_the_quality_threshold() {
     let index = realistic_index(dir.path());
 
     assert!(index.search("e").is_empty());
-    assert!(!index
-        .search_with_options("e", RankOptions { min_quality: 0 })
-        .is_empty());
+    assert!(
+        !index
+            .search_with_options("e", RankOptions { min_quality: 0 })
+            .is_empty()
+    );
 }

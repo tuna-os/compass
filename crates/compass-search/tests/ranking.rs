@@ -118,13 +118,7 @@ fn quality_threshold_is_configurable_without_changing_the_default() {
     let items = ["Firefox Web Browser", "Calculator"];
     let default = rank("ffb", &items);
     let permissive = rank_with_options("ffb", &items, RankOptions { min_quality: 0 });
-    let reject_all = rank_with_options(
-        "firefox",
-        &items,
-        RankOptions {
-            min_quality: 101,
-        },
-    );
+    let reject_all = rank_with_options("firefox", &items, RankOptions { min_quality: 101 });
 
     assert!(default.is_empty());
     assert_eq!(permissive.len(), 1);
