@@ -65,6 +65,24 @@ jobs:
         run: cargo test --workspace --all-targets
 
       # --all-targets skips doctests, so run them separately.
+      # The §8.5 SLAs are release properties, and `cargo test` above is a debug
+      # build. Without this step the fuzzy-search budget would take its debug
+      # branch — a 60 ms sanity ceiling — and the real 2 ms SLA would never run
+      # in CI at all.
+      #
+      # Which is exactly the defect this work was fixing. §8.5's benches claimed
+      # to be "enforced as CI failures" while no job ran `cargo bench`; adding a
+      # release-only assertion that CI also never runs would have reproduced it
+      # one layer down.
+      #
+      # Scoped to the two budget tests rather than the workspace: a cold release
+      # build of just these is about twelve seconds, against minutes for
+      # everything including the renderer.
+      - name: SLA budgets, in release
+        run: |
+          cargo test --release -p compass-search --test ranking_budget -- --nocapture
+          cargo test --release -p compass-ipc --test roundtrip_budget -- --nocapture
+
       - name: Doctests
         run: cargo test --workspace --doc
 
