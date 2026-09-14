@@ -6,14 +6,10 @@ Bluefin is the first target and has no traditional package manager, so the Flatp
 
 ## Status
 
-⚠️ **Syntax-validated only.** The manifest, desktop file and metainfo parse cleanly, but this has
-not been built: the container these were written in has no `flatpak-builder`, no `flatpak`, and no
-display server. The first real build is a Phase 0 exit-gate task — expect it to need fixing, and do
-not treat a green parse as a working package.
-
-Specifically unverified: whether `cargo-sources.json` generation works against our lockfile, whether
-Iced/wgpu finds a working GPU path inside the sandbox, and whether the permission set is actually
-sufficient to index host applications.
+The manifest is built on pull requests and the bundle is exercised in the Bluefin VM tier. That
+tier verifies the Wayland session, portals, sandbox nesting and that the Rust launcher paints. The
+nightly VM remains the authoritative target integration check; syntax validation alone is not
+treated as packaging evidence.
 
 ## Building
 
