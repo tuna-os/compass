@@ -321,51 +321,74 @@ fn a_missing_type_defaults_to_application() {
 
 #[test]
 fn should_show_honours_no_display_and_hidden() {
-    assert!(parse("[Desktop Entry]\nName=n\n").should_show(&["GNOME"]));
-    assert!(!parse("[Desktop Entry]\nName=n\nNoDisplay=true\n").should_show(&["GNOME"]));
-    assert!(!parse("[Desktop Entry]\nName=n\nHidden=true\n").should_show(&["GNOME"]));
+    assert!(parse("[Desktop Entry]\nName=n\n").should_show(["GNOME"]));
+    assert!(!parse("[Desktop Entry]\nName=n\nNoDisplay=true\n").should_show(["GNOME"]));
+    assert!(!parse("[Desktop Entry]\nName=n\nHidden=true\n").should_show(["GNOME"]));
 }
 
 #[test]
 fn should_show_honours_only_show_in() {
     let entry = parse("[Desktop Entry]\nName=n\nOnlyShowIn=KDE;GNOME;\n");
 
-    assert!(entry.should_show(&["GNOME"]));
-    assert!(entry.should_show(&["X-Foo", "KDE"]));
-    assert!(!entry.should_show(&["XFCE"]));
-    assert!(!entry.should_show(&[]));
+    assert!(entry.should_show(["GNOME"]));
+    assert!(entry.should_show(["X-Foo", "KDE"]));
+    assert!(!entry.should_show(["XFCE"]));
+    assert!(!entry.should_show([] as [&str; 0]));
+}
+
+#[test]
+fn should_show_accepts_owned_desktop_names() {
+    let entry = parse("[Desktop Entry]\nName=n\nOnlyShowIn=KDE;GNOME;\n");
+    let desktops = vec!["X-Foo".to_owned(), "GNOME".to_owned()];
+
+    assert!(entry.should_show(&desktops));
+}
+
+#[test]
+fn locale_environment_resolution_is_injectable_and_uses_posix_precedence() {
+    let vars = [
+        ("LANG", "en_GB.UTF-8"),
+        ("LC_MESSAGES", "fr_FR.UTF-8"),
+        ("LC_ALL", "de_DE.UTF-8"),
+    ];
+    assert_eq!(Locale::from_env_vars(&vars), Locale::parse("de_DE.UTF-8"));
+
+    let vars = [("LC_ALL", ""), ("LANG", "en_GB.UTF-8")];
+    assert_eq!(Locale::from_env_vars(&vars), Locale::parse("en_GB.UTF-8"));
+
+    assert_eq!(Locale::from_env_vars::<&str, &str>(&[]), Locale::parse("C"));
 }
 
 #[test]
 fn should_show_honours_not_show_in() {
     let entry = parse("[Desktop Entry]\nName=n\nNotShowIn=KDE;\n");
 
-    assert!(entry.should_show(&["GNOME"]));
-    assert!(entry.should_show(&[]));
-    assert!(!entry.should_show(&["KDE"]));
-    assert!(!entry.should_show(&["GNOME", "KDE"]));
+    assert!(entry.should_show(["GNOME"]));
+    assert!(entry.should_show([] as [&str; 0]));
+    assert!(!entry.should_show(["KDE"]));
+    assert!(!entry.should_show(["GNOME", "KDE"]));
 }
 
 #[test]
 fn not_show_in_wins_over_only_show_in() {
     let entry = parse("[Desktop Entry]\nName=n\nOnlyShowIn=GNOME;\nNotShowIn=GNOME;\n");
 
-    assert!(!entry.should_show(&["GNOME"]));
+    assert!(!entry.should_show(["GNOME"]));
 }
 
 #[test]
 fn desktop_matching_is_case_sensitive() {
     let entry = parse("[Desktop Entry]\nName=n\nOnlyShowIn=GNOME;\n");
 
-    assert!(!entry.should_show(&["gnome"]));
+    assert!(!entry.should_show(["gnome"]));
 }
 
 #[test]
 fn matches_desktop_ignores_no_display() {
     let entry = parse("[Desktop Entry]\nName=n\nNoDisplay=true\n");
 
-    assert!(entry.matches_desktop(&["GNOME"]));
-    assert!(!entry.should_show(&["GNOME"]));
+    assert!(entry.matches_desktop(["GNOME"]));
+    assert!(!entry.should_show(["GNOME"]));
 }
 
 #[test]

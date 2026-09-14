@@ -405,8 +405,6 @@ impl AppIndexBuilder {
         let mut claimed: HashMap<String, PathBuf> = HashMap::new();
         let mut by_key: HashMap<String, usize> = HashMap::new();
 
-        let desktops: Vec<&str> = self.desktops.iter().map(String::as_str).collect();
-
         for dir in &self.dirs {
             let mut files = Vec::new();
             collect_desktop_files(dir, dir, 0, &mut files, &mut skipped);
@@ -425,7 +423,14 @@ impl AppIndexBuilder {
                 }
                 claimed.insert(id.clone(), path.clone());
 
-                self.index_file(&id, &path, &desktops, &mut items, &mut by_key, &mut skipped);
+                self.index_file(
+                    &id,
+                    &path,
+                    &self.desktops,
+                    &mut items,
+                    &mut by_key,
+                    &mut skipped,
+                );
             }
         }
 
@@ -440,7 +445,7 @@ impl AppIndexBuilder {
         &self,
         id: &str,
         path: &Path,
-        desktops: &[&str],
+        desktops: &[String],
         items: &mut Vec<AppItem>,
         by_key: &mut HashMap<String, usize>,
         skipped: &mut Vec<SkippedEntry>,
