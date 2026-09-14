@@ -426,13 +426,7 @@ impl AppIndexBuilder {
                 }
                 claimed.insert(id.to_owned(), path.to_path_buf());
 
-                self.index_file(
-                    &file,
-                    &self.desktops,
-                    &mut items,
-                    &mut by_key,
-                    &mut skipped,
-                );
+                self.index_file(&file, &self.desktops, &mut items, &mut by_key, &mut skipped);
             }
         }
 
