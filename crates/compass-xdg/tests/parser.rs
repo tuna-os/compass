@@ -398,7 +398,6 @@ fn k_field_code_expands_to_the_entry_location() {
         &ParseOptions {
             locale: Some(Locale::parse("C")),
             path: Some("/usr/share/applications/n.desktop".into()),
-            ..Default::default()
         },
     )
     .unwrap();
@@ -505,7 +504,7 @@ fn action_names_are_localized() {
     )
     .unwrap();
 
-    assert_eq!(entry.actions()[0].name(), "Un");
+    assert_eq!(entry.actions()[0].name(), Some("Un"));
 }
 
 #[test]

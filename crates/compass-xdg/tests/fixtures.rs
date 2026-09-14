@@ -82,7 +82,7 @@ fn every_fixture_parses_and_is_sane() {
         for action in entry.actions() {
             assert!(!action.id().is_empty(), "{name} action should have an id");
             assert!(
-                !action.name().is_empty(),
+                action.name().is_some_and(|name| !name.is_empty()),
                 "{name} action should have a name"
             );
             assert!(
@@ -143,7 +143,7 @@ fn libreoffice_fixture_has_actions() {
 
     let writer = entry.action("Writer").expect("Writer action");
 
-    assert_eq!(writer.name(), "Writer");
+    assert_eq!(writer.name(), Some("Writer"));
     assert_eq!(writer.expand_exec(), ["libreoffice", "--writer"]);
 }
 

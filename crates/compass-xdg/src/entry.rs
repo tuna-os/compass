@@ -55,8 +55,6 @@ pub enum EntryType {
 /// Options driving [`DesktopEntry::parse_with`].
 #[derive(Debug, Clone, Default)]
 pub struct ParseOptions {
-    /// The desktop file id, as computed from its location. Purely informative.
-    pub id: Option<String>,
     /// The locale localized keys are resolved against. Defaults to
     /// [`Locale::system`].
     pub locale: Option<Locale>,
@@ -69,7 +67,7 @@ pub struct ParseOptions {
 #[derive(Debug, Clone)]
 pub struct DesktopAction {
     id: String,
-    name: String,
+    name: Option<String>,
     icon: Option<String>,
     exec: Option<String>,
     entry_path: Option<PathBuf>,
@@ -83,7 +81,7 @@ impl DesktopAction {
                 .strip_prefix(ACTION_GROUP_PREFIX)
                 .unwrap_or_default()
                 .to_owned(),
-            name: group.string("Name").unwrap_or_default(),
+            name: group.string("Name"),
             icon: group.string("Icon"),
             exec: group.string("Exec"),
             entry_path: entry_path.map(Path::to_path_buf),
@@ -97,10 +95,10 @@ impl DesktopAction {
         &self.id
     }
 
-    /// The localized action name. Empty when the (required) key is missing.
+    /// The localized action name. The desktop entry specification requires this key.
     #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     #[must_use]
@@ -133,7 +131,7 @@ impl DesktopAction {
         };
 
         expand(
-            ExecParser::new(&self.name)
+            ExecParser::new(self.name.as_deref().unwrap_or_default())
                 .with_icon(self.icon.as_deref())
                 .with_entry_path(self.entry_path.as_deref().and_then(Path::to_str))
                 .with_force_append(force_append),
@@ -159,7 +157,6 @@ fn expand(
 /// A parsed desktop entry file.
 #[derive(Debug, Clone)]
 pub struct DesktopEntry {
-    id: Option<String>,
     path: Option<PathBuf>,
     entry_type: EntryType,
     version: Option<String>,
@@ -230,7 +227,6 @@ impl DesktopEntry {
             .collect();
 
         Ok(DesktopEntry {
-            id: opts.id.clone(),
             entry_type,
             version: group.string("Version"),
             name,
@@ -297,12 +293,6 @@ impl DesktopEntry {
                 ..opts.clone()
             },
         )
-    }
-
-    /// The desktop file id, when the entry was created with one.
-    #[must_use]
-    pub fn id(&self) -> Option<&str> {
-        self.id.as_deref()
     }
 
     /// The location of the file this entry was read from, if any.
