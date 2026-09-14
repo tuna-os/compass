@@ -61,16 +61,14 @@ where
 
     scored
         .into_iter()
-        .map(|s| {
-            Ranked {
-                item: s.item,
-                score: s.score,
-                match_score: s.match_score,
-                quality: s.quality,
-                weighted: s.weighted,
-                frecency: s.bias / FRECENCY_WEIGHT,
-                index: s.index,
-            }
+        .map(|s| Ranked {
+            item: s.item,
+            score: s.score,
+            match_score: s.match_score,
+            quality: s.quality,
+            weighted: s.weighted,
+            frecency: s.bias / FRECENCY_WEIGHT,
+            index: s.index,
         })
         .collect()
 }

@@ -88,11 +88,7 @@ pub fn rank_with_query<'a, T: FuzzySearchable>(
 ///
 /// Ordering is deterministic: combined score descending, raw weighted score
 /// descending, then input index ascending.
-pub fn rank_with_bias<'a, T, B>(
-    query: &str,
-    items: &'a [T],
-    bias: B,
-) -> Vec<BiasedScored<&'a T>>
+pub fn rank_with_bias<'a, T, B>(query: &str, items: &'a [T], bias: B) -> Vec<BiasedScored<&'a T>>
 where
     T: FuzzySearchable,
     B: Fn(&T) -> f64,

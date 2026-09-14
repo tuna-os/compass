@@ -125,9 +125,13 @@ fn empty_query_keeps_everything_in_input_order() {
 #[test]
 fn bias_breaks_a_fuzzy_tie_without_duplicating_the_ordering_rule() {
     let items = ["Firefox", "Firewall"];
-    let ranked = rank_with_bias("fir", &items, |item| {
-        if *item == "Firewall" { 1.0 } else { 0.0 }
-    });
+    let ranked = rank_with_bias(
+        "fir",
+        &items,
+        |item| {
+            if *item == "Firewall" { 1.0 } else { 0.0 }
+        },
+    );
 
     assert_eq!(ranked[0].item, &"Firewall");
     assert_eq!(ranked[0].bias, 1.0);
@@ -152,9 +156,7 @@ fn bias_cannot_resurrect_a_non_match() {
 #[test]
 fn an_empty_query_is_ranked_by_bias_then_input_order() {
     let items = ["first", "second", "third"];
-    let ranked = rank_with_bias("", &items, |item| {
-        if *item == "third" { 2.0 } else { 1.0 }
-    });
+    let ranked = rank_with_bias("", &items, |item| if *item == "third" { 2.0 } else { 1.0 });
     let values: Vec<_> = ranked.into_iter().map(|result| *result.item).collect();
 
     assert_eq!(values, ["third", "first", "second"]);
