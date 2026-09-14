@@ -915,8 +915,58 @@ The spec claims sub-30 MB but proposes no test for it; without a gate the claim 
 per commit, fail on >5% regression. **Measure inside the Flatpak** — sandbox overhead is real and
 the number users see is the sandboxed one.
 
-**"Enforced as CI failures, not advisory numbers" was not true of the IPC row, and the way it was
-untrue is worth recording.** `benches/ipc_bench.rs` timed a closure that created a Tokio runtime,
+**"Enforced as CI failures, not advisory numbers" was not true of ANY row.** An audit of the five:
+
+| SLA | what existed |
+|---|---|
+| Fuzzy search, top-20 of 10,000 | no benchmark — now measured, see below |
+| IPC round-trip | one benchmark, which timed a sleep — see below |
+| Cold start to first frame | no benchmark |
+| Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
+| Peak RSS, 10k index + 3 extensions | no benchmark |
+
+The workspace contained **exactly one benchmark**, `compass-ipc`'s. **No CI job ran `cargo bench`
+at all**, so no benchmark could have failed anything even had it been correct. And §8.7's
+pre-flight command invokes `cargo bench --bench slas`, **a target that does not exist** — the third
+documented-but-absent interface found this week, after Suite 0's `--engine=cpp --json query` and
+the C++ `doctor`.
+
+The fix for the two that are measurable without a display or a sandbox is to assert them in
+**tests**, which CI already runs on every PR, rather than in benches, which it does not run at all.
+
+#### Fuzzy search, top-20 of 10,000 — met at the median, marginal at the tail
+
+`crates/compass-search/tests/ranking_budget.rs`. Five release runs of 1000 samples:
+
+| | |
+|---|---|
+| p50 | 1209–1242 µs — stable, comfortably inside |
+| **p99** | **1589–2548 µs — over the 2.0 ms budget in two runs of five** |
+| max | 2277–2654 µs |
+
+**The row does not say which statistic it means, and here the answer depends entirely on that
+missing word.** At the median the SLA is met with ~1.6× headroom; at p99 it is not reliably met on
+an unloaded machine.
+
+The test asserts the **median** and reports the tail. Gating on p99 would invent a stricter promise
+than §8.5 makes, and a gate that fails two runs in five teaches people to re-run until it passes —
+the argument §11.2 already makes for reporting RSS rather than gating on one sample. **The tail is
+a real performance question for whoever owns ranking, not a measurement artefact.**
+
+Two measurement errors were made getting here, both worth recording because both produced
+confident wrong numbers:
+
+- **Debug builds are meaningless for this.** The first run reported 26 879 µs and looked like a 13×
+  SLA violation. In release the same code is 1411 µs — nineteen times faster. The test now asserts
+  the real budget only when optimised, and a loose ceiling otherwise, rather than skipping silently.
+- **A "p99" over 100 samples is the maximum.** `timings[100 * 99 / 100]` is the last element, so the
+  statistic was the single worst sample of the run. Two consecutive release runs then read 1411 µs
+  and 2800 µs, which looked like a flaky SLA and was a flaky statistic. A thousand samples puts ten
+  above the p99, and the spread above narrowed accordingly.
+
+#### The IPC row
+
+**The way that one was untrue is worth recording separately.** `benches/ipc_bench.rs` timed a closure that created a Tokio runtime,
 bound a listener, **slept 10 ms**, connected a client, sent one request and tore it all down. It
 reported **11.9 ms** against a 0.5 ms SLA — a 24× miss on a stated gate, sitting in a benchmark
 nobody had read, because a criterion bench prints a number and exits zero whatever it says.
