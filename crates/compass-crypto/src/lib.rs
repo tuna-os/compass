@@ -39,6 +39,8 @@
 //! the backend and cross-decryption against the C++ engine still has to pass,
 //! so a change of implementation cannot quietly change the format.
 
+pub mod keys;
+
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use hkdf::Hkdf;
