@@ -56,14 +56,34 @@ impl Drop for TestBus {
     }
 }
 
+/// The environment variable that turns a skip into a failure.
+///
+/// A skip is the right behaviour on a developer machine without `dbus-daemon`
+/// and the wrong behaviour in CI, where 21 tests quietly not running looks
+/// exactly like 21 tests passing. The GitHub Actions Ubuntu image ships
+/// `dbus-daemon` today — checked in the log of a real run, not assumed — and
+/// nothing guaranteed it would keep doing so. The Rust workflow sets this, so
+/// an image change fails the build instead of hollowing out the suite.
+pub const REQUIRE_ENV: &str = "COMPASS_REQUIRE_DBUS";
+
 /// Start a private bus, or return `None` after a loud message.
 ///
 /// Tests call this as the first line and `return` on `None`, so a machine
-/// without `dbus-daemon` skips visibly instead of passing silently.
+/// without `dbus-daemon` skips visibly instead of passing silently. When
+/// [`REQUIRE_ENV`] is set to anything other than `0`, there is no skip: the
+/// absence of `dbus-daemon` is a failure.
 pub fn start_or_skip(test_name: &str) -> Option<TestBus> {
     match TestBus::start() {
         Some(bus) => Some(bus),
         None => {
+            let required = std::env::var(REQUIRE_ENV).is_ok_and(|v| v != "0");
+            assert!(
+                !required,
+                "{test_name} needs a `dbus-daemon` binary and there is none on PATH. \
+                 {REQUIRE_ENV} is set, so this is a failure rather than a skip: the D-Bus \
+                 suite is the whole of Suite 3a and an environment that cannot run it must \
+                 not report success."
+            );
             eprintln!(
                 "\n\
                  ############################################################\n\
@@ -71,6 +91,9 @@ pub fn start_or_skip(test_name: &str) -> Option<TestBus> {
                  # compass-shell's D-Bus tests exercise a REAL session bus and\n\
                  # cannot be meaningfully faked. Install dbus to run them\n\
                  # (Fedora: dbus-daemon, Debian/Ubuntu: dbus-bin).\n\
+                 #\n\
+                 # Set {REQUIRE_ENV}=1 to make this a failure instead, which is\n\
+                 # what CI does.\n\
                  ############################################################\n"
             );
             None

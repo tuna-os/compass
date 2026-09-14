@@ -8,7 +8,11 @@
 //! - [`WINDOWS_XML`] — `dbus/org.gnome.Shell.Extensions.Vicinae.Windows.xml`
 //! - [`CLIPBOARD_XML`] — `dbus/org.gnome.Shell.Extensions.Vicinae.Clipboard.xml`
 //!
-//! Everything below must stay in lockstep with those files.
+//! Everything below must stay in lockstep with those files, and
+//! `tests/contract_introspection.rs` is what makes that true rather than
+//! aspirational: it compares the documents against the interfaces an object
+//! server actually serves, and fails on a renamed method, a retyped or
+//! redirected argument, a dropped signal or a widened property.
 
 /// Contract version this build of Compass speaks.
 ///

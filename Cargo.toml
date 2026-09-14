@@ -57,6 +57,7 @@ walkdir = "2"
 tempfile = "3"     # also a runtime dep of the sandbox spike
 parking_lot = "0.12"
 criterion = { version = "0.5", features = ["async"] }
+roxmltree = "0.20"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

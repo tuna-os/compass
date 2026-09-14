@@ -681,44 +681,16 @@ async fn version_mismatch_survives_a_shell_restart() {
 // ---------------------------------------------------------------------------
 // The contract itself
 // ---------------------------------------------------------------------------
-
-#[test]
-fn checked_in_xml_matches_what_the_client_talks_to() {
-    // The XML is the reviewable artefact shared with the extension repo; if it
-    // and the proxies drift, this is where it shows up.
-    for (xml, iface, methods) in [
-        (
-            compass_shell::contract::WINDOWS_XML,
-            compass_shell::WINDOWS_INTERFACE,
-            &["ListWindows", "ActivateWindow", "CloseWindow"][..],
-        ),
-        (
-            compass_shell::contract::CLIPBOARD_XML,
-            compass_shell::CLIPBOARD_INTERFACE,
-            &["GetClipboard", "SetClipboard"][..],
-        ),
-    ] {
-        assert!(
-            xml.contains(&format!("<interface name=\"{iface}\">")),
-            "{iface} missing from its XML"
-        );
-        assert!(
-            xml.contains("<property name=\"Version\" type=\"u\" access=\"read\"/>"),
-            "{iface} must expose a Version property"
-        );
-        for method in methods {
-            assert!(
-                xml.contains(&format!("<method name=\"{method}\">")),
-                "{iface} missing method {method}"
-            );
-        }
-    }
-    assert!(
-        compass_shell::contract::WINDOWS_XML.contains("<signal name=\"WindowsChanged\"/>"),
-        "windows contract must carry WindowsChanged"
-    );
-    assert!(
-        compass_shell::contract::CLIPBOARD_XML.contains("<signal name=\"ClipboardChanged\">"),
-        "clipboard contract must carry ClipboardChanged"
-    );
-}
+//
+// This used to hold `checked_in_xml_matches_what_the_client_talks_to`, a
+// substring test asserting the XML `contains` `<method name="ActivateWindow">`
+// against a member list typed into this same file. Its comment claimed that
+// "if it and the proxies drift, this is where it shows up", and it could not
+// do that: it never touched the proxies, and it never looked at a signature,
+// so a method renamed in both `proxy.rs` and the mock, or an argument retyped
+// from `u` to `s`, left it green.
+//
+// It is replaced by `tests/contract_introspection.rs`, which introspects the
+// running object server and compares it to the checked-in document member by
+// member and argument by argument, with controls showing each kind of drift
+// being caught.

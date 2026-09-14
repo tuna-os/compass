@@ -889,6 +889,48 @@ window list mirrors state across add/remove/rename races; clipboard signals prod
 rows; **extension absent** and **version mismatch** both degrade correctly and surface the right
 `doctor` diagnosis; DBus disconnect mid-session reconnects.
 
+**Where this stands, and one thing it did not cover.** The suite lives in
+`crates/compass-shell/tests/` rather than `compass-testkit` (the mock needs the crate's own
+`contract` constants, and nothing outside `compass-shell` consumes it), and every assertion listed
+above is implemented: 21 tests across window round-trips, malformed replies, timeouts, signals,
+extension-absent, one-sided extensions, version mismatch and shell restart.
+
+What it did **not** cover was the contract document itself. Phase 3 asks us to "publish the
+versioned interface XML in-tree so the extension and the engine can be reviewed against one
+another", and `dbus/*.xml` was published — but the only check on it was a substring test asserting
+the XML `contains` `<method name="ActivateWindow">`, compared against a list of member names typed
+into the same test file. That check could not fail for the reason its comment gave: it never
+touched the proxies, so a method renamed in both `proxy.rs` and the mock left the XML stale and the
+test green; and it never looked at a signature, so `ActivateWindow(u)` could become
+`ActivateWindow(s)` on the wire with the document unchanged. The XML was decorative, and
+`contract.rs` and `proxy.rs` both asserted in prose that it was not.
+
+`tests/contract_introspection.rs` now serves both interfaces on a private bus, reads their
+`org.freedesktop.DBus.Introspectable.Introspect` output, and compares it to the checked-in document
+member by member and argument by argument — method and signal sets, argument count, order, type and
+direction, and property type and access. Renaming `CloseWindow` to `DestroyWindow` in the mock was
+run as a control and the check reports both halves of the drift.
+
+Two limits are worth stating rather than leaving to be discovered. `zbus` emits no **names for out
+arguments**, so argument names are compared only where both documents supply one; a control pins
+that as intended. And `zbus` offers no way to introspect a `#[zbus::proxy]` trait, so the XML cannot
+be compared to `proxy.rs` directly: the chain is XML ≡ mock (this test) plus mock ≡ proxy
+(`every_contract_member_is_reached_through_the_proxy`, which drives the whole surface through the
+real client and fails if the contract grows a member it does not exercise). What nothing in this
+repository can prove is that the real GNOME Shell extension implements the contract — the extension
+is not in this tree. The XML is the artefact the two sides are reviewed against; this makes our side
+of it true.
+
+**A second thing the suite did not defend: whether it runs at all.** Every D-Bus test opens with
+`start_or_skip`, which returns `None` and prints a banner when there is no `dbus-daemon` on PATH —
+correct on a developer machine, and in CI indistinguishable from success, because a job whose 21
+tests all skip is a green job. The GitHub Actions Ubuntu image does ship `dbus-daemon`: confirmed by
+reading a run's log rather than by assuming, and the tests are really executing today. But nothing
+made that a requirement, so the whole of Suite 3a rested on an unstated property of a runner image.
+The Rust workflow now sets `COMPASS_REQUIRE_DBUS=1`, under which a missing `dbus-daemon` is a
+failure instead of a skip. Three controls were run: absent and unguarded skips and exits zero,
+absent and guarded fails with the reason, present and guarded passes all twelve.
+
 **(b) Headless GNOME session — nightly.** `gnome-shell --headless --virtual-monitor` in a Fedora
 44/45 container running a scripted 10-step session against both GNOME 50 and 51. This is the tier
 that catches real portal behaviour, the GlobalShortcuts permission dialog, and
@@ -921,9 +963,9 @@ the number users see is the sandboxed one.
 |---|---|
 | Fuzzy search, top-20 of 10,000 | no benchmark — now measured, see below |
 | IPC round-trip | one benchmark, which timed a sleep — see below |
-| Cold start to first frame | no benchmark |
+| Cold start to first frame | no benchmark — **nearest observable proxy now reported**, see below |
 | Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
-| Peak RSS, 10k index + 3 extensions | no benchmark |
+| Peak RSS, 10k index + 3 extensions | no benchmark — **index half now measured**, see below |
 
 The workspace contained **exactly one benchmark**, `compass-ipc`'s. **No CI job ran `cargo bench`
 at all**, so no benchmark could have failed anything even had it been correct. And §8.7's
@@ -963,6 +1005,54 @@ confident wrong numbers:
   statistic was the single worst sample of the run. Two consecutive release runs then read 1411 µs
   and 2800 µs, which looked like a flaky SLA and was a flaky statistic. A thousand samples puts ten
   above the p99, and the spread above narrowed accordingly.
+
+#### Cold start — reported from the VM tier, and not the number the SLA names
+
+`packaging/vmtest/checks.sh launcher-start` now times three points: spawn to
+process, process to `Adapter AdapterInfo`, and the total.
+
+**It is deliberately not the SLA.** "Cold start to first frame" needs a frame,
+and ADR-0010 settles that nothing inside the guest can observe one — the paint
+gate lives on the host with corral's screenshots precisely because the
+framebuffer's only observer is on the far side of QEMU. What the guest can see
+is the renderer choosing an adapter, which wgpu reports only once it has a
+surface. First paint follows shortly after.
+
+**Reported, not gated**, for the reason §11.2 gives for RSS. Under llvmpipe on
+an emulated GPU the spread is enormous: ADR-0010 records wgpu initialising 2.4 s
+into one run and not yet touched 8.1 s into another. A 120 ms budget checked
+there would be measuring QEMU, and gating on it would turn the tier red for
+reasons unrelated to the code.
+
+The split is the useful part. Spawn cost is Flatpak and process start; render
+cost is wgpu bringing up a software adapter. Only the second is what the SLA is
+about, and only the first would shrink on real hardware — so the two numbers
+are worth having separately rather than as one total that hides which is which.
+
+#### Peak RSS — the index costs 15.5 MB of the 150 MB budget
+
+`crates/compass-core/tests/index_memory.rs`. An index of 10,000 generated
+desktop entries, measured as the `VmHWM` delta across the build:
+
+| | |
+|---|---|
+| peak RSS growth | **15.4–15.6 MB** across release and debug |
+| per entry | ~1620 bytes |
+
+Stable to within 1% over repeated runs and near-identical between profiles,
+which is what one would expect of memory and is worth stating because the
+timing rows above are nothing like that stable.
+
+**This does not evaluate the SLA, and the test says so.** The row is "10k index
++ **3 extensions** < 150 MB", and the extension host does not exist — that is
+Phase 4. What the number gives is the remaining budget: the index takes about
+10%, leaving roughly **134 MB for three extensions** when there is something to
+measure.
+
+The test asserts a loose 100 MB ceiling rather than the 150 MB SLA. Asserting
+the SLA here would quietly convert a whole-system budget into an index-only one
+and report it met — the same error as reading a green tick on a check that
+measures the wrong thing.
 
 #### The IPC row
 
