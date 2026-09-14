@@ -13,6 +13,7 @@ an unfilter loop.
 
 Usage:
     framediff.py BEFORE AFTER [--min-percent P] [--expect-box X0 Y0 X1 Y1]
+                              [--ignore-box X0 Y0 X1 Y1]
 
 Exit status is 0 when every requested assertion holds, 1 when one does not, and
 2 when the files cannot be read. With no assertions it only reports, which is
@@ -86,6 +87,10 @@ def main() -> int:
     ap.add_argument("--expect-box", nargs=4, type=int, metavar=("X0", "Y0", "X1", "Y1"),
                     default=None,
                     help="fail unless the changed region lies within this box")
+    ap.add_argument("--ignore-box", nargs=4, type=int, metavar=("X0", "Y0", "X1", "Y1"),
+                    default=None,
+                    help="exclude this region from the comparison entirely; pixels inside "
+                         "it count towards neither the percentage nor the bounding box")
     args = ap.parse_args()
 
     try:
@@ -98,25 +103,44 @@ def main() -> int:
         print(f"framediff: sizes differ: {w}x{h} vs {w2}x{h2}", file=sys.stderr)
         return 2
 
+    # A region excluded from the comparison, and the count of changed pixels
+    # inside it -- reported rather than discarded silently, so that an ignored
+    # region quietly swallowing the whole diff is visible instead of looking
+    # like agreement.
+    ix0, iy0, ix1, iy1 = args.ignore_box if args.ignore_box else (0, 0, -1, -1)
+    ignored = 0
+
     minx, maxx, miny, maxy, n = w, -1, h, -1, 0
     for y in range(h):
         row = y * w
         for x in range(w):
             k = (row + x) * ch
             if a[k : k + 3] != b[k : k + 3]:
+                if ix0 <= x <= ix1 and iy0 <= y <= iy1:
+                    ignored += 1
+                    continue
                 n += 1
                 if x < minx: minx = x
                 if x > maxx: maxx = x
                 if y < miny: miny = y
                 if y > maxy: maxy = y
 
-    total = w * h
+    # The denominator excludes the ignored region too: a percentage of the
+    # whole screen would drift as the ignored box grows, and the threshold was
+    # calibrated against a comparable area.
+    ignored_area = 0
+    if args.ignore_box:
+        ignored_area = max(0, min(ix1, w - 1) - max(ix0, 0) + 1) * \
+                       max(0, min(iy1, h - 1) - max(iy0, 0) + 1)
+    total = w * h - ignored_area
     pct = 100.0 * n / total
     if n == 0:
         print(f"IDENTICAL  {args.before} and {args.after} ({w}x{h})")
     else:
         print(f"{n} of {total} pixels differ ({pct:.2f}%)  "
               f"box x {minx}..{maxx} ({maxx - minx + 1}w) y {miny}..{maxy} ({maxy - miny + 1}h)")
+    if args.ignore_box:
+        print(f"  ({ignored} changed pixel(s) ignored inside {ix0},{iy0}..{ix1},{iy1})")
 
     ok = True
     if args.min_percent is not None:
