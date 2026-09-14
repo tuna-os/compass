@@ -35,7 +35,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use compass_search::{FuzzySearchable, WeightedField};
-use compass_xdg::{DesktopAction, DesktopEntry, Locale, ParseOptions};
+use compass_xdg::{
+    DesktopAction, DesktopEntry, DesktopFile, Error, Locale, ParseOptions, scan_desktop_files,
+};
 
 /// Weight of the item's own display name.
 pub const WEIGHT_NAME: f32 = 1.0;
@@ -52,9 +54,6 @@ pub const WEIGHT_CATEGORY: f32 = 0.2;
 
 /// The separator between a desktop file id and an action id in an [`AppItem::key`].
 pub const ACTION_KEY_SEPARATOR: &str = "::";
-
-/// Maximum directory depth the scanner descends to, as a cycle guard for symlinked trees.
-const MAX_SCAN_DEPTH: usize = 8;
 
 /// Why a file in an application directory did not produce an item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -406,26 +405,29 @@ impl AppIndexBuilder {
         let mut by_key: HashMap<String, usize> = HashMap::new();
 
         for dir in &self.dirs {
-            let mut files = Vec::new();
-            collect_desktop_files(dir, dir, 0, &mut files, &mut skipped);
-            files.sort_by(|a, b| a.0.cmp(&b.0));
+            let scan = scan_desktop_files(dir);
+            skipped.extend(scan.errors.into_iter().map(|error| SkippedEntry {
+                path: error.path,
+                reason: SkipReason::Unreadable(error.message),
+            }));
 
-            for (id, path) in files {
-                if let Some(winner) = claimed.get(&id) {
+            for file in scan.files {
+                let id = file.id();
+                let path = file.path();
+                if let Some(winner) = claimed.get(id) {
                     skipped.push(SkippedEntry {
-                        path,
+                        path: path.to_path_buf(),
                         reason: SkipReason::Shadowed {
-                            id,
+                            id: id.to_owned(),
                             winner: winner.clone(),
                         },
                     });
                     continue;
                 }
-                claimed.insert(id.clone(), path.clone());
+                claimed.insert(id.to_owned(), path.to_path_buf());
 
                 self.index_file(
-                    &id,
-                    &path,
+                    &file,
                     &self.desktops,
                     &mut items,
                     &mut by_key,
@@ -443,38 +445,29 @@ impl AppIndexBuilder {
 
     fn index_file(
         &self,
-        id: &str,
-        path: &Path,
+        file: &DesktopFile,
         desktops: &[String],
         items: &mut Vec<AppItem>,
         by_key: &mut HashMap<String, usize>,
         skipped: &mut Vec<SkippedEntry>,
     ) {
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                tracing::debug!(path = %path.display(), %err, "could not read desktop entry");
+        let id = file.id();
+        let path = file.path();
+        let opts = ParseOptions {
+            locale: self.locale.clone(),
+            path: None,
+        };
+
+        let entry = match file.parse_with(&opts) {
+            Ok(entry) => entry.into_entry(),
+            Err(Error::Io { source, .. }) => {
+                tracing::debug!(path = %path.display(), err = %source, "could not read desktop entry");
                 skipped.push(SkippedEntry {
                     path: path.to_path_buf(),
-                    reason: SkipReason::Unreadable(err.to_string()),
+                    reason: SkipReason::Unreadable(source.to_string()),
                 });
                 return;
             }
-        };
-
-        // Read lossily rather than strictly: `non-utf8.desktop` exists in the wild (latin-1
-        // Comment lines are common in old entries) and losing the whole application over one bad
-        // byte in a tooltip is not a trade worth making.
-        let text = String::from_utf8_lossy(&bytes);
-
-        let opts = ParseOptions {
-            id: Some(id.to_owned()),
-            locale: self.locale.clone(),
-            path: Some(path.to_path_buf()),
-        };
-
-        let entry = match DesktopEntry::parse_with(&text, &opts) {
-            Ok(entry) => entry,
             Err(err) => {
                 tracing::debug!(path = %path.display(), %err, "malformed desktop entry");
                 skipped.push(SkippedEntry {
@@ -547,7 +540,10 @@ impl AppIndexBuilder {
         for (index, action) in entry.actions().iter().enumerate() {
             // An action with no name has nothing to search for, and one with no Exec has nothing
             // to do; the spec requires both, so a missing one means a broken entry.
-            if action.name().is_empty() || action.exec().is_none() {
+            let Some(action_name) = action.name() else {
+                continue;
+            };
+            if action_name.is_empty() || action.exec().is_none() {
                 continue;
             }
 
@@ -559,7 +555,7 @@ impl AppIndexBuilder {
                     desktop_id: id.to_owned(),
                     action_id: Some(action.id().to_owned()),
                     action_index: Some(index),
-                    name: action.name().to_owned(),
+                    name: action_name.to_owned(),
                     app_name: app_name.clone(),
                     entry: Arc::clone(&entry),
                     launchable,
@@ -600,75 +596,6 @@ fn is_executable_file(path: &Path) -> bool {
     // would need a `std::os::unix` import that makes this file platform-specific for a check that
     // is advisory anyway. Existence as a non-directory is the useful 95%.
     path.is_file()
-}
-
-/// Recursively collects `(desktop file id, path)` pairs under `dir`.
-fn collect_desktop_files(
-    root: &Path,
-    dir: &Path,
-    depth: usize,
-    out: &mut Vec<(String, PathBuf)>,
-    skipped: &mut Vec<SkippedEntry>,
-) {
-    if depth > MAX_SCAN_DEPTH {
-        tracing::warn!(dir = %dir.display(), "application directory nested too deeply, not descending");
-        return;
-    }
-
-    let read = match std::fs::read_dir(dir) {
-        Ok(read) => read,
-        Err(err) => {
-            // A missing $XDG_DATA_DIRS entry is completely normal, so this is not a diagnostic
-            // worth surfacing unless the directory exists but is unreadable.
-            if err.kind() != std::io::ErrorKind::NotFound {
-                skipped.push(SkippedEntry {
-                    path: dir.to_path_buf(),
-                    reason: SkipReason::Unreadable(err.to_string()),
-                });
-            }
-            return;
-        }
-    };
-
-    for entry in read.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-
-        // `is_dir` follows symlinks, which is what we want: distributions symlink application
-        // directories around. MAX_SCAN_DEPTH is the loop guard.
-        if file_type.is_dir() || (file_type.is_symlink() && path.is_dir()) {
-            collect_desktop_files(root, &path, depth + 1, out, skipped);
-            continue;
-        }
-
-        if path.extension().is_none_or(|ext| ext != "desktop") {
-            continue;
-        }
-
-        if let Some(id) = desktop_file_id(root, &path) {
-            out.push((id, path));
-        }
-    }
-}
-
-/// The desktop file id of `path` relative to the applications directory `root`.
-///
-/// Returns `None` for a path outside `root` or one that is not valid Unicode; an id that cannot be
-/// spelled cannot be matched against `Actions`, `DBusActivatable` or the MIME cache anyway.
-#[must_use]
-pub fn desktop_file_id(root: &Path, path: &Path) -> Option<String> {
-    let relative = path.strip_prefix(root).ok()?;
-    let mut id = String::new();
-    for component in relative.components() {
-        let part = component.as_os_str().to_str()?;
-        if !id.is_empty() {
-            id.push('-');
-        }
-        id.push_str(part);
-    }
-    (!id.is_empty()).then_some(id)
 }
 
 /// A built, searchable index of applications and their actions.

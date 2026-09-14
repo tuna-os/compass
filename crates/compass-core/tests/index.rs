@@ -2,9 +2,8 @@
 
 mod support;
 
-use compass_core::apps::{SkipReason, desktop_file_id};
+use compass_core::apps::SkipReason;
 use compass_testkit::corpus;
-use std::path::Path;
 use support::{app, builder, write};
 
 #[test]
@@ -19,27 +18,6 @@ fn indexes_a_flat_directory() {
     let mut names: Vec<&str> = index.items().iter().map(|i| i.name()).collect();
     names.sort_unstable();
     assert_eq!(names, ["Firefox", "GIMP"]);
-}
-
-#[test]
-fn desktop_ids_flatten_subdirectories() {
-    let root = Path::new("/usr/share/applications");
-    assert_eq!(
-        desktop_file_id(root, Path::new("/usr/share/applications/konsole.desktop")).as_deref(),
-        Some("konsole.desktop"),
-    );
-    assert_eq!(
-        desktop_file_id(
-            root,
-            Path::new("/usr/share/applications/kde4/konsole.desktop")
-        )
-        .as_deref(),
-        Some("kde4-konsole.desktop"),
-    );
-    assert_eq!(
-        desktop_file_id(root, Path::new("/elsewhere/konsole.desktop")),
-        None,
-    );
 }
 
 #[test]

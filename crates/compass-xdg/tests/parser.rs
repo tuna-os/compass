@@ -505,7 +505,7 @@ fn action_names_are_localized() {
     )
     .unwrap();
 
-    assert_eq!(entry.actions()[0].name(), "Un");
+    assert_eq!(entry.actions()[0].name(), Some("Un"));
 }
 
 #[test]

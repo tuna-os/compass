@@ -82,7 +82,7 @@ fn every_fixture_parses_and_is_sane() {
         for action in entry.actions() {
             assert!(!action.id().is_empty(), "{name} action should have an id");
             assert!(
-                !action.name().is_empty(),
+                action.name().is_some_and(|name| !name.is_empty()),
                 "{name} action should have a name"
             );
             assert!(

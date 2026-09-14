@@ -13,9 +13,6 @@
 //!   The four `X-TerminalArg*` cases cover the xdg-terminal-exec draft
 //!   extension, which is outside the scope of this pass (the keys are still
 //!   readable through `Reader`, they just have no typed accessor yet).
-//! - "should be invalid if file does not exist" is ported, but the `DesktopFile`
-//!   / desktop-file-id layer it belongs to (`file.hpp`, `fromId`, `relativeId`)
-//!   is not: directory lookup and id computation are a separate pass.
 //! - `src/lib/xdgpp/tests/{bookmark,env,file-uri,file,mime,special,
 //!   xdg-terminal-exec}.cpp` are whole subsystems outside this crate's current
 //!   scope.
@@ -457,7 +454,7 @@ Icon=firefox
     let action = &file.actions()[0];
 
     assert_eq!(action.id(), "open-private");
-    assert_eq!(action.name(), "Open In Private Window");
+    assert_eq!(action.name(), Some("Open In Private Window"));
     assert_eq!(action.exec(), Some("firefox %U"));
     assert_eq!(action.icon(), Some("firefox"));
     assert_eq!(
