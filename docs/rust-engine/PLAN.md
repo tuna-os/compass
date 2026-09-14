@@ -410,8 +410,36 @@ installed** (§3.5.1).
   presence/version** (§3.5.4), with `--check-only` exit codes.
 - Single-instance handling and `$XDG_RUNTIME_DIR` socket lifecycle inside the sandbox.
 
-**Gate:** IPC round-trip p99 < 0.5 ms (criterion); `doctor` output diffed against the C++ build on
-the same machine; `doctor` correctly reports each degradation with the extension uninstalled.
+**Gate:** IPC round-trip p99 < 0.5 ms (criterion); ~~`doctor` output diffed against the C++ build on
+the same machine~~ — **not achievable as written, see below**; `doctor` correctly reports each
+degradation with the extension uninstalled.
+
+**Where this gate stands, measured rather than assumed:**
+
+- **IPC round-trip: met.** p99 **47.9 µs** against the 500 µs budget, ~10× headroom, now asserted by
+  `crates/compass-ipc/tests/roundtrip_budget.rs` rather than printed. §8.5 records how the previous
+  benchmark reported 11.9 ms by timing its own setup.
+
+- **`doctor` diffed against the C++ build: withdraw it.** The C++ engine has **no `doctor`
+  command** — its entire CLI is `launch app`, `ls`, `launch cmd`, `ping`, `toggle`, `open`, `close`,
+  `dmenu`, `version`, `deeplink`, `logs`. There is nothing to diff against, and this is the second
+  gate criterion found to assume a C++ interface that has never existed (the first was Suite 0's
+  `vicinae --engine=cpp --json query`, §8.1a). Both were written against an imagined C++ CLI rather
+  than the one in `src/cli`.
+
+  Worth noting even if someone built that command: **the diff would mostly prove nothing.** Nine of
+  `doctor`'s eleven checks — `dbus.session`, `session.type`, `xdg.runtime-dir`, `xdg.application-dirs`,
+  `desktop.environment`, `flatpak.sandbox`, `portal.desktop`, `portal.global-shortcuts`,
+  `gnome.shell-extension` — are probes of the *environment*. Two processes on one machine observe the
+  same environment by construction, so they would agree trivially, in the same way "same top result"
+  would be trivially 100% over single-hit queries. Only `engine.selected` and `ipc.socket` describe
+  the engine itself, and those map to the C++ `version` and `ping`.
+
+  **What the criterion actually wants is that `doctor`'s picture of the machine is accurate, and
+  that is already tested — non-differentially, against reality.** The VM tier runs
+  `checks.sh doctor` and `doctor-assert` inside a real GNOME session every run. Restate the
+  criterion as that, and keep the differential ambition for `version`/`ping`, where the two engines
+  genuinely have something to compare.
 
 ### Phase 3 — GNOME Shell integration (≈3 weeks)
 
@@ -886,6 +914,84 @@ correct degradation when a protocol is absent. Deferred until there is wlroots c
 The spec claims sub-30 MB but proposes no test for it; without a gate the claim decays. Track RSS
 per commit, fail on >5% regression. **Measure inside the Flatpak** — sandbox overhead is real and
 the number users see is the sandboxed one.
+
+**"Enforced as CI failures, not advisory numbers" was not true of ANY row.** An audit of the five:
+
+| SLA | what existed |
+|---|---|
+| Fuzzy search, top-20 of 10,000 | no benchmark — now measured, see below |
+| IPC round-trip | one benchmark, which timed a sleep — see below |
+| Cold start to first frame | no benchmark |
+| Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
+| Peak RSS, 10k index + 3 extensions | no benchmark |
+
+The workspace contained **exactly one benchmark**, `compass-ipc`'s. **No CI job ran `cargo bench`
+at all**, so no benchmark could have failed anything even had it been correct. And §8.7's
+pre-flight command invokes `cargo bench --bench slas`, **a target that does not exist** — the third
+documented-but-absent interface found this week, after Suite 0's `--engine=cpp --json query` and
+the C++ `doctor`.
+
+The fix for the two that are measurable without a display or a sandbox is to assert them in
+**tests**, which CI already runs on every PR, rather than in benches, which it does not run at all.
+
+#### Fuzzy search, top-20 of 10,000 — met at the median, marginal at the tail
+
+`crates/compass-search/tests/ranking_budget.rs`. Five release runs of 1000 samples:
+
+| | |
+|---|---|
+| p50 | 1209–1242 µs — stable, comfortably inside |
+| **p99** | **1589–2548 µs — over the 2.0 ms budget in two runs of five** |
+| max | 2277–2654 µs |
+
+**The row does not say which statistic it means, and here the answer depends entirely on that
+missing word.** At the median the SLA is met with ~1.6× headroom; at p99 it is not reliably met on
+an unloaded machine.
+
+The test asserts the **median** and reports the tail. Gating on p99 would invent a stricter promise
+than §8.5 makes, and a gate that fails two runs in five teaches people to re-run until it passes —
+the argument §11.2 already makes for reporting RSS rather than gating on one sample. **The tail is
+a real performance question for whoever owns ranking, not a measurement artefact.**
+
+Two measurement errors were made getting here, both worth recording because both produced
+confident wrong numbers:
+
+- **Debug builds are meaningless for this.** The first run reported 26 879 µs and looked like a 13×
+  SLA violation. In release the same code is 1411 µs — nineteen times faster. The test now asserts
+  the real budget only when optimised, and a loose ceiling otherwise, rather than skipping silently.
+- **A "p99" over 100 samples is the maximum.** `timings[100 * 99 / 100]` is the last element, so the
+  statistic was the single worst sample of the run. Two consecutive release runs then read 1411 µs
+  and 2800 µs, which looked like a flaky SLA and was a flaky statistic. A thousand samples puts ten
+  above the p99, and the spread above narrowed accordingly.
+
+#### The IPC row
+
+**The way that one was untrue is worth recording separately.** `benches/ipc_bench.rs` timed a closure that created a Tokio runtime,
+bound a listener, **slept 10 ms**, connected a client, sent one request and tore it all down. It
+reported **11.9 ms** against a 0.5 ms SLA — a 24× miss on a stated gate, sitting in a benchmark
+nobody had read, because a criterion bench prints a number and exits zero whatever it says.
+
+The tell was in its own output: `concurrent_1` 12.03 ms against `concurrent_100` 13.08 ms, so
+ninety-nine extra in-flight requests cost about a millisecond between them. The per-request cost was
+always small; the harness was measuring its own scaffolding.
+
+With setup hoisted out of the timed region, one request on an established connection measures:
+
+| | |
+|---|---|
+| p50 | 30.6 µs |
+| p95 | 36.8 µs |
+| **p99** | **47.9 µs** |
+| max | 57.1 µs |
+
+**The SLA is met with about 10× headroom**, and it is now asserted rather than printed:
+`crates/compass-ipc/tests/roundtrip_budget.rs` fails the build if p99 crosses 500 µs. Control-tested
+by tightening the bound below the real p99.
+
+Two things this does **not** establish. The SLA says *inside Flatpak* and this is a host
+measurement, so it is necessary evidence and not the whole gate. And it measures `Ping`, the
+cheapest request there is; a `Query` round-trip over a real index is a different number that nothing
+yet records.
 
 Plus `insta` snapshot tests rendering views to a headless framebuffer. Keep these *few* and
 semantic (results list, empty state, detail view, form). Large pixel-snapshot suites get
