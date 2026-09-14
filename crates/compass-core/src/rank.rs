@@ -52,34 +52,27 @@ where
     S: FrecencyStore + ?Sized,
 {
     let now = store.now();
-    let scored = compass_search::rank_indices(query, items);
+    let scored = compass_search::rank_with_bias(query, items, |item| {
+        let frecency = store
+            .record(key(item))
+            .map_or(0.0, |record| record.score_at(now));
+        FRECENCY_WEIGHT * frecency
+    });
 
-    let mut out: Vec<Ranked<&'a T>> = scored
+    scored
         .into_iter()
         .map(|s| {
-            let item = &items[s.index];
-            let frecency = store
-                .record(key(item))
-                .map_or(0.0, |record| record.score_at(now));
             Ranked {
-                item,
-                score: f64::from(s.score) + FRECENCY_WEIGHT * frecency,
-                match_score: s.score,
+                item: s.item,
+                score: s.score,
+                match_score: s.match_score,
                 quality: s.quality,
                 weighted: s.weighted,
-                frecency,
+                frecency: s.bias / FRECENCY_WEIGHT,
                 index: s.index,
             }
         })
-        .collect();
-
-    out.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then(b.weighted.cmp(&a.weighted))
-            .then(a.index.cmp(&b.index))
-    });
-    out
+        .collect()
 }
 
 impl crate::AppIndex {

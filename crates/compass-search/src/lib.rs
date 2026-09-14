@@ -20,7 +20,10 @@ mod translit;
 pub use coherence::is_coherent;
 pub use matcher::{MatchResult, Matcher};
 pub use query::{Query, Variant, Word};
-pub use rank::{Scored, rank, rank_indices, rank_indices_with_query, rank_with_query};
+pub use rank::{
+    BiasedScored, Scored, rank, rank_indices, rank_indices_with_query, rank_with_bias,
+    rank_with_query, rank_with_query_and_bias,
+};
 pub use searchable::{
     FRECENCY_WEIGHT, FuzzySearchable, MIN_QUALITY, Match, WeightedField, frecency, score_item,
     score_weighted, score_weighted_with,

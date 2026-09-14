@@ -23,6 +23,30 @@ pub struct Scored<T> {
     pub index: usize,
 }
 
+/// An item ranked by its fuzzy score plus a caller-provided bias.
+///
+/// Launch history is the first consumer, but the type deliberately does not
+/// know what the bias means. Keeping the combination and its deterministic
+/// tiebreaks here prevents every caller from growing a subtly different copy
+/// of the launcher ranking rule.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BiasedScored<T> {
+    /// The scored value.
+    pub item: T,
+    /// Combined score: `match_score + bias`.
+    pub score: f64,
+    /// The field-weighted fuzzy score in `0..=100`, before the bias.
+    pub match_score: u32,
+    /// Quality of the worst-matched query word, in `0..=100`.
+    pub quality: u32,
+    /// Raw weighted matcher score; the tiebreak between equal combined scores.
+    pub weighted: u32,
+    /// The caller-provided boost added to `match_score`.
+    pub bias: f64,
+    /// Index of the item in the input slice; the final ranking tiebreak.
+    pub index: usize,
+}
+
 /// Ranks `items` against `query`, best first.
 ///
 /// Non-matching items (those failing the [`MIN_QUALITY`](crate::MIN_QUALITY)
@@ -53,6 +77,69 @@ pub fn rank_with_query<'a, T: FuzzySearchable>(
             index: s.index,
         })
         .collect()
+}
+
+/// Ranks `items` by fuzzy match quality plus a caller-provided bias.
+///
+/// The bias is added to the normalized fuzzy score and may be negative. It
+/// must be finite. Non-matches are still filtered before the callback can
+/// influence ordering, so a large bias cannot resurrect an unrelated item.
+/// For an empty query every item is retained and ranked by bias alone.
+///
+/// Ordering is deterministic: combined score descending, raw weighted score
+/// descending, then input index ascending.
+pub fn rank_with_bias<'a, T, B>(
+    query: &str,
+    items: &'a [T],
+    bias: B,
+) -> Vec<BiasedScored<&'a T>>
+where
+    T: FuzzySearchable,
+    B: Fn(&T) -> f64,
+{
+    let parsed = Query::new(query);
+    rank_with_query_and_bias(&parsed, items, bias)
+}
+
+/// [`rank_with_bias`], with a query parsed once and reused across calls.
+pub fn rank_with_query_and_bias<'a, T, B>(
+    query: &Query,
+    items: &'a [T],
+    bias: B,
+) -> Vec<BiasedScored<&'a T>>
+where
+    T: FuzzySearchable,
+    B: Fn(&T) -> f64,
+{
+    let mut out: Vec<_> = rank_indices_with_query(query, items)
+        .into_iter()
+        .map(|matched| {
+            let item = &items[matched.index];
+            let item_bias = bias(item);
+            assert!(
+                item_bias.is_finite(),
+                "ranking bias must be finite, got {item_bias} for input index {}",
+                matched.index
+            );
+            BiasedScored {
+                item,
+                score: f64::from(matched.score) + item_bias,
+                match_score: matched.score,
+                quality: matched.quality,
+                weighted: matched.weighted,
+                bias: item_bias,
+                index: matched.index,
+            }
+        })
+        .collect();
+
+    out.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then(b.weighted.cmp(&a.weighted))
+            .then(a.index.cmp(&b.index))
+    });
+    out
 }
 
 /// [`rank`], returning indices into `items` instead of borrows.
