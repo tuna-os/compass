@@ -143,7 +143,7 @@ fn libreoffice_fixture_has_actions() {
 
     let writer = entry.action("Writer").expect("Writer action");
 
-    assert_eq!(writer.name(), "Writer");
+    assert_eq!(writer.name(), Some("Writer"));
     assert_eq!(writer.expand_exec(), ["libreoffice", "--writer"]);
 }
 
