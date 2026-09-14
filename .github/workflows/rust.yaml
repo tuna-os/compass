@@ -61,8 +61,17 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # COMPASS_REQUIRE_DBUS turns compass-shell's "no dbus-daemon, skipping"
+      # path into a failure. Suite 3a is 21 tests against a private session
+      # bus, and on a runner image without `dbus-daemon` every one of them
+      # would skip and the job would still be green -- 21 tests not running
+      # looks identical to 21 tests passing. The image ships it today (checked
+      # in a run's log), and this is what keeps that from being load-bearing
+      # and unstated.
       - name: Test
         run: cargo test --workspace --all-targets
+        env:
+          COMPASS_REQUIRE_DBUS: "1"
 
       # --all-targets skips doctests, so run them separately.
       # The §8.5 SLAs are release properties, and `cargo test` above is a debug

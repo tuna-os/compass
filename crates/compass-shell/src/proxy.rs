@@ -1,6 +1,10 @@
 //! `zbus` proxies for the two contract interfaces.
 //!
-//! These mirror the checked-in introspection XML exactly. They intentionally
+//! These mirror the checked-in introspection XML exactly, and that is checked
+//! rather than asserted in prose: `tests/contract_introspection.rs`
+//! introspects a live object server built from these same interfaces and
+//! compares every method, signal, argument and property against
+//! `dbus/*.xml`. They intentionally
 //! carry no default service/path: [`ShellClient`](crate::ShellClient) builds
 //! them from [`ShellConfig`](crate::ShellConfig) so that tests can point the
 //! same code at a private bus.

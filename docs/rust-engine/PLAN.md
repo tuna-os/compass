@@ -889,6 +889,48 @@ window list mirrors state across add/remove/rename races; clipboard signals prod
 rows; **extension absent** and **version mismatch** both degrade correctly and surface the right
 `doctor` diagnosis; DBus disconnect mid-session reconnects.
 
+**Where this stands, and one thing it did not cover.** The suite lives in
+`crates/compass-shell/tests/` rather than `compass-testkit` (the mock needs the crate's own
+`contract` constants, and nothing outside `compass-shell` consumes it), and every assertion listed
+above is implemented: 21 tests across window round-trips, malformed replies, timeouts, signals,
+extension-absent, one-sided extensions, version mismatch and shell restart.
+
+What it did **not** cover was the contract document itself. Phase 3 asks us to "publish the
+versioned interface XML in-tree so the extension and the engine can be reviewed against one
+another", and `dbus/*.xml` was published — but the only check on it was a substring test asserting
+the XML `contains` `<method name="ActivateWindow">`, compared against a list of member names typed
+into the same test file. That check could not fail for the reason its comment gave: it never
+touched the proxies, so a method renamed in both `proxy.rs` and the mock left the XML stale and the
+test green; and it never looked at a signature, so `ActivateWindow(u)` could become
+`ActivateWindow(s)` on the wire with the document unchanged. The XML was decorative, and
+`contract.rs` and `proxy.rs` both asserted in prose that it was not.
+
+`tests/contract_introspection.rs` now serves both interfaces on a private bus, reads their
+`org.freedesktop.DBus.Introspectable.Introspect` output, and compares it to the checked-in document
+member by member and argument by argument — method and signal sets, argument count, order, type and
+direction, and property type and access. Renaming `CloseWindow` to `DestroyWindow` in the mock was
+run as a control and the check reports both halves of the drift.
+
+Two limits are worth stating rather than leaving to be discovered. `zbus` emits no **names for out
+arguments**, so argument names are compared only where both documents supply one; a control pins
+that as intended. And `zbus` offers no way to introspect a `#[zbus::proxy]` trait, so the XML cannot
+be compared to `proxy.rs` directly: the chain is XML ≡ mock (this test) plus mock ≡ proxy
+(`every_contract_member_is_reached_through_the_proxy`, which drives the whole surface through the
+real client and fails if the contract grows a member it does not exercise). What nothing in this
+repository can prove is that the real GNOME Shell extension implements the contract — the extension
+is not in this tree. The XML is the artefact the two sides are reviewed against; this makes our side
+of it true.
+
+**A second thing the suite did not defend: whether it runs at all.** Every D-Bus test opens with
+`start_or_skip`, which returns `None` and prints a banner when there is no `dbus-daemon` on PATH —
+correct on a developer machine, and in CI indistinguishable from success, because a job whose 21
+tests all skip is a green job. The GitHub Actions Ubuntu image does ship `dbus-daemon`: confirmed by
+reading a run's log rather than by assuming, and the tests are really executing today. But nothing
+made that a requirement, so the whole of Suite 3a rested on an unstated property of a runner image.
+The Rust workflow now sets `COMPASS_REQUIRE_DBUS=1`, under which a missing `dbus-daemon` is a
+failure instead of a skip. Three controls were run: absent and unguarded skips and exits zero,
+absent and guarded fails with the reason, present and guarded passes all twelve.
+
 **(b) Headless GNOME session — nightly.** `gnome-shell --headless --virtual-monitor` in a Fedora
 44/45 container running a scripted 10-step session against both GNOME 50 and 51. This is the tier
 that catches real portal behaviour, the GlobalShortcuts permission dialog, and

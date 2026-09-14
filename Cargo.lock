@@ -757,6 +757,7 @@ dependencies = [
 name = "compass-shell"
 version = "0.1.0"
 dependencies = [
+ "roxmltree",
  "serde",
  "thiserror 2.0.20",
  "tokio",
