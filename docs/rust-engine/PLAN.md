@@ -921,7 +921,7 @@ the number users see is the sandboxed one.
 |---|---|
 | Fuzzy search, top-20 of 10,000 | no benchmark — now measured, see below |
 | IPC round-trip | one benchmark, which timed a sleep — see below |
-| Cold start to first frame | no benchmark |
+| Cold start to first frame | no benchmark — **nearest observable proxy now reported**, see below |
 | Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
 | Peak RSS, 10k index + 3 extensions | no benchmark — **index half now measured**, see below |
 
@@ -963,6 +963,29 @@ confident wrong numbers:
   statistic was the single worst sample of the run. Two consecutive release runs then read 1411 µs
   and 2800 µs, which looked like a flaky SLA and was a flaky statistic. A thousand samples puts ten
   above the p99, and the spread above narrowed accordingly.
+
+#### Cold start — reported from the VM tier, and not the number the SLA names
+
+`packaging/vmtest/checks.sh launcher-start` now times three points: spawn to
+process, process to `Adapter AdapterInfo`, and the total.
+
+**It is deliberately not the SLA.** "Cold start to first frame" needs a frame,
+and ADR-0010 settles that nothing inside the guest can observe one — the paint
+gate lives on the host with corral's screenshots precisely because the
+framebuffer's only observer is on the far side of QEMU. What the guest can see
+is the renderer choosing an adapter, which wgpu reports only once it has a
+surface. First paint follows shortly after.
+
+**Reported, not gated**, for the reason §11.2 gives for RSS. Under llvmpipe on
+an emulated GPU the spread is enormous: ADR-0010 records wgpu initialising 2.4 s
+into one run and not yet touched 8.1 s into another. A 120 ms budget checked
+there would be measuring QEMU, and gating on it would turn the tier red for
+reasons unrelated to the code.
+
+The split is the useful part. Spawn cost is Flatpak and process start; render
+cost is wgpu bringing up a software adapter. Only the second is what the SLA is
+about, and only the first would shrink on real hardware — so the two numbers
+are worth having separately rather than as one total that hides which is which.
 
 #### Peak RSS — the index costs 15.5 MB of the 150 MB budget
 

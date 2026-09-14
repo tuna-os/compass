@@ -459,6 +459,12 @@ PY
     : > "$UI_ERR"
     rm -f "$UI_DONE"
 
+    # §8.5's last unmeasured row is "Cold start to first frame < 120 ms", and it
+    # had no measurement anywhere. This is the closest thing the guest can
+    # honestly produce, and the gap between it and the SLA is stated below
+    # rather than glossed.
+    start_ms="$(date +%s%3N)"
+
     # RUST_LOG and the wgpu/winit knobs are set because the first run of this
     # job produced a launcher that started, stayed alive, exited nothing, and
     # printed *not one line* — while never putting a window on screen. A silent
@@ -502,6 +508,7 @@ sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=deb
     wait_for "the launcher process to appear, or exit" 90 \
       bash -c 'pgrep -u "$1" -x vicinae >/dev/null || [ -f "$2" ]' \
       _ "$SESSION_USER" "$UI_DONE"
+    spawned_ms="$(date +%s%3N)"
 
     # And then wait for it to be READY, which is not the same thing and cost
     # three runs and a wrong conclusion to learn.
@@ -520,6 +527,31 @@ sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=deb
     wait_for "the renderer to choose an adapter, or the launcher to exit" 150 \
       bash -c 'grep -q "Adapter AdapterInfo" "$1" || [ -f "$2" ]' \
       _ "$UI_ERR" "$UI_DONE"
+    ready_ms="$(date +%s%3N)"
+
+    # WHAT THIS NUMBER IS, AND WHAT §8.5 ASKED FOR.
+    #
+    # The SLA is "cold start to first frame". Nothing inside the guest can
+    # observe a frame — ADR-0010 settles that, and it is why the paint gate
+    # lives on the host with corral's screenshots. So this measures the nearest
+    # state the guest CAN see: `Adapter AdapterInfo`, which wgpu emits only once
+    # it has a surface to render to. First paint follows shortly after.
+    #
+    # It is REPORTED, NOT GATED, for the same reason §11.2 reports RSS rather
+    # than gating it. Under llvmpipe on a QEMU guest this is software rendering
+    # on emulated hardware, and the spread is enormous — ADR-0010 records 2.4 s
+    # to wgpu in one run against not-yet at 8.1 s in another. A 120 ms budget
+    # measured here would be measuring the VM, not the launcher, and gating on
+    # it would make the tier red for reasons that have nothing to do with the
+    # code.
+    #
+    # The split matters too: spawn cost is Flatpak and process start, render
+    # cost is wgpu bringing up a software adapter. Only the second is what the
+    # SLA is about, and only the first would improve on real hardware.
+    echo "cold start: $((spawned_ms - start_ms)) ms to process, \
+$((ready_ms - spawned_ms)) ms process to renderer-ready, \
+$((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
+
     sleep 3
 
     if [ -f "$UI_DONE" ]; then
