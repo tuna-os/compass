@@ -737,8 +737,39 @@ impl AppIndex {
     }
 
     /// Ranks the index against `query`, best first, ignoring launch history.
+    ///
+    /// An empty or whitespace-only query returns every item in index order.
     #[must_use]
     pub fn search(&self, query: &str) -> Vec<compass_search::Scored<&AppItem>> {
         compass_search::rank(query, &self.items)
+    }
+
+    /// [`AppIndex::search`] with a query parsed once and reused across calls.
+    #[must_use]
+    pub fn search_with_query(
+        &self,
+        query: &compass_search::Query,
+    ) -> Vec<compass_search::Scored<&AppItem>> {
+        compass_search::rank_with_query(query, &self.items)
+    }
+
+    /// [`AppIndex::search`] with an explicit quality threshold.
+    #[must_use]
+    pub fn search_with_options(
+        &self,
+        query: &str,
+        options: compass_search::RankOptions,
+    ) -> Vec<compass_search::Scored<&AppItem>> {
+        compass_search::rank_with_options(query, &self.items, options)
+    }
+
+    /// [`AppIndex::search_with_options`] with a pre-parsed query.
+    #[must_use]
+    pub fn search_with_query_and_options(
+        &self,
+        query: &compass_search::Query,
+        options: compass_search::RankOptions,
+    ) -> Vec<compass_search::Scored<&AppItem>> {
+        compass_search::rank_with_query_and_options(query, &self.items, options)
     }
 }

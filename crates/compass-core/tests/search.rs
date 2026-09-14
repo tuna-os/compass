@@ -3,6 +3,7 @@
 mod support;
 
 use compass_core::{AppIndex, AppItem};
+use compass_search::{Query, RankOptions};
 use support::{builder, write};
 
 /// A small but realistic slice of a desktop: overlapping prefixes, actions, keywords, and
@@ -244,4 +245,33 @@ fn nonsense_matches_nothing() {
     let index = realistic_index(dir.path());
 
     assert!(index.search("qzxwvjkq").is_empty());
+}
+
+#[test]
+fn a_preparsed_query_uses_the_same_app_index_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = realistic_index(dir.path());
+    let query = Query::new("firef");
+
+    assert_eq!(
+        names(&index.search_with_query(&query)),
+        names(&index.search("firef"))
+    );
+}
+
+#[test]
+fn app_index_exposes_the_quality_threshold() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = realistic_index(dir.path());
+
+    assert!(
+        index
+            .search_with_options("e", RankOptions { min_quality: 101 })
+            .is_empty()
+    );
+    assert!(
+        !index
+            .search_with_options("e", RankOptions { min_quality: 0 })
+            .is_empty()
+    );
 }

@@ -2,7 +2,8 @@
 //! quality gate, determinism, and plain ranking sanity on realistic app names.
 
 use compass_search::{
-    FuzzySearchable, Query, WeightedField, rank, rank_indices, rank_with_bias, score_item,
+    FuzzySearchable, Query, RankOptions, WeightedField, rank, rank_indices, rank_with_bias,
+    rank_with_options, score_item,
 };
 
 /// A launcher entry: name matters most, keywords less, description least.
@@ -110,6 +111,27 @@ fn non_matches_are_filtered_out() {
     assert!(names("zzzz").is_empty());
     assert!(!names("fir").contains(&"Calculator"));
     assert!(!names("calc").contains(&"Konsole"));
+}
+
+#[test]
+fn quality_threshold_is_configurable_without_changing_the_default() {
+    let items = ["Firefox Web Browser", "Calculator"];
+    let default = rank("ffb", &items);
+    let permissive = rank_with_options("ffb", &items, RankOptions { min_quality: 0 });
+    let reject_all = rank_with_options("firefox", &items, RankOptions { min_quality: 101 });
+
+    assert!(default.is_empty());
+    assert_eq!(permissive.len(), 1);
+    assert_eq!(*permissive[0].item, "Firefox Web Browser");
+    assert!(reject_all.is_empty());
+}
+
+#[test]
+fn empty_queries_ignore_the_quality_threshold() {
+    let ranked = rank_with_options("", APPS, RankOptions { min_quality: 101 });
+
+    assert_eq!(ranked.len(), APPS.len());
+    assert_eq!(ranked[0].item.name, APPS[0].name);
 }
 
 #[test]

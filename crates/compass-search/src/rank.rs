@@ -7,6 +7,24 @@ use crate::matcher::Matcher;
 use crate::query::Query;
 use crate::searchable::{FuzzySearchable, Match, WeightedField, score_weighted_with};
 
+/// Options controlling which fuzzy matches enter a ranking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RankOptions {
+    /// Minimum accepted quality of the worst-matched query word.
+    ///
+    /// A value above 100 intentionally rejects every non-empty-query match.
+    /// Empty queries are never filtered by this threshold.
+    pub min_quality: u32,
+}
+
+impl Default for RankOptions {
+    fn default() -> Self {
+        Self {
+            min_quality: crate::MIN_QUALITY,
+        }
+    }
+}
+
 /// An item paired with its score and its position in the input slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Scored<T> {
@@ -49,16 +67,25 @@ pub struct BiasedScored<T> {
 
 /// Ranks `items` against `query`, best first.
 ///
-/// Non-matching items (those failing the [`MIN_QUALITY`](crate::MIN_QUALITY)
-/// gate) are dropped. An empty query keeps every item, in input order, with
-/// score 0 — matching the C++ `fuzzyFilter`.
+/// Non-matching items (those failing the default
+/// [`MIN_QUALITY`](crate::MIN_QUALITY) gate) are dropped. An empty query keeps
+/// every item, in input order, with score 0 — matching the C++ `fuzzyFilter`.
 ///
 /// The order is **total and deterministic**: descending score, then ascending
 /// input index. Equal-scoring items therefore keep their input order and two
 /// runs over the same input always produce the same sequence.
 pub fn rank<'a, T: FuzzySearchable>(query: &str, items: &'a [T]) -> Vec<Scored<&'a T>> {
+    rank_with_options(query, items, RankOptions::default())
+}
+
+/// [`rank`] with an explicit quality threshold.
+pub fn rank_with_options<'a, T: FuzzySearchable>(
+    query: &str,
+    items: &'a [T],
+    options: RankOptions,
+) -> Vec<Scored<&'a T>> {
     let parsed = Query::new(query);
-    rank_with_query(&parsed, items)
+    rank_with_query_and_options(&parsed, items, options)
 }
 
 /// [`rank`], but with a query parsed once and reused across calls.
@@ -66,7 +93,16 @@ pub fn rank_with_query<'a, T: FuzzySearchable>(
     query: &Query,
     items: &'a [T],
 ) -> Vec<Scored<&'a T>> {
-    let scored = rank_indices_with_query(query, items);
+    rank_with_query_and_options(query, items, RankOptions::default())
+}
+
+/// [`rank_with_options`], but with a query parsed once and reused across calls.
+pub fn rank_with_query_and_options<'a, T: FuzzySearchable>(
+    query: &Query,
+    items: &'a [T],
+    options: RankOptions,
+) -> Vec<Scored<&'a T>> {
+    let scored = rank_indices_with_query_and_options(query, items, options);
     scored
         .into_iter()
         .map(|s| Scored {
@@ -140,14 +176,32 @@ where
 
 /// [`rank`], returning indices into `items` instead of borrows.
 pub fn rank_indices<T: FuzzySearchable>(query: &str, items: &[T]) -> Vec<Scored<usize>> {
+    rank_indices_with_options(query, items, RankOptions::default())
+}
+
+/// [`rank_indices`] with an explicit quality threshold.
+pub fn rank_indices_with_options<T: FuzzySearchable>(
+    query: &str,
+    items: &[T],
+    options: RankOptions,
+) -> Vec<Scored<usize>> {
     let parsed = Query::new(query);
-    rank_indices_with_query(&parsed, items)
+    rank_indices_with_query_and_options(&parsed, items, options)
 }
 
 /// [`rank_indices`], with a pre-parsed query.
 pub fn rank_indices_with_query<T: FuzzySearchable>(
     query: &Query,
     items: &[T],
+) -> Vec<Scored<usize>> {
+    rank_indices_with_query_and_options(query, items, RankOptions::default())
+}
+
+/// [`rank_indices_with_options`], with a pre-parsed query.
+pub fn rank_indices_with_query_and_options<T: FuzzySearchable>(
+    query: &Query,
+    items: &[T],
+    options: RankOptions,
 ) -> Vec<Scored<usize>> {
     let mut out: Vec<Scored<usize>> = Vec::with_capacity(items.len());
 
@@ -172,7 +226,10 @@ pub fn rank_indices_with_query<T: FuzzySearchable>(
                 quality,
                 weighted,
             } = score_weighted_with(matcher, &fields, query);
-            if quality >= crate::MIN_QUALITY {
+            // `quality == 0` can mean either an incoherent fuzzy match or no
+            // match at all. `weighted` distinguishes them, which matters when
+            // a caller deliberately lowers the quality threshold to zero.
+            if weighted > 0 && quality >= options.min_quality {
                 out.push(Scored {
                     item: index,
                     score,
