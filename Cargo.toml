@@ -26,6 +26,7 @@ compass-portals = { path = "crates/compass-portals" }
 compass-wayland = { path = "crates/compass-wayland" }
 compass-platform = { path = "crates/compass-platform" }
 compass-ui = { path = "crates/compass-ui" }
+compass-crypto = { path = "crates/compass-crypto" }
 
 anyhow = "1"
 nucleo-matcher = "0.3.1"
@@ -44,6 +45,13 @@ dirs = "6"
 ashpd = { version = "0.13", default-features = false, features = ["tokio"] }
 toml = "0.9"
 
+# Clipboard-at-rest crypto. See crates/compass-crypto/src/lib.rs for why these
+# and not the `openssl` crate.
+aes-gcm = "0.11"
+hkdf = "0.13"
+sha2 = "0.11"
+getrandom = "0.3"
+
 # Spike B (docs/rust-engine issue #3): the sandbox primitives Phase 4 plans to
 # use. Both expose safe APIs, so `unsafe_code = "forbid"` still holds here.
 landlock = "0.4"
@@ -58,6 +66,7 @@ tempfile = "3"     # also a runtime dep of the sandbox spike
 parking_lot = "0.12"
 criterion = { version = "0.5", features = ["async"] }
 roxmltree = "0.20"
+hex = "0.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

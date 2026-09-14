@@ -143,6 +143,61 @@ jobs:
           rustup run "${{ steps.msrv.outputs.version }}" \
             cargo build --release --locked -p vicinae
 
+  crypto-parity:
+    name: The two clipboard crypto implementations interoperate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: crypto-parity-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: crypto-parity-${{ runner.os }}-
+
+      # Same trick as scorer-parity, for the same reason: vicinae::crypto is a
+      # standalone static library whose only Linux dependency is OpenSSL, so
+      # three translation units give us the REAL C++ implementation to test
+      # against, with no CMake, no Qt and no server. PLAN.md §8.4a.
+      - name: Build the C++ crypto probe
+        run: |
+          set -o pipefail
+          c++ -std=c++23 -O2 -Isrc/lib/crypto/include -Isrc/lib/crypto/src \
+            -o /tmp/vicinae-crypto-probe src/lib/crypto/probe/main.cpp \
+            src/lib/crypto/src/aes-gcm.cpp src/lib/crypto/src/kdf.cpp \
+            src/lib/crypto/src/gcm-openssl.cpp -lcrypto
+          # Asserted, because a probe that built but could not answer would
+          # otherwise surface as "no divergences" -- the harness's own failure
+          # looking like success. This is a fixed HKDF-SHA256 vector, so it also
+          # catches an OpenSSL that links but computes something else.
+          expected=d6a1eec1713edd7472e1477cbe7beece6c36d9394d677f6a79447e63018544d4
+          got=$(printf 'derive 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 636c6970626f617264\n' \
+            | /tmp/vicinae-crypto-probe)
+          test "$got" = "ok $expected" \
+            || { echo "::error::the probe answered '$got', expected 'ok $expected'"; exit 1; }
+
+      - name: Cross-decrypt the two implementations
+        run: |
+          cargo run --locked -p compass-testkit --bin crypto-parity -- \
+            --probe /tmp/vicinae-crypto-probe
+
+      - name: What this proves, and what it does not
+        if: always()
+        run: |
+          echo 'This is the CRYPTO, not the clipboard store. clipboard-db.hpp and'
+          echo 'clipboard-encrypter.cpp wrap it in a SQLite schema, key management'
+          echo 'and a mime model, none of which is exercised here. Format parity is'
+          echo 'necessary for the Phase 3 gate -- "readable and writable by both'
+          echo 'engines interchangeably" -- and is not the whole of it.'
+          echo
+          echo 'It is also not a byte-diff, deliberately: the IV is random, so two'
+          echo 'CORRECT implementations differ on every call. Each engine decrypts'
+          echo "what the other wrote instead, which is what interchangeable means."
+
   scorer-parity:
     name: The two scorers agree on the corpus
     runs-on: ubuntu-24.04

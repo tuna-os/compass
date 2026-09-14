@@ -17,6 +17,7 @@ walkdir.workspace = true
 compass-xdg.workspace = true
 compass-search.workspace = true
 compass-core.workspace = true
+compass-crypto.workspace = true
 
 [[bin]]
 name = "parity"
@@ -27,3 +28,10 @@ path = "src/parity.rs"
 [[bin]]
 name = "scorer-parity"
 path = "src/scorer_parity.rs"
+
+# Suite 0 (PLAN §8.4a): cross-decrypts the C++ clipboard crypto against the Rust
+# one. Needs the C++ probe built and passed with --probe; see
+# src/lib/crypto/probe/main.cpp.
+[[bin]]
+name = "crypto-parity"
+path = "src/crypto_parity.rs"

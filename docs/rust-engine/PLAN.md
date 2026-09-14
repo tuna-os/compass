@@ -931,6 +931,50 @@ The Rust workflow now sets `COMPASS_REQUIRE_DBUS=1`, under which a missing `dbus
 failure instead of a skip. Three controls were run: absent and unguarded skips and exits zero,
 absent and guarded fails with the reason, present and guarded passes all twelve.
 
+**The clipboard crypto is now covered too, in the per-PR tier.** Phase 3's gate wants the clipboard
+store "readable and writable by both engines interchangeably", and that looked like VM-tier work.
+It is not: `vicinae::crypto` is a standalone static library whose only Linux dependency is OpenSSL —
+no Qt, no CMake needed to consume it — so three translation units give the REAL C++ implementation
+to test against, exactly the property that made the fuzzy-scorer probe affordable (§8.1a).
+
+**The instrument had to differ from the scorer's, and that is the interesting part.** Scoring is a
+pure function, so `scorer-parity` compares outputs directly. Encryption is not: the IV comes from
+`RAND_bytes`, so two *correct* implementations produce different bytes on every call, and a harness
+that diffed ciphertexts would fail on a correct port — the same error as a ratchet that fires when
+a number improves. So `crypto-parity` **cross-decrypts**: each engine reads what the other wrote,
+in both directions. That is what "interchangeably" means, and it is stronger than a diff, because
+it exercises each side as reader and as writer. `deriveKey` is deterministic (HKDF-SHA256) and *is*
+compared byte for byte.
+
+Cross-decryption alone would be passed by an implementation that ignored the GCM tag, so every run
+also asserts both engines **refuse** what they should, with the specific error each should give: a
+flipped bit at every offset is `AuthFailed`, the right blob under the wrong key is `AuthFailed`, a
+buffer too short for an IV plus a tag is `DataTooShort`. Measured on the first green run: **15 KDF
+vectors identical, 10 cross-decryptions each way, 64 controls refused.**
+
+Five controls were run against the harness itself, because a parity harness that has only ever seen
+agreeing implementations is evidence of nothing:
+
+| broken thing | what the harness said |
+|---|---|
+| Rust appends the IV instead of prefixing it | the C++ engine could not read what Rust wrote |
+| Rust HKDF uses a salt | KDF disagreement, with both hex values |
+| Rust `decrypt` falls back to raw ciphertext when the tag fails | Rust accepted a flipped bit at offset 0 |
+| probe path does not exist | exit 1, naming the path |
+| probe exits without answering | exit 1, naming the unanswered request |
+
+Two things it does **not** prove. It is the crypto, not the store: `clipboard-db.hpp` and
+`clipboard-encrypter.cpp` add a SQLite schema, key management and a mime model, none of it
+exercised. And the CI job pins one HKDF vector before running the harness, because a probe that
+built but could not answer would otherwise surface as "no divergences" — the harness's own failure
+looking like success, which is the defect this whole suite exists to rule out.
+
+A protocol hole showed up on the first run and is worth recording: an empty KDF label hex-encodes to
+an empty string, which whitespace-separated fields cannot distinguish from a missing argument, so
+the probe rejected it as malformed. Empty labels and empty plaintexts are both legitimate, and both
+are in the corpus precisely because they sit on boundaries; the wire format now spells the empty
+string `-`. A corpus of only comfortable inputs would have left that hole in place.
+
 **(b) Headless GNOME session — nightly.** `gnome-shell --headless --virtual-monitor` in a Fedora
 44/45 container running a scripted 10-step session against both GNOME 50 and 51. This is the tier
 that catches real portal behaviour, the GlobalShortcuts permission dialog, and
