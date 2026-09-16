@@ -94,26 +94,26 @@ std::optional<fs::path> findHelperProgram(std::string_view program) {
 fs::path runtimeDir() {
 #ifdef __APPLE__
   if (const char *t = std::getenv("TMPDIR")) return fs::path(t) / "vicinae";
-  return "/tmp/vicinae";
+  return fs::path("/tmp") / ("vicinae-" + currentUserName());
 #elif defined(_WIN32)
   return fs::temp_directory_path() / "vicinae";
 #else
   if (const char *r = std::getenv("XDG_RUNTIME_DIR")) return fs::path(r) / "vicinae";
-  return "/tmp/vicinae";
+  return fs::path("/tmp") / ("vicinae-" + currentUserName());
 #endif
 }
 
 fs::path stateDir() {
 #ifdef __APPLE__
   if (const char *h = std::getenv("HOME")) return fs::path(h) / ".local" / "state" / "vicinae";
-  return "/tmp/vicinae";
+  return fs::path("/tmp") / ("vicinae-" + currentUserName());
 #elif defined(_WIN32)
   if (const char *l = std::getenv("LOCALAPPDATA")) return fs::path(l) / "vicinae" / "state";
   return fs::temp_directory_path() / "vicinae" / "state";
 #else
   if (const char *s = std::getenv("XDG_STATE_HOME")) return fs::path(s) / "vicinae";
   if (const char *h = std::getenv("HOME")) return fs::path(h) / ".local" / "state" / "vicinae";
-  return "/tmp/vicinae";
+  return fs::path("/tmp") / ("vicinae-" + currentUserName());
 #endif
 }
 
