@@ -84,13 +84,18 @@ def main() -> int:
     ap.add_argument("after")
     ap.add_argument("--min-percent", type=float, default=None,
                     help="fail unless at least this percent of pixels changed")
+    ap.add_argument("--max-percent", type=float, default=None,
+                    help="fail unless at most this percent of pixels changed; the mirror "
+                         "of --min-percent, for asserting that something went AWAY")
     ap.add_argument("--expect-box", nargs=4, type=int, metavar=("X0", "Y0", "X1", "Y1"),
                     default=None,
                     help="fail unless the changed region lies within this box")
     ap.add_argument("--ignore-box", nargs=4, type=int, metavar=("X0", "Y0", "X1", "Y1"),
-                    default=None,
+                    action="append", default=None,
                     help="exclude this region from the comparison entirely; pixels inside "
-                         "it count towards neither the percentage nor the bounding box")
+                         "it count towards neither the percentage nor the bounding box. "
+                         "May be given more than once -- the shell has furniture at both "
+                         "the top (a clock) and the bottom (the dash) and neither is ours")
     args = ap.parse_args()
 
     try:
@@ -103,44 +108,52 @@ def main() -> int:
         print(f"framediff: sizes differ: {w}x{h} vs {w2}x{h2}", file=sys.stderr)
         return 2
 
-    # A region excluded from the comparison, and the count of changed pixels
-    # inside it -- reported rather than discarded silently, so that an ignored
+    # Regions excluded from the comparison, and the count of changed pixels
+    # inside them -- reported rather than discarded silently, so that an ignored
     # region quietly swallowing the whole diff is visible instead of looking
     # like agreement.
-    ix0, iy0, ix1, iy1 = args.ignore_box if args.ignore_box else (0, 0, -1, -1)
+    boxes = args.ignore_box or []
     ignored = 0
 
+    def is_ignored(x: int, y: int) -> bool:
+        return any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in boxes)
+
+    # `considered` is counted here rather than derived from the boxes' areas.
+    # Rectangle arithmetic would double-count any overlap between two ignore
+    # boxes and quietly inflate the percentage; counting the pixels actually
+    # examined cannot.
     minx, maxx, miny, maxy, n = w, -1, h, -1, 0
+    considered = 0
     for y in range(h):
         row = y * w
         for x in range(w):
+            if is_ignored(x, y):
+                if a[(row + x) * ch : (row + x) * ch + 3] != b[(row + x) * ch : (row + x) * ch + 3]:
+                    ignored += 1
+                continue
+            considered += 1
             k = (row + x) * ch
             if a[k : k + 3] != b[k : k + 3]:
-                if ix0 <= x <= ix1 and iy0 <= y <= iy1:
-                    ignored += 1
-                    continue
                 n += 1
                 if x < minx: minx = x
                 if x > maxx: maxx = x
                 if y < miny: miny = y
                 if y > maxy: maxy = y
 
-    # The denominator excludes the ignored region too: a percentage of the
-    # whole screen would drift as the ignored box grows, and the threshold was
-    # calibrated against a comparable area.
-    ignored_area = 0
-    if args.ignore_box:
-        ignored_area = max(0, min(ix1, w - 1) - max(ix0, 0) + 1) * \
-                       max(0, min(iy1, h - 1) - max(iy0, 0) + 1)
-    total = w * h - ignored_area
-    pct = 100.0 * n / total
+    # The denominator excludes the ignored regions too: a percentage of the
+    # whole screen would drift as the ignored boxes grow, and the thresholds
+    # were calibrated against a comparable area.
+    total = considered
+    pct = 100.0 * n / total if total else 0.0
     if n == 0:
         print(f"IDENTICAL  {args.before} and {args.after} ({w}x{h})")
     else:
         print(f"{n} of {total} pixels differ ({pct:.2f}%)  "
               f"box x {minx}..{maxx} ({maxx - minx + 1}w) y {miny}..{maxy} ({maxy - miny + 1}h)")
-    if args.ignore_box:
-        print(f"  ({ignored} changed pixel(s) ignored inside {ix0},{iy0}..{ix1},{iy1})")
+    for x0, y0, x1, y1 in boxes:
+        print(f"  (ignoring {x0},{y0}..{x1},{y1})")
+    if boxes:
+        print(f"  ({ignored} changed pixel(s) fell inside an ignored region)")
 
     ok = True
     if args.min_percent is not None:
@@ -150,6 +163,13 @@ def main() -> int:
             ok = False
         else:
             print(f"ok: {pct:.2f}% >= {args.min_percent:.2f}%")
+    if args.max_percent is not None:
+        if pct > args.max_percent:
+            print(f"FAIL: {pct:.2f}% of pixels changed, expected at most "
+                  f"{args.max_percent:.2f}%", file=sys.stderr)
+            ok = False
+        else:
+            print(f"ok: {pct:.2f}% <= {args.max_percent:.2f}%")
     if args.expect_box is not None:
         x0, y0, x1, y1 = args.expect_box
         if n == 0:

@@ -20,6 +20,7 @@ use compass_platform::{AppLauncher, NullLauncher};
 use compass_search::rank_indices;
 
 use crate::message::{Direction, Message};
+use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
@@ -32,6 +33,12 @@ pub struct AppFlags {
     /// is on Linux. `vicinae` supplies `compass-platform-linux`'s launcher;
     /// tests supply their own. See ADR-0013.
     pub launcher: Arc<dyn AppLauncher>,
+    /// The engine driving this window, when there is one.
+    ///
+    /// `None` is the standalone case -- `vicinae ui` run by hand with no daemon
+    /// -- and it changes what dismissing means: with nothing able to summon the
+    /// window back, hiding it would strand the process invisible, so it exits.
+    pub link: Option<EngineLink>,
 }
 
 impl Default for AppFlags {
@@ -50,6 +57,7 @@ impl Default for AppFlags {
             // invisible at the call site, which is the arrangement ADR-0013
             // exists to end. `vicinae` sets this explicitly.
             launcher: Arc::new(NullLauncher),
+            link: None,
         }
     }
 }
@@ -72,6 +80,39 @@ pub struct LauncherApp {
     error: Option<String>,
     /// How to launch. See [`AppFlags::launcher`].
     launcher: Arc<dyn AppLauncher>,
+    /// The engine driving this window. See [`AppFlags::link`].
+    link: Option<EngineLink>,
+    /// The open window, if one is.
+    ///
+    /// `None` is the hidden state: on Wayland a hidden window is a closed one.
+    window: Option<window::Id>,
+    /// Settings to open a window with, kept for every summon after the first.
+    window_config: window::Settings,
+    /// Whether the engine is waiting for an outcome right now.
+    ///
+    /// # Every report must answer a command, or the stream goes out of step
+    ///
+    /// The link is strictly one command, one outcome: the bridge sends a
+    /// command and then blocks reading exactly one reply. So an outcome sent
+    /// when nothing was asked does not go nowhere -- it sits in the channel and
+    /// becomes the answer to the *next* command, and every answer after that is
+    /// one behind, permanently.
+    ///
+    /// Two things used to do exactly that. Opening the window at boot reported
+    /// `Shown`, and a user pressing Escape reported `Hidden`; neither answers
+    /// anything. The engine would then report "shown" for a toggle that hid the
+    /// window -- the precise lie this whole design exists to prevent, arriving
+    /// through the mechanism built to prevent it.
+    awaiting: bool,
+}
+
+/// What a dismissal does. See [`LauncherApp::on_dismiss`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dismissal {
+    /// Close the window and wait to be summoned again.
+    Hide,
+    /// End the process, because nothing could summon it back.
+    Exit,
 }
 
 /// Where the selection lands after moving one row in `direction`.
@@ -97,7 +138,20 @@ impl LauncherApp {
     pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
         let mut app = Self::with_index(AppIndex::from_environment());
         app.launcher = flags.launcher;
+        app.window_config = flags.window_config;
+        app.link = flags.link;
         (app, Task::none())
+    }
+
+    /// Builds the state and opens the first window, for [`crate::run_resident`].
+    ///
+    /// Distinct from [`LauncherApp::new`] because `iced::daemon` starts with no
+    /// windows at all: without this, `vicinae ui` with no engine attached would
+    /// be an invisible process with no way to summon it.
+    pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
+        let (app, task) = Self::new(flags);
+        let (_id, opened) = window::open(app.window_config.clone());
+        (app, Task::batch([task, opened.map(Message::Opened)]))
     }
 
     /// Create one over a supplied index.
@@ -113,6 +167,98 @@ impl LauncherApp {
             selected: 0,
             error: None,
             launcher: Arc::new(NullLauncher),
+            link: None,
+            window: None,
+            window_config: AppFlags::default().window_config,
+            awaiting: false,
+        }
+    }
+
+    /// Whether a window is currently on screen.
+    #[must_use]
+    pub fn is_visible(&self) -> bool {
+        self.window.is_some()
+    }
+
+    /// Attaches an engine link. For tests that drive the resident path.
+    #[must_use]
+    pub fn with_link(mut self, link: EngineLink) -> Self {
+        self.link = Some(link);
+        self
+    }
+
+    /// Answers the engine, if it is waiting for one.
+    ///
+    /// Does nothing when no command is outstanding. See [`Self::awaiting`] for
+    /// why that matters more than it looks.
+    fn answer(&mut self, outcome: UiOutcome) {
+        if !self.awaiting {
+            return;
+        }
+        self.awaiting = false;
+        if let Some(link) = &self.link {
+            link.report(outcome);
+        }
+    }
+
+    /// Whether the engine is waiting for an outcome. For tests.
+    #[must_use]
+    pub fn is_awaiting(&self) -> bool {
+        self.awaiting
+    }
+
+    /// What dismissing does, given whether anything could bring the window back.
+    ///
+    /// Split out from [`LauncherApp::conceal`] because the two outcomes it
+    /// chooses between are both opaque `Task`s: a test can see that the window
+    /// closed, but not that the process was told to exit. This is the decision
+    /// itself, and it is what the tests assert on.
+    #[must_use]
+    pub fn on_dismiss(&self) -> Dismissal {
+        if self.link.is_some() {
+            Dismissal::Hide
+        } else {
+            Dismissal::Exit
+        }
+    }
+
+    /// Hides the window, or ends the process when nothing could summon it back.
+    ///
+    /// This is what dismissing and a successful launch both do. A launcher that
+    /// stayed on screen after launching is a bug report waiting to happen; a
+    /// launcher that vanished with no way back is a worse one.
+    fn conceal(&mut self) -> Task<Message> {
+        if self.on_dismiss() == Dismissal::Exit {
+            return iced::exit();
+        }
+        if self.link.is_none() {
+            // Unreachable: `on_dismiss` returns `Hide` only when there is a
+            // link. Written as a return rather than an unwrap so a future
+            // change to `on_dismiss` degrades into exiting rather than
+            // panicking in the middle of a keystroke.
+            return iced::exit();
+        }
+        match self.window {
+            // The answer waits for `Message::Closed`, which arrives when the
+            // window is actually gone.
+            //
+            // REPORTING HERE WOULD BE OPTIMISTIC, AND IT WAS. `window::close`
+            // returns a Task; answering before it runs tells the engine
+            // "hidden" while the window is still on screen. A VM run caught it:
+            // `vicinae toggle` reported success and the screenshot taken
+            // straight afterwards still had the launcher in it.
+            //
+            // `self.window` is deliberately NOT cleared yet. Until the close
+            // lands the window really is still visible, and `is_visible` should
+            // say so -- the engine cannot send another command in the meantime
+            // because it is blocked reading this one's reply.
+            Some(id) => window::close(id),
+            // Nothing to close, so nothing to wait for. Still answers, because
+            // the engine is blocked until it hears something.
+            None => {
+                self.answer(UiOutcome::Hidden);
+                Task::none()
+            }
         }
     }
 
@@ -144,7 +290,45 @@ impl LauncherApp {
     /// `listen` yields only events with `Status::Ignored`, so the text input
     /// still gets every printable key and this sees the arrows and Escape.
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        iced::keyboard::listen().map(Message::Keyboard)
+        let keyboard = iced::keyboard::listen().map(Message::Keyboard);
+        let closed = window::close_events().map(Message::Closed);
+        match &self.link {
+            Some(link) => iced::Subscription::batch([
+                keyboard,
+                closed,
+                link.subscription().map(Message::Command),
+            ]),
+            None => iced::Subscription::batch([keyboard, closed]),
+        }
+    }
+
+    /// Acts on a command from the engine and reports what happened.
+    ///
+    /// `Show` on an already-visible window reports `Shown` without opening a
+    /// second one: the outcome names the state the window ended in, so
+    /// "already there" and "just opened" are the same answer.
+    fn obey(&mut self, command: UiCommand) -> Task<Message> {
+        // From here until the outcome is sent, the engine is blocked reading
+        // one reply. Set before any branch so every path answers exactly once.
+        self.awaiting = true;
+
+        let show = match command {
+            UiCommand::Show => true,
+            UiCommand::Hide => false,
+            UiCommand::Toggle => !self.is_visible(),
+        };
+
+        if !show {
+            return self.conceal();
+        }
+
+        if let Some(id) = self.window {
+            self.answer(UiOutcome::Shown);
+            return window::gain_focus(id);
+        }
+
+        let (_id, opened) = window::open(self.window_config.clone());
+        opened.map(Message::Opened)
     }
 
     /// Update the application state.
@@ -188,19 +372,39 @@ impl LauncherApp {
                     Message::Launched,
                 )
             }
-            Message::Launched(Ok(())) => {
-                // A launcher that stays open after launching is a bug report
-                // waiting to happen.
-                iced::exit()
-            }
+            // A launcher that stays open after launching is a bug report
+            // waiting to happen. Hidden, not gone -- see `conceal`.
+            Message::Launched(Ok(())) => self.conceal(),
             Message::Launched(Err(err)) => {
                 self.error = Some(err);
                 Task::none()
             }
-            Message::Dismiss => iced::exit(),
+            Message::Dismiss => self.conceal(),
             Message::ShortcutActivated(_) => Task::none(),
             Message::FocusChanged(_) => Task::none(),
-            Message::WindowClosed => iced::exit(),
+            Message::WindowClosed => self.conceal(),
+            Message::Quit => iced::exit(),
+            Message::Opened(id) => {
+                self.window = Some(id);
+                // Answers only a `Show` that asked for it. The window opened at
+                // boot answers nothing -- see `awaiting`.
+                self.answer(UiOutcome::Shown);
+                Task::none()
+            }
+            Message::Closed(id) => {
+                // Only clear the state if *this* window is the one that went;
+                // a stale close for a window already replaced would otherwise
+                // leave the launcher believing it is hidden while it is not.
+                if self.window == Some(id) {
+                    self.window = None;
+                    // The honest moment to say "hidden": the window is gone.
+                    // Answers only a command that asked -- a window the user
+                    // closed answers nothing. See `awaiting`.
+                    self.answer(UiOutcome::Hidden);
+                }
+                Task::none()
+            }
+            Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
             Message::EventOccurred(_) => Task::none(),
             Message::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {

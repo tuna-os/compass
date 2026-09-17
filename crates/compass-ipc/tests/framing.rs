@@ -4,7 +4,7 @@
 use compass_ipc::codec::{FrameCodec, LENGTH_PREFIX_LEN, MAX_FRAME_LEN};
 use compass_ipc::{
     DoctorCheck, DoctorStatus, Error, ErrorKind, PROTOCOL_VERSION, ProtocolError, QueryHit,
-    Request, RequestEnvelope, Response, ResponseEnvelope,
+    Request, RequestEnvelope, Response, ResponseEnvelope, WindowCommand, WindowOutcome,
 };
 use tokio_util::bytes::{BufMut, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
@@ -28,6 +28,11 @@ fn all_requests() -> Vec<Request> {
         },
         Request::Doctor,
         Request::Shutdown,
+        Request::AttachWindow,
+        Request::WindowOutcome(WindowOutcome::Shown),
+        Request::WindowOutcome(WindowOutcome::Hidden),
+        Request::WindowOutcome(WindowOutcome::Failed(String::new())),
+        Request::WindowOutcome(WindowOutcome::Failed("no compositor: é 🚀".into())),
     ]
 }
 
@@ -85,6 +90,10 @@ fn all_responses() -> Vec<Response> {
         Response::Error(ProtocolError::new(ErrorKind::Unsupported, "")),
         Response::Error(ProtocolError::new(ErrorKind::BadRequest, "empty query")),
         Response::Error(ProtocolError::new(ErrorKind::Internal, "handler panicked")),
+        Response::WindowAttached,
+        Response::Window(WindowCommand::Show),
+        Response::Window(WindowCommand::Hide),
+        Response::Window(WindowCommand::Toggle),
     ]
 }
 
@@ -100,7 +109,9 @@ fn request_variants_are_exhaustive() {
             | Request::Hide
             | Request::Query { .. }
             | Request::Doctor
-            | Request::Shutdown => {}
+            | Request::Shutdown
+            | Request::AttachWindow
+            | Request::WindowOutcome(_) => {}
         }
     }
 }
@@ -114,7 +125,9 @@ fn response_variants_are_exhaustive() {
             | Response::QueryResults { .. }
             | Response::DoctorReport { .. }
             | Response::ShuttingDown
-            | Response::Error(_) => {}
+            | Response::Error(_)
+            | Response::WindowAttached
+            | Response::Window(_) => {}
         }
     }
 }

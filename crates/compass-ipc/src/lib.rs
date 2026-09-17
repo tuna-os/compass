@@ -16,7 +16,9 @@
 //! * [`path`] — resolving `$XDG_RUNTIME_DIR/vicinae/ipc.sock`, injectable for
 //!   tests.
 //! * [`transport`] — [`Listener`] (which is also the single-instance lock),
-//!   [`Client`], and the serve loop.
+//!   [`Client`], the serve loop, and the reversed [`WindowLink`]/[`WindowClient`]
+//!   pair a resident launcher window is driven over
+//!   (`docs/rust-engine/adr/0015-the-launcher-window-is-resident.md`).
 //!
 //! # Example
 //!
@@ -57,6 +59,9 @@ pub use error::{Error, Result};
 pub use path::SocketPath;
 pub use protocol::{
     DoctorCheck, DoctorStatus, ErrorKind, PROTOCOL_VERSION, ProtocolError, QueryHit, Request,
-    RequestEnvelope, Response, ResponseEnvelope,
+    RequestEnvelope, Response, ResponseEnvelope, WindowCommand, WindowOutcome,
 };
-pub use transport::{Client, Listener, is_listening, serve_connection};
+pub use transport::{
+    Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,
+    serve_connection_until_attach,
+};

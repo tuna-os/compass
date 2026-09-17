@@ -1237,9 +1237,41 @@ correct degradation when a protocol is absent. Deferred until there is wlroots c
 |---|---|---|
 | Fuzzy search, top-20 of 10,000 items | < 2.0 ms | gist spec |
 | IPC round-trip, local UDS | < 0.5 ms | gist spec |
-| Cold start to first frame | < 120 ms | new — the number users feel |
+| Cold start to first frame | < 120 ms | new — see the split below |
+| **Summon to first frame** | **< 120 ms** | **new — the number users actually feel** |
 | Idle RSS | < 30 MB | gist spec |
 | Peak RSS, 10k index + 3 extensions | < 150 MB | new |
+
+**The first-frame row split, and the second half is the one that matters now.**
+[ADR-0015](./adr/0015-the-launcher-window-is-resident.md) made the launcher window resident, so a
+user pressing Super+Space is no longer waiting on a cold start at all — they are waiting on a warm
+process opening a surface. Those are different numbers with different costs:
+
+* **Cold start to first frame** is paid once, when the window process is first started (autostart,
+  or by hand). It includes process spawn, dynamic linking, Iced and winit initialisation, and wgpu
+  enumerating and bringing up an adapter. 120 ms was never a realistic budget for it — ADR-0015
+  rejected spawn-per-summon precisely because this is seconds, not milliseconds, and the VM tier's
+  own figures (2.4 s in one run, not yet there at 8.1 s in another) are two orders of magnitude off.
+* **Summon to first frame** is paid on every keypress, and it is what the SLA was always about. It
+  is a `WindowCommand::Show` arriving on an attached window, the window opening a surface, and the
+  first paint. Everything expensive — the process, the adapter, the font atlas, the application
+  index — is already warm.
+
+**The warm half now has a proxy, and it is not the SLA.** `scripts/vmtest/launcher.sh` times a
+`vicinae show` against an attached window: CLI to engine, engine to window, and the window's answer
+back. Two runs report **338 ms and 480 ms** under llvmpipe.
+
+That number is an **upper bound with a whole Flatpak launch inside it** — the client is `vicinae`
+rather than a keypress, so a process spawn, a Flatpak sandbox setup and a socket connection are all
+counted before the engine is even asked. On the real path the portal delivers an activation
+straight into a running engine and none of that happens. It is also not a frame: ADR-0010 settles
+that nothing inside the guest can observe one, so what is timed ends at the window's *answer*,
+which the launcher now sends only once the window actually exists or is actually gone.
+
+**So the 120 ms figure is still a target carried over from the spec, not a result.** Closing the
+gap needs the host-side paint gate the cold number uses, with the clock started at the toggle. What
+the round trip does establish is a ceiling and a regression signal, which is more than the row had
+before.
 
 The spec claims sub-30 MB but proposes no test for it; without a gate the claim decays. Track RSS
 per commit, fail on >5% regression. **Measure inside the Flatpak** — sandbox overhead is real and
@@ -1252,6 +1284,7 @@ the number users see is the sandboxed one.
 | Fuzzy search, top-20 of 10,000 | no benchmark — now measured, see below |
 | IPC round-trip | one benchmark, which timed a sleep — see below |
 | Cold start to first frame | no benchmark — **nearest observable proxy now reported**, see below |
+| Summon to first frame | no benchmark — **the round trip is now reported**, see below; still not a frame |
 | Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
 | Peak RSS, 10k index + 3 extensions | no benchmark — **index half now measured**, see below |
 
@@ -1565,9 +1598,15 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-**Sixteen crates, 769 tests, and an engine that runs.** Counts verified against the committed tree
+**Sixteen crates, 809 tests, and an engine that runs.** Counts verified against the committed tree
 rather than a dirty one — three commits early on built only because the working tree supplied files
 they had not committed, and that is checked rather than assumed.
+
+Each crate's figure below is what `cargo test -p <crate> -- --test-threads=1` reports, doc-tests
+included, and **they sum to the total** — a property a reader can check with one command, which is
+the point of stating them. Several had drifted below the tree (`vicinae` read 137 against a real
+166) because they were maintained by hand while the total was recomputed; all sixteen were
+re-measured rather than adjusted.
 
 - **Workspace and CI.** Pinned 1.94.1, edition 2024, `unsafe_code` forbidden and `clippy::all`
   denied workspace-wide. Rust CI workflow, Makefile targets kept separate from the C++ ones. All
@@ -1576,25 +1615,34 @@ they had not committed, and that is checked rather than assumed.
   the real half on a machine that has applications installed. Corpus files are `-text` in
   `.gitattributes`, with a test that fails loudly if a checkout ever normalises the CRLF and
   Latin-1 fixtures into fixtures that test nothing.
-- **`compass-xdg`** (110) — desktop-entry, locale, value, reader and exec layers, with all 47
+- **`compass-xdg`** (118) — desktop-entry, locale, value, reader and exec layers, with all 47
   in-scope C++ cases ported verbatim.
-- **`compass-search`** (52) — fuzzy matching on `nucleo`, with the C++ ordering suite ported and
+- **`compass-search`** (59) — fuzzy matching on `nucleo`, with the C++ ordering suite ported and
   fzf's coherence signal reconstructed exactly (ADR-0006).
-- **`compass-ipc`** (57) — length-prefixed postcard framing, with the length checked against
+- **`compass-ipc`** (67) — length-prefixed postcard framing, with the length checked against
   `MAX_FRAME_LEN` before any allocation.
-- **`compass-core`** (71) — app index with desktop-ID precedence, frecency, `vicinae.json`.
-- **`compass-shell`** (36) — GNOME Shell DBus client; 22 of its tests spawn a real `dbus-daemon`.
+- **`compass-core`** (74) — app index with desktop-ID precedence, frecency, `vicinae.json`.
+- **`compass-shell`** (47) — GNOME Shell DBus client; 22 of its tests spawn a real `dbus-daemon`.
 - **`compass-portals`** (55) — XDG portals via `ashpd`, with availability a three-state outcome
   rather than a boolean, version-property probing, and a timeout on every call.
 - **`compass-extension-api`** (74) — the view tree, derived identity, diffing, dispatch and the
   capability registry, behind a mechanical seam gate that fails if host transport or runtime is
   named anywhere in the crate. The gate was itself tested by injecting a violation.
-- **`vicinae`** (137) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
-  indexes applications, ranks queries with frecency and answers over the IPC socket. Headless, and
-  the window commands refuse rather than answer `Ack`, so a client can tell "no window yet" from
-  "the window was shown". Eleven end-to-end tests spawn the real binary on its own socket with every
-  XDG variable pointed into a tempdir.
-- **`compass-testkit`** (5) — corpus loader; entries expose raw bytes, not `String`.
+- **`vicinae`** (180) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
+  indexes applications, ranks queries with frecency and answers over the IPC socket. It holds no
+  window of its own and never opens one; `show`, `hide` and `toggle` are forwarded to a **resident
+  launcher window** that attached over the same socket
+  ([ADR-0015](./adr/0015-the-launcher-window-is-resident.md)), and refused when none has. So a
+  client can still tell "no window" from "the window was shown". Fifteen end-to-end tests spawn the
+  real binary on its own socket with every XDG variable pointed into a tempdir; four of them attach
+  a fake window from the test process and assert across the process boundary.
+- **`compass-ui`** (22) and **`compass-wayland`** (2) — the Iced launcher shell and the Wayland
+  surface under it. `compass-ui` is now **resident** (ADR-0015): it runs on `iced::daemon`, opens
+  and closes its window on command, and reports the state it ended in. That state machine is
+  testable with no display and is, which is where the 11 new tests came from. Everything that
+  actually draws still needs a compositor, which is why the VM tier exists — read the numbers as
+  "the logic is covered, the rendering is not".
+- **`compass-testkit`** (8) — corpus loader; entries expose raw bytes, not `String`.
 - **`compass-crypto`** (24) — the clipboard's AES-256-GCM and its HKDF key derivation, ported from
   `aes-gcm.cpp` and `database-key.cpp`. CI cross-decrypts against the real C++ implementation in
   both directions, which is the right check for randomised-IV crypto where a byte diff would fail
@@ -1830,17 +1878,72 @@ starts a window."* Both halves are now false. `crates/vicinae/src/lib.rs` calls 
 with a real `LinuxLauncher`, and `LaunchSelected` launches through the `AppLauncher` trait (#64).
 The VM tier watches it draw in a real GNOME session.
 
-**What remains is the daemon's half.** `vicinae serve` still answers `toggle`, `show` and `hide`
-with *"this engine is headless and cannot … it has no window yet"* (`serve.rs:199`). Per
-[ADR-0011](./adr/0011-the-window-is-its-own-command.md) the window is its own command because Iced's
-event loop must own the process's main thread, so the daemon cannot simply open one — it has to
-*drive* a window that exists in another process. That is the next thing that matters, and it is a
-different problem from the one this section used to describe: not "write a launcher" but "let the
-daemon show the launcher".
+**The daemon's half is now built, and the remaining gap is the window's.**
+[ADR-0015](./adr/0015-the-launcher-window-is-resident.md) settled the shape: a resident window
+process attaches to `serve` over the same socket, and `serve` pushes `show`/`hide`/`toggle` to it.
+Both halves of that protocol exist — `compass-ipc` carries the push direction (`WindowLink` on the
+engine's side, `WindowClient` on the window's), and `serve` holds at most one attached window and
+forwards to it. End-to-end tests attach a window from the test process to a real spawned daemon and
+assert the command arrives as itself and the answer comes back.
 
-Which is also why the refusal is worth keeping as a refusal. A client can tell "no window yet" from
-"the window was shown", and that distinction is the only thing standing between an honest gap and a
-`toggle` that silently does nothing.
+**`vicinae ui` now attaches, and the loop is closed in code.** It runs on `iced::daemon` rather than
+`iced::application`, so the window is something it opens and closes rather than something it *is*:
+dismissing hides, a successful launch hides, and the engine's `show` opens a window again. On
+Wayland that is what hiding means — `xdg_toplevel` has no hide, so a hidden window is a closed one
+— and what residency preserves is the process, the wgpu adapter, the font atlas and the index.
+
+With no engine listening, `vicinae ui` still starts and Escape still exits: a window that hid with
+nothing able to summon it back would be an invisible process.
+
+**The shortcut is bound too.** `vicinae serve` opens a GlobalShortcuts session, asks for
+`LOGO+space`, and turns each activation into a `Toggle` pushed to the attached window. On GNOME
+50/51 that portal is the only path an unprivileged application has to a global hotkey; where it
+does not exist — every wlroots compositor — the engine says so and `vicinae toggle` still works.
+Nothing about the hotkey can stop the engine starting: the socket is the contract, the hotkey is a
+convenience. `serve --no-hotkey` declines to ask at all, for a user whose compositor already binds
+a key — and, measurably, for the VM tier, where GNOME's permission dialog is 1.62% of the screen
+sitting in the middle of a gate about the launcher.
+
+**The loop is verified on a real GNOME session.** `scripts/vmtest/launcher.sh` starts the engine,
+starts the launcher, asks the engine to hide the window and then to show it again, and gates on
+what the screen does. As of `5918e2a` every gate passes on Bluefin under corral:
+
+| gate | result |
+|---|---|
+| starting the engine draws nothing | `IDENTICAL` |
+| a launcher window appeared | 9.99%, box x 335..942 y 152..796 |
+| the window answered a toggle over the link | passed |
+| summoning it back | 480 ms round trip |
+| hidden looks like the bare desktop again | `IDENTICAL` |
+| summoned looks like a launcher again | 9.96%, **the same box it first opened in** |
+
+The last pair is the part worth reading twice. Hiding returns the screen to byte-identical with the
+desktop, and summoning reproduces the opened frame's bounding box to within three pixels of area —
+so the window genuinely goes away and genuinely comes back, rather than something merely changing.
+
+This is also the first thing in this tier that can observe a *connection* rather than a process:
+`serve` refuses `toggle` when no window has attached, so a `toggle` that succeeds is proof of the
+whole chain — CLI, socket, engine, window link, and a window that answered on the other end.
+
+**What is still missing is the keypress, and it is not the code's fault.** Injected input does not
+reach this VM's compositor at all — `launcher.sh` documents the chain and where it breaks, and
+GNOME's own Super binding is equally inert there. So the client in the tier is `vicinae`, not
+Super+Space, and what stays untested is the portal delivering an activation. Everything after the
+activation is exercised.
+
+**And the number that matters is still unmeasured.** See §8.5's split SLA row: summon to first
+frame still has no harness. The 480 ms the tier now reports is a round trip, not a frame, and an
+upper bound with a whole Flatpak launch inside it.
+
+**One more thing the tier has to be told to ignore.** Two strips of GNOME's own furniture change
+without us: the top bar carries a clock, and the dash redraws its backdrop when any process starts.
+Both are excluded from the "nothing drew" gates. The middle of the screen — where a window or a
+permission dialog would land — is still compared exactly, and `framediff-selftest.py` holds twelve
+controls proving each gate still fails for every reason it exists to catch.
+
+Which is also why the refusal stays a refusal. A client can tell "no window" from "the window was
+shown", and that distinction is the only thing standing between an honest gap and a `toggle` that
+silently does nothing.
 
 Ordered by what unblocks the most:
 

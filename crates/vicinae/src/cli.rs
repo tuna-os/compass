@@ -95,9 +95,21 @@ pub enum Command {
     /// Run the engine.
     ///
     /// Serves the IPC socket until a `shutdown` request or a termination
-    /// signal. This build is headless: it answers `ping`, `query` and `doctor`,
-    /// and refuses the window commands, which have no window to act on yet.
-    Serve,
+    /// signal. It answers `ping`, `query` and `doctor` on any machine, display
+    /// or not. `toggle`, `show` and `hide` are forwarded to a resident launcher
+    /// window that attached over the same socket, and refused when none has --
+    /// see ADR-0015.
+    Serve {
+        /// Do not bind the global launcher hotkey.
+        ///
+        /// The engine normally asks the GlobalShortcuts portal for
+        /// `LOGO+space`, which on GNOME means a permission prompt. Pass this
+        /// when your compositor already binds a key to `vicinae toggle`, or on
+        /// a desktop with no GlobalShortcuts backend, and the engine will not
+        /// ask. Everything else works exactly the same.
+        #[arg(long)]
+        no_hotkey: bool,
+    },
 
     /// Ask a running engine to shut down.
     Shutdown,
@@ -340,7 +352,14 @@ mod tests {
 
     #[test]
     fn the_engine_commands_parse() {
-        assert_eq!(parse(&["vicinae", "serve"]).command, Command::Serve);
+        assert_eq!(
+            parse(&["vicinae", "serve"]).command,
+            Command::Serve { no_hotkey: false }
+        );
+        assert_eq!(
+            parse(&["vicinae", "serve", "--no-hotkey"]).command,
+            Command::Serve { no_hotkey: true }
+        );
         assert_eq!(parse(&["vicinae", "shutdown"]).command, Command::Shutdown);
     }
 

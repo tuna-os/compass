@@ -11,7 +11,8 @@ use tokio_util::codec::Framed;
 use crate::codec::FrameCodec;
 use crate::error::{Error, Result};
 use crate::protocol::{
-    PROTOCOL_VERSION, Request, RequestEnvelope, Response, ResponseEnvelope, version_mismatch,
+    PROTOCOL_VERSION, Request, RequestEnvelope, Response, ResponseEnvelope, WindowCommand,
+    WindowOutcome, version_mismatch,
 };
 
 /// Permissions for the directory holding the socket: owner only.
@@ -118,7 +119,41 @@ impl Listener {
         Fut: Future<Output = Response> + Send + 'static,
         S: Future<Output = ()>,
     {
+        // `|_| async {}` rather than a dedicated no-attach path: a handler that
+        // never answers `WindowAttached` never reaches it, so there is nothing
+        // for a second code path to do differently.
+        self.serve_with_shutdown_attach(handler, |_link| async {}, shutdown)
+            .await
+    }
+
+    /// Like [`Listener::serve_with_shutdown`], but hands over connections that
+    /// become launcher windows.
+    ///
+    /// When `handler` answers a request with [`Response::WindowAttached`], that
+    /// response is written and then the connection **stops being
+    /// request/response**: it is wrapped in a [`WindowLink`] and passed to
+    /// `on_attach`, which owns it for the rest of its life. `on_attach` runs on
+    /// the connection's own task, so it may block for as long as the window
+    /// lives without holding up other clients.
+    ///
+    /// The handler decides *whether* to attach — a server that already holds a
+    /// window can refuse a second one by answering [`Response::Error`] instead,
+    /// and never sees `on_attach` called.
+    pub async fn serve_with_shutdown_attach<F, Fut, A, AFut, S>(
+        self,
+        handler: F,
+        on_attach: A,
+        shutdown: S,
+    ) -> Result<()>
+    where
+        F: Fn(Request) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Response> + Send + 'static,
+        A: Fn(WindowLink) -> AFut + Send + Sync + 'static,
+        AFut: Future<Output = ()> + Send + 'static,
+        S: Future<Output = ()>,
+    {
         let handler = Arc::new(handler);
+        let on_attach = Arc::new(on_attach);
         tokio::pin!(shutdown);
 
         loop {
@@ -130,9 +165,14 @@ impl Listener {
                 accepted = self.inner.accept() => {
                     let (stream, _addr) = accepted.map_err(Error::Io)?;
                     let handler = Arc::clone(&handler);
+                    let on_attach = Arc::clone(&on_attach);
                     tokio::spawn(async move {
-                        if let Err(err) = serve_connection(stream, |req| handler(req)).await {
-                            tracing::debug!(error = %err, "ipc connection ended with an error");
+                        match serve_connection_until_attach(stream, |req| handler(req)).await {
+                            Ok(Some(link)) => on_attach(link).await,
+                            Ok(None) => {}
+                            Err(err) => {
+                                tracing::debug!(error = %err, "ipc connection ended with an error");
+                            }
                         }
                     });
                 }
@@ -158,6 +198,30 @@ where
     F: Fn(Request) -> Fut,
     Fut: Future<Output = Response>,
 {
+    // An attached connection is dropped here rather than served: a caller that
+    // wants windows uses `serve_connection_until_attach` and is handed the
+    // link. Dropping closes the socket, so a window that attaches to a server
+    // which cannot hold one finds out immediately instead of waiting forever
+    // for a push that will never come.
+    serve_connection_until_attach(stream, handler)
+        .await
+        .map(|_| ())
+}
+
+/// Serves a connection until the peer closes it **or** becomes a window.
+///
+/// Returns `Ok(Some(link))` when `handler` answered with
+/// [`Response::WindowAttached`]: that response has been written and the
+/// connection now belongs to the returned [`WindowLink`]. Returns `Ok(None)`
+/// when the peer closed an ordinary request/response connection.
+pub async fn serve_connection_until_attach<F, Fut>(
+    stream: UnixStream,
+    handler: F,
+) -> Result<Option<WindowLink>>
+where
+    F: Fn(Request) -> Fut,
+    Fut: Future<Output = Response>,
+{
     let mut framed = Framed::new(stream, FrameCodec::<RequestEnvelope>::new());
 
     while let Some(frame) = framed.next().await {
@@ -176,12 +240,185 @@ where
         }
 
         let response = handler(envelope.request).await;
+        let attaching = matches!(response, Response::WindowAttached);
         framed
             .send(&ResponseEnvelope::new(envelope.id, response))
             .await?;
+
+        if attaching {
+            // Written first, handed over second: the window must see the
+            // acceptance before any push, or it would decode a command as the
+            // answer to its own attach request.
+            return Ok(Some(WindowLink {
+                framed,
+                next_id: envelope.id.wrapping_add(1),
+            }));
+        }
     }
 
-    Ok(())
+    Ok(None)
+}
+
+/// The engine's end of an attached launcher window.
+///
+/// Holds the reversed connection: this side sends [`WindowCommand`]s and reads
+/// [`WindowOutcome`]s, the mirror image of every other connection the
+/// [`Listener`] serves.
+///
+/// Dropping it closes the socket, which is how the window learns the engine is
+/// no longer driving it.
+#[derive(Debug)]
+pub struct WindowLink {
+    framed: Framed<UnixStream, FrameCodec<RequestEnvelope>>,
+    next_id: u64,
+}
+
+impl WindowLink {
+    /// Pushes `command` to the window and waits for what it did.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ConnectionClosed`] when the window went away — which is the
+    /// signal the engine needs to go back to refusing `show`/`hide`/`toggle`
+    /// rather than reporting success into a dead socket. The push is *not*
+    /// acknowledged by the write succeeding: a successful write only means the
+    /// bytes reached a kernel buffer, and a window that died between the write
+    /// and the read would look like a window that showed.
+    pub async fn push(&mut self, command: WindowCommand) -> Result<WindowOutcome> {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+
+        self.framed
+            .send(&ResponseEnvelope::new(id, Response::Window(command)))
+            .await?;
+
+        let envelope = match self.framed.next().await {
+            Some(frame) => frame?,
+            None => return Err(Error::ConnectionClosed),
+        };
+
+        if envelope.version != PROTOCOL_VERSION {
+            return Err(Error::VersionMismatch {
+                expected: PROTOCOL_VERSION,
+                actual: envelope.version,
+            });
+        }
+
+        if envelope.id != id {
+            return Err(Error::MismatchedResponse {
+                expected: id,
+                got: envelope.id,
+            });
+        }
+
+        match envelope.request {
+            Request::WindowOutcome(outcome) => Ok(outcome),
+            other => Err(Error::NotAWindowOutcome {
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+}
+
+/// A launcher window's end of the link: connect, attach, then take commands.
+///
+/// The window drives this loop itself rather than being called into, because
+/// on every platform the window's own event loop owns the thread that may
+/// touch it.
+#[derive(Debug)]
+pub struct WindowClient {
+    framed: Framed<UnixStream, FrameCodec<ResponseEnvelope>>,
+    /// Id of the command handed out by the last [`WindowClient::next_command`]
+    /// and not yet answered.
+    pending: Option<u64>,
+}
+
+impl WindowClient {
+    /// Connects to the engine at `path` and offers this process as its window.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Remote`] when the engine refuses — most usefully when another
+    /// window is already attached, which a second `vicinae ui` should report
+    /// rather than sit silently unused.
+    pub async fn attach(path: impl AsRef<Path>) -> Result<Self> {
+        let stream = UnixStream::connect(path.as_ref())
+            .await
+            .map_err(Error::Io)?;
+        let mut framed = Framed::new(stream, FrameCodec::<ResponseEnvelope>::new());
+
+        framed
+            .send(&RequestEnvelope::new(1, Request::AttachWindow))
+            .await?;
+
+        let envelope = match framed.next().await {
+            Some(frame) => frame?,
+            None => return Err(Error::ConnectionClosed),
+        };
+
+        if envelope.version != PROTOCOL_VERSION {
+            return Err(Error::VersionMismatch {
+                expected: PROTOCOL_VERSION,
+                actual: envelope.version,
+            });
+        }
+
+        match envelope.response {
+            Response::WindowAttached => Ok(Self {
+                framed,
+                pending: None,
+            }),
+            Response::Error(err) => Err(Error::Remote(err)),
+            other => Err(Error::NotAWindowOutcome {
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+
+    /// Waits for the next command from the engine.
+    ///
+    /// Returns `Ok(None)` when the engine closed the link, which is the
+    /// window's cue to stop rather than wedge waiting for a push that cannot
+    /// come.
+    pub async fn next_command(&mut self) -> Result<Option<WindowCommand>> {
+        let envelope = match self.framed.next().await {
+            Some(frame) => frame?,
+            None => return Ok(None),
+        };
+
+        if envelope.version != PROTOCOL_VERSION {
+            return Err(Error::VersionMismatch {
+                expected: PROTOCOL_VERSION,
+                actual: envelope.version,
+            });
+        }
+
+        match envelope.response {
+            Response::Window(command) => {
+                self.pending = Some(envelope.id);
+                Ok(Some(command))
+            }
+            other => Err(Error::NotAWindowOutcome {
+                got: format!("{other:?}"),
+            }),
+        }
+    }
+
+    /// Reports what the window did with the command last handed out.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ConnectionClosed`] when called with no command outstanding.
+    /// Replying twice, or before any command, would put a frame on the wire
+    /// that the engine correlates against an id it is not waiting for, and the
+    /// two sides would be one reply out of step from then on.
+    pub async fn reply(&mut self, outcome: WindowOutcome) -> Result<()> {
+        let id = self.pending.take().ok_or(Error::ConnectionClosed)?;
+        self.framed
+            .send(&RequestEnvelope::new(id, Request::WindowOutcome(outcome)))
+            .await?;
+        Ok(())
+    }
 }
 
 /// A connected IPC client.

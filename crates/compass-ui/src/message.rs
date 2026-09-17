@@ -2,6 +2,8 @@
 
 use iced::Event;
 
+use crate::resident::UiCommand;
+
 /// Which way the selection moves.
 ///
 /// An enum rather than a signed delta: the only two motions a launcher list has
@@ -45,6 +47,24 @@ pub enum Message {
     PollShortcuts,
     /// Raw Iced event (for advanced handling).
     EventOccurred(Event),
+    /// The engine asked the window to show, hide or toggle.
+    Command(UiCommand),
+    /// A window finished opening, and this is its id.
+    ///
+    /// Carried separately from `Command(Show)` because the honest moment to
+    /// report `Shown` is when the window exists, not when opening it was
+    /// requested.
+    Opened(iced::window::Id),
+    /// A window was closed by the compositor or the user.
+    ///
+    /// Distinct from [`Message::Dismiss`]: this is the window telling us it is
+    /// gone, not a request to make it go.
+    Closed(iced::window::Id),
+    /// Leave for good.
+    ///
+    /// The one thing that still ends the process, now that dismissing only
+    /// hides. See ADR-0015.
+    Quit,
     /// A keyboard event that no widget consumed.
     ///
     /// Carries the whole event rather than a pre-digested action because the

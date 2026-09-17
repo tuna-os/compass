@@ -36,9 +36,24 @@ on:
       - packaging/vmtest/**
       - packaging/flatpak/**
       - scripts/vmtest/**
-      # The spike itself. Narrower than crates/**, because a change anywhere in
-      # the workspace does not need three VMs to answer for it.
-      - crates/vicinae/src/spike.rs
+      # The code this tier actually exercises. Narrower than crates/**, because
+      # a change anywhere in the workspace does not need three VMs to answer
+      # for it.
+      #
+      # `spike.rs` was listed here and DOES NOT EXIST -- the module is
+      # `spike/`, a directory, and has been since it grew a second file. So the
+      # one path filter naming the spike matched nothing and the spike could
+      # not trigger its own tier. Found while adding the entries below.
+      - crates/vicinae/src/spike/**
+      # The summon path: the engine that pushes, the bridge that carries it,
+      # and the window that answers. `launcher.sh` now asserts all three and
+      # would go on passing against a stale Flatpak if a change to them did not
+      # rebuild it.
+      - crates/vicinae/src/serve.rs
+      - crates/vicinae/src/hotkey.rs
+      - crates/vicinae/src/window.rs
+      - crates/compass-ui/**
+      - crates/compass-ipc/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
