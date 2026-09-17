@@ -17,7 +17,18 @@ use serde::{Deserialize, Serialize};
 ///
 /// Bumped whenever the postcard encoding of [`Request`] or [`Response`]
 /// changes in a way that an older peer would misread.
-pub const PROTOCOL_VERSION: u16 = 1;
+///
+/// # Why v2 bumped for appended variants
+///
+/// Appending a variant does not change the meaning of any byte a v1 peer can
+/// produce, so by the rule above it looks like it should not need a bump. It
+/// does, because of the direction the new variants travel: a v2 window sends
+/// [`Request::AttachWindow`], and a **v1 engine** decoding it would not get a
+/// clean refusal — the variant index is past the end of its `Request` enum, so
+/// it gets a postcard decode error and drops the connection with no
+/// explanation. The version field exists precisely to turn that into a sentence
+/// a human can act on, and it only does so if the number moves.
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +105,18 @@ pub enum Request {
     Doctor,
     /// Ask the engine to shut down cleanly.
     Shutdown,
+    /// Offer this connection as *the* launcher window.
+    ///
+    /// Answered with [`Response::WindowAttached`], after which the connection
+    /// reverses: the engine pushes [`Response::Window`] frames and the window
+    /// answers each with [`Request::WindowOutcome`]. See
+    /// [`crate::transport::WindowLink`].
+    AttachWindow,
+    /// A window's answer to one pushed [`WindowCommand`].
+    ///
+    /// Only legal on an attached connection, where it is a *reply* rather than
+    /// a request; the engine never sends a [`Response`] back to it.
+    WindowOutcome(WindowOutcome),
 }
 
 /// What the engine answers.
@@ -122,6 +145,43 @@ pub enum Response {
     ShuttingDown,
     /// The request could not be served.
     Error(ProtocolError),
+    /// [`Request::AttachWindow`] was accepted; this connection is now the
+    /// launcher window's push channel.
+    WindowAttached,
+    /// A command pushed from the engine to an attached window.
+    ///
+    /// This is the one frame the engine sends unsolicited. Its envelope id is
+    /// allocated by the engine and echoed by the window in the matching
+    /// [`Request::WindowOutcome`].
+    Window(WindowCommand),
+}
+
+/// What the engine asks an attached window to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WindowCommand {
+    /// Become visible and take focus.
+    Show,
+    /// Become hidden.
+    Hide,
+    /// Hide if visible, show if not.
+    Toggle,
+}
+
+/// What an attached window reports back after acting on a [`WindowCommand`].
+///
+/// [`Self::Shown`] and [`Self::Hidden`] report the state the window ended in,
+/// not the command it was given — which is the only useful answer to
+/// [`WindowCommand::Toggle`], and lets a caller of `show` on an
+/// already-visible window learn that nothing changed without a second round
+/// trip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WindowOutcome {
+    /// The window is now visible.
+    Shown,
+    /// The window is now hidden.
+    Hidden,
+    /// The window could not carry the command out, with a reason to print.
+    Failed(String),
 }
 
 /// One ranked search result.

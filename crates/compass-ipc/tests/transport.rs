@@ -71,6 +71,10 @@ async fn echo_handler(request: Request) -> Response {
             pid: 4242,
         },
         Request::Toggle | Request::Show | Request::Hide => Response::Ack,
+        // This stand-in engine has no window. The window-link handover has its
+        // own suite in `window_link.rs`; answering `Ack` here keeps the
+        // connection request/response, which is what these tests exercise.
+        Request::AttachWindow | Request::WindowOutcome(_) => Response::Ack,
         Request::Query { text } => {
             if text.is_empty() {
                 Response::Error(ProtocolError::new(ErrorKind::BadRequest, "empty query"))

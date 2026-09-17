@@ -59,6 +59,20 @@ pub enum Error {
     #[error("server error: {0}")]
     Remote(ProtocolError),
 
+    /// An attached window sent something other than a
+    /// [`crate::protocol::Request::WindowOutcome`] in reply to a pushed
+    /// command.
+    ///
+    /// The connection is reversed after
+    /// [`crate::protocol::Request::AttachWindow`], so an ordinary request
+    /// arriving on it is a peer that does not understand the handover rather
+    /// than a request to serve.
+    #[error("attached window replied with {got} instead of a window outcome")]
+    NotAWindowOutcome {
+        /// Debug rendering of what arrived instead.
+        got: String,
+    },
+
     /// The server answered a request we did not send.
     #[error("response id {got} does not match request id {expected}")]
     MismatchedResponse {

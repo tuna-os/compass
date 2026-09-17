@@ -310,3 +310,208 @@ fn a_client_with_no_engine_explains_itself() {
         "the error did not name the path it tried: {stderr}"
     );
 }
+
+// --- the resident window, against a real daemon -----------------------------
+//
+// ADR-0015: `serve` forwards `show`/`hide`/`toggle` to a window that attached
+// itself over the same socket. These tests *are* that window: the test process
+// attaches a `WindowClient` to a real spawned daemon and answers what it is
+// asked, which exercises the handover, the push and the reply across a process
+// boundary rather than inside one.
+
+/// A fake launcher window attached to a running daemon, on its own thread.
+///
+/// Answers every command with `reports`, and records what it was asked.
+struct FakeWindow {
+    seen: std::sync::Arc<std::sync::Mutex<Vec<compass_ipc::WindowCommand>>>,
+    /// Told on drop, so the loop returns and the socket closes.
+    ///
+    /// Without it, dropping the window while the daemon still holds the link
+    /// joins a thread parked forever in `next_command`. A test that wants to
+    /// kill the window has to be able to do it while the engine is still
+    /// alive, which is exactly what the death test needs.
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FakeWindow {
+    fn attach(socket: &Path, reports: compass_ipc::WindowOutcome) -> Self {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let thread = {
+            let seen = std::sync::Arc::clone(&seen);
+            let socket = socket.to_path_buf();
+            std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("runtime");
+                runtime.block_on(async move {
+                    let mut window = compass_ipc::WindowClient::attach(&socket)
+                        .await
+                        .expect("attach to the engine");
+                    ready_tx.send(()).expect("signal attached");
+
+                    loop {
+                        tokio::select! {
+                            // `biased` so a pending stop wins over a command
+                            // that arrived in the same poll: a window asked to
+                            // die should die rather than answer once more.
+                            biased;
+                            _ = &mut stop_rx => break,
+                            command = window.next_command() => {
+                                match command.expect("read a command") {
+                                    Some(command) => {
+                                        seen.lock().expect("lock").push(command);
+                                        window.reply(reports.clone()).await.expect("reply");
+                                    }
+                                    // The engine closed the link.
+                                    None => break,
+                                }
+                            }
+                        }
+                    }
+                    drop(window);
+                });
+            })
+        };
+
+        // Attach before returning: a test that raced the attach would exercise
+        // the refusal path and still look like it passed.
+        ready_rx
+            .recv_timeout(STARTUP_TIMEOUT)
+            .expect("the fake window attached");
+
+        Self {
+            seen,
+            stop: Some(stop_tx),
+            thread: Some(thread),
+        }
+    }
+
+    fn seen(&self) -> Vec<compass_ipc::WindowCommand> {
+        self.seen.lock().expect("lock").clone()
+    }
+}
+
+impl Drop for FakeWindow {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            // Joining rather than detaching: the death test needs the socket
+            // closed by the time this returns, and a detached runtime would
+            // close it whenever it got around to it.
+            let _ = thread.join();
+        }
+    }
+}
+
+#[test]
+fn an_attached_window_turns_the_refusal_into_a_real_show() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+
+    // Control: the same command against the same daemon is refused a moment
+    // before the window attaches. Without this the test could pass against an
+    // engine that answered `Ack` unconditionally.
+    let before = daemon.try_client(&["show"]);
+    assert!(
+        !before.status.success(),
+        "`show` must be refused before a window attaches"
+    );
+
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+
+    let after = daemon.try_client(&["show"]);
+    assert!(
+        after.status.success(),
+        "`show` must succeed with a window attached: {}",
+        String::from_utf8_lossy(&after.stderr)
+    );
+    assert_eq!(window.seen(), vec![compass_ipc::WindowCommand::Show]);
+}
+
+#[test]
+fn each_command_reaches_the_window_as_itself() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+
+    // Three different commands, so a daemon that forwarded a constant would
+    // produce a different vector rather than an identical-looking one.
+    for command in ["show", "hide", "toggle"] {
+        let out = daemon.try_client(&[command]);
+        assert!(
+            out.status.success(),
+            "`{command}` failed with a window attached: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    assert_eq!(
+        window.seen(),
+        vec![
+            compass_ipc::WindowCommand::Show,
+            compass_ipc::WindowCommand::Hide,
+            compass_ipc::WindowCommand::Toggle,
+        ]
+    );
+}
+
+#[test]
+fn a_window_that_refuses_is_reported_rather_than_acked() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let reason = "no compositor to present on";
+    let _window = FakeWindow::attach(
+        &daemon.socket,
+        compass_ipc::WindowOutcome::Failed(reason.to_owned()),
+    );
+
+    let out = daemon.try_client(&["show"]);
+    assert!(
+        !out.status.success(),
+        "a window that refused must not be reported as a success"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(reason),
+        "the window's own reason should reach the user: {stderr}"
+    );
+}
+
+#[test]
+fn a_window_that_dies_puts_the_engine_back_to_refusing() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+
+    {
+        let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+        let out = daemon.try_client(&["show"]);
+        assert!(out.status.success(), "control: `show` works while attached");
+        assert_eq!(window.seen(), vec![compass_ipc::WindowCommand::Show]);
+    }
+    // The fake window's runtime is gone here, so its socket is closed.
+
+    // The first request after the death may be the one that discovers it --
+    // the engine notices on a push, not before -- so a single failed attempt
+    // proves nothing on its own. What must hold is that it *settles* on
+    // refusing rather than alternating.
+    //
+    // What this does *not* pin is the engine clearing its slot: a push to a
+    // dead socket fails whether or not the link was dropped, so the refusal
+    // looks identical. Confirmed by a control -- these tests still pass with
+    // the clearing removed. See `forward` in `serve.rs`.
+    for attempt in 0..3 {
+        let out = daemon.try_client(&["show"]);
+        assert!(
+            !out.status.success(),
+            "attempt {attempt}: `show` reported success after the window died"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
+        assert!(
+            stderr.contains("vicinae ui"),
+            "attempt {attempt}: the refusal should say how to fix it: {stderr}"
+        );
+    }
+}

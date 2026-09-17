@@ -1565,9 +1565,15 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-**Sixteen crates, 769 tests, and an engine that runs.** Counts verified against the committed tree
+**Sixteen crates, 782 tests, and an engine that runs.** Counts verified against the committed tree
 rather than a dirty one — three commits early on built only because the working tree supplied files
 they had not committed, and that is checked rather than assumed.
+
+Each crate's figure below is what `cargo test -p <crate> -- --test-threads=1` reports, doc-tests
+included, and **they sum to the total** — a property a reader can check with one command, which is
+the point of stating them. Several had drifted below the tree (`vicinae` read 137 against a real
+166) because they were maintained by hand while the total was recomputed; all sixteen were
+re-measured rather than adjusted.
 
 - **Workspace and CI.** Pinned 1.94.1, edition 2024, `unsafe_code` forbidden and `clippy::all`
   denied workspace-wide. Rust CI workflow, Makefile targets kept separate from the C++ ones. All
@@ -1576,25 +1582,32 @@ they had not committed, and that is checked rather than assumed.
   the real half on a machine that has applications installed. Corpus files are `-text` in
   `.gitattributes`, with a test that fails loudly if a checkout ever normalises the CRLF and
   Latin-1 fixtures into fixtures that test nothing.
-- **`compass-xdg`** (110) — desktop-entry, locale, value, reader and exec layers, with all 47
+- **`compass-xdg`** (118) — desktop-entry, locale, value, reader and exec layers, with all 47
   in-scope C++ cases ported verbatim.
-- **`compass-search`** (52) — fuzzy matching on `nucleo`, with the C++ ordering suite ported and
+- **`compass-search`** (59) — fuzzy matching on `nucleo`, with the C++ ordering suite ported and
   fzf's coherence signal reconstructed exactly (ADR-0006).
-- **`compass-ipc`** (57) — length-prefixed postcard framing, with the length checked against
+- **`compass-ipc`** (67) — length-prefixed postcard framing, with the length checked against
   `MAX_FRAME_LEN` before any allocation.
-- **`compass-core`** (71) — app index with desktop-ID precedence, frecency, `vicinae.json`.
-- **`compass-shell`** (36) — GNOME Shell DBus client; 22 of its tests spawn a real `dbus-daemon`.
+- **`compass-core`** (74) — app index with desktop-ID precedence, frecency, `vicinae.json`.
+- **`compass-shell`** (47) — GNOME Shell DBus client; 22 of its tests spawn a real `dbus-daemon`.
 - **`compass-portals`** (55) — XDG portals via `ashpd`, with availability a three-state outcome
   rather than a boolean, version-property probing, and a timeout on every call.
 - **`compass-extension-api`** (74) — the view tree, derived identity, diffing, dispatch and the
   capability registry, behind a mechanical seam gate that fails if host transport or runtime is
   named anywhere in the crate. The gate was itself tested by injecting a violation.
-- **`vicinae`** (137) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
-  indexes applications, ranks queries with frecency and answers over the IPC socket. Headless, and
-  the window commands refuse rather than answer `Ack`, so a client can tell "no window yet" from
-  "the window was shown". Eleven end-to-end tests spawn the real binary on its own socket with every
-  XDG variable pointed into a tempdir.
-- **`compass-testkit`** (5) — corpus loader; entries expose raw bytes, not `String`.
+- **`vicinae`** (166) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
+  indexes applications, ranks queries with frecency and answers over the IPC socket. It holds no
+  window of its own and never opens one; `show`, `hide` and `toggle` are forwarded to a **resident
+  launcher window** that attached over the same socket
+  ([ADR-0015](./adr/0015-the-launcher-window-is-resident.md)), and refused when none has. So a
+  client can still tell "no window" from "the window was shown". Fifteen end-to-end tests spawn the
+  real binary on its own socket with every XDG variable pointed into a tempdir; four of them attach
+  a fake window from the test process and assert across the process boundary.
+- **`compass-ui`** (9) and **`compass-wayland`** (2) — the Iced launcher shell and the Wayland
+  surface under it. The thinnest test coverage in the workspace by a wide margin, and honestly so:
+  almost everything they do needs a compositor, which is why the VM tier exists and why these two
+  numbers should be read as "barely tested in-process" rather than "small".
+- **`compass-testkit`** (8) — corpus loader; entries expose raw bytes, not `String`.
 - **`compass-crypto`** (24) — the clipboard's AES-256-GCM and its HKDF key derivation, ported from
   `aes-gcm.cpp` and `database-key.cpp`. CI cross-decrypts against the real C++ implementation in
   both directions, which is the right check for randomised-IV crypto where a byte diff would fail
@@ -1830,17 +1843,22 @@ starts a window."* Both halves are now false. `crates/vicinae/src/lib.rs` calls 
 with a real `LinuxLauncher`, and `LaunchSelected` launches through the `AppLauncher` trait (#64).
 The VM tier watches it draw in a real GNOME session.
 
-**What remains is the daemon's half.** `vicinae serve` still answers `toggle`, `show` and `hide`
-with *"this engine is headless and cannot … it has no window yet"* (`serve.rs:199`). Per
-[ADR-0011](./adr/0011-the-window-is-its-own-command.md) the window is its own command because Iced's
-event loop must own the process's main thread, so the daemon cannot simply open one — it has to
-*drive* a window that exists in another process. That is the next thing that matters, and it is a
-different problem from the one this section used to describe: not "write a launcher" but "let the
-daemon show the launcher".
+**The daemon's half is now built, and the remaining gap is the window's.**
+[ADR-0015](./adr/0015-the-launcher-window-is-resident.md) settled the shape: a resident window
+process attaches to `serve` over the same socket, and `serve` pushes `show`/`hide`/`toggle` to it.
+Both halves of that protocol exist — `compass-ipc` carries the push direction (`WindowLink` on the
+engine's side, `WindowClient` on the window's), and `serve` holds at most one attached window and
+forwards to it. End-to-end tests attach a window from the test process to a real spawned daemon and
+assert the command arrives as itself and the answer comes back.
 
-Which is also why the refusal is worth keeping as a refusal. A client can tell "no window yet" from
-"the window was shown", and that distinction is the only thing standing between an honest gap and a
-`toggle` that silently does nothing.
+**What is left is making `vicinae ui` the process that attaches.** Today it is still ADR-0011's
+one-shot: it opens a window, launches something, and exits. It has to become resident — hide rather
+than exit, and run the attach loop alongside Iced's event loop, which owns the main thread. Until
+then the push path is exercised only by test windows, and Super+Space still has nothing to summon.
+
+Which is also why the refusal stays a refusal. A client can tell "no window" from "the window was
+shown", and that distinction is the only thing standing between an honest gap and a `toggle` that
+silently does nothing.
 
 Ordered by what unblocks the most:
 

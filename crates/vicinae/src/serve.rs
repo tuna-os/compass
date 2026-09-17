@@ -6,15 +6,21 @@
 //!
 //! # Headless on purpose
 //!
-//! There is no `compass-ui` crate yet, so this engine has no window. It serves
-//! the requests that do not need one — [`Request::Ping`], [`Request::Query`],
-//! [`Request::Doctor`], [`Request::Shutdown`] — and **refuses** the three that
-//! do, with [`ErrorKind::Unsupported`] and a message saying why.
+//! This engine has no window of its own and never opens one. It serves the
+//! requests that do not need one — [`Request::Ping`], [`Request::Query`],
+//! [`Request::Doctor`], [`Request::Shutdown`] — always, on any machine,
+//! display or not.
+//!
+//! [`Request::Show`], [`Request::Hide`] and [`Request::Toggle`] are forwarded
+//! to a **resident launcher window** that attached itself over the same socket
+//! ([ADR-0015](../../../docs/rust-engine/adr/0015-the-launcher-window-is-resident.md)).
+//! With no window attached they are **refused**, with [`ErrorKind::Unsupported`]
+//! and a message saying how to start one.
 //!
 //! Refusing matters more than it looks. `Response::Ack` means "the side effect
 //! was performed"; answering `Ack` to `Show` when nothing can be shown would
-//! make a client that later grows a window unable to tell a working engine from
-//! this one, and would make the first UI bring-up debug a lie instead of a gap.
+//! make a client unable to tell a working engine from a windowless one, and
+//! would make UI bring-up debug a lie instead of a gap.
 //!
 //! What it *does* serve is a genuine vertical slice — index the machine's
 //! applications, rank a query against them with frecency, answer over the same
@@ -28,13 +34,39 @@ use compass_core::{
     AppIndex, Config, FrecencyStore, JsonFrecencyStore, SystemClock, rank_with_frecency,
 };
 use compass_ipc::{
-    ErrorKind, Listener, ProtocolError, QueryHit, Request, Response, SocketPath,
-    protocol::PROTOCOL_VERSION,
+    ErrorKind, Listener, ProtocolError, QueryHit, Request, Response, SocketPath, WindowCommand,
+    WindowLink, WindowOutcome, protocol::PROTOCOL_VERSION,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::doctor;
 use crate::engine::Engine;
+
+/// The at-most-one launcher window this engine drives.
+///
+/// # Last window wins
+///
+/// A second `vicinae ui` **replaces** the first rather than being refused.
+/// Dropping the old [`WindowLink`] closes its socket, so that window's
+/// `next_command` returns `None` and it exits its loop.
+///
+/// The alternative — refuse the newcomer — reads better until you ask what
+/// happens when a window wedges without closing its socket: the engine would
+/// hold a link that answers nothing and refuse every replacement, and the only
+/// way out would be restarting the daemon. Replacing has no state that can get
+/// stuck. It also means the handler needs no reservation between answering
+/// `WindowAttached` and the link actually arriving, which is a window (however
+/// narrow) in which an attach that died mid-handshake could strand the slot.
+///
+/// # Death is noticed on the next push, not before
+///
+/// Nothing polls the link. A window that dies is discovered when the engine
+/// next tries to push to it, at which point the slot is cleared and the request
+/// is refused with [`no_window`] — correctly, since by then there is none.
+/// Proactively watching would mean a second reader on a socket whose only
+/// reader is [`WindowLink::push`]'s reply, so it would have to be built into
+/// the link rather than bolted beside it.
+type WindowSlot = Arc<Mutex<Option<WindowLink>>>;
 
 /// Where launch history lives, under `$XDG_DATA_HOME`.
 ///
@@ -55,6 +87,8 @@ pub struct EngineState {
     /// How many hits a query answers with. `launcher.max_results` from the
     /// user's config, so the wire honours the same limit the UI would.
     max_results: usize,
+    /// The attached launcher window, if one is.
+    window: WindowSlot,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -66,6 +100,8 @@ impl std::fmt::Debug for EngineState {
             .field("applications", &self.index.len())
             .field("socket", &self.socket)
             .field("max_results", &self.max_results)
+            // Deliberately not the link itself: formatting it would need the
+            // lock, and `Debug` is used from log lines that must not block.
             .finish_non_exhaustive()
     }
 }
@@ -100,6 +136,7 @@ impl EngineState {
             frecency,
             socket,
             max_results,
+            window: WindowSlot::default(),
         }
     }
 
@@ -141,7 +178,18 @@ impl EngineState {
             frecency,
             socket,
             max_results,
+            window: WindowSlot::default(),
         }
+    }
+
+    /// The slot holding the attached launcher window.
+    ///
+    /// Cloned rather than borrowed because the attach callback outlives any
+    /// borrow of the state: it runs on the connection's own task for as long
+    /// as that window lives.
+    #[must_use]
+    pub fn window_slot(&self) -> WindowSlot {
+        Arc::clone(&self.window)
     }
 
     /// Number of indexed applications.
@@ -212,6 +260,41 @@ fn no_window(what: &str) -> Response {
     ))
 }
 
+/// Forwards `command` to the attached window, if there is one.
+///
+/// Clears the slot when the push fails. That is **hygiene, not behaviour**: a
+/// push to a dead socket fails anyway, so the refusal a client sees is the same
+/// either way — a control confirmed the end-to-end tests pass with the clearing
+/// removed. What it buys is releasing the file descriptor and not paying a
+/// doomed write on every subsequent request. See [`WindowSlot`].
+async fn forward(slot: &WindowSlot, command: WindowCommand, what: &str) -> Response {
+    let mut guard = slot.lock().await;
+
+    let Some(link) = guard.as_mut() else {
+        return no_window(what);
+    };
+
+    match link.push(command).await {
+        Ok(WindowOutcome::Shown | WindowOutcome::Hidden) => Response::Ack,
+        Ok(WindowOutcome::Failed(reason)) => {
+            // The window is alive and said no. Keeping the link is the point:
+            // a compositor that refused one activation will very likely accept
+            // the next, and dropping the window over it would turn a recoverable
+            // refusal into a dead launcher.
+            tracing::warn!(reason = %reason, "the launcher window refused a command");
+            Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("the launcher window could not {what}: {reason}"),
+            ))
+        }
+        Err(err) => {
+            tracing::info!(error = %err, "the launcher window went away");
+            *guard = None;
+            no_window(what)
+        }
+    }
+}
+
 /// Answers one request.
 ///
 /// Separated from the serve loop so the whole request surface is testable
@@ -244,9 +327,39 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         // here means the loop did not intercept it.
         Request::Shutdown => Response::ShuttingDown,
 
-        Request::Toggle => no_window("toggle a window"),
-        Request::Show => no_window("show a window"),
-        Request::Hide => no_window("hide a window"),
+        Request::Toggle | Request::Show | Request::Hide => {
+            let (slot, command, what) = {
+                let state = state.read().await;
+                match request {
+                    Request::Toggle => (
+                        state.window_slot(),
+                        WindowCommand::Toggle,
+                        "toggle a window",
+                    ),
+                    Request::Show => (state.window_slot(), WindowCommand::Show, "show a window"),
+                    _ => (state.window_slot(), WindowCommand::Hide, "hide a window"),
+                }
+            };
+            // The read lock is released before the push: a window that takes a
+            // moment to answer must not block queries from other clients.
+            forward(&slot, command, what).await
+        }
+
+        // Accepting is the whole decision: the transport reads this response,
+        // writes it, and then hands the connection over as a `WindowLink`. The
+        // engine never refuses an attach — see `WindowSlot` for why replacing
+        // beats refusing.
+        Request::AttachWindow => Response::WindowAttached,
+
+        // An outcome is a *reply* on an attached connection, never a request.
+        // Arriving here means a peer sent one on an ordinary connection, which
+        // is a confused client rather than a window.
+        Request::WindowOutcome(outcome) => Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            format!(
+                "{outcome:?} is a reply to a pushed window command, not a request;                  send AttachWindow first and answer the commands that follow"
+            ),
+        )),
     }
 }
 
@@ -267,9 +380,11 @@ pub async fn run(socket: &SocketPath) -> Result<()> {
     // instead of a clean stop.
     let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel::<()>(1);
 
+    let window_slot = state.read().await.window_slot();
+
     let serving = {
         let state = Arc::clone(&state);
-        listener.serve_with_shutdown(
+        listener.serve_with_shutdown_attach(
             move |request| {
                 let state = Arc::clone(&state);
                 let stop_tx = stop_tx.clone();
@@ -282,6 +397,18 @@ pub async fn run(socket: &SocketPath) -> Result<()> {
                         return Response::ShuttingDown;
                     }
                     handle(&state, request).await
+                }
+            },
+            move |link| {
+                let window_slot = Arc::clone(&window_slot);
+                async move {
+                    tracing::info!("a launcher window attached");
+                    // Replaces any previous window; see `WindowSlot`. The old
+                    // link drops here, closing that window's socket.
+                    let replaced = window_slot.lock().await.replace(link).is_some();
+                    if replaced {
+                        tracing::info!("the previous launcher window was replaced");
+                    }
                 }
             },
             async move {
