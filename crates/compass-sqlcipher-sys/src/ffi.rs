@@ -97,6 +97,7 @@ unsafe extern "C" {
         destructor: Option<unsafe extern "C" fn(*mut c_void)>,
     ) -> c_int;
     pub fn sqlite3_bind_int64(stmt: *mut Sqlite3Stmt, idx: c_int, value: i64) -> c_int;
+    pub fn sqlite3_bind_null(stmt: *mut Sqlite3Stmt, idx: c_int) -> c_int;
 
     pub fn sqlite3_column_count(stmt: *mut Sqlite3Stmt) -> c_int;
     pub fn sqlite3_column_text(stmt: *mut Sqlite3Stmt, col: c_int) -> *const u8;

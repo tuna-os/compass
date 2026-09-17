@@ -403,6 +403,22 @@ impl Statement<'_> {
         self.check(rc, "binding an integer")
     }
 
+    /// Bind SQL NULL to a named parameter.
+    ///
+    /// Explicit rather than implied by "did not bind": an unbound parameter is
+    /// also NULL, so without this a typo'd name and a deliberate NULL would be
+    /// indistinguishable — which is exactly the confusion
+    /// [`Statement::bind_text`]'s error exists to prevent.
+    ///
+    /// # Errors
+    ///
+    /// As [`Statement::bind_text`].
+    pub fn bind_null(&mut self, name: &str) -> Result<()> {
+        let index = self.parameter_index(name)?;
+        let rc = unsafe { ffi::sqlite3_bind_null(self.stmt, index) };
+        self.check(rc, "binding null")
+    }
+
     fn parameter_index(&self, name: &str) -> Result<i32> {
         let c_name = CString::new(name).map_err(|_| Error::InteriorNul("the parameter name"))?;
         let index = unsafe { ffi::sqlite3_bind_parameter_index(self.stmt, c_name.as_ptr()) };
