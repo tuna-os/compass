@@ -200,6 +200,16 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
   `ParseOptions::{id,path}` exist, but id computation and lookup are a separate pass;
 - the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
 
+**`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
+itself, built from the same C the C++ engine links (ADR-0014). `Database::open` does what
+`ClipboardDatabase`'s constructor does and in the same order — open, key with raw bytes in
+SQLCipher's `x'...'` form, register `fuzzy_trigram`, apply the four pragmas — because that order is
+load-bearing. Tested against real encrypted files rather than SQL strings: the file has no
+`SQLite format 3` magic and does not contain its own payload in the clear, a wrong key is refused by
+`open`, the FTS table the clipboard schema declares can be created and queried, and a second
+connection to an existing encrypted file still has the tokenizer. Not yet ported: blobs, the
+transaction wrapper, and `sqlite3_changes` (deliberately — see `tryBubbleUpSelection` below).
+
 **`src/services/clipboard` → `compass-clipboard`** — one slice of `clipboard-db.cpp` (478 lines) is
 ported: `search::plan`, which decides for each word of the user's query whether it goes to the FTS5
 `MATCH` or to an `instr` substring condition. The split matters because `selection_fts` uses a
@@ -210,7 +220,10 @@ rather than a narrowed one. Still C++-only:
 
 - the schema and `MigrationManager` wiring;
 - `insertSelection`, `insertOffer`, `indexSelectionContent`, `removeSelection`, `removeAll`;
-- `evictOlderThan` / `oldestEvictableTimestamp`, pinning, keywords, `tryBubbleUpSelection`;
+- `evictOlderThan` / `oldestEvictableTimestamp`, pinning, keywords, `tryBubbleUpSelection`
+  (which discards its own `exec()` result and answers from the connection-wide `changes()` counter;
+  the port should return false when the statement failed, and `compass-sqlcipher-sys` deliberately
+  does not expose `sqlite3_changes` so that shape cannot be reproduced by accident);
 - the paginated `query` itself — the two SQL shapes, the `GROUP BY`, and the `COUNT(*) OVER()`
   total that drives pagination.
 

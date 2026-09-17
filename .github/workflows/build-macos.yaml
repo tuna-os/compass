@@ -1,10 +1,22 @@
 name: Build (macOS)
 
+# Linux first, and for now Linux only.
+#
+# ADR-0013 makes Linux-first a sequence rather than a scope limit: macOS and
+# Windows get their own phases (9 and 10), and until then every non-Linux build
+# on every pull request is work nobody reads. The Flatpak is what ships on
+# Bluefin, so it is the one that stays.
+#
+# This is a trigger change, not a deletion. The jobs below are unchanged and
+# still run from the Actions tab (`workflow_dispatch`); deleting the leading
+# `# ` from the commented lines below restores them exactly, indentation
+# included. Re-enable before Phase 9 starts, or earlier if a change here needs
+# proving on a platform this no longer covers.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+#   push:
+#     branches: [main]
+#   pull_request:
+#     branches: [main]
   workflow_dispatch:
 
 concurrency:
