@@ -267,7 +267,7 @@ fn no_window(what: &str) -> Response {
 /// either way — a control confirmed the end-to-end tests pass with the clearing
 /// removed. What it buys is releasing the file descriptor and not paying a
 /// doomed write on every subsequent request. See [`WindowSlot`].
-async fn forward(slot: &WindowSlot, command: WindowCommand, what: &str) -> Response {
+pub(crate) async fn forward(slot: &WindowSlot, command: WindowCommand, what: &str) -> Response {
     let mut guard = slot.lock().await;
 
     let Some(link) = guard.as_mut() else {
@@ -381,6 +381,11 @@ pub async fn run(socket: &SocketPath) -> Result<()> {
     let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let window_slot = state.read().await.window_slot();
+
+    // Detached: the hotkey is a convenience, the socket is the contract. A
+    // portal that never answers must not keep the engine from listening, so
+    // this is spawned rather than awaited or raced against the serve loop.
+    tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
 
     let serving = {
         let state = Arc::clone(&state);

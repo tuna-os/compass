@@ -14,6 +14,7 @@
 pub mod cli;
 pub mod doctor;
 pub mod engine;
+pub mod hotkey;
 pub mod ipc;
 pub mod serve;
 pub mod spike;

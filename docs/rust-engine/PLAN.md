@@ -1565,7 +1565,7 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-**Sixteen crates, 799 tests, and an engine that runs.** Counts verified against the committed tree
+**Sixteen crates, 804 tests, and an engine that runs.** Counts verified against the committed tree
 rather than a dirty one — three commits early on built only because the working tree supplied files
 they had not committed, and that is checked rather than assumed.
 
@@ -1595,7 +1595,7 @@ re-measured rather than adjusted.
 - **`compass-extension-api`** (74) — the view tree, derived identity, diffing, dispatch and the
   capability registry, behind a mechanical seam gate that fails if host transport or runtime is
   named anywhere in the crate. The gate was itself tested by injecting a violation.
-- **`vicinae`** (172) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
+- **`vicinae`** (177) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
   indexes applications, ranks queries with frecency and answers over the IPC socket. It holds no
   window of its own and never opens one; `show`, `hide` and `toggle` are forwarded to a **resident
   launcher window** that attached over the same socket
@@ -1862,9 +1862,16 @@ Wayland that is what hiding means — `xdg_toplevel` has no hide, so a hidden wi
 With no engine listening, `vicinae ui` still starts and Escape still exits: a window that hid with
 nothing able to summon it back would be an invisible process.
 
-**What is left is the shortcut, and a measurement.** Nothing yet binds Super+Space to `vicinae
-toggle`, so the loop has no trigger. And the 120 ms SLA that forced this design is still unmeasured
-on the path that now matters — see the note below.
+**The shortcut is bound too.** `vicinae serve` opens a GlobalShortcuts session, asks for
+`LOGO+space`, and turns each activation into a `Toggle` pushed to the attached window. On GNOME
+50/51 that portal is the only path an unprivileged application has to a global hotkey; where it
+does not exist — every wlroots compositor — the engine says so and `vicinae toggle` still works.
+Nothing about the hotkey can stop the engine starting: the socket is the contract, the hotkey is a
+convenience.
+
+**What is left is a measurement, and a run on real hardware.** Every part of the loop exists in
+code and is tested in pieces; nothing has yet pressed Super+Space on a real GNOME and watched a
+window appear. That is the VM tier's job and it needs the SLA row split first — see below.
 
 Which is also why the refusal stays a refusal. A client can tell "no window" from "the window was
 shown", and that distinction is the only thing standing between an honest gap and a `toggle` that
