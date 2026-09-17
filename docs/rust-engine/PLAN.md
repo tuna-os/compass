@@ -527,8 +527,9 @@ Default flips to `--engine=rust` on Linux; the C++ engine stays one release behi
 build there until a follow-up project. Compass supports all three today, and a Linux-only Rust
 default is a visible narrowing: say so loudly in the release notes.
 
-"A follow-up project" was doing a lot of work in that sentence — it is 678 cross-platform files, and
-until it happens the repository keeps two engines and every shared change is made twice. It is now
+"A follow-up project" was doing a lot of work in that sentence — it is 229 shared translation units
+and 202 platform conditionals inside them, and until it happens the repository keeps two engines and
+every shared change is made twice. It is now
 Phases 9 and 10 rather than an unowned successor; see
 [ADR-0013](./adr/0013-qt-leaves-the-repository.md).
 
@@ -544,33 +545,130 @@ Keep macOS/Windows targets until their own migration. Repo becomes Rust-primary.
 executable: **every** macOS and Windows source file lives *inside* `src/server`, so it cannot be
 deleted while those targets are kept.
 
-Counting `.cpp`/`.hpp` under `src/server` by path (crude matching; the error bars do not change the
-conclusion):
+#### How much this removes, measured from the build rather than from paths
 
-| | files |
-|---|---:|
-| total | 840 |
-| **Linux-specific** — `wayland`, `x11`, `gnome`, `hyprland`, `linux`, `data-control` | **64** |
-| macOS-specific | 28 |
-| Windows-specific | 70 |
-| cross-platform | 678 |
+The counts here were originally derived by matching path fragments (`wayland`, `macos`, `windows`
+and so on). That method is wrong in both directions and the numbers it produced were wrong: it
+counted `src/server/src/ui/windows` — the UI's *window* classes, 11 files — as Windows-platform
+code, and it counted 28 "macOS files" when only **three** macOS translation units exist, the rest
+being headers and directory-name matches.
 
-So this phase removes on the order of **64** files plus the Linux CMake targets. ~776 Qt files
-remain, and until Phase 10 every change to shared behaviour is made twice.
+Attributing each translation unit to the `if (APPLE)` / `if (WIN32)` / `if (UNIX AND NOT APPLE)`
+block that lists it in `src/server/CMakeLists.txt` is the measure that matches what a deletion
+actually removes. All 320 `.cpp` files under `src/server/src` are listed there, so this covers the
+whole build:
 
-### Phase 9 — macOS
+| | `.cpp` | share |
+|---|---:|---:|
+| Linux-only | **59** | 18% |
+| Windows-only | 33 | 10% |
+| macOS-only | 3 | 1% |
+| compiled everywhere | 229 | 70% |
 
-Implement the platform seam for macOS: clipboard, window management, tray, global shortcuts, file
-indexing. Delete the macOS C++ targets (28 files plus their share of the cross-platform core).
+Headers are a different denominator — 520 on disk, 337 named in `CMakeLists.txt` — and travel with
+whichever unit includes them, so they are not counted separately.
 
-**Gate:** the same suites the Linux engine gates on, running on macOS; one release cycle with no P0
+**So this phase removes on the order of 59 translation units and the Linux CMake targets.** That is
+the smaller half of the work, and the plan used to stop here.
+
+#### What Phase 8 does *not* remove, and the plan used not to say
+
+Platform-specific behaviour is not confined to platform-specific files. It is also conditional
+compilation inside the 229 units that compile everywhere:
+
+| guard | sites | files |
+|---|---:|---:|
+| `Q_OS_MAC` | 102 | 38 |
+| `Q_OS_WIN` | 100 | 43 |
+| `Q_OS_LINUX` | 72 | 30 |
+
+**61 shared files carry at least one platform conditional**, concentrated in `server.cpp` (29
+sites), `vicinae.cpp` (14), `utils/environment.hpp` (11) and `utils/capabilities.cpp` (11).
+
+Deleting the 59 Linux units therefore leaves **72 `Q_OS_LINUX` sites inside files that stay**. They
+are dead code the moment the Linux engine is Rust, and dead conditional compilation is worse than
+dead functions: it does not warn, it is not covered by any test on any platform, and it silently
+changes what the *other* platforms compile when someone edits around it. Removing them is part of
+this phase, not a tidy-up for later.
+
+### Phase 9 — macOS (≈6–8 weeks)
+
+This phase used to read, in full: *"Implement the platform seam for macOS: clipboard, window
+management, tray, global shortcuts, file indexing. Delete the macOS C++ targets (28 files plus
+their share of the cross-platform core)."*
+
+Two things were wrong with that. The 28 is a path-match artefact — there are **three** macOS
+translation units. And **"their share of the cross-platform core" is not executable**, which is the
+same defect ADR-0013 corrected in Phase 8: a file compiled on three platforms has no share that can
+be deleted on one of them. The shared core goes when the *last* platform leaves it, in Phase 10, or
+it does not go at all.
+
+So the macOS work is not "port three files". It is the **102 `Q_OS_MAC` sites across 38 shared
+files**, each of which has to become either a Rust implementation behind a trait or a deliberate
+decision not to support it.
+
+**The traits this needs.** `compass-platform` today declares exactly one, `AppLauncher` (#64), with
+`NullLauncher` as its second implementation. Each of the following is a trait added when the port
+reaches it, implemented once for Linux and once for macOS:
+
+| seam | Linux today | macOS backend |
+|---|---|---|
+| clipboard read/write | `wlr-data-control` | `NSPasteboard` |
+| window management | portal + compositor | Accessibility API, needs a user grant |
+| tray | StatusNotifierItem | `NSStatusItem` |
+| global shortcuts | XDG portal | `RegisterEventHotKey` / Carbon |
+| file indexing | `inotify` + walk | Spotlight (`NSMetadataQuery`) or the same walk |
+| autostart | `.desktop` in autostart dir | `SMAppService` |
+
+**Two decisions this phase forces**, neither of which has a Linux precedent to copy:
+
+1. **Window management needs Accessibility permission**, which the user grants in System Settings
+   and which cannot be requested silently. The Linux engine has no equivalent step, so the
+   onboarding flow gains a macOS-only branch — a product decision, not only an engineering one.
+2. **SQLCipher's crypto provider is `SQLCIPHER_CRYPTO_CC` (CommonCrypto) on macOS**, chosen at
+   compile time. `compass-sqlcipher-sys`'s `build.rs` already selects it, transcribed from
+   `vendor/sqlcipher/CMakeLists.txt` — but **that path has never been built or run**, by CI or by
+   anyone, since CI went Linux-only. It is a reading, not a green check. Phase 9 starts by
+   re-enabling `Build (macOS)` and finding out; see [ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md).
+
+**What this phase deletes:** the three macOS translation units, the `if (APPLE)` CMake blocks, and
+the 102 `Q_OS_MAC` sites. **Not** the shared core.
+
+**Gate:** the same suites the Linux engine gates on, running on macOS, plus a clipboard database
+written by the C++ engine on macOS and read by the Rust one; one release cycle with no P0
 regressions.
 
-### Phase 10 — Windows, and Qt leaves
+### Phase 10 — Windows, and Qt leaves (≈8–10 weeks)
 
-The same for Windows (70 files). When this lands, `src/server` and the C++ `src/lib` are deleted in
-full, the CMake targets go with them, and **the repository is Rust-primary** — the claim Phase 8
-used to make three phases early.
+The same shape, and larger: **33 Windows translation units and 100 `Q_OS_WIN` sites across 43
+files**. It is last because it is the platform furthest from the others — no XDG, no D-Bus, a
+different shortcut model, and the only one whose SQLCipher provider is a custom hook
+(`SQLCIPHER_CRYPTO_CUSTOM=sqlcipher_cng_setup`, backed by `bcrypt.dll`) rather than a stock one.
+A Windows build that silently picks OpenSSL instead writes a database the C++ engine cannot read,
+which is why that selection is asserted in `build.rs` rather than left to a default.
+
+**Windows-specific work with no Linux or macOS precedent:**
+
+- `files-service/windows` is **7 translation units** (plus 8 headers), the largest single platform
+  backend in the tree, and it wraps the third-party Everything SDK (`vendor/everything-sdk3`) over
+  a named pipe. Either that dependency is carried into Rust or file search on Windows is
+  reimplemented — a scope decision this phase has to take explicitly.
+- Global shortcuts, paste, selection and the snippet server each have a `windows-*` implementation
+  sitting beside their Linux counterparts rather than under a `windows/` directory, so they are
+  easy to miss when enumerating by path. They are listed in `CMakeLists.txt` under `if(WIN32)`,
+  which is why the build is the right thing to enumerate from.
+
+**When this lands**, the last conditional leaves the shared core, `src/server` and the C++
+`src/lib` are deleted **in full**, the CMake targets go with them, and **the repository is
+Rust-primary** — the claim Phase 8 used to make three phases early.
+
+**Two things survive Qt's departure**, and it is worth being plain that "no Qt" is not "no C":
+`vendor/sqlcipher` and `vendor/fuzzy-trigram` are the clipboard *file format*, not an
+implementation of it, so they are linked by the Rust engine forever (ADR-0014). `vendor/everything-sdk3`
+survives too if Phase 10 keeps Everything.
+
+**Gate:** as Phase 9, on Windows; plus `grep -r Q_OS_ src/` returning nothing, because there is no
+`src/server` left to search.
 
 ---
 
@@ -606,9 +704,28 @@ weeks.
 | 5 Breadth + compositor #2 | 8–10 wks | 4+ |
 | 6 Packaging breadth | 2 wks | 1 |
 | 7 Cutover | 2 wks | — |
-| **Total** | **~7 months serial** | **~4 months at 3–4 FTE** |
+| **Linux subtotal** | **~7 months serial** | **~4 months at 3–4 FTE** |
+| 8 Remove the Linux C++ engine | 1–2 wks | — |
+| 9 macOS | 6–8 wks | 2 |
+| 10 Windows, and Qt leaves | 8–10 wks | 2 |
+| **Total to Qt leaving** | **~11 months serial** | **~6 months at 3–4 FTE** |
 
 Order-of-magnitude only. Phase 4 is the one most likely to double.
+
+**The subtotal row is the point.** This table used to end at Phase 7 and call ~7 months the total,
+which quietly described a port that leaves Qt in the repository, ~229 shared translation units
+still compiled by CMake, and every change to shared behaviour made twice — the outcome ADR-0013
+rejected. Phases 8–10 are the other four months, and they are what the word *complete* is doing in
+"the complete port".
+
+Phases 9 and 10 parallelise to 2 rather than 4: each is one platform backend behind traits that
+already exist by then, so the limit is how many people can usefully work on one operating system's
+seam, not how much work there is.
+
+**What is not in this estimate:** neither 9 nor 10 has been costed against a working build. CI has
+been Linux-only since #71, so the macOS and Windows paths in `compass-sqlcipher-sys`'s `build.rs`
+have never run anywhere. The first task of Phase 9 is re-enabling `Build (macOS)` and replacing
+that estimate with a measured one.
 
 ---
 
