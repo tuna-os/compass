@@ -98,9 +98,20 @@ echo "=== 3. type a query at it (EXPECTED TO DO NOTHING — see below) ==="
 #
 # So the loss is above the kernel, in a session whose compositor is holding the
 # device it is losing events from. "Does not reach the session" would point at
-# corral or QEMU, which the capture rules out; the remaining suspects are
-# mutter's input handling under a virtual monitor and the seat assignment,
-# which `compositor-input` now reports without truncating.
+# corral or QEMU, which the capture rules out.
+#
+# The seat is ruled out too, as of the run that first printed the untruncated
+# diagnostic: the AT keyboard IS on seat0, and the capture decodes clean
+# LEFTMETA press and release on event1 -- the very node gnome-shell holds open.
+#
+# What narrows it furthest is that pressing Super ALONE leaves the framebuffer
+# byte-identical (deviation 0.1576 before and after). Super alone is GNOME's own
+# binding for the Activities overview. So this is not our portal shortcut
+# failing to route: the compositor is inert to injected input generally. The
+# remaining suspect is that logind has the session's devices PAUSED, which keeps
+# their file descriptors open, which is why "holds event1" and "receives nothing
+# from event1" are both true at once. `compositor-input` now reports the
+# session's Active state, which is what tells those apart.
 #
 # Deleting it would lose the regression check for free — the day injection
 # starts working, this frame changes and says so. Leaving it unlabelled would

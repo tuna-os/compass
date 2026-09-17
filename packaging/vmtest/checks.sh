@@ -301,6 +301,32 @@ PY
     else
       echo '(seat-status unavailable)'
     fi
+
+    # IS THE SESSION ACTIVE?
+    #
+    # This is the question the rest of the evidence now points at. Everything
+    # else is green: the keyboard is on seat0, the kernel receives clean
+    # LEFTMETA press and release on event1, and gnome-shell holds event1 open.
+    # Yet pressing Super alone leaves the framebuffer byte-identical -- and
+    # Super alone is GNOME's OWN binding for the Activities overview, nothing
+    # to do with our portal shortcut. So the compositor is inert to this input
+    # generally, not failing to route one shortcut.
+    #
+    # logind pauses a session's input devices when the session is not active,
+    # and a paused device keeps its file descriptor open -- the fd is how the
+    # resume is delivered. So "gnome-shell holds event1" is entirely consistent
+    # with gnome-shell receiving nothing from it, and Active= is what tells the
+    # two apart.
+    echo '--- is the session active? (paused devices keep their fds) ---'
+    sid="$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$SESSION_USER" '$3 == u {print $1; exit}')"
+    if [ -n "$sid" ]; then
+      loginctl show-session "$sid" \
+        -p Id -p User -p Name -p Seat -p Type -p Class -p State -p Active -p Remote \
+        2>/dev/null | sed 's/^/  /'
+    else
+      echo "  no logind session found for $SESSION_USER"
+      loginctl list-sessions --no-legend 2>/dev/null | sed 's/^/  /' || true
+    fi
     ;;
 
   # Does an injected scancode reach the guest KERNEL?
