@@ -1,0 +1,38 @@
+[package]
+name = "compass-sqlcipher-sys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SQLCipher and the fuzzy_trigram FTS5 tokenizer, built from vendor/ and wrapped for Compass."
+links = "compass_sqlcipher"
+
+# DELIBERATELY NOT `[lints] workspace = true`.
+#
+# The workspace sets `unsafe_code = "forbid"`, and `forbid` cannot be lifted by
+# a crate-level `allow` -- that is the difference between `forbid` and `deny`.
+# Registering the fuzzy_trigram tokenizer is a call on a raw `sqlite3*` after
+# the database is keyed (ADR-0014), so this crate needs `unsafe`, and the only
+# way to have it is to not inherit that lint.
+#
+# The exception is therefore visible here, as a missing line in one manifest,
+# rather than as an `allow` buried in a source file. Every other workspace lint
+# is restated below so that opting out of one does not silently opt out of the
+# rest.
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "deny"
+
+[lints.clippy]
+all = "deny"
+
+[dependencies]
+libc.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[build-dependencies]
+cc = "1"

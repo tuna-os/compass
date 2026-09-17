@@ -863,6 +863,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-sqlcipher-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "compass-testkit"
 version = "0.1.0"
 dependencies = [
