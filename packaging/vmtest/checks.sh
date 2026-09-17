@@ -22,6 +22,9 @@ SPIKE_ERR=/tmp/compass-spike-a.err
 SPIKE_DONE=/tmp/compass-spike-a.done
 UI_ERR=/tmp/compass-ui.err
 UI_DONE=/tmp/compass-ui.done
+ENGINE_ERR=/tmp/compass-engine.err
+ENGINE_DONE=/tmp/compass-engine.done
+ENGINE_PIDS=/tmp/compass-engine.pids
 CONTROL_ERR=/tmp/compass-control-app.err
 CONTROL_DONE=/tmp/compass-control-app.done
 KBD_CAP_DIR=/tmp
@@ -60,6 +63,73 @@ exe_running() {
     esac
   done
   return 1
+}
+
+# Run a compass CLI command as the session user, inside the Flatpak.
+#
+# Named `compass_cli`, not `as_session`: `spike-a-evidence` already defines a
+# local `as_session` that runs an arbitrary guest binary without the Flatpak,
+# and two helpers of the same name doing different things is how the wrong one
+# gets called.
+#
+# Every summon check needs the same seven environment variables, and getting
+# XDG_RUNTIME_DIR wrong means talking to a socket that is not the session's --
+# which presents as "no engine running" rather than as a mistake here.
+compass_cli() {
+  local u
+  u="$(uid)"
+  runuser -u "$SESSION_USER" -- env \
+    XDG_RUNTIME_DIR="/run/user/$u" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$u/bus" \
+    WAYLAND_DISPLAY="$(wayland_display)" \
+    XDG_SESSION_TYPE=wayland \
+    flatpak run --installation="$INSTALLATION" "$APP" "$@"
+}
+
+# The launcher's pid, excluding the engine's.
+#
+# BOTH PROCESSES ARE NAMED `vicinae`. Before ADR-0015 there was only ever one,
+# and `pgrep -u "$SESSION_USER" -x vicinae | head -1` was unambiguous. Now
+# `serve` runs first, so that pgrep matches the engine -- and matching the
+# engine is not a cosmetic problem:
+#
+#   * `launcher-start`'s waiter would be satisfied the instant it began,
+#     because a `vicinae` process already exists, so it would stop waiting for
+#     the launcher entirely;
+#   * `launcher-diagnose` would report which syscall the *engine* is parked in
+#     while claiming to explain the launcher;
+#   * `launcher-rss` would measure the wrong process against Phase 1's gate.
+#
+# So the engine records its pids and everything about the launcher skips them.
+# Matching on the command line instead is the obvious alternative and is worse
+# here: both are `flatpak run … com.vicinae.Vicinae <verb>` and the inner
+# process is a grandchild whose argv is not the one written above.
+launcher_pid() {
+  local engine="" pid
+  [ -f "$ENGINE_PIDS" ] && engine="$(tr '\n' ' ' < "$ENGINE_PIDS")"
+  for pid in $(pgrep -u "$SESSION_USER" -x vicinae 2>/dev/null); do
+    case " $engine " in
+      *" $pid "*) continue ;;
+    esac
+    echo "$pid"
+    return 0
+  done
+  return 1
+}
+
+# True once the launcher exists, or once it has exited.
+launcher_appeared() {
+  launcher_pid >/dev/null || [ -f "$UI_DONE" ]
+}
+
+# True once the engine answers, or once it has exited.
+#
+# A shell function rather than a `bash -c` predicate, because `wait_for` calls
+# what it is given in the current shell: a subshell would not inherit
+# `compass_cli`, `uid` or `APP`, and the check would fail for reasons that have
+# nothing to do with the engine.
+engine_ready() {
+  compass_cli vicinae ping >/dev/null 2>&1 || [ -f "$ENGINE_DONE" ]
 }
 
 # The session's Wayland socket name. Read from the runtime directory rather than
@@ -556,9 +626,7 @@ sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=deb
     # matching, so the predicate matches itself and is true before the launcher
     # has done anything at all. That exact bug cost an earlier waiter here 180
     # seconds a run, and it presents as a timeout rather than as a mistake.
-    wait_for "the launcher process to appear, or exit" 90 \
-      bash -c 'pgrep -u "$1" -x vicinae >/dev/null || [ -f "$2" ]' \
-      _ "$SESSION_USER" "$UI_DONE"
+    wait_for "the launcher process to appear, or exit" 90 launcher_appeared
     spawned_ms="$(date +%s%3N)"
 
     # And then wait for it to be READY, which is not the same thing and cost
@@ -631,7 +699,7 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   # Reading the host's /proc for a Flatpak process is fine: bwrap namespaces
   # the guest's view, not root's.
   launcher-diagnose)
-    pid="$(pgrep -u "$SESSION_USER" -x vicinae | head -1 || true)"
+    pid="$(launcher_pid || true)"
     if [ -z "$pid" ]; then
       echo "no vicinae process to diagnose"
       exit 0
@@ -707,7 +775,7 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   # deviation mistake again in a different costume. It goes in the log so the
   # gate can be set from a distribution later.
   launcher-rss)
-    pid="$(pgrep -u "$SESSION_USER" -x vicinae | head -1 || true)"
+    pid="$(launcher_pid || true)"
     if [ -z "$pid" ]; then
       echo "no launcher process to measure" >&2
       exit 1
@@ -841,6 +909,120 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
     fi
     echo "the launcher is still running"
     cat "$UI_ERR"
+    ;;
+
+  # Start the engine, so the launcher has something to attach to.
+  #
+  # ADR-0015 made the launcher window resident and driven: `vicinae ui` connects
+  # to `vicinae serve` and waits to be told to show. So the engine has to be up
+  # BEFORE launcher-start, or the launcher comes up undriven and every summon
+  # below is refused -- correctly, and confusingly.
+  #
+  # Inside the same Flatpak and the same session as the launcher, because the
+  # socket lives under $XDG_RUNTIME_DIR and a daemon in a different runtime dir
+  # is a daemon the launcher cannot find.
+  engine-start)
+    u="$(uid)"
+    : > "$ENGINE_ERR"
+    rm -f "$ENGINE_DONE"
+
+    setsid bash -c '
+      runuser -u "$1" -- env \
+        XDG_RUNTIME_DIR="/run/user/$2" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$2/bus" \
+        WAYLAND_DISPLAY="$3" \
+        XDG_SESSION_TYPE=wayland \
+        RUST_LOG=info \
+        RUST_BACKTRACE=1 \
+        flatpak run --installation="$4" "$5" serve \
+        > "$6" 2>&1
+      echo "$?" > "$7"
+    ' _ "$SESSION_USER" "$u" "$(wayland_display)" "$INSTALLATION" "$APP" \
+      "$ENGINE_ERR" "$ENGINE_DONE" \
+      < /dev/null >> "$ENGINE_ERR" 2>&1 &
+
+    # Waited on by asking it, not by looking for its process. A `serve` that is
+    # alive but has not yet bound its socket would pass a pgrep and fail every
+    # summon after it -- and the engine indexes the machine's applications
+    # before it listens, which under llvmpipe is not instant. `ping` answers
+    # only once the socket is up.
+    wait_for "the engine to answer a ping, or exit" 120 engine_ready
+
+    # Recorded before the launcher starts, so `launcher_pid` can tell the two
+    # apart. Written even on the failure path below: a half-started engine
+    # still leaves a process named `vicinae` around to be mistaken for the
+    # launcher.
+    pgrep -u "$SESSION_USER" -x vicinae > "$ENGINE_PIDS" 2>/dev/null || : > "$ENGINE_PIDS"
+    echo "engine pids: $(tr '\n' ' ' < "$ENGINE_PIDS")"
+
+    if [ -f "$ENGINE_DONE" ]; then
+      echo "the engine exited $(cat "$ENGINE_DONE") instead of listening; its output follows" >&2
+      cat "$ENGINE_ERR" >&2
+      exit 1
+    fi
+    echo "the engine is listening; output so far:"
+    cat "$ENGINE_ERR"
+    ;;
+
+  # Is the launcher window actually attached to the engine?
+  #
+  # The distinguishing check, and the reason the summon verbs below can mean
+  # anything. `serve` refuses show/hide/toggle when no window has attached, so
+  # a `toggle` that SUCCEEDS is proof that the whole chain exists: CLI, socket,
+  # engine, window link, and a window that answered. A `toggle` that fails with
+  # "no launcher window is connected" says precisely which link is missing.
+  #
+  # This is what the tier could never assert before: every earlier check could
+  # only see a process, never a connection.
+  window-attached)
+    if ! out="$(compass_cli vicinae toggle 2>&1)"; then
+      echo "the launcher window is not attached to the engine:" >&2
+      echo "$out" >&2
+      exit 1
+    fi
+    # Left hidden by the toggle above; `summon` below puts it back. Said out
+    # loud because a reader of the log otherwise sees a window vanish for no
+    # stated reason.
+    echo "the window answered a toggle (and is now hidden): $out"
+    ;;
+
+  # Summon the window and report how long the round trip took.
+  #
+  # §8.5's "summon to first frame" row. This is NOT that number: nothing inside
+  # the guest can observe a frame (ADR-0010), so what is timed here is the
+  # round trip -- CLI to engine, engine to window, window's answer back. First
+  # paint follows it.
+  #
+  # It is also inflated by a whole process spawn, because the client is
+  # `vicinae toggle` rather than a keypress. On the real path the engine is
+  # already running and the portal delivers the activation directly, so this
+  # number is an upper bound with a Flatpak launch inside it. Reported, not
+  # gated, for the reasons §8.5 gives.
+  summon)
+    start_ms="$(date +%s%3N)"
+    if ! out="$(compass_cli vicinae show 2>&1)"; then
+      echo "the engine could not show the window:" >&2
+      echo "$out" >&2
+      exit 1
+    fi
+    end_ms="$(date +%s%3N)"
+    echo "summon round trip: $((end_ms - start_ms)) ms \
+(client spawn included; not a frame -- see §8.5)"
+    ;;
+
+  # Hide it again, so the host can screenshot the difference.
+  dismiss)
+    compass_cli vicinae hide
+    ;;
+
+  # What did the engine say about the hotkey?
+  #
+  # Recorded, not gated. Whether GNOME grants LOGO+space is the user's decision
+  # via a permission dialog, and an unattended session may well be refused --
+  # which is a real outcome worth seeing in the log, not a failure of the code.
+  hotkey-status)
+    grep -E "launcher hotkey|GlobalShortcuts|shortcut" "$ENGINE_ERR" || \
+      echo "the engine said nothing about the hotkey"
     ;;
 
   *)

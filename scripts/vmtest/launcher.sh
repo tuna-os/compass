@@ -63,6 +63,14 @@ echo "=== 0. the desktop before the launcher opens (the control) ==="
 shot "launcher-00-before.png"
 
 echo
+echo "=== 0b. start the engine, so the launcher has something to attach to ==="
+# ADR-0015 made the window resident and driven: `vicinae ui` connects to
+# `vicinae serve` and waits to be told to show. Order matters -- a launcher
+# started first comes up undriven, and every summon below is then refused
+# correctly and confusingly.
+guest "$checks" engine-start
+
+echo
 echo "=== 1. open the launcher in the session ==="
 guest "$checks" launcher-start
 
@@ -190,6 +198,59 @@ echo "=== 3d. did a launcher window actually appear? (the gate) ==="
 python3 scripts/vmtest/framediff.py \
   "$out/launcher-00-before.png" "$out/launcher-01-open.png" \
   --min-percent 3 --expect-box 300 140 980 800 --ignore-box 0 0 1279 139
+
+echo
+echo "=== 3d2. can the engine hide and summon the window? (the ADR-0015 gate) ==="
+# THE THING THIS TIER COULD NOT ASSERT BEFORE.
+#
+# Every check above can see a *process*. None of them can see a *connection*.
+# `serve` refuses show/hide/toggle when no window has attached, so a `toggle`
+# that succeeds is proof of the whole chain at once: CLI, socket, engine, the
+# window link, and a window that answered on the other end of it.
+#
+# The keypress leg is still missing and is still not this job's to fix:
+# injected input does not reach this compositor (see step 3's note), so the
+# client here is `vicinae` rather than Super+Space. What that leaves untested
+# is the portal delivering an activation. Everything after the activation is
+# exercised.
+guest "$checks" window-attached
+shot "launcher-04-hidden.png"
+
+echo
+echo "=== 3d3. and does summoning it bring the window back? ==="
+guest "$checks" summon
+# The same settle the open path gets. Opening a surface under llvmpipe is not
+# instant, and screenshotting before the paint would produce "summon does not
+# work" for the same reason step 1 produced "the launcher does not draw" --
+# twice, wrongly.
+sleep 5
+sudo -E "$corral_bin" screenshot "$vm" -o "$out/launcher-05-summoned.png" --require-paint
+
+echo
+echo "=== 3d4. the two assertions that make the pair mean something ==="
+# Hidden must look like the bare desktop, and summoned must look like the
+# launcher again. Either alone is weak: a frame that never changes passes the
+# first, and a frame that never changes fails the second, so the pair together
+# is what says the window actually went away and actually came back.
+#
+# Same box and the same ignore strip as the gate above, for the same reasons --
+# including the top-bar clock, which cost a red run to discover.
+echo "--- the window went away: hidden should match the desktop before it opened ---"
+python3 scripts/vmtest/framediff.py \
+  "$out/launcher-00-before.png" "$out/launcher-04-hidden.png" \
+  --max-percent 3 --ignore-box 0 0 1279 139
+
+echo "--- and came back: summoned should look like the launcher did ---"
+python3 scripts/vmtest/framediff.py \
+  "$out/launcher-00-before.png" "$out/launcher-05-summoned.png" \
+  --min-percent 3 --expect-box 300 140 980 800 --ignore-box 0 0 1279 139
+
+echo
+echo "=== 3d5. what did the engine make of the hotkey? (recorded, not gated) ==="
+# Whether GNOME grants LOGO+space is the user's decision through a permission
+# dialog, and an unattended session may well be refused. That is a real outcome
+# worth reading in the log, not a failure of the code.
+guest "$checks" hotkey-status || true
 
 echo
 echo "=== 3e. harvest a real desktop-entry corpus from this box ==="

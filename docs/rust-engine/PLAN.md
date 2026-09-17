@@ -1893,9 +1893,22 @@ does not exist — every wlroots compositor — the engine says so and `vicinae 
 Nothing about the hotkey can stop the engine starting: the socket is the contract, the hotkey is a
 convenience.
 
-**What is left is a measurement, and a run on real hardware.** Every part of the loop exists in
-code and is tested in pieces; nothing has yet pressed Super+Space on a real GNOME and watched a
-window appear. That is the VM tier's job and it needs the SLA row split first — see below.
+**The VM tier now drives the summon path.** `scripts/vmtest/launcher.sh` starts the engine, starts
+the launcher, asks the engine to hide the window and then to show it again, and gates on the screen
+going back to the bare desktop and then back to a launcher. That is the first thing in this tier
+that can observe a *connection* rather than a process: `serve` refuses `toggle` when no window has
+attached, so a `toggle` that succeeds is proof of the whole chain — CLI, socket, engine, window
+link, and a window that answered.
+
+**What is still missing is the keypress, and it is not the code's fault.** Injected input does not
+reach this VM's compositor at all — `launcher.sh` documents the chain and where it breaks, and
+GNOME's own Super binding is equally inert there. So the client in the tier is `vicinae`, not
+Super+Space, and what stays untested is the portal delivering an activation. Everything after the
+activation is exercised.
+
+**And the number that matters is still unmeasured.** See §8.5's split SLA row: summon to first
+frame has no harness, and the round trip the tier now reports is an upper bound with a whole
+Flatpak launch inside it.
 
 Which is also why the refusal stays a refusal. A client can tell "no window" from "the window was
 shown", and that distinction is the only thing standing between an honest gap and a `toggle` that

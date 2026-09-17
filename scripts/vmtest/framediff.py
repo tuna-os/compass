@@ -84,6 +84,9 @@ def main() -> int:
     ap.add_argument("after")
     ap.add_argument("--min-percent", type=float, default=None,
                     help="fail unless at least this percent of pixels changed")
+    ap.add_argument("--max-percent", type=float, default=None,
+                    help="fail unless at most this percent of pixels changed; the mirror "
+                         "of --min-percent, for asserting that something went AWAY")
     ap.add_argument("--expect-box", nargs=4, type=int, metavar=("X0", "Y0", "X1", "Y1"),
                     default=None,
                     help="fail unless the changed region lies within this box")
@@ -150,6 +153,13 @@ def main() -> int:
             ok = False
         else:
             print(f"ok: {pct:.2f}% >= {args.min_percent:.2f}%")
+    if args.max_percent is not None:
+        if pct > args.max_percent:
+            print(f"FAIL: {pct:.2f}% of pixels changed, expected at most "
+                  f"{args.max_percent:.2f}%", file=sys.stderr)
+            ok = False
+        else:
+            print(f"ok: {pct:.2f}% <= {args.max_percent:.2f}%")
     if args.expect_box is not None:
         x0, y0, x1, y1 = args.expect_box
         if n == 0:
