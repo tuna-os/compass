@@ -238,12 +238,28 @@ impl LauncherApp {
             // panicking in the middle of a keystroke.
             return iced::exit();
         }
-        let task = match self.window.take() {
+        match self.window {
+            // The answer waits for `Message::Closed`, which arrives when the
+            // window is actually gone.
+            //
+            // REPORTING HERE WOULD BE OPTIMISTIC, AND IT WAS. `window::close`
+            // returns a Task; answering before it runs tells the engine
+            // "hidden" while the window is still on screen. A VM run caught it:
+            // `vicinae toggle` reported success and the screenshot taken
+            // straight afterwards still had the launcher in it.
+            //
+            // `self.window` is deliberately NOT cleared yet. Until the close
+            // lands the window really is still visible, and `is_visible` should
+            // say so -- the engine cannot send another command in the meantime
+            // because it is blocked reading this one's reply.
             Some(id) => window::close(id),
-            None => Task::none(),
-        };
-        self.answer(UiOutcome::Hidden);
-        task
+            // Nothing to close, so nothing to wait for. Still answers, because
+            // the engine is blocked until it hears something.
+            None => {
+                self.answer(UiOutcome::Hidden);
+                Task::none()
+            }
+        }
     }
 
     /// Replace the launcher. For tests that assert what the UI asked for.
@@ -381,6 +397,10 @@ impl LauncherApp {
                 // leave the launcher believing it is hidden while it is not.
                 if self.window == Some(id) {
                     self.window = None;
+                    // The honest moment to say "hidden": the window is gone.
+                    // Answers only a command that asked -- a window the user
+                    // closed answers nothing. See `awaiting`.
+                    self.answer(UiOutcome::Hidden);
                 }
                 Task::none()
             }

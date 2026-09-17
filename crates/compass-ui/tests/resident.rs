@@ -59,16 +59,28 @@ fn opened(app: &mut LauncherApp) -> iced::window::Id {
     id
 }
 
+/// Pretends the compositor confirmed a window is gone.
+///
+/// Hiding is not instant and the launcher no longer pretends it is:
+/// `window::close` is a Task, so the window is still on screen until this
+/// arrives. A VM run caught the optimistic version -- `vicinae toggle` reported
+/// success and the screenshot taken straight afterwards still had the launcher
+/// in it -- so every hide here is driven through the close it really needs.
+fn closed(app: &mut LauncherApp, id: iced::window::Id) {
+    let _ = app.update(Message::Closed(id));
+}
+
 // --- hide versus exit -------------------------------------------------------
 
 #[test]
 fn dismissing_hides_when_an_engine_can_summon_it_back() {
     let mut driven = driven();
-    opened(&mut driven.app);
+    let id = opened(&mut driven.app);
     assert!(driven.app.is_visible(), "control: the window is up");
     let _ = reported(&mut driven.outcomes);
 
     let _ = driven.app.update(Message::Dismiss);
+    closed(&mut driven.app, id);
 
     assert_eq!(driven.app.on_dismiss(), Dismissal::Hide);
     assert!(
@@ -91,10 +103,11 @@ fn dismissing_exits_when_nothing_could_summon_it_back() {
 #[test]
 fn a_successful_launch_hides_rather_than_exits() {
     let mut driven = driven();
-    opened(&mut driven.app);
+    let id = opened(&mut driven.app);
     let _ = reported(&mut driven.outcomes);
 
     let _ = driven.app.update(Message::Launched(Ok(())));
+    closed(&mut driven.app, id);
 
     assert_eq!(driven.app.on_dismiss(), Dismissal::Hide);
     assert!(!driven.app.is_visible());
@@ -122,15 +135,32 @@ fn a_failed_launch_leaves_the_window_up_to_show_the_error() {
 // --- obeying the engine -----------------------------------------------------
 
 #[test]
-fn hiding_a_visible_window_reports_hidden() {
+fn hiding_reports_only_once_the_window_is_actually_gone() {
+    // THE ANSWER WAITS FOR THE CLOSE. `window::close` is a Task; answering
+    // before it runs tells the engine "hidden" while the window is still on
+    // screen, which a VM run caught doing exactly that.
     let mut driven = driven();
-    opened(&mut driven.app);
+    let id = opened(&mut driven.app);
     let _ = reported(&mut driven.outcomes);
 
     let _ = driven.app.update(Message::Command(UiCommand::Hide));
 
+    assert!(
+        driven.app.is_visible(),
+        "still on screen until the compositor confirms the close"
+    );
+    assert_eq!(
+        reported(&mut driven.outcomes),
+        vec![],
+        "nothing to report until the window is gone"
+    );
+    assert!(driven.app.is_awaiting(), "the engine is still waiting");
+
+    closed(&mut driven.app, id);
+
     assert!(!driven.app.is_visible());
     assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Hidden]);
+    assert!(!driven.app.is_awaiting());
 }
 
 #[test]
@@ -154,21 +184,23 @@ fn showing_an_already_visible_window_reports_shown_and_keeps_the_same_window() {
 #[test]
 fn toggling_alternates_rather_than_repeating() {
     let mut driven = driven();
-    opened(&mut driven.app);
+    let first = opened(&mut driven.app);
     let _ = reported(&mut driven.outcomes);
 
     // Visible -> hidden. The other half of the toggle would open a real
     // window, which nothing here can do, so `opened` re-establishes it.
     let _ = driven.app.update(Message::Command(UiCommand::Toggle));
+    closed(&mut driven.app, first);
     assert!(!driven.app.is_visible());
     assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Hidden]);
 
     // Re-established directly rather than by a command, so it answers nothing.
-    opened(&mut driven.app);
+    let second = opened(&mut driven.app);
     assert!(driven.app.is_visible());
     assert_eq!(reported(&mut driven.outcomes), vec![]);
 
     let _ = driven.app.update(Message::Command(UiCommand::Toggle));
+    closed(&mut driven.app, second);
     assert!(!driven.app.is_visible());
     assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Hidden]);
 }
@@ -235,21 +267,24 @@ fn every_report_answers_exactly_one_command() {
     // without being asked.
     let mut driven = driven();
 
-    opened(&mut driven.app); // boot: not a command
+    let boot = opened(&mut driven.app); // boot: not a command
     let _ = driven.app.update(Message::Dismiss); // user: not a command
-    opened(&mut driven.app); // still not a command
+    closed(&mut driven.app, boot);
+    let again = opened(&mut driven.app); // still not a command
 
     assert_eq!(
         reported(&mut driven.outcomes),
         vec![],
-        "three events, none of them a command, must produce no outcomes"
+        "four events, none of them a command, must produce no outcomes"
     );
 
     // Now three real commands, each of which must produce exactly one.
     let _ = driven.app.update(Message::Command(UiCommand::Hide));
+    closed(&mut driven.app, again);
     let _ = driven.app.update(Message::Command(UiCommand::Show));
-    opened(&mut driven.app); // completes the Show
+    let shown = opened(&mut driven.app); // completes the Show
     let _ = driven.app.update(Message::Command(UiCommand::Hide));
+    closed(&mut driven.app, shown);
 
     assert_eq!(
         reported(&mut driven.outcomes),
@@ -275,10 +310,11 @@ fn a_close_for_some_other_window_does_not_mark_the_launcher_hidden() {
 #[test]
 fn a_window_closed_by_the_compositor_hides_rather_than_ending_the_process() {
     let mut driven = driven();
-    opened(&mut driven.app);
+    let id = opened(&mut driven.app);
     let _ = reported(&mut driven.outcomes);
 
     let _ = driven.app.update(Message::WindowClosed);
+    closed(&mut driven.app, id);
 
     assert_eq!(driven.app.on_dismiss(), Dismissal::Hide);
     assert!(!driven.app.is_visible());

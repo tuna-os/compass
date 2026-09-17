@@ -187,18 +187,6 @@ echo "=== 3b2. what does the launcher cost at idle? (Phase 1 gate) ==="
 # window is up and before the control application starts competing for memory.
 guest "$checks" launcher-rss || true
 
-echo
-echo "=== 3c. can ANY client draw in this session? (the control) ==="
-# The control this job should have had from the start. Everything above says
-# our launcher puts no window on screen; none of it distinguishes that from
-# nothing being able to. A session where no client can render would produce
-# identical evidence and would exonerate the launcher entirely — and the
-# desktop painting does not settle it, because that is GNOME Shell compositing
-# its own furniture, not a client surface.
-guest "$checks" control-app-start || true
-shot "launcher-03-control-app.png"
-
-echo
 echo "=== 3d. did a launcher window actually appear? (the gate) ==="
 # The first assertion in this tier derived from a measurement rather than from
 # an assumption, and the reason it exists is that its absence let a wrong
@@ -297,6 +285,26 @@ echo "=== 3d5. what did the engine make of the hotkey? (recorded, not gated) ===
 # worth reading in the log, not a failure of the code.
 guest "$checks" hotkey-status || true
 
+echo
+echo "=== 3d6. can ANY client draw in this session? (the control) ==="
+# MOVED AFTER THE SUMMON GATES, AND THE ORDER IS THE POINT. This starts a
+# second application and leaves it on screen. Run before the gates above, it
+# puts a whole file manager into frames that are compared against a control
+# taken before it existed -- which is exactly how 3d4 failed at 20.38% in a
+# 957px box, with a nautilus window sitting in the "hidden" frame.
+#
+# It is a diagnostic for 3d, not an input to it, so it loses nothing by
+# running once the frame-comparing steps are done.
+# The control this job should have had from the start. Everything above says
+# our launcher puts no window on screen; none of it distinguishes that from
+# nothing being able to. A session where no client can render would produce
+# identical evidence and would exonerate the launcher entirely — and the
+# desktop painting does not settle it, because that is GNOME Shell compositing
+# its own furniture, not a client surface.
+guest "$checks" control-app-start || true
+shot "launcher-03-control-app.png"
+
+echo
 echo
 echo "=== 3e. harvest a real desktop-entry corpus from this box ==="
 # Phase 1's gate wants ~500 real entries for Suite 0 ranking parity and the
