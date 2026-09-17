@@ -5,7 +5,7 @@ set -euo pipefail
 # Constants
 REPO="vicinaehq/vicinae"
 BINARY_NAME="vicinae"
-TEMP_DIR="/tmp"
+TEMP_DIR="$(mktemp -d -t vicinae-install.XXXXXX)"
 SYSTEMD_SERVICE_NAME="vicinae.service"
 
 # Installation prefix - can be overridden via environment or --prefix flag
@@ -34,7 +34,7 @@ warn() {
 ok() { echo -e "  \033[0;32m✓\033[0m $1" >&2; }
 
 cleanup() {
-	rm -f $VICINAE_SCRIPT_PATH
+	rm -rf "$TEMP_DIR"
 	for file in "${TEMP_FILES[@]}"; do
 		if [[ -e "$file" ]]; then
 			rm -rf "$file"
