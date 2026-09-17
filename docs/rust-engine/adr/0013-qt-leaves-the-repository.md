@@ -19,6 +19,22 @@ Counting `.cpp`/`.hpp` under `src/server` by path:
 | cross-platform | 678 |
 
 So the recorded scope deletes on the order of **64** files and keeps **~776 Qt files** indefinitely.
+
+> **Corrected after this ADR was accepted.** The table above was produced by matching path
+> fragments, and both its method and its numbers are wrong. It counts `src/server/src/ui/windows` —
+> the UI's *window* classes — as Windows code, and reports 28 "macOS files" where only **three**
+> macOS translation units exist. Attributing each unit to the CMake block that lists it gives
+> **59 Linux / 33 Windows / 3 macOS / 229 shared** `.cpp`.
+>
+> More importantly, the table asks the wrong question. Platform behaviour is mostly *not* in
+> platform files: there are **102 `Q_OS_MAC` sites across 38 shared files, 100 `Q_OS_WIN` across 43,
+> and 72 `Q_OS_LINUX` across 30**, with 61 shared files carrying at least one. That is what
+> Phases 9 and 10 actually have to resolve, and it is why "delete a platform's share of the
+> cross-platform core" — which this ADR's Phase 9 sketch implied — is not executable.
+>
+> The decision this ADR records is unaffected: Qt leaves, Linux-first is a sequence, and the seam
+> comes before Phase 4. Only the sizing was wrong. [PLAN.md](../PLAN.md) §6 carries the measured
+> figures.
 The bulk is the Qt UI layer, the builtins and the extension model. Two consequences follow that the
 old wording did not state: the repository stays majority C++/Qt, and every change to shared
 behaviour is made twice for as long as that lasts.

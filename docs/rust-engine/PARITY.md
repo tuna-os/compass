@@ -18,6 +18,31 @@ Columns:
 A row may go green with a **declared divergence** instead of exact parity: record it in the
 Divergences section below with a rationale. Divergences are declared, never discovered.
 
+## Scope of this ledger
+
+**Every row below is the Linux port.** That is Phases 0–8, and it is what the row set was built to
+track. It is not the whole port, and reading it as one would badly understate what remains: a fully
+green ledger here is the state at the end of Phase 8, with Qt still in the repository.
+
+The reason is that the non-Linux surface is not shaped like these rows. Rows here map a C++
+directory to a Rust crate, because Linux behaviour lives in Linux files. macOS and Windows
+behaviour mostly does not — it lives in conditional compilation inside files that compile
+everywhere, so there is no directory to put in the left-hand column:
+
+| | dedicated `.cpp` | `#ifdef` sites | shared files touched |
+|---|---:|---:|---:|
+| Linux | 59 | 72 (`Q_OS_LINUX`) | 30 |
+| Windows | 33 | 100 (`Q_OS_WIN`) | 43 |
+| macOS | 3 | 102 (`Q_OS_MAC`) | 38 |
+
+Counted by attributing each translation unit to the `if (APPLE)` / `if (WIN32)` /
+`if (UNIX AND NOT APPLE)` block that lists it in `src/server/CMakeLists.txt`, and by grepping the
+guards. 61 shared files carry at least one conditional; `server.cpp` alone has 29.
+
+So the macOS and Windows work is tracked as **conditional sites resolved**, not as directories
+ported, and it lives in [PLAN.md](./PLAN.md) §6 Phases 9 and 10 rather than here. A row in this
+ledger going green says nothing about either.
+
 Update this file in the same PR that changes a box. It is meant to be read in standup.
 
 ### A correction to the plan's deletion rule
@@ -210,48 +235,48 @@ load-bearing. Tested against real encrypted files rather than SQL strings: the f
 connection to an existing encrypted file still has the tokenizer. Not yet ported: blobs, the
 transaction wrapper, and `sqlite3_changes` (deliberately — see `tryBubbleUpSelection` below).
 
-**`src/services/clipboard` → `compass-clipboard`** — one slice of `clipboard-db.cpp` (478 lines) is
-ported: `search::plan`, which decides for each word of the user's query whether it goes to the FTS5
-`MATCH` or to an `instr` substring condition. The split matters because `selection_fts` uses a
-trigram tokenizer, and a word with no run of three indexable characters cannot reach a document
-longer than itself — measured against the real vendored tokenizer, `"fi"` misses `firefox` and
-`"bc"` misses `abc` — so without the `instr` fallback a two-letter search returns an empty history
-rather than a narrowed one. Still C++-only:
+**`src/services/clipboard` → `compass-clipboard`** — **`clipboard-db.cpp` (478 lines) is ported in
+full.** Every function `clipboard-db.hpp` declares has a Rust counterpart:
 
-- ~~the schema and `MigrationManager` wiring~~ — ported as `compass_clipboard::schema`, which
-  embeds the same two `.sql` files (the C++ reads them from `:database/...`, a Qt resource, so they
-  are already compiled in) and records them in the same `schema_migrations` table, with the same
-  MD5 checksums. Two declared divergences, both in the table below;
-- ~~`insertSelection`, `insertOffer`, `indexSelectionContent`, `removeSelection`, `removeAll`~~,
-  ~~`evictOlderThan`, `tryBubbleUpSelection`~~ — ported as `compass_clipboard::write`, with the two
-  bugs below fixed rather than reproduced, together with `oldestEvictableTimestamp`, `setPinned`,
-  `setKeywords`, `retrieveKeywords`, `findSelection` and `findPreferredOffer`. That is every
-  function `clipboard-db.hpp` declares;
-- ~~the paginated `query` itself~~ — ported as `compass_clipboard::store::query`, both SQL shapes,
-  the `GROUP BY` and the `COUNT(*) OVER()` total, driven by `search::plan`.
+| C++ | Rust |
+|---|---|
+| `searchTerms` + the trigram predicate | `search::plan` |
+| `runMigrations` | `schema::run` |
+| `query` | `store::query` |
+| `insertSelection`, `insertOffer`, `indexSelectionContent` | `write::insert_selection`, `insert_offer`, `index_content` |
+| `removeSelection`, `removeAll`, `evictOlderThan` | `write::remove_selection`, `remove_all`, `evict_older_than` |
+| `tryBubbleUpSelection` | `write::bubble_up` |
+| `setPinned`, `setKeywords`, `retrieveKeywords` | `write::set_pinned`, `set_keywords`, `keywords_of` |
+| `oldestEvictableTimestamp` | `write::oldest_evictable` |
+| `findSelection`, `findPreferredOffer` | `write::find_selection`, `find_preferred_offer` |
 
-One thing found while reading, to be fixed rather than reproduced when eviction is ported.
-`evictOlderThan` runs two statements: a `SELECT` that collects the offer IDs whose blobs the caller
-must delete from disk, then a `DELETE` that removes the selections. Both compute the cutoff with
-`unixepoch()`, and each statement gets its own reading of the clock — SQLite holds a time function
-constant *within* a statement, but not across statements, and an open transaction does not freeze it
-(checked: inside `BEGIN`, `unixepoch('subsec')` advanced after 434 consecutive statements). Time only
-moves forward, so the `DELETE` set is a superset of the `SELECT` set, and any selection that crosses
-the threshold in between has its rows removed while its offer IDs are never returned. Those blobs
-are then unreferenced and unreported: they stay on disk forever. The window is short, but eviction
-runs on a timer for the lifetime of the install, and the payloads are clipboard images. The port
-should compute the cutoff once and bind the same value to both statements.
+It runs on `compass-sqlcipher-sys`, which builds `vendor/sqlcipher` and `vendor/fuzzy-trigram` from
+the same C the C++ engine links ([ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md)),
+so both engines read and write the same encrypted files with the same tokenizer.
 
-The `parity test ✓` column is 🟡 rather than ✅ for a specific reason. `vicinae::fuzzy` and
-`vicinae::crypto` each compile standalone, which is what lets CI diff the real C++ implementation
-against ours; `clipboard-db.cpp` does not — it pulls in Qt, `db::Database` and `MigrationManager`.
-So this slice is verified against a reading of the source plus controls (each assertion shown to
-fail against a deliberately wrong port) rather than against a running C++ binary. The gap worth
-naming: `QString` iterates UTF-16 code units, so a non-BMP character counts as *two* word
-characters, and `"a😀"` is a trigram run to the C++ engine but not to a port that walks Rust
-`char`s. `has_trigram_run` walks `encode_utf16` for that reason, and
+**Still C++-only, and the reason the row is 🟡:** `clipboard-service.cpp` — the Wayland selection
+watcher, payload storage on disk, and the encryption of those payloads. That is the layer *above*
+the database, and it is the caller that unlinks the blobs whose ids `evict_older_than` now reliably
+returns.
+
+Four C++ bugs are fixed rather than reproduced, each pinned by a control that fails when the
+original shape is put back: the eviction blob leak, `tryBubbleUpSelection` answering from a
+connection-wide counter, the migration checksum that was written and never compared, and
+`runMigrations` swallowing its own failures. All four are in the divergences table below.
+
+**Why `parity test ✓` is 🟡 rather than ✅.** `vicinae::fuzzy` and `vicinae::crypto` each compile
+standalone, which is what lets CI diff the real C++ implementation against ours. `clipboard-db.cpp`
+does not — it pulls in Qt, `db::Database` and `MigrationManager` — so there is no C++ binary to
+diff against. What exists instead: every assertion is shown to fail against a deliberately wrong
+port, and the tests run against real SQLCipher files rather than SQL strings. That is strong
+evidence and it is not a differential, which is what the amber says.
+
+The gap worth naming is `QString` iterating UTF-16 code units, so a non-BMP character counts as
+*two* word characters: `"a😀"` is a trigram run to the C++ engine and would not be to a port walking
+Rust `char`s. `has_trigram_run` walks `encode_utf16` for that reason, and
 `a_non_bmp_character_is_two_word_characters_not_one` holds the scalar-walking version alongside it
-so the case is shown to discriminate.
+so the case is shown to discriminate. The same trap recurs in `index_content`, where
+`QString::left(65536)` can split a surrogate pair.
 
 ## Out of scope for the port
 
