@@ -213,6 +213,18 @@ history rather than a narrowed one. Still C++-only:
 - the paginated `query` itself — the two SQL shapes, the `GROUP BY`, and the `COUNT(*) OVER()`
   total that drives pagination.
 
+One thing found while reading, to be fixed rather than reproduced when eviction is ported.
+`evictOlderThan` runs two statements: a `SELECT` that collects the offer IDs whose blobs the caller
+must delete from disk, then a `DELETE` that removes the selections. Both compute the cutoff with
+`unixepoch()`, and each statement gets its own reading of the clock — SQLite holds a time function
+constant *within* a statement, but not across statements, and an open transaction does not freeze it
+(checked: inside `BEGIN`, `unixepoch('subsec')` advanced after 434 consecutive statements). Time only
+moves forward, so the `DELETE` set is a superset of the `SELECT` set, and any selection that crosses
+the threshold in between has its rows removed while its offer IDs are never returned. Those blobs
+are then unreferenced and unreported: they stay on disk forever. The window is short, but eviction
+runs on a timer for the lifetime of the install, and the payloads are clipboard images. The port
+should compute the cutoff once and bind the same value to both statements.
+
 The `parity test ✓` column is 🟡 rather than ✅ for a specific reason. `vicinae::fuzzy` and
 `vicinae::crypto` each compile standalone, which is what lets CI diff the real C++ implementation
 against ours; `clipboard-db.cpp` does not — it pulls in Qt, `db::Database` and `MigrationManager`.
