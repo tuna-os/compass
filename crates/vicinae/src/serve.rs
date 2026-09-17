@@ -367,7 +367,12 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
 ///
 /// Returns when a client sends [`Request::Shutdown`] or the process is asked to
 /// terminate. The socket file is removed on the way out by [`Listener`]'s drop.
-pub async fn run(socket: &SocketPath) -> Result<()> {
+///
+/// `hotkey` asks the engine to bind the global launcher shortcut. Turning it
+/// off is not only a test affordance: on GNOME, binding means a permission
+/// prompt, and a user whose compositor already binds a key to `vicinae toggle`
+/// should not be asked for one they will not use.
+pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     let listener = Listener::bind(socket.as_path())
         .await
         .with_context(|| format!("binding the engine socket at {socket}"))?;
@@ -385,7 +390,11 @@ pub async fn run(socket: &SocketPath) -> Result<()> {
     // Detached: the hotkey is a convenience, the socket is the contract. A
     // portal that never answers must not keep the engine from listening, so
     // this is spawned rather than awaited or raced against the serve loop.
-    tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
+    if hotkey {
+        tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
+    } else {
+        tracing::info!("not binding the launcher hotkey (--no-hotkey)");
+    }
 
     let serving = {
         let state = Arc::clone(&state);

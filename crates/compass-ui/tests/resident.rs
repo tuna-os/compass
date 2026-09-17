@@ -75,7 +75,9 @@ fn dismissing_hides_when_an_engine_can_summon_it_back() {
         !driven.app.is_visible(),
         "dismissing should hide the window"
     );
-    assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Hidden]);
+    // And reports nothing: the user pressing Escape answers no command. See
+    // `every_report_answers_exactly_one_command` below.
+    assert_eq!(reported(&mut driven.outcomes), vec![]);
 }
 
 #[test]
@@ -96,7 +98,8 @@ fn a_successful_launch_hides_rather_than_exits() {
 
     assert_eq!(driven.app.on_dismiss(), Dismissal::Hide);
     assert!(!driven.app.is_visible());
-    assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Hidden]);
+    // Nothing reported: launching answers no command either.
+    assert_eq!(reported(&mut driven.outcomes), vec![]);
 }
 
 #[test]
@@ -160,9 +163,10 @@ fn toggling_alternates_rather_than_repeating() {
     assert!(!driven.app.is_visible());
     assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Hidden]);
 
+    // Re-established directly rather than by a command, so it answers nothing.
     opened(&mut driven.app);
     assert!(driven.app.is_visible());
-    assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Shown]);
+    assert_eq!(reported(&mut driven.outcomes), vec![]);
 
     let _ = driven.app.update(Message::Command(UiCommand::Toggle));
     assert!(!driven.app.is_visible());
@@ -184,14 +188,74 @@ fn hiding_an_already_hidden_window_still_answers() {
 // --- window bookkeeping -----------------------------------------------------
 
 #[test]
-fn opening_reports_shown_once_the_window_exists() {
+fn the_window_opened_at_boot_answers_nothing() {
+    // The window `boot` opens is not a response to any command, so reporting
+    // `Shown` for it would sit in the channel and become the answer to the
+    // first command that arrives -- putting every answer after it one behind,
+    // permanently. This asserted the opposite before that was understood.
     let mut driven = driven();
+
+    opened(&mut driven.app);
+
+    assert!(driven.app.is_visible());
     assert_eq!(reported(&mut driven.outcomes), vec![]);
+}
+
+#[test]
+fn opening_in_answer_to_show_reports_shown_once_the_window_exists() {
+    let mut driven = driven();
+    assert!(!driven.app.is_visible(), "control: nothing is up yet");
+
+    // `Show` on a hidden launcher cannot answer immediately -- the window does
+    // not exist yet -- so the outcome has to wait for the window.
+    let _ = driven.app.update(Message::Command(UiCommand::Show));
+    assert_eq!(
+        reported(&mut driven.outcomes),
+        vec![],
+        "nothing to report until the window exists"
+    );
+    assert!(driven.app.is_awaiting(), "the engine is still waiting");
 
     opened(&mut driven.app);
 
     assert!(driven.app.is_visible());
     assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Shown]);
+    assert!(!driven.app.is_awaiting());
+}
+
+#[test]
+fn every_report_answers_exactly_one_command() {
+    // THE PROPERTY THE LINK DEPENDS ON. The bridge sends one command and then
+    // blocks reading exactly one reply, so a spare outcome is not discarded --
+    // it becomes the answer to the next command, and the engine reports
+    // "shown" for a toggle that hid the window.
+    //
+    // Driven through a mix of commands and user actions, because it was
+    // exactly the user actions (boot, Escape, a launch) that used to report
+    // without being asked.
+    let mut driven = driven();
+
+    opened(&mut driven.app); // boot: not a command
+    let _ = driven.app.update(Message::Dismiss); // user: not a command
+    opened(&mut driven.app); // still not a command
+
+    assert_eq!(
+        reported(&mut driven.outcomes),
+        vec![],
+        "three events, none of them a command, must produce no outcomes"
+    );
+
+    // Now three real commands, each of which must produce exactly one.
+    let _ = driven.app.update(Message::Command(UiCommand::Hide));
+    let _ = driven.app.update(Message::Command(UiCommand::Show));
+    opened(&mut driven.app); // completes the Show
+    let _ = driven.app.update(Message::Command(UiCommand::Hide));
+
+    assert_eq!(
+        reported(&mut driven.outcomes),
+        vec![UiOutcome::Hidden, UiOutcome::Shown, UiOutcome::Hidden],
+        "one outcome per command, in order"
+    );
 }
 
 #[test]
@@ -218,5 +282,6 @@ fn a_window_closed_by_the_compositor_hides_rather_than_ending_the_process() {
 
     assert_eq!(driven.app.on_dismiss(), Dismissal::Hide);
     assert!(!driven.app.is_visible());
-    assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Hidden]);
+    // The compositor closing the window answers no command either.
+    assert_eq!(reported(&mut driven.outcomes), vec![]);
 }

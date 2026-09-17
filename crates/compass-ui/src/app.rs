@@ -88,6 +88,22 @@ pub struct LauncherApp {
     window: Option<window::Id>,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
+    /// Whether the engine is waiting for an outcome right now.
+    ///
+    /// # Every report must answer a command, or the stream goes out of step
+    ///
+    /// The link is strictly one command, one outcome: the bridge sends a
+    /// command and then blocks reading exactly one reply. So an outcome sent
+    /// when nothing was asked does not go nowhere -- it sits in the channel and
+    /// becomes the answer to the *next* command, and every answer after that is
+    /// one behind, permanently.
+    ///
+    /// Two things used to do exactly that. Opening the window at boot reported
+    /// `Shown`, and a user pressing Escape reported `Hidden`; neither answers
+    /// anything. The engine would then report "shown" for a toggle that hid the
+    /// window -- the precise lie this whole design exists to prevent, arriving
+    /// through the mechanism built to prevent it.
+    awaiting: bool,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -154,6 +170,7 @@ impl LauncherApp {
             link: None,
             window: None,
             window_config: AppFlags::default().window_config,
+            awaiting: false,
         }
     }
 
@@ -168,6 +185,26 @@ impl LauncherApp {
     pub fn with_link(mut self, link: EngineLink) -> Self {
         self.link = Some(link);
         self
+    }
+
+    /// Answers the engine, if it is waiting for one.
+    ///
+    /// Does nothing when no command is outstanding. See [`Self::awaiting`] for
+    /// why that matters more than it looks.
+    fn answer(&mut self, outcome: UiOutcome) {
+        if !self.awaiting {
+            return;
+        }
+        self.awaiting = false;
+        if let Some(link) = &self.link {
+            link.report(outcome);
+        }
+    }
+
+    /// Whether the engine is waiting for an outcome. For tests.
+    #[must_use]
+    pub fn is_awaiting(&self) -> bool {
+        self.awaiting
     }
 
     /// What dismissing does, given whether anything could bring the window back.
@@ -194,18 +231,18 @@ impl LauncherApp {
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
         }
-        let Some(link) = self.link.clone() else {
+        if self.link.is_none() {
             // Unreachable: `on_dismiss` returns `Hide` only when there is a
             // link. Written as a return rather than an unwrap so a future
             // change to `on_dismiss` degrades into exiting rather than
             // panicking in the middle of a keystroke.
             return iced::exit();
-        };
+        }
         let task = match self.window.take() {
             Some(id) => window::close(id),
             None => Task::none(),
         };
-        link.report(UiOutcome::Hidden);
+        self.answer(UiOutcome::Hidden);
         task
     }
 
@@ -255,6 +292,10 @@ impl LauncherApp {
     /// second one: the outcome names the state the window ended in, so
     /// "already there" and "just opened" are the same answer.
     fn obey(&mut self, command: UiCommand) -> Task<Message> {
+        // From here until the outcome is sent, the engine is blocked reading
+        // one reply. Set before any branch so every path answers exactly once.
+        self.awaiting = true;
+
         let show = match command {
             UiCommand::Show => true,
             UiCommand::Hide => false,
@@ -266,9 +307,7 @@ impl LauncherApp {
         }
 
         if let Some(id) = self.window {
-            if let Some(link) = &self.link {
-                link.report(UiOutcome::Shown);
-            }
+            self.answer(UiOutcome::Shown);
             return window::gain_focus(id);
         }
 
@@ -331,9 +370,9 @@ impl LauncherApp {
             Message::Quit => iced::exit(),
             Message::Opened(id) => {
                 self.window = Some(id);
-                if let Some(link) = &self.link {
-                    link.report(UiOutcome::Shown);
-                }
+                // Answers only a `Show` that asked for it. The window opened at
+                // boot answers nothing -- see `awaiting`.
+                self.answer(UiOutcome::Shown);
                 Task::none()
             }
             Message::Closed(id) => {

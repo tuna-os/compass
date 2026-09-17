@@ -929,6 +929,18 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   # Inside the same Flatpak and the same session as the launcher, because the
   # socket lives under $XDG_RUNTIME_DIR and a daemon in a different runtime dir
   # is a daemon the launcher cannot find.
+  #
+  # WITH `--no-hotkey`, AND THAT WAS MEASURED RATHER THAN ASSUMED. Binding the
+  # GlobalShortcuts portal makes GNOME ask the user for permission, and step 0d
+  # measured what that puts on screen: 1.62% of pixels in a 496x532 box. That
+  # is correct product behaviour and it is Spike A's job to exercise it -- but
+  # inside THIS job it sits between the frames of a gate about the launcher,
+  # and moving the control after the engine was not enough, because the
+  # launcher window then interacts with it. Two runs failed identically at
+  # 962x603 before the flag existed.
+  #
+  # The flag is not a test hook: a user whose compositor binds a key to
+  # `vicinae toggle` should not be asked to grant one they will not use.
   engine-start)
     u="$(uid)"
     : > "$ENGINE_ERR"
@@ -942,7 +954,7 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
         XDG_SESSION_TYPE=wayland \
         RUST_LOG=info \
         RUST_BACKTRACE=1 \
-        flatpak run --installation="$4" "$5" serve \
+        flatpak run --installation="$4" "$5" serve --no-hotkey \
         > "$6" 2>&1
       echo "$?" > "$7"
     ' _ "$SESSION_USER" "$u" "$(wayland_display)" "$INSTALLATION" "$APP" \

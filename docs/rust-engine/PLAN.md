@@ -1589,7 +1589,7 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-**Sixteen crates, 804 tests, and an engine that runs.** Counts verified against the committed tree
+**Sixteen crates, 809 tests, and an engine that runs.** Counts verified against the committed tree
 rather than a dirty one — three commits early on built only because the working tree supplied files
 they had not committed, and that is checked rather than assumed.
 
@@ -1619,7 +1619,7 @@ re-measured rather than adjusted.
 - **`compass-extension-api`** (74) — the view tree, derived identity, diffing, dispatch and the
   capability registry, behind a mechanical seam gate that fails if host transport or runtime is
   named anywhere in the crate. The gate was itself tested by injecting a violation.
-- **`vicinae`** (177) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
+- **`vicinae`** (180) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
   indexes applications, ranks queries with frecency and answers over the IPC socket. It holds no
   window of its own and never opens one; `show`, `hide` and `toggle` are forwarded to a **resident
   launcher window** that attached over the same socket
@@ -1627,7 +1627,7 @@ re-measured rather than adjusted.
   client can still tell "no window" from "the window was shown". Fifteen end-to-end tests spawn the
   real binary on its own socket with every XDG variable pointed into a tempdir; four of them attach
   a fake window from the test process and assert across the process boundary.
-- **`compass-ui`** (20) and **`compass-wayland`** (2) — the Iced launcher shell and the Wayland
+- **`compass-ui`** (22) and **`compass-wayland`** (2) — the Iced launcher shell and the Wayland
   surface under it. `compass-ui` is now **resident** (ADR-0015): it runs on `iced::daemon`, opens
   and closes its window on command, and reports the state it ended in. That state machine is
   testable with no display and is, which is where the 11 new tests came from. Everything that
@@ -1891,7 +1891,9 @@ nothing able to summon it back would be an invisible process.
 50/51 that portal is the only path an unprivileged application has to a global hotkey; where it
 does not exist — every wlroots compositor — the engine says so and `vicinae toggle` still works.
 Nothing about the hotkey can stop the engine starting: the socket is the contract, the hotkey is a
-convenience.
+convenience. `serve --no-hotkey` declines to ask at all, for a user whose compositor already binds
+a key — and, measurably, for the VM tier, where GNOME's permission dialog is 1.62% of the screen
+sitting in the middle of a gate about the launcher.
 
 **The VM tier now drives the summon path.** `scripts/vmtest/launcher.sh` starts the engine, starts
 the launcher, asks the engine to hide the window and then to show it again, and gates on the screen

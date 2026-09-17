@@ -100,7 +100,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         return Ok(ExitCode::from(EXIT_OK));
     }
 
-    let runtime = if matches!(cli.command, Command::Serve) {
+    let runtime = if matches!(cli.command, Command::Serve { .. }) {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?
@@ -137,9 +137,9 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::from(EXIT_OK))
         }
 
-        Command::Serve => {
+        Command::Serve { no_hotkey } => {
             require_servable_engine(cli.engine)?;
-            serve::run(&socket).await?;
+            serve::run(&socket, !no_hotkey).await?;
             Ok(ExitCode::from(EXIT_OK))
         }
 

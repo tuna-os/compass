@@ -92,14 +92,28 @@ echo "=== 0c. the desktop with the engine up (THE CONTROL for every gate) ==="
 shot "launcher-00-before.png"
 
 echo
-echo "=== 0d. what did starting the engine put on screen? (recorded, not gated) ==="
-# The question the run above could not answer, asked directly. No thresholds:
-# a portal permission dialog here is correct behaviour -- GNOME requires the
-# user to grant a global hotkey -- and gating on its absence would be gating on
-# a guess about someone else's UI. Printing the geometry means the next reader
-# has the measurement this run had to infer.
+echo "=== 0d. starting the engine must not put anything on screen (the gate) ==="
+# THIS WAS A RECORDING AND IS NOW A GATE, on the strength of what it recorded.
+#
+# It was added ungated to answer a question two failed runs could only infer:
+# what does starting the engine draw? The answer came back 1.62% of pixels in a
+# 496x532 box -- GNOME asking the user to grant the launcher hotkey, which
+# `serve` requests from the GlobalShortcuts portal at startup.
+#
+# So `engine-start` now passes `--no-hotkey`, and with nothing to ask about,
+# starting the engine should be invisible. That makes this a real assertion
+# about the flag: if it stops working, the dialog comes back and this fails
+# here, naming the cause, instead of corrupting the launcher gate three steps
+# later with a bounding box nobody can interpret.
+#
+# The top bar is excluded for the same reason as every other gate here: it
+# carries a clock, and a minute boundary is not the engine drawing something.
+#
+# Binding the hotkey for real is Spike A's job, in its own VM, where a dialog
+# is the expected outcome rather than contamination.
 python3 scripts/vmtest/framediff.py \
-  "$out/launcher-00a-bare-desktop.png" "$out/launcher-00-before.png" || true
+  "$out/launcher-00a-bare-desktop.png" "$out/launcher-00-before.png" \
+  --max-percent 1 --ignore-box 0 0 1279 139
 
 echo
 echo "=== 1. open the launcher in the session ==="

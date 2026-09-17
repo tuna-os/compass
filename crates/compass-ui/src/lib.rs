@@ -52,6 +52,20 @@ pub use resident::{EngineLink, UiCommand, UiOutcome};
 /// Returns Iced's error when the event loop cannot start, which on a machine
 /// with no compositor is the normal outcome rather than a bug.
 pub fn run_resident(flags: AppFlags) -> iced::Result {
+    // `iced::daemon`, NOT `iced::application`, AND THE DIFFERENCE IS THE WHOLE
+    // FEATURE.
+    //
+    // `iced_winit` ends the process when the last window closes -- but that
+    // branch is guarded by `!is_daemon`, and `is_daemon` is simply
+    // `window_settings.is_none()`. `daemon`'s `Program::window()` returns
+    // `None`; `application`'s returns `Some(..)`.
+    //
+    // So under `application`, hiding the launcher would kill it. Every test in
+    // this workspace would still pass, because none of them run a real event
+    // loop -- the state machine would report `Hidden` quite correctly to an
+    // engine whose window had just exited. Verified by reading the shipped
+    // iced 0.14 source rather than inferred from the names.
+    //
     // Named functions rather than closures: `iced::daemon`'s view takes a
     // higher-ranked lifetime, and a closure's inferred signature is not general
     // enough to satisfy it.

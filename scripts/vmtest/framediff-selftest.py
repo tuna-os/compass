@@ -186,6 +186,12 @@ def assert_gate_matches_launcher_sh() -> None:
                                "--ignore-box 0 0 1279 139"),
         "the came-back gate": ("launcher-05-summoned.png", "--min-percent 3",
                                "--expect-box 300 140 980 800", "--ignore-box 0 0 1279 139"),
+        # Starting the engine must be invisible, now that it runs --no-hotkey.
+        # A tighter bound than the others on purpose: there is nothing legitimate
+        # for it to draw at all, so the only slack is the shell's own furniture.
+        "the engine-draws-nothing gate": ("launcher-00a-bare-desktop.png",
+                                          "--max-percent 1",
+                                          "--ignore-box 0 0 1279 139"),
     }
 
     for what, flags in wanted.items():
