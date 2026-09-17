@@ -78,13 +78,38 @@ Registration is per connection and **ordered**: `clipboard-db.cpp` keys the data
 `vicinaeFuzzyTrigramInit(handle, nullptr, nullptr)`, then runs its pragmas. The Rust side has to do
 the same three things in the same order.
 
-That ordering has a consequence for decision 4 above and for the workspace's
-`unsafe_code = "forbid"`, which `forbid` does not let a crate opt out of: calling that function from
-Rust is FFI on a raw `sqlite3*`. The alternative is a C shim compiled into the same library that
-chains the registration onto `SQLITE_EXTRA_INIT` — the hook SQLCipher already occupies with
-`sqlcipher_extra_init` — which would keep every connection registered with no Rust `unsafe` at all.
-That choice belongs to the slice that writes the build, but it is a choice, not a detail, and the
-lint is why.
+That ordering is not incidental, and it removes the escape hatch this ADR first recorded.
+
+The original text here proposed a C shim chaining the registration onto `SQLITE_EXTRA_INIT` — the
+hook SQLCipher already occupies with `sqlcipher_extra_init` — so that every connection would be
+registered with no Rust `unsafe` at all. **That does not work, and the reason is the ordering
+above.** An `sqlite3_auto_extension` callback runs during `sqlite3_open`, before any caller can
+issue `PRAGMA key`; registering an FTS5 tokenizer has to query the database for the `fts5` API
+pointer; and on an encrypted database that query cannot succeed before the key is set. Built and
+measured, with the registration traced:
+
+| file being opened | registration `rc` |
+|---|---|
+| fresh / empty | `0` — ok |
+| existing, encrypted | `1` — SQL logic error, and `sqlite3_open` fails with "automatic extension loading failed" |
+
+The shim was written and it passed — against fresh files, the one case that cannot distinguish the
+two. It fails on exactly the input that matters: a clipboard history that already exists.
+
+So the registration must be an explicit call after keying, as `clipboard-db.cpp` does it, which
+means FFI on a raw `sqlite3*`. The workspace sets `unsafe_code = "forbid"`, and `forbid` cannot be
+locally overridden, so **the sys crate must decline `[lints] workspace = true` and state its own
+lints**. That is the cost of the file format, and it is confined to one crate whose exception is
+visible as a missing line in one manifest.
+
+### The bundled alternative, and why it is not needed
+
+`rusqlite`'s `bundled-sqlcipher` feature carries its own SQLCipher — **4.6.1**, against the
+vendored **4.16.0**. Files written by one are readable by the other: a database written by
+rusqlite 4.6.1 was opened and read by a binary built from `vendor/sqlcipher`. So the version skew
+is not itself a format break, which lowers the stakes of decision 1 without changing it — one
+round trip on one simple table is not a guarantee about every page type, and linking the same
+amalgamation both engines already use costs nothing by comparison.
 
 ## Consequences
 
