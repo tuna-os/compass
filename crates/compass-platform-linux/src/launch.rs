@@ -1,0 +1,154 @@
+//! Launching an application on Linux.
+//!
+//! Three strategies, tried in order, unchanged from when this code lived in
+//! `compass-platform`:
+//!
+//! 1. `flatpak-spawn --host`, when running inside a Flatpak
+//! 2. the XDG `OpenURI` portal
+//! 3. a direct spawn
+//!
+//! The order matters and is not arbitrary. Inside the sandbox a direct spawn
+//! reaches only what the sandbox contains, so it is the last resort rather
+//! than the obvious first move.
+
+use std::path::Path;
+
+use compass_platform::{AppLauncher, LaunchError, LaunchFuture, LaunchMethod};
+use compass_portals::OpenOutcome;
+use compass_xdg::DesktopEntry;
+use tokio::process::Command as TokioCommand;
+use tracing::{debug, info, warn};
+
+/// Launches applications the way a Linux desktop expects.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LinuxLauncher;
+
+impl AppLauncher for LinuxLauncher {
+    fn launch<'a>(&'a self, entry: &'a DesktopEntry, uris: &'a [&'a str]) -> LaunchFuture<'a> {
+        Box::pin(launch_app_with_uris(entry, uris))
+    }
+}
+
+/// Launch an application with URIs.
+async fn launch_app_with_uris(
+    entry: &DesktopEntry,
+    uris: &[&str],
+) -> Result<LaunchMethod, LaunchError> {
+    let exec = entry.expand_exec_with(uris, false, None);
+    if exec.is_empty() {
+        return Err(LaunchError::NoExec);
+    }
+
+    info!(?exec, "Launching application");
+
+    // Try flatpak-spawn --host first if we're in a Flatpak
+    if is_flatpak() {
+        match launch_via_flatpak_spawn(&exec).await {
+            Ok(()) => return Ok(LaunchMethod::FlatpakSpawn),
+            Err(e) => warn!(%e, "flatpak-spawn failed, trying OpenURI"),
+        }
+    }
+
+    // Try OpenURI portal
+    match launch_via_open_uri(&exec).await {
+        Ok(()) => return Ok(LaunchMethod::OpenUri),
+        Err(e) => warn!(%e, "OpenURI failed, trying direct execution"),
+    }
+
+    // Fall back to direct execution
+    launch_direct(&exec).await.map(|()| LaunchMethod::Direct)
+}
+
+/// Check if we're running inside a Flatpak.
+fn is_flatpak() -> bool {
+    Path::new("/.flatpak-info").exists()
+}
+
+/// Launch via `flatpak-spawn --host`.
+async fn launch_via_flatpak_spawn(exec: &[String]) -> Result<(), LaunchError> {
+    let mut cmd = TokioCommand::new("flatpak-spawn");
+    cmd.arg("--host");
+    cmd.args(exec);
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+
+    debug!(?cmd, "Running flatpak-spawn");
+
+    let status = cmd
+        .spawn()
+        .map_err(|e| LaunchError::FlatpakSpawnFailed(e.to_string()))?
+        .wait()
+        .await
+        .map_err(|e| LaunchError::FlatpakSpawnFailed(e.to_string()))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(LaunchError::FlatpakSpawnFailed(format!(
+            "exit code: {:?}",
+            status.code()
+        )))
+    }
+}
+
+/// Launch via the OpenURI portal.
+async fn launch_via_open_uri(exec: &[String]) -> Result<(), LaunchError> {
+    // For OpenURI, we need to construct a URI that the desktop will open.
+    // This is tricky because OpenURI opens URIs, not arbitrary commands.
+    // We use the "exec:" URI scheme if available, or fall back to launching
+    // the command directly via the portal's OpenFile if it's a .desktop file.
+    // For now, we just try to use the first arg as a URI if it looks like one.
+    let uri = exec.first().ok_or(LaunchError::NoExec)?;
+
+    let portals = compass_portals::Portals::connect(compass_portals::PortalConfig::default())
+        .await
+        .map_err(|e| LaunchError::OpenUriUnavailable(e.to_string()))?;
+
+    let open_uri = portals
+        .open_uri()
+        .map_err(|e| LaunchError::OpenUriUnavailable(e.to_string()))?;
+
+    match open_uri.open_uri(uri, true).await {
+        Ok(OpenOutcome::Opened) => Ok(()),
+        Ok(OpenOutcome::Dismissed) => Err(LaunchError::OpenUriDismissed),
+        Ok(OpenOutcome::Refused) => Err(LaunchError::OpenUriRefused("portal refused".to_owned())),
+        Ok(_) => Err(LaunchError::OpenUriRefused("unknown outcome".to_owned())),
+        Err(e) => Err(LaunchError::OpenUriFailed(e.to_string())),
+    }
+}
+
+/// Launch directly (not sandboxed).
+async fn launch_direct(exec: &[String]) -> Result<(), LaunchError> {
+    let mut cmd = TokioCommand::new(&exec[0]);
+    cmd.args(&exec[1..]);
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+
+    debug!(?cmd, "Running direct");
+
+    cmd.spawn()
+        .map(|_child| ())
+        .map_err(|e| LaunchError::DirectFailed(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_linux_launcher_is_an_app_launcher() {
+        // The composition in `vicinae` holds an Arc<dyn AppLauncher>; this
+        // fails to compile if LinuxLauncher stops satisfying it.
+        let launcher: std::sync::Arc<dyn AppLauncher> = std::sync::Arc::new(LinuxLauncher);
+        assert_eq!(format!("{launcher:?}"), "LinuxLauncher");
+    }
+
+    #[test]
+    fn flatpak_detection_reads_the_sandbox_marker() {
+        // Asserts what it actually checks rather than the answer, which
+        // differs between a developer machine and the Flatpak CI job.
+        assert_eq!(is_flatpak(), Path::new("/.flatpak-info").exists());
+    }
+}

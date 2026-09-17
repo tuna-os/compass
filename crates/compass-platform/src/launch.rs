@@ -1,13 +1,36 @@
-//! Application launching via `flatpak-spawn --host` and `OpenURI` portal.
+//! Launching an application — the interface, not an implementation.
+//!
+//! # Why this is a trait now
+//!
+//! This module used to *be* the Linux launcher: `flatpak-spawn --host`, then
+//! the XDG `OpenURI` portal, then a direct spawn, in a crate named
+//! `compass-platform` that depended on `compass-portals`. That is an
+//! implementation wearing the name of an abstraction, and
+//! [ADR-0013](../../../docs/rust-engine/adr/0013-qt-leaves-the-repository.md)
+//! makes it a problem rather than a curiosity: Qt leaves the repository, so
+//! macOS and Windows get their own phases, and every phase that lands before
+//! the seam exists is written against the shape this crate has today.
+//!
+//! The Linux implementation now lives in `compass-platform-linux` and is
+//! selected in the `vicinae` binary. This crate names what a launcher *is*.
+//!
+//! # Why the future is boxed
+//!
+//! `async fn` in traits is stable, but it is not `dyn`-compatible, and the
+//! whole point here is to hold an `Arc<dyn AppLauncher>` chosen at
+//! composition. Boxing the future is the cost of that, and it is paid once per
+//! launch — not once per keystroke.
 
-use std::path::Path;
+use std::future::Future;
+use std::pin::Pin;
 
-use compass_portals::OpenOutcome;
 use compass_xdg::DesktopEntry;
-use tokio::process::Command as TokioCommand;
-use tracing::{debug, info, warn};
 
 /// How the application was launched.
+///
+/// The variants are Linux-shaped today because the only implementation is.
+/// A macOS backend would report its own, and this enum grows then rather than
+/// being guessed at now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchMethod {
     /// Launched via `flatpak-spawn --host`.
@@ -47,136 +70,41 @@ pub enum LaunchError {
     DirectFailed(String),
 }
 
-/// Launch an application from a desktop entry.
+/// The future an [`AppLauncher`] returns.
+pub type LaunchFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<LaunchMethod, LaunchError>> + Send + 'a>>;
+
+/// Launching an application on this platform.
 ///
-/// Tries `flatpak-spawn --host` first (for Flatpak sandbox), then falls back
-/// to the OpenURI portal, then direct execution.
-pub async fn launch_app(entry: &DesktopEntry) -> Result<LaunchMethod, LaunchError> {
-    launch_app_with_uris(entry, &[]).await
+/// One implementation exists (`compass-platform-linux`), which means this is
+/// not yet proven to be an abstraction — a trait with a single implementation
+/// describes that implementation until a second one disagrees with it. The
+/// same is true of `compass-shell`'s D-Bus contract, and the answer there was
+/// a mock: see [`NullLauncher`], which exists so that a caller can be tested
+/// without launching anything, and so that the trait has to survive being
+/// implemented twice.
+pub trait AppLauncher: std::fmt::Debug + Send + Sync {
+    /// Launch `entry`, passing `uris` to its `Exec` field codes.
+    fn launch<'a>(&'a self, entry: &'a DesktopEntry, uris: &'a [&'a str]) -> LaunchFuture<'a>;
 }
 
-/// Launch an application with URIs.
+/// A launcher that launches nothing and says so.
 ///
-/// Expands the `Exec` field codes with the given URIs, then tries:
-/// 1. `flatpak-spawn --host` (if running in a Flatpak)
-/// 2. OpenURI portal
-/// 3. Direct execution
-pub async fn launch_app_with_uris(
-    entry: &DesktopEntry,
-    uris: &[&str],
-) -> Result<LaunchMethod, LaunchError> {
-    let exec = entry.expand_exec_with(uris, false, None);
-    if exec.is_empty() {
-        return Err(LaunchError::NoExec);
-    }
+/// Not a stub to be filled in: it is the second implementation that keeps
+/// [`AppLauncher`] honest, and it is what a test uses when the thing under
+/// test is "did the UI ask to launch the right entry" rather than "did the
+/// application start".
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NullLauncher;
 
-    info!(?exec, "Launching application");
-
-    // Try flatpak-spawn --host first if we're in a Flatpak
-    if is_flatpak() {
-        match launch_via_flatpak_spawn(&exec).await {
-            Ok(()) => return Ok(LaunchMethod::FlatpakSpawn),
-            Err(e) => warn!(%e, "flatpak-spawn failed, trying OpenURI"),
-        }
-    }
-
-    // Try OpenURI portal
-    match launch_via_open_uri(&exec).await {
-        Ok(()) => return Ok(LaunchMethod::OpenUri),
-        Err(e) => warn!(%e, "OpenURI failed, trying direct execution"),
-    }
-
-    // Fall back to direct execution
-    launch_direct(&exec).await.map(|_| LaunchMethod::Direct)
-}
-
-/// Check if we're running inside a Flatpak.
-fn is_flatpak() -> bool {
-    Path::new("/.flatpak-info").exists()
-}
-
-/// Launch via `flatpak-spawn --host`.
-async fn launch_via_flatpak_spawn(exec: &[String]) -> Result<(), LaunchError> {
-    let mut cmd = TokioCommand::new("flatpak-spawn");
-    cmd.arg("--host");
-    cmd.args(exec);
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
-
-    debug!(?cmd, "Running flatpak-spawn");
-
-    let status = cmd
-        .spawn()
-        .map_err(|e| LaunchError::FlatpakSpawnFailed(e.to_string()))?
-        .wait()
-        .await
-        .map_err(|e| LaunchError::FlatpakSpawnFailed(e.to_string()))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(LaunchError::FlatpakSpawnFailed(format!(
-            "exit code: {:?}",
-            status.code()
-        )))
-    }
-}
-
-/// Launch via the OpenURI portal.
-async fn launch_via_open_uri(exec: &[String]) -> Result<(), LaunchError> {
-    // For OpenURI, we need to construct a URI that the desktop will open.
-    // This is tricky because OpenURI opens URIs, not arbitrary commands.
-    // We use the "exec:" URI scheme if available, or fall back to launching
-    // the command directly via the portal's OpenFile if it's a .desktop file.
-    // For now, we just try to use the first arg as a URI if it looks like one.
-
-    let uri = exec.first().ok_or(LaunchError::NoExec)?;
-
-    // Try to get the OpenURI portal
-    let portals = compass_portals::Portals::connect(compass_portals::PortalConfig::default())
-        .await
-        .map_err(|e| LaunchError::OpenUriUnavailable(e.to_string()))?;
-
-    let open_uri = portals
-        .open_uri()
-        .map_err(|e| LaunchError::OpenUriUnavailable(e.to_string()))?;
-
-    // For desktop entries, we can try the exec URI or just the command
-    // This is a simplified version - real implementation would need more logic
-    match open_uri.open_uri(uri, true).await {
-        Ok(OpenOutcome::Opened) => Ok(()),
-        Ok(OpenOutcome::Dismissed) => Err(LaunchError::OpenUriDismissed),
-        Ok(OpenOutcome::Refused) => Err(LaunchError::OpenUriRefused("portal refused".to_owned())),
-        Ok(_) => Err(LaunchError::OpenUriRefused("unknown outcome".to_owned())),
-        Err(e) => Err(LaunchError::OpenUriFailed(e.to_string())),
-    }
-}
-
-/// Launch directly (not sandboxed).
-async fn launch_direct(exec: &[String]) -> Result<(), LaunchError> {
-    let mut cmd = TokioCommand::new(&exec[0]);
-    cmd.args(&exec[1..]);
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
-
-    debug!(?cmd, "Running direct");
-
-    let status = cmd
-        .spawn()
-        .map_err(|e| LaunchError::DirectFailed(e.to_string()))?
-        .wait()
-        .await
-        .map_err(|e| LaunchError::DirectFailed(e.to_string()))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(LaunchError::DirectFailed(format!(
-            "exit code: {:?}",
-            status.code()
-        )))
+impl AppLauncher for NullLauncher {
+    fn launch<'a>(&'a self, entry: &'a DesktopEntry, _uris: &'a [&'a str]) -> LaunchFuture<'a> {
+        Box::pin(async move {
+            tracing::info!(name = %entry.name(), "NullLauncher: not launching");
+            Err(LaunchError::DirectFailed(
+                "NullLauncher never launches anything".to_owned(),
+            ))
+        })
     }
 }
 
@@ -185,18 +113,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_flatpak_false_when_no_file() {
-        // Can't easily test this without mocking the filesystem
-        // Just ensure the function compiles
-        let _ = is_flatpak();
-    }
-
-    #[test]
-    fn launch_error_display() {
-        let err = LaunchError::NoExec;
-        assert!(err.to_string().contains("Exec"));
-
-        let err = LaunchError::FlatpakSpawnNotFound;
-        assert!(err.to_string().contains("flatpak-spawn"));
+    fn the_null_launcher_is_an_app_launcher() {
+        // Compiles only if NullLauncher satisfies the object-safe trait, which
+        // is the property the composition in `vicinae` depends on.
+        let launcher: std::sync::Arc<dyn AppLauncher> = std::sync::Arc::new(NullLauncher);
+        assert_eq!(format!("{launcher:?}"), "NullLauncher");
     }
 }

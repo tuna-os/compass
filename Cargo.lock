@@ -805,10 +805,20 @@ dependencies = [
 name = "compass-platform"
 version = "0.1.0"
 dependencies = [
- "compass-portals",
  "compass-xdg",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "compass-platform-linux"
+version = "0.1.0"
+dependencies = [
+ "compass-platform",
+ "compass-portals",
+ "compass-xdg",
  "tokio",
  "tracing",
 ]
@@ -865,9 +875,7 @@ version = "0.1.0"
 dependencies = [
  "compass-core",
  "compass-platform",
- "compass-portals",
  "compass-search",
- "compass-wayland",
  "compass-xdg",
  "iced",
  "iced_winit",
@@ -4274,6 +4282,7 @@ dependencies = [
  "clap",
  "compass-core",
  "compass-ipc",
+ "compass-platform-linux",
  "compass-portals",
  "compass-testkit",
  "compass-ui",

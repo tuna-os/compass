@@ -19,8 +19,6 @@ winit = { version = "0.30", features = ["wayland"] }
 compass-core.workspace = true
 compass-search.workspace = true
 compass-xdg.workspace = true
-compass-portals.workspace = true
-compass-wayland.workspace = true
 compass-platform.workspace = true
 
 [dev-dependencies]

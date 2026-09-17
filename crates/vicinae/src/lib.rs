@@ -76,8 +76,14 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                  nothing to open a window on. Run `vicinae doctor` for the full picture"
             );
         }
-        compass_ui::run(compass_ui::AppFlags::default())
-            .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+        // The one place that knows which platform this is. ADR-0013: the
+        // shared crates name what a platform can do; the binary picks who
+        // does it.
+        compass_ui::run(compass_ui::AppFlags {
+            launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
+            ..compass_ui::AppFlags::default()
+        })
+        .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
         return Ok(ExitCode::from(EXIT_OK));
     }
 
