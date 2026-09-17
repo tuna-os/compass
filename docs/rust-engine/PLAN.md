@@ -1257,12 +1257,21 @@ process opening a surface. Those are different numbers with different costs:
   first paint. Everything expensive — the process, the adapter, the font atlas, the application
   index — is already warm.
 
-**Neither number is measured yet, and the second one has no harness at all.** The VM tier reports
-its proxy for the cold half (below); nothing reports the warm half, because until this branch there
-was no way to summon anything. Measuring it needs the same host-side paint gate the cold number
-uses — ADR-0010 settles that nothing inside the guest can observe a frame — with the clock started
-at the `toggle` rather than at process spawn. **Until that exists, the 120 ms figure is a target
-carried over from the spec, not a result.**
+**The warm half now has a proxy, and it is not the SLA.** `scripts/vmtest/launcher.sh` times a
+`vicinae show` against an attached window: CLI to engine, engine to window, and the window's answer
+back. Two runs report **338 ms and 480 ms** under llvmpipe.
+
+That number is an **upper bound with a whole Flatpak launch inside it** — the client is `vicinae`
+rather than a keypress, so a process spawn, a Flatpak sandbox setup and a socket connection are all
+counted before the engine is even asked. On the real path the portal delivers an activation
+straight into a running engine and none of that happens. It is also not a frame: ADR-0010 settles
+that nothing inside the guest can observe one, so what is timed ends at the window's *answer*,
+which the launcher now sends only once the window actually exists or is actually gone.
+
+**So the 120 ms figure is still a target carried over from the spec, not a result.** Closing the
+gap needs the host-side paint gate the cold number uses, with the clock started at the toggle. What
+the round trip does establish is a ceiling and a regression signal, which is more than the row had
+before.
 
 The spec claims sub-30 MB but proposes no test for it; without a gate the claim decays. Track RSS
 per commit, fail on >5% regression. **Measure inside the Flatpak** — sandbox overhead is real and
@@ -1275,7 +1284,7 @@ the number users see is the sandboxed one.
 | Fuzzy search, top-20 of 10,000 | no benchmark — now measured, see below |
 | IPC round-trip | one benchmark, which timed a sleep — see below |
 | Cold start to first frame | no benchmark — **nearest observable proxy now reported**, see below |
-| Summon to first frame | **no harness at all** — the row exists, nothing measures it |
+| Summon to first frame | no benchmark — **the round trip is now reported**, see below; still not a frame |
 | Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
 | Peak RSS, 10k index + 3 extensions | no benchmark — **index half now measured**, see below |
 
@@ -1895,12 +1904,26 @@ convenience. `serve --no-hotkey` declines to ask at all, for a user whose compos
 a key — and, measurably, for the VM tier, where GNOME's permission dialog is 1.62% of the screen
 sitting in the middle of a gate about the launcher.
 
-**The VM tier now drives the summon path.** `scripts/vmtest/launcher.sh` starts the engine, starts
-the launcher, asks the engine to hide the window and then to show it again, and gates on the screen
-going back to the bare desktop and then back to a launcher. That is the first thing in this tier
-that can observe a *connection* rather than a process: `serve` refuses `toggle` when no window has
-attached, so a `toggle` that succeeds is proof of the whole chain — CLI, socket, engine, window
-link, and a window that answered.
+**The loop is verified on a real GNOME session.** `scripts/vmtest/launcher.sh` starts the engine,
+starts the launcher, asks the engine to hide the window and then to show it again, and gates on
+what the screen does. As of `5918e2a` every gate passes on Bluefin under corral:
+
+| gate | result |
+|---|---|
+| starting the engine draws nothing | `IDENTICAL` |
+| a launcher window appeared | 9.99%, box x 335..942 y 152..796 |
+| the window answered a toggle over the link | passed |
+| summoning it back | 480 ms round trip |
+| hidden looks like the bare desktop again | `IDENTICAL` |
+| summoned looks like a launcher again | 9.96%, **the same box it first opened in** |
+
+The last pair is the part worth reading twice. Hiding returns the screen to byte-identical with the
+desktop, and summoning reproduces the opened frame's bounding box to within three pixels of area —
+so the window genuinely goes away and genuinely comes back, rather than something merely changing.
+
+This is also the first thing in this tier that can observe a *connection* rather than a process:
+`serve` refuses `toggle` when no window has attached, so a `toggle` that succeeds is proof of the
+whole chain — CLI, socket, engine, window link, and a window that answered on the other end.
 
 **What is still missing is the keypress, and it is not the code's fault.** Injected input does not
 reach this VM's compositor at all — `launcher.sh` documents the chain and where it breaks, and
@@ -1909,8 +1932,14 @@ Super+Space, and what stays untested is the portal delivering an activation. Eve
 activation is exercised.
 
 **And the number that matters is still unmeasured.** See §8.5's split SLA row: summon to first
-frame has no harness, and the round trip the tier now reports is an upper bound with a whole
-Flatpak launch inside it.
+frame still has no harness. The 480 ms the tier now reports is a round trip, not a frame, and an
+upper bound with a whole Flatpak launch inside it.
+
+**One more thing the tier has to be told to ignore.** Two strips of GNOME's own furniture change
+without us: the top bar carries a clock, and the dash redraws its backdrop when any process starts.
+Both are excluded from the "nothing drew" gates. The middle of the screen — where a window or a
+permission dialog would land — is still compared exactly, and `framediff-selftest.py` holds twelve
+controls proving each gate still fails for every reason it exists to catch.
 
 Which is also why the refusal stays a refusal. A client can tell "no window" from "the window was
 shown", and that distinction is the only thing standing between an honest gap and a `toggle` that
