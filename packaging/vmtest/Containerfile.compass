@@ -86,6 +86,44 @@ RUN mkdir -p /var/home && \
     useradd --create-home --home-dir /var/home/compass --shell /bin/bash compass && \
     id compass
 
+# ── no first-run tour ────────────────────────────────────────────────────────
+#
+# Every frame this tier captured used to have "Welcome to Bluefin (Version: …)"
+# centred on it, with Skip and Take Tour — GNOME Tour, which Bluefin rebrands.
+# It sat in the middle of the screen, which is exactly where the launcher opens,
+# so the launcher gate was measuring a window partly hidden behind a dialog and
+# the artifacts were hard for a human to read.
+#
+# It is not autostarted by a desktop file of its own — org.gnome.Tour.desktop
+# has no AutostartCondition. It is started on a user's first login through
+# gnome-initial-setup's first-login autostart entry, which is gated on
+#
+#     AutostartCondition=unless-exists gnome-initial-setup-done
+#
+# so the way GNOME provides to say "this user has been through it" is to create
+# that file. Doing that rather than deleting an autostart entry means we are
+# using the package's own mechanism, and it keeps working if Bluefin renames or
+# repackages the tour.
+#
+# /var/home is seeded from the image at install time (see the note above), so a
+# file written here reaches the installed system.
+#
+# The grep below is diagnostic, not an assertion, and the difference is
+# deliberate. The condition is how GNOME documents this, but which package in
+# this image carries it — gnome-initial-setup, gnome-tour, or something Bluefin
+# adds — is the image's business and may change under us. Failing the build on
+# it would turn a cosmetic regression into a red tier; printing it means that if
+# a later run's frames still show a dialog, the build log already says whether
+# the mechanism was there to be used. The frame is the real check, and this tier
+# captures one either way.
+RUN install -d -o compass -g compass -m 0755 /var/home/compass/.config && \
+    printf 'yes\n' > /var/home/compass/.config/gnome-initial-setup-done && \
+    chown compass:compass /var/home/compass/.config/gnome-initial-setup-done && \
+    ls -l /var/home/compass/.config/gnome-initial-setup-done && \
+    echo '-- autostart entries gated on gnome-initial-setup-done --' && \
+    grep -rl gnome-initial-setup-done /etc/xdg/autostart /usr/share/gnome/autostart 2>/dev/null \
+      || echo 'NONE FOUND: no autostart entry references the condition in this image'
+
 # WaylandEnable is spelled out rather than left to the default: the whole point
 # of this tier is that compass is Wayland-only, and a silent fallback to Xorg
 # would turn a real failure into a green run.
@@ -166,6 +204,7 @@ RUN systemctl enable sshd.service
 # app id survived into it; whether the *value* is right is answered in the guest
 # by `checks.sh spike-a-evidence`, which reads it the way GNOME will.
 COPY compass-shortcuts.dconf /etc/dconf/db/compass.d/10-compass-shortcuts
+COPY compass-session.dconf /etc/dconf/db/compass.d/20-compass-session
 RUN set -eux; \
     mkdir -p /etc/dconf/profile; \
     if [ -f /etc/dconf/profile/user ]; then \
@@ -177,7 +216,8 @@ RUN set -eux; \
     cat /etc/dconf/profile/user; \
     dconf update; \
     test -f /etc/dconf/db/compass; \
-    grep -q com.vicinae.Vicinae /etc/dconf/db/compass
+    grep -q com.vicinae.Vicinae /etc/dconf/db/compass; \
+    grep -q welcome-dialog-last-shown-version /etc/dconf/db/compass
 
 # ── the corpus harvester ─────────────────────────────────────────────────────
 #
