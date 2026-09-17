@@ -4,6 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-unstable";
     systems.url = "github:nix-systems/default";
+    crane = {
+      url = "github:ipetkov/crane/v0.17.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     soulver-cpp = {
       url = "github:vicinaehq/soulver-cpp";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -16,67 +20,121 @@
 
   nixConfig = {
     extra-substituters = ["https://vicinae.cachix.org"];
-    extra-trusted-public-keys = ["vicinae.cachix.org-1:1kDrfienkGHPYbkpNj1mWTr7Fm1+zcenzgTizIcI3oc="];
+    extra-trusted-public-keys = [
+      "vicinae.cachix.org-1:1kDrfienkGHPYbkpNj1mWTr7Fm1+zcenzgTizIcI3oc="
+    ];
   };
 
   outputs = {
     self,
     nixpkgs,
     systems,
+    crane,
     soulver-cpp,
     numen,
   }: let
     inherit (nixpkgs) lib;
+
     forEachPkgs = f: lib.genAttrs (import systems) (system: f nixpkgs.legacyPackages.${system});
+
     numenFor = pkgs: numen.packages.${pkgs.stdenv.hostPlatform.system}.numen.override {withRepl = false;};
-  in {
-    packages = forEachPkgs (pkgs: let
-      vicinae = pkgs.callPackage ./nix/vicinae.nix {
-        gcc15Stdenv = pkgs.gcc15Stdenv;
-        numen = numenFor pkgs;
+
+    # Crane-based Rust build
+    rustBuild = pkgs: let
+      craneLib = crane.mkLib pkgs;
+      # crane's cleanCargoSource only keeps .rs/.toml/Cargo.lock/.cargo/config and
+      # so strips the .xml D-Bus introspection files + dconf seed that are embedded
+      # via include_str! in compass-shell and vicinae; preserve them too.
+      includeStrFilter = path: type:
+        craneLib.filterCargoSources path type
+        || lib.hasSuffix ".xml" (builtins.baseNameOf path)
+        || lib.hasSuffix ".dconf" (builtins.baseNameOf path);
+      rustSrc = lib.cleanSourceWith {
+        src = lib.cleanSource self;
+        filter = includeStrFilter;
       };
-      soulver = soulver-cpp.packages.${pkgs.stdenv.hostPlatform.system}.default or null;
     in
-      lib.optionalAttrs (soulver != null) {
-        with-soulver = pkgs.symlinkJoin {
-          name = "${vicinae.name}-with-soulver";
-          paths = [vicinae];
-          nativeBuildInputs = [pkgs.makeWrapper];
-          postBuild = ''
-            for bin in $out/bin/*; do
-              wrapProgram "$bin" \
-                --prefix LD_LIBRARY_PATH : ${soulver}/lib \
-                --prefix XDG_DATA_DIRS : ${soulver}/share
-            done
-          '';
-          inherit (vicinae) meta;
+      craneLib.buildPackage {
+        pname = "rust-vicinae";
+        version = "0.1.0";
+        src = rustSrc;
+        cargoBuildFlags = ["-p" "vicinae" "--locked" "--release"];
+        nativeBuildInputs = [pkgs.pkg-config];
+        # Linux-only engine (ADR-0007): wayland and friends are not available
+        # on darwin, so keep them out of the closure there. The package itself
+        # is marked Linux-only below.
+        buildInputs = with pkgs;
+          lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+            dbus
+            libxkbcommon
+            wayland
+            mesa
+            fontconfig
+            freetype
+            harfbuzz
+          ];
+        doCheck = false;
+        meta = {
+          description = "Vicinae Rust engine";
+          homepage = "https://github.com/tuna-os/compass";
+          license = lib.licenses.gpl3Plus;
+          platforms = lib.platforms.linux;
         };
-      }
-      // {
-        default = vicinae;
-        nix-update-script = pkgs.writeShellScriptBin "nix-update-script" ''
-          OLD_API_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.apiDeps.hash)
-          OLD_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.extensionManagerDeps.hash)
+      };
+  in {
+    packages = forEachPkgs (
+      pkgs: let
+        vicinae = pkgs.callPackage ./nix/vicinae.nix {
+          gcc15Stdenv = pkgs.gcc15Stdenv;
+          numen = numenFor pkgs;
+        };
+        soulver = soulver-cpp.packages.${pkgs.stdenv.hostPlatform.system}.default or null;
+      in
+        lib.optionalAttrs (soulver != null) {
+          with-soulver = pkgs.symlinkJoin {
+            name = "${vicinae.name}-with-soulver";
+            paths = [vicinae];
+            nativeBuildInputs = [pkgs.makeWrapper];
+            postBuild = ''
+              for bin in $out/bin/*; do
+                wrapProgram "$bin" \
+                  --prefix LD_LIBRARY_PATH : ${soulver}/lib \
+                  --prefix XDG_DATA_DIRS : ${soulver}/share
+              done
+            '';
+            inherit (vicinae) meta;
+          };
+        }
+        // {
+          default = vicinae;
+          rust-vicinae = rustBuild pkgs;
+          nix-update-script = pkgs.writeShellScriptBin "nix-update-script" ''
+            OLD_API_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.apiDeps.hash)
+            OLD_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.extensionManagerDeps.hash)
 
-          cd src/typescript/api
-          NEW_API_DEPS_HASH=$(${pkgs.lib.getExe pkgs.prefetch-npm-deps} package-lock.json)
-          cd ../extension-manager
-          NEW_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.prefetch-npm-deps} package-lock.json)
-          cd ..
+            cd src/typescript/api
+            NEW_API_DEPS_HASH=$(${pkgs.lib.getExe pkgs.prefetch-npm-deps} package-lock.json)
+            cd ../extension-manager
+            NEW_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.prefetch-npm-deps} package-lock.json)
+            cd ..
 
-          [[ "$OLD_API_DEPS_HASH" == "$NEW_API_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for API npm deps, please replace the value in vicinae.nix with '$NEW_API_DEPS_HASH'.\e[0m" >&2; exit 1;}
+            [[ "$OLD_API_DEPS_HASH" == "$NEW_API_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for API npm deps, please replace the value in vicinae.nix with '$NEW_API_DEPS_HASH'.\e[0m" >&2; exit 1; }
 
-          [[ "$OLD_EXT_MAN_DEPS_HASH" == "$NEW_EXT_MAN_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for extension-manager npm deps, please replace the value in vicinae.nix with '$NEW_EXT_MAN_DEPS_HASH'.\e[0m" >&2; exit 1;}
-        '';
-      });
+            [[ "$OLD_EXT_MAN_DEPS_HASH" == "$NEW_EXT_MAN_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for extension-manager npm deps, please replace the value in vicinae.nix with '$NEW_EXT_MAN_DEPS_HASH'.\e[0m" >&2; exit 1; }
+          '';
+        }
+    );
+
     lib = forEachPkgs (pkgs: {
       mkVicinaeExtension = pkgs.callPackage ./nix/mkVicinaeExtension.nix {};
       mkRayCastExtension = pkgs.callPackage ./nix/mkRayCastExtension.nix {};
     });
+
     devShells = forEachPkgs (
       pkgs: let
         inherit (pkgs.stdenv.hostPlatform) isLinux;
-        qtEnv = pkgs.qt6.env "qt-custom-${pkgs.qt6.qtbase.version}" ([
+        qtEnv = pkgs.qt6.env "qt-custom-${pkgs.qt6.qtbase.version}" (
+          [
             pkgs.qt6.qtdeclarative
             pkgs.qt6.qtsvg
             pkgs.qt6.qtimageformats
@@ -85,7 +143,8 @@
           ++ pkgs.lib.optionals isLinux [
             pkgs.qt6.qtwayland
             pkgs.kdePackages.layer-shell-qt
-          ]);
+          ]
+        );
         package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
       in {
         default = pkgs.mkShell.override {stdenv = package.stdenv;} {
@@ -111,6 +170,7 @@
         };
       }
     );
+
     overlays.default = final: prev: {
       vicinae = final.callPackage ./nix/vicinae.nix {numen = numenFor final;};
       mkVicinaeExtension = prev.callPackage ./nix/mkVicinaeExtension.nix {};
