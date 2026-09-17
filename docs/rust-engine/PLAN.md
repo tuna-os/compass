@@ -1565,7 +1565,7 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-**Sixteen crates, 782 tests, and an engine that runs.** Counts verified against the committed tree
+**Sixteen crates, 799 tests, and an engine that runs.** Counts verified against the committed tree
 rather than a dirty one — three commits early on built only because the working tree supplied files
 they had not committed, and that is checked rather than assumed.
 
@@ -1595,7 +1595,7 @@ re-measured rather than adjusted.
 - **`compass-extension-api`** (74) — the view tree, derived identity, diffing, dispatch and the
   capability registry, behind a mechanical seam gate that fails if host transport or runtime is
   named anywhere in the crate. The gate was itself tested by injecting a violation.
-- **`vicinae`** (166) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
+- **`vicinae`** (172) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
   indexes applications, ranks queries with frecency and answers over the IPC socket. It holds no
   window of its own and never opens one; `show`, `hide` and `toggle` are forwarded to a **resident
   launcher window** that attached over the same socket
@@ -1603,10 +1603,12 @@ re-measured rather than adjusted.
   client can still tell "no window" from "the window was shown". Fifteen end-to-end tests spawn the
   real binary on its own socket with every XDG variable pointed into a tempdir; four of them attach
   a fake window from the test process and assert across the process boundary.
-- **`compass-ui`** (9) and **`compass-wayland`** (2) — the Iced launcher shell and the Wayland
-  surface under it. The thinnest test coverage in the workspace by a wide margin, and honestly so:
-  almost everything they do needs a compositor, which is why the VM tier exists and why these two
-  numbers should be read as "barely tested in-process" rather than "small".
+- **`compass-ui`** (20) and **`compass-wayland`** (2) — the Iced launcher shell and the Wayland
+  surface under it. `compass-ui` is now **resident** (ADR-0015): it runs on `iced::daemon`, opens
+  and closes its window on command, and reports the state it ended in. That state machine is
+  testable with no display and is, which is where the 11 new tests came from. Everything that
+  actually draws still needs a compositor, which is why the VM tier exists — read the numbers as
+  "the logic is covered, the rendering is not".
 - **`compass-testkit`** (8) — corpus loader; entries expose raw bytes, not `String`.
 - **`compass-crypto`** (24) — the clipboard's AES-256-GCM and its HKDF key derivation, ported from
   `aes-gcm.cpp` and `database-key.cpp`. CI cross-decrypts against the real C++ implementation in
@@ -1851,10 +1853,18 @@ engine's side, `WindowClient` on the window's), and `serve` holds at most one at
 forwards to it. End-to-end tests attach a window from the test process to a real spawned daemon and
 assert the command arrives as itself and the answer comes back.
 
-**What is left is making `vicinae ui` the process that attaches.** Today it is still ADR-0011's
-one-shot: it opens a window, launches something, and exits. It has to become resident — hide rather
-than exit, and run the attach loop alongside Iced's event loop, which owns the main thread. Until
-then the push path is exercised only by test windows, and Super+Space still has nothing to summon.
+**`vicinae ui` now attaches, and the loop is closed in code.** It runs on `iced::daemon` rather than
+`iced::application`, so the window is something it opens and closes rather than something it *is*:
+dismissing hides, a successful launch hides, and the engine's `show` opens a window again. On
+Wayland that is what hiding means — `xdg_toplevel` has no hide, so a hidden window is a closed one
+— and what residency preserves is the process, the wgpu adapter, the font atlas and the index.
+
+With no engine listening, `vicinae ui` still starts and Escape still exits: a window that hid with
+nothing able to summon it back would be an invisible process.
+
+**What is left is the shortcut, and a measurement.** Nothing yet binds Super+Space to `vicinae
+toggle`, so the loop has no trigger. And the 120 ms SLA that forced this design is still unmeasured
+on the path that now matters — see the note below.
 
 Which is also why the refusal stays a refusal. A client can tell "no window" from "the window was
 shown", and that distinction is the only thing standing between an honest gap and a `toggle` that

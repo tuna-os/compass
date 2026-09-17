@@ -17,10 +17,11 @@ pub mod engine;
 pub mod ipc;
 pub mod serve;
 pub mod spike;
+pub mod window;
 
 use std::process::ExitCode;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use compass_ipc::{Request, Response};
 
@@ -76,11 +77,22 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                  nothing to open a window on. Run `vicinae doctor` for the full picture"
             );
         }
+        // Attached before Iced starts, on a thread that still belongs to us.
+        // `None` means no engine is listening, which leaves the launcher
+        // running undriven rather than refusing to start -- `vicinae ui` by
+        // hand is a supported way to use it.
+        let link = window::attach(cli.socket_path().as_path())
+            .context("attaching the launcher window to the engine")?;
+        if link.is_none() {
+            tracing::info!("no engine attached; Escape will exit rather than hide");
+        }
+
         // The one place that knows which platform this is. ADR-0013: the
         // shared crates name what a platform can do; the binary picks who
         // does it.
-        compass_ui::run(compass_ui::AppFlags {
+        compass_ui::run_resident(compass_ui::AppFlags {
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
+            link,
             ..compass_ui::AppFlags::default()
         })
         .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
