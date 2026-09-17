@@ -8,6 +8,7 @@
 //! * [`schema`] — the migrations, and applying them to a database.
 //! * [`search`] — how a query in the search box becomes the FTS match phrases
 //!   and substring terms the SQL layer binds.
+//! * [`store`] — reading history back: the paginated query.
 //!
 //! Still on the C++ side: the schema and migrations, insert/evict, pinning and
 //! keywords, and the paginated read itself. See `docs/rust-engine/PARITY.md`.
@@ -17,3 +18,4 @@
 pub mod kind;
 pub mod schema;
 pub mod search;
+pub mod store;

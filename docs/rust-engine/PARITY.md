@@ -227,8 +227,8 @@ rather than a narrowed one. Still C++-only:
   (which discards its own `exec()` result and answers from the connection-wide `changes()` counter;
   the port should return false when the statement failed, and `compass-sqlcipher-sys` deliberately
   does not expose `sqlite3_changes` so that shape cannot be reproduced by accident);
-- the paginated `query` itself — the two SQL shapes, the `GROUP BY`, and the `COUNT(*) OVER()`
-  total that drives pagination.
+- ~~the paginated `query` itself~~ — ported as `compass_clipboard::store::query`, both SQL shapes,
+  the `GROUP BY` and the `COUNT(*) OVER()` total, driven by `search::plan`.
 
 One thing found while reading, to be fixed rather than reproduced when eviction is ported.
 `evictOlderThan` runs two statements: a `SELECT` that collects the offer IDs whose blobs the caller
@@ -306,6 +306,7 @@ the behaviour changes, so a future fix is loud rather than silent.
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
+| 0 | `query` divides by `limit` to compute `totalPages` (`ceil(totalCount / limit)`), so a zero `limit` is a division by zero whose result is cast to `int`. It also interpolates `limit` and `offset` into the SQL text with `.arg()` rather than binding them. | Refuse a non-positive `limit`; bind both. `current_page`'s ceiling rounding *is* reproduced, oddity included — it is a display value the C++ UI already agrees with. | `a_zero_limit_is_refused_rather_than_dividing_by_it` |
 | 1 | `MigrationManager::runMigrations` catches every exception, logs it, rolls back and returns `void`; `ClipboardDatabase::runMigrations` returns `void` too. A failed migration is silent, and the next thing the user sees is every query failing against a schema that was never created. | `schema::run` returns a `Result`. | `an_edited_migration_is_refused`, `a_database_from_a_newer_build_is_refused` |
 | 2 | The `checksum` column exists to detect a migration edited after it was applied. `insertMigration` writes it and `loadDatabaseMigrations` reads it back into a struct field — and nothing ever compares the two. It is a stored value with no reader, so the detection it exists for never happens. | Compare it, and refuse on a mismatch. The expected hashes are also pinned in `schema.rs`'s tests, so editing a migration fails at development time rather than on a user's machine. | `an_edited_migration_is_refused`, `the_embedded_content_hashes_to_what_the_cpp_engine_recorded` |
 
