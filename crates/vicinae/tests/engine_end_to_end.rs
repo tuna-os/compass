@@ -205,9 +205,15 @@ fn query_json_is_machine_readable_and_carries_the_documented_fields() {
 
 #[test]
 fn the_window_commands_refuse_rather_than_pretend() {
-    // The point of the whole headless design: a client must be able to tell
-    // "there is no window" from "the window was shown". If these ever start
-    // answering Ack without a UI behind them, first bring-up debugs a lie.
+    // The point of the design: a client must be able to tell "there is no
+    // window" from "the window was shown". If these ever start answering Ack
+    // without a UI behind them, first bring-up debugs a lie.
+    //
+    // Asserted on the *properties* of the refusal rather than on its wording.
+    // An earlier version checked `stderr.contains("headless")`, which broke the
+    // moment ADR-0015 made the refusal name a missing connection instead of a
+    // headless build -- a more accurate message failing a test is the test
+    // being wrong, not the message.
     let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
     for command in ["show", "hide", "toggle"] {
         let out = daemon.try_client(&[command]);
@@ -215,10 +221,16 @@ fn the_window_commands_refuse_rather_than_pretend() {
             !out.status.success(),
             "`{command}` reported success with no window"
         );
-        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
         assert!(
-            stderr.contains("headless"),
-            "`{command}` did not explain itself: {stderr}"
+            stderr.contains("window"),
+            "`{command}` refused without naming what is missing: {stderr}"
+        );
+        // Actionable: a refusal that does not say what to do about it sends
+        // the reader to the source.
+        assert!(
+            stderr.contains("vicinae ui"),
+            "`{command}` refused without saying how to fix it: {stderr}"
         );
     }
 }

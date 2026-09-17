@@ -191,13 +191,23 @@ impl EngineState {
     }
 }
 
-/// The three requests that need a window this build does not have.
+/// The three requests that need a launcher window, when none is connected.
+///
+/// [ADR-0015](../../../docs/rust-engine/adr/0015-the-launcher-window-is-resident.md)
+/// makes the window a resident process that connects to this daemon, so the
+/// honest answer is about a *connection* rather than about the build. That is
+/// the more useful thing to be told: "start the window" is actionable, "this
+/// engine is headless" was not.
+///
+/// The property this preserves is the one that matters. A client can still
+/// tell "no window" from "the window was shown", which is the only thing
+/// standing between an honest gap and a `toggle` that silently does nothing.
 fn no_window(what: &str) -> Response {
     Response::Error(ProtocolError::new(
         ErrorKind::Unsupported,
         format!(
-            "this engine is headless and cannot {what}: it has no window yet. \
-             Use `--engine cpp` for the launcher UI. Query and doctor work here."
+            "cannot {what}: no launcher window is connected to this engine. \
+             Start one with `vicinae ui`. Query and doctor work without it."
         ),
     ))
 }

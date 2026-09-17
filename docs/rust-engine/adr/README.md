@@ -22,3 +22,4 @@ drifting away from a recorded decision is not.
 | [0012](./0012-compass-public-brand.md) | Compass is the public brand; legacy identifiers migrate at cutover | Accepted |
 | [0013](./0013-qt-leaves-the-repository.md) | Qt leaves the repository; Linux-first is a sequence, not a scope limit | Accepted |
 | [0014](./0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md) | The clipboard store is SQLCipher plus a vendored FTS5 tokenizer; the Rust engine links both | Accepted |
+| [0015](./0015-the-launcher-window-is-resident.md) | The launcher window is resident and `serve` summons it; amends ADR-0011 | Accepted |
