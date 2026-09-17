@@ -44,6 +44,8 @@ jobs:
     - name: Build Flake
       run: nix build -L
     - name: Build Rust engine
+      # Linux-only engine (ADR-0007): macOS and Windows keep the C++ build.
+      if: startsWith(matrix.os, 'ubuntu')
       run: nix build -L .#rust-vicinae
     - name: Build Soulver backend
       if: matrix.os == 'ubuntu-24.04'

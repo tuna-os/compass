@@ -60,21 +60,25 @@
         src = rustSrc;
         cargoBuildFlags = ["-p" "vicinae" "--locked" "--release"];
         nativeBuildInputs = [pkgs.pkg-config];
-        buildInputs = with pkgs; [
-          dbus
-          libxkbcommon
-          wayland
-          mesa
-          fontconfig
-          freetype
-          harfbuzz
-        ];
+        # Linux-only engine (ADR-0007): wayland and friends are not available
+        # on darwin, so keep them out of the closure there. The package itself
+        # is marked Linux-only below.
+        buildInputs = with pkgs;
+          lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+            dbus
+            libxkbcommon
+            wayland
+            mesa
+            fontconfig
+            freetype
+            harfbuzz
+          ];
         doCheck = false;
         meta = {
           description = "Vicinae Rust engine";
           homepage = "https://github.com/tuna-os/compass";
           license = lib.licenses.gpl3Plus;
-          platforms = with lib.platforms; linux ++ darwin;
+          platforms = lib.platforms.linux;
         };
       };
   in {
