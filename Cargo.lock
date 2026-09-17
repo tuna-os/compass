@@ -749,6 +749,7 @@ dependencies = [
 name = "compass-clipboard"
 version = "0.1.0"
 dependencies = [
+ "compass-crypto",
  "compass-sqlcipher-sys",
  "md-5",
  "tempfile",
