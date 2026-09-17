@@ -19,13 +19,42 @@
 //! > (`"->>"`, `"a!b"`) yields no trigrams, so MATCH would find nothing and the
 //! > instr scan must be used instead
 //!
-//! Find *nothing*, not everything — the empty token list makes the term
-//! unsatisfiable rather than unconstraining. Checked against SQLite 3.45.1's
-//! stock `trigram` tokenizer, which shares the three-character floor: with
-//! `"ab"` present in the corpus, `MATCH '"ab"'` returns zero rows. So a
-//! two-letter search routed to FTS does not return too much, it returns an
-//! empty history, and the `instr` fallback is the only thing that makes such a
-//! search work at all.
+//! Find *nothing*, not everything: the term becomes unsatisfiable rather than
+//! unconstraining, so a short word routed to FTS would empty the history
+//! instead of flooding it. The `instr` fallback is what makes such a search
+//! work at all.
+//!
+//! ## Measured against the real tokenizer
+//!
+//! An earlier version of this comment said `MATCH` on a short term "returns
+//! zero rows", citing SQLite 3.45.1's **stock** `trigram` tokenizer. That was
+//! the wrong thing to measure and the claim was too strong. `fuzzy_trigram` is
+//! vendored C ([ADR-0014](../../../docs/rust-engine/adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md)),
+//! it is not the stock tokenizer, and it does not behave like it. Compiled from
+//! `vendor/` and driven directly, over the documents `abc`, `ab`, `a-b-c`,
+//! `xabcx`, `firefox homepage`:
+//!
+//! | term | matches |
+//! |---|---|
+//! | `"abc"` | `abc`, `a-b-c`, `xabcx` |
+//! | `"hom"` | `firefox homepage` |
+//! | `"ab"` | `ab` — **not** `abc`, **not** `xabcx` |
+//! | `"bc"` | nothing |
+//! | `"fi"` | nothing |
+//!
+//! So a term with a three-run searches substrings of separator-stripped
+//! content, and a term without one cannot reach a longer document — `"fi"`
+//! misses `firefox`, `"bc"` misses `abc`. It can still match a document that is
+//! itself that short, which is why "returns zero rows" was too strong: with
+//! `"ab"` in the corpus, `MATCH '"ab"'` returns it.
+//!
+//! The operational point is unchanged and is what the routing rests on: a short
+//! word sent to `MATCH` misses every entry longer than itself, which is nearly
+//! all of them. What is *not* characterised here is `fuzzy_trigram`'s full
+//! rule — `"a-b"` matches both `ab` and `a-b-c`, which neither of the above
+//! explains — and nothing in this module depends on knowing it, because the
+//! routing predicate is `hasTrigramRun` rather than anything the tokenizer
+//! reports.
 //!
 //! # Why this counts UTF-16 code units
 //!

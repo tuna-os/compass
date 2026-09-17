@@ -59,6 +59,33 @@ open the table, not to search it.
    `sqlite3_auto_extension`. That rules out any binding that insists on bundling its own stock
    SQLite.
 
+## Confirmed buildable
+
+Recorded after the ADR was accepted, because "link the vendored C" is worth nothing if the vendored
+C does not build outside CMake. Both trees compile standalone with `gcc`, no CMake and no Qt — the
+same property that makes the `vicinae::fuzzy` and `vicinae::crypto` parity jobs possible:
+
+| | |
+|---|---|
+| `vendor/sqlcipher/sqlite3.c` | compiles in 14s with the CMake flag set, `-lcrypto` |
+| `vendor/fuzzy-trigram/register.c` | compiles with `-DSQLITE_CORE` |
+| `vicinaeFuzzyTrigramInit` on a live handle | `SQLITE_OK` |
+| `PRAGMA cipher_version` | `4.16.0 community` |
+| `CREATE VIRTUAL TABLE ... tokenize='fuzzy_trigram remove_diacritics 2'` | succeeds |
+| the resulting file | no `SQLite format 3` magic — genuinely encrypted |
+
+Registration is per connection and **ordered**: `clipboard-db.cpp` keys the database, then calls
+`vicinaeFuzzyTrigramInit(handle, nullptr, nullptr)`, then runs its pragmas. The Rust side has to do
+the same three things in the same order.
+
+That ordering has a consequence for decision 4 above and for the workspace's
+`unsafe_code = "forbid"`, which `forbid` does not let a crate opt out of: calling that function from
+Rust is FFI on a raw `sqlite3*`. The alternative is a C shim compiled into the same library that
+chains the registration onto `SQLITE_EXTRA_INIT` — the hook SQLCipher already occupies with
+`sqlcipher_extra_init` — which would keep every connection registered with no Rust `unsafe` at all.
+That choice belongs to the slice that writes the build, but it is a choice, not a detail, and the
+lint is why.
+
 ## Consequences
 
 **The Rust engine inherits a C dependency it cannot drop.** ADR-0013 moves the repository off Qt;
