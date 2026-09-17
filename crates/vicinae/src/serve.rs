@@ -373,6 +373,13 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
 /// prompt, and a user whose compositor already binds a key to `vicinae toggle`
 /// should not be asked for one they will not use.
 pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
+    // Before binding, not after: on the `/tmp` fallback the directory may
+    // already exist and belong to someone else, and `DirBuilder::recursive`
+    // adopts a directory rather than correcting it. See #88.
+    socket
+        .ensure_private_parent()
+        .with_context(|| format!("checking the engine socket directory for {socket}"))?;
+
     let listener = Listener::bind(socket.as_path())
         .await
         .with_context(|| format!("binding the engine socket at {socket}"))?;

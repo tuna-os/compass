@@ -1598,7 +1598,7 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-**Sixteen crates, 809 tests, and an engine that runs.** Counts verified against the committed tree
+**Sixteen crates, 828 tests, and an engine that runs.** Counts verified against the committed tree
 rather than a dirty one — three commits early on built only because the working tree supplied files
 they had not committed, and that is checked rather than assumed.
 
@@ -1619,7 +1619,7 @@ re-measured rather than adjusted.
   in-scope C++ cases ported verbatim.
 - **`compass-search`** (59) — fuzzy matching on `nucleo`, with the C++ ordering suite ported and
   fzf's coherence signal reconstructed exactly (ADR-0006).
-- **`compass-ipc`** (67) — length-prefixed postcard framing, with the length checked against
+- **`compass-ipc`** (74) — length-prefixed postcard framing, with the length checked against
   `MAX_FRAME_LEN` before any allocation.
 - **`compass-core`** (74) — app index with desktop-ID precedence, frecency, `vicinae.json`.
 - **`compass-shell`** (47) — GNOME Shell DBus client; 22 of its tests spawn a real `dbus-daemon`.
@@ -1655,7 +1655,7 @@ re-measured rather than adjusted.
   `vendor/` (ADR-0014), wrapped as `Database`/`Statement`. The one crate that declines the
   workspace's `unsafe_code = "forbid"`, because tokenizer registration is FFI on a raw `sqlite3*`;
   it restates every other workspace lint so the exception is visible as a missing manifest line.
-- **`compass-clipboard`** (64) — **`clipboard-db.cpp` ported in full**: query planning, the schema
+- **`compass-clipboard`** (76) — **`clipboard-db.cpp` ported in full**: query planning, the schema
   and migrations, the paginated read, and the whole write path. Four C++ bugs fixed rather than
   reproduced, each pinned by a control that fails when the original shape is restored. The layer
   above it, `clipboard-service.cpp`, is still C++.
