@@ -57,7 +57,34 @@ guest() { "${ssh_argv[@]}" "$@"; }
 corral_bin="$(command -v corral)"
 shot() { sudo -E "$corral_bin" screenshot "$vm" -o "$out/$1" ; }
 
-echo "=== 0. the bare desktop, before anything of ours runs ==="
+echo "=== 0. what the session is actually showing at login ==="
+# Evidence only, and kept separate from the bare desktop below because they
+# turned out not to be the same picture.
+shot "launcher-00z-login.png"
+
+echo
+echo "=== 0a. put the session on a bare desktop (the Activities overview) ==="
+# GNOME Shell opens the overview at login when the session has no windows.
+# Until the first-run tour was suppressed the session always had one, so this
+# never came up; the first run without the tour shows what it costs. Three
+# things in that run's own frames, none of which the gates could name:
+#
+#   launcher-01-open.png    our window rendered as a SCALED THUMBNAIL inside a
+#                           workspace tile, because it opened behind the
+#                           overview. The gate at 3d passed on it -- at 34% in
+#                           the expected box -- while measuring a preview.
+#   launcher-04-hidden.png  the query from step 3 typed into GNOME's OWN search
+#                           field, with GNOME's own results under it.
+#   the 3d4 assertion       81.60% against a 3% bound, which is what finally
+#                           failed, and the only reason any of this was seen.
+#
+# Dismissed in the guest over the session bus (checks.sh overview-dismiss), not
+# by injecting Escape from the host, so the step can read back whether it
+# worked instead of hoping.
+guest "$checks" overview-dismiss
+
+echo
+echo "=== 0a2. the bare desktop, before anything of ours runs ==="
 # Evidence only. The control for every gate below is step 0c, not this.
 shot "launcher-00a-bare-desktop.png"
 
@@ -147,14 +174,13 @@ sudo -E "$corral_bin" screenshot "$vm" -o "$out/launcher-01-open.png" --require-
 
 echo
 echo "=== 3. type a query at it (EXPECTED TO DO NOTHING — see below) ==="
-# Kept, and labelled, rather than deleted. Pressing Super alone, which opens
-# the Activities overview, leaves the framebuffer byte-identical, so this step
-# cannot currently type anything and its screenshot is evidence about key
-# delivery rather than about the launcher.
+# Kept, and labelled, rather than deleted: its screenshot is evidence about key
+# DELIVERY, not about the launcher's input handling, and nothing here asserts
+# that the query reaches our window.
 #
-# It previously said injection "does not reach this session at all". That is
-# WRONG and was written before the evdev capture existed. Spike A's
-# keyboard-capture now answers it directly, and the chain is longer than that:
+# This comment has been wrong twice and the corrections are kept, because each
+# one was paid for by a run. It first said injection "does not reach this
+# session at all"; the evdev capture disproved that, and the chain is longer:
 #
 #   QEMU delivers the scancode          yes — 288 bytes captured on the evdev
 #                                        node while the key was injected
@@ -171,19 +197,36 @@ echo "=== 3. type a query at it (EXPECTED TO DO NOTHING — see below) ==="
 # diagnostic: the AT keyboard IS on seat0, and the capture decodes clean
 # LEFTMETA press and release on event1 -- the very node gnome-shell holds open.
 #
-# What narrows it furthest is that pressing Super ALONE leaves the framebuffer
-# byte-identical (deviation 0.1576 before and after). Super alone is GNOME's own
-# binding for the Activities overview. So this is not our portal shortcut
-# failing to route: the compositor is inert to injected input generally. The
-# remaining suspect is that logind has the session's devices PAUSED, which keeps
-# their file descriptors open, which is why "holds event1" and "receives nothing
-# from event1" are both true at once. `compositor-input` now reports the
-# session's Active state, which is what tells those apart.
+# THE PARAGRAPH THAT USED TO BE HERE WAS WRONG, and the run that suppressed the
+# first-run tour disproved it with a screenshot.
 #
-# Deleting it would lose the regression check for free — the day injection
-# starts working, this frame changes and says so. Leaving it unlabelled would
-# be worse than either, because it reads as a test of the launcher's input
-# handling, which it is not.
+# It argued from "pressing Super ALONE leaves the framebuffer byte-identical"
+# that "the compositor is inert to injected input generally", and went on to
+# suspect logind of having the session's devices paused -- which would have been
+# a deep problem and was not one. In that run's `launcher-04-hidden.png` the
+# query from THIS STEP is sitting in GNOME Shell's own search field with GNOME's
+# own results rendered under it. The compositor receives injected keys and acts
+# on them.
+#
+# What was actually inert was the session, because the tour dialog held the
+# keyboard: Super does nothing while a modal dialog has the grab, and the
+# framebuffer stays byte-identical for that reason rather than for the one the
+# paragraph gave. Every layer in the table above was measured correctly; only
+# the last line's cause was wrong.
+#
+# So "activated False" for our own shortcut is still unexplained and is still
+# Spike A's question -- but it is no longer explained by input not arriving, and
+# the next person should not spend a run on logind.
+#
+# What this step asserts is unchanged, which is nothing: it types at the session
+# and screenshots the result. Now that the overview is dismissed first, the keys
+# go to whatever holds the focus, and if that is ever our window this frame is
+# where it will show.
+#
+# Deleting it would lose the regression check for free — the day the query
+# lands in OUR field rather than the session's, this frame changes and says so.
+# Leaving it unlabelled would be worse than either, because it reads as a test
+# of the launcher's input handling, which it is not.
 sudo -E "$corral_bin" type "$vm" "$query"
 shot "launcher-02-typed.png"
 
