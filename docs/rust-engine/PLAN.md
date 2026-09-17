@@ -1237,9 +1237,32 @@ correct degradation when a protocol is absent. Deferred until there is wlroots c
 |---|---|---|
 | Fuzzy search, top-20 of 10,000 items | < 2.0 ms | gist spec |
 | IPC round-trip, local UDS | < 0.5 ms | gist spec |
-| Cold start to first frame | < 120 ms | new — the number users feel |
+| Cold start to first frame | < 120 ms | new — see the split below |
+| **Summon to first frame** | **< 120 ms** | **new — the number users actually feel** |
 | Idle RSS | < 30 MB | gist spec |
 | Peak RSS, 10k index + 3 extensions | < 150 MB | new |
+
+**The first-frame row split, and the second half is the one that matters now.**
+[ADR-0015](./adr/0015-the-launcher-window-is-resident.md) made the launcher window resident, so a
+user pressing Super+Space is no longer waiting on a cold start at all — they are waiting on a warm
+process opening a surface. Those are different numbers with different costs:
+
+* **Cold start to first frame** is paid once, when the window process is first started (autostart,
+  or by hand). It includes process spawn, dynamic linking, Iced and winit initialisation, and wgpu
+  enumerating and bringing up an adapter. 120 ms was never a realistic budget for it — ADR-0015
+  rejected spawn-per-summon precisely because this is seconds, not milliseconds, and the VM tier's
+  own figures (2.4 s in one run, not yet there at 8.1 s in another) are two orders of magnitude off.
+* **Summon to first frame** is paid on every keypress, and it is what the SLA was always about. It
+  is a `WindowCommand::Show` arriving on an attached window, the window opening a surface, and the
+  first paint. Everything expensive — the process, the adapter, the font atlas, the application
+  index — is already warm.
+
+**Neither number is measured yet, and the second one has no harness at all.** The VM tier reports
+its proxy for the cold half (below); nothing reports the warm half, because until this branch there
+was no way to summon anything. Measuring it needs the same host-side paint gate the cold number
+uses — ADR-0010 settles that nothing inside the guest can observe a frame — with the clock started
+at the `toggle` rather than at process spawn. **Until that exists, the 120 ms figure is a target
+carried over from the spec, not a result.**
 
 The spec claims sub-30 MB but proposes no test for it; without a gate the claim decays. Track RSS
 per commit, fail on >5% regression. **Measure inside the Flatpak** — sandbox overhead is real and
@@ -1252,6 +1275,7 @@ the number users see is the sandboxed one.
 | Fuzzy search, top-20 of 10,000 | no benchmark — now measured, see below |
 | IPC round-trip | one benchmark, which timed a sleep — see below |
 | Cold start to first frame | no benchmark — **nearest observable proxy now reported**, see below |
+| Summon to first frame | **no harness at all** — the row exists, nothing measures it |
 | Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
 | Peak RSS, 10k index + 3 extensions | no benchmark — **index half now measured**, see below |
 
