@@ -1,6 +1,6 @@
 # ADR-0007: Hard fork in practice, `vicinae` names kept, Linux-first
 
-**Status:** Accepted; naming decision superseded by ADR-0012 · **Date:** 2026-09-12 · Relates to: PLAN.md §10.1, §10.2, §10.3, §10.8
+**Status:** Accepted; naming decision superseded by ADR-0012, platform scope by ADR-0013 · **Date:** 2026-09-12 · Relates to: PLAN.md §10.1, §10.2, §10.3, §10.8
 
 ## Context
 
@@ -23,9 +23,11 @@ users and their configs touch stay `vicinae`. Renaming buys nothing and breaks e
 config, script command, `dmenu` invocation and shell alias. The repository and the crates can carry
 the fork's name without dragging the user-visible surface along.
 
-**3. Linux-first; macOS and Windows keep the C++ engine.** The Rust engine targets Linux, and
+**3. Linux-first; macOS and Windows keep the C++ engine.** ~~The Rust engine targets Linux, and
 GNOME/Bluefin specifically. macOS and Windows continue to ship the C++ build until a follow-up
-project. This is a real narrowing and must be stated in release notes at cutover rather than
+project.~~ **Superseded by [ADR-0013](./0013-qt-leaves-the-repository.md):** Linux-first is kept as
+a *sequence*, but macOS and Windows get committed phases rather than an unowned follow-up, because
+this wording left ~776 Qt files in the repository permanently. This is a real narrowing and must be stated in release notes at cutover rather than
 discovered by users — compass supports all three today.
 
 **4. Support GNOME 50 and 51 both, with both in CI.** GNOME 51 ships 16 September 2026 and Bluefin
