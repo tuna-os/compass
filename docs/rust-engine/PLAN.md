@@ -1824,12 +1824,23 @@ and all three now exist.
 our Flatpak in it and asserts from a real GNOME session; Spike A has an answer (§11.1); Spike B runs
 in both the Flatpak job and the VM; every workflow defaults to read-only permissions.
 
-**The largest gap is that there is no launcher.** `compass-ui` and `compass-wayland` exist as
-libraries, but nothing wires them into the binary: `vicinae` still answers `toggle`, `show` and
-`hide` with "this engine is headless", `LaunchSelected` returns `Task::none()`, and no code starts a
-window. Until that changes, Phase 1's gate cannot be evaluated at all and the VM tier's subject is
-the portal and sandbox questions rather than the launcher. This is issue #4 and it is the next thing
-that matters.
+**That gap has moved rather than closed, and the section previously said otherwise.** It read: *"The
+largest gap is that there is no launcher — `LaunchSelected` returns `Task::none()`, and no code
+starts a window."* Both halves are now false. `crates/vicinae/src/lib.rs` calls `compass_ui::run`
+with a real `LinuxLauncher`, and `LaunchSelected` launches through the `AppLauncher` trait (#64).
+The VM tier watches it draw in a real GNOME session.
+
+**What remains is the daemon's half.** `vicinae serve` still answers `toggle`, `show` and `hide`
+with *"this engine is headless and cannot … it has no window yet"* (`serve.rs:199`). Per
+[ADR-0011](./adr/0011-the-window-is-its-own-command.md) the window is its own command because Iced's
+event loop must own the process's main thread, so the daemon cannot simply open one — it has to
+*drive* a window that exists in another process. That is the next thing that matters, and it is a
+different problem from the one this section used to describe: not "write a launcher" but "let the
+daemon show the launcher".
+
+Which is also why the refusal is worth keeping as a refusal. A client can tell "no window yet" from
+"the window was shown", and that distinction is the only thing standing between an honest gap and a
+`toggle` that silently does nothing.
 
 Ordered by what unblocks the most:
 
