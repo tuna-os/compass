@@ -57,10 +57,9 @@ guest() { "${ssh_argv[@]}" "$@"; }
 corral_bin="$(command -v corral)"
 shot() { sudo -E "$corral_bin" screenshot "$vm" -o "$out/$1" ; }
 
-echo "=== 0. the desktop before the launcher opens (the control) ==="
-# Without this frame there is nothing to compare against, and "the launcher is
-# on screen" cannot be distinguished from "the desktop was always like that".
-shot "launcher-00-before.png"
+echo "=== 0. the bare desktop, before anything of ours runs ==="
+# Evidence only. The control for every gate below is step 0c, not this.
+shot "launcher-00a-bare-desktop.png"
 
 echo
 echo "=== 0b. start the engine, so the launcher has something to attach to ==="
@@ -69,6 +68,38 @@ echo "=== 0b. start the engine, so the launcher has something to attach to ==="
 # started first comes up undriven, and every summon below is then refused
 # correctly and confusingly.
 guest "$checks" engine-start
+
+echo
+echo "=== 0c. the desktop with the engine up (THE CONTROL for every gate) ==="
+# THE CONTROL MOVED, AND THAT IS THE POINT.
+#
+# It used to be taken before anything of ours ran, when the only thing that
+# happened between it and the launcher frame was the launcher. Starting the
+# engine in between broke that: the gate at 3d asks "did a LAUNCHER window
+# appear", and it was being shown every pixel the engine changed as well.
+#
+# It cost a run. The gate failed with a changed region 962 px wide against a
+# 640 px window -- while the launcher's own log showed it configuring a surface
+# at exactly 640x480, so the window was never the problem. `serve` binds the
+# GlobalShortcuts portal at startup, and the portal asks the user for
+# permission; whatever that puts on screen was landing inside a comparison that
+# claimed to be about the launcher.
+#
+# Taking the control AFTER the engine is up restores what the gate means: the
+# only thing that differs between this frame and the next is the launcher. The
+# thresholds and boxes below are untouched -- this is not a gate loosened to
+# fit a failure, it is a control put back where it belongs.
+shot "launcher-00-before.png"
+
+echo
+echo "=== 0d. what did starting the engine put on screen? (recorded, not gated) ==="
+# The question the run above could not answer, asked directly. No thresholds:
+# a portal permission dialog here is correct behaviour -- GNOME requires the
+# user to grant a global hotkey -- and gating on its absence would be gating on
+# a guess about someone else's UI. Printing the geometry means the next reader
+# has the measurement this run had to infer.
+python3 scripts/vmtest/framediff.py \
+  "$out/launcher-00a-bare-desktop.png" "$out/launcher-00-before.png" || true
 
 echo
 echo "=== 1. open the launcher in the session ==="
