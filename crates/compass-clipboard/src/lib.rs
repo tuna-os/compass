@@ -5,6 +5,7 @@
 //!
 //! * [`kind`] — what an entry is and whether it is encrypted, as the integers
 //!   SQLite actually stores.
+//! * [`schema`] — the migrations, and applying them to a database.
 //! * [`search`] — how a query in the search box becomes the FTS match phrases
 //!   and substring terms the SQL layer binds.
 //!
@@ -14,4 +15,5 @@
 #![deny(missing_docs)]
 
 pub mod kind;
+pub mod schema;
 pub mod search;

@@ -275,6 +275,72 @@ impl Database {
     }
 }
 
+impl Database {
+    /// Begin a transaction.
+    ///
+    /// The returned guard rolls back when dropped unless [`Transaction::commit`]
+    /// is called, so an early return cannot leave a half-applied change
+    /// committed. That is the same shape as the C++ `db::Transaction`, and it
+    /// matters in `evictOlderThan`, which returns early without committing when
+    /// there is nothing to evict.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Sqlite`] if `BEGIN` fails, which it does when a
+    /// transaction is already open — this crate does not nest.
+    pub fn transaction(&self) -> Result<Transaction<'_>> {
+        self.execute("BEGIN")?;
+        Ok(Transaction {
+            db: self,
+            finished: false,
+        })
+    }
+}
+
+/// An open transaction. Rolls back on drop unless committed.
+#[derive(Debug)]
+pub struct Transaction<'db> {
+    db: &'db Database,
+    finished: bool,
+}
+
+impl Transaction<'_> {
+    /// Commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Sqlite`] if the commit fails, in which case the
+    /// transaction is left for the drop to roll back.
+    pub fn commit(mut self) -> Result<()> {
+        self.db.execute("COMMIT")?;
+        self.finished = true;
+        Ok(())
+    }
+
+    /// Roll back explicitly, rather than by dropping.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Sqlite`] if the rollback fails.
+    pub fn rollback(mut self) -> Result<()> {
+        self.finished = true;
+        self.db.execute("ROLLBACK")
+    }
+}
+
+impl Drop for Transaction<'_> {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        // Nothing useful to do with a failure here: the caller has already
+        // stopped caring, and panicking in a drop during unwinding aborts.
+        if let Err(err) = self.db.execute("ROLLBACK") {
+            tracing::warn!(?err, "rolling back a dropped transaction failed");
+        }
+    }
+}
+
 /// The pragmas `clipboard-db.cpp` applies on every connection.
 const PRAGMAS: [&str; 4] = [
     "PRAGMA journal_mode = WAL",

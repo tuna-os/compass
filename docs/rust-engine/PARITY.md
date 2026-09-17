@@ -218,7 +218,10 @@ longer than itself — measured against the real vendored tokenizer, `"fi"` miss
 `"bc"` misses `abc` — so without the `instr` fallback a two-letter search returns an empty history
 rather than a narrowed one. Still C++-only:
 
-- the schema and `MigrationManager` wiring;
+- ~~the schema and `MigrationManager` wiring~~ — ported as `compass_clipboard::schema`, which
+  embeds the same two `.sql` files (the C++ reads them from `:database/...`, a Qt resource, so they
+  are already compiled in) and records them in the same `schema_migrations` table, with the same
+  MD5 checksums. Two declared divergences, both in the table below;
 - `insertSelection`, `insertOffer`, `indexSelectionContent`, `removeSelection`, `removeAll`;
 - `evictOlderThan` / `oldestEvictableTimestamp`, pinning, keywords, `tryBubbleUpSelection`
   (which discards its own `exec()` result and answers from the connection-wide `changes()` counter;
@@ -298,6 +301,13 @@ the channel that matters.
 
 Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
 the behaviour changes, so a future fix is loud rather than silent.
+
+### `compass-clipboard` — two C++ behaviours deliberately **not** reproduced
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | `MigrationManager::runMigrations` catches every exception, logs it, rolls back and returns `void`; `ClipboardDatabase::runMigrations` returns `void` too. A failed migration is silent, and the next thing the user sees is every query failing against a schema that was never created. | `schema::run` returns a `Result`. | `an_edited_migration_is_refused`, `a_database_from_a_newer_build_is_refused` |
+| 2 | The `checksum` column exists to detect a migration edited after it was applied. `insertMigration` writes it and `loadDatabaseMigrations` reads it back into a struct field — and nothing ever compares the two. It is a stored value with no reader, so the detection it exists for never happens. | Compare it, and refuse on a mismatch. The expected hashes are also pinned in `schema.rs`'s tests, so editing a migration fails at development time rather than on a user's machine. | `an_edited_migration_is_refused`, `the_embedded_content_hashes_to_what_the_cpp_engine_recorded` |
 
 ### `compass-xdg` — six C++ bugs deliberately **not** reproduced
 
