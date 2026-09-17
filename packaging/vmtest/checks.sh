@@ -274,8 +274,33 @@ PY
 
     # logind hands input devices to the active session through TakeDevice, so
     # if the compositor has none, its view of the seat is where to look next.
-    echo '--- what logind thinks the seat has ---'
-    loginctl seat-status seat0 2>/dev/null | sed -n '1,25p' || echo '(seat-status unavailable)'
+    #
+    # This used to print `seat-status | sed -n '1,25p'`, which truncated the
+    # device tree before any input device appeared -- the first 25 lines are
+    # the DRM card, the optical drive, i2c and the power button. The one
+    # question being asked, "is the KEYBOARD on this seat", was exactly what
+    # got cut off. Filtered to input devices instead of arbitrarily truncated.
+    echo '--- what logind thinks the seat has (input devices only) ---'
+    if seat="$(loginctl seat-status seat0 2>/dev/null)"; then
+      printf '%s\n' "$seat" | sed -n '1,3p'
+      inputs="$(printf '%s\n' "$seat" | grep -E '/input/input[0-9]+$' || true)"
+      if [ -n "$inputs" ]; then
+        printf '%s\n' "$inputs" | sed 's/^/  /'
+      else
+        echo '  NONE — seat0 has no input devices assigned.'
+      fi
+
+      # The keyboard specifically. i8042 is the AT controller the emulated
+      # "AT Translated Set 2 keyboard" hangs off; if the compositor reads a
+      # device logind has not put on this seat, that mismatch is the lead.
+      if printf '%s\n' "$seat" | grep -q 'i8042'; then
+        echo '  -> the AT keyboard IS on seat0'
+      else
+        echo '  -> the AT keyboard is NOT on seat0 (i8042 absent from the tree)'
+      fi
+    else
+      echo '(seat-status unavailable)'
+    fi
     ;;
 
   # Does an injected scancode reach the guest KERNEL?
