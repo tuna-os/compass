@@ -90,7 +90,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/calculator-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/clipboard` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/services/desktop-notification` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
@@ -199,6 +199,42 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 - the `DesktopFile` layer — `fromId`, `relativeId`, directory search. `from_file` and
   `ParseOptions::{id,path}` exist, but id computation and lookup are a separate pass;
 - the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
+
+**`src/services/clipboard` → `compass-clipboard`** — one slice of `clipboard-db.cpp` (478 lines) is
+ported: `search::plan`, which decides for each word of the user's query whether it goes to the FTS5
+`MATCH` or to an `instr` substring condition. The split matters because `selection_fts` uses a
+trigram tokenizer, and a word with no run of three indexable characters produces no tokens — so
+`MATCH` on it finds *nothing*, and without the `instr` fallback a two-letter search returns an empty
+history rather than a narrowed one. Still C++-only:
+
+- the schema and `MigrationManager` wiring;
+- `insertSelection`, `insertOffer`, `indexSelectionContent`, `removeSelection`, `removeAll`;
+- `evictOlderThan` / `oldestEvictableTimestamp`, pinning, keywords, `tryBubbleUpSelection`;
+- the paginated `query` itself — the two SQL shapes, the `GROUP BY`, and the `COUNT(*) OVER()`
+  total that drives pagination.
+
+One thing found while reading, to be fixed rather than reproduced when eviction is ported.
+`evictOlderThan` runs two statements: a `SELECT` that collects the offer IDs whose blobs the caller
+must delete from disk, then a `DELETE` that removes the selections. Both compute the cutoff with
+`unixepoch()`, and each statement gets its own reading of the clock — SQLite holds a time function
+constant *within* a statement, but not across statements, and an open transaction does not freeze it
+(checked: inside `BEGIN`, `unixepoch('subsec')` advanced after 434 consecutive statements). Time only
+moves forward, so the `DELETE` set is a superset of the `SELECT` set, and any selection that crosses
+the threshold in between has its rows removed while its offer IDs are never returned. Those blobs
+are then unreferenced and unreported: they stay on disk forever. The window is short, but eviction
+runs on a timer for the lifetime of the install, and the payloads are clipboard images. The port
+should compute the cutoff once and bind the same value to both statements.
+
+The `parity test ✓` column is 🟡 rather than ✅ for a specific reason. `vicinae::fuzzy` and
+`vicinae::crypto` each compile standalone, which is what lets CI diff the real C++ implementation
+against ours; `clipboard-db.cpp` does not — it pulls in Qt, `db::Database` and `MigrationManager`.
+So this slice is verified against a reading of the source plus controls (each assertion shown to
+fail against a deliberately wrong port) rather than against a running C++ binary. The gap worth
+naming: `QString` iterates UTF-16 code units, so a non-BMP character counts as *two* word
+characters, and `"a😀"` is a trigram run to the C++ engine but not to a port that walks Rust
+`char`s. `has_trigram_run` walks `encode_utf16` for that reason, and
+`a_non_bmp_character_is_two_word_characters_not_one` holds the scalar-walking version alongside it
+so the case is shown to discriminate.
 
 ## Out of scope for the port
 
