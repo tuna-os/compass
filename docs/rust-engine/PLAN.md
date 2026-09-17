@@ -527,12 +527,53 @@ Default flips to `--engine=rust` on Linux; the C++ engine stays one release behi
 build there until a follow-up project. Compass supports all three today, and a Linux-only Rust
 default is a visible narrowing: say so loudly in the release notes.
 
+"A follow-up project" is doing a lot of work in that sentence: it is 678 cross-platform files, and
+until it happens the repository keeps two engines and every shared change is made twice. Phase 8
+sizes that properly.
+
 **Gate:** one full release cycle with no P0 regressions.
 
 ### Phase 8 — Removal
 
-Delete `src/server`, the C++ `src/lib`, and the Linux CMake targets. Keep macOS/Windows targets
-until their own migration. Repo becomes Rust-primary.
+**Linux targets only**, per [ADR-0007](./adr/0007-fork-posture-and-platform-scope.md), whose
+consequences section already says so: *"the macOS and Windows C++ code stays alive in-tree well
+past Phase 8, so Phase 8's deletion is Linux targets only."*
+
+This section previously read *"Delete `src/server`, the C++ `src/lib`, and the Linux CMake targets.
+Keep macOS/Windows targets until their own migration. Repo becomes Rust-primary."* That contradicts
+the ADR and is not executable: **every** macOS and Windows source file lives *inside* `src/server`,
+so it cannot be deleted while those targets are kept.
+
+What Phase 8 can actually delete, counting `.cpp`/`.hpp` under `src/server` by path (crude
+matching, but the error bars do not change the conclusion):
+
+| | files |
+|---|---:|
+| total | 840 |
+| **Linux-specific** — `wayland`, `x11`, `gnome`, `hyprland`, `linux`, `data-control` | **64** |
+| macOS-specific | 28 |
+| Windows-specific | 70 |
+| cross-platform | 678 |
+
+So Phase 8 removes on the order of **64** files plus the Linux CMake targets, and **~776 Qt files
+stay**. The bulk of what stays is the Qt UI layer (`ui/views`, `ui/quick`, `ui/settings`,
+`ui/image`), the builtins and the extension model — shared by all three platforms.
+
+**Two consequences worth stating plainly, because the old wording hid both:**
+
+1. *"Repo becomes Rust-primary"* is **not** true of this outcome. The repository stays majority
+   C++/Qt by file count until macOS and Windows migrate.
+2. Every change to shared behaviour is made twice — once in Rust for Linux, once in C++/Qt for the
+   other two — for as long as that lasts. That is the standing cost ADR-0007 accepted, and it is
+   larger than "a follow-up project" suggests.
+
+**If the goal is that Qt leaves the repository**, that is a revision of ADR-0007 decision 3 rather
+than a Phase 8 detail, and it is a real scope increase: the 678 cross-platform files need Rust
+equivalents that also work on macOS and Windows. The renderer is the easy half — the Rust workspace
+has **no Qt anywhere today** (`iced` + `winit` + `wgpu`, verified against every crate manifest) and
+is platform-neutral by construction. The hard half is the platform *services*: clipboard, window
+management, tray, global shortcuts and files-service each carry per-OS backends, 98 files between
+them, and none of the Linux work done so far transfers.
 
 ---
 
