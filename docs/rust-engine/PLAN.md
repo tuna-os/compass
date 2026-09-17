@@ -662,10 +662,24 @@ which is why that selection is asserted in `build.rs` rather than left to a defa
 `src/lib` are deleted **in full**, the CMake targets go with them, and **the repository is
 Rust-primary** — the claim Phase 8 used to make three phases early.
 
-**Two things survive Qt's departure**, and it is worth being plain that "no Qt" is not "no C":
-`vendor/sqlcipher` and `vendor/fuzzy-trigram` are the clipboard *file format*, not an
-implementation of it, so they are linked by the Rust engine forever (ADR-0014). `vendor/everything-sdk3`
-survives too if Phase 10 keeps Everything.
+#### What is left in `vendor/` when Qt goes
+
+"No Qt" is not "no C", and the plan did not previously say what happens to the eleven vendored
+trees. Checked by looking for each name in the C++ `CMakeLists.txt` files and in the Rust crates'
+manifests:
+
+| tree | after Phase 10 |
+|---|---|
+| `sqlcipher` | **stays** — linked by `compass-sqlcipher-sys`. It is the clipboard file format, not an implementation of it (ADR-0014) |
+| `fuzzy-trigram` | **stays** — same reason: without it the FTS table cannot be opened at all |
+| `everything-sdk3` | **stays only if** Phase 10 keeps Everything for Windows file search; goes with that decision |
+| `cmark-gfm`, `pugixml`, `spellfix`, `kirigami-wheelhandler` | **go** with the C++ engine — referenced only by its CMake |
+| `CLI11`, `tomlplusplus`, `rang` | **already unreferenced** by either build; they can go at any time and are not Phase 10's problem |
+| `zip` | referenced by the C++ CMake only. The Rust extension host will need archive extraction, but from a Rust crate rather than this tree — no Rust manifest depends on it |
+
+A caution for whoever checks this again: `rang` and `zip` produce dozens of false hits in the Rust
+tree (`range`, `ranger`, `.zip()`). The counts above come from dependency declarations in
+`Cargo.toml`, not from grepping source.
 
 **Gate:** as Phase 9, on Windows; plus `grep -r Q_OS_ src/` returning nothing, because there is no
 `src/server` left to search.
@@ -1551,9 +1565,9 @@ Updated as work lands. See [`PARITY.md`](./PARITY.md) for the per-subsystem ledg
 
 ### Done
 
-Nine crates, 597 tests, and an engine that runs. Every count below was verified in a clean `git worktree` checkout of the
-committed tree, not in the working tree — three commits early on built only because the dirty tree
-supplied files they had not committed, and that is now checked rather than assumed.
+**Sixteen crates, 769 tests, and an engine that runs.** Counts verified against the committed tree
+rather than a dirty one — three commits early on built only because the working tree supplied files
+they had not committed, and that is checked rather than assumed.
 
 - **Workspace and CI.** Pinned 1.94.1, edition 2024, `unsafe_code` forbidden and `clippy::all`
   denied workspace-wide. Rust CI workflow, Makefile targets kept separate from the C++ ones. All
@@ -1581,7 +1595,23 @@ supplied files they had not committed, and that is now checked rather than assum
   "the window was shown". Eleven end-to-end tests spawn the real binary on its own socket with every
   XDG variable pointed into a tempdir.
 - **`compass-testkit`** (5) — corpus loader; entries expose raw bytes, not `String`.
-- **ADRs 0001–0009.**
+- **`compass-crypto`** (24) — the clipboard's AES-256-GCM and its HKDF key derivation, ported from
+  `aes-gcm.cpp` and `database-key.cpp`. CI cross-decrypts against the real C++ implementation in
+  both directions, which is the right check for randomised-IV crypto where a byte diff would fail
+  on a *correct* port.
+- **`compass-platform`** (6) and **`compass-platform-linux`** (2) — the platform seam ADR-0013
+  requires before Phase 4. `compass-platform` names what a launcher is and has **zero** Linux
+  dependencies; the implementation moved out. A manifest test fails if a crate shared by every
+  platform takes a dependency on a Linux-specific one.
+- **`compass-sqlcipher-sys`** (7) — SQLCipher and the `fuzzy_trigram` FTS5 tokenizer, built from
+  `vendor/` (ADR-0014), wrapped as `Database`/`Statement`. The one crate that declines the
+  workspace's `unsafe_code = "forbid"`, because tokenizer registration is FFI on a raw `sqlite3*`;
+  it restates every other workspace lint so the exception is visible as a missing manifest line.
+- **`compass-clipboard`** (64) — **`clipboard-db.cpp` ported in full**: query planning, the schema
+  and migrations, the paginated read, and the whole write path. Four C++ bugs fixed rather than
+  reproduced, each pinned by a control that fails when the original shape is restored. The layer
+  above it, `clipboard-service.cpp`, is still C++.
+- **ADRs 0001–0014.**
 - **Flatpak manifest** for the Bluefin target — built, installed and run in CI on every change
   (`.github/workflows/flatpak.yaml`), and layered into the VM tier's test image.
 - **i18n converter** — 7,347 messages across 7 locales, all parsing with the real `fluent-syntax`
