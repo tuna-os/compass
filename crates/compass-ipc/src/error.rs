@@ -35,6 +35,24 @@ pub enum Error {
         max: usize,
     },
 
+    /// The fallback socket directory is not one we exclusively own.
+    ///
+    /// Only ever raised for the `/tmp` fallback: `$XDG_RUNTIME_DIR` is the
+    /// session manager's to get right, and an explicit
+    /// [`crate::SocketPath::in_dir`] is the caller's.
+    #[error(
+        "refusing to use {} for the ipc socket: {reason}. \
+         This is the fallback used when $XDG_RUNTIME_DIR is unset; a directory \
+         there that is not exclusively yours may belong to another user",
+        .path.display()
+    )]
+    UnsafeSocketDir {
+        /// The directory that was refused.
+        path: PathBuf,
+        /// What is wrong with it.
+        reason: String,
+    },
+
     /// Something is already listening on the socket path.
     #[error("vicinae is already running (socket {} is live)", .path.display())]
     AlreadyRunning {
