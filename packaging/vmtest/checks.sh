@@ -75,6 +75,14 @@ exe_running() {
 # Every summon check needs the same seven environment variables, and getting
 # XDG_RUNTIME_DIR wrong means talking to a socket that is not the session's --
 # which presents as "no engine running" rather than as a mistake here.
+#
+# THE ARGUMENTS ARE THE CLI'S OWN SUBCOMMAND, with no `vicinae` in front. The
+# Flatpak's entrypoint IS `vicinae`, so `compass_cli vicinae ping` runs
+# `vicinae vicinae ping` -- rejected by the parser, forever. That cost a
+# 30-minute VM run, presenting as "the engine never answered a ping" with a
+# perfectly healthy engine sitting there. `crates/vicinae/tests/vmtest_cli.rs`
+# now parses these call sites with the real clap definition so the next one
+# fails in seconds instead.
 compass_cli() {
   local u
   u="$(uid)"
@@ -129,7 +137,7 @@ launcher_appeared() {
 # `compass_cli`, `uid` or `APP`, and the check would fail for reasons that have
 # nothing to do with the engine.
 engine_ready() {
-  compass_cli vicinae ping >/dev/null 2>&1 || [ -f "$ENGINE_DONE" ]
+  compass_cli ping >/dev/null 2>&1 || [ -f "$ENGINE_DONE" ]
 }
 
 # The session's Wayland socket name. Read from the runtime directory rather than
@@ -946,7 +954,18 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
     # summon after it -- and the engine indexes the machine's applications
     # before it listens, which under llvmpipe is not instant. `ping` answers
     # only once the socket is up.
-    wait_for "the engine to answer a ping, or exit" 120 engine_ready
+    # A bare `wait_for` here says only "timed out", which is the same message
+    # for an engine that is still indexing, an engine that crashed, and a
+    # client invocation that could never have worked. The last of those is
+    # exactly what happened once, and the 120 s of silence is what made it
+    # expensive. So the timeout now says what `ping` actually returns.
+    if ! wait_for "the engine to answer a ping, or exit" 120 engine_ready; then
+      echo "--- what the client actually says ---" >&2
+      compass_cli ping >&2 2>&1 || true
+      echo "--- the engine's own output ---" >&2
+      cat "$ENGINE_ERR" >&2
+      exit 1
+    fi
 
     # Recorded before the launcher starts, so `launcher_pid` can tell the two
     # apart. Written even on the failure path below: a half-started engine
@@ -975,7 +994,7 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   # This is what the tier could never assert before: every earlier check could
   # only see a process, never a connection.
   window-attached)
-    if ! out="$(compass_cli vicinae toggle 2>&1)"; then
+    if ! out="$(compass_cli toggle 2>&1)"; then
       echo "the launcher window is not attached to the engine:" >&2
       echo "$out" >&2
       exit 1
@@ -1000,7 +1019,7 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   # gated, for the reasons §8.5 gives.
   summon)
     start_ms="$(date +%s%3N)"
-    if ! out="$(compass_cli vicinae show 2>&1)"; then
+    if ! out="$(compass_cli show 2>&1)"; then
       echo "the engine could not show the window:" >&2
       echo "$out" >&2
       exit 1
@@ -1012,7 +1031,7 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
 
   # Hide it again, so the host can screenshot the difference.
   dismiss)
-    compass_cli vicinae hide
+    compass_cli hide
     ;;
 
   # What did the engine say about the hotkey?

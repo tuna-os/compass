@@ -95,8 +95,10 @@ pub enum Command {
     /// Run the engine.
     ///
     /// Serves the IPC socket until a `shutdown` request or a termination
-    /// signal. This build is headless: it answers `ping`, `query` and `doctor`,
-    /// and refuses the window commands, which have no window to act on yet.
+    /// signal. It answers `ping`, `query` and `doctor` on any machine, display
+    /// or not. `toggle`, `show` and `hide` are forwarded to a resident launcher
+    /// window that attached over the same socket, and refused when none has --
+    /// see ADR-0015.
     Serve,
 
     /// Ask a running engine to shut down.
