@@ -222,11 +222,11 @@ rather than a narrowed one. Still C++-only:
   embeds the same two `.sql` files (the C++ reads them from `:database/...`, a Qt resource, so they
   are already compiled in) and records them in the same `schema_migrations` table, with the same
   MD5 checksums. Two declared divergences, both in the table below;
-- `insertSelection`, `insertOffer`, `indexSelectionContent`, `removeSelection`, `removeAll`;
-- `evictOlderThan` / `oldestEvictableTimestamp`, pinning, keywords, `tryBubbleUpSelection`
-  (which discards its own `exec()` result and answers from the connection-wide `changes()` counter;
-  the port should return false when the statement failed, and `compass-sqlcipher-sys` deliberately
-  does not expose `sqlite3_changes` so that shape cannot be reproduced by accident);
+- ~~`insertSelection`, `insertOffer`, `indexSelectionContent`, `removeSelection`, `removeAll`~~,
+  ~~`evictOlderThan`, `tryBubbleUpSelection`~~ — ported as `compass_clipboard::write`, with the two
+  bugs below fixed rather than reproduced, together with `oldestEvictableTimestamp`, `setPinned`,
+  `setKeywords`, `retrieveKeywords`, `findSelection` and `findPreferredOffer`. That is every
+  function `clipboard-db.hpp` declares;
 - ~~the paginated `query` itself~~ — ported as `compass_clipboard::store::query`, both SQL shapes,
   the `GROUP BY` and the `COUNT(*) OVER()` total, driven by `search::plan`.
 
@@ -306,6 +306,8 @@ the behaviour changes, so a future fix is loud rather than silent.
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
+| -2 | `evictOlderThan` computes its cutoff with `unixepoch()` in **both** the `SELECT` that collects the offer ids to unlink from disk and the `DELETE` that removes the rows. Those are separate statements with separate readings of the clock (measured: inside `BEGIN`, `unixepoch('subsec')` advanced after 434 consecutive statements), so the `DELETE` set is a superset and anything crossing the threshold in between is deleted but never reported — its payload stays on disk forever. | Compute the cutoff once and bind it to both statements, which makes the two sets identical by construction. | `eviction_returns_every_offer_it_deletes` (fails when the second reading is reintroduced) |
+| -1 | `tryBubbleUpSelection` runs its `UPDATE`, discards whether it succeeded, and answers from `m_db.changes()` — a connection-wide counter holding the most recent *successful* statement's count. A failed or no-op update can therefore report success, and its caller (`clipboard-service.cpp:508`) then skips `insertSelection`, so the copied content never reaches the history. | `RETURNING id`: did *this* statement touch a row. `compass-sqlcipher-sys` deliberately does not expose `sqlite3_changes`. | `bubbling_up_something_absent_reports_false_even_after_a_successful_write` |
 | 0 | `query` divides by `limit` to compute `totalPages` (`ceil(totalCount / limit)`), so a zero `limit` is a division by zero whose result is cast to `int`. It also interpolates `limit` and `offset` into the SQL text with `.arg()` rather than binding them. | Refuse a non-positive `limit`; bind both. `current_page`'s ceiling rounding *is* reproduced, oddity included — it is a display value the C++ UI already agrees with. | `a_zero_limit_is_refused_rather_than_dividing_by_it` |
 | 1 | `MigrationManager::runMigrations` catches every exception, logs it, rolls back and returns `void`; `ClipboardDatabase::runMigrations` returns `void` too. A failed migration is silent, and the next thing the user sees is every query failing against a schema that was never created. | `schema::run` returns a `Result`. | `an_edited_migration_is_refused`, `a_database_from_a_newer_build_is_refused` |
 | 2 | The `checksum` column exists to detect a migration edited after it was applied. `insertMigration` writes it and `loadDatabaseMigrations` reads it back into a struct field — and nothing ever compares the two. It is a stored value with no reader, so the detection it exists for never happens. | Compare it, and refuse on a mismatch. The expected hashes are also pinned in `schema.rs`'s tests, so editing a migration fails at development time rather than on a user's machine. | `an_edited_migration_is_refused`, `the_embedded_content_hashes_to_what_the_cpp_engine_recorded` |
