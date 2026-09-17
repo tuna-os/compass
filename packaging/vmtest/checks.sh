@@ -274,8 +274,59 @@ PY
 
     # logind hands input devices to the active session through TakeDevice, so
     # if the compositor has none, its view of the seat is where to look next.
-    echo '--- what logind thinks the seat has ---'
-    loginctl seat-status seat0 2>/dev/null | sed -n '1,25p' || echo '(seat-status unavailable)'
+    #
+    # This used to print `seat-status | sed -n '1,25p'`, which truncated the
+    # device tree before any input device appeared -- the first 25 lines are
+    # the DRM card, the optical drive, i2c and the power button. The one
+    # question being asked, "is the KEYBOARD on this seat", was exactly what
+    # got cut off. Filtered to input devices instead of arbitrarily truncated.
+    echo '--- what logind thinks the seat has (input devices only) ---'
+    if seat="$(loginctl seat-status seat0 2>/dev/null)"; then
+      printf '%s\n' "$seat" | sed -n '1,3p'
+      inputs="$(printf '%s\n' "$seat" | grep -E '/input/input[0-9]+$' || true)"
+      if [ -n "$inputs" ]; then
+        printf '%s\n' "$inputs" | sed 's/^/  /'
+      else
+        echo '  NONE — seat0 has no input devices assigned.'
+      fi
+
+      # The keyboard specifically. i8042 is the AT controller the emulated
+      # "AT Translated Set 2 keyboard" hangs off; if the compositor reads a
+      # device logind has not put on this seat, that mismatch is the lead.
+      if printf '%s\n' "$seat" | grep -q 'i8042'; then
+        echo '  -> the AT keyboard IS on seat0'
+      else
+        echo '  -> the AT keyboard is NOT on seat0 (i8042 absent from the tree)'
+      fi
+    else
+      echo '(seat-status unavailable)'
+    fi
+
+    # IS THE SESSION ACTIVE?
+    #
+    # This is the question the rest of the evidence now points at. Everything
+    # else is green: the keyboard is on seat0, the kernel receives clean
+    # LEFTMETA press and release on event1, and gnome-shell holds event1 open.
+    # Yet pressing Super alone leaves the framebuffer byte-identical -- and
+    # Super alone is GNOME's OWN binding for the Activities overview, nothing
+    # to do with our portal shortcut. So the compositor is inert to this input
+    # generally, not failing to route one shortcut.
+    #
+    # logind pauses a session's input devices when the session is not active,
+    # and a paused device keeps its file descriptor open -- the fd is how the
+    # resume is delivered. So "gnome-shell holds event1" is entirely consistent
+    # with gnome-shell receiving nothing from it, and Active= is what tells the
+    # two apart.
+    echo '--- is the session active? (paused devices keep their fds) ---'
+    sid="$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$SESSION_USER" '$3 == u {print $1; exit}')"
+    if [ -n "$sid" ]; then
+      loginctl show-session "$sid" \
+        -p Id -p User -p Name -p Seat -p Type -p Class -p State -p Active -p Remote \
+        2>/dev/null | sed 's/^/  /'
+    else
+      echo "  no logind session found for $SESSION_USER"
+      loginctl list-sessions --no-legend 2>/dev/null | sed 's/^/  /' || true
+    fi
     ;;
 
   # Does an injected scancode reach the guest KERNEL?

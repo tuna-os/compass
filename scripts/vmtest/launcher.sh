@@ -80,11 +80,38 @@ sudo -E "$corral_bin" screenshot "$vm" -o "$out/launcher-01-open.png" --require-
 
 echo
 echo "=== 3. type a query at it (EXPECTED TO DO NOTHING — see below) ==="
-# Kept, and labelled, rather than deleted. Spike A established that QMP key
-# injection does not reach this session at all: pressing Super alone, which
-# opens the Activities overview, left the framebuffer byte-identical. So this
-# step cannot currently type anything, and its screenshot is evidence about key
-# injection rather than about the launcher.
+# Kept, and labelled, rather than deleted. Pressing Super alone, which opens
+# the Activities overview, leaves the framebuffer byte-identical, so this step
+# cannot currently type anything and its screenshot is evidence about key
+# delivery rather than about the launcher.
+#
+# It previously said injection "does not reach this session at all". That is
+# WRONG and was written before the evdev capture existed. Spike A's
+# keyboard-capture now answers it directly, and the chain is longer than that:
+#
+#   QEMU delivers the scancode          yes — 288 bytes captured on the evdev
+#                                        node while the key was injected
+#   the guest kernel sees it            yes — same evidence
+#   gnome-shell holds the keyboard      yes — event0..event3 open on its fds
+#   the portal grants the binding       yes — "portal available | bind granted"
+#   the shortcut fires                  NO  — "activated False"
+#
+# So the loss is above the kernel, in a session whose compositor is holding the
+# device it is losing events from. "Does not reach the session" would point at
+# corral or QEMU, which the capture rules out.
+#
+# The seat is ruled out too, as of the run that first printed the untruncated
+# diagnostic: the AT keyboard IS on seat0, and the capture decodes clean
+# LEFTMETA press and release on event1 -- the very node gnome-shell holds open.
+#
+# What narrows it furthest is that pressing Super ALONE leaves the framebuffer
+# byte-identical (deviation 0.1576 before and after). Super alone is GNOME's own
+# binding for the Activities overview. So this is not our portal shortcut
+# failing to route: the compositor is inert to injected input generally. The
+# remaining suspect is that logind has the session's devices PAUSED, which keeps
+# their file descriptors open, which is why "holds event1" and "receives nothing
+# from event1" are both true at once. `compositor-input` now reports the
+# session's Active state, which is what tells those apart.
 #
 # Deleting it would lose the regression check for free — the day injection
 # starts working, this frame changes and says so. Leaving it unlabelled would

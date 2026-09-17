@@ -527,12 +527,70 @@ Default flips to `--engine=rust` on Linux; the C++ engine stays one release behi
 build there until a follow-up project. Compass supports all three today, and a Linux-only Rust
 default is a visible narrowing: say so loudly in the release notes.
 
+"A follow-up project" was doing a lot of work in that sentence — it is 678 cross-platform files, and
+until it happens the repository keeps two engines and every shared change is made twice. It is now
+Phases 9 and 10 rather than an unowned successor; see
+[ADR-0013](./adr/0013-qt-leaves-the-repository.md).
+
 **Gate:** one full release cycle with no P0 regressions.
 
-### Phase 8 — Removal
+### Phase 8 — Remove the Linux C++ engine
 
-Delete `src/server`, the C++ `src/lib`, and the Linux CMake targets. Keep macOS/Windows targets
-until their own migration. Repo becomes Rust-primary.
+**Linux targets only.** Not "Removal" — the repository is not Rust-primary at the end of this phase
+and the plan no longer claims it is. See [ADR-0013](./adr/0013-qt-leaves-the-repository.md).
+
+This section previously read *"Delete `src/server`, the C++ `src/lib`, and the Linux CMake targets.
+Keep macOS/Windows targets until their own migration. Repo becomes Rust-primary."* That is not
+executable: **every** macOS and Windows source file lives *inside* `src/server`, so it cannot be
+deleted while those targets are kept.
+
+Counting `.cpp`/`.hpp` under `src/server` by path (crude matching; the error bars do not change the
+conclusion):
+
+| | files |
+|---|---:|
+| total | 840 |
+| **Linux-specific** — `wayland`, `x11`, `gnome`, `hyprland`, `linux`, `data-control` | **64** |
+| macOS-specific | 28 |
+| Windows-specific | 70 |
+| cross-platform | 678 |
+
+So this phase removes on the order of **64** files plus the Linux CMake targets. ~776 Qt files
+remain, and until Phase 10 every change to shared behaviour is made twice.
+
+### Phase 9 — macOS
+
+Implement the platform seam for macOS: clipboard, window management, tray, global shortcuts, file
+indexing. Delete the macOS C++ targets (28 files plus their share of the cross-platform core).
+
+**Gate:** the same suites the Linux engine gates on, running on macOS; one release cycle with no P0
+regressions.
+
+### Phase 10 — Windows, and Qt leaves
+
+The same for Windows (70 files). When this lands, `src/server` and the C++ `src/lib` are deleted in
+full, the CMake targets go with them, and **the repository is Rust-primary** — the claim Phase 8
+used to make three phases early.
+
+---
+
+**Phases 9 and 10 exist because of [ADR-0013](./adr/0013-qt-leaves-the-repository.md).** ADR-0007
+decision 3 left them as "a follow-up project", which has no owner, no phase and no gate — so Qt
+would not have left late, it would not have left at all.
+
+**The one thing this changes before Phase 4**, and the reason the ADR was worth writing now rather
+than at cutover: the platform seam gets built while it is still cheap. Measured today —
+
+- Linux-only dependencies are confined to `compass-portals`, `compass-shell`, `compass-wayland` and
+  the `vicinae` binary, with **zero** `cfg(target_os)` guards anywhere. That part is in good shape.
+- **`compass-platform` defines no traits.** It is named like a seam and is not one: two files, and
+  it depends on `compass-portals`.
+- **`compass-ui` depends directly on `compass-portals` and `compass-wayland`**, so the crate built
+  on the portable renderer (`iced` + `winit` + `wgpu`, no Qt) is itself Linux-bound.
+
+Phase 4's extension host and Phase 5's breadth will be written against whatever shape those crates
+have when they land. Fixing the dependency direction now is days; retrofitting it afterwards is
+weeks.
 
 ---
 
@@ -1347,6 +1405,7 @@ The questions that were open when this plan was written have been decided and re
 | Is the Rhai tier worth it? | Build the seam now; the tier is a product go/no-go at the end of Phase 4 | [0005](./adr/0005-rhai-seam-now-tier-later.md) |
 | The fuzzy coherence gap | Reconstruct the signal over nucleo's indices, rather than raising the gate or accepting looser matching | [0006](./adr/0006-fuzzy-coherence-classifier.md) |
 | Fork posture, branding, platform scope, GNOME versions | Hard fork acknowledged; `vicinae` user-facing names kept; Linux-first with macOS/Windows on the C++ engine; GNOME 50 **and** 51 in CI | [0007](./adr/0007-fork-posture-and-platform-scope.md) |
+| **Does Qt ever actually leave?** | Yes — Linux-first becomes a *sequence*, not a scope limit; macOS and Windows get committed phases 9 and 10, and the platform seam is built before Phase 4 | [0013](./adr/0013-qt-leaves-the-repository.md) |
 | Does browser control belong in the core? | No — it becomes an extension and leaves the port's scope entirely | [0008](./adr/0008-browser-control-is-an-extension.md) |
 
 ### Still genuinely open
