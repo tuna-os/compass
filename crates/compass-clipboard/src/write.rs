@@ -403,3 +403,190 @@ mod tests {
         );
     }
 }
+
+/// Pin a selection, or unpin it.
+///
+/// Returns whether a selection with that id existed.
+///
+/// # Why this reports "found" where the C++ reports "the statement ran"
+///
+/// `setPinned` returns `exec()`, which is true for an `UPDATE` that matched no
+/// rows — pinning an id that does not exist "succeeds". That is a different
+/// question from the one a caller asks. `RETURNING id` answers the one they
+/// mean, and unlike [`bubble_up`] nothing depends on the looser reading, so
+/// this is a narrowing rather than a fix.
+///
+/// # Errors
+///
+/// Returns [`Error::Database`] if the update fails.
+pub fn set_pinned(db: &Database, id: &str, pinned: bool) -> Result<bool> {
+    let mut stmt = if pinned {
+        let mut stmt =
+            db.prepare("UPDATE selection SET pinned_at = :epoch WHERE id = :id RETURNING id")?;
+        stmt.bind_int64(":epoch", now())?;
+        stmt
+    } else {
+        db.prepare("UPDATE selection SET pinned_at = NULL WHERE id = :id RETURNING id")?
+    };
+    stmt.bind_text(":id", id)?;
+    stmt.step().map_err(Error::Database)
+}
+
+/// Set a selection's keywords.
+///
+/// Returns whether a selection with that id existed.
+///
+/// # The trigger this fires
+///
+/// `selection_auk` (`002_trigram_fts.sql`) runs `AFTER UPDATE OF keywords`: it
+/// deletes the `selection_fts` row whose content equals the *old* keywords and
+/// inserts one holding the new. So changing keywords silently re-indexes the
+/// entry, and searching by an old keyword stops finding it. That is the
+/// database's behaviour rather than this function's, which is exactly why it is
+/// worth a test — nothing in this file would reveal it.
+///
+/// # Errors
+///
+/// Returns [`Error::Database`] if the update fails.
+pub fn set_keywords(db: &Database, id: &str, keywords: &str) -> Result<bool> {
+    let mut stmt = db.prepare("UPDATE selection SET keywords = :kw WHERE id = :id RETURNING id")?;
+    stmt.bind_text(":kw", keywords)?;
+    stmt.bind_text(":id", id)?;
+    stmt.step().map_err(Error::Database)
+}
+
+/// A selection's keywords, or `None` if there is no such selection.
+///
+/// A selection that exists with no keywords reads back as `Some("")`, because
+/// the column defaults to the empty string rather than to NULL.
+///
+/// # Errors
+///
+/// Returns [`Error::Database`] if the query fails.
+pub fn keywords_of(db: &Database, id: &str) -> Result<Option<String>> {
+    let mut stmt = db.prepare("SELECT keywords FROM selection WHERE id = :id")?;
+    stmt.bind_text(":id", id)?;
+    if stmt.step()? {
+        Ok(Some(stmt.column_text(0).unwrap_or_default()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// The `updated_at` of the oldest selection eviction would consider, so a
+/// caller can schedule the next sweep instead of polling.
+///
+/// `None` means there is nothing evictable.
+///
+/// # Errors
+///
+/// Returns [`Error::Database`] if the query fails.
+pub fn oldest_evictable(db: &Database, preserve_tagged: bool) -> Result<Option<i64>> {
+    let sql = if preserve_tagged {
+        "SELECT MIN(updated_at) FROM selection WHERE pinned_at IS NULL AND keywords == ''"
+    } else {
+        "SELECT MIN(updated_at) FROM selection"
+    };
+    let mut stmt = db.prepare(sql)?;
+    if stmt.step()? && !stmt.is_null(0) {
+        Ok(Some(stmt.column_int64(0)))
+    } else {
+        // MIN over no rows is one row holding NULL, so "no rows" and "no
+        // evictable rows" both arrive here.
+        Ok(None)
+    }
+}
+
+/// One offer of a selection, as [`find_selection`] reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfferRecord {
+    /// The offer id, which names its payload on disk.
+    pub id: String,
+    /// The MIME type it is in.
+    pub mime_type: String,
+    /// Whether that payload is encrypted.
+    pub encryption: EncryptionType,
+}
+
+/// A selection and its offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionRecord {
+    /// The application it came from, if recorded.
+    pub source: Option<String>,
+    /// Its offers, which may be empty.
+    pub offers: Vec<OfferRecord>,
+}
+
+/// Find a selection and every offer it has.
+///
+/// The `LEFT JOIN` is why a selection with no offers is `Some` with an empty
+/// `offers` rather than `None`: "no such selection" and "a selection nothing
+/// was stored for" are different answers, and the caller needs to tell them
+/// apart.
+///
+/// # Errors
+///
+/// Returns [`Error::Database`] if the query fails, or
+/// [`crate::kind::UnknownDiscriminant`] wrapped in it if a stored
+/// `encryption_type` names no variant.
+pub fn find_selection(db: &Database, id: &str) -> Result<Option<SelectionRecord>> {
+    let mut stmt = db.prepare(
+        "SELECT s.source, o.id, o.mime_type, o.encryption_type \
+         FROM selection s \
+         LEFT JOIN data_offer o ON o.selection_id = s.id \
+         WHERE s.id = :id",
+    )?;
+    stmt.bind_text(":id", id)?;
+
+    let mut found: Option<SelectionRecord> = None;
+    while stmt.step()? {
+        let record = found.get_or_insert_with(|| SelectionRecord {
+            source: stmt.column_text(0),
+            offers: Vec::new(),
+        });
+        if stmt.is_null(1) {
+            continue;
+        }
+        record.offers.push(OfferRecord {
+            id: stmt.column_text(1).unwrap_or_default(),
+            mime_type: stmt.column_text(2).unwrap_or_default(),
+            encryption: EncryptionType::from_stored(stmt.column_int64(3)).map_err(|err| {
+                Error::Database(compass_sqlcipher_sys::Error::Sqlite {
+                    context: "reading an offer's encryption type",
+                    message: err.to_string(),
+                    code: -1,
+                })
+            })?,
+        });
+    }
+    Ok(found)
+}
+
+/// The offer a selection's list entry shows — the one whose MIME type matches
+/// the selection's `preferred_mime_type`.
+///
+/// # Errors
+///
+/// Returns [`Error::Database`] if the query fails.
+pub fn find_preferred_offer(db: &Database, selection_id: &str) -> Result<Option<OfferRecord>> {
+    let mut stmt = db.prepare(
+        "SELECT o.id, o.mime_type, o.encryption_type FROM data_offer o \
+         JOIN selection s ON s.id = o.selection_id \
+         WHERE o.mime_type = s.preferred_mime_type AND o.selection_id = :id",
+    )?;
+    stmt.bind_text(":id", selection_id)?;
+    if !stmt.step()? {
+        return Ok(None);
+    }
+    Ok(Some(OfferRecord {
+        id: stmt.column_text(0).unwrap_or_default(),
+        mime_type: stmt.column_text(1).unwrap_or_default(),
+        encryption: EncryptionType::from_stored(stmt.column_int64(2)).map_err(|err| {
+            Error::Database(compass_sqlcipher_sys::Error::Sqlite {
+                context: "reading the preferred offer's encryption type",
+                message: err.to_string(),
+                code: -1,
+            })
+        })?,
+    }))
+}

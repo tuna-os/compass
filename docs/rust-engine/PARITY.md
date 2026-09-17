@@ -224,8 +224,9 @@ rather than a narrowed one. Still C++-only:
   MD5 checksums. Two declared divergences, both in the table below;
 - ~~`insertSelection`, `insertOffer`, `indexSelectionContent`, `removeSelection`, `removeAll`~~,
   ~~`evictOlderThan`, `tryBubbleUpSelection`~~ — ported as `compass_clipboard::write`, with the two
-  bugs below fixed rather than reproduced. Still C++-only: `oldestEvictableTimestamp`, pinning,
-  keywords, `findSelection` and `findPreferredOffer`;
+  bugs below fixed rather than reproduced, together with `oldestEvictableTimestamp`, `setPinned`,
+  `setKeywords`, `retrieveKeywords`, `findSelection` and `findPreferredOffer`. That is every
+  function `clipboard-db.hpp` declares;
 - ~~the paginated `query` itself~~ — ported as `compass_clipboard::store::query`, both SQL shapes,
   the `GROUP BY` and the `COUNT(*) OVER()` total, driven by `search::plan`.
 
