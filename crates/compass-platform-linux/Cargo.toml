@@ -1,5 +1,5 @@
 [package]
-name = "compass-platform"
+name = "compass-platform-linux"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +10,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-thiserror.workspace = true
-tokio.workspace = true
-tracing.workspace = true
+compass-platform.workspace = true
+compass-portals.workspace = true
 compass-xdg.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true

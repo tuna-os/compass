@@ -25,6 +25,7 @@ compass-extension-api = { path = "crates/compass-extension-api" }
 compass-portals = { path = "crates/compass-portals" }
 compass-wayland = { path = "crates/compass-wayland" }
 compass-platform = { path = "crates/compass-platform" }
+compass-platform-linux = { path = "crates/compass-platform-linux" }
 compass-ui = { path = "crates/compass-ui" }
 compass-crypto = { path = "crates/compass-crypto" }
 

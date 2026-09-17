@@ -42,8 +42,22 @@ But:
 - **`compass-platform` defines no traits.** It is named like a platform seam and is not one: two
   files, and it *depends on* `compass-portals`, so it is a Linux implementation wearing the name of
   an abstraction.
-- **`compass-ui` depends directly on `compass-portals` and `compass-wayland`.** The crate built on
-  the portable renderer is itself Linux-bound by its dependency edges.
+- **`compass-ui` declares `compass-portals` and `compass-wayland` as dependencies.** *Corrected
+  after this ADR was accepted:* the first draft said the crate was "Linux-bound by its dependency
+  edges", which overstates it. Those two dependencies are **unused** — the only mention of either
+  in `crates/compass-ui/src` is a doc comment, and the crate builds clean with both removed
+  (verified, not assumed). They were real edges and they did bind the build, but removing them is
+  deleting two lines, not untangling code.
+
+  The coupling that *is* real sits one level down: `compass-ui` → `compass-platform` →
+  `compass-portals`.
+
+`compass-platform`'s own doc comment claims it handles "launching applications, file indexing,
+clipboard". It handles launching. The other two do not exist.
+
+And `launch.rs` is not a portable API with a Linux backend — it *is* the Linux backend, sitting in
+the crate named for the abstraction: `flatpak-spawn --host`, then the XDG `OpenURI` portal, then a
+direct spawn.
 
 Every phase that lands before that seam exists makes the macOS and Windows work more expensive,
 because Phase 4's extension host and Phase 5's breadth will be written against whatever shape
@@ -72,7 +86,7 @@ deletes its C++ targets. Qt leaves when Phase 10 completes.
 - `compass-platform` gains the traits for platform services — clipboard, window management, tray,
   global shortcuts, file indexing — and stops depending on `compass-portals`.
 - `compass-ui` depends on `compass-platform`, not on `compass-portals` or `compass-wayland`
-  directly.
+  directly. (Already done, and it cost two deleted lines — see the correction above.)
 - The Linux crates become implementations selected at composition, in the `vicinae` binary.
 
 This is the only part of this ADR that changes work in the near term, and it is deliberately small:

@@ -22,6 +22,7 @@ compass-core.workspace = true
 compass-ipc.workspace = true
 compass-portals.workspace = true
 compass-ui.workspace = true
+compass-platform-linux.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

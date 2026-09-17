@@ -13,7 +13,10 @@ use iced::{
     window,
 };
 
+use std::sync::Arc;
+
 use compass_core::{AppIndex, AppItem};
+use compass_platform::{AppLauncher, NullLauncher};
 use compass_search::rank_indices;
 
 use crate::message::{Direction, Message};
@@ -23,6 +26,12 @@ use crate::message::{Direction, Message};
 pub struct AppFlags {
     /// Window configuration.
     pub window_config: window::Settings,
+    /// How to launch the selected application.
+    ///
+    /// Injected rather than reached for: this crate must not know whether it
+    /// is on Linux. `vicinae` supplies `compass-platform-linux`'s launcher;
+    /// tests supply their own. See ADR-0013.
+    pub launcher: Arc<dyn AppLauncher>,
 }
 
 impl Default for AppFlags {
@@ -36,6 +45,11 @@ impl Default for AppFlags {
                 transparent: true,
                 ..Default::default()
             },
+            // Deliberately the launcher that launches nothing. A default that
+            // silently picked a real backend would make the platform choice
+            // invisible at the call site, which is the arrangement ADR-0013
+            // exists to end. `vicinae` sets this explicitly.
+            launcher: Arc::new(NullLauncher),
         }
     }
 }
@@ -56,6 +70,8 @@ pub struct LauncherApp {
     selected: usize,
     /// The last launch failure, shown until the query changes.
     error: Option<String>,
+    /// How to launch. See [`AppFlags::launcher`].
+    launcher: Arc<dyn AppLauncher>,
 }
 
 /// Where the selection lands after moving one row in `direction`.
@@ -78,8 +94,10 @@ pub fn next_selection(len: usize, current: usize, direction: Direction) -> usize
 
 impl LauncherApp {
     /// Create a new launcher application, indexing the environment.
-    pub fn new(_flags: AppFlags) -> (Self, Task<Message>) {
-        (Self::with_index(AppIndex::from_environment()), Task::none())
+    pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
+        let mut app = Self::with_index(AppIndex::from_environment());
+        app.launcher = flags.launcher;
+        (app, Task::none())
     }
 
     /// Create one over a supplied index.
@@ -94,7 +112,14 @@ impl LauncherApp {
             results: Vec::new(),
             selected: 0,
             error: None,
+            launcher: Arc::new(NullLauncher),
         }
+    }
+
+    /// Replace the launcher. For tests that assert what the UI asked for.
+    pub fn with_launcher(mut self, launcher: Arc<dyn AppLauncher>) -> Self {
+        self.launcher = launcher;
+        self
     }
 
     /// The item the selection currently points at, if any.
@@ -151,9 +176,11 @@ impl LauncherApp {
                 // this is not free — but it happens once per launch, not once
                 // per keystroke.
                 let entry = item.entry().clone();
+                let launcher = Arc::clone(&self.launcher);
                 Task::perform(
                     async move {
-                        compass_platform::launch_app(&entry)
+                        launcher
+                            .launch(&entry, &[])
                             .await
                             .map(|_method| ())
                             .map_err(|err| err.to_string())

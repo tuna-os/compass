@@ -1,0 +1,17 @@
+//! `compass-platform-linux` — the Linux implementations of `compass-platform`.
+//!
+//! This is where the code that used to live in `compass-platform` belongs: it
+//! is not "what the platform can do", it is what *Linux* does. Splitting them
+//! is the near-term obligation in
+//! [ADR-0013](../../docs/rust-engine/adr/0013-qt-leaves-the-repository.md),
+//! which commits macOS and Windows to their own phases and so makes the shape
+//! of the seam something the later work inherits rather than fights.
+//!
+//! Nothing selects this crate except the `vicinae` binary. That is the point:
+//! a platform backend a shared crate can reach is not a backend.
+
+#![deny(missing_docs)]
+
+mod launch;
+
+pub use launch::LinuxLauncher;
