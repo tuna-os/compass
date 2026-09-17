@@ -203,9 +203,10 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 **`src/services/clipboard` → `compass-clipboard`** — one slice of `clipboard-db.cpp` (478 lines) is
 ported: `search::plan`, which decides for each word of the user's query whether it goes to the FTS5
 `MATCH` or to an `instr` substring condition. The split matters because `selection_fts` uses a
-trigram tokenizer, and a word with no run of three indexable characters produces no tokens — so
-`MATCH` on it finds *nothing*, and without the `instr` fallback a two-letter search returns an empty
-history rather than a narrowed one. Still C++-only:
+trigram tokenizer, and a word with no run of three indexable characters cannot reach a document
+longer than itself — measured against the real vendored tokenizer, `"fi"` misses `firefox` and
+`"bc"` misses `abc` — so without the `instr` fallback a two-letter search returns an empty history
+rather than a narrowed one. Still C++-only:
 
 - the schema and `MigrationManager` wiring;
 - `insertSelection`, `insertOffer`, `indexSelectionContent`, `removeSelection`, `removeAll`;
