@@ -67,9 +67,14 @@ fn main() {
     build.compile("compass_sqlcipher");
 
     // The tokenizer, statically linked the same way the C++ engine links it.
+    // `register.c` includes `sqlite3.h` (via `fuzzy-trigram.h`), which lives
+    // in the SQLCipher amalgamation directory — not on the default search
+    // path, so without this include nothing that links this crate compiles
+    // on a fresh checkout.
     cc::Build::new()
         .file(&tokenizer)
         .include(&vendor)
+        .include(vendor.join("sqlcipher"))
         .include(vendor.join("fuzzy-trigram"))
         .warnings(false)
         .define("SQLITE_CORE", "1")

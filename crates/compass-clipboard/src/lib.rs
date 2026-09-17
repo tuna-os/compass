@@ -10,12 +10,19 @@
 //!   and substring terms the SQL layer binds.
 //! * [`store`] — reading history back: the paginated query.
 //! * [`write`] — inserts, indexing, deletion and eviction.
+//! * [`ingest`] — recording one observed copy, as delivered by the GNOME
+//!   helper extension's `ClipboardChanged` signal.
 //!
-//! Still on the C++ side: the schema and migrations, insert/evict, pinning and
-//! keywords, and the paginated read itself. See `docs/rust-engine/PARITY.md`.
+//! Still on the C++ side: the monitoring loop and multi-offer sanitising in
+//! `clipboard-service.cpp`, which the daemon wiring will need. See
+//! `docs/rust-engine/PARITY.md`.
+//!
+//! [`classify`]: ingest::classify
+//! [`preview`]: ingest::preview
 
 #![deny(missing_docs)]
 
+pub mod ingest;
 pub mod kind;
 pub mod schema;
 pub mod search;
