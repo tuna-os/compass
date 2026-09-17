@@ -42,11 +42,22 @@
     # Crane-based Rust build
     rustBuild = pkgs: let
       craneLib = crane.mkLib pkgs;
+      # crane's cleanCargoSource only keeps .rs/.toml/Cargo.lock/.cargo/config and
+      # so strips the .xml D-Bus introspection files + dconf seed that are embedded
+      # via include_str! in compass-shell and vicinae; preserve them too.
+      includeStrFilter = path: type:
+        craneLib.filterCargoSources path type
+        || lib.hasSuffix ".xml" (builtins.baseNameOf path)
+        || lib.hasSuffix ".dconf" (builtins.baseNameOf path);
+      rustSrc = lib.cleanSourceWith {
+        src = lib.cleanSource self;
+        filter = includeStrFilter;
+      };
     in
       craneLib.buildPackage {
         pname = "rust-vicinae";
         version = "0.1.0";
-        src = craneLib.cleanCargoSource self;
+        src = rustSrc;
         cargoBuildFlags = ["-p" "vicinae" "--locked" "--release"];
         nativeBuildInputs = [pkgs.pkg-config];
         buildInputs = with pkgs; [
