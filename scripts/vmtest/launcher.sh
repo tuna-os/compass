@@ -106,14 +106,28 @@ echo "=== 0d. starting the engine must not put anything on screen (the gate) ===
 # here, naming the cause, instead of corrupting the launcher gate three steps
 # later with a bounding box nobody can interpret.
 #
-# The top bar is excluded for the same reason as every other gate here: it
-# carries a clock, and a minute boundary is not the engine drawing something.
+# TWO STRIPS OF SHELL FURNITURE ARE EXCLUDED, top and bottom, and neither is
+# ours to keep still.
+#
+# The top bar carries a clock, and a minute boundary is not the engine drawing
+# something -- that one cost a red run back when the launcher gate was written.
+#
+# The bottom is the dash, and it cost this gate its first run: 2.04% in a
+# 237x84 box along the bottom edge. Cropping both frames to that region and
+# looking at them shows the dash's ICONS are identical -- Files, Trash, the app
+# grid, unchanged -- and what moves is the panel backdrop behind them, which
+# the shell redraws when a process starts. Nothing we can prevent and nothing
+# worth failing over.
+#
+# What is left between the strips is the part that matters: if the hotkey
+# dialog ever comes back it lands in the middle of the screen, where this gate
+# is still sharp.
 #
 # Binding the hotkey for real is Spike A's job, in its own VM, where a dialog
 # is the expected outcome rather than contamination.
 python3 scripts/vmtest/framediff.py \
   "$out/launcher-00a-bare-desktop.png" "$out/launcher-00-before.png" \
-  --max-percent 1 --ignore-box 0 0 1279 139
+  --max-percent 1 --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799
 
 echo
 echo "=== 1. open the launcher in the session ==="
@@ -269,9 +283,14 @@ echo "=== 3d4. the two assertions that make the pair mean something ==="
 # Same box and the same ignore strip as the gate above, for the same reasons --
 # including the top-bar clock, which cost a red run to discover.
 echo "--- the window went away: hidden should match the desktop before it opened ---"
+# Same two strips as step 0d, for the same reason: the dash gains an entry
+# while the launcher process is resident, and stays changed after its window is
+# gone. That is correct -- the process really is still running, which is the
+# whole point of ADR-0015 -- so it must not be read as "the window is still
+# there".
 python3 scripts/vmtest/framediff.py \
   "$out/launcher-00-before.png" "$out/launcher-04-hidden.png" \
-  --max-percent 3 --ignore-box 0 0 1279 139
+  --max-percent 3 --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799
 
 echo "--- and came back: summoned should look like the launcher did ---"
 python3 scripts/vmtest/framediff.py \

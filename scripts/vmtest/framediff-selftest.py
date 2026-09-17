@@ -54,6 +54,7 @@ GATE = [
 AWAY_GATE = [
     "--max-percent", "3",
     "--ignore-box", "0", "0", "1279", "139",
+    "--ignore-box", "0", "700", "1279", "799",
 ]
 
 DESKTOP = (20, 20, 30)
@@ -107,6 +108,18 @@ def with_clock(painter):
     return paint
 
 
+def dash_only(x: int, y: int) -> tuple[int, int, int]:
+    """A change confined to the bottom strip, where the shell's dash lives.
+
+    The real thing the second ignore box exists for: the dash's backdrop is
+    redrawn when a process starts, which failed the engine-draws-nothing gate
+    at 2.04% before it was excluded.
+    """
+    if 520 <= x <= 760 and 716 <= y <= 799:
+        return WINDOW
+    return desktop(x, y)
+
+
 def wrong_place(x: int, y: int) -> tuple[int, int, int]:
     """A big window, but down the left edge — outside the expected box."""
     if 10 <= x <= 290 and 300 <= y <= 790:
@@ -126,6 +139,32 @@ AWAY_CASES = [
      "that did not change"),
     ("the window moved but stayed", wrong_place, False,
      "a window that left the expected box is still a window on screen"),
+]
+
+# Step 0d: starting the engine must put nothing on screen. A tighter bound than
+# the others because there is nothing legitimate for it to draw at all -- which
+# is also what makes it the gate that actually exercises the dash exclusion.
+#
+# The dash strip is 240x84 = 20160 px, about 2.4% of the compared area. Under
+# the away gate's 3% that passes with or without the second ignore box, so a
+# control placed there proves nothing -- a control confirmed exactly that. At
+# 1% it does not.
+ENGINE_GATE = [
+    "--max-percent", "1",
+    "--ignore-box", "0", "0", "1279", "139",
+    "--ignore-box", "0", "700", "1279", "799",
+]
+
+ENGINE_CASES = [
+    ("nothing changed", desktop, True,
+     "the ordinary success: a headless engine draws nothing"),
+    ("only the dash changed", dash_only, True,
+     "THE ONE THAT MATTERS: the shell redraws the dash backdrop when a process "
+     "starts -- measured at 2.04%, which fails this gate's 1% unless the second "
+     "ignore box is in effect"),
+    ("a dialog in the middle of the screen", with_launcher, False,
+     "the hotkey permission dialog coming back must still fail, or excluding "
+     "two strips has gutted the gate"),
 ]
 
 CASES = [
@@ -183,7 +222,8 @@ def assert_gate_matches_launcher_sh() -> None:
         "the open gate": ("launcher-01-open.png", "--min-percent 3",
                           "--expect-box 300 140 980 800", "--ignore-box 0 0 1279 139"),
         "the went-away gate": ("launcher-04-hidden.png", "--max-percent 3",
-                               "--ignore-box 0 0 1279 139"),
+                               "--ignore-box 0 0 1279 139",
+                               "--ignore-box 0 700 1279 799"),
         "the came-back gate": ("launcher-05-summoned.png", "--min-percent 3",
                                "--expect-box 300 140 980 800", "--ignore-box 0 0 1279 139"),
         # Starting the engine must be invisible, now that it runs --no-hotkey.
@@ -191,7 +231,8 @@ def assert_gate_matches_launcher_sh() -> None:
         # for it to draw at all, so the only slack is the shell's own furniture.
         "the engine-draws-nothing gate": ("launcher-00a-bare-desktop.png",
                                           "--max-percent 1",
-                                          "--ignore-box 0 0 1279 139"),
+                                          "--ignore-box 0 0 1279 139",
+                                          "--ignore-box 0 700 1279 799"),
     }
 
     for what, flags in wanted.items():
@@ -218,6 +259,7 @@ def main() -> int:
 
         cases = [("appeared", GATE, case) for case in CASES]
         cases += [("went away", AWAY_GATE, case) for case in AWAY_CASES]
+        cases += [("engine draws nothing", ENGINE_GATE, case) for case in ENGINE_CASES]
 
         for gate_name, gate, (name, painter, must_pass, why) in cases:
             name = f"[{gate_name}] {name}"
@@ -243,8 +285,8 @@ def main() -> int:
         print(f"framediff self-test FAILED: {', '.join(failures)}", file=sys.stderr)
         return 1
     print(
-        f"framediff self-test: all {len(CASES) + len(AWAY_CASES)} controls "
-        "behaved as required"
+        f"framediff self-test: all {len(CASES) + len(AWAY_CASES) + len(ENGINE_CASES)} "
+        "controls behaved as required"
     )
     return 0
 
