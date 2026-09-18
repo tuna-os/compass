@@ -165,11 +165,8 @@ pub enum ProgramAction {
 /// worse surprise than a wrong one that matches.
 #[must_use]
 pub fn compress_path(path: &str, home: &str) -> String {
-    if path.starts_with(home) {
-        format!("~{}", &path[home.len()..])
-    } else {
-        path.to_owned()
-    }
+    path.strip_prefix(home)
+        .map_or_else(|| path.to_owned(), |rest| format!("~{rest}"))
 }
 
 /// Builds a program row.
