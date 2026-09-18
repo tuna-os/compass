@@ -1001,6 +1001,7 @@ dependencies = [
 name = "compass-worker-host"
 version = "0.1.0"
 dependencies = [
+ "compass-core",
  "compass-db",
  "compass-local-storage",
  "compass-oauth-store",
