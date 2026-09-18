@@ -324,9 +324,18 @@ fn init_tracing(verbose: u8) {
 
     // A second call (from a test harness, say) is not an error worth aborting
     // for: the first subscriber wins.
+    //
+    // ANSI ONLY WHEN SOMETHING CAN RENDER IT. `tracing_subscriber::fmt` colours
+    // unconditionally, so a redirected log gets escape sequences woven through
+    // every field -- `applications\x1b[0m\x1b[2m=\x1b[0m15` rather than
+    // `applications=15`. That is unreadable in a log file a user mails us, and
+    // it silently broke a VM gate that grepped the engine's own output for a
+    // count: the pattern matched nothing, so the gate reported the engine had
+    // said nothing while printing the line where it had.
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .try_init();
 }
 
