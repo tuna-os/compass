@@ -81,6 +81,7 @@ pub mod telemetry;
 pub mod theme_picker;
 pub mod toast;
 pub mod update;
+pub mod wallpaper;
 pub mod window_effects;
 pub mod xdg_dirs;
 
