@@ -42,6 +42,7 @@ pub mod config;
 pub mod create_extension;
 pub mod default_app;
 pub mod file_category;
+pub mod font_browser;
 pub mod frecency;
 pub mod glyph;
 pub mod keybinding;

@@ -187,7 +187,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/clipboard` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
@@ -259,6 +259,15 @@ methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. Wh
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
+
+**`src/builtins/font` → `compass-core::font_browser`** — the grid model's decisions are ported:
+the category dropdown (only categories some installed font belongs to, "All" at index 0, the
+index-minus-one arithmetic, and the remembered choice that is restored only when it is not "All"),
+the two headings with their counts, the search that scores the display name alone, the missing-glyph
+placeholder and the colour-font rule that leaves an emoji font untinted, and the action panel whose
+*primary* action is Preview rather than apply. The thirty-three-category table itself belongs to
+`src/services/font-service`, which is its own row. Still C++-only: the grid widget and the specimen
+view.
 
 **`src/builtins/developer` → `compass-core::create_extension`** — the Create Extension form's
 validation and what follows it: all six checks run every time so every mistake shows at once, the
