@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,289 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the indexer's entry filter and query policy |
+| `compass-core` | 1,355 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,478** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,544** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,478 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,544 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -197,7 +197,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 ## The window
@@ -353,6 +353,45 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/vicinae` → `compass-core::{emoji_grid, bug_report}`** — the largest builtin
+directory (2,800 lines across 45 files). Two of its pieces are ported, the two with arithmetic and
+rules in them rather than view plumbing.
+
+**The emoji picker.** A skin tone goes after the **first** codepoint, not at the end, because in a
+person-joined-to-an-object sequence the tone belongs to the person. Every variation selector in what
+follows is then stripped, and the C++ comment gives a reason that is not cosmetic: a tone modifier
+already forces the coloured presentation, and leaving the selector in produces a sequence some fonts
+refuse to compose, so the glyph breaks apart into its parts. The `Default` tone carries an **empty**
+modifier, which is what makes applying it a no-op rather than a special case in the applier. A
+glyph's own remembered tone beats the picker's, because someone who set a tone on one glyph meant
+that glyph. The copied codepoint is the **first** one only — a sequence reports the codepoint of the
+thing it is a sequence *of*, which is the number someone looking it up wants.
+
+The tone menu's two exclusions each do something. Skipping the tone already in force keeps the panel
+from offering to do nothing; skipping the picker's default keeps it from offering a second route to
+what the "reset to preference" row already does — and that row only appears when the glyph is
+actually overriding, because otherwise there is nothing to reset to. Only copying and pasting
+register a visit: copying a glyph's *name* or codepoint is looking something up, and counting it
+would let a search for a name drift the picker's ordering.
+
+**The bug report.** The template was copied out of the C++ mechanically and its measurements are
+pinned. An extension bug goes to a different repository *and* a different path
+(`/issues/new/choose`, not `/issues/new`), because that repository offers templates. An empty title
+is left out rather than sent empty, which would leave GitHub's own placeholder unused and the field
+looking filled in. The two OS descriptions are deliberately different shapes — a dash between the
+os-release fields, parentheses around the architecture — so a reader can tell which one they are
+looking at.
+
+**The fallback manager.** A command that cannot be a fallback appears in *neither* list: the manager
+is not a list of everything with a switch beside it, and showing commands that cannot be turned on
+would be showing switches that do nothing. The enabled list is ordered by the stored fallback order
+rather than by relevance, because a fallback's position decides which of them answers a query first
+— any other order would show a ranking that is not the one in force.
+
+Still C++-only, and it is most of the directory: the store views and detail host, the installed
+extensions list, the OAuth token store, the local-storage browser, the menu-bar and tray searches,
+the builtin-icon gallery, and the extension registration in `vicinae-extension.cpp`.
 
 **`src/builtins/root` → `compass-core::root_view`** — the root list's own behaviour: the clock in
 the title bar, the space-bar alias shortcut, and reaching back through past searches with the up
