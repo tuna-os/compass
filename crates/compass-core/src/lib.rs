@@ -63,6 +63,7 @@ pub mod frecency;
 pub mod glyph;
 pub mod glyph_service;
 pub mod image_url;
+pub mod incremental_scan;
 pub mod input_server;
 pub mod internal_commands;
 pub mod keybinding;

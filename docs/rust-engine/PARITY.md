@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,578 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk |
+| `compass-core` | 1,601 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk and incremental rules |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,934** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,957** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,934 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,957 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1317,16 +1317,19 @@ what catches a window the compositor destroyed and replaced rather than moved.
 
 `compass-core::entry_filter` is a complete port of `entry-filter.cpp` — the rules deciding which
 directory entries the indexer walks into — `compass-core::file_walk` of `filesystem-walker.cpp`,
-which decides which of them are *reached* and in what order, `compass-core::query_policy` of
+which decides which of them are *reached* and in what order,
+`compass-core::incremental_scan` of `incremental-scanner.cpp`, which decides what a re-scan reads
+at all, `compass-core::query_policy` of
 `file-indexer-query-policy.cpp`, which decides what a typed query asks the index,
 `compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
 all, and `compass-core::query_ranking` of the scoring half of `file-indexer-query-engine.cpp`, which
-decides what order the answers come back in. Between them, 174 tests and 129 controls. The row stays
+decides what order the answers come back in. Between them, 197 tests and 143 controls. The row stays
 ❌ anyway.
 
 It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
 its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
-Five files of those fifteen are not the row — about 1,108 lines of the 5,646, a fifth — and marking it
+Six files of those fifteen are not the row — about 1,279 lines of the 5,646, not quite a
+quarter — and marking it
 🟡 would put a colour on this ledger that means "a model landed without its backend" when what
 actually happened is "a fifth of the row landed". The percentage in PLAN.md is only worth anything
 if a row's colour means one thing. **So this work moves the Phase 5 figure by nothing, and that is
@@ -1354,6 +1357,39 @@ Four of its rules are load-bearing and none of them is obvious:
 A fixture was too weak and a control said so: the non-directory root check could be deleted without
 failing anything, because the fake tree had nothing to list at that path either way. It now lists
 contents there, so only the check stands between the walk and reporting them.
+
+**The incremental rules** (`incremental-scanner.cpp`) are ported as decisions over a supplied disk
+and index. 23 tests, 14 controls, all of which fired.
+
+A full scan reads everything and needs no decisions. An incremental one exists to read as little as
+possible, and **the two failures are not symmetric**: reading a directory needlessly costs one
+listing, and failing to read one loses its files from the index silently — the search simply does
+not find them and nothing says why. Every rule here leans the same way because of that.
+
+- `lastModified >= cutOff` is **not** strict. Filesystem timestamps and scan records both land on
+  whole seconds, so a strict comparison drops the directory written while the scan was finishing,
+  which is the one most likely to have changed.
+- The test is `changed **or** not tracked`. A directory can be older than the cut-off and still
+  unknown to the index — a mounted disk, a restored backup, a folder moved with its timestamps
+  intact — and an mtime test alone walks straight past it.
+- A timestamp that cannot be read means **yes**, same asymmetry.
+- The pruned scan's cut-off is found by walking *up* the parents, because a scan of `~` is what
+  makes `~/code/project` up to date; asking only about the exact path finds nothing. With no record
+  anywhere the cut-off is 0, so everything is newer and the whole tree is read, which is right for
+  an index that has never been built.
+- The scan path is read **however recently it was scanned** — it is the one directory the scan was
+  asked about — but a path never scanned to completion yields only itself and the tree is not
+  walked. An incremental pass with no cut-off to be incremental against would re-read everything
+  while calling itself incremental.
+- Deletion is *absence*: a path the index holds and the re-read listing did not produce. Nothing
+  tells the scanner a file is gone, so a listing it re-read is the only evidence there is.
+- The queue is first-in-first-out, so a scan interrupted early has covered the breadth it was asked
+  about rather than one deep branch of it.
+
+**One deliberate difference, declared.** The C++ dedupes the directories it *discovers* but not the
+ones it starts with; here the check covers both. Unreachable through `scannable_directories`, which
+cannot return a path twice, and the uniform rule is the better one if a caller ever does hand it a
+repeat.
 
 The ranking is the fourth leg. A fuzzy score alone would rank an editor's swap file above the file
 it is a swap of, and `finalreport.pdf` above `report.pdf`. Every multiplier in the engine exists to
