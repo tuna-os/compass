@@ -835,6 +835,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-media"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "compass-notify"
 version = "0.1.0"
 dependencies = [

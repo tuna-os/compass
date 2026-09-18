@@ -43,6 +43,9 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // Same story: logind is the Linux mechanism, and the C++ has a separate
     // power manager for each platform.
     "compass-power",
+    // MPRIS is a session-bus protocol; the C++ has a Windows media backend
+    // beside this one for the same reason.
+    "compass-media",
 ];
 
 /// Crates whose presence in a manifest makes that crate Linux-bound.
