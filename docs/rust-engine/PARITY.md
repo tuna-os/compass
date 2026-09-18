@@ -70,7 +70,7 @@ that. The plan has been corrected.
 | `compass-search` | 58 | fuzzy, plus an exact port of fzf's coherence rule |
 | `compass-portals` | 54 | XDG portals; availability is a three-state outcome, not a boolean |
 | `compass-shell` | 46 | GNOME Shell DBus client; tests spawn a real `dbus-daemon` |
-| `compass-ui` | 29 | the launcher window and its views |
+| `compass-ui` | 60 | the launcher window and its views, and the root list's sections and selection |
 | `compass-crypto` | 24 | AES-GCM and HKDF; cross-decrypted against the C++ probe per-PR |
 | `compass-sandbox` | 23 | Landlock, a seccomp denylist, and the launcher that applies them to itself |
 | `compass-local-storage` | 36 | the extension key-value store, lossy typing and all, and the calculator history with its time grouping |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,681** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,712** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,681 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,712 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1008,6 +1008,36 @@ purpose and reordering them would silently change every URL a new build writes.
 And `resolveThemedLocalPath` inserts `@dark` before the first dot *after the last separator*, not
 before the last dot: `a.tar.gz` becomes `a@dark.tar.gz`, and `~/.local/share/logo` becomes
 `logo@dark` rather than being confused by the dot in the directory above it.
+
+
+### The first view-layer work: the root list's sections and selection
+
+Every row still 🟡 is 🟡 for the same reason — the model is ported and tested, and the *backend* is
+not. Counted across the notes below, what is left is views (4), providers (3), QML (2), MPRIS and
+HTTP. That is the engine rather than more transcription, and it is where the remaining Phase 5
+percentage lives.
+
+`compass_ui::root_list` is the first piece of it. The launcher's main list is not one list: it is
+favourites, then results, then — when nothing matched — the fallbacks, each under its own heading.
+The arrangement and the selection moving *through* it are kept out of the Iced `view` function, so
+they can be tested in a container with no display server; only the drawing needs a compositor. 31
+tests, 29 controls.
+
+The selection arithmetic is deliberately **flat**, and the sections are invisible to it. A heading
+is not a position, so nothing ever lands on one and nothing is skipped crossing a boundary — which
+is the bug this shape prevents, and one that is invisible until someone tries a list with more than
+one section. Two tests walk the whole list rather than taking one step, because a one-step test
+passes against an off-by-one that makes the last row unreachable.
+
+Favourites lead the empty query and vanish once something is typed: a favourite that does not match
+is not an answer, and keeping it above the results would push the thing asked for down the page. One
+that *does* match appears among the results instead — not hidden, just without its special position.
+The search excludes favourites for the empty query precisely so the same row is not drawn twice, and
+a test checks for the duplicate rather than trusting the flag.
+
+Fallbacks appear only when nothing matched, which is what makes them fallbacks rather than a section
+always on screen. An empty section is never drawn, because a heading with nothing under it is a
+heading that lies.
 
 ### `src/services/window-manager` stays ❌ although its dispatch layer is ported
 

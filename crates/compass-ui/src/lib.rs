@@ -9,6 +9,7 @@
 pub mod app;
 pub mod message;
 pub mod resident;
+pub mod root_list;
 
 pub use app::{AppFlags, Dismissal, LauncherApp, next_selection};
 
