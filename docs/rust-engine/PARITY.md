@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,690 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction and script output styling |
+| `compass-core` | 1,721 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction, the index reconciliation and script output styling |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **3,046** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **3,077** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 3,046 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 3,077 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1348,17 +1348,17 @@ which decides which of them are *reached* and in what order,
 `compass-core::incremental_scan` of `incremental-scanner.cpp`, which decides what a re-scan reads
 at all, `compass-core::scan_dispatch` of the decisions in `scan-dispatcher.cpp` — when a change
 becomes a scan and which scans run — `compass-core::scan_roots` of the path arithmetic in
-`util.hpp`, `compass-core::query_policy` of
+`util.hpp`, `compass-core::index_reconcile` of what a settings change and a startup do, `compass-core::query_policy` of
 `file-indexer-query-policy.cpp`, which decides what a typed query asks the index,
 `compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
 all, and `compass-core::query_ranking` of the scoring half of `file-indexer-query-engine.cpp`, which
-decides what order the answers come back in. Between them, 254 tests and 174 controls. The row stays
+decides what order the answers come back in. Between them, 285 tests and 194 controls. The row stays
 ❌ anyway.
 
 It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
 its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
-Eight files of those fifteen are not the row — about 1,672 lines of the 5,646, not quite
-three tenths — and marking it
+Nine files of those fifteen are not the row — about 1,983 lines of the 5,646, a bit over a
+third — and marking it
 🟡 would put a colour on this ledger that means "a model landed without its backend" when what
 actually happened is "a fifth of the row landed". The percentage in PLAN.md is only worth anything
 if a row's colour means one thing. **So this work moves the Phase 5 figure by nothing, and that is
@@ -1471,6 +1471,41 @@ drops `.` on its own, and `PathBuf` compares by components — so a test asserti
 `PathBuf == PathBuf` cannot tell a normalised path from an unnormalised one, and a `.` in the middle
 of a path never reaches the code that removes it. The assertions now compare rendered text, and a
 leading `.` — the only one the match arm ever sees — has a case of its own.
+
+**Reconciliation and startup** (`file-indexer.cpp`) answer the same question from two directions:
+which files should be in the index and are not, and which are in it and should not be. The second is
+the worse to get wrong — a search returning files the user asked it to forget. 31 tests, 20 controls,
+19 of which fired.
+
+The settings diff has four rules and one of them turns on a single word. A new root is skipped when
+an old root already covers it — but only when that old root **stays**. An old root that is itself
+being removed is no coverage at all, because its rows are about to be deleted, and treating it as
+coverage leaves the new root unscanned with its files gone from the index. The control dropping the
+"stays" half fires.
+
+The other three: a root the new settings no longer cover is deleted; a new exclusion is deleted
+unless it was already excluded, since then there is nothing of it indexed to remove; and an
+exclusion that has been **lifted** is scanned, but only inside a root — those files were skipped
+while it stood and nothing else would ever go back for them.
+
+The pending-full-scan set is what makes a full scan survive a restart. A full scan of a large tree
+takes minutes and the launcher can be closed inside one; without the set, a settings change followed
+by a restart leaves a root that was never scanned and never will be, because the config already
+lists it and the startup path sees nothing to do. A finished scan clears everything **beneath** its
+root rather than an exact match, and `roots_for` reports without pruning — a config change that is
+later undone must not have lost the roots it was about to drop.
+
+Startup has three cases and the middle one is why the other two are not enough. A full scan that did
+not succeed means the index holds *part* of that tree with nothing recording how much: an
+incremental pass would compare against the cut-off the interrupted scan wrote and skip everything it
+never reached. So it is redone whole, and the old record is marked interrupted so it stops being
+read as a cut-off. The watcher waits until no full scan is needed, because a full scan is already
+walking the tree the watcher would report on.
+
+**One guard was not ported because no mutation could make it fail.** The C++ skips an old exclusion
+that is still excluded before deciding whether to rescan it; the drop that runs a few lines later
+removes exactly the same paths. A guard whose whole effect is undone by a later line reads like it
+is carrying weight, and it is not.
 
 The ranking is the fourth leg. A fuzzy score alone would rank an editor's swap file above the file
 it is a swap of, and `finalreport.pdf` above `report.pdf`. Every multiplier in the engine exists to
