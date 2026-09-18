@@ -1863,6 +1863,53 @@ evaluated" hid:
   software-rendered run would be the deviation mistake again in a different
   costume. It goes in the log so the gate can be set from a distribution.
 
+### 11.3 Phases 2 and 3, evaluated
+
+§11.2 scored Phase 1 because the launcher finally existed to score. The same
+is now true one and two phases further on, and the answer is further along than
+§12's ordering implies: `compass-shell`, `compass-clipboard` and
+`compass-crypto` are built and tested, so these gates can be read against
+evidence rather than deferred.
+
+**Phase 2's gate**
+
+| Criterion | State | Evidence |
+|---|---|---|
+| IPC round-trip **p99 < 0.5 ms** | 🟢 **met** | **47.9 µs**, ~10× headroom, asserted by `crates/compass-ipc/tests/roundtrip_budget.rs` rather than printed. §8.5 records how the previous benchmark reported 11.9 ms by timing its own setup. |
+| `doctor` diffed against the C++ build | ⚪ **withdrawn, with reasons** | the C++ engine has no `doctor`. §6 sets out why the diff would mostly prove nothing even if built: nine of eleven checks probe the *environment*, which two processes on one machine agree about by construction. |
+| `doctor` reports each degradation with the extension uninstalled | 🟢 **met** | the VM has no extension, and `checks.sh doctor` plus `doctor-assert` run inside a real GNOME session every tier run. `gnome.shell-extension` is recorded as evidence rather than gated, which is the honest shape for a capability we deliberately do not ship (ADR-0004). |
+
+So **Phase 2's gate is met**, once the withdrawn criterion is read as §6 restates
+it: that `doctor`'s picture of the machine is accurate, tested non-differentially
+against reality.
+
+**Phase 3's gate**
+
+| Criterion | State | Evidence |
+|---|---|---|
+| mock-Shell-bus suite green | 🟢 **met** | `crates/compass-shell/tests/mock_bus.rs` — **21 tests**, plus 12 in `contract_introspection.rs` over the versioned interface XML, and 13 unit tests. |
+| clipboard DB readable and writable by **both engines interchangeably** | 🟡 **pinned, not round-tripped** | the stored contract is pinned *against the C++ source*: `cpp_enum_values.rs` parses the C++ header so a member inserted mid-enum — the natural way to add a kind, and the one that relabels every existing row — fails here; `compass-crypto`'s `cpp_constants.rs` does the same for the crypto parameters. Our own side is covered by 76 tests across migrations, the write path and history queries. **What does not exist is a round trip:** no test has the C++ engine write a row the Rust engine reads, or the reverse. The pinning tests say so themselves — *"it reads text, not semantics"*. |
+| extension-absent and version-mismatch paths both tested | 🟢 **met** | the capability probe treats a bus error as an absence rather than a failure (`probe_errors_are_an_absence`), and the versioned contract is introspected rather than assumed. |
+| a week of dogfooding by ≥2 people on Bluefin | 🔴 **not started** | needs people, not code. Nothing in CI can stand in for it, and it should not be quietly reinterpreted as something that can. |
+
+**And a dangling reference, which is the third of its kind.** Phase 3's gate
+cites *"the mock-Shell-bus suite (§8.4a)"*. **There is no §8.4a.** The suite
+exists and is green, so the gate is satisfiable — but its citation points
+nowhere, exactly as Suite 0's gate cited a `vicinae --engine=cpp --json query`
+that never existed (§8.1a) and Phase 2's cited a C++ `doctor` that never
+existed. Three gates written against an imagined artefact is a pattern worth
+naming: **a gate that cites something should be checked against the thing it
+cites, at the time it is written.**
+
+**What actually remains on the Linux path**, with the phases above scored:
+
+| | |
+|---|---|
+| Phase 1 | GNOME 51 — a second image, a cost decision (§11.2) |
+| Phase 2 | met |
+| Phase 3 | a clipboard round trip between the two engines; dogfooding |
+| Phase 4+ | `compass-extension-api` exists at 5.5k LOC and 73 tests; the Node host is the open half |
+
 ## 12. Immediate next steps
 
 Rewritten as items land; the previous version listed the VM tier and both spikes as the work to do,
@@ -2083,8 +2130,13 @@ Ordered by what unblocks the most:
      ordering case from upstream issue #946. Neither can be closed without shipping our own fold
      table or reproducing fzf's bonus constants, so neither is a to-do — they are decisions.
 
-   What genuinely remains under this heading is the corpus itself: 8 harvested entries from one
-   host is a thin sample, and `scripts/harvest-desktop-corpus.sh` is how it grows.
+   ~~What genuinely remains under this heading is the corpus itself: 8 harvested entries from one
+   host is a thin sample.~~ **Stale, and it contradicted item 4 three paragraphs above.** The
+   harvested set is **738 real entries** against 19 synthetic, so the thin-sample concern this
+   sentence described was answered by the same harvests item 4 records. `scripts/harvest-desktop-corpus.sh`
+   remains how it grows, and one distribution's application set is still one sample — §8.1a's
+   divergence table is the standing reminder that a 115-entry corpus produced a generalisation the
+   738-entry one destroyed. But nothing under this heading is now outstanding.
 6. **Promote the VM tier to the merge queue** once it has been stable for a couple of weeks
    (ADR-0010). It has three consecutive green runs; that is not two weeks.
 
