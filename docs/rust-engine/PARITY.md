@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,721 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction, the index reconciliation and script output styling |
+| `compass-core` | 1,743 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction, the index reconciliation, the watch policy and script output styling |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **3,077** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **3,099** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 3,077 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 3,099 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1348,17 +1348,17 @@ which decides which of them are *reached* and in what order,
 `compass-core::incremental_scan` of `incremental-scanner.cpp`, which decides what a re-scan reads
 at all, `compass-core::scan_dispatch` of the decisions in `scan-dispatcher.cpp` — when a change
 becomes a scan and which scans run — `compass-core::scan_roots` of the path arithmetic in
-`util.hpp`, `compass-core::index_reconcile` of what a settings change and a startup do, `compass-core::query_policy` of
+`util.hpp`, `compass-core::index_reconcile` of what a settings change and a startup do,
+`compass-core::watch_policy` of which directories earn an inotify watch, `compass-core::query_policy` of
 `file-indexer-query-policy.cpp`, which decides what a typed query asks the index,
 `compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
 all, and `compass-core::query_ranking` of the scoring half of `file-indexer-query-engine.cpp`, which
-decides what order the answers come back in. Between them, 285 tests and 194 controls. The row stays
+decides what order the answers come back in. Between them, 307 tests and 215 controls. The row stays
 ❌ anyway.
 
 It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
 its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
-Nine files of those fifteen are not the row — about 1,983 lines of the 5,646, a bit over a
-third — and marking it
+Ten files of those fifteen are not the row — about 2,265 lines of the 5,646, two fifths — and marking it
 🟡 would put a colour on this ledger that means "a model landed without its backend" when what
 actually happened is "a fifth of the row landed". The percentage in PLAN.md is only worth anything
 if a row's colour means one thing. **So this work moves the Phase 5 figure by nothing, and that is
@@ -1506,6 +1506,32 @@ walking the tree the watcher would report on.
 that is still excluded before deciding whether to rescan it; the drop that runs a few lines later
 removes exactly the same paths. A guard whose whole effect is undone by a later line reads like it
 is carrying weight, and it is not.
+
+**The watch policy** (`important-dir-watcher-linux.cpp`) decides which directories earn an inotify
+watch, which is a finite and *shared* resource: `fs.inotify.max_user_watches` is 8,192 on many
+systems and every program on the desktop draws from it. A launcher that watched a whole home
+directory would take all of them and break whatever asked next. 22 tests, 21 controls, all of which
+fired.
+
+The answer is not to watch less accurately but to watch **shallowly**, and to treat running out as
+an expected outcome rather than an error. Two levels below each important root are watched;
+`~/code/project/src` is not, and a change in it still shows up within a scan cycle, for a budget
+that instead covers a hundred other projects' top levels. When the budget runs out the remaining
+directories fall back to the scan cadence — which would have covered them anyway.
+
+The walk is **breadth-first, and that is the whole design**: with a budget that can run out, the
+order decides what is covered when it does. Depth-first would spend the budget inside the first root
+and leave the others entirely unwatched; breadth-first covers every root's top level before any
+root's second.
+
+The roots are the home directory, its visible subdirectories, and then the XDG config and data
+homes — which are hidden, so the enumeration skips them, and which are indexed regardless. Adding
+them back explicitly is the only reason the function is not simply "list the home directory". With
+no home there are no roots **at all**, the XDG directories included, because the C++ returns before
+reaching them.
+
+The two constants are pinned literally, having learned that from `scan_dispatch`: every other test
+reads them through the names, so nothing else would notice them changing.
 
 The ranking is the fourth leg. A fuzzy score alone would rank an editor's swap file above the file
 it is a swap of, and `finalreport.pdf` above `report.pdf`. Every multiplier in the engine exists to
