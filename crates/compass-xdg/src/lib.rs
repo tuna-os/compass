@@ -26,6 +26,7 @@ pub mod entry;
 pub mod exec;
 pub mod icon;
 pub mod locale;
+pub mod mime_subclasses;
 pub mod mimeapps;
 pub mod reader;
 pub mod scan;

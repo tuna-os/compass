@@ -63,7 +63,7 @@ that. The plan has been corrected.
 | `compass-core` | 1,469 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
-| `compass-xdg` | 174 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
+| `compass-xdg` | 202 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
 | `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
 | `compass-extension-api` | 73 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
 | `compass-ipc` | 73 | framing, transport, single-instance |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,770** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,798** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,770 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,798 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -716,12 +716,39 @@ rather than an error, because a lost output cache is no reason to stop listing s
 C++-only: the service's own Qt machinery (the filesystem watcher, its 100 ms debounce and the
 15-minute refresh), the output tokenizer, the script actions and the executor view host.
 
-**`src/services/app-service` → `compass-core::app_service`** — the lookups are ported:
+**`src/services/app-service` → `compass-core::app_service`, with the MIME hierarchy in
+`compass-xdg::mime_subclasses`** — the lookups are ported:
 `findById` (with its `.desktop` retry), `findByClass`, `find`'s id-then-class order,
 `findCuratedOpeners`' dedupe by display name, and `list`'s case-insensitive sort. Still C++-only:
-`findOpeners` / `findDefaultOpener`, which walk the MIME parent chain through `QMimeDatabase` — Rust
-has no shared-mime-info reader here yet — and everything that starts a process (launch, the file
-browser, the terminal), which belongs to whoever owns the session rather than to a lookup table.
+everything that starts a process (launch, the file browser, the terminal), which belongs to whoever
+owns the session rather than to a lookup table.
+
+`findOpeners` / `findDefaultOpener` are no longer among them. The per-type lookup was already in
+`compass-xdg::mimeapps`; what was missing was the **parent-chain walk**, which the C++ gets from
+`QMimeDatabase` and which now has its own shared-mime-info reader in `compass-xdg::mime_subclasses`
+— 30 tests and 17 controls.
+
+Without the walk, a `.tar.gz` typed as `application/x-compressed-tar` finds nothing unless something
+registered for that exact name, even with an archive manager installed that registered for
+`application/gzip`. The walk is breadth-first, so a type's own associations are considered before its
+parents' and a near ancestor before a distant one — which is what makes a reader registered for
+`application/pdf` beat one registered for `application/octet-stream`. An application claiming both a
+type and its parent appears once, in the position its *nearest* claim earned.
+
+The table is parsed forgivingly: a malformed line is skipped rather than refusing the file, because
+it is generated by `update-mime-database` from whatever packages installed and one bad line should
+not cost every association on the system. Comments need their own check and not just a field count —
+a two-word comment has exactly the two fields a real line has, and would otherwise register `#` as a
+type.
+
+**A declared divergence.** The C++ keeps no record of which types it has already walked. A type
+reachable by two routes is visited twice (harmless — the association lookup deduplicates by
+application), but a **cycle in the table loops forever**. `subclasses` is generated, so a cycle would
+be a bug in `update-mime-database` or in a package's XML rather than something a user writes; it is
+still a file on disk that this reads, and a launcher that hangs on a malformed system file is worse
+than one that copes. This keeps a visited set, which terminates on any input and removes the
+duplicate visits at the same time. Two tests pin it, one for a cycle and one for a self-referential
+type.
 
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
 full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
