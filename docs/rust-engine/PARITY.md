@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 548 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks |
+| `compass-core` | 566 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,650** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,668** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,643;
-the 1,650 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,661;
+the 1,668 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -156,7 +156,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/media-control` | `compass-media` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/menu-bar` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/news` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/news` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/paste` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
