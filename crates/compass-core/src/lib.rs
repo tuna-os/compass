@@ -62,6 +62,7 @@ pub mod input_server;
 pub mod keybinding;
 pub mod list_navigation;
 pub mod manifest;
+pub mod media_commands;
 pub mod news;
 pub mod paste;
 pub mod power_commands;

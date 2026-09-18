@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,120 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the indexer's entry filter and query policy |
+| `compass-core` | 1,160 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,269** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,309** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,269 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,309 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -189,7 +189,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -353,6 +353,43 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/media` → `compass-core::media_commands`** — which commands exist on which platform,
+how a player is chosen from what was typed, what the on-screen display says, and which speaker glyph
+goes with a volume. The player commands need MPRIS and are registered only where it exists; the
+volume commands go through the audio service and are registered everywhere, so a platform without
+MPRIS gets a shorter list rather than commands that fail.
+
+`trackLabel` narrows in a fixed order and the order is only visible in one case: with a title but no
+artist, or an artist but no title, either order gives the same answer — it is the player with
+*neither* that shows it, where testing the artist first would return the empty title and leave the
+row blank. A test covers exactly that case. Choosing a player is two different things: an empty
+query takes the player the media service already considers active, and anything else is a search.
+Their two failure messages are different sentences on purpose — one is a fact about the system, the
+other quotes the query back, which is what says "you misspelled it" rather than "your music
+stopped".
+
+The play/pause message is built from the state *before* the toggle, because reading it back after
+would race the player's own reply. A skip asks the player whether it can before calling, so the
+refusal names the player instead of reporting a bare failure.
+
+The four speaker bands put each boundary in the *lower* band, and silence is its own case rather
+than the bottom of the first, so a muted system shows a crossed-out speaker and not a quiet one.
+The percentage is rounded half away from zero, the way `qRound` does and unlike Rust's default
+`round`-to-even would be if written casually — so a nudge that changed something never reads as if
+it changed nothing.
+
+Two things are ported as they are rather than tidied:
+
+- The preset list disagrees with `volumeIcon`. 50% is listed with the *low* speaker while
+  `volumeIcon(0.5)` returns the *down* one. The list is written out by hand in the C++ and drifted
+  from the function. Changing either changes what someone sees today and neither is more right, so
+  both are kept and a test pins the disagreement.
+- `volume-down 5` turns the volume **up** by five. Both commands share one `adjustVolume` call and
+  neither negates its argument, so the defaults are the only thing carrying the direction. Pinned
+  rather than quietly corrected.
+
+Still C++-only: the MPRIS provider, the audio provider, and the Now Playing view.
 
 **`src/builtins/wm` → `compass-core::window_switcher`** — which commands the window-management
 extension offers and how a window and a workspace are described in the list. Switching windows is
