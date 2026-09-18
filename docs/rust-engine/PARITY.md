@@ -242,6 +242,14 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
   `ParseOptions::{id,path}` exist, but id computation and lookup are a separate pass;
 - the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
 
+**`src/extension/api` → `compass-worker-host`** — the extension API's service adapters. `Storage`,
+three of `OAuth`'s four, `UI/render`, `FileSearch/search` and all four `Clipboard` methods are
+ported and pinned: 14 of the 49 methods `figura/tsapi.fig` declares. `FileSearch` and `Clipboard`
+sit behind traits (`FileIndexer`, `Clipboard`) that mirror the C++'s own indirection, so the
+adapters are finished and tested while the backends they will call — the file index, the Wayland
+clipboard — are still ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
+itself rather than hanging the caller.
+
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
 full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
 the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the

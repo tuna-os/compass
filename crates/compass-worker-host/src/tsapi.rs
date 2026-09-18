@@ -121,6 +121,10 @@ pub const IMPLEMENTED: &[&str] = &[
     "OAuth/removeTokens",
     "UI/render",
     "FileSearch/search",
+    "Clipboard/copy",
+    "Clipboard/paste",
+    "Clipboard/clear",
+    "Clipboard/readContent",
 ];
 
 /// Something that answers some of the extension API.
@@ -262,6 +266,7 @@ mod tests {
             .chain(crate::oauth_service::METHODS)
             .chain(crate::ui_service::METHODS)
             .chain(crate::file_search_service::METHODS)
+            .chain(crate::clipboard_service::METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
