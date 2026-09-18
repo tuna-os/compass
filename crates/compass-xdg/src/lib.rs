@@ -20,6 +20,7 @@
 //!
 //! [spec]: https://specifications.freedesktop.org/desktop-entry-spec/latest/
 
+pub mod bookmarks;
 pub mod entry;
 pub mod exec;
 pub mod icon;
