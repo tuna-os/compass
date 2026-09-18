@@ -110,7 +110,16 @@ pub fn unimplemented(id: u64, method: &str) -> String {
 /// stops this from becoming a list of aspirations, and every entry must be
 /// claimed by a service, which is what stops it from becoming a list of
 /// promises.
-pub const IMPLEMENTED: &[&str] = crate::storage_service::METHODS;
+pub const IMPLEMENTED: &[&str] = &[
+    "Storage/get",
+    "Storage/set",
+    "Storage/remove",
+    "Storage/clear",
+    "Storage/list",
+    "OAuth/getTokens",
+    "OAuth/setTokens",
+    "OAuth/removeTokens",
+];
 
 /// Whether [`IMPLEMENTED`] names `method`.
 #[must_use]
@@ -227,6 +236,22 @@ mod tests {
             IMPLEMENTED.len(),
             declared.len()
         );
+    }
+
+    #[test]
+    fn the_ledger_is_exactly_what_the_services_claim() {
+        // Checked from both ends. An entry no service serves is a promise the
+        // host does not keep -- an extension would be told the method exists
+        // and then get nothing back.
+        let mut claimed: Vec<&str> = crate::storage_service::METHODS
+            .iter()
+            .chain(crate::oauth_service::METHODS)
+            .copied()
+            .collect();
+        let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
+        claimed.sort_unstable();
+        ledger.sort_unstable();
+        assert_eq!(ledger, claimed);
     }
 
     #[test]

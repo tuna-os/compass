@@ -148,11 +148,6 @@ mod tests {
                 "{method} is served here but is not on the tsapi ledger"
             );
         }
-        assert_eq!(
-            METHODS.len(),
-            tsapi::IMPLEMENTED.len(),
-            "the ledger has entries no service claims"
-        );
     }
 
     #[test]

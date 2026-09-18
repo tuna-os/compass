@@ -835,6 +835,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-oauth-store"
+version = "0.1.0"
+dependencies = [
+ "compass-db",
+ "compass-sqlcipher-sys",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "compass-platform"
 version = "0.1.0"
 dependencies = [
@@ -950,7 +960,9 @@ dependencies = [
 name = "compass-worker-host"
 version = "0.1.0"
 dependencies = [
+ "compass-db",
  "compass-local-storage",
+ "compass-oauth-store",
  "compass-sqlcipher-sys",
  "serde",
  "serde_json",

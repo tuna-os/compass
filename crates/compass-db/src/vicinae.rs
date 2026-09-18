@@ -2,11 +2,14 @@
 //!
 //! The same three files the C++ engine applies, embedded rather than read from
 //! disk because the C++ loads them from `:database/...`, a Qt resource path.
-//! [`compass_db`] owns the mechanism.
-
-pub use compass_db::{Error, Migration, checksum};
+//! It lives here rather than in one of its readers because the `vicinae`
+//! database is shared: local storage, the OAuth token store, the root item
+//! manager and the calculator history are all tables in it, and each of them
+//! has to apply the same list.
 
 use compass_sqlcipher_sys::Database;
+
+use crate::{Error, Migration};
 
 /// Every `vicinae` migration, in the order they must be applied.
 pub const MIGRATIONS: &[Migration] = &[
@@ -37,16 +40,17 @@ pub const MIGRATIONS: &[Migration] = &[
 ///
 /// See [`compass_db::run`].
 pub fn run(db: &Database) -> Result<(), Error> {
-    compass_db::run(db, MIGRATIONS)
+    crate::run(db, MIGRATIONS)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checksum;
 
     #[test]
     fn the_migration_list_is_well_formed() {
-        compass_db::assert_well_formed(MIGRATIONS);
+        crate::assert_well_formed(MIGRATIONS);
     }
 
     #[test]

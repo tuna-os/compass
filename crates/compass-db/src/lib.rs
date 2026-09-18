@@ -42,6 +42,8 @@
 //! detection. Here a mismatch is an error, because a stored value with no
 //! reader is not a check.
 
+pub mod vicinae;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use compass_sqlcipher_sys::Database;

@@ -540,6 +540,7 @@ mod reader_tests {
 /// `"<Service>/<method>"`, from
 /// `std::format("{}/{}", s.name, method.name)`.
 pub mod extension_manager;
+pub mod oauth_service;
 pub mod storage_service;
 pub mod tsapi;
 
