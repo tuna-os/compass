@@ -1921,7 +1921,7 @@ reads as uniformly in-progress.
 
 | Phase | Gate | State | Evidence |
 |---|---|---|---|
-| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**5,985 LOC, 120 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **19 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio rather than the UDS this phase names — see §11.4a and #101. |
+| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**6,485 LOC, 130 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **23 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio rather than the UDS this phase names — see §11.4a and #101. |
 | **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🔴 **35%** | `PARITY.md` holds **115 ✅, 193 ❌, 23 🟡** — 115 of 331 cells, counted by script rather than by eye. (The previous figure here, 96 of 340, was counted differently; the script is in this commit's message.) This is the single largest remaining number in the project and it is a breadth problem, not a hard one: most rows are individual builtins. |
 | **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **one output of several** | the Flatpak builds, is installed and is smoke-tested on every run. Every other packaging workflow — AppImage, Linux tarball, macOS dmg, Windows — is `workflow_dispatch` only, by the deliberate decision to narrow CI to what ships on the first target. |
 | **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
@@ -1936,7 +1936,7 @@ opens on a real GNOME session, indexes the host's applications, ranks them at
 IPC, and idles at 6.2 MB. Phases 4–10 are the *rest of the product*. Phase 4 now has a
 working spine — a worker can be spawned confined, a session runs, and a real
 Node process has driven a storage call through the host and read it back — but
-the phase is 19 of 49 API methods and none of its gate. The rest is 226 unported
+the phase is 23 of 49 API methods and none of its gate. The rest is 226 unported
 parity rows, packaging breadth, a cutover and two further platforms. §7's own schedule puts the whole
 sequence at roughly a year.
 
@@ -1951,13 +1951,14 @@ Ordered by what blocks what, not by size.
 | Landlock boundary + seccomp denylist + launcher | done; the cgroups v2 memory cap is not |
 | session routing (event → service → reply) | done |
 | `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
+| `Command` (all four) | the adapter is done and pinned (`compass-worker-host::command_service`), behind a `Commands` trait — 23 of 49. The registry walk, the navigation controller and the settings window behind it are Phase 4/5 work |
 | `Application` (all five) | the adapter is done and pinned (`compass-worker-host::application_service`), behind an `Apps` trait — 19 of 49. `compass-core::AppIndex` and `compass-xdg::mimeapps` already answer most of what the trait needs; wiring them together, launching, and the terminal are still ahead |
 | `Clipboard` (all four) | the adapter is done and pinned (`compass-worker-host::clipboard_service`), behind a `Clipboard` trait — 14 of 49. The Wayland backend behind it is Phase 3/5 work and does not exist yet |
 | `FileSearch/search` | the adapter is done and pinned (`compass-worker-host::file_search_service`), behind a `FileIndexer` trait — 10 of 49. The index it would query is Phase 6 and does not exist yet, so no real backend implements the trait |
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
 | `UI` (toasts, navigation, HUD, alerts, selected text) | **not started**; 14 of `UI`'s 15 methods. `render` lands the tree and the handler-activation event; the rest need a front end for extensions, and a `showToast` that accepted the call and did nothing would leave an extension believing the user had been told something |
-| `WindowManagement`, `Command`, `Wallpaper`, `BrowserExtension` | **not started**; 14 methods, most of which are a thin call into a service Phase 5 also needs |
+| `WindowManagement`, `Wallpaper`, `BrowserExtension` | **not started**; 10 methods, most of which are a thin call into a service Phase 5 also needs |
 | `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
 | `OAuth/authorize` | **not started**; needs a browser and an overlay |
 | running the real `vicinae-worker-ts` | **not started**; the mock worker in `tests/node_worker.rs` speaks the same wire format, which is not the same claim |

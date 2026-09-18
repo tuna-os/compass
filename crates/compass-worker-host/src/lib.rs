@@ -541,6 +541,7 @@ mod reader_tests {
 /// `std::format("{}/{}", s.name, method.name)`.
 pub mod application_service;
 pub mod clipboard_service;
+pub mod command_service;
 pub mod extension_manager;
 pub mod file_search_service;
 pub mod oauth_service;

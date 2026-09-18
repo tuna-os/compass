@@ -126,6 +126,10 @@ pub const IMPLEMENTED: &[&str] = &[
     "Application/getDefault",
     "Application/showInFileBrowser",
     "Application/runInTerminal",
+    "Command/launchCommand",
+    "Command/updateCommandMetadata",
+    "Command/openExtensionPreferences",
+    "Command/openCommandPreferences",
     "Clipboard/copy",
     "Clipboard/paste",
     "Clipboard/clear",
@@ -273,6 +277,7 @@ mod tests {
             .chain(crate::file_search_service::METHODS)
             .chain(crate::clipboard_service::METHODS)
             .chain(crate::application_service::METHODS)
+            .chain(crate::command_service::METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
