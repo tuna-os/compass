@@ -70,7 +70,7 @@ that. The plan has been corrected.
 | `compass-search` | 58 | fuzzy, plus an exact port of fzf's coherence rule |
 | `compass-portals` | 54 | XDG portals; availability is a three-state outcome, not a boolean |
 | `compass-shell` | 46 | GNOME Shell DBus client; tests spawn a real `dbus-daemon` |
-| `compass-ui` | 60 | the launcher window and its views, and the root list's sections and selection |
+| `compass-ui` | 101 | the launcher window and its views, the root list's sections and selection, and the action panel |
 | `compass-crypto` | 24 | AES-GCM and HKDF; cross-decrypted against the C++ probe per-PR |
 | `compass-sandbox` | 23 | Landlock, a seccomp denylist, and the launcher that applies them to itself |
 | `compass-local-storage` | 36 | the extension key-value store, lossy typing and all, and the calculator history with its time grouping |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,712** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,753** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,712 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,753 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1038,6 +1038,37 @@ a test checks for the duplicate rather than trusting the flag.
 Fallbacks appear only when nothing matched, which is what makes them fallbacks rather than a section
 always on screen. An empty section is never drawn, because a heading with nothing under it is a
 heading that lies.
+
+
+`compass_ui::action_panel` is the second piece, and the one every command needs: the panel its
+actions are shown in. Ported from `action-panel-model.cpp`. 41 tests, 29 controls.
+
+A panel is sections flattened into rows, where headings and dividers are rows that cannot be
+selected — so almost all of it is the difference between a row and a selectable row. Three
+flattening rules, each a thing that looks wrong on screen if it is missed: a section filtered down to
+nothing contributes **no heading and no divider** (a heading over an empty space being the most
+visible way to get it wrong); the divider is emitted *before* the next section's heading rather than
+after the previous section's last action, which is what keeps "between" true when a middle section
+drops out under the filter; and an unnamed section gets its divider but no heading, because the
+separation is what the section is for even when it has nothing to say about itself.
+
+Moving by *section* has the asymmetry the C++ has, and it is a good one: down goes to the first
+action of the next section, while up goes to the top of the **current** section when the selection
+is not already there. One press takes you to the top of what you are in, a second to the section
+above, and neither requires counting rows. Moving up onto a section's first row scrolls to its
+heading, without which the heading sits just above the viewport and the first row of a section looks
+like the middle of the one before.
+
+A shortcut runs the first bound action in panel order. Two actions sharing one is a mistake nothing
+reports, so the order decides it rather than nothing happening — and a shortcut on an action the
+filter has removed is not reachable, because running something not on screen is worse than the key
+doing nothing.
+
+Two guards were written and then deleted because no mutation could reach them: an empty-filter early
+return (`all` over an empty iterator is already true) and an empty-panel early return (both search
+loops are bounded by the row count). Three controls found tests that proved less than they looked
+like they did — the section-down test started from the last row of its section, where the next row is
+already the next section and the rule under test never fires.
 
 ### `src/services/window-manager` stays ❌ although its dispatch layer is ported
 

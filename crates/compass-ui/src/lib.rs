@@ -6,6 +6,7 @@
 
 #![deny(missing_docs)]
 
+pub mod action_panel;
 pub mod app;
 pub mod message;
 pub mod resident;
