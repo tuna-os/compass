@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,452 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
+| `compass-core` | 1,469 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 174 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,664** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,681** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,664 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,681 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -733,9 +733,31 @@ then the user's per-item setting, then a *disabled* provider, which wins), alias
 favourite positions and fallback flags. `searchGroupedByProvider` is ported
 too, with its two rules that differ from the flat search — a provider whose *display name* matches
 contributes all of its items, including ones scoring zero, and `providerId` is not applied — for
-another nine tests and nine controls. Still C++-only: the manager around it — loading items from
-providers, `mergeConfigWithMetadata`, recording a visit, and `setAlias` / `setProviderEnabled` with
-the config writes behind them.
+another nine tests and nine controls.
+
+The manager's state changes are ported too, and this note previously understated that:
+`mergeConfigWithMetadata` and `registerVisit` were already done when it was written, and the config
+writes behind `setAlias`, `setShortcut`, `setItemEnabled` and `setProviderEnabled` are done now —
+seventeen more tests and fourteen controls. A write is a *merge*: setting an alias must not clear a
+shortcut set earlier, and the provider and entrypoint entries are created on first write because the
+config file holds only what the user changed. Each pairing writes **both** halves, memory and file,
+because doing only the first is a change that shows immediately and vanishes on restart.
+
+`setItemEnabled` deliberately writes only the file. The merge applies the provider's setting *after*
+the item's, so enabling an item whose provider is off does not make it appear — and only the merge
+knows about the provider. There is a test for that interaction end to end rather than for the
+absence of a line.
+
+**A declared divergence in `setShortcut`.** The C++ is asymmetric and the asymmetry is a bug: an
+empty shortcut *resets* the metadata but still writes `std::string{""}` into the config. On the next
+merge that stored empty string is present, so `if (auto shortcut = itemConfig->shortcut)` takes it
+and the metadata comes back as `Some("")` rather than `None`. Clearing a shortcut therefore looks as
+though it worked until the launcher restarts, and then the item has an empty shortcut instead of
+none. This port writes `None`, and two tests pin it — one on the write, one on the round trip
+through a merge.
+
+Still C++-only: loading items from the providers themselves, which is the extension registry, the
+application database and the rest of the backends rather than logic.
 
 **`src/services/tray-host` → `compass-core::tray_host`** — `TrayItem` and `TrayMenuItem` are
 ported: the item key is the bus name *and* the object path, because one application can export

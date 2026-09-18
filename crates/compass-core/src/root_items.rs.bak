@@ -549,10 +549,7 @@ pub fn set_item_enabled(config: &mut RootConfig, provider: &str, entrypoint: &st
 
 /// Turn a whole provider on or off.
 pub fn set_provider_enabled(config: &mut RootConfig, provider: &str, enabled: bool) {
-    config.merge_provider(
-        provider,
-        &ProviderConfigPatch {
-            enabled: Some(enabled),
-        },
-    );
+    config.merge_provider(provider, &ProviderConfigPatch {
+        enabled: Some(enabled),
+    });
 }

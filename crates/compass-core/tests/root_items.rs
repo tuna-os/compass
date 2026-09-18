@@ -713,3 +713,281 @@ fn a_visit_is_counted_and_timed_and_can_be_forgotten() {
     assert_eq!(it.meta.last_visited_at, None);
     assert_eq!(it.frecency(NOW + 60), 0.0);
 }
+
+// --- writing the user's config -----------------------------------------
+//
+// Ported from `RootItemManager::{setAlias, setShortcut, setItemEnabled,
+// setProviderEnabled}` and `config::Manager::{mergeEntrypointWithUser,
+// mergeProviderWithUser}`.
+
+mod config_writes {
+    use compass_core::root_items::{
+        ItemConfigPatch, ProviderConfigPatch, RootConfig, RootItem, RootItemMeta, set_alias,
+        set_item_enabled, set_provider_enabled, set_shortcut,
+    };
+
+    fn item(provider: &str, entrypoint: &str) -> RootItem {
+        RootItem {
+            id: format!("{provider}:{entrypoint}"),
+            meta: RootItemMeta {
+                provider_id: provider.to_owned(),
+                ..RootItemMeta::default()
+            },
+            ..RootItem::default()
+        }
+    }
+
+    fn stored<'a>(
+        config: &'a RootConfig,
+        provider: &str,
+        entrypoint: &str,
+    ) -> Option<&'a compass_core::root_items::ItemConfig> {
+        config.providers.get(provider)?.entrypoints.get(entrypoint)
+    }
+
+    #[test]
+    fn setting_an_alias_updates_the_metadata_and_the_config() {
+        // Doing only the first is the bug this pairing exists to prevent: the
+        // change shows immediately and then vanishes on restart.
+        let mut it = item("apps", "firefox");
+        let mut config = RootConfig::default();
+        set_alias(&mut it, &mut config, "ff");
+        assert_eq!(it.meta.alias.as_deref(), Some("ff"));
+        assert_eq!(
+            stored(&config, "apps", "firefox").and_then(|c| c.alias.as_deref()),
+            Some("ff")
+        );
+    }
+
+    #[test]
+    fn a_write_creates_the_provider_and_entrypoint_entries() {
+        // The config holds only what the user changed, so most items have no
+        // entry at all until the first write.
+        let mut config = RootConfig::default();
+        assert!(config.providers.is_empty());
+        set_item_enabled(&mut config, "apps", "firefox", false);
+        assert_eq!(
+            stored(&config, "apps", "firefox").and_then(|c| c.enabled),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_write_is_a_merge_and_not_a_replacement() {
+        // Setting an alias must not clear a shortcut set earlier.
+        let mut config = RootConfig::default();
+        config.merge_entrypoint(
+            "apps",
+            "firefox",
+            &ItemConfigPatch {
+                shortcut: Some("ctrl+f".to_owned()),
+                ..ItemConfigPatch::default()
+            },
+        );
+        config.merge_entrypoint(
+            "apps",
+            "firefox",
+            &ItemConfigPatch {
+                alias: Some("ff".to_owned()),
+                ..ItemConfigPatch::default()
+            },
+        );
+        let entry = stored(&config, "apps", "firefox").expect("an entry");
+        assert_eq!(entry.shortcut.as_deref(), Some("ctrl+f"));
+        assert_eq!(entry.alias.as_deref(), Some("ff"));
+    }
+
+    #[test]
+    fn an_absent_field_leaves_what_is_stored_alone() {
+        let mut config = RootConfig::default();
+        set_item_enabled(&mut config, "apps", "firefox", false);
+        config.merge_entrypoint("apps", "firefox", &ItemConfigPatch::default());
+        assert_eq!(
+            stored(&config, "apps", "firefox").and_then(|c| c.enabled),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn writing_one_entrypoint_leaves_its_siblings_alone() {
+        let mut config = RootConfig::default();
+        set_item_enabled(&mut config, "apps", "firefox", false);
+        set_item_enabled(&mut config, "apps", "chromium", true);
+        assert_eq!(
+            stored(&config, "apps", "firefox").and_then(|c| c.enabled),
+            Some(false)
+        );
+        assert_eq!(
+            stored(&config, "apps", "chromium").and_then(|c| c.enabled),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_shortcut_is_written_and_remembered() {
+        let mut it = item("apps", "firefox");
+        let mut config = RootConfig::default();
+        set_shortcut(&mut it, &mut config, "ctrl+f");
+        assert_eq!(it.meta.shortcut.as_deref(), Some("ctrl+f"));
+        assert_eq!(
+            stored(&config, "apps", "firefox").and_then(|c| c.shortcut.as_deref()),
+            Some("ctrl+f")
+        );
+    }
+
+    #[test]
+    fn clearing_a_shortcut_clears_it_in_the_config_too() {
+        // A declared divergence. The C++ resets the metadata but writes an
+        // empty string into the config, and the next merge reads that empty
+        // string back as a shortcut — so clearing one looks as though it
+        // worked until the launcher restarts, and then the item has an empty
+        // shortcut instead of none.
+        let mut it = item("apps", "firefox");
+        let mut config = RootConfig::default();
+        set_shortcut(&mut it, &mut config, "ctrl+f");
+        set_shortcut(&mut it, &mut config, "");
+        assert_eq!(it.meta.shortcut, None);
+        assert_eq!(
+            stored(&config, "apps", "firefox").and_then(|c| c.shortcut.clone()),
+            None,
+            "an empty shortcut must not survive as Some(\"\")"
+        );
+    }
+
+    #[test]
+    fn enabling_an_item_whose_provider_is_off_does_not_make_it_appear() {
+        // `set_item_enabled` writes only the config; the metadata follows on
+        // the next merge. That is right rather than an oversight, and this is
+        // why: the merge applies the provider's setting *after* the item's, so
+        // a disabled provider still wins.
+        let mut config = RootConfig::default();
+        set_provider_enabled(&mut config, "apps", false);
+        set_item_enabled(&mut config, "apps", "firefox", true);
+
+        let mut it = item("apps", "firefox");
+        it.merge_config(&config, false);
+        assert!(
+            !it.meta.enabled,
+            "the provider's setting must outlast the item's"
+        );
+    }
+
+    #[test]
+    fn enabling_an_item_under_an_untouched_provider_does_make_it_appear() {
+        let mut config = RootConfig::default();
+        set_item_enabled(&mut config, "apps", "firefox", true);
+
+        let mut it = item("apps", "firefox");
+        it.merge_config(&config, true);
+        assert!(it.meta.enabled);
+    }
+
+    #[test]
+    fn a_written_alias_survives_the_round_trip_through_a_merge() {
+        // The pairing is only worth anything if what was written comes back.
+        let mut it = item("apps", "firefox");
+        let mut config = RootConfig::default();
+        set_alias(&mut it, &mut config, "ff");
+
+        let mut reloaded = item("apps", "firefox");
+        reloaded.merge_config(&config, false);
+        assert_eq!(reloaded.meta.alias.as_deref(), Some("ff"));
+    }
+
+    #[test]
+    fn a_cleared_shortcut_stays_cleared_through_a_merge() {
+        // The divergence again, from the other side: with the C++'s empty
+        // string in the config this comes back as `Some("")`.
+        let mut it = item("apps", "firefox");
+        let mut config = RootConfig::default();
+        set_shortcut(&mut it, &mut config, "ctrl+f");
+        set_shortcut(&mut it, &mut config, "");
+
+        let mut reloaded = item("apps", "firefox");
+        reloaded.merge_config(&config, false);
+        assert_eq!(reloaded.meta.shortcut, None);
+    }
+
+    #[test]
+    fn turning_a_provider_off_is_stored_on_the_provider() {
+        let mut config = RootConfig::default();
+        set_provider_enabled(&mut config, "apps", false);
+        assert_eq!(
+            config.providers.get("apps").and_then(|p| p.enabled),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_provider_write_leaves_its_entrypoints_alone() {
+        let mut config = RootConfig::default();
+        set_item_enabled(&mut config, "apps", "firefox", false);
+        set_provider_enabled(&mut config, "apps", true);
+        assert_eq!(
+            stored(&config, "apps", "firefox").and_then(|c| c.enabled),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_provider_patch_with_nothing_in_it_changes_nothing() {
+        let mut config = RootConfig::default();
+        set_provider_enabled(&mut config, "apps", true);
+        config.merge_provider("apps", &ProviderConfigPatch::default());
+        assert_eq!(
+            config.providers.get("apps").and_then(|p| p.enabled),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_stored_provider_setting_survives_a_write_to_a_different_provider() {
+        let mut config = RootConfig::default();
+        set_provider_enabled(&mut config, "apps", false);
+        set_provider_enabled(&mut config, "extensions", true);
+        assert_eq!(
+            config.providers.get("apps").and_then(|p| p.enabled),
+            Some(false)
+        );
+        assert_eq!(
+            config.providers.get("extensions").and_then(|p| p.enabled),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn an_item_whose_id_has_no_separator_is_written_under_its_provider() {
+        // A bare id is not malformed: `entrypoint_id_of` joins it to the
+        // item's provider, so the write lands where the merge will look for
+        // it.
+        let mut it = RootItem {
+            id: "firefox".to_owned(),
+            ..item("apps", "firefox")
+        };
+        let mut config = RootConfig::default();
+        set_alias(&mut it, &mut config, "ff");
+        assert_eq!(
+            stored(&config, "apps", "firefox").and_then(|c| c.alias.as_deref()),
+            Some("ff")
+        );
+    }
+
+    #[test]
+    fn an_item_with_no_provider_writes_under_an_empty_provider_key() {
+        // Faithful to the C++, whose `EntrypointId` does the same. It is not
+        // useful — nothing reads that key — but inventing a guard the C++ does
+        // not have would make the two configs diverge in a way nobody asked
+        // for. Pinned so the behaviour is known rather than discovered.
+        let mut it = RootItem {
+            id: "orphan".to_owned(),
+            meta: RootItemMeta::default(),
+            ..item("apps", "firefox")
+        };
+        let mut config = RootConfig::default();
+        set_alias(&mut it, &mut config, "x");
+        assert_eq!(
+            stored(&config, "", "orphan").and_then(|c| c.alias.as_deref()),
+            Some("x")
+        );
+    }
+}
