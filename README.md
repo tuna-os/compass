@@ -35,29 +35,96 @@ them with the ported fuzzy-search semantics, launches the selected result, expos
 diagnostics, and is exercised in Flatpak and Bluefin VM CI. Clipboard, extension-host and builtin
 feature parity are still in progress; the parity ledger is the source of truth.
 
-## Try the Rust launcher
+## Install
 
-Install the pinned Rust toolchain, then run:
+> **There is no tagged release and Compass is not on Flathub yet.** Every path below builds or
+> installs a development build. The Rust port is [not yet the default engine](#migration-status),
+> so expect a launcher that opens, searches applications and launches them — not feature parity
+> with the screenshot above.
+
+**Requirements.** A Wayland session; GNOME is the first target and the only one covered by CI.
+There is no X11 fallback — the engine is Wayland-only by design. The Flatpak paths also need
+`flatpak` and access to Flathub for the `org.freedesktop.Platform//24.08` runtime.
+
+### From a CI build
+
+The quickest way to get a binary. Every successful run of the
+[Flatpak workflow](https://github.com/tuna-os/compass/actions/workflows/flatpak.yaml) uploads a
+single-file bundle as the `flatpak-bundle` artifact. Artifacts expire after 14 days and downloading
+them requires being signed in to GitHub.
+
+With the [`gh` CLI](https://cli.github.com):
+
+```sh
+run=$(gh run list --repo tuna-os/compass --workflow flatpak.yaml \
+        --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run download "$run" --repo tuna-os/compass --name flatpak-bundle
+
+flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user --bundle com.vicinae.Vicinae.flatpak
+```
+
+Or download `flatpak-bundle` from a run page in a browser, unzip it, and run the last two commands.
+
+The bundle carries the application only, so the runtime still has to come from somewhere — that is
+what the `remote-add` line is for. Once both are installed nothing further needs the network.
+
+### Build the Flatpak yourself
+
+Install `flatpak-builder` and the Freedesktop SDK, then:
+
+```sh
+make flatpak-rust
+```
+
+This builds and installs into your user installation. See
+[`packaging/flatpak/README.md`](packaging/flatpak/README.md) for what each sandbox permission in the
+manifest is for and why.
+
+### From source
+
+Cargo builds it without any Flatpak involved. The toolchain is pinned in `rust-toolchain.toml`, so
+[rustup](https://rustup.rs) will fetch the right one on first build:
 
 ```sh
 cargo run -p vicinae -- ui
 ```
 
-The launcher currently targets a graphical Linux session. To run the same checks as Rust CI:
+`ui` opens the launcher in the foreground and indexes and ranks in-process — it does not need an
+engine running alongside it.
+
+## Running it
+
+```sh
+flatpak run com.vicinae.Vicinae -- ui       # open the launcher
+flatpak run com.vicinae.Vicinae -- doctor   # what works on this machine, and what does not
+```
+
+Start with `doctor` if something misbehaves: it reports the session type, bus, portals and index
+state, and `doctor --check-only` exits non-zero when a check fails.
+
+For the resident mode the launcher is moving to, run the engine and let a window attach to it
+([ADR-0015](docs/rust-engine/adr/0015-the-launcher-window-is-resident.md)):
+
+```sh
+flatpak run com.vicinae.Vicinae -- serve    # then, from anywhere:
+flatpak run com.vicinae.Vicinae -- toggle
+```
+
+`serve` asks the GlobalShortcuts portal for `LOGO+space`, which on GNOME means a permission prompt.
+Pass `serve --no-hotkey` if your compositor already binds a key to `toggle`, or if there is no
+GlobalShortcuts backend.
+
+The legacy `vicinae` and `com.vicinae.Vicinae` identifiers in these commands are intentional
+migration compatibility, not the public brand.
+
+### Hacking on it
+
+To run the same checks as Rust CI:
 
 ```sh
 make check-rust
 ```
-
-For the Bluefin/Flatpak development path, install `flatpak-builder` and the Freedesktop SDK, then:
-
-```sh
-make flatpak-rust
-flatpak run com.vicinae.Vicinae -- ui
-```
-
-The legacy identifiers in those commands are intentional migration compatibility, not the public
-brand.
 
 ## Architecture
 
