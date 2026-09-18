@@ -34,6 +34,7 @@
 #![deny(missing_docs)]
 
 pub mod apps;
+pub mod builtin_icon;
 pub mod config;
 pub mod frecency;
 pub mod glyph;
