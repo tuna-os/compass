@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,658 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling and root compaction |
+| `compass-core` | 1,690 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction and script output styling |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **3,014** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **3,046** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 3,014 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 3,046 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -802,9 +802,36 @@ script has no effect. The icon chain is emoji, path as written, path beside the 
 URL, then the tinted `code` glyph; `http` is refused because the C++ tests the scheme for `https`
 exactly. The metadata store keeps each line base64-encoded for the reason the C++ comment gives —
 the output is arbitrary bytes from someone else's script — and a corrupt file leaves an empty store
-rather than an error, because a lost output cache is no reason to stop listing scripts. Still
-C++-only: the service's own Qt machinery (the filesystem watcher, its 100 ms debounce and the
-15-minute refresh), the output tokenizer, the script actions and the executor view host.
+rather than an error, because a lost output cache is no reason to stop listing scripts. The output tokenizer is ported too, as
+`compass-core::script_output`: 32 tests, 18 controls, all of which fired.
+
+A script's stdout is arbitrary bytes from someone else's program and the launcher renders it, so
+this decides what is a link, what is coloured, and what is neither. Three of its rules are the kind
+that only a test notices:
+
+- Three of the four states end a run **without consuming the character that ended it**, so the next
+  call sees it again in the new state. That is what starts a link at the `h` of `http` rather than
+  one character late, and what keeps the character after a link from being dropped.
+- A link that runs to the end of the output is **not** marked as a link — the loop falls out of the
+  end and returns the run with the flag unset. Visible behaviour: the last link in a stream is not
+  clickable until more output arrives after it. Pinned rather than fixed.
+- Quotes and brackets end a link, because a URL printed inside them — how most prose prints one —
+  would otherwise swallow the closing mark and produce a link that 404s.
+
+37 is deliberately absent from the colour table, so white text draws in the theme's ordinary
+foreground; a script colouring its output white would otherwise be invisible on a light theme. Two
+arms of the C++ switch, for 0 and 97, **cannot be reached** — everything is normalised into 30–37
+before the lookup — and are not ported.
+
+**Three controls were silent and each needed an input that could tell the two readings apart.** Two
+sequences with no text between them is the only case where the one-format-per-run check does
+anything, because with text between them the text flush ends the run first. `ESC 3 1 m [ 3 2 m` is
+the malformed escape that distinguishes "swallow everything until `[`" from the other reading.
+And `ESC[287m` is red, because the accumulator is a `uint8_t` and 287 wraps to 31 — with 999,
+wrapping and saturating are indistinguishable.
+
+Still C++-only: the service's own Qt machinery (the filesystem watcher, its 100 ms debounce and the
+15-minute refresh), the script actions and the executor view host.
 
 
 **`compass-xdg::terminal`** — how to run a command inside a terminal emulator, from

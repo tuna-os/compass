@@ -83,6 +83,7 @@ pub mod root_view;
 pub mod scan_dispatch;
 pub mod scan_roots;
 pub mod script_command;
+pub mod script_output;
 pub mod script_scan;
 pub mod selection;
 pub mod semver;
