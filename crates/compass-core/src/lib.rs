@@ -51,6 +51,7 @@ pub mod script_command;
 pub mod shortcut;
 pub mod shortcut_store;
 pub mod snippet;
+pub mod system_run;
 pub mod toast;
 pub mod xdg_dirs;
 
