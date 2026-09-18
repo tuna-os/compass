@@ -59,6 +59,7 @@ pub mod power_commands;
 pub mod rank;
 pub mod root_items;
 pub mod script_command;
+pub mod selection;
 pub mod semver;
 pub mod shortcut;
 pub mod shortcut_form;
