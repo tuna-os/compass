@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,255 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the indexer's entry filter and query policy |
+| `compass-core` | 1,289 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,444** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,478** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,444 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,478 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -192,7 +192,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
@@ -353,6 +353,40 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/root` → `compass-core::root_view`** — the root list's own behaviour: the clock in
+the title bar, the space-bar alias shortcut, and reaching back through past searches with the up
+arrow.
+
+The clock's next tick is `interval - (now % interval)`, which lands on a multiple of the interval
+rather than one interval from now — so a clock showing minutes updates *on* the minute instead of
+drifting to whenever the window happened to open, and one re-enabled mid-interval falls back into
+step with a single short tick. Turning it off clears the title as well as stopping the timer, which
+matters as much: leaving the last time on screen would show a clock that had silently stopped.
+
+The space-bar shortcut fires only when what was typed *is* the selected item's alias, compared
+lowercased. With a completer open the space goes to the completer instead — but only while every
+completion field is still empty, because once something has been typed into one, stealing the space
+would make the arguments unwritable. Without a completer the item has to support the shortcut; a
+no-view command does not, as there would be nothing to show for it. The completer branch returns
+*before* the support check, so a completer overrides the item's own answer either way.
+
+Reaching history with the up arrow needs two things, and the first is a **conflict rather than a
+preference**: wrapping navigation makes the up arrow at the top jump to the bottom, so it cannot
+also mean "previous search" — where wrapping is on, history is unreachable by design. The second is
+that the selection is already on the first row. The first press takes offset 0, so one press reaches
+the last thing typed, and the skip past an entry equal to the current text is a **loop**: history
+can hold the same query several times in a row, and stopping after one would leave the arrow doing
+nothing on the second press.
+
+A control found a gap the suite had: nothing covered an empty query against an item with **no**
+alias — the one case that separates an absent alias from an empty one, where treating the two alike
+would make every press of space over an empty search box activate whatever was selected. There is a
+test for it now.
+
+Still C++-only: the search sources and their models (`root-search-sources.cpp`,
+`root-search-model.cpp`, 768 lines between them), the provider search view, and everything the
+actions do.
 
 **`src/builtins/clipboard` → `compass-clipboard::history_view`** — the history command's own
 decisions. The ledger had this row down for `compass-core`; it landed in `compass-clipboard`
