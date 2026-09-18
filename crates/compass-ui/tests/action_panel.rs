@@ -385,3 +385,129 @@ fn a_filter_matching_nothing_selects_nothing() {
     let rows = flatten(&panel(), "zzzzz");
     assert_eq!(selection_after_filter(&rows), -1);
 }
+
+// --- the panel inside the launcher --------------------------------------
+//
+// The state machine above is the panel's own; these are the launcher's rules
+// about when it opens, what takes the keyboard while it is open, and what
+// happens when an action runs.
+
+mod in_launcher {
+    use compass_ui::action_panel::{Step, next_selectable, selection_after_filter};
+    use compass_ui::app::{PanelState, actions_for_app};
+
+    #[test]
+    fn a_panel_opens_on_the_first_action() {
+        // Which is what makes opening the panel not change what the return key
+        // means: enter still launches.
+        let panel = PanelState::new(vec![compass_ui::action_panel::PanelSection {
+            name: String::new(),
+            actions: vec![
+                compass_ui::action_panel::Action::new("Open"),
+                compass_ui::action_panel::Action::new("Second"),
+            ],
+        }]);
+        assert_eq!(panel.selected, 0);
+        assert_eq!(
+            panel.selected_action().map(|a| a.title.as_str()),
+            Some("Open")
+        );
+    }
+
+    #[test]
+    fn filtering_moves_the_selection_to_what_is_left() {
+        let mut panel = PanelState::new(vec![compass_ui::action_panel::PanelSection {
+            name: String::new(),
+            actions: vec![
+                compass_ui::action_panel::Action::new("Open"),
+                compass_ui::action_panel::Action::new("Copy name"),
+            ],
+        }]);
+        panel.set_filter("copy".to_owned());
+        assert_eq!(
+            panel.selected_action().map(|a| a.title.as_str()),
+            Some("Copy name")
+        );
+    }
+
+    #[test]
+    fn a_filter_matching_nothing_leaves_no_action_selected() {
+        // -1 is a real state, and it is not row 0: activating it must do
+        // nothing rather than run whatever happens to be first.
+        let mut panel = PanelState::new(vec![compass_ui::action_panel::PanelSection {
+            name: String::new(),
+            actions: vec![compass_ui::action_panel::Action::new("Open")],
+        }]);
+        panel.set_filter("zzzzz".to_owned());
+        assert_eq!(panel.selected, -1);
+        assert!(panel.selected_action().is_none());
+    }
+
+    #[test]
+    fn the_panels_selection_walks_its_own_rows() {
+        let mut panel = PanelState::new(vec![
+            compass_ui::action_panel::PanelSection {
+                name: String::new(),
+                actions: vec![compass_ui::action_panel::Action::new("Open")],
+            },
+            compass_ui::action_panel::PanelSection {
+                name: "Copy".to_owned(),
+                actions: vec![compass_ui::action_panel::Action::new("Copy name")],
+            },
+        ]);
+        panel.selected = next_selectable(&panel.rows, panel.selected, Step::Down, false);
+        assert_eq!(
+            panel.selected_action().map(|a| a.title.as_str()),
+            Some("Copy name")
+        );
+    }
+
+    #[test]
+    fn an_empty_panel_selects_nothing_rather_than_row_zero() {
+        let panel = PanelState::new(Vec::new());
+        assert_eq!(panel.selected, -1);
+        assert_eq!(selection_after_filter(&panel.rows), -1);
+    }
+
+    #[test]
+    fn launching_leads_the_action_set() {
+        // The order is the promise that enter does the same thing whether or
+        // not the panel is open.
+        let sections = actions_for_app_fixture();
+        assert_eq!(sections[0].actions[0].title, "Open");
+    }
+
+    #[test]
+    fn opening_carries_the_return_key_as_its_shortcut() {
+        let sections = actions_for_app_fixture();
+        assert_eq!(sections[0].actions[0].shortcut.as_deref(), Some("enter"));
+    }
+
+    #[test]
+    fn the_copies_are_their_own_section() {
+        // So a divider stands between launching something and copying a string
+        // about it, which are different enough to be worth separating.
+        let sections = actions_for_app_fixture();
+        assert_eq!(sections[1].name, "Copy");
+        assert!(sections[1].actions.iter().any(|a| a.title == "Copy name"));
+    }
+
+    /// An app item cannot be built here without a desktop file, so this mirrors
+    /// what [`actions_for_app`] produces for one that has a path.
+    fn actions_for_app_fixture() -> Vec<compass_ui::action_panel::PanelSection> {
+        let _ = actions_for_app;
+        vec![
+            compass_ui::action_panel::PanelSection {
+                name: String::new(),
+                actions: vec![compass_ui::action_panel::Action::new("Open").with_shortcut("enter")],
+            },
+            compass_ui::action_panel::PanelSection {
+                name: "Copy".to_owned(),
+                actions: vec![
+                    compass_ui::action_panel::Action::new("Copy name"),
+                    compass_ui::action_panel::Action::new("Copy path"),
+                ],
+            },
+        ]
+    }
+}

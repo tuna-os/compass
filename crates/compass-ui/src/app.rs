@@ -19,6 +19,7 @@ use compass_core::{AppIndex, AppItem};
 use compass_platform::{AppLauncher, NullLauncher};
 use compass_search::rank_indices;
 
+use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
@@ -113,6 +114,75 @@ impl Default for AppFlags {
     }
 }
 
+/// The action panel's own state while it is open.
+///
+/// Its selection is an `isize` because -1 means "nothing selectable", which is
+/// a real state for a panel filtered down to nothing and is not the same as
+/// row 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelState {
+    /// The sections, as the command supplied them.
+    pub sections: Vec<PanelSection>,
+    /// What has been typed into the panel's own filter.
+    pub filter: String,
+    /// The flattened rows under that filter.
+    pub rows: Vec<Row>,
+    /// The selected row, or -1.
+    pub selected: isize,
+}
+
+impl PanelState {
+    /// Open a panel over `sections`, selecting its first action.
+    #[must_use]
+    pub fn new(sections: Vec<PanelSection>) -> Self {
+        let rows = action_panel::flatten(&sections, "");
+        let selected = action_panel::selection_after_filter(&rows);
+        Self {
+            sections,
+            filter: String::new(),
+            rows,
+            selected,
+        }
+    }
+
+    /// Re-filter, and put the selection back on the first row of what is left.
+    pub fn set_filter(&mut self, filter: String) {
+        self.filter = filter;
+        self.rows = action_panel::flatten(&self.sections, &self.filter);
+        self.selected = action_panel::selection_after_filter(&self.rows);
+    }
+
+    /// The action the selection is on, if any.
+    #[must_use]
+    pub fn selected_action(&self) -> Option<&Action> {
+        let row = self.rows.get(usize::try_from(self.selected).ok()?)?;
+        self.sections.get(row.section)?.actions.get(row.action?)
+    }
+}
+
+/// The actions offered for an application.
+///
+/// Launching is first because it is what the return key does, and the panel's
+/// first row is the one the return key runs -- so the panel opening does not
+/// change what enter means.
+#[must_use]
+pub fn actions_for_app(item: &AppItem) -> Vec<PanelSection> {
+    let mut copy = vec![Action::new("Copy name")];
+    if item.path().is_some() {
+        copy.push(Action::new("Copy path"));
+    }
+    vec![
+        PanelSection {
+            name: String::new(),
+            actions: vec![Action::new("Open").with_shortcut("enter")],
+        },
+        PanelSection {
+            name: "Copy".to_owned(),
+            actions: copy,
+        },
+    ]
+}
+
 /// The launcher application state.
 pub struct LauncherApp {
     /// The application index.
@@ -147,6 +217,13 @@ pub struct LauncherApp {
     /// Held rather than read per keystroke because it comes from the user's
     /// configuration, which is read once.
     keybinding: compass_core::keybinding::Scheme,
+    /// The action panel, when it is open.
+    ///
+    /// `None` is closed. Holding the whole state rather than a bare flag is
+    /// what lets the panel keep its own filter and selection while the list
+    /// underneath keeps its own -- they are two lists on screen at once, and
+    /// sharing either would make one of them jump when the other moved.
+    panel: Option<PanelState>,
     /// Whether the engine is waiting for an outcome right now.
     ///
     /// # Every report must answer a command, or the stream goes out of step
@@ -276,6 +353,7 @@ impl LauncherApp {
             query: String::new(),
             results: Vec::new(),
             selected: 0,
+            panel: None,
             error: None,
             launcher: Arc::new(NullLauncher),
             link: None,
@@ -548,6 +626,56 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::TogglePanel => {
+                if self.panel.is_some() {
+                    self.panel = None;
+                } else if let Some(item) = self.selected_item() {
+                    // Only over a selected row. A panel of actions for nothing
+                    // would be a panel whose every action fails.
+                    self.panel = Some(PanelState::new(actions_for_app(item)));
+                }
+                Task::none()
+            }
+            Message::PanelFilterChanged(filter) => {
+                if let Some(panel) = self.panel.as_mut() {
+                    panel.set_filter(filter);
+                }
+                Task::none()
+            }
+            Message::PanelMove(direction) => {
+                if let Some(panel) = self.panel.as_mut() {
+                    let step = match direction {
+                        Direction::Up => Step::Up,
+                        Direction::Down => Step::Down,
+                    };
+                    panel.selected = action_panel::next_selectable(
+                        &panel.rows,
+                        panel.selected,
+                        step,
+                        self.wrap_navigation,
+                    );
+                }
+                Task::none()
+            }
+            Message::PanelActivate => {
+                let Some(panel) = self.panel.as_ref() else {
+                    return Task::none();
+                };
+                let Some(action) = panel.selected_action() else {
+                    return Task::none();
+                };
+                // Only `Open` does anything yet; the copies need a clipboard
+                // this crate does not have. Closing the panel either way is
+                // deliberate -- an action that ran and one that is not wired up
+                // both leave the panel with nothing more to say, and leaving it
+                // open would look like the key had not registered.
+                let launches = action.title == "Open";
+                self.panel = None;
+                if launches {
+                    return self.update(Message::LaunchSelected);
+                }
+                Task::none()
+            }
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
             Message::EventOccurred(_) => Task::none(),
@@ -555,6 +683,43 @@ impl LauncherApp {
                 ref key, modifiers, ..
             }) => {
                 use iced::keyboard::{Key, key::Named};
+
+                // Ctrl+B opens and closes the panel, over the list either way.
+                //
+                // Ctrl+B and not Ctrl+K, which is what the C++ binds on macOS
+                // only: on Linux Ctrl+K is the vim chord for "move up", and
+                // taking it here would have broken navigation for every user
+                // of the default scheme. `keybind-manager.cpp` has the same
+                // `#ifdef`, for the same reason.
+                if modifiers.control() && key.as_ref() == Key::Character("b") {
+                    return self.update(Message::TogglePanel);
+                }
+
+                // While the panel is open it takes the keys the list would
+                // otherwise take. Escape closes the panel rather than the
+                // launcher, because a panel opened by mistake should cost one
+                // key and not the whole window.
+                if self.panel.is_some() {
+                    match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => {
+                            return self.update(Message::PanelMove(Direction::Down));
+                        }
+                        Key::Named(Named::ArrowUp) => {
+                            return self.update(Message::PanelMove(Direction::Up));
+                        }
+                        Key::Named(Named::Enter) => return self.update(Message::PanelActivate),
+                        Key::Named(Named::Escape) => {
+                            self.panel = None;
+                            return Task::none();
+                        }
+                        _ => {}
+                    }
+                    return match chord_direction(self.keybinding, key.as_ref(), modifiers) {
+                        Some(direction) => self.update(Message::PanelMove(direction)),
+                        None => Task::none(),
+                    };
+                }
+
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
                         return self.update(Message::MoveSelection(Direction::Down));
@@ -612,11 +777,20 @@ impl LauncherApp {
             container(col).width(Length::Fill).padding(20).into()
         };
 
+        // The panel replaces the results rather than floating over them. A
+        // real overlay needs a stacking widget and a backdrop; what the tier
+        // has to be able to see is that the panel is on screen and which row
+        // is selected, and replacing the list shows both without either.
+        let body: Element<Message> = match &self.panel {
+            Some(panel) => self.view_panel(panel),
+            None => results_content,
+        };
+
         let content = column![
             Space::new(),
             container(input).width(Length::Fill).padding(20),
             Space::new(),
-            results_content,
+            body,
             Space::new(),
         ]
         .align_x(iced::Alignment::Center);
@@ -626,6 +800,50 @@ impl LauncherApp {
             .height(Length::Fill)
             .padding(20)
             .into()
+    }
+
+    /// Draw the action panel.
+    ///
+    /// Every row kind gets a different left margin, and a caret marks the
+    /// selection -- the same convention the results list uses, and for the same
+    /// reason: under llvmpipe at 1280x800 a background tint is not identifiable
+    /// in a captured frame, and a caret is.
+    fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
+        let mut col = column![text("Actions").size(14)].spacing(4);
+
+        for (index, panel_row) in panel.rows.iter().enumerate() {
+            let line = match panel_row.kind {
+                RowKind::Divider => text("  ---".to_owned()).size(14),
+                RowKind::Header => {
+                    let name = panel
+                        .sections
+                        .get(panel_row.section)
+                        .map_or("", |section| section.name.as_str());
+                    text(format!("  {name}")).size(14)
+                }
+                RowKind::Item => {
+                    let title = panel_row
+                        .action
+                        .and_then(|position| {
+                            panel.sections.get(panel_row.section)?.actions.get(position)
+                        })
+                        .map_or("", |action| action.title.as_str());
+                    let marker = if index as isize == panel.selected {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    text(format!("{marker}  {title}")).size(16)
+                }
+            };
+            col = col.push(line);
+        }
+
+        if panel.rows.is_empty() {
+            col = col.push(text("No actions").size(16));
+        }
+
+        container(col).width(Length::Fill).padding(20).into()
     }
 
     /// Re-rank against the current query.
@@ -798,6 +1016,159 @@ mod tests {
         let _ = app.update(Message::QueryChanged("fi".to_owned()));
         assert!(app.results.len() > 1, "need several rows to move between");
         app
+    }
+
+    #[test]
+    fn the_action_panel_is_not_bound_to_the_vim_chord() {
+        // Ctrl+K is "move up" in the default Linux scheme. The C++ binds the
+        // panel to Ctrl+K on macOS only and Ctrl+B everywhere else, and this
+        // is why -- taking Ctrl+K here would break navigation for every user
+        // who has configured nothing.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "precondition: Ctrl+J moved down");
+
+        let _ = app.update(chord("k", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none(), "Ctrl+K must not open the panel");
+        assert_eq!(app.selected, 0, "Ctrl+K still moves up");
+    }
+
+    #[test]
+    fn ctrl_b_opens_and_closes_the_panel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_some(), "Ctrl+B opened it");
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none(), "and Ctrl+B closed it again");
+    }
+
+    #[test]
+    fn the_panel_does_not_open_over_nothing() {
+        // A panel of actions for no selected row is a panel whose every action
+        // fails.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("zzzzzzzz".to_owned()));
+        assert!(
+            app.selected_item().is_none(),
+            "precondition: nothing selected"
+        );
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn the_panel_takes_the_arrow_keys_while_it_is_open() {
+        // Otherwise the list underneath moves out from under a panel whose
+        // actions are for the row that was selected when it opened.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let before = app.selected;
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(app.selected, before, "the list did not move");
+        // Row 1 is the divider and row 2 the heading, so the next selectable
+        // row is 3. Expecting 1 would have been expecting the selection to
+        // land on a divider.
+        assert_eq!(
+            app.panel.as_ref().map(|panel| panel.selected),
+            Some(3),
+            "the panel did"
+        );
+    }
+
+    #[test]
+    fn typing_the_panels_letter_without_ctrl_does_not_open_it() {
+        // The search field takes ordinary characters, and a launcher whose
+        // search box opens a panel when someone types `b` is unusable.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::default()));
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn escape_closes_the_panel_rather_than_the_launcher() {
+        // A panel opened by mistake should cost one key, not the whole window.
+        // The window has to be open for this to mean anything -- with no
+        // window, "the window did not close" is true however Escape is routed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::Opened(window::Id::unique()));
+        assert!(app.window.is_some(), "precondition: a window is open");
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.panel.is_none(), "the panel closed");
+        assert!(app.window.is_some(), "and the window did not");
+
+        // HALF OF THIS IS NOT CONTROL-BACKED, and it is worth saying which.
+        //
+        // "The panel closed" fires under a mutation. "The window did not"
+        // does not: `conceal` closes the window through a Task and clears
+        // `self.window` only when `Message::Closed` comes back, and with no
+        // engine link `on_dismiss` returns `Exit`, so a mutation that made
+        // Escape dismiss as well as close the panel changes nothing this test
+        // can see. Proving it would need an app built around a live
+        // `EngineLink`, which is a harness this crate does not have yet.
+        //
+        // Recorded rather than left looking covered.
+    }
+
+    #[test]
+    fn the_panel_stops_intercepting_once_it_is_closed() {
+        // The follow-on from the test above: with the panel gone, Escape is
+        // the launcher's again. What it *does* then is `conceal`, which closes
+        // the window through a Task and so is not observable from here — so
+        // this asserts the routing rather than the closing, and the test above
+        // asserts that the routing was different while the panel was open.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::Opened(window::Id::unique()));
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.panel.is_none(), "the panel closed");
+
+        // Arrows reach the list again, which the panel was taking.
+        let before = app.selected;
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_ne!(app.selected, before, "the list moved again");
+    }
+
+    #[test]
+    fn the_vim_chords_move_the_panel_while_it_is_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let before = app.selected;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, before, "the list did not move");
+        assert_eq!(app.panel.as_ref().map(|panel| panel.selected), Some(3));
+    }
+
+    #[test]
+    fn running_an_action_closes_the_panel() {
+        // An action that ran and one that is not wired up both leave the panel
+        // with nothing more to say, and leaving it open would look like the key
+        // had not registered.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.panel.is_none());
     }
 
     #[test]

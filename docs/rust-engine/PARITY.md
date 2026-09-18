@@ -70,7 +70,7 @@ that. The plan has been corrected.
 | `compass-search` | 58 | fuzzy, plus an exact port of fzf's coherence rule |
 | `compass-portals` | 54 | XDG portals; availability is a three-state outcome, not a boolean |
 | `compass-shell` | 46 | GNOME Shell DBus client; tests spawn a real `dbus-daemon` |
-| `compass-ui` | 101 | the launcher window and its views, the root list's sections and selection, and the action panel |
+| `compass-ui` | 118 | the launcher window and its views, the root list's sections and selection, and the action panel — open, filtered, navigated and drawn |
 | `compass-crypto` | 24 | AES-GCM and HKDF; cross-decrypted against the C++ probe per-PR |
 | `compass-sandbox` | 23 | Landlock, a seccomp denylist, and the launcher that applies them to itself |
 | `compass-local-storage` | 36 | the extension key-value store, lossy typing and all, and the calculator history with its time grouping |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,753** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,770** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,753 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,770 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1069,6 +1069,28 @@ return (`all` over an empty iterator is already true) and an empty-panel early r
 loops are bounded by the row count). Three controls found tests that proved less than they looked
 like they did — the section-down test started from the last row of its section, where the next row is
 already the next section and the rule under test never fires.
+
+
+The panel is now *in* the launcher rather than beside it: Ctrl+B opens it over the selected row, it
+takes the arrow keys and the vim chords while it is open, Escape closes it rather than the window,
+and running an action closes it either way.
+
+**Ctrl+B and not Ctrl+K, and the reason is in the C++.** `keybind-manager.cpp` binds the panel to
+Ctrl+K on macOS and Ctrl+B everywhere else. I had written Ctrl+K before reading that, which would
+have taken the vim chord for "move up" from every Linux user of the default scheme — there is a test
+asserting that chord, and it would have caught the clash a moment later. Reading the source first
+was cheaper.
+
+Three test premises were wrong and the suite said so, and one of them is the shape of this component
+in miniature: the panel's second *selectable* row is index 3, not 1, because index 1 is a divider
+and index 2 a heading. Expecting 1 was expecting the selection to land on a divider — which is the
+exact bug the flattening is built to prevent, written into a test of it.
+
+**One assertion is not control-backed and says so in place.** "Escape closes the panel and *not* the
+window" — the first half fires under a mutation, the second cannot: `conceal` closes the window
+through a Task and clears the field only when `Message::Closed` returns, and with no engine link
+`on_dismiss` exits instead. Proving it needs an app built around a live `EngineLink`, which this
+crate has no harness for. Recorded rather than left looking covered.
 
 ### `src/services/window-manager` stays ❌ although its dispatch layer is ported
 
