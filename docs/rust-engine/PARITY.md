@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 851 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the indexer's entry filter and query policy |
+| `compass-core` | 894 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,953** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,996** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,946;
-the 1,953 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,989;
+the 1,996 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -146,7 +146,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/font-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -733,6 +733,22 @@ the same answer. Two controls pin it — taking the last channel instead, and av
 which fail the suite. (Swapping the `BTreeMap` for a `HashMap` does *not* reliably fail it, which is
 a defect in that mutation rather than in the test: it makes the result vary per process instead of
 being wrong in a fixed way, so a suite that passed once proves nothing either way.)
+
+### `compass-core::font_service` — two tables extracted, not retyped
+
+The category names and the per-script pangrams were pulled out of the C++ with a script and written
+into the Rust source mechanically. That is not laziness: a pangram exists to exercise every letter
+of a script, and one retyped with a character wrong still looks right to anyone reviewing the diff
+— particularly in Thai, Devanagari or Arabic. Earlier in this session three power-command
+descriptions were written from memory and all three were wrong, which is the same failure caught
+late rather than avoided.
+
+Two classification rules are worth reading twice. A Nerd Font outranks monospace, because a patched
+font is almost always a monospace Latin one and without that order the Monospace section would
+contain nothing else; both are still tagged, so filtering by either finds it. And a font covering
+several distinctive scripts *plus* a European one is filed under Latin rather than under the first
+of them — that is a pan-Unicode font, and burying it under Gujarati would hide a general-purpose
+font from everyone.
 
 ### `compass-core::window_effects` — two registries whose support checks are in opposite orders
 

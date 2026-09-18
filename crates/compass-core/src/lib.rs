@@ -52,6 +52,7 @@ pub mod fetch_queue;
 pub mod file_category;
 pub mod file_chooser;
 pub mod font_browser;
+pub mod font_service;
 pub mod frecency;
 pub mod glyph;
 pub mod glyph_service;
