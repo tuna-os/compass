@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 783 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, the indexer's entry filter and query policy |
+| `compass-core` | 806 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,885** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,908** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,878;
-the 1,885 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,901;
+the 1,908 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -555,13 +555,28 @@ a generation the C++ completes. It is a bug worth fixing upstream, not worth div
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
 
-### `src/server/src/ui/image` stays ❌ although its wire format is ported
+### `src/server/src/ui/image` stays ❌ although its wire format and its contrast maths are ported
 
 `compass-core::image_url` is a complete port of `url.cpp` — the `icon://` scheme every icon in the
-system is referred to by — with 30 tests and 21 controls. The row stays ❌, for the same reason
+system is referred to by — and `compass-core::contrast` of `contrast-helper.hpp`, which picks a
+colour that can be read against another one. Between them, 53 tests and 43 controls. The row stays
+❌, for the same reason
 `src/file-indexer` does: the directory is 2,154 lines across fourteen files, and what is ported is
 one of them. The renderer, the streaming decoder, the painter and the platform icon loaders are the
 rest, and they are the part that needs a UI layer.
+
+The contrast maths splits into a standard and a judgement, and they are tested differently on
+purpose. `getRelativeLuminance` and `getContrastRatio` are WCAG 2.x, defined to the digit, so they
+are pinned against the standard's own values — black on white is exactly 21:1, and a pure green is
+0.7152 where a pure blue is 0.0722. `getTonalContrastColor` is not a standard: it is this project's
+answer to "given an album cover, what colour do I write on it", and what is pinned there is the
+properties it must hold — it moves away from the background, it keeps the background's hue, and it
+gives up after thirty steps rather than looping, because on a mid grey no lightness reaches 4.5 and
+a search without the bound would never end.
+
+One thing this port does *not* verify is that its HSL conversion agrees with Qt's to the last bit.
+The tests hold the properties rather than exact RGB triples for that reason; a caller needing the
+same pixel as the C++ would need a cross-check that does not exist yet.
 
 It was worth porting ahead of them because an `ImageURL` is a *string*, not a widget. That string
 crosses every boundary in the system: it is what a root-search row stores, what an extension gets

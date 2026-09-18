@@ -43,6 +43,7 @@ pub mod boilerplate;
 pub mod browse_apps;
 pub mod builtin_icon;
 pub mod config;
+pub mod contrast;
 pub mod create_extension;
 pub mod default_app;
 pub mod entry_filter;
