@@ -539,6 +539,8 @@ mod reader_tests {
 /// codegen builds `{ paramName: value, ... }` — and the method string is
 /// `"<Service>/<method>"`, from
 /// `std::format("{}/{}", s.name, method.name)`.
+pub mod extension_manager;
+
 pub mod rpc {
     use serde::{Deserialize, Serialize};
 
