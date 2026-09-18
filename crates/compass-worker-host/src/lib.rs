@@ -781,3 +781,355 @@ mod fig_methods {
         }
     }
 }
+
+/// A spawned worker process and the frames going to and from it.
+///
+/// # Why stdio rather than the socket the plan describes
+///
+/// PLAN.md §6 says the host talks to the worker "over UDS". It does not: the
+/// worker reads `process.stdin` and writes `process.stdout`, and §11.4a records
+/// how that was established. Adding a socket to the worker would contradict the
+/// same phase's rule that `src/typescript/` is not rewritten, for no capability
+/// the host needs, so stdio is what this implements. #101 carries the decision.
+///
+/// # stderr is left alone on purpose
+///
+/// `src/snippet/README.md` documents the convention the workers follow —
+/// "stderr is used for debug logs" — so it is inherited rather than captured.
+/// A host that swallowed it would make a worker's own diagnostics invisible at
+/// exactly the moment they are wanted.
+pub struct Worker {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    reader: FrameReader<std::process::ChildStdout>,
+    next_id: u64,
+}
+
+impl std::fmt::Debug for Worker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Worker")
+            .field("pid", &self.child.id())
+            .field("next_id", &self.next_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Why starting or driving a worker failed.
+#[derive(Debug, Error)]
+pub enum WorkerError {
+    /// The process could not be started, or its pipes were not available.
+    #[error("spawning the worker failed: {0}")]
+    Spawn(std::io::Error),
+
+    /// Writing to the worker failed.
+    #[error("writing to the worker failed: {0}")]
+    Write(std::io::Error),
+
+    /// Reading from the worker failed.
+    #[error(transparent)]
+    Read(#[from] ReadError),
+
+    /// A frame was not the JSON this protocol requires.
+    #[error("the worker sent a frame that is not JSON-RPC: {0}")]
+    Malformed(#[from] serde_json::Error),
+
+    /// The payload was too large to frame.
+    #[error(transparent)]
+    Frame(#[from] FrameError),
+}
+
+impl Worker {
+    /// Spawns `command`, wiring stdin and stdout to frames and leaving stderr
+    /// inherited.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError::Spawn`] if the process will not start or its pipes are
+    /// missing.
+    pub fn spawn(mut command: std::process::Command) -> Result<Self, WorkerError> {
+        let mut child = command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .map_err(WorkerError::Spawn)?;
+
+        // `take` rather than `as_mut`: the pipes outlive the borrow, and a
+        // half-taken child is not a state this type can be left in.
+        let stdin = child.stdin.take().ok_or_else(|| {
+            WorkerError::Spawn(std::io::Error::other("the worker has no stdin pipe"))
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            WorkerError::Spawn(std::io::Error::other("the worker has no stdout pipe"))
+        })?;
+
+        Ok(Self {
+            child,
+            stdin,
+            reader: FrameReader::new(stdout),
+            next_id: 1,
+        })
+    }
+
+    /// The worker's process id.
+    #[must_use]
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Sends a request and returns the id it was given.
+    ///
+    /// Does not wait for the reply: the worker is free to interleave events
+    /// with responses, so correlating is the caller's job and pretending
+    /// otherwise would mean dropping events that arrive first.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError::Write`] if the pipe is gone — which is how a worker that
+    /// has died presents — or [`WorkerError::Frame`] if the payload is too big.
+    pub fn request(&mut self, method: &str, params: serde_json::Value) -> Result<u64, WorkerError> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let body = serde_json::to_vec(&rpc::Request::new(id, method, params))?;
+        let framed = encode(&body)?;
+
+        use std::io::Write as _;
+        self.stdin.write_all(&framed).map_err(WorkerError::Write)?;
+        self.stdin.flush().map_err(WorkerError::Write)?;
+        Ok(id)
+    }
+
+    /// Reads the next message from the worker, or `None` at a clean exit.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError::Read`] if the stream fails or ends mid-frame, and
+    /// [`WorkerError::Malformed`] if a frame is not JSON-RPC.
+    pub fn next_message(&mut self) -> Result<Option<rpc::Incoming>, WorkerError> {
+        match self.reader.next_frame()? {
+            Some(frame) => Ok(Some(serde_json::from_slice(&frame)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Closes the worker's stdin and waits for it to exit.
+    ///
+    /// Closing stdin first is the polite half: the worker's read loop ends, so
+    /// it gets to shut down on its own terms rather than being killed
+    /// part-way through writing a reply.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError::Spawn`] if waiting fails.
+    pub fn shutdown(mut self) -> Result<std::process::ExitStatus, WorkerError> {
+        drop(self.stdin);
+        self.child.wait().map_err(WorkerError::Spawn)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod worker_process {
+    //! [`Worker`] against real processes.
+    //!
+    //! The worker these will eventually drive is `vicinae-worker-ts`, which is
+    //! not built here, so the child is `cat`: either echoing what the host
+    //! wrote, which exercises the encode/pipe/decode path end to end, or
+    //! printing a file of bytes written by the test, which is how a worker's
+    //! side of a conversation is staged without a worker. Both are real
+    //! processes with real pipes — the part these tests exist to cover.
+
+    use super::{ReadError, Worker, WorkerError, encode, rpc};
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    /// A child that prints `bytes` and exits.
+    fn replaying(bytes: &[u8]) -> (tempfile::TempDir, Command) {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path: PathBuf = dir.path().join("frames.bin");
+        std::fs::write(&path, bytes).expect("staging the worker's output");
+        let mut command = Command::new("cat");
+        command.arg(&path);
+        // The directory has to outlive the child, so it goes back to the caller.
+        (dir, command)
+    }
+
+    fn frame(value: &serde_json::Value) -> Vec<u8> {
+        encode(&serde_json::to_vec(value).expect("a JSON value serialises")).expect("a small frame")
+    }
+
+    #[test]
+    fn a_request_survives_the_round_trip_through_a_real_pipe() {
+        // `cat` echoes stdin to stdout, so what comes back is exactly what
+        // `request` framed. That makes this a check of the whole path --
+        // serialise, length-prefix, write to a pipe, read back, decode --
+        // rather than of `encode` and `decode` agreeing with each other.
+        let mut worker = Worker::spawn(Command::new("cat")).expect("cat is spawnable");
+        assert!(worker.pid() > 0, "a spawned child has a pid");
+
+        let id = worker
+            .request(
+                rpc::manager::LOAD,
+                serde_json::json!({ "extension_id": "hn" }),
+            )
+            .expect("writing to cat's stdin");
+        assert_eq!(id, 1, "ids start at 1");
+
+        let message = worker
+            .next_message()
+            .expect("reading cat's stdout")
+            .expect("cat echoed the frame");
+
+        assert_eq!(message.jsonrpc, rpc::VERSION);
+        assert_eq!(message.id, Some(1));
+        assert_eq!(message.method.as_deref(), Some(rpc::manager::LOAD));
+        assert_eq!(
+            message.params,
+            Some(serde_json::json!({ "extension_id": "hn" }))
+        );
+        assert!(
+            !message.is_event(),
+            "a message carrying an id is a response, not an event"
+        );
+
+        let second = worker
+            .request(
+                rpc::manager::READY,
+                serde_json::json!({ "session_id": "s" }),
+            )
+            .expect("writing the second request");
+        assert_eq!(second, 2, "each request gets a fresh id");
+    }
+
+    #[test]
+    fn an_event_arriving_before_a_response_is_delivered_not_skipped() {
+        // The reason `request` does not wait for its own reply: the worker
+        // emits `extensionMessage` whenever an extension talks, including
+        // between a request and its response. A host that read until it saw
+        // its id would drop this event on the floor.
+        let event = frame(&serde_json::json!({
+            "jsonrpc": rpc::VERSION,
+            "method": rpc::manager::EVENT_EXTENSION_MESSAGE,
+            "params": { "session_id": "s", "payload": "{}" },
+        }));
+        let response = frame(&serde_json::json!({
+            "jsonrpc": rpc::VERSION,
+            "id": 1,
+            "result": { "session_id": "s" },
+        }));
+        let mut bytes = event;
+        bytes.extend_from_slice(&response);
+
+        let (_dir, command) = replaying(&bytes);
+        let mut worker = Worker::spawn(command).expect("cat is spawnable");
+
+        let first = worker
+            .next_message()
+            .expect("reading the first frame")
+            .expect("there is a first frame");
+        assert!(
+            first.is_event(),
+            "the event came first on the wire and must come first here: {first:?}"
+        );
+        assert_eq!(
+            first.method.as_deref(),
+            Some(rpc::manager::EVENT_EXTENSION_MESSAGE)
+        );
+
+        let second = worker
+            .next_message()
+            .expect("reading the second frame")
+            .expect("there is a second frame");
+        assert_eq!(second.id, Some(1), "the response follows the event");
+        assert_eq!(
+            second.result,
+            Some(serde_json::json!({ "session_id": "s" }))
+        );
+
+        assert_eq!(
+            worker.next_message().expect("a clean end of stream"),
+            None,
+            "the worker exited after two frames"
+        );
+    }
+
+    #[test]
+    fn a_worker_that_dies_mid_frame_is_truncated_not_a_clean_exit() {
+        // A worker killed while writing leaves a length prefix promising bytes
+        // that never arrive. Reporting that as end-of-stream would make a crash
+        // look like an orderly shutdown, which is the difference between
+        // restarting the extension and quietly losing it.
+        let whole = frame(&serde_json::json!({
+            "jsonrpc": rpc::VERSION,
+            "id": 1,
+            "result": {},
+        }));
+        let cut = &whole[..whole.len() - 3];
+
+        let (_dir, command) = replaying(cut);
+        let mut worker = Worker::spawn(command).expect("cat is spawnable");
+
+        match worker.next_message() {
+            Err(WorkerError::Read(ReadError::Truncated { .. })) => {}
+            other => panic!("a half-written frame must read as Truncated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_worker_that_says_nothing_reads_as_a_clean_exit() {
+        // The control for the test above: the same code path, with nothing
+        // missing, must not report Truncated.
+        let (_dir, command) = replaying(b"");
+        let mut worker = Worker::spawn(command).expect("cat is spawnable");
+
+        assert_eq!(
+            worker
+                .next_message()
+                .expect("an empty stream is not an error"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_frame_that_is_not_json_rpc_is_malformed() {
+        // Framing and payload are separate failures. A worker whose payload is
+        // wrong -- the wrong `jsonrpc`, a missing field, a log line that
+        // escaped onto stdout -- must not present as a transport fault.
+        let (_dir, command) = replaying(&encode(b"this is not JSON").expect("a small frame"));
+        let mut worker = Worker::spawn(command).expect("cat is spawnable");
+
+        match worker.next_message() {
+            Err(WorkerError::Malformed(_)) => {}
+            other => panic!("a non-JSON payload must read as Malformed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shutdown_closes_stdin_so_the_worker_ends_on_its_own() {
+        // `cat` with a piped stdin and no file runs until its stdin closes, so
+        // this hangs rather than fails if `shutdown` stopped dropping stdin
+        // before waiting. That is the behaviour under test: the worker is given
+        // the chance to finish, not killed part-way through a reply.
+        let mut worker = Worker::spawn(Command::new("cat")).expect("cat is spawnable");
+        worker
+            .request(
+                rpc::manager::UNLOAD,
+                serde_json::json!({ "session_id": "s" }),
+            )
+            .expect("writing a final request");
+
+        let status = worker.shutdown().expect("waiting for the worker");
+        assert!(
+            status.success(),
+            "a worker whose stdin closed should exit cleanly, got {status:?}"
+        );
+    }
+
+    #[test]
+    fn spawning_something_that_does_not_exist_is_a_spawn_error() {
+        let command = Command::new("compass-no-such-worker-binary");
+        match Worker::spawn(command) {
+            Err(WorkerError::Spawn(_)) => {}
+            other => panic!("a missing binary must be a Spawn error, got {other:?}"),
+        }
+    }
+}
