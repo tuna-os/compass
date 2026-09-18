@@ -253,6 +253,13 @@ index, the Wayland clipboard, the launcher, the navigation and settings controll
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
 
+**`src/services/app-service` → `compass-core::app_service`** — the lookups are ported:
+`findById` (with its `.desktop` retry), `findByClass`, `find`'s id-then-class order,
+`findCuratedOpeners`' dedupe by display name, and `list`'s case-insensitive sort. Still C++-only:
+`findOpeners` / `findDefaultOpener`, which walk the MIME parent chain through `QMimeDatabase` — Rust
+has no shared-mime-info reader here yet — and everything that starts a process (launch, the file
+browser, the terminal), which belongs to whoever owns the session rather than to a lookup table.
+
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
 full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
 the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the
