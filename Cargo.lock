@@ -950,6 +950,8 @@ dependencies = [
 name = "compass-worker-host"
 version = "0.1.0"
 dependencies = [
+ "compass-local-storage",
+ "compass-sqlcipher-sys",
  "serde",
  "serde_json",
  "tempfile",

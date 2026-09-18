@@ -106,11 +106,11 @@ pub fn unimplemented(id: u64, method: &str) -> String {
 
 /// The `tsapi` methods this host serves.
 ///
-/// Empty, and deliberately so: the framing and routing land before any host
-/// API, so that each API arrives with somewhere to arrive. Every entry must
-/// name a method `figura/tsapi.fig` declares, which is what stops this from
-/// becoming a list of aspirations.
-pub const IMPLEMENTED: &[&str] = &[];
+/// Every entry must name a method `figura/tsapi.fig` declares, which is what
+/// stops this from becoming a list of aspirations, and every entry must be
+/// claimed by a service, which is what stops it from becoming a list of
+/// promises.
+pub const IMPLEMENTED: &[&str] = crate::storage_service::METHODS;
 
 /// Whether [`IMPLEMENTED`] names `method`.
 #[must_use]
