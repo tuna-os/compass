@@ -82,12 +82,12 @@ that. The plan has been corrected.
 | `compass-testkit` | 8 | corpora — **757 desktop entries, 738 harvested from real hosts** |
 | `compass-notify` | 7 | desktop notifications over D-Bus |
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
-| `compass-platform-linux` | 2 |  |
+| `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,467** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,491** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,460;
-the 1,467 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,484;
+the 1,491 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -119,7 +119,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ✅ | 🟡 | ⏳ |
 | `src/lib/figura` | `compass-ipc` | Phase 2 | ✅ | n/a | n/a | ⏳ |
 | `src/lib/common` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
-| `src/lib/linux-utils` | `compass-platform` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
+| `src/lib/linux-utils` | `compass-platform-linux` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
 | `src/lib/soulver` | `—` | n/a (macOS) | ✅ | ❌ | ❌ | ❌ |
 | `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -552,6 +552,23 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `compass-platform-linux::keyboard` — four modifiers that are declared and ignored
+
+`UInputKeyboard::Modifier` names six modifiers. `applyMods` and `clearMods` test two of them. A
+caller passing `Alt`, `Logo`, `Altgr` or `Capslock` gets a bare keystroke with no modifier held —
+and still gets the *slow* path, because the C++ chooses its delay on `mods ? ... : ...`, the raw
+integer, before deciding what to do with it. So an ignored modifier costs 10ms per key and changes
+nothing.
+
+Both halves are reproduced and pinned. Making Alt work would be the obvious fix and the wrong port:
+a snippet bound to Alt+F would send a keystroke on Compass that it does not send on Vicinae, with no
+way for the caller to tell which build it is on. The tests are named for what they protect, and are
+the ones that should fail when the C++ grows the other four branches.
+
+Two trailing `SYN_REPORT`s in `sendKey(code, mods)` are likewise redundant — `sendKey(code)` already
+ends with one — and likewise kept, with `a_shifted_keystroke_is_exactly_this_sequence` pinning the
+whole wire in order.
 
 ### `compass-core::fetch_queue` — an abort that frees a slot without filling it
 

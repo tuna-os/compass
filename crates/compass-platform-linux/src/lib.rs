@@ -12,6 +12,7 @@
 
 #![deny(missing_docs)]
 
+pub mod keyboard;
 mod launch;
 
 pub use launch::LinuxLauncher;
