@@ -47,6 +47,7 @@ pub mod create_extension;
 pub mod default_app;
 pub mod fetch_queue;
 pub mod file_category;
+pub mod file_chooser;
 pub mod font_browser;
 pub mod frecency;
 pub mod glyph;
