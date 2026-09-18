@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 753 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the indexer's entry filter and query policy |
+| `compass-core` | 783 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,855** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,885** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,848;
-the 1,855 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,878;
+the 1,885 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -554,6 +554,27 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `src/server/src/ui/image` stays ❌ although its wire format is ported
+
+`compass-core::image_url` is a complete port of `url.cpp` — the `icon://` scheme every icon in the
+system is referred to by — with 30 tests and 21 controls. The row stays ❌, for the same reason
+`src/file-indexer` does: the directory is 2,154 lines across fourteen files, and what is ported is
+one of them. The renderer, the streaming decoder, the painter and the platform icon loaders are the
+rest, and they are the part that needs a UI layer.
+
+It was worth porting ahead of them because an `ImageURL` is a *string*, not a widget. That string
+crosses every boundary in the system: it is what a root-search row stores, what an extension gets
+handed back, what an alert carries. Two details in it are load-bearing for data already written
+down, and neither is obvious from reading the code once:
+
+`nameForType` returns the *first* table entry for a type, so `Builtin` prints as `omnicast` rather
+than `builtin`, and `Https` prints as `http`. Both spellings parse, so the tables are asymmetric on
+purpose and reordering them would silently change every URL a new build writes.
+
+And `resolveThemedLocalPath` inserts `@dark` before the first dot *after the last separator*, not
+before the last dot: `a.tar.gz` becomes `a@dark.tar.gz`, and `~/.local/share/logo` becomes
+`logo@dark` rather than being confused by the dot in the directory above it.
 
 ### `src/file-indexer` stays ❌ although part of it is ported
 
