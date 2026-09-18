@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,629 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules and scan scheduling |
+| `compass-core` | 1,658 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling and root compaction |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,985** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **3,014** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,985 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 3,014 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1320,16 +1320,17 @@ directory entries the indexer walks into — `compass-core::file_walk` of `files
 which decides which of them are *reached* and in what order,
 `compass-core::incremental_scan` of `incremental-scanner.cpp`, which decides what a re-scan reads
 at all, `compass-core::scan_dispatch` of the decisions in `scan-dispatcher.cpp` — when a change
-becomes a scan and which scans run — `compass-core::query_policy` of
+becomes a scan and which scans run — `compass-core::scan_roots` of the path arithmetic in
+`util.hpp`, `compass-core::query_policy` of
 `file-indexer-query-policy.cpp`, which decides what a typed query asks the index,
 `compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
 all, and `compass-core::query_ranking` of the scoring half of `file-indexer-query-engine.cpp`, which
-decides what order the answers come back in. Between them, 225 tests and 159 controls. The row stays
+decides what order the answers come back in. Between them, 254 tests and 174 controls. The row stays
 ❌ anyway.
 
 It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
 its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
-Seven files of those fifteen are not the row — about 1,532 lines of the 5,646, not quite
+Eight files of those fifteen are not the row — about 1,672 lines of the 5,646, not quite
 three tenths — and marking it
 🟡 would put a colour on this ledger that means "a model landed without its backend" when what
 actually happened is "a fifth of the row landed". The percentage in PLAN.md is only worth anything
@@ -1420,6 +1421,29 @@ yet, and removing it would let a second scan of that path start beside it.
 `DEBOUNCE_QUIET_SECS` and friends through the constants, so changing a constant moved the
 expectation with it. The values are now pinned literally in a test of their own: 5 seconds, 30
 seconds, 2 workers. A test written in terms of the thing it is checking cannot check it.
+
+**The scan roots** (`util.hpp`) decide which directories are handed to all of the above. The list
+comes from settings a user edits by hand, so it arrives with duplicates, relative paths and
+overlapping subtrees, and scanning `~` and `~/code` separately does not merely waste a pass — the
+two scans race each other's writes for the same rows. 29 tests, 15 controls, all of which fired.
+
+Descent is compared **component by component**, never as text. `/home/user2` starts with the
+characters of `/home/user` and is not inside it, and a string prefix test would silently drop one of
+the two from the scan set — a bug that appears only for the user whose name is a prefix of someone
+else's. The control replacing the comparison with `starts_with` fires.
+
+The compaction sorts by **component count first**, then alphabetically, and the first half is what
+makes it correct: an ancestor always has fewer components than its descendants, so it is accepted
+before them. A plain alphabetical sort is not enough — `/a/b/c` sorts before `/a/bb`, so the
+descendant would be weighed against a set that did not yet hold `/a/b`. The alphabetical tie-break
+keeps the answer stable, which matters because a scan interrupted halfway should cover the same half
+next time.
+
+**Two controls were silent for a reason worth writing down.** `Path`'s own `Components` iterator
+drops `.` on its own, and `PathBuf` compares by components — so a test asserting
+`PathBuf == PathBuf` cannot tell a normalised path from an unnormalised one, and a `.` in the middle
+of a path never reaches the code that removes it. The assertions now compare rendered text, and a
+leading `.` — the only one the match arm ever sees — has a case of its own.
 
 The ranking is the fourth leg. A fuzzy score alone would rank an editor's swap file above the file
 it is a swap of, and `finalreport.pdf` above `report.pdf`. Every multiplier in the engine exists to
