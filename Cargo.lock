@@ -835,6 +835,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-notify"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "compass-oauth-store"
 version = "0.1.0"
 dependencies = [
