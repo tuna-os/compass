@@ -38,6 +38,7 @@ pub mod config;
 pub mod frecency;
 pub mod keybinding;
 pub mod rank;
+pub mod script_command;
 pub mod xdg_dirs;
 
 pub use apps::{AppIndex, AppIndexBuilder, AppItem, SkipReason, SkippedEntry};
