@@ -306,3 +306,213 @@ mod cpp_framing {
         );
     }
 }
+
+/// Reads whole frames from a byte stream.
+///
+/// The worker writes to a pipe, so a `read` returns whatever happened to be
+/// there: half a frame, three frames, or a frame split across two reads. This
+/// holds the leftover and hands back one payload at a time, which is the same
+/// loop `index.ts` runs on its own side.
+///
+/// It is generic over [`std::io::Read`] rather than taking a child's stdout
+/// directly, so the tests drive it with an in-memory stream that can reproduce
+/// an awkward split exactly. A reader that can only be tested against a real
+/// process is a reader whose partial-read path is never exercised.
+#[derive(Debug)]
+pub struct FrameReader<R> {
+    inner: R,
+    buf: Vec<u8>,
+    /// How much of `buf` has been consumed by frames already returned.
+    start: usize,
+}
+
+/// Why reading a frame stopped.
+#[derive(Debug, Error)]
+pub enum ReadError {
+    /// The stream ended part-way through a frame.
+    ///
+    /// Distinguished from a clean end deliberately: a worker that exits between
+    /// writing a length and writing the body has crashed, and reporting that as
+    /// "no more messages" would turn a crash into silence.
+    #[error("stream ended with {have} bytes of an incomplete frame")]
+    Truncated {
+        /// Bytes left over.
+        have: usize,
+    },
+
+    /// The frame was malformed.
+    #[error(transparent)]
+    Frame(#[from] FrameError),
+
+    /// The underlying stream failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+impl<R: std::io::Read> FrameReader<R> {
+    /// Wraps a stream.
+    pub fn new(inner: R) -> Self {
+        Self {
+            inner,
+            buf: Vec::new(),
+            start: 0,
+        }
+    }
+
+    /// Reads the next whole frame, or `None` at a clean end of stream.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadError::Truncated`] if the stream ends mid-frame,
+    /// [`ReadError::Frame`] if a length prefix is absurd, and
+    /// [`ReadError::Io`] if the stream itself fails.
+    pub fn next_frame(&mut self) -> Result<Option<Vec<u8>>, ReadError> {
+        loop {
+            // `decode` borrows, so the payload is copied out before the buffer
+            // is touched. Frames are small and this keeps the borrow checker
+            // out of the control flow, which matters more here than the copy.
+            if let Some(found) = decode(&self.buf[self.start..])? {
+                let payload = found.payload.to_vec();
+                self.start += found.consumed;
+                return Ok(Some(payload));
+            }
+
+            // Reclaim, rather than growing for ever on a long-lived worker.
+            if self.start > 0 {
+                self.buf.drain(..self.start);
+                self.start = 0;
+            }
+
+            let mut chunk = [0u8; 8192];
+            let n = self.inner.read(&mut chunk)?;
+            if n == 0 {
+                return if self.buf.is_empty() {
+                    Ok(None)
+                } else {
+                    Err(ReadError::Truncated {
+                        have: self.buf.len(),
+                    })
+                };
+            }
+            self.buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod reader_tests {
+    use super::*;
+
+    /// A stream that hands back exactly the chunks it was given, so a test can
+    /// reproduce a specific awkward split rather than hoping for one.
+    struct Chunks {
+        chunks: Vec<Vec<u8>>,
+        at: usize,
+    }
+
+    impl std::io::Read for Chunks {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if self.at >= self.chunks.len() {
+                return Ok(0);
+            }
+            let chunk = &self.chunks[self.at];
+            self.at += 1;
+            let n = chunk.len().min(out.len());
+            out[..n].copy_from_slice(&chunk[..n]);
+            Ok(n)
+        }
+    }
+
+    fn reader(chunks: Vec<Vec<u8>>) -> FrameReader<Chunks> {
+        FrameReader::new(Chunks { chunks, at: 0 })
+    }
+
+    #[test]
+    fn frames_split_across_reads_are_reassembled() {
+        let framed = encode(b"a message").expect("encode");
+        // Split inside the length prefix AND inside the body: both halves of
+        // the partial path in one case.
+        let mut r = reader(vec![
+            framed[..2].to_vec(),
+            framed[2..6].to_vec(),
+            framed[6..].to_vec(),
+        ]);
+        assert_eq!(
+            r.next_frame().expect("read").as_deref(),
+            Some(&b"a message"[..])
+        );
+        assert_eq!(r.next_frame().expect("read"), None);
+    }
+
+    #[test]
+    fn several_frames_in_one_read_come_back_one_at_a_time() {
+        let mut both = encode(b"first").expect("encode");
+        both.extend_from_slice(&encode(b"second").expect("encode"));
+        let mut r = reader(vec![both]);
+
+        assert_eq!(
+            r.next_frame().expect("read").as_deref(),
+            Some(&b"first"[..])
+        );
+        assert_eq!(
+            r.next_frame().expect("read").as_deref(),
+            Some(&b"second"[..])
+        );
+        assert_eq!(r.next_frame().expect("read"), None);
+    }
+
+    #[test]
+    fn a_clean_end_of_stream_is_not_an_error() {
+        let mut r = reader(vec![]);
+        assert!(r.next_frame().expect("a clean end is Ok(None)").is_none());
+    }
+
+    #[test]
+    fn a_worker_that_dies_mid_frame_is_an_error_not_a_silence() {
+        // THE DISTINCTION THAT MATTERS. A worker killed between writing its
+        // length and its body would otherwise look exactly like one that
+        // finished, and the host would carry on with a missing reply.
+        let framed = encode(b"never finished").expect("encode");
+        let mut r = reader(vec![framed[..6].to_vec()]);
+
+        match r.next_frame() {
+            Err(ReadError::Truncated { have }) => assert_eq!(have, 6),
+            other => panic!("expected Truncated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_absurd_length_surfaces_as_an_error_rather_than_a_hang() {
+        let mut buf = vec![0xff, 0xff, 0xff, 0xff];
+        buf.extend_from_slice(b"short");
+        let mut r = reader(vec![buf]);
+
+        match r.next_frame() {
+            Err(ReadError::Frame(FrameError::TooLarge { declared })) => {
+                assert_eq!(declared, u32::MAX as usize);
+            }
+            other => panic!("expected TooLarge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_buffer_does_not_grow_without_bound_across_many_frames() {
+        // A long-lived worker sends thousands of messages down one pipe. If the
+        // consumed prefix is never reclaimed the host's memory tracks total
+        // bytes ever received rather than the largest frame.
+        let chunks: Vec<Vec<u8>> = (0..500)
+            .map(|i| encode(format!("message {i}").as_bytes()).expect("encode"))
+            .collect();
+        let mut r = reader(chunks);
+
+        for i in 0..500 {
+            let got = r.next_frame().expect("read").expect("a frame");
+            assert_eq!(got, format!("message {i}").into_bytes());
+            assert!(
+                r.buf.len() < 1024,
+                "buffer grew to {} bytes by frame {i}; the consumed prefix is not being reclaimed",
+                r.buf.len()
+            );
+        }
+    }
+}
