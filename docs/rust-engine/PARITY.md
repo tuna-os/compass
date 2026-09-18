@@ -196,7 +196,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 
@@ -259,6 +259,14 @@ methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. Wh
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
+
+**`src/builtins/theme` → `compass-core::theme_picker`** — the list model and the view's own logic
+are ported: the current/available split (and that the configured theme is filtered out like any
+other when it does not match), the sort that only happens when something is typed, the name/
+description weights with the id *not* searchable, the `Default theme description` fallback
+subtitle, the eight palette swatches in the row's order, the action panel's two conditional
+actions, and the live preview — selecting a row applies the theme and leaving the view puts the
+configured one back. Still C++-only: the view host and the swatch rendering.
 
 **`src/builtins/power-management` → `compass-core::power_commands`** — the catalogue and the run
 plan are ported: eight commands in registration order with their titles, long descriptions and

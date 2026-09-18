@@ -54,6 +54,7 @@ pub mod shortcut;
 pub mod shortcut_store;
 pub mod snippet;
 pub mod system_run;
+pub mod theme_picker;
 pub mod toast;
 pub mod xdg_dirs;
 
