@@ -193,7 +193,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
@@ -259,6 +259,15 @@ methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. Wh
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
+
+**`src/builtins/shortcut` → `compass-core::shortcut_form`** — the quicklink form: what each mode
+prefills (`Copy of %1` only when duplicating, the quoted navigation titles), the reverts to
+`default` when the saved app or icon no longer exists, the three required fields — link, app and
+icon, but **not** the name — the `default` icon being stored as whatever it resolved to rather than
+as the word, the favicon-over-opener rule for `http*` links, and the three link completions with the
+cursor offset that lands inside `{argument name="|"}`. Duplicating takes the *create* path, as the
+C++ does by branching on `Mode::Edit` alone. Still C++-only: the QML form, the favicon request, and
+the manage-shortcuts list's action panel.
 
 **`src/builtins/font` → `compass-core::font_browser`** — the grid model's decisions are ported:
 the category dropdown (only categories some installed font belongs to, "All" at index 0, the
