@@ -63,19 +63,37 @@ fn the_two_id_schemes_agree_on_a_flat_file() {
 }
 
 #[test]
-fn the_two_id_schemes_disagree_on_a_nested_file() {
-    // The specification says `/` becomes `-`; the C++ turns it into `.`. The
-    // id is the key an application's frecency score, alias and enabled state
-    // are stored under, so the two engines would not find each other's
-    // records for any nested application. This test exists to make that
-    // disagreement impossible to change by accident in either direction.
+fn the_scan_keys_nested_files_the_way_the_cpp_does() {
+    // The specification says `/` becomes `-`; the C++ turns it into `.`, and
+    // the scan follows the C++.
+    //
+    // The id is the key an application's frecency score, alias and enabled
+    // state are stored under. The two engines disagreeing means neither finds
+    // the other's records for any nested application, which is where
+    // distribution-packaged KDE and GNOME applications live — so the question
+    // was which engine changes, and the answer is the one with no users. The
+    // C++ has written these keys on real machines; this engine has no tagged
+    // release.
+    //
+    // This test is what stops the two drifting apart again.
     let file = p("/usr/share/applications/kde4/konsole.desktop");
     let dir = p("/usr/share/applications");
     assert_eq!(relative_id_dotted(&file, &dir), "kde4.konsole.desktop");
     assert_eq!(
         desktop_file_id(&dir, &file).as_deref(),
-        Some("kde4-konsole.desktop")
+        Some("kde4.konsole.desktop"),
+        "the scan and the C++ must agree"
     );
+}
+
+#[test]
+fn the_specifications_separator_is_deliberately_not_used() {
+    // Recorded so the divergence from the XDG specification is inherited
+    // knowingly rather than rediscovered as a bug. If the ids are ever
+    // migrated, this is the test that should change first.
+    let file = p("/usr/share/applications/kde4/konsole.desktop");
+    let dir = p("/usr/share/applications");
+    assert!(!desktop_file_id(&dir, &file).unwrap().contains('-'));
 }
 
 #[test]

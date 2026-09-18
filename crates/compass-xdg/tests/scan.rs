@@ -9,7 +9,7 @@ fn write(root: &Path, relative: &str, contents: &str) {
 }
 
 #[test]
-fn desktop_ids_flatten_subdirectories() {
+fn desktop_ids_flatten_subdirectories_with_the_cpp_separator() {
     let root = Path::new("/usr/share/applications");
     assert_eq!(
         desktop_file_id(root, Path::new("/usr/share/applications/konsole.desktop")).as_deref(),
@@ -21,7 +21,12 @@ fn desktop_ids_flatten_subdirectories() {
             Path::new("/usr/share/applications/kde4/konsole.desktop")
         )
         .as_deref(),
-        Some("kde4-konsole.desktop"),
+        // A dot, not the specification's dash. The id is the key an
+        // application's frecency, alias and enabled state are stored under,
+        // and the C++ has written these keys on real machines while this
+        // engine has no release — so this engine is the one that matches.
+        // `compass_xdg::desktop_file` holds both spellings and the reasoning.
+        Some("kde4.konsole.desktop"),
     );
     assert_eq!(
         desktop_file_id(root, Path::new("/elsewhere/konsole.desktop")),
@@ -47,7 +52,7 @@ fn scanning_is_recursive_sorted_and_limited_to_desktop_files() {
     let scan = scan_desktop_files(dir.path());
     let ids: Vec<_> = scan.files.iter().map(|file| file.id()).collect();
 
-    assert_eq!(ids, ["kde4-a.desktop", "z.desktop"]);
+    assert_eq!(ids, ["kde4.a.desktop", "z.desktop"]);
     assert!(scan.errors.is_empty());
 }
 
@@ -68,7 +73,7 @@ fn a_scanned_entry_has_a_non_optional_id() {
         })
         .unwrap();
 
-    assert_eq!(entry.id(), "nested-example.desktop");
+    assert_eq!(entry.id(), "nested.example.desktop");
     assert_eq!(entry.name(), "Example");
     assert_eq!(entry.path(), Some(scan.files[0].path()));
 }

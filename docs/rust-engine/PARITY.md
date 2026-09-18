@@ -63,7 +63,7 @@ that. The plan has been corrected.
 | `compass-core` | 1,469 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
-| `compass-xdg` | 202 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
+| `compass-xdg` | 200 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
 | `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
 | `compass-extension-api` | 73 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
 | `compass-ipc` | 73 | framing, transport, single-instance |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,798** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,799** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,798 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,799 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -268,12 +268,22 @@ application** — a user moving from one to the other would silently lose per-ap
 installed in a subdirectory, which is where distribution-packaged KDE and GNOME applications often
 live.
 
-Both functions now exist, named for what they are, and a test pins the disagreement in both
-directions so neither can be changed by accident. Which one the Rust engine should key on is a
-decision about migrating stored data — keep the C++'s and inherit its divergence from the
-specification, or keep the specification's and migrate existing records — and that belongs to
-whoever owns the data, not to whichever function a caller reached for first. It is recorded here
-rather than resolved.
+**Resolved: the Rust engine keys on the C++'s dotted id.** `compass_xdg::scan::desktop_file_id` now
+joins with `.`, and the application index, its tests and the parity tests follow.
+
+The reasoning is which engine has users. The id is a key, not a display string — the separator is
+never shown to anyone — and the C++ has already written these keys on real machines, while the Rust
+engine has no tagged release and therefore no stored records to protect. Matching the specification
+would have orphaned existing frecency scores, aliases and enable/disable state for every nested
+application in order to fix a divergence nobody can observe.
+
+The one cost is the ambiguity the dotted scheme carries: `kde4.konsole.desktop` could be a nested
+`konsole` or a flat file of that exact name, and nothing recovers the difference. That needs a file
+deliberately named to collide, which is a smaller risk than silently losing everyone's settings.
+
+Inherited rather than endorsed. Both spellings live in `compass_xdg::desktop_file`, a test asserts
+the scan and the C++ agree, and a second records that the specification's separator is deliberately
+unused — so if the ids are ever migrated, the tests to change first are named.
 
 The dotted scheme has a second property worth knowing if it is kept: because the `.desktop` suffix
 is part of the id, it is indistinguishable from a separator. An id of `kde4.konsole.desktop` could
