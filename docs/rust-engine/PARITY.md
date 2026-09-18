@@ -86,7 +86,7 @@ is larger is how a count stops meaning anything.
 
 ## Progress
 
-Scaffolding, corpora and CI are in place, and **twenty** crates have landed: **1,047 tests** across
+Scaffolding, corpora and CI are in place, and **twenty** crates have landed: **1,059 tests** across
 the workspace, all green. `compass-db` (the shared migration runner and the `vicinae` schema, extracted from
 `compass-clipboard`), `compass-local-storage`, `compass-oauth-store` and `compass-sandbox` are the four newest. An earlier revision of this
 paragraph said nine crates and 597 tests, and both had drifted — `compass-clipboard`,
@@ -117,7 +117,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 
 ## Services
