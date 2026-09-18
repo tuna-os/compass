@@ -550,6 +550,7 @@ pub mod session;
 pub mod storage_service;
 pub mod tsapi;
 pub mod ui_service;
+pub mod window_service;
 
 pub mod rpc {
     use serde::{Deserialize, Serialize};

@@ -130,6 +130,13 @@ pub const IMPLEMENTED: &[&str] = &[
     "Command/updateCommandMetadata",
     "Command/openExtensionPreferences",
     "Command/openCommandPreferences",
+    "WindowManagement/focusWindow",
+    "WindowManagement/getActiveWindow",
+    "WindowManagement/getActiveWorkspace",
+    "WindowManagement/getWindows",
+    "WindowManagement/getScreens",
+    "WindowManagement/getWorkspaces",
+    "WindowManagement/setWindowBounds",
     "Clipboard/copy",
     "Clipboard/paste",
     "Clipboard/clear",
@@ -278,6 +285,7 @@ mod tests {
             .chain(crate::clipboard_service::METHODS)
             .chain(crate::application_service::METHODS)
             .chain(crate::command_service::METHODS)
+            .chain(crate::window_service::METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
