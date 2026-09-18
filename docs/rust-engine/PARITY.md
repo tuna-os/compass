@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 390 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator |
+| `compass-core` | 405 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 171 | the extension host: framing, sandboxed spawn, 44 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 2 |  |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,452** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,467** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,445;
-the 1,452 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,460;
+the 1,467 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -149,7 +149,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/input-server` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -552,6 +552,21 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `compass-core::fetch_queue` — an abort that frees a slot without filling it
+
+`NetworkFetcher`'s abort handler erases the reply from the in-flight map and emits
+`abortRequested`. It does not call `startRequests`. So aborting an in-flight image fetch leaves one
+of the six slots empty until some *other* request finishes, and a queued request that could have
+taken it waits instead.
+
+The port reproduces this, and `aborting_an_in_flight_request_does_not_start_the_next_one` pins it
+with a control that fires the moment the slot is refilled. Calling `start_requests` there is the
+better scheduler and the wrong port: a person scrolling a list of remote icons fast enough to
+cancel requests would see Compass issue a different number of them than Vicinae, at different
+times, and any comparison of the two under load would be measuring this difference rather than the
+thing being compared. `the_slot_an_abort_freed_is_taken_by_the_next_completion` pins the other half
+— the queue is delayed, not wedged.
 
 ### `compass-core::root_items` — a hash order made deterministic
 
