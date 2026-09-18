@@ -1114,6 +1114,37 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
     echo "OverviewActive now: $(shell_prop Get 2>&1 || echo '(unreadable)')"
     ;;
 
+  # Did the engine actually find any applications? (#95)
+  #
+  # THE CHEAPEST GATE IN THIS FILE, AND IT WOULD HAVE SAVED MONTHS.
+  #
+  # `indexed applications applications=0` was printed by every run of this tier and read by
+  # nobody, because an empty index and a working one looked identical on screen: until the search
+  # field could be focused at all, both drew "Type to search..." forever. The launcher shipped
+  # unable to see a single application on the machine it was running on.
+  #
+  # A missing line fails as loudly as a zero. "The engine did not say" and "the engine said none"
+  # are both answers this check must not treat as success -- a log format change that silently
+  # turned this into a no-op is exactly the failure mode the gate exists to prevent.
+  engine-index)
+    line="$(grep -o 'indexed applications applications=[0-9]*' "$ENGINE_ERR" | tail -1 || true)"
+    if [ -z "$line" ]; then
+      echo "the engine never reported an application count; the log format has probably changed" >&2
+      echo "--- what it did say ---" >&2
+      cat "$ENGINE_ERR" >&2
+      exit 1
+    fi
+
+    count="${line##*=}"
+    echo "the engine indexed $count applications"
+    if [ "$count" -eq 0 ]; then
+      echo "the engine indexed ZERO applications: the launcher can see nothing to launch (#95)" >&2
+      echo "--- where the doctor looked ---" >&2
+      compass_cli doctor 2>&1 | grep -A 20 'xdg.application-dirs' >&2 || true
+      exit 1
+    fi
+    ;;
+
   *)
     echo "unknown subcommand: $1" >&2
     exit 64

@@ -3,31 +3,33 @@
 //! Everything here reads process environment variables. Nothing else in this crate does, so a
 //! test that avoids these functions cannot accidentally touch the invoking user's home directory.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// `/usr/local/share:/usr/share`, the specified fallback for an unset `$XDG_DATA_DIRS`.
 pub const DEFAULT_DATA_DIRS: &str = "/usr/local/share:/usr/share";
 
-/// The application directories, in precedence order: `$XDG_DATA_HOME/applications` first, then
-/// each entry of `$XDG_DATA_DIRS` with `/applications` appended.
+/// The application directories, in precedence order.
 ///
-/// Duplicates are removed, keeping the first occurrence, so a `$XDG_DATA_DIRS` that repeats
-/// `$XDG_DATA_HOME` does not index everything twice.
+/// DELEGATES rather than reimplementing, and that is the fix for a class of bug rather than a
+/// style preference. This function used to be a character-for-character copy of
+/// [`compass_xdg::application_dirs`], with `compass-xdg` owning the matching `icon_dirs`. So the
+/// applications the launcher indexes and the icons it draws for them were resolved by two
+/// separate copies of the same logic, and #95 -- a Flatpak sandbox exposing host data under
+/// paths neither copy knew about -- had to be fixed in both or the launcher would have found
+/// applications and then drawn none of their icons.
 #[must_use]
 pub fn application_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
+    compass_xdg::application_dirs()
+}
 
-    if let Some(home) = data_home() {
-        dirs.push(home.join("applications"));
-    }
-
-    for dir in data_dirs() {
-        dirs.push(dir.join("applications"));
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    dirs.retain(|dir| seen.insert(dir.clone()));
-    dirs
+/// The extra data roots a Flatpak sandbox needs, with its inputs supplied explicitly.
+///
+/// Re-exported rather than having `vicinae` depend on `compass-xdg` directly: `compass-core` is
+/// already the seam that crate sits behind, and `vicinae doctor` needs this to report the
+/// directories the index really searches.
+#[must_use]
+pub fn sandbox_data_roots_for(in_flatpak: bool, home: Option<&Path>) -> Vec<PathBuf> {
+    compass_xdg::sandbox_data_roots_for(in_flatpak, home)
 }
 
 /// `$XDG_DATA_HOME`, falling back to `~/.local/share`.
