@@ -54,6 +54,7 @@ pub mod font_browser;
 pub mod frecency;
 pub mod glyph;
 pub mod glyph_service;
+pub mod input_server;
 pub mod keybinding;
 pub mod list_navigation;
 pub mod manifest;
