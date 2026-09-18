@@ -1146,7 +1146,9 @@ mod tests {
             "the host's /usr, where --filesystem=host-os:ro mounts it: {dirs:?}"
         );
         assert!(
-            dirs.contains(&PathBuf::from("/var/home/someone/.local/share/applications")),
+            dirs.contains(&PathBuf::from(
+                "/var/home/someone/.local/share/applications"
+            )),
             "the user's real data dir, which $XDG_DATA_HOME no longer names: {dirs:?}"
         );
 
@@ -1161,10 +1163,7 @@ mod tests {
         // every host install grows six permanently-absent lines in its report.
         let env = Env::from_pairs([("HOME", "/home/someone")]);
         let dirs = application_dir_paths(&env, &FakeFs::new());
-        assert!(
-            dirs.iter().all(|d| !d.starts_with("/run/host")),
-            "{dirs:?}"
-        );
+        assert!(dirs.iter().all(|d| !d.starts_with("/run/host")), "{dirs:?}");
     }
 
     #[test]
@@ -1173,7 +1172,10 @@ mod tests {
         // com.vicinae.Vicinae.desktop, so a total that counts it can never reach zero and the
         // "App search will return nothing" failure can never fire -- which is why a machine
         // with 88 applications and an index of 0 reported `ok`.
-        let env = Env::from_pairs([("HOME", "/var/home/someone"), ("XDG_DATA_DIRS", "/app/share")]);
+        let env = Env::from_pairs([
+            ("HOME", "/var/home/someone"),
+            ("XDG_DATA_DIRS", "/app/share"),
+        ]);
         let fs = FakeFs::new()
             .with_file(FLATPAK_INFO_PATH)
             .with_dir("/app/share/applications", ["com.vicinae.Vicinae.desktop"]);
@@ -1192,7 +1194,10 @@ mod tests {
     fn our_own_bundled_desktop_file_is_still_reported() {
         // Not counted is not the same as not shown: the line has to stay, or the next person
         // diagnosing this cannot tell "we did not look there" from "it was empty".
-        let env = Env::from_pairs([("HOME", "/var/home/someone"), ("XDG_DATA_DIRS", "/app/share")]);
+        let env = Env::from_pairs([
+            ("HOME", "/var/home/someone"),
+            ("XDG_DATA_DIRS", "/app/share"),
+        ]);
         let fs = FakeFs::new()
             .with_file(FLATPAK_INFO_PATH)
             .with_dir("/app/share/applications", ["com.vicinae.Vicinae.desktop"])
@@ -1200,8 +1205,14 @@ mod tests {
 
         let c = application_dirs(&env, &fs);
         assert_eq!(c.status, DoctorStatus::Ok);
-        assert!(detail(&c).contains("/app/share/applications — 1 .desktop files (ours; not counted)"));
-        assert!(detail(&c).contains("1 .desktop files across"), "{}", detail(&c));
+        assert!(
+            detail(&c).contains("/app/share/applications — 1 .desktop files (ours; not counted)")
+        );
+        assert!(
+            detail(&c).contains("1 .desktop files across"),
+            "{}",
+            detail(&c)
+        );
     }
 
     #[test]

@@ -278,8 +278,8 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../packaging/flatpak/com.vicinae.Vicinae.yaml"
         );
-        let text = std::fs::read_to_string(manifest)
-            .unwrap_or_else(|e| panic!("read {manifest}: {e}"));
+        let text =
+            std::fs::read_to_string(manifest).unwrap_or_else(|e| panic!("read {manifest}: {e}"));
 
         let home = Path::new("/home/someone");
         let searched: Vec<PathBuf> = dirs_for(
