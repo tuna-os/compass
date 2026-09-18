@@ -47,6 +47,7 @@ pub mod rank;
 pub mod root_items;
 pub mod script_command;
 pub mod snippet;
+pub mod toast;
 pub mod xdg_dirs;
 
 pub use apps::{AppIndex, AppIndexBuilder, AppItem, SkipReason, SkippedEntry};

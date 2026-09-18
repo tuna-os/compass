@@ -162,7 +162,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/toast` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/update` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
