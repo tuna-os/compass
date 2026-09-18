@@ -60,22 +60,37 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-xdg` | 110 | desktop entries, locale, exec, reader — scope gaps listed below |
-| `compass-search` | 52 | fuzzy, plus an exact port of fzf's coherence rule |
-| `compass-ipc` | 57 | framing, transport, single-instance |
-| `compass-core` | 71 | app index, frecency, config |
-| `compass-shell` | 36 | GNOME Shell DBus client; 22 tests spawn a real `dbus-daemon` |
-| `compass-portals` | 55 | XDG portals; availability is a three-state outcome, not a boolean |
+| `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
+| `compass-xdg` | 124 | desktop entries, locale, exec, reader — scope gaps listed below |
+| `compass-clipboard` | 76 | history store, ingest, migrations; stored enums pinned to the C++ header |
+| `compass-ipc` | 74 | framing, transport, single-instance |
+| `compass-core` | 74 | app index, frecency, config |
 | `compass-extension-api` | 74 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
-| `vicinae` | 137 | CLI, an 11-check `doctor`, and **the engine daemon** |
-| `compass-testkit` | 5 | corpora — 115 desktop entries, 96 of them harvested from a real Bluefin |
-| **Total** | **597** | all green under fmt, clippy `-D warnings`, doctests |
+| `compass-search` | 59 | fuzzy, plus an exact port of fzf's coherence rule |
+| `compass-portals` | 55 | XDG portals; availability is a three-state outcome, not a boolean |
+| `compass-shell` | 47 | GNOME Shell DBus client; tests spawn a real `dbus-daemon` |
+| `compass-crypto` | 24 | AES-GCM and HKDF; cross-decrypted against the C++ probe per-PR |
+| `compass-worker-host` | 8 | extension-worker framing, pinned to the TypeScript worker |
+| `compass-testkit` | 8 | corpora — **757 desktop entries, 738 harvested from real hosts** |
+| `compass-platform` | 6 | the launcher seam (ADR-0013) |
+| `compass-wayland` | 2 | |
+| `compass-platform-linux` | 2 | |
+| `compass-sqlcipher-sys` | 1 + 7 | SQLCipher and the vendored tokenizer; connection pragmas pinned to the C++ |
+| **Total** | **849** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+
+The per-crate column is measured with `cargo test -p <crate>` and sums to 818;
+the 849 is the workspace figure `make check-rust` prints, which additionally
+covers doctests and harnesses not attributable to a single package. Both numbers
+are given rather than one reconciled figure, because quietly picking whichever
+is larger is how a count stops meaning anything.
 
 ## Progress
 
-Scaffolding, corpora and CI are in place, and nine crates have landed: 597 tests across the
-workspace, all green, each count verified in a clean `git worktree` checkout of the committed tree
-rather than in the working tree.
+Scaffolding, corpora and CI are in place, and **sixteen** crates have landed: **849 tests** across
+the workspace, all green. The previous revision of this paragraph said nine crates and 597 tests,
+and both had drifted — `compass-clipboard`, `compass-crypto`, `compass-sqlcipher-sys`,
+`compass-platform`, `compass-platform-linux`, `compass-wayland` and `compass-worker-host` were
+missing from the table entirely, and the corpus line still read 115 entries against an actual 757.
 
 Almost no row is fully green, and no C++ directory may be deleted yet — see the partial markers and
 the divergences below. 🟡 means implemented but not to the full scope of the C++ source. A green
