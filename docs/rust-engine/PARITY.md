@@ -155,7 +155,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/permissions` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | 🟡 | ⏳ |
+| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -241,6 +241,14 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 - the `DesktopFile` layer — `fromId`, `relativeId`, directory search. `from_file` and
   `ParseOptions::{id,path}` exist, but id computation and lookup are a separate pass;
 - the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
+
+**`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
+full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
+the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the
+enabled/provider/favourite filters, and the stable sort with its alias-prefix prioritisation. Twelve
+tests, twelve controls, each read off `root-item-manager.cpp`. Still C++-only: the manager around it
+— loading items from providers, `mergeConfigWithMetadata`, recording a visit, `setAlias` /
+`setProviderEnabled` and the config writes behind them, and `searchGroupedByProvider`'s bucketing.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
 itself, built from the same C the C++ engine links (ADR-0014). `Database::open` does what
