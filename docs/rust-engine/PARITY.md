@@ -64,7 +64,7 @@ that. The plan has been corrected.
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
-| `compass-clipboard` | 74 | history store, ingest, migrations; stored enums pinned to the C++ header |
+| `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
 | `compass-extension-api` | 73 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
 | `compass-ipc` | 73 | framing, transport, single-instance |
 | `compass-search` | 58 | fuzzy, plus an exact port of fzf's coherence rule |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,404** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,444** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,404 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,444 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -184,7 +184,7 @@ whether a real GNOME session grants the shortcut we ask for.
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/clipboard` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
@@ -353,6 +353,46 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/clipboard` → `compass-clipboard::history_view`** — the history command's own
+decisions. The ledger had this row down for `compass-core`; it landed in `compass-clipboard`
+instead, because everything it decides is decided *about* `OfferKind` and `EncryptionType`, which
+live there — and `compass-core` does not depend on that crate. The crate column was a plan; the
+types decide.
+
+The query controller is **single-flight with one waiting slot**, and the port keeps both halves. At
+most one query runs and at most one waits; a third request while one is running collapses into the
+same slot rather than queueing, because only the newest matters. And a result that arrives while
+something newer is wanted is **dropped without ever reaching the list** — the C++ comment says why,
+and it is not about wasted work: each delivery consumes the view's one-shot "select the first row"
+flag, so a stale delivery would move the selection out from under whoever was reading. The same
+flag is what makes every delivery after the first *incremental*: a pin, a rename, or a new copy
+landing while the list is open leaves the selection where it is.
+
+The action panel is gated in three independent ways. An entry whose contents cannot be read — an
+encrypted one before the keyring is unlocked — offers a way into the settings and **neither** copy
+nor paste, rather than an action that would fail. Where pasting is unsupported only copying appears.
+And where both appear, the stored preference decides only their *order*, the first being what the
+return key runs; only the exact string `paste` selects pasting, and everything else falls back to
+copying, which is the safer of the two to get wrong.
+
+Opening is ported with its asymmetry. A file entry holds a URI list, and open actions appear only
+when it holds **exactly one** entry that still exists — a copy of three files has no single thing to
+open, and a copy of one that has since been deleted would offer to open nothing. A link needs no
+such check, because the payload *is* the target. In both cases the chooser appears whenever the
+target is usable and `open` additionally needs a default application, so a file type nothing claims
+still gets a chooser.
+
+The filter's stored vocabulary is the enum's and not the interface's — the option reads `Images` and
+stores `image` — and keeping them apart is what lets either change without the other. A kind with no
+option (`Unknown`, and the enum's count sentinel) answers index 0 rather than an out-of-range index
+that would select nothing.
+
+One fixture was too permissive and a control caught it: an `exists` stub that accepted every path
+let a mangled path through, so splitting the URI list on the wrong separator — which leaves a stray
+carriage return — looked correct. The stub now names the paths it knows.
+
+Still C++-only: the QML views, the detail pane, the drag payload, and the actions' effects.
 
 **`src/builtins/raycast` → `compass-core::raycast_store_view`** — the store's two views. Its API
 client was already ported (`compass-core::raycast_store`); this is what the views do with what it

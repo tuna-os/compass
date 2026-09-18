@@ -22,6 +22,7 @@
 
 #![deny(missing_docs)]
 
+pub mod history_view;
 pub mod ingest;
 pub mod kind;
 pub mod schema;
