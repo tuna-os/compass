@@ -1920,7 +1920,7 @@ numbers is more useful than a phase list that reads as uniformly in-progress.
 
 | Phase | Gate | State | Evidence |
 |---|---|---|---|
-| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **its prerequisite is done; the host is not started** | the phase says to *"carve out `compass-extension-api` first, before the Node host is written against it"* — that is done, **5,546 LOC and 73 tests**. `compass-worker-host` **does not exist as a crate**. `src/typescript/` is intact and is explicitly not to be rewritten, so the reconciler and the `@raycast/api` shim are assets rather than work. The gate cannot be attempted until a host exists to run an extension in. |
+| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **prerequisite done, host not started — and the phase's own wire spec is wrong** | the phase says to *"carve out `compass-extension-api` first, before the Node host is written against it"* — done, **5,546 LOC and 73 tests**. `compass-worker-host` **does not exist as a crate**. See §11.4a: the transport and encoding this phase specifies are not the ones the worker speaks. |
 | **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🔴 **28%** | `PARITY.md` holds **96 ✅, 226 ❌, 18 🟡** — 96 of 340 rows. This is the single largest remaining number in the project and it is a breadth problem, not a hard one: most rows are individual builtins. |
 | **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **one output of several** | the Flatpak builds, is installed and is smoke-tested on every run. Every other packaging workflow — AppImage, Linux tarball, macOS dmg, Windows — is `workflow_dispatch` only, by the deliberate decision to narrow CI to what ships on the first target. |
 | **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
@@ -1936,6 +1936,61 @@ IPC, and idles at 6.2 MB. Phases 4–10 are the *rest of the product*: an
 extension host (§6 costs it at 6–8 weeks), 244 unported parity rows, packaging
 breadth, a cutover and two further platforms. §7's own schedule puts the whole
 sequence at roughly a year.
+
+#### 11.4a Phase 4 specifies a wire protocol the worker does not speak
+
+Phase 4 says the host *"spawns `vicinae-worker-ts` per extension **over UDS with
+JSON-RPC 2.0**"*, and in the same breath that **`src/typescript/` is not
+rewritten** — the reconciler and the `@raycast/api` shim keep working. Those two
+sentences are in conflict, because the worker that is not to be rewritten speaks
+neither of those things.
+
+What `src/typescript/extension-manager/src/index.ts` actually does:
+
+```ts
+private async writePacket(message: Buffer) {
+  const packet = Buffer.allocUnsafe(message.length + 4);
+  packet.writeUint32BE(message.length, 0);      // 4-byte big-endian length
+  message.copy(packet, 4, 0);
+  process.stdout.write(packet);                  // ... over STDOUT
+}
+```
+
+and on the way in it reads a `UInt32BE` length, slices that many bytes, and hands
+them to `manager.Server`.
+
+So, measured against the running code rather than the design note:
+
+| Phase 4 says | the worker does |
+|---|---|
+| UDS | **stdio** — `process.stdout` / `process.stdin` |
+| JSON-RPC 2.0 | **figura-generated RPC** — `import * as manager from "./proto/manager"`, generated from `figura/manager.fig` by `figura_compile` |
+| — | framing is a **4-byte big-endian length prefix**, not `Content-Length` headers and not newline-delimited |
+
+`figura/` is the project's own IDL: `manager.fig` and `manager-extension.fig`
+define this boundary in 120 lines, and `figura_compile` generates both sides.
+`manager.fig`'s own header describes the layering — the manager is *"unaware
+what the payload is made of"*, because the payload is a second RPC message from
+the `vicinae↔extension` spec (`tsapi.fig`, 357 lines).
+
+**This is a decision to take before the crate is written, not after.** Three ways
+out, and they are not equivalent:
+
+1. **Speak figura from Rust.** Keeps `src/typescript/` untouched as the phase
+   requires. Costs a figura reader for Rust, or a hand-written codec pinned to
+   the `.fig` files the way `cpp_enum_values.rs` is pinned to the C++ header.
+2. **Change the worker's transport.** Contradicts "not rewritten", and the shim
+   is the reason Raycast extensions run at all.
+3. **Re-aim the phase at the protocol that exists** — amend the spec rather than
+   the code.
+
+Nothing here is hard. What makes it worth a section is *when* it is found: the
+phase is costed at 6–8 weeks, and the wire format is the first thing a host
+commits to. This is the fourth gate or spec in this document written against an
+artefact that was never checked — after Suite 0's `vicinae --engine=cpp --json
+query`, Phase 2's C++ `doctor`, and §8.4a. The pattern is consistent enough to
+state as a rule: **before building to a spec in this document, read the thing it
+describes.**
 
 So the remaining roadmap is not a list of oversights to be closed in a sitting.
 It is the bulk of the port, and the honest next move is Phase 4's first slice:
