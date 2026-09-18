@@ -71,6 +71,7 @@ pub mod power_commands;
 pub mod query_policy;
 pub mod rank;
 pub mod raycast_store;
+pub mod raycast_store_view;
 pub mod root_items;
 pub mod script_command;
 pub mod script_scan;

@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,224 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the indexer's entry filter and query policy |
+| `compass-core` | 1,255 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,373** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,404** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,373 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,404 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -191,7 +191,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
@@ -353,6 +353,41 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/raycast` → `compass-core::raycast_store_view`** — the store's two views. Its API
+client was already ported (`compass-core::raycast_store`); this is what the views do with what it
+returns.
+
+The list is a **rendezvous, not a sequence**. The page and the compatibility sheet are fetched
+independently and may finish in either order, and whichever lands second is what draws the list —
+drawing on the page alone would show every row with no badge and then flicker when the sheet
+arrived. The two stale-result guards differ correctly: the browsable list is only ever shown for the
+empty query, so it checks that the box is *still* empty, while a search compares against the query
+it was sent for.
+
+Three distinctions in the compatibility handling are ported because each means something different.
+A platform with **no sheet** shows no badge at all, which is not the same as an `Unknown` badge —
+one says the question does not apply, the other that it was asked and not answered; the view model
+separates them with `-1`. An extension the sheet does not mention gets a *different* muted banner
+from one the sheet mentions with an unrecognised status: "may or may not work" against "no data is
+available". They look identical and read differently, and only the first can be fixed by someone
+adding a row to the sheet. And an unrecognised status is `Unknown` rather than an error, so a status
+the sheet gains later degrades instead of breaking.
+
+`formatCount` is ported with its arithmetic intact: both thresholds are **strict**, so exactly 1,000
+prints as `1000` and 1,000,000 prints as `1000K`; and the figure is rounded to one decimal by
+*ceiling*, so 1,001 downloads reads as `1.1K`. That is generous and it is what ships.
+
+**Ported as-is rather than fixed:** a failed fetch leaves the spinner running. Both handlers report
+the failure and return before clearing the loading state. It is visible behaviour, and correcting it
+here would make the two implementations disagree while the C++ is still the one shipping, so it is
+pinned by a constant and a test instead.
+
+One line was written and then removed because a control could not make it fail: a special case for
+printing a whole number without its fraction. Rust's `f64` `Display` already does that, the same way
+`QString::arg(float)` does.
+
+Still C++-only: the HTTP calls themselves, the install-from-zip path, and the QML views.
 
 **`src/builtins/internal` → `compass-core::internal_commands`** — a hidden extension holding one
 command: a fixed Markdown document rendered to check that every construct the renderer claims to
