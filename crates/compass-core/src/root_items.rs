@@ -35,6 +35,10 @@ pub struct RootItemMeta {
     pub visit_count: u32,
     /// When it was last opened, in unix seconds.
     pub last_visited_at: Option<u64>,
+    /// Whether it is one of the fallback commands.
+    pub fallback: bool,
+    /// The keyboard shortcut the user gave it.
+    pub shortcut: Option<String>,
 }
 
 /// A searchable entry in the root list.
@@ -301,4 +305,124 @@ pub fn search_grouped_by_provider<'a>(
     buckets.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     buckets
+}
+
+/// A provider's slice of the config file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProviderConfig {
+    /// `enabled` for the whole provider, when the user has set it.
+    pub enabled: Option<bool>,
+    /// Per-entrypoint settings, keyed by the entrypoint half of the id.
+    pub entrypoints: std::collections::BTreeMap<String, ItemConfig>,
+}
+
+/// One entrypoint's slice of the config file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ItemConfig {
+    /// `enabled`, when the user has set it.
+    pub enabled: Option<bool>,
+    /// The alias the user gave it.
+    pub alias: Option<String>,
+    /// The keyboard shortcut the user gave it.
+    pub shortcut: Option<String>,
+}
+
+/// The parts of the config `mergeConfigWithMetadata` reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RootConfig {
+    /// Per-provider settings.
+    pub providers: std::collections::BTreeMap<String, ProviderConfig>,
+    /// Favourites, in the order the user arranged them.
+    pub favorites: Vec<String>,
+    /// Fallback commands, in order.
+    pub fallbacks: Vec<String>,
+}
+
+/// An entrypoint id: `provider:entrypoint`.
+///
+/// The C++ `EntrypointId` serialises with a colon and splits on the **first**
+/// one, so an entrypoint may contain colons and a provider may not.
+#[must_use]
+pub fn entrypoint_id(provider: &str, entrypoint: &str) -> String {
+    format!("{provider}:{entrypoint}")
+}
+
+/// Splits `provider:entrypoint`, on the first colon.
+#[must_use]
+pub fn split_entrypoint_id(id: &str) -> Option<(&str, &str)> {
+    id.split_once(':')
+}
+
+impl RootItem {
+    /// Applies `config` to this item's metadata, as `mergeConfigWithMetadata`
+    /// does for one item.
+    ///
+    /// The order is the C++'s and it matters: the item's own default first,
+    /// then the user's per-item setting, then the provider's — so a disabled
+    /// provider disables an item the user had enabled, while an *enabled*
+    /// provider does not re-enable one the user turned off.
+    ///
+    /// `default_disabled` is `RootItem::isDefaultDisabled()`, which the item
+    /// itself answers.
+    pub fn merge_config(&mut self, config: &RootConfig, default_disabled: bool) {
+        let id = entrypoint_id_of(self);
+        let (provider_id, entrypoint) = split_entrypoint_id(&id)
+            .map_or((self.meta.provider_id.clone(), String::new()), |(p, e)| {
+                (p.to_owned(), e.to_owned())
+            });
+
+        let provider_config = config.providers.get(&provider_id);
+        let item_config =
+            provider_config.and_then(|provider| provider.entrypoints.get(&entrypoint));
+
+        self.meta.provider_id = provider_id;
+        self.meta.enabled = !default_disabled;
+
+        // A divergence, declared in PARITY.md: the C++ only *assigns*
+        // `favoriteIdx` when the id is in the list, and its metadata map
+        // outlives the merge — so unfavouriting an item leaves the old index
+        // behind until the launcher restarts, and every search that drops
+        // favourites keeps dropping it. Clearing it first is the fix.
+        self.meta.favorite_idx = config.favorites.iter().position(|fav| *fav == id);
+        self.meta.fallback = config.fallbacks.iter().any(|fallback| *fallback == id);
+
+        if let Some(item) = item_config {
+            if let Some(enabled) = item.enabled {
+                self.meta.enabled = enabled;
+            }
+            if let Some(alias) = &item.alias {
+                self.meta.alias = Some(alias.clone());
+            }
+            if let Some(shortcut) = &item.shortcut {
+                self.meta.shortcut = Some(shortcut.clone());
+            }
+        }
+
+        // `if (enabled.has_value() && !enabled.value())` -- only a false here
+        // has any effect.
+        if provider_config.and_then(|provider| provider.enabled) == Some(false) {
+            self.meta.enabled = false;
+        }
+    }
+
+    /// Records an opening, as `RootItemManager::registerVisit` does.
+    pub fn register_visit(&mut self, now: u64) {
+        self.meta.visit_count += 1;
+        self.meta.last_visited_at = Some(now);
+    }
+
+    /// Forgets the history, as `RootItemManager::resetRanking` does.
+    pub fn reset_ranking(&mut self) {
+        self.meta.visit_count = 0;
+        self.meta.last_visited_at = None;
+    }
+}
+
+/// The item's entrypoint id.
+fn entrypoint_id_of(item: &RootItem) -> String {
+    if item.id.contains(':') {
+        item.id.clone()
+    } else {
+        entrypoint_id(&item.meta.provider_id, &item.id)
+    }
 }

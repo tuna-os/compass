@@ -478,3 +478,238 @@ fn groups_that_tie_keep_first_appearance_order() {
         "the scores do tie"
     );
 }
+
+// --- `mergeConfigWithMetadata`, `registerVisit`, `resetRanking` ----------
+
+use compass_core::root_items::{ItemConfig, ProviderConfig, RootConfig, entrypoint_id};
+
+fn config() -> RootConfig {
+    RootConfig::default()
+}
+
+fn with_provider(mut config: RootConfig, id: &str, provider: ProviderConfig) -> RootConfig {
+    config.providers.insert(id.to_owned(), provider);
+    config
+}
+
+fn item_config(enabled: Option<bool>, alias: Option<&str>, shortcut: Option<&str>) -> ItemConfig {
+    ItemConfig {
+        enabled,
+        alias: alias.map(str::to_owned),
+        shortcut: shortcut.map(str::to_owned),
+    }
+}
+
+/// An item whose id is already `provider:entrypoint`.
+fn addressable(provider: &str, entrypoint: &str) -> RootItem {
+    let mut it = item(&entrypoint_id(provider, entrypoint), "Title");
+    it.meta.provider_id = provider.to_owned();
+    it
+}
+
+#[test]
+fn an_item_starts_from_its_own_default_and_the_user_overrides_it() {
+    // `meta.enabled = !item.item->isDefaultDisabled();` then
+    // `if (auto enabled = itemConfig->enabled) { meta.enabled = ...; }`.
+    let mut off_by_default = addressable("apps", "hidden");
+    off_by_default.merge_config(&config(), true);
+    assert!(
+        !off_by_default.meta.enabled,
+        "the item's own default applies"
+    );
+
+    let mut turned_on = addressable("apps", "hidden");
+    turned_on.merge_config(
+        &with_provider(
+            config(),
+            "apps",
+            ProviderConfig {
+                enabled: None,
+                entrypoints: [("hidden".to_owned(), item_config(Some(true), None, None))].into(),
+            },
+        ),
+        true,
+    );
+    assert!(
+        turned_on.meta.enabled,
+        "and the user's setting wins over it"
+    );
+}
+
+#[test]
+fn a_disabled_provider_disables_an_item_the_user_enabled() {
+    // `if (auto enabled = providerConfig->enabled; enabled.has_value() &&
+    // !enabled.value()) { meta.enabled = false; }` runs *after* the per-item
+    // override, so turning a provider off wins.
+    let mut it = addressable("ext", "search");
+    it.merge_config(
+        &with_provider(
+            config(),
+            "ext",
+            ProviderConfig {
+                enabled: Some(false),
+                entrypoints: [("search".to_owned(), item_config(Some(true), None, None))].into(),
+            },
+        ),
+        false,
+    );
+
+    assert!(!it.meta.enabled);
+}
+
+#[test]
+fn an_enabled_provider_does_not_re_enable_an_item_the_user_turned_off() {
+    // The same line only tests for `false`: `enabled == true` does nothing at
+    // all, in either direction.
+    let provider = |item_enabled: bool| {
+        with_provider(
+            config(),
+            "ext",
+            ProviderConfig {
+                enabled: Some(true),
+                entrypoints: [(
+                    "search".to_owned(),
+                    item_config(Some(item_enabled), None, None),
+                )]
+                .into(),
+            },
+        )
+    };
+
+    let mut off = addressable("ext", "search");
+    off.merge_config(&provider(false), false);
+    assert!(
+        !off.meta.enabled,
+        "an enabled provider does not turn it back on"
+    );
+
+    let mut on = addressable("ext", "search");
+    on.merge_config(&provider(true), false);
+    assert!(on.meta.enabled, "nor does it turn an enabled one off");
+}
+
+#[test]
+fn the_alias_and_shortcut_come_from_the_item_config() {
+    let mut it = addressable("apps", "firefox.desktop");
+    it.merge_config(
+        &with_provider(
+            config(),
+            "apps",
+            ProviderConfig {
+                enabled: None,
+                entrypoints: [(
+                    "firefox.desktop".to_owned(),
+                    item_config(None, Some("ff"), Some("Ctrl+Shift+F")),
+                )]
+                .into(),
+            },
+        ),
+        false,
+    );
+
+    assert_eq!(it.meta.alias.as_deref(), Some("ff"));
+    assert_eq!(it.meta.shortcut.as_deref(), Some("Ctrl+Shift+F"));
+}
+
+#[test]
+fn a_favourite_carries_its_position_and_a_fallback_its_flag() {
+    // `meta.favoriteIdx = std::distance(cfg.favorites.begin(), it);` and
+    // `meta.fallback = fallbackSet.contains(entrypointId);`
+    let mut config = config();
+    config.favorites = vec![
+        entrypoint_id("apps", "a.desktop"),
+        entrypoint_id("apps", "b.desktop"),
+    ];
+    config.fallbacks = vec![entrypoint_id("ext", "search")];
+
+    let mut second = addressable("apps", "b.desktop");
+    second.merge_config(&config, false);
+    assert_eq!(second.meta.favorite_idx, Some(1), "its place in the list");
+    assert!(!second.meta.fallback);
+
+    let mut fallback = addressable("ext", "search");
+    fallback.merge_config(&config, false);
+    assert_eq!(fallback.meta.favorite_idx, None);
+    assert!(fallback.meta.fallback);
+}
+
+#[test]
+fn unfavouriting_clears_the_index_rather_than_leaving_it_behind() {
+    // A declared divergence. The C++ only assigns `favoriteIdx` when the id is
+    // in the list, and `m_metadata` outlives the merge -- so an item removed
+    // from favourites keeps its old index until the launcher restarts, and
+    // every search that drops favourites keeps dropping it.
+    let mut it = addressable("apps", "a.desktop");
+    let mut config = config();
+    config.favorites = vec![entrypoint_id("apps", "a.desktop")];
+    it.merge_config(&config, false);
+    assert_eq!(it.meta.favorite_idx, Some(0));
+
+    config.favorites.clear();
+    it.merge_config(&config, false);
+    assert_eq!(
+        it.meta.favorite_idx, None,
+        "the item is no longer a favourite and the metadata says so"
+    );
+}
+
+#[test]
+fn a_fallback_that_is_removed_stops_being_one() {
+    // This one the C++ already recomputes every merge, because it assigns
+    // unconditionally from the set.
+    let mut it = addressable("ext", "search");
+    let mut config = config();
+    config.fallbacks = vec![entrypoint_id("ext", "search")];
+    it.merge_config(&config, false);
+    assert!(it.meta.fallback);
+
+    config.fallbacks.clear();
+    it.merge_config(&config, false);
+    assert!(!it.meta.fallback);
+}
+
+#[test]
+fn an_id_splits_on_its_first_colon() {
+    // `EntrypointId::fromSerialized` uses `find(':')`, so an entrypoint may
+    // contain colons and a provider may not.
+    let mut it = addressable("ext", "search:recent");
+    it.merge_config(
+        &with_provider(
+            config(),
+            "ext",
+            ProviderConfig {
+                enabled: None,
+                entrypoints: [(
+                    "search:recent".to_owned(),
+                    item_config(None, Some("sr"), None),
+                )]
+                .into(),
+            },
+        ),
+        false,
+    );
+
+    assert_eq!(it.meta.provider_id, "ext");
+    assert_eq!(it.meta.alias.as_deref(), Some("sr"));
+}
+
+#[test]
+fn a_visit_is_counted_and_timed_and_can_be_forgotten() {
+    // `++m_metadata[id].visitCount; ... lastVisitedAt = now;` and
+    // `resetRanking`, which zeroes both.
+    let mut it = addressable("apps", "a.desktop");
+    assert_eq!(it.meta.visit_count, 0);
+    assert_eq!(it.meta.last_visited_at, None);
+
+    it.register_visit(NOW as u64);
+    it.register_visit(NOW as u64 + 60);
+    assert_eq!(it.meta.visit_count, 2);
+    assert_eq!(it.meta.last_visited_at, Some(NOW as u64 + 60));
+
+    // And it shows: frecency is non-zero, then zero again.
+    assert!(it.frecency(NOW + 60) > 0.0);
+    it.reset_ranking();
+    assert_eq!(it.meta.visit_count, 0);
+    assert_eq!(it.meta.last_visited_at, None);
+    assert_eq!(it.frecency(NOW + 60), 0.0);
+}

@@ -274,7 +274,10 @@ browser, the terminal), which belongs to whoever owns the session rather than to
 full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
 the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the
 enabled/provider/favourite filters, and the stable sort with its alias-prefix prioritisation. Twelve
-tests, twelve controls, each read off `root-item-manager.cpp`. `searchGroupedByProvider` is ported
+tests, twelve controls, each read off `root-item-manager.cpp`. `mergeConfigWithMetadata`,
+`registerVisit` and `resetRanking` are ported too — the enabled precedence (the item's own default,
+then the user's per-item setting, then a *disabled* provider, which wins), aliases, shortcuts,
+favourite positions and fallback flags. `searchGroupedByProvider` is ported
 too, with its two rules that differ from the flat search — a provider whose *display name* matches
 contributes all of its items, including ones scoring zero, and `providerId` is not applied — for
 another nine tests and nine controls. Still C++-only: the manager around it — loading items from
@@ -407,6 +410,25 @@ the behaviour changes, so a future fix is loud rather than silent.
 Matched deliberately, for the record: field codes are not expanded inside quotes; unknown and
 deprecated field codes expand to nothing; a redeclared group replaces rather than merges; localized
 score ties resolve to the last declaration.
+
+### `compass-core::root_items` — an unfavourited item that stays unfavourited
+
+`mergeConfigWithMetadata` only *assigns* `favoriteIdx` when the entrypoint id is in `cfg.favorites`:
+
+```cpp
+if (auto it = std::ranges::find(cfg.favorites, std::string{entrypointId}); it != cfg.favorites.end()) {
+  meta.favoriteIdx = std::distance(cfg.favorites.begin(), it);
+}
+```
+
+`m_metadata` is a map that outlives the merge, so removing an item from favourites leaves the old
+index in place. Every search that passes `includeFavorites = false` — the root list, which renders
+favourites separately — keeps dropping that item until the launcher restarts. `meta.fallback` two
+lines below is assigned unconditionally and does not have the bug.
+
+Compass clears the index when the id is absent. `unfavouriting_clears_the_index_rather_than_leaving_it_behind`
+pins the fixed behaviour; `a_fallback_that_is_removed_stops_being_one` pins the neighbouring line
+that was already right, so a future "fix" that changed the wrong one would be caught.
 
 ### `compass-worker-host::ui_shell_service` — a method that does nothing, faithfully
 
