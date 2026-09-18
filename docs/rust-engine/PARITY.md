@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 614 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, the extension store |
+| `compass-core` | 648 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, the extension store, the indexer's entry filter |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,716** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,750** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,709;
-the 1,716 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,743;
+the 1,750 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -554,6 +554,31 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `src/file-indexer` stays ❌ although part of it is ported
+
+`compass-core::entry_filter` is a complete port of `entry-filter.cpp` — the rules deciding which
+directory entries the indexer walks into — with 34 tests and 22 controls. The row stays ❌ anyway.
+
+It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
+its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
+One file of those fifteen is not the row, and marking it 🟡 would put a colour on this ledger that
+means "a model landed without its backend" when what actually happened is "a fifteenth of the row
+landed". The percentage in PLAN.md is only worth anything if a row's colour means one thing.
+
+What the port is worth is not in the score: an indexer that walks `/proc` never finishes, and one
+that walks `~/.cargo/registry` fills the index with vendored sources that rank above the file
+somebody wanted. Those rules are a long list of specific names rather than a general principle, and
+a name quietly dropped from the list is not a bug anyone reports — it is a search that stops being
+useful. So the list is now pinned, whatever colour the row is.
+
+Two C++ behaviours it reproduces rather than fixes, both in `GitIgnoreReader`: only the *filename* is
+matched against a pattern, so `build/*.o` never matches anything, and a leading `/` is stripped
+rather than anchoring, so `/target` matches a `target` anywhere in the tree. The C++ calls this a
+hack in its own comment. Narrowing it would start indexing directories people's `.gitignore` files
+currently keep out; widening it would drop files they expect to find. Every line of an ignore file
+becomes a pattern too, comments included — a `#comment` glob never matches anything real, which is
+why nobody has noticed.
 
 ### `compass-core::extension_store` — a search query that is actually escaped
 

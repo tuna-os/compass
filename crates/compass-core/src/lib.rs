@@ -45,6 +45,7 @@ pub mod builtin_icon;
 pub mod config;
 pub mod create_extension;
 pub mod default_app;
+pub mod entry_filter;
 pub mod extension_store;
 pub mod fetch_queue;
 pub mod file_category;
