@@ -253,6 +253,14 @@ index, the Wayland clipboard, the launcher, the navigation and settings controll
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
 
+**`src/services/shortcut` → `compass-core::shortcut`** — `Shortcut::parseLink`'s state machine and
+`insertPlaceholder`'s argument rules are ported: literal text and placeholders in order, reserved
+ids that expand on their own, `name=` / `default=` with and without quotes, and the two behaviours a
+rewrite would "fix" by accident — a repeated key keeps its **first** value (`std::map::insert`), and
+a link that ends inside a placeholder loses everything from the opening brace. Still C++-only: the
+SQLite store behind it (`shortcut-db.cpp`), the migration from the old `OmniDatabase`, visit
+counting, and `resolveApp`.
+
 **`src/services/app-service` → `compass-core::app_service`** — the lookups are ported:
 `findById` (with its `.desktop` retry), `findByClass`, `find`'s id-then-class order,
 `findCuratedOpeners`' dedupe by display name, and `list`'s case-insensitive sort. Still C++-only:
