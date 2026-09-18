@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,483 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
+| `compass-core` | 1,497 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,839** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,853** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,839 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,853 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -806,6 +806,31 @@ still a file on disk that this reads, and a launcher that hangs on a malformed s
 than one that copes. This keeps a visited set, which terminates on any input and removes the
 duplicate visits at the same time. Two tests pin it, one for a cycle and one for a self-referential
 type.
+
+
+**`src/root-search/apps` → `compass-core::root_items`** — what an application looks like in the root
+list, ported so `compass_ui::root_list` has something real to arrange. 14 tests, 12 controls.
+
+The provider is spelled **`applications`**, not `apps`: it is half of every application's entrypoint
+id and so is written into the config file, which makes the spelling a stored format rather than a
+label. The entrypoint half is the desktop id with `.desktop` removed, and the C++ uses
+`QString::remove`, which takes out **every** occurrence rather than the suffix. For an ordinary id
+that is the same thing; with dotted ids it is reachable — a file named `desktop.desktop` in a
+directory called `my` has the id `my.desktop.desktop` and loses both — and the port keeps the C++'s
+answer, because the result is a stored key.
+
+Three things in the conversion are deliberate and each has a test saying so. The **subtitle is
+empty**, because an application's comment is its description in the settings and filling it would
+give every row a paragraph. The **unlocalized name joins the keywords**, so someone who knows an
+application by its English name still finds it on a localised desktop where the title is something
+else. And `enabled` starts true: the root item manager's merge is what turns an item off, and an
+application is not disabled by being converted.
+
+**Not wired into the launcher yet, deliberately.** `compass_ui::root_list` and this conversion are
+both tested, but the launcher still searches the application index directly. Flipping that is a
+change to the one path the VM tier has actually verified — it is where #91 was found — and changing
+it blind, in a container with no compositor, would trade a working launcher for an untested one. The
+pieces are ready; the switch waits for a run that can answer for it.
 
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
 full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,

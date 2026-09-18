@@ -556,3 +556,60 @@ pub fn set_provider_enabled(config: &mut RootConfig, provider: &str, enabled: bo
         },
     );
 }
+
+/// The provider id applications are contributed under.
+///
+/// `"applications"`, not `"apps"` — it is half of every application's
+/// entrypoint id and so is written into the config file, so the spelling is a
+/// stored format rather than a label.
+pub const APPS_PROVIDER_ID: &str = "applications";
+
+/// An application's entrypoint half, from its desktop file id.
+///
+/// The C++ is `m_app->id().remove(".desktop")`, and `QString::remove` takes
+/// out **every** occurrence rather than a suffix. For an ordinary id that is
+/// the same thing; for one that contains the text twice it is not, and the
+/// port keeps the C++'s answer because the result is a stored key.
+///
+/// With ids joined by dots (see `compass_xdg::scan::desktop_file_id`) that is
+/// reachable: a desktop file named `desktop.desktop` in a directory called
+/// `my` has the id `my.desktop.desktop`, and both occurrences go.
+#[must_use]
+pub fn app_entrypoint_id(desktop_id: &str) -> String {
+    desktop_id.replace(".desktop", "")
+}
+
+/// What an application looks like in the root list.
+///
+/// Three things are deliberate. The **subtitle is empty**: an application's
+/// comment is its description in the settings, not a second line in the
+/// launcher, and filling it would give every row a paragraph. The
+/// **unlocalized name joins the keywords**, so someone who knows an
+/// application by its English name finds it on a localised desktop where the
+/// title is something else. And `enabled` starts true, because the root item
+/// manager's merge is what turns it off — an application is not disabled by
+/// being converted.
+#[must_use]
+pub fn app_root_item(
+    desktop_id: &str,
+    display_name: &str,
+    keywords: &[String],
+    unlocalized_name: Option<&str>,
+) -> RootItem {
+    let mut search_terms = keywords.to_vec();
+    if let Some(name) = unlocalized_name {
+        search_terms.push(name.to_owned());
+    }
+
+    RootItem {
+        id: entrypoint_id(APPS_PROVIDER_ID, &app_entrypoint_id(desktop_id)),
+        title: display_name.to_owned(),
+        subtitle: String::new(),
+        keywords: search_terms,
+        meta: RootItemMeta {
+            provider_id: APPS_PROVIDER_ID.to_owned(),
+            enabled: true,
+            ..RootItemMeta::default()
+        },
+    }
+}

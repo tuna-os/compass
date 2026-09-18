@@ -991,3 +991,127 @@ mod config_writes {
         );
     }
 }
+
+// --- an application as a root item --------------------------------------
+//
+// Ported from `AppRootItem` / `AppRootProvider`
+// (`src/server/src/root-search/apps/app-root-provider.cpp`).
+
+mod from_applications {
+    use compass_core::root_items::{APPS_PROVIDER_ID, app_entrypoint_id, app_root_item};
+
+    fn words(list: &[&str]) -> Vec<String> {
+        list.iter().map(|w| (*w).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_provider_is_spelled_applications() {
+        // It is half of every application's entrypoint id and so is written
+        // into the config file: the spelling is a stored format, not a label.
+        assert_eq!(APPS_PROVIDER_ID, "applications");
+    }
+
+    #[test]
+    fn the_desktop_suffix_comes_off_the_entrypoint() {
+        assert_eq!(app_entrypoint_id("konsole.desktop"), "konsole");
+    }
+
+    #[test]
+    fn a_nested_id_keeps_its_dots_and_loses_only_the_suffix() {
+        assert_eq!(app_entrypoint_id("kde4.konsole.desktop"), "kde4.konsole");
+    }
+
+    #[test]
+    fn every_occurrence_goes_not_just_the_last() {
+        // `QString::remove` takes out all of them. For an ordinary id that is
+        // the same thing; for this one it is not, and the C++'s answer is the
+        // one that got stored.
+        assert_eq!(app_entrypoint_id("my.desktop.desktop"), "my");
+        assert_eq!(app_entrypoint_id(".desktop"), "");
+    }
+
+    #[test]
+    fn an_id_without_the_suffix_is_left_alone() {
+        assert_eq!(app_entrypoint_id("konsole"), "konsole");
+    }
+
+    #[test]
+    fn the_item_is_addressed_by_provider_and_entrypoint() {
+        let item = app_root_item("konsole.desktop", "Konsole", &[], None);
+        assert_eq!(item.id, "applications:konsole");
+    }
+
+    #[test]
+    fn the_title_is_the_display_name() {
+        let item = app_root_item("konsole.desktop", "Konsole", &[], None);
+        assert_eq!(item.title, "Konsole");
+    }
+
+    #[test]
+    fn the_subtitle_is_deliberately_empty() {
+        // An application's comment is its description in the settings, not a
+        // second line in the launcher. Filling it would give every row a
+        // paragraph.
+        let item = app_root_item("konsole.desktop", "Konsole", &[], None);
+        assert_eq!(item.subtitle, "");
+    }
+
+    #[test]
+    fn the_desktop_files_keywords_are_searchable() {
+        let item = app_root_item(
+            "konsole.desktop",
+            "Konsole",
+            &words(&["shell", "prompt"]),
+            None,
+        );
+        assert_eq!(item.keywords, ["shell", "prompt"]);
+    }
+
+    #[test]
+    fn the_unlocalized_name_joins_them() {
+        // So someone who knows an application by its English name finds it on
+        // a localised desktop where the title is something else.
+        let item = app_root_item(
+            "files.desktop",
+            "Dateien",
+            &words(&["folder"]),
+            Some("Files"),
+        );
+        assert_eq!(item.keywords, ["folder", "Files"]);
+    }
+
+    #[test]
+    fn an_application_with_no_unlocalized_name_gains_no_extra_term() {
+        let item = app_root_item("konsole.desktop", "Konsole", &words(&["shell"]), None);
+        assert_eq!(item.keywords, ["shell"]);
+    }
+
+    #[test]
+    fn the_unlocalized_name_goes_last_rather_than_first() {
+        // The weights are equal, but the order is the C++'s and a stable sort
+        // downstream can see it.
+        let item = app_root_item("a.desktop", "A", &words(&["one", "two"]), Some("English"));
+        assert_eq!(item.keywords.last().map(String::as_str), Some("English"));
+    }
+
+    #[test]
+    fn a_converted_application_starts_enabled() {
+        // The root item manager's merge is what turns it off; an application
+        // is not disabled by being converted.
+        let item = app_root_item("konsole.desktop", "Konsole", &[], None);
+        assert!(item.meta.enabled);
+        assert_eq!(item.meta.provider_id, "applications");
+    }
+
+    #[test]
+    fn a_converted_application_carries_no_user_state() {
+        // Alias, favourite position and visit count all come from the config
+        // and the visit log, not from the desktop file.
+        let item = app_root_item("konsole.desktop", "Konsole", &[], None);
+        assert_eq!(item.meta.alias, None);
+        assert_eq!(item.meta.favorite_idx, None);
+        assert_eq!(item.meta.visit_count, 0);
+        assert_eq!(item.meta.last_visited_at, None);
+        assert!(!item.meta.fallback);
+    }
+}
