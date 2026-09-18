@@ -133,7 +133,7 @@ whether a real GNOME session grants the shortcut we ask for.
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/services/app-runtime` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/app-service` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ⏳ |
-| `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/autostart` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
@@ -173,7 +173,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/update` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/url-scheme` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/window-material` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -259,6 +259,12 @@ methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. Wh
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
+
+**`src/services/asset-resolver` → `compass-core::asset_resolver`** — ported **whole**, which is why
+this row is green rather than amber: the base-path list, the first-match lookup, and the two
+behaviours that make shared asset directories work — `addPath` does not deduplicate and `removePath`
+erases one entry, so the first command to unload does not blind the second. The C++ singleton is an
+ordinary value here; a singleton is how that file is reached, not what it does.
 
 **`src/builtins/snippet` → `compass-core::snippet_form`** — the snippet form's validation and
 `Expansion::validateKeyword`: a two-character minimum name, non-empty content with at most one
