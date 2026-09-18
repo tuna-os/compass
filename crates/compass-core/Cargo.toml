@@ -14,6 +14,7 @@ compass-xdg.workspace = true
 compass-search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+getrandom.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
 tracing.workspace = true

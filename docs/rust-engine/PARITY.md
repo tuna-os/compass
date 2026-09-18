@@ -258,8 +258,10 @@ itself rather than hanging the caller.
 ids that expand on their own, `name=` / `default=` with and without quotes, and the two behaviours a
 rewrite would "fix" by accident — a repeated key keeps its **first** value (`std::map::insert`), and
 a link that ends inside a placeholder loses everything from the opening brace. Still C++-only: the
-SQLite store behind it (`shortcut-db.cpp`), the migration from the old `OmniDatabase`, visit
-counting, and `resolveApp`.
+store behind it is ported too (`compass-core::shortcut_store`): the JSON file, the 10,000 limit,
+the two different not-found sentences, the rollback when a write fails after the list already
+changed, and the `value_or({})` that turns a corrupt file into an empty list rather than a refusal
+to start. Still C++-only: the migration from the old `OmniDatabase`, and `resolveApp`.
 
 **`src/services/app-service` → `compass-core::app_service`** — the lookups are ported:
 `findById` (with its `.desktop` retry), `findByClass`, `find`'s id-then-class order,

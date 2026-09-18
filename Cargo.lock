@@ -765,6 +765,7 @@ dependencies = [
  "compass-testkit",
  "compass-xdg",
  "dirs",
+ "getrandom 0.3.4",
  "proptest",
  "serde",
  "serde_json",
