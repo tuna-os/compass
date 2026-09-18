@@ -56,6 +56,7 @@ pub mod shortcut;
 pub mod shortcut_form;
 pub mod shortcut_store;
 pub mod snippet;
+pub mod snippet_form;
 pub mod system_run;
 pub mod theme_picker;
 pub mod toast;

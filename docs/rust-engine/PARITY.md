@@ -194,7 +194,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -259,6 +259,13 @@ methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. Wh
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
+
+**`src/builtins/snippet` → `compass-core::snippet_form`** — the snippet form's validation and
+`Expansion::validateKeyword`: a two-character minimum name, non-empty content with at most one
+`{cursor}`, and a keyword that is optional but, when given, must be printable ASCII with no spaces
+and at most 32 bytes. The two success toasts are not symmetrical ("Snippet updated" against
+"Snippet successfully created") and are copied as they are. Still C++-only: the QML form, the
+snippet store, and the manage-snippets list.
 
 **`src/builtins/shortcut` → `compass-core::shortcut_form`** — the quicklink form: what each mode
 prefills (`Copy of %1` only when duplicating, the quoted navigation titles), the reverts to
