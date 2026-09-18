@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,562 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, and the quicklink list |
+| `compass-core` | 1,578 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,918** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,934** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,918 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,934 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1316,20 +1316,44 @@ what catches a window the compositor destroyed and replaced rather than moved.
 ### `src/file-indexer` stays ❌ although part of it is ported
 
 `compass-core::entry_filter` is a complete port of `entry-filter.cpp` — the rules deciding which
-directory entries the indexer walks into — `compass-core::query_policy` of
+directory entries the indexer walks into — `compass-core::file_walk` of `filesystem-walker.cpp`,
+which decides which of them are *reached* and in what order, `compass-core::query_policy` of
 `file-indexer-query-policy.cpp`, which decides what a typed query asks the index,
 `compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
 all, and `compass-core::query_ranking` of the scoring half of `file-indexer-query-engine.cpp`, which
-decides what order the answers come back in. Between them, 158 tests and 117 controls. The row stays
+decides what order the answers come back in. Between them, 174 tests and 129 controls. The row stays
 ❌ anyway.
 
 It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
 its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
-Four files of those fifteen are not the row — about 995 lines of the 5,646, a fifth — and marking it
+Five files of those fifteen are not the row — about 1,108 lines of the 5,646, a fifth — and marking it
 🟡 would put a colour on this ledger that means "a model landed without its backend" when what
 actually happened is "a fifth of the row landed". The percentage in PLAN.md is only worth anything
 if a row's colour means one thing. **So this work moves the Phase 5 figure by nothing, and that is
 the right answer rather than a disappointing one.**
+
+**The walk** (`filesystem-walker.cpp`) is ported with the tree supplied by the caller, because every
+rule in it is about which entries are reached rather than about how to read a directory. 16 tests,
+12 controls, all of which fired.
+
+Four of its rules are load-bearing and none of them is obvious:
+
+- It is a **stack, not a queue**. The last directory listed is the first entered, which decides
+  which half of a large tree is indexed first when a scan is interrupted — and scans are interrupted
+  routinely.
+- A `CACHEDIR.TAG` abandons its directory **whole**, including the entries already listed *before*
+  the tag turned up: the C++ breaks out of the listing loop and drops the vector it was filling. So
+  what a cache directory contributes does not depend on where in the filesystem's listing order the
+  tag happens to sit. Two tests cover it, one with the tag first and one with it in the middle.
+- `depth <= maxDepth` bounds what is **entered**, and entering a directory reports its contents, so
+  a limit of 1 yields entries at depth 2. That is off by one against the obvious reading of the
+  name, and it is what ships. Controls for both directions of the comparison fire.
+- The root is never reported. The walk answers what is *in* a tree, and a caller that wanted the
+  root already had it.
+
+A fixture was too weak and a control said so: the non-directory root check could be deleted without
+failing anything, because the fake tree had nothing to list at that path either way. It now lists
+contents there, so only the check stands between the walk and reporting them.
 
 The ranking is the fourth leg. A fuzzy score alone would rank an editor's swap file above the file
 it is a swap of, and `finalreport.pdf` above `report.pdf`. Every multiplier in the engine exists to

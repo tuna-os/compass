@@ -56,6 +56,7 @@ pub mod fetch_queue;
 pub mod file_category;
 pub mod file_chooser;
 pub mod file_search;
+pub mod file_walk;
 pub mod font_browser;
 pub mod font_service;
 pub mod frecency;
