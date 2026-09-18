@@ -384,7 +384,7 @@ impl RootItem {
         // behind until the launcher restarts, and every search that drops
         // favourites keeps dropping it. Clearing it first is the fix.
         self.meta.favorite_idx = config.favorites.iter().position(|fav| *fav == id);
-        self.meta.fallback = config.fallbacks.iter().any(|fallback| *fallback == id);
+        self.meta.fallback = config.fallbacks.contains(&id);
 
         if let Some(item) = item_config {
             if let Some(enabled) = item.enabled {
