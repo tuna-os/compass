@@ -1056,6 +1056,64 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
       echo "the engine said nothing about the hotkey"
     ;;
 
+  # Put the session on a bare desktop before anything is measured against it.
+  #
+  # GNOME Shell opens the Activities overview at login when the session has no
+  # windows, and until now the session always had one: the first-run tour. With
+  # the tour suppressed the overview is what the tier's "bare desktop" frame
+  # actually shows, and the first run after that suppression shows exactly what
+  # that costs -- the launcher opened BEHIND the overview and was captured as a
+  # scaled thumbnail inside a workspace tile, so the gate that says "a launcher
+  # window appeared" was measuring a preview of one.
+  #
+  # It is dismissed over the session bus rather than by injecting Escape, and
+  # the difference is the point: `org.gnome.Shell.OverviewActive` is a readwrite
+  # boolean, so this says what it wants and then READS BACK whether it got it. A
+  # keystroke can only be sent, and a tier that cannot tell "the overview closed"
+  # from "the key went nowhere" is how the wrong conclusion below got written
+  # down in the first place.
+  #
+  # Idempotent by construction: setting it false when it is already false is
+  # fine, and the read-back is then trivially true. So this stays correct if a
+  # later GNOME stops opening the overview at login, rather than becoming a step
+  # that fails because it had nothing to do.
+  overview-dismiss)
+    u="$(uid)"
+    shell_prop() {
+      local method="$1"; shift
+      runuser -u "$SESSION_USER" -- env \
+        XDG_RUNTIME_DIR="/run/user/$u" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$u/bus" \
+        gdbus call --session \
+          --dest org.gnome.Shell --object-path /org/gnome/Shell \
+          --method "org.freedesktop.DBus.Properties.$method" \
+          org.gnome.Shell OverviewActive "$@"
+    }
+    overview_closed() { case "$(shell_prop Get 2>/dev/null)" in *false*) return 0 ;; esac; return 1; }
+
+    echo "OverviewActive at login: $(shell_prop Get 2>&1 || echo '(unreadable)')"
+
+    if ! shell_prop Set "<false>" >/dev/null 2>&1; then
+      echo "could not set org.gnome.Shell OverviewActive -- is gnome-shell on the session bus?" >&2
+      shell_prop Get >&2 2>&1 || true
+      exit 1
+    fi
+
+    # Read back, rather than trusting the write. The property is set on the
+    # shell's side of an async animation, so the value can be false while the
+    # overview is still on its way out; the poll covers the first and the sleep
+    # covers the second. If the frame is still mid-animation the run does not
+    # silently pass on it -- step 0d compares this desktop against the one taken
+    # after the engine starts and requires them identical, which a moving
+    # overview cannot be.
+    if ! wait_for "the overview to report itself closed" 30 overview_closed; then
+      echo "OverviewActive is still: $(shell_prop Get 2>&1 || echo '(unreadable)')" >&2
+      exit 1
+    fi
+    sleep 2
+    echo "OverviewActive now: $(shell_prop Get 2>&1 || echo '(unreadable)')"
+    ;;
+
   *)
     echo "unknown subcommand: $1" >&2
     exit 64

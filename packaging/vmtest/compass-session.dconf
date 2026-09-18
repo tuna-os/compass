@@ -1,0 +1,14 @@
+# Session settings for the VM test image, so the frames the tier captures show
+# the desktop rather than a first-run tour.
+#
+# Compiled into /etc/dconf/db/compass by `dconf update` at image build time,
+# alongside 10-compass-shortcuts. See Containerfile.compass for why these are a
+# system database rather than a user one.
+#
+# GNOME Shell's own "Welcome to GNOME <version>" dialog is shown once per
+# version and suppressed by recording a version already seen. The value is
+# deliberately absurd rather than the image's real version: a real one would
+# stop suppressing the moment Bluefin rebased onto a newer GNOME, and the
+# failure would look like a flaky tier rather than a stale constant.
+[org/gnome/shell]
+welcome-dialog-last-shown-version='999.0'
