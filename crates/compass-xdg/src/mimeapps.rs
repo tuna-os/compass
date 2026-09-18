@@ -190,6 +190,54 @@ pub fn search_paths() -> Vec<PathBuf> {
     )
 }
 
+/// The MIME type a target names, as `mimeNameForTarget` computes it.
+///
+/// Three steps, in the C++'s order:
+///
+/// 1. a URL with a scheme is `x-scheme-handler/<scheme>` — this is how
+///    `https://…` reaches a browser, and it is the case that needs no
+///    database at all;
+/// 2. a string that is already a MIME type is itself;
+/// 3. anything else is looked up as a file, and falls back to the string
+///    unchanged.
+///
+/// # Where this diverges, and it is visible
+///
+/// Step 2 asks `QMimeDatabase::mimeTypeForName(...).isValid()`, which means
+/// *registered on this machine*; here it is the syntactic shape `type/subtype`.
+/// A made-up `foo/bar` is therefore taken as a MIME type here and as a
+/// filename by the C++ — and both then find no opener, because nothing claims
+/// `foo/bar` either way.
+///
+/// Step 3's lookup needs shared-mime-info, which nothing in Rust reads yet, so
+/// a path is returned unchanged. That is the C++'s own fallback for a file it
+/// cannot classify, and it means `example.txt` does not resolve to
+/// `text/plain` here. The gap is the module's, not this function's.
+#[must_use]
+pub fn target_mime(target: &str) -> String {
+    if let Some(scheme) = url_scheme(target) {
+        return format!("x-scheme-handler/{scheme}");
+    }
+    target.to_owned()
+}
+
+/// The scheme of `target`, if it has one.
+///
+/// RFC 3986: `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"`. A bare path
+/// has none, and neither does `text/plain` — there is no colon.
+fn url_scheme(target: &str) -> Option<&str> {
+    let colon = target.find(':')?;
+    let scheme = &target[..colon];
+    let mut chars = scheme.chars();
+    let first = chars.next()?;
+    if !first.is_ascii_alphabetic() {
+        return None;
+    }
+    chars
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        .then_some(scheme)
+}
+
 /// The `mimeapps.list` files that exist, in consultation order.
 #[derive(Debug, Clone, Default)]
 pub struct Lists {
@@ -238,6 +286,18 @@ impl Lists {
             }
         }
         self.openers_for(mime, usable).into_iter().next()
+    }
+
+    /// The preferred opener for whatever `target` names.
+    ///
+    /// `findDefaultOpener` is exactly `defaultForMime(mimeNameForTarget(t))`.
+    #[must_use]
+    pub fn default_for_target(
+        &self,
+        target: &str,
+        usable: &impl Fn(&str) -> bool,
+    ) -> Option<String> {
+        self.default_for(&target_mime(target), usable)
     }
 
     /// Every application offered for `mime`, best first.
@@ -492,6 +552,50 @@ mod tests {
         let stack = lists(&["[Default Applications]\ntext/plain=gedit.desktop;\n"]);
         assert!(stack.openers_for("image/png", &anything()).is_empty());
         assert_eq!(stack.default_for("image/png", &anything()), None);
+    }
+
+    #[test]
+    fn a_url_resolves_to_a_scheme_handler() {
+        // The case that needs no MIME database, and the one that matters most:
+        // it is how a link reaches a browser.
+        assert_eq!(target_mime("https://example.com"), "x-scheme-handler/https");
+        assert_eq!(target_mime("mailto:a@b.c"), "x-scheme-handler/mailto");
+        assert_eq!(
+            target_mime("vicinae+deep://x"),
+            "x-scheme-handler/vicinae+deep"
+        );
+    }
+
+    #[test]
+    fn a_path_and_a_mime_type_are_left_alone() {
+        // Neither has a scheme. A path stays a path because classifying it
+        // needs shared-mime-info, which is the module's stated gap; a MIME
+        // type is already the answer.
+        assert_eq!(target_mime("/home/u/notes.txt"), "/home/u/notes.txt");
+        assert_eq!(target_mime("text/plain"), "text/plain");
+        assert_eq!(target_mime("notes.txt"), "notes.txt");
+    }
+
+    #[test]
+    fn something_that_only_looks_like_a_scheme_is_not_one() {
+        // RFC 3986 says a scheme starts with a letter. A Windows-style path or
+        // a time of day must not become `x-scheme-handler/c`.
+        assert_eq!(target_mime("12:30"), "12:30");
+        assert_eq!(target_mime(":/x"), ":/x");
+        assert_eq!(
+            target_mime("a b:c"),
+            "a b:c",
+            "a space is not scheme syntax"
+        );
+    }
+
+    #[test]
+    fn a_target_resolves_through_the_same_stack_as_a_mime_type() {
+        let stack = lists(&["[Default Applications]\nx-scheme-handler/https=firefox.desktop;\n"]);
+        assert_eq!(
+            stack.default_for_target("https://example.com", &anything()),
+            Some("firefox.desktop".to_owned())
+        );
     }
 
     #[test]
