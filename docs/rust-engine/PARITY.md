@@ -86,11 +86,13 @@ is larger is how a count stops meaning anything.
 
 ## Progress
 
-Scaffolding, corpora and CI are in place, and **sixteen** crates have landed: **849 tests** across
-the workspace, all green. The previous revision of this paragraph said nine crates and 597 tests,
-and both had drifted — `compass-clipboard`, `compass-crypto`, `compass-sqlcipher-sys`,
-`compass-platform`, `compass-platform-linux`, `compass-wayland` and `compass-worker-host` were
-missing from the table entirely, and the corpus line still read 115 entries against an actual 757.
+Scaffolding, corpora and CI are in place, and **eighteen** crates have landed: **909 tests** across
+the workspace, all green. `compass-db` (the shared migration runner, extracted from
+`compass-clipboard`) and `compass-local-storage` are the two newest. An earlier revision of this
+paragraph said nine crates and 597 tests, and both had drifted — `compass-clipboard`,
+`compass-crypto`, `compass-sqlcipher-sys`, `compass-platform`, `compass-platform-linux`,
+`compass-wayland` and `compass-worker-host` were missing from the table entirely, and the corpus
+line still read 115 entries against an actual 757.
 
 Almost no row is fully green, and no C++ directory may be deleted yet — see the partial markers and
 the divergences below. 🟡 means implemented but not to the full scope of the C++ source. A green

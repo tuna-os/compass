@@ -750,6 +750,7 @@ name = "compass-clipboard"
 version = "0.1.0"
 dependencies = [
  "compass-crypto",
+ "compass-db",
  "compass-sqlcipher-sys",
  "md-5",
  "tempfile",
@@ -786,6 +787,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-db"
+version = "0.1.0"
+dependencies = [
+ "compass-sqlcipher-sys",
+ "md-5",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "compass-extension-api"
 version = "0.1.0"
 dependencies = [
@@ -810,6 +821,17 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "compass-local-storage"
+version = "0.1.0"
+dependencies = [
+ "compass-db",
+ "compass-sqlcipher-sys",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

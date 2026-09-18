@@ -1,5 +1,5 @@
 [package]
-name = "compass-clipboard"
+name = "compass-local-storage"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +10,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-compass-crypto.workspace = true
-compass-sqlcipher-sys = { path = "../compass-sqlcipher-sys" }
-md-5 = "0.11"
 compass-db = { path = "../compass-db" }
+compass-sqlcipher-sys = { path = "../compass-sqlcipher-sys" }
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
