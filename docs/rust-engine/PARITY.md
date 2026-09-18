@@ -1224,6 +1224,19 @@ not. Counted across the notes below, what is left is views (4), providers (3), Q
 HTTP. That is the engine rather than more transcription, and it is where the remaining Phase 5
 percentage lives.
 
+**What the VM tier proves about this work, and what it does not.** Run 195 is green on `443efa6`:
+stock Bluefin boots under QEMU, the Flatpak installs, the engine starts *without putting anything on
+screen*, it finds applications (#95), a launcher window appears, a typed query reaches **our** field
+(#91), and the window hides and comes back (ADR-0015) — each against a control frame, with the
+changed region asserted to lie inside a box so that "something else moved" fails too.
+
+It does **not** touch the action panel. `scripts/vmtest/launcher.sh` never presses Ctrl+B and never
+looks for the caret: the panel, the root list's sections and the selection moving through them have
+no VM coverage at all, only the tests in this crate. The tier answers "does the launcher paint and
+receive keystrokes in a real GNOME session", which is the question #91 came from; it does not yet
+answer "is what it paints the right thing". Saying otherwise — as an earlier version of this PR's
+description did — would claim verification that no assertion performs.
+
 `compass_ui::root_list` is the first piece of it. The launcher's main list is not one list: it is
 favourites, then results, then — when nothing matched — the fallbacks, each under its own heading.
 The arrangement and the selection moving *through* it are kept out of the Iced `view` function, so
