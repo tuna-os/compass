@@ -888,6 +888,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-power"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "compass-sandbox"
 version = "0.1.0"
 dependencies = [

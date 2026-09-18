@@ -40,6 +40,9 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // platform needs one; until then this is the Linux half and nothing
     // shared depends on it.
     "compass-notify",
+    // Same story: logind is the Linux mechanism, and the C++ has a separate
+    // power manager for each platform.
+    "compass-power",
 ];
 
 /// Crates whose presence in a manifest makes that crate Linux-bound.
