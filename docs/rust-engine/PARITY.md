@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,059 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the indexer's entry filter and query policy |
+| `compass-core` | 1,059 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -198,7 +198,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 ## The window
 
@@ -353,6 +353,40 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/wm` → `compass-core::window_switcher`** — which commands the window-management
+extension offers and how a window and a workspace are described in the list. Switching windows is
+unconditional; everything else is gated on a capability, because a command certain to fail is worse
+than a command that is absent. The C++ also tests `SetSticky` and registers nothing in that branch;
+the port keeps the empty test rather than tidying it away, because the capability *is* used — a
+window's action panel offers pinning when it is present — so the branch is the only written record
+that someone meant a command to go there.
+
+A window's row falls back twice and the two are independent: the subtitle is the application's
+display name or the raw `WM_CLASS`, and the icon is the application's or the generic window glyph.
+The accessory has three distinct cases, not two: a named workspace shows its name, a numbered one
+shows `WS n`, and a window on no workspace shows nothing at all — an absent accessory is not the
+same as `WS ` with nothing after it. The rule that decides between the first two is the subtle one:
+a compositor with no workspace names reports the **id as the name**, so a name equal to the id is
+treated as no name, which is what keeps a bare `3` out of the slot where a name belongs. Searching
+keeps the `WM_CLASS` at low weight even when an application was recognised, so someone who knows a
+window as `org.gnome.Geary` still finds it when the desktop entry calls it Mail.
+
+A workspace's applications are deduplicated but its windows are counted, so three terminals show one
+icon and the subtitle still says three; an unrecognised window is counted and contributes no icon.
+The applications are searchable at low weight, which is what lets someone find "the workspace with
+the browser on it" without knowing its name. The Windows/other naming split is a compile-time
+`#ifdef` in the C++ and an argument here, so both namings are reachable from one build and both are
+tested.
+
+**A declared divergence.** The C++ writes the count as Qt's `tr("%n window(s)", "", n)`. Qt applies
+plural forms only where a translation supplies them, and there is no English entry for this string —
+Russian and Ukrainian have real plural forms and English falls back to the source text. The shipped
+English therefore reads `3 window(s)`, with the translator's placeholder left in the interface. The
+port writes `1 window` and `3 windows`: what every translated locale already does, and what English
+would do if the entry existed. A test pins it.
+
+Still C++-only: the window manager providers themselves and everything the actions do.
 
 **`src/builtins/calculator` → `compass-core::calculator_history`, and the grouping in
 `compass-local-storage::calculator`** — the view's own decisions and the half of `CalculatorService`
