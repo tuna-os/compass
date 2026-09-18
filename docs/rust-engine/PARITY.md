@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,160 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the indexer's entry filter and query policy |
+| `compass-core` | 1,205 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,309** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,354** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,309 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,354 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -186,7 +186,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/clipboard` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -353,6 +353,42 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/file` → `compass-core::file_search`** — when a query is read as a path rather than a
+search, which of three result modes the view is in, how a late answer is discarded, and how the
+category filter is stored and read back.
+
+The path test is deliberately anchored: `~`, `.` and `..` count only as the *whole* query, and the
+prefixed forms need their separator, so `~notes` stays a search rather than becoming a home-relative
+path that does not exist and `notes..txt` is not mistaken for a traversal. The direct-path branch
+then needs three things at once — the text must look like a path, the path must exist, and it must
+not be `/`. That last one matters: the root exists everywhere, and matching it would turn a single
+slash into a one-item list instead of a search for names containing a slash. When a category filter
+excludes the named file the result is an **empty** direct-path section rather than a fall-through to
+the index: the user asked for that file, and answering with a list of other files would be a
+different question.
+
+The three stale-result guards are ported as three, because each catches something the others do not:
+the task may have been cancelled, the view may have changed mode (a direct path typed while a search
+was in flight), and the query may have moved on — the last being what stops out-of-order answers
+leaving the list showing a question already finished with. Recent files are guarded differently and
+correctly so: they are only ever requested for the empty query, so the test is that the box is
+*still* empty rather than that it matches a remembered string.
+
+The filter stores the **untranslated** key, so a filter chosen in one language is still readable in
+another, and `restored_filter_index` folds three cases into one: nothing stored, an unknown value,
+and `All` all restore nothing — which is what the C++'s `index <= 0` means, `-1` being not-found.
+
+Two lines are noted rather than silently kept or dropped. The C++'s empty-string guard in the path
+test is unreachable here (none of the tests below can match an empty string) and is left out rather
+than carried over as a line no mutation can reach. The `index >= 0` bound check *is* kept although
+the cast to `usize` already covers it, because it says what is meant and survives a future signed
+comparison. Rebuilding the index is written and deliberately unregistered in the C++, with a comment
+saying the indexer's timed sweeps and deleting its cache directory have the same effect; the port
+keeps it unregistered for the same reason, and a test pins that.
+
+Still C++-only: the indexer behind the search, the file preview in the detail pane, the drag payload
+and the per-platform preference sets.
 
 **`src/builtins/media` → `compass-core::media_commands`** — which commands exist on which platform,
 how a player is chosen from what was typed, what the on-screen display says, and which speaker glyph
