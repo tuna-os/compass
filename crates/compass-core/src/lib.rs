@@ -84,6 +84,7 @@ pub mod theme_picker;
 pub mod toast;
 pub mod tray;
 pub mod update;
+pub mod vocabulary;
 pub mod wallpaper;
 pub mod window_effects;
 pub mod xdg_dirs;

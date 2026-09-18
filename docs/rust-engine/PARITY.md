@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 946 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu, the indexer's entry filter and query policy |
+| `compass-core` | 976 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **2,048** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,078** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,041;
-the 2,048 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
+the 2,078 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -594,13 +594,14 @@ before the last dot: `a.tar.gz` becomes `a@dark.tar.gz`, and `~/.local/share/log
 ### `src/file-indexer` stays ❌ although part of it is ported
 
 `compass-core::entry_filter` is a complete port of `entry-filter.cpp` — the rules deciding which
-directory entries the indexer walks into — and `compass-core::query_policy` of
-`file-indexer-query-policy.cpp`, which decides what a typed query asks the index. Between them, 70
-tests and 46 controls. The row stays ❌ anyway.
+directory entries the indexer walks into — `compass-core::query_policy` of
+`file-indexer-query-policy.cpp`, which decides what a typed query asks the index, and
+`compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
+all. Between them, 100 tests and 68 controls. The row stays ❌ anyway.
 
 It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
 its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
-Two files of those fifteen are not the row, and marking it 🟡 would put a colour on this ledger that
+Three files of those fifteen are not the row, and marking it 🟡 would put a colour on this ledger that
 means "a model landed without its backend" when what actually happened is "a fifteenth of the row
 landed". The percentage in PLAN.md is only worth anything if a row's colour means one thing.
 
@@ -617,6 +618,15 @@ None of that fails anything — it makes search feel slightly unreliable. Every 
 naming what it prevents: why a word the corpus knows well is left alone, why only one word per
 family is tried and why the shorter one wins it, and why every plan after the first differs from it
 in exactly one word rather than enumerating combinations nobody typed.
+
+The tokenizer is the third leg of the same argument: a file turns up in a search only if one of its
+tokens matches what was typed. Split too coarsely and `AnnualReport2024.pdf` is findable only by its
+whole name; too finely and the index fills with fragments matching everything. Its two junk rules
+are narrow on purpose — anything over 24 bytes, and anything twelve bytes or longer that is entirely
+hexadecimal — because the twelve-byte floor is what stops the hash rule eating `deface`, `facade`
+and `decade`, all of which are hex-shaped. Porting it turned up two bugs in the port rather than in
+the C++: accumulating a token as `char`s corrupts a UTF-8 filename, and the C++'s length limits are
+in bytes rather than characters, which makes them stricter for a non-Latin name.
 
 Two C++ behaviours it reproduces rather than fixes, both in `GitIgnoreReader`: only the *filename* is
 matched against a pattern, so `build/*.o` never matches anything, and a leading `/` is stripped
