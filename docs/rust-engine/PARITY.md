@@ -426,6 +426,19 @@ Matched deliberately, for the record: field codes are not expanded inside quotes
 deprecated field codes expand to nothing; a redeclared group replaces rather than merges; localized
 score ties resolve to the last declaration.
 
+### `compass-core::default_app` — one picker sorts stably and the other does not
+
+`set-default-browser-view-host.hpp` sorts its candidates with `std::ranges::stable_sort`;
+`set-default-terminal-view-host.hpp`, which is otherwise a copy of it, uses `std::ranges::sort`.
+Both comparators are `isDefault(a) > isDefault(b)` and say nothing about two non-defaults, so the
+terminal list below the current default is in an unspecified order — two runs of the same binary may
+disagree, and nothing in the view depends on it being one way or the other.
+
+Compass sorts both stably, so the rest keep the order the application database gave them.
+`the_rest_keep_the_order_the_database_gave_them` pins it for the browser picker, where the C++ makes
+the same promise; the terminal picker shares the implementation, so it inherits a guarantee the C++
+does not make rather than a different behaviour.
+
 ### `compass-core::root_items` — an unfavourited item that stays unfavourited
 
 `mergeConfigWithMetadata` only *assigns* `favoriteIdx` when the entrypoint id is in `cfg.favorites`:

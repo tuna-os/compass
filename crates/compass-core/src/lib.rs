@@ -39,6 +39,7 @@ pub mod apps;
 pub mod browse_apps;
 pub mod builtin_icon;
 pub mod config;
+pub mod default_app;
 pub mod file_category;
 pub mod frecency;
 pub mod glyph;
