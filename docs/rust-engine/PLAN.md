@@ -1912,6 +1912,36 @@ cites, at the time it is written.**
 | Phase 3 | a clipboard **database-file** round trip — the crypto layer is already cross-verified per-PR; dogfooding |
 | Phase 4+ | `compass-extension-api` exists at 5.5k LOC and 73 tests; the Node host is the open half |
 
+### 11.4 Phases 4 to 10, evaluated
+
+Scored the same way, and the answer is short: **the Linux path is close to done
+through Phase 3, and Phase 4 onwards is largely unstarted.** Saying so with
+numbers is more useful than a phase list that reads as uniformly in-progress.
+
+| Phase | Gate | State | Evidence |
+|---|---|---|---|
+| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **its prerequisite is done; the host is not started** | the phase says to *"carve out `compass-extension-api` first, before the Node host is written against it"* — that is done, **5,546 LOC and 73 tests**. `compass-worker-host` **does not exist as a crate**. `src/typescript/` is intact and is explicitly not to be rewritten, so the reconciler and the `@raycast/api` shim are assets rather than work. The gate cannot be attempted until a host exists to run an extension in. |
+| **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🔴 **28%** | `PARITY.md` holds **96 ✅, 226 ❌, 18 🟡** — 96 of 340 rows. This is the single largest remaining number in the project and it is a breadth problem, not a hard one: most rows are individual builtins. |
+| **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **one output of several** | the Flatpak builds, is installed and is smoke-tested on every run. Every other packaging workflow — AppImage, Linux tarball, macOS dmg, Windows — is `workflow_dispatch` only, by the deliberate decision to narrow CI to what ships on the first target. |
+| **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
+| **8 — Remove the Linux C++ engine** | — | ⚪ **not startable** | requires 7. Several tests are written to die with `src/` at this point and say so (`cpp_enum_values.rs`, `cpp_constants.rs`, the new pragma pin), which is the intended shape. |
+| **9 — macOS** | — | ⚪ **sequenced, not blocked** | ADR-0013 makes Linux-first a sequence rather than a scope limit. 102 `Q_OS_MAC` sites are inventoried in #78. |
+| **10 — Windows, Qt leaves** | — | ⚪ **sequenced** | #79. |
+
+**What this means for "the roadmap", stated plainly.** Phases 0–3 are the
+launcher and its foundations, and they are essentially done — the launcher
+opens on a real GNOME session, indexes the host's applications, ranks them at
+100% top-1 parity with the C++ scorer, accepts typing, hides and summons over
+IPC, and idles at 6.2 MB. Phases 4–10 are the *rest of the product*: an
+extension host (§6 costs it at 6–8 weeks), 244 unported parity rows, packaging
+breadth, a cutover and two further platforms. §7's own schedule puts the whole
+sequence at roughly a year.
+
+So the remaining roadmap is not a list of oversights to be closed in a sitting.
+It is the bulk of the port, and the honest next move is Phase 4's first slice:
+`compass-worker-host`, built the way `compass-ipc` was — transport and framing
+first, with the protocol pinned by tests, before anything is spawned.
+
 ## 12. Immediate next steps
 
 Rewritten as items land; the previous version listed the VM tier and both spikes as the work to do,
