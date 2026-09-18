@@ -1,10 +1,12 @@
 #include "common/common.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <clocale>
 #include <cstdlib>
 #include <filesystem>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #ifdef __APPLE__
@@ -14,6 +16,10 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -91,15 +97,26 @@ std::optional<fs::path> findHelperProgram(std::string_view program) {
   return {};
 }
 
+#ifndef _WIN32
+/// `vicinae-<uid>`, for the directories that land in a shared root.
+///
+/// A flat `/tmp/vicinae` is one directory for every user on the machine: the
+/// first to start owns it and everybody else collides with it or is locked out.
+/// The uid is not a secret and does not make the path unguessable -- that is
+/// what `ensurePrivateDir` is for -- it just stops users tripping over each
+/// other, which is the ordinary case rather than the adversarial one.
+static std::string sharedRootName() { return "vicinae-" + std::to_string(::getuid()); }
+#endif
+
 fs::path runtimeDir() {
 #ifdef __APPLE__
   if (const char *t = std::getenv("TMPDIR")) return fs::path(t) / "vicinae";
-  return "/tmp/vicinae";
+  return fs::path("/tmp") / sharedRootName();
 #elif defined(_WIN32)
   return fs::temp_directory_path() / "vicinae";
 #else
   if (const char *r = std::getenv("XDG_RUNTIME_DIR")) return fs::path(r) / "vicinae";
-  return "/tmp/vicinae";
+  return fs::path("/tmp") / sharedRootName();
 #endif
 }
 
@@ -113,7 +130,48 @@ fs::path stateDir() {
 #else
   if (const char *s = std::getenv("XDG_STATE_HOME")) return fs::path(s) / "vicinae";
   if (const char *h = std::getenv("HOME")) return fs::path(h) / ".local" / "state" / "vicinae";
-  return "/tmp/vicinae";
+  return fs::path("/tmp") / sharedRootName();
+#endif
+}
+
+bool ensurePrivateDir(const fs::path &dir, std::error_code &ec) {
+  ec.clear();
+
+#ifdef _WIN32
+  fs::create_directories(dir, ec);
+  return !ec;
+#else
+  // Declared without an initialiser on purpose: `lstat` fills it, and the
+  // braced form `struct stat st {}` is spelled differently by different
+  // clang-format versions -- ours wants the space, CI's newer one does not, so
+  // the file cannot satisfy both. No braces, nothing to disagree about.
+  struct stat st;
+  if (::lstat(dir.c_str(), &st) == 0) {
+    // lstat, not stat: a symlink here could point anywhere we can write, so it
+    // is refused on sight rather than followed.
+    if (S_ISLNK(st.st_mode)) {
+      ec = std::make_error_code(std::errc::too_many_symbolic_link_levels);
+      return false;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+      ec = std::make_error_code(std::errc::not_a_directory);
+      return false;
+    }
+    if ((st.st_mode & 07777) != 0700) {
+      ec = std::make_error_code(std::errc::permission_denied);
+      return false;
+    }
+    return true;
+  }
+
+  // mkdir, not create_directories: the mode has to be applied by the call that
+  // creates the directory. `create_directories` succeeds on one that already
+  // exists and leaves its mode alone, which is the whole bug.
+  if (::mkdir(dir.c_str(), 0700) != 0) {
+    ec = std::error_code(errno, std::generic_category());
+    return false;
+  }
+  return true;
 #endif
 }
 

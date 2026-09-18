@@ -27,6 +27,25 @@ std::optional<std::filesystem::path> findServerBinary();
 
 std::filesystem::path runtimeDir();
 std::filesystem::path stateDir();
+
+/// Creates `dir` as a directory only this user can enter, or fails.
+///
+/// Mirrors `compass-ipc`'s `ensure_private_dir` on the Rust side (#88). A
+/// directory that already exists is ADOPTED by `create_directories`, which
+/// leaves its mode alone -- so a shared root like `/tmp` lets another local user
+/// pre-create the path and keep write access to whatever we put inside it.
+///
+/// Returns false, setting `ec`, when the path exists and is a symlink, is not a
+/// directory, or is any mode other than 0700. A missing path is created 0700 and
+/// is ours by construction.
+///
+/// Checking the mode is sufficient without checking the owner: for the attack to
+/// work their directory has to be writable by us, which means a permissive mode.
+/// One they own at 0700 we cannot write to at all, so the bind fails safely.
+///
+/// On Windows this is a plain `create_directories`: the shared-/tmp problem it
+/// guards against does not arise, and the POSIX mode bits do not exist.
+bool ensurePrivateDir(const std::filesystem::path &dir, std::error_code &ec);
 std::filesystem::path logFilePath();
 std::filesystem::path serverSocketPath();
 
