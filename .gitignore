@@ -2,6 +2,7 @@
 .kilo
 /build
 /build-*
+/.build
 .vscode
 CMakeUserPresets.json
 .tmp

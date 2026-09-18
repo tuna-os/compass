@@ -1963,7 +1963,7 @@ Ordered by what blocks what, not by size.
 | `UI/confirmAlert` | **not started**; it answers whenever the *user* does, and the host has no way to hold a reply open across a dialog |
 | `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
 | `OAuth/authorize` | **not started**; needs a browser and an overlay |
-| running the real `vicinae-worker-ts` | **not started**; the mock worker in `tests/node_worker.rs` speaks the same wire format, which is not the same claim |
+| running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
 | Suite 1 (the gate) | **not started** |
 
 #### 11.4a Phase 4 specifies a wire protocol the worker does not speak

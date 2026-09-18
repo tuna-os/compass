@@ -269,6 +269,13 @@ build-rust:
 	cargo build --workspace
 .PHONY: build-rust
 
+# The extension runtime the Rust host drives in its real_runtime test. Not part
+# of check-rust: it needs a C++23 compiler and npm, and the test skips without
+# it rather than failing.
+extension-runtime:
+	./scripts/build-extension-runtime.sh
+.PHONY: extension-runtime
+
 test-rust:
 	cargo test --workspace --all-targets
 	cargo test --workspace --doc
