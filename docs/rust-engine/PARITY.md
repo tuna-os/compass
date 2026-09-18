@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,469 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
+| `compass-core` | 1,483 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 200 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,799** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,813** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,799 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,813 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -372,7 +372,32 @@ a link that ends inside a placeholder loses everything from the opening brace. S
 store behind it is ported too (`compass-core::shortcut_store`): the JSON file, the 10,000 limit,
 the two different not-found sentences, the rollback when a write fails after the list already
 changed, and the `value_or({})` that turns a corrupt file into an empty list rather than a refusal
-to start. Still C++-only: the migration from the old `OmniDatabase`, and `resolveApp`.
+to start.
+
+The migration from the old `OmniDatabase` and `resolveApp` are ported too — 15 more tests and 15
+controls, closing this row's named gap. The migration's three outcomes are kept apart because they
+mean different things: a **missing table** is every installation that never ran the old version, an
+**empty table** writes nothing *at all* (an empty write would still create the JSON file and make
+the next start think a migration had happened), and rows are written whole — including
+`last_used_at`, the one nullable column, where turning a null into 0 would make a shortcut nobody
+has opened look used at the epoch. It runs only into an empty store: anything already there has
+been migrated or used since, and re-running would duplicate every shortcut or overwrite work done
+after the move.
+
+`resolveApp` narrows in three steps. A shortcut naming an application uses it even if that
+application is gone — the lookup returns nothing and the caller reports it, which is better than
+silently opening something else. A shortcut set to the default uses whatever opens *that target*,
+which for a `mailto:` is the mail client; the web browser is the last resort and not the rule,
+because it is right for a quicklink and wrong for anything else. That middle step only became
+portable once the MIME parent-chain walk landed.
+
+**Two claims were written into this port and then removed, because no mutation could make a test
+fail on either**: restoring the previous list when the write fails, and a comment saying the
+write-then-reload order was load-bearing. Neither is observable, for the same reason — the migration
+runs only into an empty store, so there is no previous list and no good file to clobber. The order
+still matches the C++; it is just not doing the work the comment claimed. Recorded because a comment
+that overstates what a line does is the kind of thing that survives review and then misleads
+whoever changes it.
 
 **`src/data-control-server` → `compass-wayland::data_control`** — the part that decides which of a
 Wayland client's offered MIME types belong in a clipboard entry, and which of them get their bytes

@@ -361,21 +361,17 @@ impl ShortcutStore {
         let count = rows.len();
         let migrated: Vec<SerializedShortcut> =
             rows.into_iter().map(LegacyRow::into_serialized).collect();
-        // Written in the C++'s order — write the whole array, then reload —
-        // and on failure the in-memory list is left holding the unwritten
-        // rows, as the C++ leaves it.
+        // The C++ writes the whole array through `setShortcuts` and only then
+        // reloads. Keeping that order is the point: the write is what can
+        // fail, and reloading before knowing it succeeded is how a migration
+        // turns a recoverable problem into an empty shortcut list.
         //
-        // TWO CLAIMS WERE MADE HERE AND BOTH WERE REMOVED, because no mutation
-        // could make a test fail on either. The first restored the previous
-        // list on failure; the second said the write-then-reload order was
-        // load-bearing. Neither is observable, and for the same reason: this
-        // runs only into an *empty* store, so there is no previous list to
-        // restore and no good file for a failed write to clobber. What a
-        // failure actually costs is one start — the file is unchanged, so the
-        // next one finds an empty store and tries again.
-        //
-        // The order still matches the C++. It is just not doing the work the
-        // comment used to say it was.
+        // On failure the in-memory list is left holding the rows that were not
+        // written, exactly as the C++ leaves it. Restoring what was there
+        // before was written here first and removed: the migration only runs
+        // into an *empty* store, so there is never anything to restore, and a
+        // line no mutation can reach is worse than no line. The next start
+        // reads the file, finds it still empty, and tries again.
         self.shortcuts = migrated;
         match self.save() {
             Ok(()) => {

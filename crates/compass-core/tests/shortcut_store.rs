@@ -346,3 +346,222 @@ fn reloading_takes_the_file_over_memory() {
     shortcuts.reload();
     assert!(shortcuts.shortcuts().is_empty(), "the file wins");
 }
+
+// --- migrating from the old SQLite table --------------------------------
+//
+// Ported from `ShortcutService::migrateFromDatabase` and `resolveApp`.
+
+mod migration {
+    use compass_core::shortcut_store::{
+        LegacyRow, Migration, ShortcutStore, resolve_app, should_migrate,
+    };
+
+    fn row(id: &str) -> LegacyRow {
+        LegacyRow {
+            id: id.to_owned(),
+            name: "Search".to_owned(),
+            icon: "link".to_owned(),
+            url: "https://example.com/?q={argument}".to_owned(),
+            app: "default".to_owned(),
+            open_count: 3,
+            created_at: 1_700_000_000,
+            updated_at: 1_700_000_100,
+            last_used_at: Some(1_700_000_200),
+        }
+    }
+
+    fn store() -> (tempfile::TempDir, ShortcutStore) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ShortcutStore::open(&dir.path().join("shortcuts.json"));
+        (dir, store)
+    }
+
+    #[test]
+    fn a_missing_table_is_not_an_error() {
+        // It is every installation that never ran the old version.
+        let (_dir, mut store) = store();
+        assert_eq!(
+            store.migrate_from_legacy(false, vec![row("a")]),
+            Migration::NoTable
+        );
+        assert!(store.shortcuts().is_empty());
+    }
+
+    #[test]
+    fn an_empty_table_writes_nothing_at_all() {
+        // Not merely "writes an empty array": an empty write would still
+        // create the JSON file, and the next start would then see a store
+        // that exists and skip the migration for good.
+        let (dir, mut store) = store();
+        let path = dir.path().join("shortcuts.json");
+        let before = std::fs::read_to_string(&path).ok();
+
+        assert_eq!(
+            store.migrate_from_legacy(true, Vec::new()),
+            Migration::NoRows
+        );
+        assert_eq!(std::fs::read_to_string(&path).ok(), before);
+    }
+
+    #[test]
+    fn rows_are_moved_across_with_every_column() {
+        let (_dir, mut store) = store();
+        assert_eq!(
+            store.migrate_from_legacy(true, vec![row("a")]),
+            Migration::Migrated(1)
+        );
+
+        let moved = store.find_by_id("a").expect("the row moved");
+        assert_eq!(moved.name, "Search");
+        assert_eq!(moved.icon, "link");
+        assert_eq!(moved.url, "https://example.com/?q={argument}");
+        assert_eq!(moved.app, "default");
+        assert_eq!(moved.open_count, 3);
+        assert_eq!(moved.created_at, 1_700_000_000);
+        assert_eq!(moved.updated_at, 1_700_000_100);
+        assert_eq!(moved.last_used_at, Some(1_700_000_200));
+    }
+
+    #[test]
+    fn the_one_nullable_column_survives_being_null() {
+        // `last_used_at` is the only nullable column, and a shortcut nobody
+        // has opened yet has it unset. Turning that into 0 would make it look
+        // used at the epoch.
+        let (_dir, mut store) = store();
+        let mut never_used = row("a");
+        never_used.last_used_at = None;
+        store.migrate_from_legacy(true, vec![never_used]);
+        assert_eq!(store.find_by_id("a").expect("moved").last_used_at, None);
+    }
+
+    #[test]
+    fn several_rows_keep_their_order() {
+        let (_dir, mut store) = store();
+        store.migrate_from_legacy(true, vec![row("a"), row("b"), row("c")]);
+        let ids: Vec<&str> = store.shortcuts().iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn the_migration_survives_a_round_trip_to_disk() {
+        // The reload after the write is what proves the JSON is readable
+        // back, rather than the store simply holding what it was handed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("shortcuts.json");
+        let mut store = ShortcutStore::open(&path);
+        store.migrate_from_legacy(true, vec![row("a")]);
+
+        let reopened = ShortcutStore::open(&path);
+        assert_eq!(reopened.shortcuts().len(), 1);
+        assert_eq!(reopened.shortcuts()[0].id, "a");
+    }
+
+    #[test]
+    fn a_failed_write_leaves_the_store_as_it_was() {
+        // Reloading after a failed write is how a migration turns a
+        // recoverable problem into an empty shortcut list.
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A directory where the file should be: the write fails, the read does
+        // not error in a way that matters, and nothing is lost.
+        let path = dir.path().join("shortcuts.json");
+        std::fs::create_dir(&path).expect("a directory in the file's place");
+        let mut store = ShortcutStore::open(&path);
+
+        assert_eq!(
+            store.migrate_from_legacy(true, vec![row("a")]),
+            Migration::Failed
+        );
+
+        // What matters is the *file*: nothing was written, so the next start
+        // finds an empty store and tries the migration again. The in-memory
+        // list is left holding the unwritten rows, as the C++ leaves it — and
+        // that is not observable to anyone, because a failed migration is
+        // reported and the process does not go on to use the list.
+        let reopened = ShortcutStore::open(&path);
+        assert!(reopened.shortcuts().is_empty(), "nothing reached the disk");
+    }
+
+    #[test]
+    fn a_migration_runs_only_into_an_empty_store() {
+        // A store with anything in it has been migrated already or has been
+        // used since; re-running would duplicate every shortcut or overwrite
+        // work done after the move.
+        let (_dir, mut store) = store();
+        assert!(should_migrate(&store, true));
+
+        store.migrate_from_legacy(true, vec![row("a")]);
+        assert!(!should_migrate(&store, true));
+    }
+
+    #[test]
+    fn no_table_means_no_migration_however_empty_the_store() {
+        let (_dir, store) = store();
+        assert!(!should_migrate(&store, false));
+    }
+
+    // --- which application opens a shortcut -----------------------------
+
+    fn none(_: &str) -> Option<String> {
+        None
+    }
+
+    #[test]
+    fn a_shortcut_naming_an_application_uses_it() {
+        let chosen = resolve_app(
+            "firefox.desktop",
+            "https://example.com",
+            |id| Some(id.to_owned()),
+            |_| Some("wrong.desktop".to_owned()),
+            || Some("browser.desktop".to_owned()),
+        );
+        assert_eq!(chosen.as_deref(), Some("firefox.desktop"));
+    }
+
+    #[test]
+    fn a_named_application_that_is_gone_resolves_to_nothing() {
+        // Better than silently opening something else: the caller reports it.
+        let chosen = resolve_app(
+            "uninstalled.desktop",
+            "https://example.com",
+            none,
+            |_| Some("wrong.desktop".to_owned()),
+            || Some("browser.desktop".to_owned()),
+        );
+        assert_eq!(chosen, None);
+    }
+
+    #[test]
+    fn the_default_uses_whatever_opens_that_target() {
+        // Which for a `mailto:` is the mail client, not the browser.
+        let chosen = resolve_app(
+            "default",
+            "mailto:someone@example.com",
+            none,
+            |target| {
+                target
+                    .starts_with("mailto:")
+                    .then(|| "mail.desktop".to_owned())
+            },
+            || Some("browser.desktop".to_owned()),
+        );
+        assert_eq!(chosen.as_deref(), Some("mail.desktop"));
+    }
+
+    #[test]
+    fn the_browser_is_the_last_resort_and_not_the_rule() {
+        // Right for a quicklink and wrong for anything else, so it only
+        // applies once the target's own opener has found nothing.
+        let chosen = resolve_app("default", "mailto:someone@example.com", none, none, || {
+            Some("browser.desktop".to_owned())
+        });
+        assert_eq!(chosen.as_deref(), Some("browser.desktop"));
+    }
+
+    #[test]
+    fn nothing_anywhere_resolves_to_nothing() {
+        assert_eq!(
+            resolve_app("default", "https://example.com", none, none, || None),
+            None
+        );
+    }
+}
