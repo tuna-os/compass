@@ -326,3 +326,245 @@ fn a_label_keeps_its_non_ascii_characters() {
     entry.label = "_Préférences".to_owned();
     assert_eq!(entry.plain_label(), "Préférences");
 }
+
+// --- reading a dbusmenu layout ------------------------------------------
+//
+// Ported from `toMenuItem` in
+// `src/server/src/services/tray-host/sni/sni-tray-host.cpp`.
+
+mod layout {
+    use compass_core::tray_host::{
+        MENU_PROPERTIES, MenuLayoutNode, MenuProperty, ToggleType, menu_from_layout,
+        menu_item_from_layout,
+    };
+
+    fn node(id: i32, props: &[(&str, MenuProperty)]) -> MenuLayoutNode {
+        MenuLayoutNode {
+            id,
+            properties: props
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), v.clone()))
+                .collect(),
+            children: Vec::new(),
+        }
+    }
+
+    fn text(value: &str) -> MenuProperty {
+        MenuProperty::Text(value.to_owned())
+    }
+
+    #[test]
+    fn an_entry_with_no_properties_is_clickable_and_shown() {
+        // An application that sends neither `enabled` nor `visible` wants an
+        // ordinary entry. Defaulting either to false renders a menu of grey
+        // nothing.
+        let item = menu_item_from_layout(&node(7, &[]));
+        assert!(item.enabled);
+        assert!(item.visible);
+        assert_eq!(item.id, 7);
+    }
+
+    #[test]
+    fn an_application_can_turn_either_off() {
+        let item = menu_item_from_layout(&node(
+            1,
+            &[
+                ("enabled", MenuProperty::Flag(false)),
+                ("visible", MenuProperty::Flag(false)),
+            ],
+        ));
+        assert!(!item.enabled);
+        assert!(!item.visible);
+    }
+
+    #[test]
+    fn the_label_comes_across_with_its_mnemonic_intact() {
+        // Stripping it here would lose the information `plain_label` needs.
+        let item = menu_item_from_layout(&node(1, &[("label", text("_File"))]));
+        assert_eq!(item.label, "_File");
+        assert_eq!(item.plain_label(), "File");
+    }
+
+    #[test]
+    fn a_separator_is_recognised_by_its_type() {
+        let item = menu_item_from_layout(&node(1, &[("type", text("separator"))]));
+        assert!(item.separator);
+    }
+
+    #[test]
+    fn an_ordinary_entry_is_not_a_separator() {
+        assert!(!menu_item_from_layout(&node(1, &[("type", text("standard"))])).separator);
+        assert!(!menu_item_from_layout(&node(1, &[])).separator);
+    }
+
+    #[test]
+    fn the_separator_type_is_matched_exactly() {
+        // A loose match would catch a type the protocol adds later that merely
+        // starts the same way, and draw a dividing line where an application
+        // meant an entry.
+        assert!(!menu_item_from_layout(&node(1, &[("type", text("separator-group"))])).separator);
+        assert!(!menu_item_from_layout(&node(1, &[("type", text("Separator"))])).separator);
+    }
+
+    #[test]
+    fn a_submenu_is_recognised_by_its_children_display() {
+        let item = menu_item_from_layout(&node(1, &[("children-display", text("submenu"))]));
+        assert!(item.submenu);
+    }
+
+    #[test]
+    fn the_two_toggle_types_are_recognised() {
+        assert_eq!(
+            menu_item_from_layout(&node(1, &[("toggle-type", text("checkmark"))])).toggle_type,
+            ToggleType::Checkmark
+        );
+        assert_eq!(
+            menu_item_from_layout(&node(1, &[("toggle-type", text("radio"))])).toggle_type,
+            ToggleType::Radio
+        );
+    }
+
+    #[test]
+    fn a_toggle_type_from_a_later_protocol_renders_as_a_plain_entry() {
+        // Rather than as an empty checkbox.
+        assert_eq!(
+            menu_item_from_layout(&node(1, &[("toggle-type", text("tristate"))])).toggle_type,
+            ToggleType::None
+        );
+    }
+
+    #[test]
+    fn an_unanswered_checkbox_is_indeterminate_and_not_unchecked() {
+        // This is the reason the key's *presence* is tested rather than its
+        // value: the default is -1, and -1 and 0 are different states.
+        let item = menu_item_from_layout(&node(1, &[("toggle-type", text("checkmark"))]));
+        assert_eq!(item.toggle_state, -1);
+    }
+
+    #[test]
+    fn an_explicit_off_is_off_and_not_indeterminate() {
+        let item = menu_item_from_layout(&node(
+            1,
+            &[
+                ("toggle-type", text("checkmark")),
+                ("toggle-state", MenuProperty::Number(0)),
+            ],
+        ));
+        assert_eq!(item.toggle_state, 0);
+    }
+
+    #[test]
+    fn an_explicit_on_comes_across() {
+        let item = menu_item_from_layout(&node(1, &[("toggle-state", MenuProperty::Number(1))]));
+        assert_eq!(item.toggle_state, 1);
+    }
+
+    #[test]
+    fn an_icon_name_comes_across() {
+        let item = menu_item_from_layout(&node(1, &[("icon-name", text("document-open"))]));
+        assert_eq!(item.icon_name, "document-open");
+    }
+
+    #[test]
+    fn icon_bytes_come_across_when_there_are_any() {
+        let item = menu_item_from_layout(&node(
+            1,
+            &[(
+                "icon-data",
+                MenuProperty::Bytes(vec![0x89, b'P', b'N', b'G']),
+            )],
+        ));
+        assert_eq!(
+            item.icon_data.as_deref(),
+            Some(&[0x89, b'P', b'N', b'G'][..])
+        );
+    }
+
+    #[test]
+    fn an_empty_icon_payload_is_no_icon_rather_than_an_empty_one() {
+        // An empty image would draw as a blank space where the application
+        // meant to have no icon at all.
+        let item =
+            menu_item_from_layout(&node(1, &[("icon-data", MenuProperty::Bytes(Vec::new()))]));
+        assert_eq!(item.icon_data, None);
+    }
+
+    #[test]
+    fn a_property_of_the_wrong_shape_takes_the_default() {
+        // The bus is loosely typed and an application can send anything. A
+        // `label` that arrives as a number should leave an empty label, not
+        // refuse the whole menu.
+        let item = menu_item_from_layout(&node(
+            1,
+            &[("label", MenuProperty::Number(3)), ("enabled", text("yes"))],
+        ));
+        assert_eq!(item.label, "");
+        assert!(item.enabled, "an unreadable `enabled` falls back to true");
+    }
+
+    #[test]
+    fn children_are_converted_too() {
+        let mut root = node(0, &[]);
+        root.children = vec![
+            node(1, &[("label", text("One"))]),
+            node(2, &[("label", text("Two"))]),
+        ];
+        let item = menu_item_from_layout(&root);
+        assert_eq!(item.children.len(), 2);
+        assert_eq!(item.children[1].label, "Two");
+    }
+
+    #[test]
+    fn a_submenus_own_children_are_converted() {
+        let mut leaf = node(2, &[("label", text("Deep"))]);
+        leaf.children = vec![node(3, &[("label", text("Deeper"))])];
+        let mut root = node(0, &[]);
+        root.children = vec![leaf];
+
+        let item = menu_item_from_layout(&root);
+        assert_eq!(item.children[0].children[0].label, "Deeper");
+    }
+
+    #[test]
+    fn the_menu_is_the_roots_children_and_not_the_root() {
+        // Returning the root would put an unnamed entry above every menu.
+        let mut root = node(0, &[("label", text("root"))]);
+        root.children = vec![node(1, &[("label", text("Open"))])];
+
+        let menu = menu_from_layout(Some(&root));
+        assert_eq!(menu.len(), 1);
+        assert_eq!(menu[0].label, "Open");
+    }
+
+    #[test]
+    fn a_failed_fetch_is_an_empty_menu_rather_than_an_error() {
+        // A tray icon whose menu will not load should still be clickable.
+        assert!(menu_from_layout(None).is_empty());
+    }
+
+    #[test]
+    fn a_menu_with_no_entries_is_empty() {
+        assert!(menu_from_layout(Some(&node(0, &[]))).is_empty());
+    }
+
+    #[test]
+    fn every_property_the_conversion_reads_is_one_it_asks_for() {
+        // Anything not on the list is never sent, so reading a property the
+        // fetch does not request would be reading something that never
+        // arrives.
+        for name in [
+            "label",
+            "enabled",
+            "visible",
+            "type",
+            "toggle-type",
+            "toggle-state",
+            "icon-name",
+            "icon-data",
+            "children-display",
+        ] {
+            assert!(MENU_PROPERTIES.contains(&name), "{name} is not requested");
+        }
+        assert_eq!(MENU_PROPERTIES.len(), 9);
+    }
+}

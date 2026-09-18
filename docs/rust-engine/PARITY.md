@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,497 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
+| `compass-core` | 1,519 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,853** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,875** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,853 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,875 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -878,9 +878,26 @@ no attention pixmap still shows its ordinary pixmap rather than nothing. `resolv
 directory is walked — and `best_icon` returns an SVG immediately and otherwise takes a *strictly*
 larger file, so equal-sized candidates take the first and the answer does not depend on directory
 read order. `plain_label` strips a single `_` mnemonic and folds `__` to one literal underscore,
-iterating by `char` so a label with accented text is not cut mid-codepoint. Still C++-only: the
-DBus plumbing itself (the StatusNotifierWatcher registration, the `com.canonical.dbusmenu` layout
-walk, and the property-change signals), which belongs to whoever owns the bus connection.
+iterating by `char` so a label with accented text is not cut mid-codepoint. 
+The `com.canonical.dbusmenu` layout is read here too (`menu_item_from_layout`, 22 tests and 20
+controls): the transport is the bus's, but turning a property bag into a menu entry is not, and
+every default in it is the protocol's rather than a guess.
+
+Three of those defaults carry weight. `enabled` and `visible` default to **true**, because an
+application that sends neither wants an ordinary entry and defaulting either way round renders a
+menu of grey nothing. `toggle-state` is read only when the key is **present**, because its default
+is `-1` — indeterminate — and that is a different state from `0`, which is off: a checkbox nobody has
+answered is not an unchecked one. And an unknown `toggle-type` falls back to none, so a type the
+protocol gains later draws as a plain entry rather than an empty checkbox.
+
+Two more are about a bus that is loosely typed and carries whatever an application sends. A property
+of the wrong shape takes its default rather than refusing the menu, and an **empty** `icon-data`
+payload is no icon rather than an empty one — which would draw as a blank space where the
+application meant nothing at all. The menu itself is the root node's *children*: returning the root
+would put an unnamed entry above every menu.
+
+Still C++-only: the DBus plumbing (the StatusNotifierWatcher registration, the `GetLayout` call and
+the property-change signals), which belongs to whoever owns the bus connection.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
 itself, built from the same C the C++ engine links (ADR-0014). `Database::open` does what
