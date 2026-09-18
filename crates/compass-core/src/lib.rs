@@ -82,6 +82,7 @@ pub mod system_run;
 pub mod telemetry;
 pub mod theme_picker;
 pub mod toast;
+pub mod tray;
 pub mod update;
 pub mod wallpaper;
 pub mod window_effects;
