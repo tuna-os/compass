@@ -831,6 +831,7 @@ name = "compass-local-storage"
 version = "0.1.0"
 dependencies = [
  "compass-db",
+ "compass-search",
  "compass-sqlcipher-sys",
  "serde_json",
  "tempfile",

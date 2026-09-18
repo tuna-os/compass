@@ -42,6 +42,7 @@ pub mod audio_control;
 pub mod boilerplate;
 pub mod browse_apps;
 pub mod builtin_icon;
+pub mod calculator_history;
 pub mod config;
 pub mod contrast;
 pub mod create_extension;

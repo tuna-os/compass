@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,059 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the indexer's entry filter and query policy |
+| `compass-core` | 1,059 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -73,7 +73,7 @@ that. The plan has been corrected.
 | `compass-ui` | 29 | the launcher window and its views |
 | `compass-crypto` | 24 | AES-GCM and HKDF; cross-decrypted against the C++ probe per-PR |
 | `compass-sandbox` | 23 | Landlock, a seccomp denylist, and the launcher that applies them to itself |
-| `compass-local-storage` | 20 | the extension key-value store, lossy typing and all |
+| `compass-local-storage` | 36 | the extension key-value store, lossy typing and all, and the calculator history with its time grouping |
 | `compass-media` | 13 | MPRIS players, with the timeout the C++ has for a reason |
 | `compass-power` | 11 | logind; one C++ bug deliberately not reproduced |
 | `compass-db` | 10 | the shared migration runner and the `vicinae` schema |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,192** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,231** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,192 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,231 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -183,7 +183,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
-| `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/clipboard` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -353,6 +353,37 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/calculator` → `compass-core::calculator_history`, and the grouping in
+`compass-local-storage::calculator`** — the view's own decisions and the half of `CalculatorService`
+that is not persistence. The live-calculation gate is ported with both of its rules: three
+characters before the search box is also read as a sum (below that almost anything parses as
+*something*, and a result flickering in on the way to typing a word is worse than none), and a
+leading `=` that gets under the length rule entirely and is stripped before the rest is computed —
+including the bare `=`, which the C++ hands to the backend to decline rather than short-circuiting.
+The length is counted in characters, so a two-character accented word does not slip through a byte
+count. Also ported: the `question = answer` title with its spaces, the conversion/arithmetic icon
+split with its `default` arm, and both action panels as sections — pinning alone, the three copies
+with **the answer** primary, then the two destructive actions behind a section break, which is the
+only thing standing between them and the primary action.
+
+`group_records_by_time` is a **sequential scan, not a classification**, and the port keeps it that
+way because the difference is visible. Each group consumes a *prefix* of the rows and stops at the
+first that does not match, leaving the rest to the next group; nothing rewinds. Two things follow.
+A row older than every boundary reaches `A few years ago` without any group needing a lower bound.
+And a row out of order cannot go back to an earlier group — which is safe only because the query
+sorts `pinned_at DESC, created_at DESC`, so the `ORDER BY` and this scan are one mechanism and not
+two. Every group is produced on every call, including the empty ones, and the view drops those;
+that split is the C++'s and is pinned on both sides. `query` is a filter and not a ranking, and an
+empty query short-circuits to the full list rather than matching everything — which is what makes
+an empty search box show the grouped history rather than a fuzzy-ordered one.
+
+The calendar arithmetic is **not** ported: `group_records_by_time` takes the eight boundary instants
+as an argument rather than reading a clock. Computing them belongs to whoever owns the clock, and
+keeping them out is what lets the scan be tested without freezing a timezone. The `dividers` vector
+the C++ declares at the top of that function is dead — nothing reads it — and is not carried over.
+Still C++-only: the backends (unported by design, see the crate docs), the preference dropdown that
+selects one, and the refresh-rates command.
 
 **`src/services/script-command` → `compass-core::script_scan`** — the header parser was already
 ported (`src/lib/script-command`); this is the layer around it. The scan's rules are ported with
