@@ -343,64 +343,66 @@ fn binary(name: &str) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
-#[test]
-fn a_denied_syscall_is_refused_and_the_same_call_works_without_the_filter() {
-    // `unshare(2)` is on the default denylist because new namespaces are how a
-    // confined process gets out of one. The `unshare` binary is the shortest
-    // way to make a real program issue it.
-    let Some(unshare) = binary("unshare") else {
-        panic!("no unshare on this system; this test needs a real caller of a denied syscall");
-    };
-    let Some(r#true) = binary("true") else {
-        panic!("no true on this system");
-    };
+/// The probe, as cargo built it for this test.
+fn probe() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_compass-sandbox-probe"))
+}
 
-    let args = [
-        "--user".to_owned(),
-        "--map-root-user".to_owned(),
-        r#true.to_string_lossy().into_owned(),
-    ];
-
-    // The control, first: unsandboxed, this succeeds here. If it does not, the
-    // denial below proves nothing.
-    let plain = Command::new(&unshare)
-        .args(&args)
+/// Runs the probe behind `policy` and returns the errno it printed.
+fn probe_errno(policy: &Policy) -> String {
+    let output = policy
+        .command(&launcher(), &probe(), &[])
         .output()
-        .expect("unshare runs");
+        .expect("the launcher runs");
     assert!(
-        plain.status.success(),
-        "the unsandboxed control failed, so this machine cannot answer the question: {}",
-        String::from_utf8_lossy(&plain.stderr)
+        output.status.success(),
+        "the probe did not run: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[test]
+fn a_denied_syscall_answers_eperm_while_the_same_call_gets_through_without_the_filter() {
+    // `ptrace(PTRACE_ATTACH, 0)` cannot succeed: there is no process 0. That
+    // is the point -- without the filter the kernel answers ESRCH, having
+    // looked at the argument; behind the filter it answers EPERM, having not.
+    // Two errnos from one call, so "it failed" cannot be mistaken for "it was
+    // denied", and no privilege, namespace or second process is involved.
+    let policy = runnable()
+        .read(probe().parent().expect("the probe has a directory"))
+        .execute(probe().parent().expect("the probe has a directory"));
+
+    // The control, unsandboxed.
+    let plain = Command::new(probe()).output().expect("the probe runs");
+    assert_eq!(
+        String::from_utf8_lossy(&plain.stdout).trim(),
+        "errno=ESRCH",
+        "the unsandboxed control did not answer ESRCH, so this machine cannot answer the \
+         question"
     );
 
-    // The second control: the same call, behind the same policy, with the
-    // filter turned off. This separates "the syscall filter denied it" from
-    // "Landlock denied something on the way" -- `unshare --map-root-user`
-    // writes /proc/self/uid_map, so the policy has to allow /proc or the
-    // control fails for the wrong reason, and the test would then pass while
-    // measuring nothing.
-    let policy = runnable().read("/proc").write("/proc");
-    let (ok, stderr) = run(&policy.clone().without_syscall_filter(), &unshare, &args);
-    assert!(
-        ok,
-        "unshare could not run even with the filter off, so this test cannot tell a denial \
-         from a broken policy: {stderr}"
+    // The second control: same policy, filter off. Separates a syscall denial
+    // from Landlock denying something on the way.
+    assert_eq!(
+        probe_errno(&policy.clone().without_syscall_filter()),
+        "errno=ESRCH",
+        "the call did not get through with the filter off, so a denial below would prove nothing"
     );
 
     // The assertion.
-    let (ok, _) = run(&policy, &unshare, &args);
-    assert!(
-        !ok,
-        "unshare succeeded behind the syscall filter: the filter is installed and inert"
+    assert_eq!(
+        probe_errno(&policy),
+        "errno=EPERM",
+        "ptrace was not denied behind the syscall filter: the filter is installed and inert"
     );
 }
 
 #[test]
 fn ptrace_is_refused_while_ordinary_work_continues() {
-    // The one branch here that is about the machine rather than the boundary:
-    // without strace there is no program on a stock system that calls
-    // `ptrace` on purpose. The denial is still covered by the list test, and
-    // by `a_denied_syscall_is_refused...`, which uses a different syscall.
+    // A second witness, from a real tool rather than our own probe, on the
+    // machines that have one. The test above is the one that must hold
+    // everywhere.
     let Some(strace) = binary("strace") else {
         eprintln!("note: no strace on this system; skipping the ptrace half");
         return;
@@ -416,12 +418,16 @@ fn ptrace_is_refused_while_ordinary_work_continues() {
     ];
 
     let permissive = runnable().read("/dev/null").write("/dev/null");
+    // A loud skip rather than an assertion, and only here: this test is the
+    // second witness, and whether strace can attach at all depends on
+    // /proc/sys/kernel/yama/ptrace_scope and on the machine's own policy. The
+    // test above is the one that has to hold everywhere, and it does not
+    // depend on any of that.
     let (ok, stderr) = run(&permissive.clone().without_syscall_filter(), &strace, &args);
-    assert!(
-        ok,
-        "strace could not run even with the filter off, so a denial below would prove \
-         nothing: {stderr}"
-    );
+    if !ok {
+        eprintln!("note: strace cannot attach here ({stderr}); skipping the second witness");
+        return;
+    }
 
     let (ok, _) = run(&permissive, &strace, &args);
     assert!(!ok, "strace attached behind the syscall filter");

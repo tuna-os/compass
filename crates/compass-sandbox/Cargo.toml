@@ -13,6 +13,7 @@ workspace = true
 landlock.workspace = true
 libc.workspace = true
 seccompiler.workspace = true
+nix.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
@@ -21,3 +22,7 @@ tempfile.workspace = true
 [[bin]]
 name = "compass-sandbox-exec"
 path = "src/bin/exec.rs"
+
+[[bin]]
+name = "compass-sandbox-probe"
+path = "src/bin/probe.rs"
