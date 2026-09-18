@@ -925,6 +925,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-worker-host"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "compass-xdg"
 version = "0.1.0"
 dependencies = [

@@ -21,6 +21,7 @@ compass-testkit = { path = "crates/compass-testkit" }
 compass-core = { path = "crates/compass-core" }
 compass-ipc = { path = "crates/compass-ipc" }
 compass-shell = { path = "crates/compass-shell" }
+compass-worker-host = { path = "crates/compass-worker-host" }
 compass-extension-api = { path = "crates/compass-extension-api" }
 compass-portals = { path = "crates/compass-portals" }
 compass-wayland = { path = "crates/compass-wayland" }
