@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 976 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu, the indexer's entry filter and query policy |
+| `compass-core` | 1,004 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **2,078** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,106** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,078 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,106 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -171,7 +171,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/update` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -354,6 +354,20 @@ contributes all of its items, including ones scoring zero, and `providerId` is n
 another nine tests and nine controls. Still C++-only: the manager around it — loading items from
 providers, `mergeConfigWithMetadata`, recording a visit, and `setAlias` / `setProviderEnabled` with
 the config writes behind them.
+
+**`src/services/tray-host` → `compass-core::tray_host`** — `TrayItem` and `TrayMenuItem` are
+ported: the item key is the bus name *and* the object path, because one application can export
+several items on one connection; a menu path of `/` means no menu at all; and the icon falls back
+through resolved theme path, raw pixmap, theme name, then `application-x-executable`. Each
+attention field falls back **on its own**, so an application that sets an attention icon name but
+no attention pixmap still shows its ordinary pixmap rather than nothing. `resolve_icon` keeps
+`findIconInThemePath`'s first line — an empty name or an empty theme path returns before any
+directory is walked — and `best_icon` returns an SVG immediately and otherwise takes a *strictly*
+larger file, so equal-sized candidates take the first and the answer does not depend on directory
+read order. `plain_label` strips a single `_` mnemonic and folds `__` to one literal underscore,
+iterating by `char` so a label with accented text is not cut mid-codepoint. Still C++-only: the
+DBus plumbing itself (the StatusNotifierWatcher registration, the `com.canonical.dbusmenu` layout
+walk, and the property-change signals), which belongs to whoever owns the bus connection.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
 itself, built from the same C the C++ engine links (ADR-0014). `Database::open` does what

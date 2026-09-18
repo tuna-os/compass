@@ -83,6 +83,7 @@ pub mod telemetry;
 pub mod theme_picker;
 pub mod toast;
 pub mod tray;
+pub mod tray_host;
 pub mod update;
 pub mod vocabulary;
 pub mod wallpaper;
