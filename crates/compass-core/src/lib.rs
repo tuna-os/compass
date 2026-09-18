@@ -36,6 +36,7 @@
 pub mod apps;
 pub mod config;
 pub mod frecency;
+pub mod keybinding;
 pub mod rank;
 pub mod xdg_dirs;
 

@@ -86,7 +86,7 @@ is larger is how a count stops meaning anything.
 
 ## Progress
 
-Scaffolding, corpora and CI are in place, and **twenty** crates have landed: **1,000 tests** across
+Scaffolding, corpora and CI are in place, and **twenty** crates have landed: **1,012 tests** across
 the workspace, all green. `compass-db` (the shared migration runner and the `vicinae` schema, extracted from
 `compass-clipboard`), `compass-local-storage`, `compass-oauth-store` and `compass-sandbox` are the four newest. An earlier revision of this
 paragraph said nine crates and 597 tests, and both had drifted — `compass-clipboard`,
@@ -144,13 +144,13 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/input-server` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/local-storage` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/media-control` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/menu-bar` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/news` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/oauth` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/paste` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/permissions` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/power-manager` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |

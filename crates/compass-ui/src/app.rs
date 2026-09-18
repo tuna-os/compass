@@ -78,6 +78,8 @@ pub struct AppFlags {
     /// is on Linux. `vicinae` supplies `compass-platform-linux`'s launcher;
     /// tests supply their own. See ADR-0013.
     pub launcher: Arc<dyn AppLauncher>,
+    /// The navigation chord scheme, from `launcher.keybinding`.
+    pub keybinding: compass_core::keybinding::Scheme,
     /// The engine driving this window, when there is one.
     ///
     /// `None` is the standalone case -- `vicinae ui` run by hand with no daemon
@@ -97,6 +99,7 @@ impl Default for AppFlags {
                 transparent: true,
                 ..Default::default()
             },
+            keybinding: compass_core::keybinding::Scheme::default(),
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
@@ -133,6 +136,11 @@ pub struct LauncherApp {
     window: Option<window::Id>,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
+    /// Which navigation chords are in force. See [`compass_core::keybinding`].
+    ///
+    /// Held rather than read per keystroke because it comes from the user's
+    /// configuration, which is read once.
+    keybinding: compass_core::keybinding::Scheme,
     /// Whether the engine is waiting for an outcome right now.
     ///
     /// # Every report must answer a command, or the stream goes out of step
@@ -178,12 +186,56 @@ pub fn next_selection(len: usize, current: usize, direction: Direction) -> usize
     }
 }
 
+/// The direction an iced key press moves the selection, under `scheme`.
+///
+/// Returns `None` for `Left` and `Right` as well as for a key that is not a
+/// chord: the results list is one column, so `Ctrl+H` and `Ctrl+L` have
+/// nowhere to go here. They are recognised by `compass-core` and dropped here
+/// deliberately, rather than being quietly bound to something they do not
+/// mean.
+fn chord_direction(
+    scheme: compass_core::keybinding::Scheme,
+    key: iced::keyboard::Key<&str>,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Direction> {
+    use compass_core::keybinding::{Chord, Modifiers as CoreModifiers, navigation};
+
+    let iced::keyboard::Key::Character(text) = key else {
+        return None;
+    };
+    let mut chars = text.chars();
+    let (character, None) = (chars.next()?, chars.next()) else {
+        return None;
+    };
+
+    let chord = Chord::new(
+        character,
+        CoreModifiers {
+            // iced reports the physical Control key as `control` on every
+            // platform, which is what these chords want.
+            ctrl: modifiers.control(),
+            alt: modifiers.alt(),
+            shift: modifiers.shift(),
+            logo: modifiers.logo(),
+        },
+    );
+
+    match navigation(scheme, chord)? {
+        compass_core::keybinding::Direction::Up => Some(Direction::Up),
+        compass_core::keybinding::Direction::Down => Some(Direction::Down),
+        compass_core::keybinding::Direction::Left | compass_core::keybinding::Direction::Right => {
+            None
+        }
+    }
+}
+
 impl LauncherApp {
     /// Create a new launcher application, indexing the environment.
     pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
         let mut app = Self::with_index(AppIndex::from_environment());
         app.launcher = flags.launcher;
         app.window_config = flags.window_config;
+        app.keybinding = flags.keybinding;
         app.link = flags.link;
         (app, Task::none())
     }
@@ -215,6 +267,7 @@ impl LauncherApp {
             link: None,
             window: None,
             window_config: AppFlags::default().window_config,
+            keybinding: compass_core::keybinding::Scheme::default(),
             awaiting: false,
         }
     }
@@ -478,17 +531,27 @@ impl LauncherApp {
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
             Message::EventOccurred(_) => Task::none(),
-            Message::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
+            Message::Keyboard(iced::keyboard::Event::KeyPressed {
+                ref key, modifiers, ..
+            }) => {
                 use iced::keyboard::{Key, key::Named};
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
-                        self.update(Message::MoveSelection(Direction::Down))
+                        return self.update(Message::MoveSelection(Direction::Down));
                     }
                     Key::Named(Named::ArrowUp) => {
-                        self.update(Message::MoveSelection(Direction::Up))
+                        return self.update(Message::MoveSelection(Direction::Up));
                     }
-                    Key::Named(Named::Escape) => self.update(Message::Dismiss),
-                    _ => Task::none(),
+                    Key::Named(Named::Escape) => return self.update(Message::Dismiss),
+                    _ => {}
+                }
+
+                // A chord, if this one is. The scheme decides; `compass-core`
+                // owns which chords each scheme has, so this front end does
+                // not have a second opinion about it.
+                match chord_direction(self.keybinding, key.as_ref(), modifiers) {
+                    Some(direction) => self.update(Message::MoveSelection(direction)),
+                    None => Task::none(),
                 }
             }
             Message::Keyboard(_) => Task::none(),
@@ -685,6 +748,84 @@ mod tests {
             text: None,
             repeat: false,
         })
+    }
+
+    /// A `KeyPressed` for a character key with modifiers.
+    fn chord(character: &str, modifiers: iced::keyboard::Modifiers) -> Message {
+        Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Character(character.into()),
+            modified_key: iced::keyboard::Key::Character(character.into()),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    /// An app over the fixture corpus with several matching rows.
+    fn app_with_rows(dir: &std::path::Path) -> LauncherApp {
+        let mut app = app(dir);
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        assert!(app.results.len() > 1, "need several rows to move between");
+        app
+    }
+
+    #[test]
+    fn the_vim_chords_move_the_selection_because_they_are_the_linux_default() {
+        // `KeyBindingService::getMode` falls back to vim off macOS, so a user
+        // who has configured nothing still expects Ctrl+J and Ctrl+K to work.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+        assert_eq!(app.selected, 0);
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "Ctrl+J moved down");
+
+        let _ = app.update(chord("k", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0, "and Ctrl+K moved back");
+    }
+
+    #[test]
+    fn a_bare_letter_is_not_a_chord() {
+        // The negative that matters most: a handler that ignored modifiers
+        // would make the search field unusable, because every `j` typed would
+        // also move the selection.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::empty()));
+        assert_eq!(app.selected, 0, "a bare `j` moved the selection");
+    }
+
+    #[test]
+    fn a_chord_from_another_scheme_does_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Emacs;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0, "Ctrl+J is vim's, not emacs'");
+
+        let _ = app.update(chord("n", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "Ctrl+N is emacs' down");
+    }
+
+    #[test]
+    fn the_horizontal_chords_do_nothing_in_a_one_column_list() {
+        // Recognised by `compass-core`, dropped here on purpose rather than
+        // bound to something they do not mean.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("l", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(chord("h", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0);
     }
 
     #[test]

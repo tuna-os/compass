@@ -7,7 +7,8 @@
 //!   "launcher": {
 //!     "hotkey": "super+space",
 //!     "close_on_focus_loss": false,
-//!     "max_results": 50
+//!     "max_results": 50,
+//!     "keybinding": "default"
 //!   },
 //!   "extensions": {
 //!     "auto_update": true,
@@ -42,6 +43,13 @@ pub const DEFAULT_CLOSE_ON_FOCUS_LOSS: bool = false;
 
 /// Default for `launcher.max_results`.
 pub const DEFAULT_MAX_RESULTS: usize = 50;
+
+/// Default for `launcher.keybinding`.
+///
+/// The literal the C++ writes, and the one `KeyBindingService::getMode` reads
+/// as "the platform default" -- which on Linux is the vim chords. See
+/// [`crate::keybinding`].
+pub const DEFAULT_KEYBINDING: &str = "default";
 
 /// Default for `extensions.auto_update`.
 pub const DEFAULT_AUTO_UPDATE: bool = true;
@@ -106,6 +114,8 @@ pub struct LauncherConfig {
     close_on_focus_loss: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     max_results: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    keybinding: Option<String>,
 
     /// Keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -125,6 +135,21 @@ impl LauncherConfig {
     pub fn close_on_focus_loss(&self) -> bool {
         self.close_on_focus_loss
             .unwrap_or(DEFAULT_CLOSE_ON_FOCUS_LOSS)
+    }
+
+    /// The navigation chord scheme, as [`crate::keybinding::Scheme::from_config`] reads it.
+    ///
+    /// Defaults to [`DEFAULT_KEYBINDING`], which is the platform default and
+    /// therefore the vim chords on Linux.
+    #[must_use]
+    pub fn keybinding(&self) -> &str {
+        self.keybinding.as_deref().unwrap_or(DEFAULT_KEYBINDING)
+    }
+
+    /// The scheme [`keybinding`](Self::keybinding) names.
+    #[must_use]
+    pub fn keybinding_scheme(&self) -> crate::keybinding::Scheme {
+        crate::keybinding::Scheme::from_config(self.keybinding())
     }
 
     /// How many results the launcher shows. Defaults to [`DEFAULT_MAX_RESULTS`].
