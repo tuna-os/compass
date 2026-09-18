@@ -1964,8 +1964,29 @@ So, measured against the running code rather than the design note:
 | Phase 4 says | the worker does |
 |---|---|
 | UDS | **stdio** — `process.stdout` / `process.stdin` |
-| JSON-RPC 2.0 | **figura-generated RPC** — `import * as manager from "./proto/manager"`, generated from `figura/manager.fig` by `figura_compile` |
+| JSON-RPC 2.0 | **JSON-RPC 2.0** — the plan is right, and an earlier revision of this section said otherwise |
 | — | framing is a **4-byte big-endian length prefix**, not `Content-Length` headers and not newline-delimited |
+
+**A correction, made in the same sitting that introduced the error.** This
+section first claimed the payload was "figura-generated RPC, not JSON-RPC 2.0",
+reasoning from `import * as manager from "./proto/manager"` and assuming a
+binary codec behind it. Reading figura's own code settles it the other way.
+`src/lib/figura/src/codegen/typescript.hpp` emits
+
+```ts
+jsonrpc: "2.0";
+this.sendMessage({ jsonrpc: '2.0', method, params });
+this.transport.send(JSON.stringify(msg));
+const msg = JSON.parse(data) as JsonRpcMessage;
+```
+
+and the glaze backend emits a matching `std::string jsonrpc` with
+`glz::raw_json params`. `index.ts` corroborates it from the other end: it does
+`packet.toString("utf8")` before routing, which no binary codec would want.
+
+**figura is an IDL that generates JSON-RPC 2.0 bindings**, not a wire format of
+its own. So the payload is JSON text and the plan's encoding was never wrong —
+only its transport.
 
 `figura/` is the project's own IDL: `manager.fig` and `manager-extension.fig`
 define this boundary in 120 lines, and `figura_compile` generates both sides.
@@ -1973,24 +1994,29 @@ define this boundary in 120 lines, and `figura_compile` generates both sides.
 what the payload is made of"*, because the payload is a second RPC message from
 the `vicinae↔extension` spec (`tsapi.fig`, 357 lines).
 
-**This is a decision to take before the crate is written, not after.** Three ways
-out, and they are not equivalent:
+**With the encoding settled, what is left to decide is much smaller.** The host
+needs JSON-RPC 2.0 — which is off-the-shelf — inside a four-byte length prefix,
+over stdio rather than a socket. The `.fig` files define the method names and
+payload shapes, so the Rust types can be generated from them or hand-written and
+pinned to them, the way three other boundaries in this repository already are.
 
-1. **Speak figura from Rust.** Keeps `src/typescript/` untouched as the phase
-   requires. Costs a figura reader for Rust, or a hand-written codec pinned to
-   the `.fig` files the way `cpp_enum_values.rs` is pinned to the C++ header.
-2. **Change the worker's transport.** Contradicts "not rewritten", and the shim
-   is the reason Raycast extensions run at all.
-3. **Re-aim the phase at the protocol that exists** — amend the spec rather than
-   the code.
+The one real decision is the transport: **keep stdio**, which is what the worker
+does and what `src/typescript/` not being rewritten requires, or add UDS to the
+worker, which contradicts that constraint for no capability the host needs.
+Keeping stdio is the obvious answer; it is recorded here so that it is a
+decision rather than a default nobody noticed.
 
 Nothing here is hard. What makes it worth a section is *when* it is found: the
 phase is costed at 6–8 weeks, and the wire format is the first thing a host
-commits to. This is the fourth gate or spec in this document written against an
-artefact that was never checked — after Suite 0's `vicinae --engine=cpp --json
-query`, Phase 2's C++ `doctor`, and §8.4a. The pattern is consistent enough to
-state as a rule: **before building to a spec in this document, read the thing it
-describes.**
+commits to. The transport error joins Suite 0's `vicinae --engine=cpp --json
+query`, Phase 2's C++ `doctor`, and §8.4a — four specs written against an
+artefact nobody checked.
+
+And this section's own first draft joins them, which is the more useful half of
+the lesson: **reading one layer and inferring the next is the same mistake as
+not reading at all.** `./proto/manager` was read; what it generated was assumed.
+The rule, stated for both: before building to a spec — this document's or an
+import's — read the thing it describes, all the way down to the bytes.
 
 So the remaining roadmap is not a list of oversights to be closed in a sitting.
 It is the bulk of the port, and the honest next move is Phase 4's first slice:
