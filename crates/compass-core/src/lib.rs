@@ -53,6 +53,7 @@ pub mod glyph;
 pub mod keybinding;
 pub mod list_navigation;
 pub mod manifest;
+pub mod paste;
 pub mod power_commands;
 pub mod rank;
 pub mod root_items;

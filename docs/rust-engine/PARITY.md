@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 452 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute |
+| `compass-core` | 470 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,554** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,572** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,547;
-the 1,554 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,565;
+the 1,572 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -158,7 +158,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/news` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/paste` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/paste` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
@@ -554,6 +554,21 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `compass-core::paste` — a copy that happens even when the paste cannot
+
+`PasteService::pasteContent` calls `copyContent` first and only then asks whether the platform
+supports pasting. On a platform that does not, the content is on the clipboard and the caller is
+told `false`.
+
+Reproduced rather than tidied. It is arguably the more useful outcome — the person can paste it
+themselves — and reordering would break a caller that retried on `false`, which would then copy
+twice. `a_platform_that_cannot_paste_still_gets_the_copy` pins both halves: the copy happened, and
+nothing was scheduled.
+
+The timeout path is the same kind of thing and is pinned the same way: when focus never lands the
+paste is dropped and the clipboard is *not* restored, so what was copied is still there. A port that
+helpfully restored it would take away the only consolation prize the failure has.
 
 ### `compass-core::audio_control` — a volume that is not a number no longer takes the process down
 
