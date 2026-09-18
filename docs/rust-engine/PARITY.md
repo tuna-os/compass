@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 593 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog |
+| `compass-core` | 614 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, the extension store |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,695** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,716** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,688;
-the 1,695 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,709;
+the 1,716 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -143,7 +143,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/desktop-notification` | `compass-notify` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -554,6 +554,19 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `compass-core::extension_store` — a search query that is actually escaped
+
+`VicinaeStoreService::search` builds its URL with
+`QString("/store/search?q=%1").arg(query)`, which substitutes the query verbatim. A query containing
+`&`, `#` or `=` therefore changes the *shape* of the URL rather than the value of `q`: searching the
+store for `a & b` asks the server for `q=a ` plus a parameter called ` b`, and searching for `c#`
+sends `q=c` with a fragment.
+
+The port percent-encodes the value. Everything unreserved is left alone, so an ordinary search
+produces byte-identical output to the C++ and only the queries that were already broken change.
+`an_ordinary_search_makes_the_url_it_always_made` pins the first half and
+`a_search_containing_an_ampersand_stays_one_parameter` the second.
 
 ### `compass-core::semver` — an overflowing component is refused rather than wrapped
 
