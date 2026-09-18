@@ -33,6 +33,7 @@
 
 #![deny(missing_docs)]
 
+pub mod alert;
 pub mod app_service;
 pub mod app_windows;
 pub mod apps;

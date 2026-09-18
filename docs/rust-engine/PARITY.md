@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 405 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue |
+| `compass-core` | 424 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 171 | the extension host: framing, sandboxed spawn, 44 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,491** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,510** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,484;
-the 1,491 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,503;
+the 1,510 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -217,7 +217,7 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 | `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ❌ | ❌ |
 | `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/alert` | 279 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 The single 🟡 is `windows`, and it is generous: `compass-ui` opens one window, shows a text input
 and a result list, moves a selection with the arrow keys, launches on Enter and dismisses on
@@ -552,6 +552,22 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `compass-core::alert` — a replaced alert is a cancelled alert, and the caller has to be told
+
+`AlertModel::handleAlertRequested` calls `triggerCancel()` on the alert already showing before it
+takes the new one. The TypeScript API documents the consequence — "Calling this function when
+another alert is currently pending will result in the pending alert to be automatically canceled" —
+and it matters because the cancelled alert is some extension's un-settled promise.
+
+So [`AlertModel::show`] returns the previous alert's resolution rather than dropping it. That is a
+shape change from the C++, where the resolution goes out through a callback the widget owns, and it
+is deliberate: a caller that ignores a `#[must_use]`-shaped return is a caller a compiler can
+complain about, where a caller that forgets to connect a signal is not.
+
+The port also keeps the C++'s routing of *every* exit that is not the confirm button — cancel,
+navigating away, being replaced — through one place that answers `false`. A fifth exit added later
+should have to opt in to `true` rather than out of it.
 
 ### `compass-platform-linux::keyboard` — four modifiers that are declared and ignored
 
