@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 244 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks |
+| `compass-core` | 390 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 171 | the extension host: framing, sandboxed spawn, 44 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 2 |  |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,306** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,452** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,299;
-the 1,306 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,445;
+the 1,452 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -135,13 +135,13 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/app-service` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ⏳ |
 | `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/autostart` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/calculator-service` | `compass-local-storage` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/services/desktop-notification` | `compass-notify` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
@@ -523,6 +523,35 @@ Implementing it would be the more useful behaviour and the wrong port: the exten
 from the reply which host it is talking to, so a Compass that updated the toast would show text a
 Vicinae user never sees, and an extension author would tune their toasts against the wrong one. When
 the C++ grows a body, this test is the one that should fail.
+
+### `compass-core::slug` — two regex passes that reach the same string as one
+
+Qt's `slugify` replaces `[\s_]+` with the separator, which collapses a run of whitespace in that
+one pass, and then collapses runs of the separator in a later pass. The Rust port writes one
+separator per whitespace character and lets the later collapse do both jobs. It also drops the
+C++'s early return on an empty input, which cannot change the result because an empty string falls
+through every remaining step unchanged.
+
+This is recorded rather than silently done because it was found by a control that did not fire:
+mutating the whitespace-run logic changed nothing observable, because the collapse pass rescued it.
+A behaviour guarded twice is a behaviour whose guard cannot be tested, so the redundant guard went.
+`a_run_of_whitespace_makes_one_separator_not_many` still pins the property, and now fails when the
+single remaining rule is broken.
+
+### `compass-core::boilerplate` — two commands with the same slug, and the first one wins
+
+`QFile::copy` refuses to overwrite an existing destination and reports the failure through a return
+value the C++ does not check. So an extension generated with two commands whose titles slugify alike
+— "Show Things" and "show things" — gets two entries in its manifest and one source file, holding
+the *first* command's template. The second command points at a file that is not the template it
+asked for.
+
+The port reproduces this, and `two_commands_that_slugify_alike_do_not_clobber_each_other` pins it,
+because the alternative readings are both worse: overwriting would make the *second* command win and
+leave the first pointing at the wrong template instead, and rejecting the config outright would fail
+a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
+test is named for what it protects, and is the one that should fail when the C++ starts checking
+that return value.
 
 ### `compass-core::root_items` — a hash order made deterministic
 

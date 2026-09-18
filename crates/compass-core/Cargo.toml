@@ -18,6 +18,7 @@ getrandom.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
 tracing.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 compass-testkit.workspace = true

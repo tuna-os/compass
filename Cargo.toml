@@ -46,6 +46,9 @@ clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
 ashpd = { version = "0.13", default-features = false, features = ["tokio"] }
 toml = "0.9"
+# `slugify` normalises to NFD before stripping non-ASCII, so an accented
+# letter keeps its base form. See crates/compass-core/src/slug.rs.
+unicode-normalization = "0.1"
 
 # Clipboard-at-rest crypto. See crates/compass-crypto/src/lib.rs for why these
 # and not the `openssl` crate.
