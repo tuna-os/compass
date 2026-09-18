@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,205 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the indexer's entry filter and query policy |
+| `compass-core` | 1,224 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,354** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,373** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,354 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,373 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -188,7 +188,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -353,6 +353,29 @@ order because the C++ collects into a `std::set` and the port returns a `BTreeSe
 is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
 Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
 reads, and the process that carries them.
+
+**`src/builtins/internal` → `compass-core::internal_commands`** — a hidden extension holding one
+command: a fixed Markdown document rendered to check that every construct the renderer claims to
+support actually renders. This row is **green rather than partial**, because there is nothing else
+in the directory — the view that displays the document is shared with the store intro and belongs to
+that row.
+
+The document is a *test fixture that ships*, and it is treated as one. It was copied out of the C++
+raw string literal mechanically rather than retyped, because a fixture whose job is to exercise a
+renderer is exactly where a character typed wrong still looks right in review; its byte and line
+counts are pinned so a later edit cannot quietly resize it. The tests then enumerate what it must
+contain — five heading levels, the five inline styles, both kinds of line break, six labelled code
+languages *and* an unlabelled fence, both list kinds, a table with all three column alignments,
+inline formatting inside a list item and inside a table cell, both blockquote shapes including the
+empty quoted line that makes a second paragraph, all five callout kinds, a plain image and an image
+wrapped in a link, a horizontal rule, and the closing line that is the only way to see from the
+rendered page that nothing was truncated. Each of those is a separate path through the renderer, so
+a missing one is a missing code path rather than a missing sentence, and every one of them has a
+control that deletes it from the document.
+
+One thing is kept as it is: the extension's display name and description are the same string in the
+C++. It is not meant to be found by searching, so a description distinguishing it from its own name
+would be describing it to nobody.
 
 **`src/builtins/file` → `compass-core::file_search`** — when a query is read as a path rather than a
 search, which of three result modes the view is in, how a late answer is discarded, and how the

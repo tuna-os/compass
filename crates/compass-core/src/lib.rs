@@ -60,6 +60,7 @@ pub mod glyph;
 pub mod glyph_service;
 pub mod image_url;
 pub mod input_server;
+pub mod internal_commands;
 pub mod keybinding;
 pub mod list_navigation;
 pub mod manifest;
