@@ -173,14 +173,13 @@ echo "=== 2. the screen with the launcher open ==="
 sudo -E "$corral_bin" screenshot "$vm" -o "$out/launcher-01-open.png" --require-paint
 
 echo
-echo "=== 3. type a query at it (EXPECTED TO DO NOTHING — see below) ==="
-# Kept, and labelled, rather than deleted: its screenshot is evidence about key
-# DELIVERY, not about the launcher's input handling, and nothing here asserts
-# that the query reaches our window.
+echo "=== 3. type a query at it ==="
+# THIS STEP NOW ASSERTS SOMETHING, and the history of why it did not is worth
+# keeping, because the comment has been wrong twice and each correction was paid
+# for by a run.
 #
-# This comment has been wrong twice and the corrections are kept, because each
-# one was paid for by a run. It first said injection "does not reach this
-# session at all"; the evdev capture disproved that, and the chain is longer:
+# It first said injection "does not reach this session at all"; the evdev
+# capture disproved that, and the chain is longer:
 #
 #   QEMU delivers the scancode          yes — 288 bytes captured on the evdev
 #                                        node while the key was injected
@@ -218,17 +217,39 @@ echo "=== 3. type a query at it (EXPECTED TO DO NOTHING — see below) ==="
 # Spike A's question -- but it is no longer explained by input not arriving, and
 # the next person should not spend a run on logind.
 #
-# What this step asserts is unchanged, which is nothing: it types at the session
-# and screenshots the result. Now that the overview is dismissed first, the keys
-# go to whatever holds the focus, and if that is ever our window this frame is
-# where it will show.
+# With the overview dismissed and the tour gone, the keys reach whatever holds
+# the focus, and our window is the only window on the desktop. On the run that
+# first got there, `launcher-02-typed.png` came back BYTE-IDENTICAL to
+# `launcher-01-open.png`: the launcher drew a search box and ignored the
+# keyboard. That was #91, and the cause was in our code -- Iced delivers typed
+# characters only to a `text_input` that holds widget focus, and nothing ever
+# focused ours. A person trying the launcher clicks the box without noticing
+# they did; the tier only types, which is why the tier found it.
 #
-# Deleting it would lose the regression check for free — the day the query
-# lands in OUR field rather than the session's, this frame changes and says so.
-# Leaving it unlabelled would be worse than either, because it reads as a test
-# of the launcher's input handling, which it is not.
+# So the gate below is the regression check for that fix, and the floor is
+# deliberately near zero rather than fitted. What is being asserted is "the
+# keystroke reached our field at all", which is threshold-free; how many pixels
+# two characters and a results list move has not been measured yet, and ADR-0010
+# is explicit that inventing a number before seeing one is how a tier starts
+# flaking. The run prints the real figure, and the floor can be raised from data
+# in a two-line change once a few runs agree.
+#
+# The box and the ignored strips are the launcher gate's, for the same reasons
+# given there: the region that may change is the window, and the clock and the
+# dash are not ours to keep still.
+#
+# CONTROLLED, on the published artifact of run 35285035604 rather than on a
+# claim: these exact arguments against that run's two frames exit 1 with
+# "FAIL: only 0.00% of pixels changed, expected at least 0.10%".
 sudo -E "$corral_bin" type "$vm" "$query"
 shot "launcher-02-typed.png"
+
+echo
+echo "=== 3a. did the query reach OUR field? (the gate, #91) ==="
+python3 scripts/vmtest/framediff.py \
+  "$out/launcher-01-open.png" "$out/launcher-02-typed.png" \
+  --min-percent 0.1 --expect-box 300 140 980 800 \
+  --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799
 
 echo
 echo "=== 3b. and is it blocked in the same place after the keystroke? ==="
