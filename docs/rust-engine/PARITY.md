@@ -63,7 +63,7 @@ that. The plan has been corrected.
 | `compass-core` | 1,452 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
-| `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
+| `compass-xdg` | 174 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
 | `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
 | `compass-extension-api` | 73 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
 | `compass-ipc` | 73 | framing, transport, single-instance |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,641** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,664** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,641 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,664 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -245,9 +245,39 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 
 - the `xdg-terminal-exec` draft extension (`X-TerminalArg*` typed accessors; the keys are readable
   through `Reader` today);
-- the `DesktopFile` layer — `fromId`, `relativeId`, directory search. `from_file` and
-  `ParseOptions::{id,path}` exist, but id computation and lookup are a separate pass;
+- the sibling modules below (the `DesktopFile` layer itself is now ported as
+  `compass_xdg::desktop_file`: `relativeId`, `fromId`'s two-candidate lookup, and the standalone
+  filename id, with 24 tests and 16 controls);
 - the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
+
+
+#### An unresolved disagreement: two desktop file id schemes
+
+Porting `relativeId` turned up a disagreement between the two engines that nothing was recording.
+
+The XDG Desktop Entry Specification says a desktop file ID is the path below the applications
+directory with `/` turned into **`-`**. The C++ turns it into **`.`**. For a file directly in the
+directory the two agree; for anything nested they do not — `kde4/konsole.desktop` is
+`kde4-konsole.desktop` by the specification and `kde4.konsole.desktop` by the C++.
+
+This matters because the id is the key. `xdg-app-database.cpp` keys every application by
+`relativeId`, and that id is what an application's frecency score, alias, and enabled or disabled
+state are stored under. `compass_xdg::scan` keys by `desktop_file_id`, which follows the
+specification. **So the two engines would not find each other's records for any nested
+application** — a user moving from one to the other would silently lose per-app state for anything
+installed in a subdirectory, which is where distribution-packaged KDE and GNOME applications often
+live.
+
+Both functions now exist, named for what they are, and a test pins the disagreement in both
+directions so neither can be changed by accident. Which one the Rust engine should key on is a
+decision about migrating stored data — keep the C++'s and inherit its divergence from the
+specification, or keep the specification's and migrate existing records — and that belongs to
+whoever owns the data, not to whichever function a caller reached for first. It is recorded here
+rather than resolved.
+
+The dotted scheme has a second property worth knowing if it is kept: because the `.desktop` suffix
+is part of the id, it is indistinguishable from a separator. An id of `kde4.konsole.desktop` could
+be a nested `konsole` or a flat file of that exact name, and nothing recovers the difference.
 
 **`src/extension/api` → `compass-worker-host`** — the extension API's service adapters. `Storage`,
 three of `OAuth`'s four, `UI/render`, `FileSearch/search` and all four `Clipboard` methods are
