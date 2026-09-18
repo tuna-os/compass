@@ -1952,6 +1952,7 @@ Ordered by what blocks what, not by size.
 | session routing (event → service → reply) | done |
 | `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
+| finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
 | `UI` (toasts, navigation, HUD, alerts, selected text) | **not started**; 14 of `UI`'s 15 methods. `render` lands the tree and the handler-activation event; the rest need a front end for extensions, and a `showToast` that accepted the call and did nothing would leave an extension believing the user had been told something |
 | `Clipboard`, `Application`, `WindowManagement`, `FileSearch`, `Command`, `Wallpaper`, `BrowserExtension` | **not started**; 24 methods, most of which are a thin call into a service Phase 5 also needs |
 | `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |

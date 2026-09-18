@@ -732,3 +732,248 @@ mod tests {
         assert!(parsed.preferences.is_empty());
     }
 }
+
+/// Finding installed extensions on disk.
+///
+/// Ports `ExtensionRegistry::extensionDirectories` and `scanAll`
+/// (`src/server/src/services/extension-registry/extension-registry.cpp`)
+/// together with `Omnicast::dataSearchPaths`.
+///
+/// # Shadowing is by directory name, and the first one wins
+///
+/// The same extension can exist in several places — a user's own copy under
+/// `$XDG_DATA_HOME/vicinae/extensions` and a packaged one under
+/// `/usr/share/vicinae/extensions`. The C++ keeps the first it sees and logs
+/// that the later one is "shadowed by extension with same directory name in
+/// higher precedence directory", so the user's copy wins. Reproduced, and
+/// reported rather than only logged.
+pub mod registry {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    use super::{Error, ExtensionManifest};
+
+    /// The application's own data directory name under each XDG root.
+    ///
+    /// Still `vicinae`: it is where the C++ writes, where an installed
+    /// extension already is, and renaming it would strand every extension a
+    /// user has. Changing it is a migration, not a port.
+    pub const DATA_DIR_NAME: &str = "vicinae";
+
+    /// The subdirectory extensions live in.
+    pub const EXTENSIONS_SUBDIR: &str = "extensions";
+
+    /// Where extensions are looked for, highest precedence first.
+    ///
+    /// `$XDG_DATA_HOME/vicinae/extensions`, then each `$XDG_DATA_DIRS`
+    /// entry's. A system directory that is the same path as the user one is
+    /// left out, as `dataSearchPaths` leaves it out.
+    #[must_use]
+    pub fn search_paths_for(data_home: Option<&Path>, data_dirs: &[PathBuf]) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let user = data_home.map(|home| home.join(DATA_DIR_NAME).join(EXTENSIONS_SUBDIR));
+
+        if let Some(user) = &user {
+            paths.push(user.clone());
+        }
+        for dir in data_dirs {
+            let path = dir.join(DATA_DIR_NAME).join(EXTENSIONS_SUBDIR);
+            if Some(&path) != user.as_ref() {
+                paths.push(path);
+            }
+        }
+        paths
+    }
+
+    /// [`search_paths_for`], from this process's environment.
+    #[must_use]
+    pub fn search_paths() -> Vec<PathBuf> {
+        search_paths_for(
+            compass_xdg::xdg_dirs::data_home().as_deref(),
+            &compass_xdg::xdg_dirs::data_dirs(),
+        )
+    }
+
+    /// What a scan found.
+    #[derive(Debug, Default)]
+    pub struct Scan {
+        /// The manifests that loaded, in precedence order.
+        pub extensions: Vec<ExtensionManifest>,
+        /// Directories skipped because a higher-precedence one has the same
+        /// name, as `(shadowed, winner)` pairs.
+        pub shadowed: Vec<(PathBuf, PathBuf)>,
+        /// Directories whose manifest would not load, and why.
+        pub failed: Vec<(PathBuf, Error)>,
+    }
+
+    /// Scans `paths` in order, keeping the first extension of each name.
+    ///
+    /// A directory whose name starts with a dot is skipped — that is how the
+    /// C++ ignores the `.staging-*` directories an install writes. A missing
+    /// search path is not an error: most machines have only one.
+    #[must_use]
+    pub fn scan(paths: &[PathBuf]) -> Scan {
+        let mut scan = Scan::default();
+        let mut installed: BTreeMap<String, PathBuf> = BTreeMap::new();
+
+        for root in paths {
+            let Ok(entries) = std::fs::read_dir(root) else {
+                continue;
+            };
+
+            let mut directories: Vec<PathBuf> = entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .map(|entry| entry.path())
+                .collect();
+            // `directory_iterator` has no defined order; sorting makes a scan
+            // reproducible, which matters for the shadowing report.
+            directories.sort();
+
+            for path in directories {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if name.starts_with('.') {
+                    continue;
+                }
+
+                if let Some(winner) = installed.get(name) {
+                    scan.shadowed.push((path.clone(), winner.clone()));
+                    continue;
+                }
+
+                match ExtensionManifest::from_directory(&path) {
+                    Ok(manifest) => {
+                        installed.insert(name.to_owned(), path);
+                        scan.extensions.push(manifest);
+                    }
+                    Err(error) => scan.failed.push((path, error)),
+                }
+            }
+        }
+
+        scan
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::registry::{scan, search_paths_for};
+    use std::path::{Path, PathBuf};
+
+    /// An extension directory with a minimal manifest.
+    fn install(root: &Path, name: &str, title: &str) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).expect("the extension directory");
+        std::fs::write(
+            dir.join("package.json"),
+            format!(r#"{{"name": "{name}", "title": "{title}"}}"#),
+        )
+        .expect("the manifest");
+        dir
+    }
+
+    #[test]
+    fn the_user_directory_comes_before_the_system_ones() {
+        let paths = search_paths_for(
+            Some(Path::new("/home/u/.local/share")),
+            &[
+                PathBuf::from("/usr/share"),
+                PathBuf::from("/usr/local/share"),
+            ],
+        );
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("/home/u/.local/share/vicinae/extensions"),
+                PathBuf::from("/usr/share/vicinae/extensions"),
+                PathBuf::from("/usr/local/share/vicinae/extensions"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_system_directory_that_is_the_user_one_is_not_searched_twice() {
+        // `if (p != user)` in `dataSearchPaths`. Without it an extension in a
+        // repeated directory would shadow itself and be reported as such.
+        let paths = search_paths_for(
+            Some(Path::new("/data")),
+            &[PathBuf::from("/data"), PathBuf::from("/usr/share")],
+        );
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("/data/vicinae/extensions"),
+                PathBuf::from("/usr/share/vicinae/extensions"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_first_directory_of_a_name_wins_and_the_rest_are_reported() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let user = dir.path().join("user");
+        let system = dir.path().join("system");
+        let mine = install(&user, "hackernews", "Mine");
+        let theirs = install(&system, "hackernews", "Packaged");
+
+        let result = scan(&[user, system]);
+        assert_eq!(result.extensions.len(), 1);
+        assert_eq!(
+            result.extensions[0].title, "Mine",
+            "the user's copy is the one that loads"
+        );
+        assert_eq!(result.shadowed, vec![(theirs, mine)]);
+    }
+
+    #[test]
+    fn a_dotted_directory_is_skipped_because_that_is_how_an_install_stages() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = dir.path().join("extensions");
+        install(&root, ".staging-hackernews", "Half installed");
+        install(&root, "hackernews", "Installed");
+
+        let result = scan(&[root]);
+        let titles: Vec<&str> = result.extensions.iter().map(|e| e.title.as_str()).collect();
+        assert_eq!(titles, vec!["Installed"]);
+    }
+
+    #[test]
+    fn a_directory_without_a_manifest_is_reported_rather_than_skipped() {
+        // The C++ logs it as "Failed to load bundle at". Silently ignoring it
+        // would leave a user wondering why their extension does not appear.
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = dir.path().join("extensions");
+        std::fs::create_dir_all(root.join("broken")).expect("a directory");
+        install(&root, "working", "Works");
+
+        let result = scan(std::slice::from_ref(&root));
+        assert_eq!(result.extensions.len(), 1);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].0, root.join("broken"));
+    }
+
+    #[test]
+    fn a_search_path_that_does_not_exist_is_not_an_error() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = dir.path().join("extensions");
+        install(&root, "one", "One");
+
+        let result = scan(&[dir.path().join("nowhere"), root]);
+        assert_eq!(result.extensions.len(), 1);
+        assert!(result.failed.is_empty());
+    }
+
+    #[test]
+    fn a_file_among_the_directories_is_ignored() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = dir.path().join("extensions");
+        install(&root, "one", "One");
+        std::fs::write(root.join("README"), "not an extension").expect("a file");
+
+        let result = scan(&[root]);
+        assert_eq!(result.extensions.len(), 1);
+        assert!(result.failed.is_empty(), "{:?}", result.failed);
+    }
+}
