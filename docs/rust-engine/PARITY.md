@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,355 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the indexer's entry filter and query policy |
+| `compass-core` | 1,413 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,544** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,602** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,544 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,602 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -961,15 +961,48 @@ before the last dot: `a.tar.gz` becomes `a@dark.tar.gz`, and `~/.local/share/log
 
 `compass-core::entry_filter` is a complete port of `entry-filter.cpp` — the rules deciding which
 directory entries the indexer walks into — `compass-core::query_policy` of
-`file-indexer-query-policy.cpp`, which decides what a typed query asks the index, and
+`file-indexer-query-policy.cpp`, which decides what a typed query asks the index,
 `compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
-all. Between them, 100 tests and 68 controls. The row stays ❌ anyway.
+all, and `compass-core::query_ranking` of the scoring half of `file-indexer-query-engine.cpp`, which
+decides what order the answers come back in. Between them, 158 tests and 117 controls. The row stays
+❌ anyway.
 
 It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
 its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
-Three files of those fifteen are not the row, and marking it 🟡 would put a colour on this ledger that
-means "a model landed without its backend" when what actually happened is "a fifteenth of the row
-landed". The percentage in PLAN.md is only worth anything if a row's colour means one thing.
+Four files of those fifteen are not the row — about 995 lines of the 5,646, a fifth — and marking it
+🟡 would put a colour on this ledger that means "a model landed without its backend" when what
+actually happened is "a fifth of the row landed". The percentage in PLAN.md is only worth anything
+if a row's colour means one thing. **So this work moves the Phase 5 figure by nothing, and that is
+the right answer rather than a disappointing one.**
+
+The ranking is the fourth leg. A fuzzy score alone would rank an editor's swap file above the file
+it is a swap of, and `finalreport.pdf` above `report.pdf`. Every multiplier in the engine exists to
+stop one of those, and each is now pinned with a test naming what it prevents:
+
+- The substring bonus applies to the **remaining headroom** — `score + (100 - score) * bonus` —
+  rather than multiplying the score. A candidate already near 100 gains almost nothing and one at 40
+  gains a lot, so the bonus re-orders the middle of the list without letting a weak match overtake a
+  strong one, and cannot push anything past 100.
+- A token-start match is worth 1.5 and an inner one 1.05. The second is a tie-break rather than a
+  ranking, because a query buried inside a longer word is weak evidence; treating it as strong is
+  exactly what would put `finalreport.pdf` above `report.pdf`. The boundary test is
+  **alphanumeric**, so `2024report` is one word to the ranker as it is to a reader.
+- Editor and compiler leavings are **demoted, not removed**: a swap file is sometimes what you are
+  looking for right after a crash, and a search that cannot find it is worse than one that ranks it
+  last.
+- A correction plan is an **and**. One word scoring zero drops the whole plan, because a correction
+  finding files that match two of its three words is not a reading of the query but a different
+  query. The surviving words are averaged rather than summed, so a three-word plan is not worth
+  three times a one-word plan, and each is normalised against what it scores against *itself*, or a
+  six-letter word would always outscore a three-letter one on the same quality of match.
+- The four sort keys each exist because the one before it ties, and the third is the interesting
+  one: a file comes before a directory, because a directory matching as well as a file inside it is
+  usually not what was meant — the file is the thing you open.
+
+One line of the C++ is deliberately not carried over, and a control is why: the guard against a
+query longer than the text is unreachable here, since the loop's own bound already covers it. The
+*empty*-query guard beside it is kept and is load-bearing — `find("")` succeeds at offset 0, which
+would make every text a token-start match.
 
 What the ports are worth is not in the score. An indexer that walks `/proc` never finishes, and one
 that walks `~/.cargo/registry` fills the index with vendored sources that rank above the file
