@@ -76,6 +76,7 @@ pub mod shortcut_form;
 pub mod shortcut_store;
 pub mod slug;
 pub mod snippet;
+pub mod snippet_expander;
 pub mod snippet_form;
 pub mod system_run;
 pub mod telemetry;

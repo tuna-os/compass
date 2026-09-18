@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 894 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, the indexer's entry filter and query policy |
+| `compass-core` | 924 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,996** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,026** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,989;
-the 1,996 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,019;
+the 2,026 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -167,7 +167,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -733,6 +733,25 @@ the same answer. Two controls pin it — taking the last channel instead, and av
 which fail the suite. (Swapping the `BTreeMap` for a `HashMap` does *not* reliably fail it, which is
 a defect in that mutation rather than in the test: it makes the result vary per process instead of
 being wrong in a fixed way, so a suite that passed once proves nothing either way.)
+
+### `compass-core::snippet_expander` — an argument value is not marked as a placeholder
+
+Every substitution the expander makes is pushed with `placeholder = true` except one: an argument's
+value goes in through `result.parts.emplace_back(it2->second)`, which takes the struct's default of
+`false`. So whatever highlights placeholders in a preview shows a clipboard or a date as
+substituted and an argument's value as ordinary text.
+
+Reproduced rather than unified. It is arguably the right answer — the person typed that value, so it
+*is* their text — and changing it would alter what an existing preview highlights without anyone
+having asked. `substituted_placeholders_are_marked_and_arguments_are_not` pins it either way.
+
+Two more worth knowing, both found by writing the tests rather than by reading the code. A shell
+placeholder whose command contains spaces must be quoted: the parser ends an unquoted value at the
+first space and then drops the whole placeholder, so `{shell code=rm -rf /tmp/x}` expands to nothing
+at all. That is the safe failure — nothing dangerous is half-run — and it now has a test saying so.
+And the shell result index advances whether or not a result was available, so a run that returned
+fewer outputs than there were placeholders shows each remaining one as its own `$(code)` rather than
+shifting every later one onto the wrong command.
 
 ### `compass-core::font_service` — two tables extracted, not retyped
 
