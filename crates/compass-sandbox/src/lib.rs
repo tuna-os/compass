@@ -28,6 +28,8 @@
 //! ruleset. The default is [`Mode::Strict`]: a worker running unconfined
 //! because of an old kernel is a decision, not a default.
 
+pub mod syscalls;
+
 use std::path::{Path, PathBuf};
 
 use landlock::{
@@ -110,7 +112,7 @@ pub enum Error {
 /// Everything not named here is denied: there is no "allow the rest". A policy
 /// with no paths at all is a process that can open nothing, which is a valid
 /// and occasionally useful thing to ask for.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Policy {
     /// Directories and files that may be read.
     pub read: Vec<PathBuf>,
@@ -123,6 +125,23 @@ pub struct Policy {
     pub execute: Vec<PathBuf>,
     /// What to do about a partially-enforced ruleset.
     pub mode: Mode,
+    /// Whether to install the syscall denylist as well.
+    ///
+    /// On by default. Turning it off is for measuring what it costs, not for
+    /// running an extension — see [`syscalls`].
+    pub syscall_filter: bool,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self {
+            read: Vec::new(),
+            write: Vec::new(),
+            execute: Vec::new(),
+            mode: Mode::default(),
+            syscall_filter: true,
+        }
+    }
 }
 
 impl Policy {
@@ -158,6 +177,13 @@ impl Policy {
     #[must_use]
     pub fn mode(mut self, mode: Mode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    /// Turns the syscall filter off.
+    #[must_use]
+    pub fn without_syscall_filter(mut self) -> Self {
+        self.syscall_filter = false;
         self
     }
 
@@ -225,6 +251,9 @@ impl Policy {
         if self.mode == Mode::BestEffort {
             args.push("--best-effort".to_owned());
         }
+        if !self.syscall_filter {
+            args.push("--no-syscall-filter".to_owned());
+        }
         args
     }
 
@@ -279,6 +308,7 @@ where
             "--write" => policy.write.push(value()?.into()),
             "--execute" => policy.execute.push(value()?.into()),
             "--best-effort" => policy.mode = Mode::BestEffort,
+            "--no-syscall-filter" => policy.syscall_filter = false,
             "--" => {
                 rest.extend(args.map(|a| a.as_ref().to_owned()));
                 break;
@@ -339,6 +369,21 @@ mod tests {
         // An ignored flag is a policy that is quietly weaker than it reads.
         assert!(parse_args(["--allow-everything"]).is_err());
         assert!(parse_args(["--read"]).is_err(), "a flag with no value");
+    }
+
+    #[test]
+    fn the_syscall_filter_is_on_by_default_and_has_to_be_turned_off_explicitly() {
+        assert!(Policy::new().syscall_filter);
+        assert!(
+            !Policy::new()
+                .args()
+                .contains(&"--no-syscall-filter".to_owned())
+        );
+
+        let off = Policy::new().without_syscall_filter();
+        assert!(off.args().contains(&"--no-syscall-filter".to_owned()));
+        let (parsed, _) = parse_args(off.args()).expect("parse");
+        assert!(!parsed.syscall_filter);
     }
 
     #[test]

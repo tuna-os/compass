@@ -10,6 +10,16 @@
 //! compass-sandbox-exec --read /usr/share --write /tmp/w -- /usr/bin/node worker.js
 //! ```
 //!
+//! The syscall filter goes on after the filesystem boundary. With today's
+//! denylist the order makes no difference -- swapping the two changes no test
+//! -- because `landlock_*` is not on the list and everything unnamed is
+//! allowed. It is written this way for the day the filter becomes an
+//! allowlist, when a filter installed first would have to name the three
+//! Landlock syscalls or refuse the boundary it is meant to reinforce.
+//!
+//! `--no-syscall-filter` leaves it off, which is for measuring what the filter
+//! costs, not for running an extension.
+//!
 //! Anything after `--` is the program and its arguments, so a worker whose own
 //! flags happen to be spelled like these is not misread.
 
@@ -43,6 +53,16 @@ fn main() -> ExitCode {
     // names has already been checked to exist, and from here this process is
     // confined whatever happens next.
     if let Err(error) = policy.apply() {
+        eprintln!("compass-sandbox-exec: {error}");
+        return ExitCode::from(EXIT_SANDBOX);
+    }
+
+    // After Landlock -- see the module docs for why the order is written this
+    // way even though it does not bite yet.
+    if policy.syscall_filter
+        && let Err(error) =
+            compass_sandbox::syscalls::deny(&compass_sandbox::syscalls::default_numbers())
+    {
         eprintln!("compass-sandbox-exec: {error}");
         return ExitCode::from(EXIT_SANDBOX);
     }

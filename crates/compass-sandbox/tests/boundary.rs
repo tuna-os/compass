@@ -334,3 +334,109 @@ fn best_effort_is_not_the_default() {
             .contains(&"--best-effort".to_owned())
     );
 }
+
+/// A binary on this system, or `None`.
+fn binary(name: &str) -> Option<PathBuf> {
+    ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        .into_iter()
+        .map(|dir| Path::new(dir).join(name))
+        .find(|path| path.exists())
+}
+
+#[test]
+fn a_denied_syscall_is_refused_and_the_same_call_works_without_the_filter() {
+    // `unshare(2)` is on the default denylist because new namespaces are how a
+    // confined process gets out of one. The `unshare` binary is the shortest
+    // way to make a real program issue it.
+    let Some(unshare) = binary("unshare") else {
+        panic!("no unshare on this system; this test needs a real caller of a denied syscall");
+    };
+    let Some(r#true) = binary("true") else {
+        panic!("no true on this system");
+    };
+
+    let args = [
+        "--user".to_owned(),
+        "--map-root-user".to_owned(),
+        r#true.to_string_lossy().into_owned(),
+    ];
+
+    // The control, first: unsandboxed, this succeeds here. If it does not, the
+    // denial below proves nothing.
+    let plain = Command::new(&unshare)
+        .args(&args)
+        .output()
+        .expect("unshare runs");
+    assert!(
+        plain.status.success(),
+        "the unsandboxed control failed, so this machine cannot answer the question: {}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+
+    // The second control: the same call, behind the same policy, with the
+    // filter turned off. This separates "the syscall filter denied it" from
+    // "Landlock denied something on the way" -- `unshare --map-root-user`
+    // writes /proc/self/uid_map, so the policy has to allow /proc or the
+    // control fails for the wrong reason, and the test would then pass while
+    // measuring nothing.
+    let policy = runnable().read("/proc").write("/proc");
+    let (ok, stderr) = run(&policy.clone().without_syscall_filter(), &unshare, &args);
+    assert!(
+        ok,
+        "unshare could not run even with the filter off, so this test cannot tell a denial \
+         from a broken policy: {stderr}"
+    );
+
+    // The assertion.
+    let (ok, _) = run(&policy, &unshare, &args);
+    assert!(
+        !ok,
+        "unshare succeeded behind the syscall filter: the filter is installed and inert"
+    );
+}
+
+#[test]
+fn ptrace_is_refused_while_ordinary_work_continues() {
+    // The one branch here that is about the machine rather than the boundary:
+    // without strace there is no program on a stock system that calls
+    // `ptrace` on purpose. The denial is still covered by the list test, and
+    // by `a_denied_syscall_is_refused...`, which uses a different syscall.
+    let Some(strace) = binary("strace") else {
+        eprintln!("note: no strace on this system; skipping the ptrace half");
+        return;
+    };
+    let Some(r#true) = binary("true") else {
+        panic!("no true on this system");
+    };
+
+    let args = [
+        "-o".to_owned(),
+        "/dev/null".to_owned(),
+        r#true.to_string_lossy().into_owned(),
+    ];
+
+    let permissive = runnable().read("/dev/null").write("/dev/null");
+    let (ok, stderr) = run(&permissive.clone().without_syscall_filter(), &strace, &args);
+    assert!(
+        ok,
+        "strace could not run even with the filter off, so a denial below would prove \
+         nothing: {stderr}"
+    );
+
+    let (ok, _) = run(&permissive, &strace, &args);
+    assert!(!ok, "strace attached behind the syscall filter");
+
+    // The control that matters most: with the filter on, a program that makes
+    // no denied call still runs. A filter that denied everything would pass
+    // the assertion above and be useless.
+    let f = fixture();
+    let (ok, stderr) = run(
+        &runnable().read(&f.allowed),
+        &cat(),
+        &[f.inside.to_string_lossy().into_owned()],
+    );
+    assert!(
+        ok,
+        "an ordinary program could not run behind the syscall filter: {stderr}"
+    );
+}
