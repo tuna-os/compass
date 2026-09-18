@@ -37,6 +37,7 @@ pub mod app_windows;
 pub mod apps;
 pub mod builtin_icon;
 pub mod config;
+pub mod file_category;
 pub mod frecency;
 pub mod glyph;
 pub mod keybinding;
