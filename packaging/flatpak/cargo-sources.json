@@ -3083,6 +3083,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/nix/nix-0.29.0.crate",
+        "sha256": "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46",
+        "dest": "cargo/vendor/nix-0.29.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46\", \"files\": {}}",
+        "dest": "cargo/vendor/nix-0.29.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/nu-ansi-term/nu-ansi-term-0.50.3.crate",
         "sha256": "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5",
         "dest": "cargo/vendor/nu-ansi-term-0.50.3"
