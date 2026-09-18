@@ -41,5 +41,5 @@ pub use scan::{
 };
 pub use xdg_dirs::{
     DEFAULT_DATA_DIRS, application_dirs, current_desktops, data_dirs, data_home, exec_search_path,
-    icon_dirs,
+    home_dir, icon_dirs, in_flatpak, sandbox_data_roots, sandbox_data_roots_for,
 };

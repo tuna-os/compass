@@ -1114,6 +1114,52 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
     echo "OverviewActive now: $(shell_prop Get 2>&1 || echo '(unreadable)')"
     ;;
 
+  # Did the engine actually find any applications? (#95)
+  #
+  # THE CHEAPEST GATE IN THIS FILE, AND IT WOULD HAVE SAVED MONTHS.
+  #
+  # `indexed applications applications=0` was printed by every run of this tier and read by
+  # nobody, because an empty index and a working one looked identical on screen: until the search
+  # field could be focused at all, both drew "Type to search..." forever. The launcher shipped
+  # unable to see a single application on the machine it was running on.
+  #
+  # A missing line fails as loudly as a zero. "The engine did not say" and "the engine said none"
+  # are both answers this check must not treat as success -- a log format change that silently
+  # turned this into a no-op is exactly the failure mode the gate exists to prevent.
+  engine-index)
+    # THE ESCAPES ARE NOT DECORATION, THEY ARE WHY THIS FAILED THE FIRST TIME IT RAN.
+    #
+    # `tracing_subscriber::fmt` colours its output whether or not the writer is a terminal, so
+    # the engine's log file holds
+    #
+    #     indexed applications ^[[3mapplications^[[0m^[[2m=^[[0m15
+    #
+    # and a pattern with a literal `applications=` matches nothing. The gate then reported "the
+    # engine never reported an application count" while printing the line that contained it --
+    # a false negative that read exactly like the real failure it exists to catch.
+    #
+    # The engine no longer colours a non-terminal, so this is belt and braces. It stays because
+    # RUST_LOG and a future writer can both put the escapes back, and a grep in a gate should not
+    # be the thing that notices.
+    line="$(sed 's/\x1b\[[0-9;]*m//g' "$ENGINE_ERR" \
+            | grep -o 'indexed applications applications=[0-9]*' | tail -1 || true)"
+    if [ -z "$line" ]; then
+      echo "the engine never reported an application count; the log format has probably changed" >&2
+      echo "--- what it did say ---" >&2
+      cat "$ENGINE_ERR" >&2
+      exit 1
+    fi
+
+    count="${line##*=}"
+    echo "the engine indexed $count applications"
+    if [ "$count" -eq 0 ]; then
+      echo "the engine indexed ZERO applications: the launcher can see nothing to launch (#95)" >&2
+      echo "--- where the doctor looked ---" >&2
+      compass_cli doctor 2>&1 | grep -A 20 'xdg.application-dirs' >&2 || true
+      exit 1
+    fi
+    ;;
+
   *)
     echo "unknown subcommand: $1" >&2
     exit 64

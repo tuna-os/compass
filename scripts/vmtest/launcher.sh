@@ -97,6 +97,13 @@ echo "=== 0b. start the engine, so the launcher has something to attach to ==="
 guest "$checks" engine-start
 
 echo
+echo "=== 0b2. did the engine find any applications? (the gate, #95) ==="
+# Placed here rather than with the pixel gates because it is about the engine, not the screen,
+# and because failing here says "the index is empty" instead of letting it present three steps
+# later as a launcher that draws fine and finds nothing.
+guest "$checks" engine-index
+
+echo
 echo "=== 0c. the desktop with the engine up (THE CONTROL for every gate) ==="
 # THE CONTROL MOVED, AND THAT IS THE POINT.
 #
