@@ -1791,7 +1791,7 @@ answerable today.
 | Gate criterion | State | Evidence |
 |---|---|---|
 | Suite 0 parity for app-search ranking on the **500-entry corpus** | 🟢 **corpus met; top-1 ranking parity met** | **757** entries, past the 500 the gate names. The engines pick the **same top result on 100% of queries** (920 of them contested), and the same top 3 on 97.2%. Scores differ on 20.8% — the declared nucleo-vs-fzf divergence — but the ranking absorbs it (§8.1a). Full-order parity is 84.4%. |
-| Runs from a Flatpak on Bluefin with **GNOME 50 and 51** | 🟡 **half, and now a named half** | it runs from a Flatpak on Bluefin in CI on every change, on **GNOME Shell 50.3** — recorded by the evidence check rather than assumed. So the 50 half is met with a version behind it. The 51 half needs a second image; `ghcr.io/ublue-os/bluefin:stable` is 50.3 and one tier run is ~30 minutes, so this is a cost decision rather than an unknown. |
+| Runs from a Flatpak on Bluefin with **GNOME 50 and 51** | 🟡 **50 met with a version behind it; 51 is blocked upstream, not on us** | it runs from a Flatpak on Bluefin in CI on every change, on **GNOME Shell 50.3** — recorded by the evidence check rather than assumed. The 51 half is **not a cost decision**, which an earlier revision of this row called it: Bluefin's current stable stream (`stable-20260915`, Fedora 44) ships GNOME **50.3**, so there is no Bluefin image to run 51 on. The trigger is upstream shipping it, and the cheap move when they do is a second matrix leg on the same job rather than a new tier. Until then this criterion is unsatisfiable as written, and saying so is better than leaving it looking like work nobody has got round to. Not checked: whether a non-stable Bluefin tag or a different Fedora base carries 51 today. |
 | **Idle RSS < 30 MB** | 🟡 **measured, and the 135 MB was the wrong process** | the window idles at ~135 MB under llvmpipe and that was read as five times over budget. Most of it is wgpu's software renderer, which lives in that process's RSS in a VM and not on hardware. **The engine — the part that is actually resident, holds the index, serves IPC and draws nothing — idles at 6.2 MB**, measured on an ordinary container outside any VM. `launcher-rss` now reports both, labelled. Still reported rather than gated: a threshold set from a software-rendered number would be fiction. |
 | **Works with no Shell extension installed** | ✅ **met** | we ship none at all (ADR-0004), the VM has none, and `doctor` records `gnome.shell-extension` as evidence rather than gating on it. |
 
@@ -1907,7 +1907,7 @@ cites, at the time it is written.**
 
 | | |
 |---|---|
-| Phase 1 | GNOME 51 — a second image, a cost decision (§11.2) |
+| Phase 1 | GNOME 51 — **blocked upstream**: Bluefin stable is 50.3 (§11.2) |
 | Phase 2 | met |
 | Phase 3 | a clipboard **database-file** round trip — the crypto layer is already cross-verified per-PR; dogfooding |
 | Phase 4+ | `compass-extension-api` exists at 5.5k LOC and 73 tests; the Node host is the open half |
