@@ -30,6 +30,8 @@
 //! `setItemAsJson`: those store a *string* whose content is JSON, which the
 //! three cases above handle.
 
+pub mod calculator;
+
 pub use compass_db::vicinae as schema;
 
 use compass_sqlcipher_sys::Database;
