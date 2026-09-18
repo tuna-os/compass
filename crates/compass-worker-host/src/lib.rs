@@ -541,6 +541,7 @@ mod reader_tests {
 /// `std::format("{}/{}", s.name, method.name)`.
 pub mod extension_manager;
 pub mod oauth_service;
+pub mod session;
 pub mod storage_service;
 pub mod tsapi;
 
@@ -875,6 +876,31 @@ impl Worker {
         })
     }
 
+    /// Spawns a worker behind a sandbox policy.
+    ///
+    /// The launcher applies `policy` to itself and then becomes `program`, so
+    /// what this host holds pipes to is the worker, already confined — see
+    /// [`compass_sandbox`] for why it cannot be done from here directly.
+    ///
+    /// `launcher` is the path to `compass-sandbox-exec`. It is passed in
+    /// rather than guessed: where it lives is a packaging question, and the
+    /// wrong guess fails at spawn time with a confusing error.
+    ///
+    /// # Errors
+    ///
+    /// As [`spawn`](Self::spawn). A policy the kernel will not enforce shows
+    /// up later, as the launcher exiting before the first frame — which the
+    /// reader reports as a clean end of stream, with the reason on the
+    /// launcher's stderr.
+    pub fn spawn_sandboxed(
+        policy: &compass_sandbox::Policy,
+        launcher: &std::path::Path,
+        program: &std::path::Path,
+        args: &[String],
+    ) -> Result<Self, WorkerError> {
+        Self::spawn(policy.command(launcher, program, args))
+    }
+
     /// The worker's process id.
     #[must_use]
     pub fn pid(&self) -> u32 {
@@ -1136,5 +1162,104 @@ mod worker_process {
             Err(WorkerError::Spawn(_)) => {}
             other => panic!("a missing binary must be a Spawn error, got {other:?}"),
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod sandboxed_worker {
+    //! [`Worker::spawn_sandboxed`] against the real launcher.
+    //!
+    //! The launcher is `compass-sandbox`'s binary, so it is located the way
+    //! any other installed program would be: from the target directory cargo
+    //! built it into. If it is not there the test says so rather than passing.
+
+    use super::{Worker, rpc};
+    use std::path::{Path, PathBuf};
+
+    fn launcher() -> PathBuf {
+        // `CARGO_BIN_EXE_*` is only set for the crate that declares the
+        // binary, so this walks to it from this crate's own test binary.
+        let mut dir = std::env::var_os("CARGO_TARGET_DIR").map_or_else(
+            || {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .and_then(Path::parent)
+                    .expect("the repository root")
+                    .join("target")
+            },
+            PathBuf::from,
+        );
+        dir.push(if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        });
+        let launcher = dir.join("compass-sandbox-exec");
+        assert!(
+            launcher.exists(),
+            "{} is not built; `cargo build -p compass-sandbox` first",
+            launcher.display()
+        );
+        launcher
+    }
+
+    fn cat() -> PathBuf {
+        ["/usr/bin/cat", "/bin/cat"]
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|p| p.exists())
+            .expect("no cat on this system")
+    }
+
+    /// Enough of the filesystem to run a program at all.
+    fn runnable() -> compass_sandbox::Policy {
+        let mut policy = compass_sandbox::Policy::new();
+        for path in ["/usr", "/lib", "/lib64", "/bin"] {
+            if Path::new(path).exists() {
+                policy = policy.read(path).execute(path);
+            }
+        }
+        policy
+    }
+
+    #[test]
+    fn a_sandboxed_worker_still_speaks_frames() {
+        // `cat` behind the launcher: the host writes a framed request, the
+        // launcher has already been replaced by `cat`, and what comes back is
+        // the same frame. Proves the pipes survive the exec.
+        let mut worker = Worker::spawn_sandboxed(&runnable(), &launcher(), &cat(), &[])
+            .expect("the launcher spawns");
+
+        let id = worker
+            .request(
+                rpc::manager::READY,
+                serde_json::json!({ "session_id": "s" }),
+            )
+            .expect("writing through the launcher");
+        assert_eq!(id, 1);
+
+        let message = worker
+            .next_message()
+            .expect("reading back")
+            .expect("the sandboxed worker echoed the frame");
+        assert_eq!(message.method.as_deref(), Some(rpc::manager::READY));
+        assert_eq!(message.id, Some(1));
+    }
+
+    #[test]
+    fn a_policy_that_cannot_run_the_program_yields_no_frames() {
+        // The failure mode a host has to cope with: the launcher refuses, so
+        // the worker never exists, and the first read is a clean end of
+        // stream rather than a hang. The reason is on the launcher's stderr,
+        // which is inherited.
+        let policy = compass_sandbox::Policy::new().read("/definitely/not/here");
+        let mut worker = Worker::spawn_sandboxed(&policy, &launcher(), &cat(), &[])
+            .expect("the launcher itself still spawns");
+
+        assert_eq!(
+            worker.next_message().expect("a clean end of stream"),
+            None,
+            "a worker that never started must not look like one that is thinking"
+        );
     }
 }

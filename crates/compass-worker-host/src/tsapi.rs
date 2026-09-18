@@ -121,6 +121,18 @@ pub const IMPLEMENTED: &[&str] = &[
     "OAuth/removeTokens",
 ];
 
+/// Something that answers some of the extension API.
+///
+/// One method, deliberately: a service is asked about a call and either
+/// answers it or declines. Declining rather than erroring is what lets the
+/// host hold several services and ask each in turn — the first one asked would
+/// otherwise refuse every call in the system.
+pub trait Service {
+    /// The answer, as a payload for `Manager/messageExtension`, or `None` if
+    /// this call is not this service's.
+    fn handle(&self, call: &Call) -> Option<String>;
+}
+
 /// Whether [`IMPLEMENTED`] names `method`.
 #[must_use]
 pub fn is_implemented(method: &str) -> bool {

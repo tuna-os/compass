@@ -104,6 +104,12 @@ impl<'a> StorageService<'a> {
 /// A `null` to borrow when `params.value` is absent.
 const NULL: serde_json::Value = serde_json::Value::Null;
 
+impl tsapi::Service for StorageService<'_> {
+    fn handle(&self, call: &Call) -> Option<String> {
+        Self::handle(self, call)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

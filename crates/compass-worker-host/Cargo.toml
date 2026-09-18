@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+compass-sandbox = { path = "../compass-sandbox" }
 compass-oauth-store = { path = "../compass-oauth-store" }
 compass-local-storage = { path = "../compass-local-storage" }
 serde = { workspace = true, features = ["derive"] }

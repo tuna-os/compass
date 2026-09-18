@@ -86,7 +86,7 @@ is larger is how a count stops meaning anything.
 
 ## Progress
 
-Scaffolding, corpora and CI are in place, and **twenty** crates have landed: **959 tests** across
+Scaffolding, corpora and CI are in place, and **twenty** crates have landed: **968 tests** across
 the workspace, all green. `compass-db` (the shared migration runner and the `vicinae` schema, extracted from
 `compass-clipboard`), `compass-local-storage`, `compass-oauth-store` and `compass-sandbox` are the four newest. An earlier revision of this
 paragraph said nine crates and 597 tests, and both had drifted — `compass-clipboard`,

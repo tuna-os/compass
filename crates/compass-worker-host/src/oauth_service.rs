@@ -174,6 +174,12 @@ fn from_wire(extension_id: &str, payload: &serde_json::Value) -> TokenSet {
     }
 }
 
+impl tsapi::Service for OAuthService<'_> {
+    fn handle(&self, call: &Call) -> Option<String> {
+        Self::handle(self, call)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -974,6 +974,7 @@ dependencies = [
  "compass-db",
  "compass-local-storage",
  "compass-oauth-store",
+ "compass-sandbox",
  "compass-sqlcipher-sys",
  "serde",
  "serde_json",
