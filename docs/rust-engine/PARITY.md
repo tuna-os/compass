@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 806 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the indexer's entry filter and query policy |
+| `compass-core` | 825 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,908** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,927** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,901;
-the 1,908 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,920;
+the 1,927 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -166,7 +166,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -176,7 +176,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/window-material` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/window-material` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 ## Builtins
 
@@ -733,6 +733,24 @@ the same answer. Two controls pin it — taking the last channel instead, and av
 which fail the suite. (Swapping the `BTreeMap` for a `HashMap` does *not* reliably fail it, which is
 a defect in that mutation rather than in the test: it makes the result vary per process instead of
 being wrong in a fixed way, so a suite that passed once proves nothing either way.)
+
+### `compass-core::window_effects` — two registries whose support checks are in opposite orders
+
+`WaylandShortcutInhibitManager::inhibit` tests whether the window already has an inhibitor *before*
+it tests whether the compositor still supports the protocol.
+`ExtBackgroundEffectV1Manager::apply` does it the other way round: `if (!isSupported()) return
+false;` comes first, so a window that already has a blur is told the apply failed once blur goes
+away.
+
+Reading it once, that looks like an inconsistency to tidy. It is the right way round. A Wayland
+global can be withdrawn while the process runs, and the two stale states are not comparable: a blur
+that lingers is cosmetic, while an inhibitor that lingers means the keyboard is still grabbed. A
+manager answering "no" for a grab it is still holding would invite its caller to stop tracking it,
+and the person is then locked out of their own desktop shortcuts with nothing to release them.
+
+Both orders are pinned, and pinning them needed the support flag to be *settable* — with support
+fixed at construction there is no way to reach the case that distinguishes the two, which is why
+the port models `isActive()` as something that changes rather than as a constructor argument.
 
 ### `compass-core::alert` — a replaced alert is a cancelled alert, and the caller has to be told
 

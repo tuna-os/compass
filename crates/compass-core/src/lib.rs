@@ -81,6 +81,7 @@ pub mod telemetry;
 pub mod theme_picker;
 pub mod toast;
 pub mod update;
+pub mod window_effects;
 pub mod xdg_dirs;
 
 pub use apps::{AppIndex, AppIndexBuilder, AppItem, SkipReason, SkippedEntry};
