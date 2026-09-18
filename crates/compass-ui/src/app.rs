@@ -22,6 +22,51 @@ use compass_search::rank_indices;
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
+/// The search field's widget id.
+///
+/// It exists so the field can be FOCUSED, and that is not a detail. An Iced
+/// `text_input` receives typed characters only while it holds widget focus, and
+/// nothing focuses it on its own: a launcher whose field is never focused opens,
+/// draws a search box, and silently ignores every keystroke until the user
+/// thinks to click it. That was #91, and it survived this long because a person
+/// trying the launcher clicks the box without noticing they did, while the VM
+/// tier -- which only types -- recorded a frame byte-identical to the one before
+/// the keystroke and had no way to say why.
+///
+/// One constant rather than a literal at each site, because the id in `view` and
+/// the id passed to `focus` have to be the same string and nothing would report
+/// a typo: focus would simply find no widget, and the launcher would go back to
+/// ignoring the keyboard. Kept as a `&'static str` rather than an
+/// `iced::advanced::widget::Id` so this crate does not have to turn on Iced's
+/// `advanced` feature for one constant; both call sites take `impl Into<Id>`.
+const SEARCH_INPUT: &str = "compass-search-input";
+
+/// Focus the search field.
+///
+/// Every path that puts the window on screen ends in one of these, because
+/// focus does not survive the window being closed and reopened -- `conceal`
+/// closes it, so a summon is a brand new window with a brand new, unfocused
+/// field.
+fn focus_search() -> Task<Message> {
+    iced::widget::operation::focus(SEARCH_INPUT)
+}
+
+/// Lifts keyboard events out of the runtime's event stream.
+///
+/// A free function rather than a closure because [`iced::event::listen_with`]
+/// takes a plain `fn` pointer. See [`LauncherApp::subscription`] for why the
+/// stream is read at this level rather than through `iced::keyboard::listen`.
+fn keyboard_events(
+    event: iced::Event,
+    _status: iced::event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Keyboard(event) => Some(Message::Keyboard(event)),
+        _ => None,
+    }
+}
+
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
@@ -285,12 +330,33 @@ impl LauncherApp {
         Theme::CatppuccinMocha
     }
 
-    /// Keyboard events the widgets did not consume.
+    /// Every keyboard event, consumed by a widget or not.
     ///
-    /// `listen` yields only events with `Status::Ignored`, so the text input
-    /// still gets every printable key and this sees the arrows and Escape.
+    /// THIS DELIBERATELY DOES NOT USE `iced::keyboard::listen`, and the reason
+    /// is a regression that focusing the search field would otherwise have
+    /// introduced.
+    ///
+    /// `listen` yields only events with `Status::Ignored`. That was fine while
+    /// nothing focused the search field, because an unfocused `text_input`
+    /// consumes nothing -- which is also why the launcher ignored the keyboard
+    /// entirely (#91). Focusing it fixes the typing and changes this: a focused
+    /// `text_input` handles Escape by unfocusing itself and CAPTURING the
+    /// event, so under `listen` the first Escape would silently stop the user
+    /// typing instead of dismissing the launcher, and only a second one would
+    /// reach here. Arrows and printable keys are unaffected either way -- the
+    /// field captures neither.
+    ///
+    /// `listen_with` sees events whatever their status, so Escape means dismiss
+    /// on the first press. Nothing is handled twice as a result: `update` acts
+    /// on the arrows and Escape and drops every other key, while the text the
+    /// field consumes arrives separately through `on_input`.
+    ///
+    /// Note that this is not covered by a test, and cannot easily be: what
+    /// broke would be event DELIVERY, inside the Iced runtime, not the handler
+    /// in `update`. The VM tier types but never presses Escape, so it would not
+    /// catch it either.
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        let keyboard = iced::keyboard::listen().map(Message::Keyboard);
+        let keyboard = iced::event::listen_with(keyboard_events);
         let closed = window::close_events().map(Message::Closed);
         match &self.link {
             Some(link) => iced::Subscription::batch([
@@ -324,7 +390,10 @@ impl LauncherApp {
 
         if let Some(id) = self.window {
             self.answer(UiOutcome::Shown);
-            return window::gain_focus(id);
+            // Both, and they are not the same thing: `gain_focus` raises the
+            // WINDOW, `focus_search` focuses the FIELD inside it. A window
+            // summoned with only the first is on top and still deaf.
+            return Task::batch([window::gain_focus(id), focus_search()]);
         }
 
         let (_id, opened) = window::open(self.window_config.clone());
@@ -389,7 +458,9 @@ impl LauncherApp {
                 // Answers only a `Show` that asked for it. The window opened at
                 // boot answers nothing -- see `awaiting`.
                 self.answer(UiOutcome::Shown);
-                Task::none()
+                // Covers boot and every summon: `conceal` closes the window, so
+                // a summon opens a new one whose field starts unfocused.
+                focus_search()
             }
             Message::Closed(id) => {
                 // Only clear the state if *this* window is the one that went;
@@ -427,6 +498,7 @@ impl LauncherApp {
     /// View the application.
     pub fn view(&self) -> Element<'_, Message> {
         let input = text_input("Search...", &self.query)
+            .id(SEARCH_INPUT)
             .on_input(Message::QueryChanged)
             .padding(12)
             .size(24)
@@ -598,6 +670,73 @@ mod tests {
         assert_eq!(app.error.as_deref(), Some("no Exec key"));
         let _ = app.update(Message::QueryChanged("f".to_owned()));
         assert!(app.error.is_none(), "a new query should clear the error");
+    }
+
+    /// Builds a `KeyPressed` for a named key, as the subscription delivers it.
+    fn pressed(key: iced::keyboard::key::Named) -> Message {
+        Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(key),
+            modified_key: iced::keyboard::Key::Named(key),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::default(),
+            text: None,
+            repeat: false,
+        })
+    }
+
+    #[test]
+    fn the_arrows_move_the_selection_through_the_keyboard_subscription() {
+        // Goes through `Message::Keyboard` rather than `Message::MoveSelection`
+        // on purpose: the direct path is covered above, and what this covers is
+        // the match arm that routes a key to it. That arm is what a change to
+        // the subscription puts at risk.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        assert!(app.results.len() > 1, "need several rows to move between");
+        assert_eq!(app.selected, 0);
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(app.selected, 1, "ArrowDown moved down");
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(app.selected, 0, "and ArrowUp moved back");
+    }
+
+    #[test]
+    fn a_printable_key_from_the_subscription_does_not_also_type() {
+        // THE CONTROL FOR HANDLING A KEY TWICE.
+        //
+        // `subscription` reads every keyboard event, including ones the search
+        // field consumed, so that Escape survives the field being focused. The
+        // risk that buys is double handling: if `update` ever grew an arm that
+        // appended printable keys to the query, every character would arrive
+        // twice -- once here and once through the field's `on_input` -- and
+        // "fi" would be typed as "ffii".
+        //
+        // Nothing here can observe `on_input`, which Iced calls; what it can
+        // observe is that this path contributes nothing on its own.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        let before = app.query.clone();
+
+        let _ = app.update(Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Character("x".into()),
+            modified_key: iced::keyboard::Key::Character("x".into()),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::default(),
+            text: Some("x".into()),
+            repeat: false,
+        }));
+
+        assert_eq!(app.query, before, "the query is the field's to change");
     }
 
     #[test]
