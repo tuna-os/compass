@@ -83,11 +83,11 @@ that. The plan has been corrected.
 | `compass-notify` | 7 | desktop notifications over D-Bus |
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
-| `compass-wayland` | 2 |  |
-| **Total** | **2,161** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
+| **Total** | **2,192** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,161 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,192 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -123,7 +123,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/lib/soulver` | `—` | n/a (macOS) | ✅ | ❌ | ❌ | ❌ |
 | `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 
@@ -333,6 +333,26 @@ store behind it is ported too (`compass-core::shortcut_store`): the JSON file, t
 the two different not-found sentences, the rollback when a write fails after the list already
 changed, and the `value_or({})` that turns a corrupt file into an empty list rather than a refusal
 to start. Still C++-only: the migration from the old `OmniDatabase`, and `resolveApp`.
+
+**`src/data-control-server` → `compass-wayland::data_control`** — the part that decides which of a
+Wayland client's offered MIME types belong in a clipboard entry, and which of them get their bytes
+read over a pipe. Ported: the accept test (`text/`, `image/`, `application/`, plus
+`x-special/gnome-copied-files` by name) with `application/x-qt-image` checked against the ignore
+list **first**, so the hint that an image exists does not survive its own prefix; the flag types,
+kept for their presence and never read, which is the only way a password hint survives at all;
+the single-image rule, where a later encoding must be **strictly** better ranked to displace an
+earlier one, so two encodings the preference list does not name keep the first offered rather than
+the last; and the drop of `text/plain` when `text/plain;charset=utf-8` is also there, matched on
+that one spelling and not on any charset. The primary selection is much stricter and is ported that
+way: a concealed selection is dropped without being read, only plain text is kept (UTF-8 first, and
+the loop breaks so both spellings never both appear), and a selection over 1 MiB is dropped rather
+than truncated *and not retried* with the other spelling.
+
+One test here is not control-backed and says so in place: the offers come back in lexicographic
+order because the C++ collects into a `std::set` and the port returns a `BTreeSet`, so the ordering
+is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
+Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
+reads, and the process that carries them.
 
 **`src/services/script-command` → `compass-core::script_scan`** — the header parser was already
 ported (`src/lib/script-command`); this is the layer around it. The scan's rules are ported with
