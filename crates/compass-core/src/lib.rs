@@ -53,6 +53,7 @@ pub mod file_chooser;
 pub mod font_browser;
 pub mod frecency;
 pub mod glyph;
+pub mod glyph_service;
 pub mod keybinding;
 pub mod list_navigation;
 pub mod manifest;
