@@ -80,6 +80,8 @@ pub struct AppFlags {
     pub launcher: Arc<dyn AppLauncher>,
     /// The navigation chord scheme, from `launcher.keybinding`.
     pub keybinding: compass_core::keybinding::Scheme,
+    /// Whether the selection wraps, from `launcher.wrap_navigation`.
+    pub wrap_navigation: bool,
     /// The engine driving this window, when there is one.
     ///
     /// `None` is the standalone case -- `vicinae ui` run by hand with no daemon
@@ -100,6 +102,7 @@ impl Default for AppFlags {
                 ..Default::default()
             },
             keybinding: compass_core::keybinding::Scheme::default(),
+            wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
@@ -136,6 +139,9 @@ pub struct LauncherApp {
     window: Option<window::Id>,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
+    /// Whether the selection wraps at the ends. See
+    /// [`compass_core::list_navigation`].
+    wrap_navigation: bool,
     /// Which navigation chords are in force. See [`compass_core::keybinding`].
     ///
     /// Held rather than read per keystroke because it comes from the user's
@@ -170,19 +176,26 @@ pub enum Dismissal {
 
 /// Where the selection lands after moving one row in `direction`.
 ///
-/// Wraps at both ends, which is what every launcher does and what makes the
-/// first Up press useful. Returns 0 for an empty list so callers never index
-/// into nothing.
+/// `wrap` is `launcher.wrap_navigation`, which is **false** by default -- the
+/// C++ `Config::wrapNavigation` is, and the selection clamps at the first and
+/// last row. An earlier version of this function wrapped unconditionally, with
+/// a comment saying that is "what every launcher does"; the launcher being
+/// ported does not.
+///
+/// Returns 0 for an empty list so callers never index into nothing.
 #[must_use]
-pub fn next_selection(len: usize, current: usize, direction: Direction) -> usize {
+pub fn next_selection(len: usize, current: usize, direction: Direction, wrap: bool) -> usize {
+    use compass_core::list_navigation::{Step, next};
+
     if len == 0 {
         return 0;
     }
+    // Clamp the incoming index first: the list may have shrunk since it was
+    // set, and `next` would otherwise step from somewhere that is not there.
+    let current = current.min(len - 1);
     match direction {
-        Direction::Down => (current + 1) % len,
-        // `current` can exceed `len` only if the list shrank without the
-        // selection being reset; saturating keeps that from underflowing.
-        Direction::Up => current.checked_sub(1).unwrap_or(len - 1).min(len - 1),
+        Direction::Down => next(current, Step::Forward, len, wrap),
+        Direction::Up => next(current, Step::Backward, len, wrap),
     }
 }
 
@@ -236,6 +249,7 @@ impl LauncherApp {
         app.launcher = flags.launcher;
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
+        app.wrap_navigation = flags.wrap_navigation;
         app.link = flags.link;
         (app, Task::none())
     }
@@ -268,6 +282,7 @@ impl LauncherApp {
             window: None,
             window_config: AppFlags::default().window_config,
             keybinding: compass_core::keybinding::Scheme::default(),
+            wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             awaiting: false,
         }
     }
@@ -470,7 +485,12 @@ impl LauncherApp {
                 Task::none()
             }
             Message::MoveSelection(direction) => {
-                self.selected = next_selection(self.results.len(), self.selected, direction);
+                self.selected = next_selection(
+                    self.results.len(),
+                    self.selected,
+                    direction,
+                    self.wrap_navigation,
+                );
                 Task::none()
             }
             Message::LaunchSelected => {
@@ -654,27 +674,34 @@ mod tests {
     }
 
     #[test]
-    fn selection_wraps_at_both_ends() {
-        // The first Up press is the one people actually use — it should land on
-        // the last row, not sit at the top doing nothing.
-        assert_eq!(next_selection(3, 0, Direction::Up), 2);
-        assert_eq!(next_selection(3, 2, Direction::Down), 0);
-        assert_eq!(next_selection(3, 0, Direction::Down), 1);
-        assert_eq!(next_selection(3, 2, Direction::Up), 1);
+    fn the_selection_clamps_by_default_because_the_cpp_does() {
+        // This used to assert the opposite. `Config::wrapNavigation` is
+        // `false` in the engine being ported, so Up at the top stays at the
+        // top -- and `compass_core::list_navigation` holds the rule.
+        assert_eq!(next_selection(3, 0, Direction::Up, false), 0);
+        assert_eq!(next_selection(3, 2, Direction::Down, false), 2);
+        assert_eq!(next_selection(3, 0, Direction::Down, false), 1);
+        assert_eq!(next_selection(3, 2, Direction::Up, false), 1);
+    }
+
+    #[test]
+    fn the_selection_wraps_when_the_setting_asks_for_it() {
+        assert_eq!(next_selection(3, 0, Direction::Up, true), 2);
+        assert_eq!(next_selection(3, 2, Direction::Down, true), 0);
     }
 
     #[test]
     fn selection_on_an_empty_list_is_not_an_index_into_nothing() {
-        assert_eq!(next_selection(0, 0, Direction::Up), 0);
-        assert_eq!(next_selection(0, 0, Direction::Down), 0);
+        assert_eq!(next_selection(0, 0, Direction::Up, false), 0);
+        assert_eq!(next_selection(0, 0, Direction::Down, true), 0);
     }
 
     #[test]
     fn a_selection_left_past_the_end_is_clamped_rather_than_underflowing() {
         // Reachable if a list shrinks without the selection being reset. The
         // arithmetic here is unsigned, so getting this wrong is a panic.
-        assert_eq!(next_selection(2, 9, Direction::Up), 1);
-        assert_eq!(next_selection(1, 5, Direction::Down), 0);
+        assert_eq!(next_selection(2, 9, Direction::Up, false), 0);
+        assert_eq!(next_selection(1, 5, Direction::Down, false), 0);
     }
 
     #[test]
@@ -904,6 +931,10 @@ mod tests {
             );
             let _ = app.update(Message::MoveSelection(Direction::Down));
         }
-        assert_eq!(app.selected, 0, "and it wrapped back to the top");
+        assert_eq!(
+            app.selected,
+            expected.len() - 1,
+            "and it stayed on the last row, because wrap_navigation is off by default"
+        );
     }
 }

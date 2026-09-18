@@ -39,6 +39,7 @@ pub mod config;
 pub mod frecency;
 pub mod glyph;
 pub mod keybinding;
+pub mod list_navigation;
 pub mod rank;
 pub mod script_command;
 pub mod snippet;

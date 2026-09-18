@@ -8,7 +8,8 @@
 //!     "hotkey": "super+space",
 //!     "close_on_focus_loss": false,
 //!     "max_results": 50,
-//!     "keybinding": "default"
+//!     "keybinding": "default",
+//!     "wrap_navigation": false
 //!   },
 //!   "extensions": {
 //!     "auto_update": true,
@@ -43,6 +44,12 @@ pub const DEFAULT_CLOSE_ON_FOCUS_LOSS: bool = false;
 
 /// Default for `launcher.max_results`.
 pub const DEFAULT_MAX_RESULTS: usize = 50;
+
+/// Default for `launcher.wrap_navigation`.
+///
+/// `Config::wrapNavigation` is `false` in the C++: the selection clamps at the
+/// first and last row rather than going round. See [`crate::list_navigation`].
+pub const DEFAULT_WRAP_NAVIGATION: bool = false;
 
 /// Default for `launcher.keybinding`.
 ///
@@ -116,6 +123,8 @@ pub struct LauncherConfig {
     max_results: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     keybinding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wrap_navigation: Option<bool>,
 
     /// Keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -144,6 +153,15 @@ impl LauncherConfig {
     #[must_use]
     pub fn keybinding(&self) -> &str {
         self.keybinding.as_deref().unwrap_or(DEFAULT_KEYBINDING)
+    }
+
+    /// Whether the selection wraps at the ends of a list.
+    ///
+    /// Defaults to [`DEFAULT_WRAP_NAVIGATION`], which is the C++'s default:
+    /// clamp.
+    #[must_use]
+    pub fn wrap_navigation(&self) -> bool {
+        self.wrap_navigation.unwrap_or(DEFAULT_WRAP_NAVIGATION)
     }
 
     /// The scheme [`keybinding`](Self::keybinding) names.

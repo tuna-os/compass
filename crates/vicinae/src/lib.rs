@@ -94,11 +94,17 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // The user's chord scheme. A configuration that cannot be read is not
         // a reason to refuse to start: the launcher runs with the defaults and
         // says so, which is what every other unreadable setting here does.
-        let keybinding = match compass_core::Config::load() {
-            Ok(config) => config.launcher().keybinding_scheme(),
+        let (keybinding, wrap_navigation) = match compass_core::Config::load() {
+            Ok(config) => (
+                config.launcher().keybinding_scheme(),
+                config.launcher().wrap_navigation(),
+            ),
             Err(error) => {
                 tracing::warn!(%error, "could not read the configuration; using the defaults");
-                compass_core::keybinding::Scheme::default()
+                (
+                    compass_core::keybinding::Scheme::default(),
+                    compass_core::config::DEFAULT_WRAP_NAVIGATION,
+                )
             }
         };
 
@@ -106,6 +112,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             link,
             keybinding,
+            wrap_navigation,
             ..compass_ui::AppFlags::default()
         })
         .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
