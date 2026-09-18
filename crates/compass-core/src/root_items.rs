@@ -178,3 +178,127 @@ pub fn search<'a>(
 
     results
 }
+
+/// A provider of root items: the "Applications" list, an extension, and so on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Provider {
+    /// The id items refer to in [`RootItemMeta::provider_id`].
+    pub id: String,
+    /// The label shown above the group, and matched against the query.
+    pub display_name: String,
+    /// Transient providers are left out of a grouped search entirely — and so
+    /// are their items, because the C++ drops any item whose provider is not in
+    /// the map it just built.
+    pub transient: bool,
+}
+
+/// An item in a provider group, with the enabled flag the group view renders.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupedItem<'a> {
+    /// The item.
+    pub item: &'a RootItem,
+    /// Whether the user has it enabled; carried because a grouped search may
+    /// be asked for disabled items and still needs to show them greyed out.
+    pub enabled: bool,
+    /// The item's own score, which ordered it within the group. Zero here is
+    /// normal: an item can be in a group because the *provider's* name matched.
+    /// The C++ `ScoredEntry` drops this on the way into the group; keeping it
+    /// costs nothing and saves rescoring to explain an order.
+    pub score: f64,
+}
+
+/// One provider's matches, and the score that ordered the group.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderGroup<'a> {
+    /// The provider.
+    pub provider: &'a Provider,
+    /// The best of every item score and, if the provider's own name matched,
+    /// that name's score.
+    pub score: f64,
+    /// The provider's matching items, best first.
+    pub items: Vec<GroupedItem<'a>>,
+}
+
+/// Searches `items`, grouped by provider, as `searchGroupedByProvider` does.
+///
+/// This is a different query from [`search`], not a regrouping of it. Two rules
+/// differ and both are deliberate:
+///
+/// - a provider whose *display name* matches the query contributes **all** of
+///   its items, including ones that score zero — typing "applications" lists
+///   the applications rather than nothing;
+/// - `provider_id` is not applied. The C++ reads `includeDisabled` and
+///   `includeFavorites` here but never `providerId`, which makes sense for a
+///   view that is already one group per provider.
+#[must_use]
+pub fn search_grouped_by_provider<'a>(
+    items: &'a [RootItem],
+    providers: &'a [Provider],
+    pattern: &str,
+    opts: &SearchOptions,
+    now: i64,
+) -> Vec<ProviderGroup<'a>> {
+    let query = Query::new(pattern);
+
+    // Provider id -> (provider, its display name's score if it matched).
+    let scored_providers: Vec<(&Provider, Option<f64>)> = providers
+        .iter()
+        .filter(|p| !p.transient)
+        .map(|p| {
+            let m = score_weighted(&[WeightedField::new(&p.display_name, 1.0)], &query);
+            (p, m.accepted().then(|| f64::from(m.score)))
+        })
+        .collect();
+    let find = |id: &str| scored_providers.iter().find(|(p, _)| p.id == id);
+
+    // The C++ buckets into an `unordered_map`, so its group order before the
+    // final stable sort is a hash order -- two groups with the same score come
+    // out in an order that depends on the ids present. Bucketing in
+    // first-appearance order instead makes the tie deterministic; see
+    // PARITY.md.
+    let mut buckets: Vec<ProviderGroup<'a>> = Vec::new();
+
+    for item in items {
+        if !item.meta.enabled && !opts.include_disabled {
+            continue;
+        }
+        if item.meta.favorite_idx.is_some() && !opts.include_favorites {
+            continue;
+        }
+        let Some((provider, provider_score)) = find(&item.meta.provider_id) else {
+            continue;
+        };
+
+        let title_score = item.fuzzy_score(&query, now);
+        if title_score <= 0.0 && provider_score.is_none() {
+            continue;
+        }
+
+        let best = title_score.max(provider_score.unwrap_or(0.0));
+        let group = match buckets.iter_mut().find(|g| g.provider.id == provider.id) {
+            Some(group) => group,
+            None => {
+                buckets.push(ProviderGroup {
+                    provider,
+                    score: 0.0,
+                    items: Vec::new(),
+                });
+                buckets.last_mut().expect("just pushed")
+            }
+        };
+        group.score = group.score.max(best);
+        group.items.push(GroupedItem {
+            item,
+            enabled: item.meta.enabled,
+            score: title_score,
+        });
+    }
+
+    // Stable again, and for the same reason as in `search`.
+    for group in &mut buckets {
+        group.items.sort_by(|a, b| b.score.total_cmp(&a.score));
+    }
+    buckets.sort_by(|a, b| b.score.total_cmp(&a.score));
+
+    buckets
+}

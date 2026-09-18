@@ -268,3 +268,213 @@ fn ties_keep_the_input_order() {
         (0..8).collect::<Vec<_>>()
     );
 }
+
+// --- `searchGroupedByProvider` -------------------------------------------
+
+use compass_core::root_items::{Provider, ProviderGroup, search_grouped_by_provider};
+
+fn provider(id: &str, display_name: &str) -> Provider {
+    Provider {
+        id: id.to_owned(),
+        display_name: display_name.to_owned(),
+        transient: false,
+    }
+}
+
+fn from(provider_id: &str, id: &str, title: &str) -> RootItem {
+    let mut it = item(id, title);
+    it.meta.provider_id = provider_id.to_owned();
+    it
+}
+
+fn group_ids<'a>(groups: &'a [ProviderGroup<'a>]) -> Vec<&'a str> {
+    groups.iter().map(|g| g.provider.id.as_str()).collect()
+}
+
+#[test]
+fn a_transient_provider_and_its_items_are_left_out() {
+    // `if (provider->isTransient()) continue;` -- and then
+    // `if (!providerById.contains(providerId)) continue;`, which drops the
+    // items too, since the transient provider never entered the map.
+    let providers = vec![
+        Provider {
+            transient: true,
+            ..provider("fallback", "Fallback")
+        },
+        provider("apps", "Applications"),
+    ];
+    let items = vec![
+        from("fallback", "f1", "Search Google"),
+        from("apps", "a1", "Search Tool"),
+    ];
+
+    let groups =
+        search_grouped_by_provider(&items, &providers, "search", &SearchOptions::default(), NOW);
+    assert_eq!(group_ids(&groups), ["apps"]);
+}
+
+#[test]
+fn an_item_from_an_unknown_provider_is_dropped() {
+    // Same line, other cause: metadata naming a provider that no longer exists.
+    let providers = vec![provider("apps", "Applications")];
+    let items = vec![
+        from("ghost", "g1", "Ghost Tool"),
+        from("apps", "a1", "Ghost Writer"),
+    ];
+
+    let groups =
+        search_grouped_by_provider(&items, &providers, "ghost", &SearchOptions::default(), NOW);
+    assert_eq!(group_ids(&groups), ["apps"]);
+    assert_eq!(groups[0].items.len(), 1);
+}
+
+#[test]
+fn a_provider_whose_name_matches_contributes_all_of_its_items() {
+    // `if (titleScore <= 0 && !providerMatched) continue;` -- typing the
+    // provider's name lists its contents, not nothing.
+    let providers = vec![provider("clock", "Clock")];
+    let items = vec![
+        from("clock", "stopwatch", "Stopwatch"),
+        from("clock", "timer", "Timer"),
+    ];
+
+    // Neither title matches "clock", so without the provider-name rule the
+    // group would be empty.
+    let plain = search(&items, "clock", &SearchOptions::default(), NOW);
+    assert!(plain.is_empty(), "no title matches the query: {plain:?}");
+
+    let groups =
+        search_grouped_by_provider(&items, &providers, "clock", &SearchOptions::default(), NOW);
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].items.len(), 2);
+    assert!(
+        groups[0].items.iter().all(|i| i.score == 0.0),
+        "carried on the provider's score alone"
+    );
+}
+
+#[test]
+fn a_group_can_score_on_its_providers_name_alone() {
+    // `max(titleScore, providerMatched ? nameScore : 0)` -- the name half.
+    // "gmp" scores 100 against the provider name "GMP" and 0 against every one
+    // of its item titles, so without the name half the group would rank last.
+    let providers = vec![provider("gmp", "GMP"), provider("gnu", "Zzz Other")];
+    let items = vec![
+        from("gmp", "g1", "Zzz One"),
+        // The matcher scores this 71 for "gmp": below the GMP group's 100.
+        from("gnu", "n1", "GNU Image Manipulation Program"),
+    ];
+
+    let groups =
+        search_grouped_by_provider(&items, &providers, "gmp", &SearchOptions::default(), NOW);
+    assert_eq!(group_ids(&groups), ["gmp", "gnu"]);
+    assert_eq!(groups[0].score, 100.0);
+    assert_eq!(groups[1].score, 71.0);
+}
+
+#[test]
+fn a_group_scores_on_its_best_item() {
+    // The same `max`, the other half: neither provider's name matches, so only
+    // the item scores can order these groups.
+    let providers = vec![provider("weak", "Zzz A"), provider("strong", "Zzz B")];
+    let items = vec![
+        from("weak", "w1", "GNU Image Manipulation Program"),
+        from("strong", "s1", "GMP Tool"),
+    ];
+
+    let groups =
+        search_grouped_by_provider(&items, &providers, "gmp", &SearchOptions::default(), NOW);
+    assert_eq!(group_ids(&groups), ["strong", "weak"]);
+    assert_eq!((groups[0].score, groups[1].score), (100.0, 71.0));
+}
+
+#[test]
+fn items_are_ordered_within_a_group_by_their_own_score() {
+    // `std::ranges::stable_sort(bucket.entries, [](a, b) { return a.score > b.score; })`
+    let providers = vec![provider("apps", "Applications")];
+    let items = vec![
+        // 71 against "gmp", where the other scores 100.
+        from("apps", "partial", "GNU Image Manipulation Program"),
+        from("apps", "exact", "GMP Tool"),
+    ];
+
+    let groups =
+        search_grouped_by_provider(&items, &providers, "gmp", &SearchOptions::default(), NOW);
+    let ids: Vec<&str> = groups[0].items.iter().map(|i| i.item.id.as_str()).collect();
+    assert_eq!(ids, ["exact", "partial"]);
+}
+
+#[test]
+fn the_provider_filter_is_not_applied_to_a_grouped_search() {
+    // The C++ reads `includeDisabled` and `includeFavorites` here but never
+    // `providerId` -- a view that is already one group per provider does not
+    // need it, and a caller that passes it must not silently get one group.
+    let providers = vec![
+        provider("apps", "Applications"),
+        provider("ext", "Extensions"),
+    ];
+    let items = vec![from("apps", "a1", "Notes"), from("ext", "e1", "Notes Sync")];
+
+    let opts = SearchOptions {
+        provider_id: Some("apps".to_owned()),
+        ..SearchOptions::default()
+    };
+    let groups = search_grouped_by_provider(&items, &providers, "notes", &opts, NOW);
+    assert_eq!(groups.len(), 2, "providerId is ignored here: {groups:?}");
+}
+
+#[test]
+fn a_disabled_item_is_hidden_from_a_group_but_keeps_its_flag_when_asked_for() {
+    // `if (!item.meta->enabled && !opts.includeDisabled) continue;` and
+    // `group.items.push_back({item, entry.enabled})`.
+    let providers = vec![provider("apps", "Applications")];
+    let mut off = from("apps", "off", "Notes");
+    off.meta.enabled = false;
+    let items = vec![off, from("apps", "on", "Notebook")];
+
+    let groups =
+        search_grouped_by_provider(&items, &providers, "note", &SearchOptions::default(), NOW);
+    assert_eq!(groups[0].items.len(), 1);
+
+    let opts = SearchOptions {
+        include_disabled: true,
+        ..SearchOptions::default()
+    };
+    let groups = search_grouped_by_provider(&items, &providers, "note", &opts, NOW);
+    let flags: Vec<bool> = groups[0].items.iter().map(|i| i.enabled).collect();
+    assert_eq!(flags.len(), 2);
+    assert!(
+        flags.contains(&false),
+        "the disabled item is shown, flagged: {groups:?}"
+    );
+}
+
+#[test]
+fn groups_that_tie_keep_first_appearance_order() {
+    // A declared divergence: the C++ buckets into an `unordered_map`, so a tie
+    // resolves in hash order. Bucketing in the order the items arrive makes the
+    // same tie reproducible.
+    let providers = vec![
+        provider("p0", "P0"),
+        provider("p1", "P1"),
+        provider("p2", "P2"),
+    ];
+    let items = vec![
+        from("p1", "b", "Identical"),
+        from("p2", "c", "Identical"),
+        from("p0", "a", "Identical"),
+    ];
+
+    let groups = search_grouped_by_provider(
+        &items,
+        &providers,
+        "identical",
+        &SearchOptions::default(),
+        NOW,
+    );
+    assert_eq!(group_ids(&groups), ["p1", "p2", "p0"]);
+    assert!(
+        groups.windows(2).all(|w| w[0].score == w[1].score),
+        "the scores do tie"
+    );
+}

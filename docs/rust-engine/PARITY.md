@@ -246,9 +246,12 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
 the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the
 enabled/provider/favourite filters, and the stable sort with its alias-prefix prioritisation. Twelve
-tests, twelve controls, each read off `root-item-manager.cpp`. Still C++-only: the manager around it
-— loading items from providers, `mergeConfigWithMetadata`, recording a visit, `setAlias` /
-`setProviderEnabled` and the config writes behind them, and `searchGroupedByProvider`'s bucketing.
+tests, twelve controls, each read off `root-item-manager.cpp`. `searchGroupedByProvider` is ported
+too, with its two rules that differ from the flat search — a provider whose *display name* matches
+contributes all of its items, including ones scoring zero, and `providerId` is not applied — for
+another nine tests and nine controls. Still C++-only: the manager around it — loading items from
+providers, `mergeConfigWithMetadata`, recording a visit, and `setAlias` / `setProviderEnabled` with
+the config writes behind them.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
 itself, built from the same C the C++ engine links (ADR-0014). `Database::open` does what
@@ -376,6 +379,19 @@ the behaviour changes, so a future fix is loud rather than silent.
 Matched deliberately, for the record: field codes are not expanded inside quotes; unknown and
 deprecated field codes expand to nothing; a redeclared group replaces rather than merges; localized
 score ties resolve to the last declaration.
+
+### `compass-core::root_items` — a hash order made deterministic
+
+`searchGroupedByProvider` buckets into a `std::unordered_map<std::string, Bucket>` and then stable-sorts
+the groups by score. Stable sort preserves the order it was given, and the order it is given is the
+map's iteration order — a hash order over the provider ids present. Two groups that score equally
+therefore come out in an order that depends on which other providers matched, and can change between
+builds of the same binary.
+
+Compass buckets in first-appearance order instead: the first item belonging to a provider creates its
+group, so a tie resolves to the order the items were registered in. `groups_that_tie_keep_first_appearance_order`
+pins it. There is no "fails if the C++ is fixed" test to pair with this one, because the C++ is not
+wrong in a way a test can name — it is unspecified, and this is a choice within it.
 
 ### `compass-power` — one C++ bug deliberately **not** reproduced
 
