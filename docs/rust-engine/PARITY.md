@@ -245,8 +245,9 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 **`src/extension/api` → `compass-worker-host`** — the extension API's service adapters. `Storage`,
 three of `OAuth`'s four, `UI/render`, `FileSearch/search` and all four `Clipboard` methods are
 ported and pinned, as are all five `Application` methods, all four `Command` ones and all seven
-`WindowManagement` ones: 30 of the 49 methods `figura/tsapi.fig` declares. Each sits behind a trait
-(`FileIndexer`, `Clipboard`, `Apps`, `Commands`, `Windows`) mirroring the C++'s own indirection, so the adapters are finished and tested while the backends they will call — the file
+`WindowManagement` ones, plus `Wallpaper/set` and both `BrowserExtension` methods: 33 of the 49
+methods `figura/tsapi.fig` declares. Each sits behind a trait (`FileIndexer`, `Clipboard`, `Apps`,
+`Commands`, `Windows`, `Wallpaper`, `Browser`) mirroring the C++'s own indirection, so the adapters are finished and tested while the backends they will call — the file
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.

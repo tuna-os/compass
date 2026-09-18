@@ -540,6 +540,7 @@ mod reader_tests {
 /// `"<Service>/<method>"`, from
 /// `std::format("{}/{}", s.name, method.name)`.
 pub mod application_service;
+pub mod browser_service;
 pub mod clipboard_service;
 pub mod command_service;
 pub mod extension_manager;
@@ -550,6 +551,7 @@ pub mod session;
 pub mod storage_service;
 pub mod tsapi;
 pub mod ui_service;
+pub mod wallpaper_service;
 pub mod window_service;
 
 pub mod rpc {

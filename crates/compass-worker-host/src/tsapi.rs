@@ -137,6 +137,9 @@ pub const IMPLEMENTED: &[&str] = &[
     "WindowManagement/getScreens",
     "WindowManagement/getWorkspaces",
     "WindowManagement/setWindowBounds",
+    "Wallpaper/set",
+    "BrowserExtension/getTabs",
+    "BrowserExtension/focusTab",
     "Clipboard/copy",
     "Clipboard/paste",
     "Clipboard/clear",
@@ -286,6 +289,8 @@ mod tests {
             .chain(crate::application_service::METHODS)
             .chain(crate::command_service::METHODS)
             .chain(crate::window_service::METHODS)
+            .chain(crate::wallpaper_service::METHODS)
+            .chain(crate::browser_service::METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
@@ -382,15 +387,23 @@ mod tests {
 
     #[test]
     fn an_unimplemented_call_is_refused_by_name() {
+        // Picked from the IDL rather than written down: every method named here
+        // eventually gets implemented, and a test that then silently checks an
+        // implemented one proves nothing.
+        let declared = declared_methods();
+        let method = declared
+            .iter()
+            .find(|method| !is_implemented(method))
+            .expect("some method is still unimplemented");
+
         let refusal: serde_json::Value =
-            serde_json::from_str(&unimplemented(3, "Wallpaper/set")).expect("JSON");
+            serde_json::from_str(&unimplemented(3, method)).expect("JSON");
         let message = refusal["error"].as_str().expect("a string error");
         assert!(
-            message.contains("Wallpaper/set"),
+            message.contains(method),
             "the refusal must name the method; the extension's stack trace stops at the \
              generated client: {message}"
         );
-        assert!(!is_implemented("Wallpaper/set"));
     }
 
     #[test]
