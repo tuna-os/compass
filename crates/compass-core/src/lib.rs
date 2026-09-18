@@ -58,6 +58,7 @@ pub mod power_commands;
 pub mod rank;
 pub mod root_items;
 pub mod script_command;
+pub mod semver;
 pub mod shortcut;
 pub mod shortcut_form;
 pub mod shortcut_store;
@@ -68,6 +69,7 @@ pub mod system_run;
 pub mod telemetry;
 pub mod theme_picker;
 pub mod toast;
+pub mod update;
 pub mod xdg_dirs;
 
 pub use apps::{AppIndex, AppIndexBuilder, AppItem, SkipReason, SkippedEntry};

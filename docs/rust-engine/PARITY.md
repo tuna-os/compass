@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 500 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record |
+| `compass-core` | 548 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,602** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,650** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,595;
-the 1,602 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,643;
+the 1,650 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -172,7 +172,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/update` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/update` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
@@ -554,6 +554,25 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `compass-core::semver` — an overflowing component is refused rather than wrapped
+
+`Semver::parse` accumulates into an `unsigned` with `current * 10 + digit` and no overflow check, so
+a component past 2^32 wraps. `4294967296.0.0` therefore compares equal to `0.0.0`, and a release
+tagged that way would look like no release at all. The port returns `None`, which makes the tag "not
+a release tag" — a refusal the update service already knows how to ignore — rather than a wrong
+answer it would act on.
+
+What is *not* changed is that `Semver` is not semver. It parses a dotted run of decimal integers and
+nothing else: `v1.2.3-rc1` does not parse. That is load-bearing, because it is what keeps release
+candidates from being offered as updates without anyone having to filter them, and
+`a_prerelease_tag_does_not_parse_at_all` says so where someone might otherwise "fix" it.
+
+One bug found while porting, in the port rather than the C++: deriving `PartialEq` compares the
+component lists structurally, which would make `1.0` and `1.0.0` unequal *and* neither greater — a
+contradiction a sort or a hash map can act on. The C++ defines `operator==` in terms of `<=>`; the
+port now does the same, and hashes on the components with trailing zeroes removed so `Hash` agrees
+with `Eq`. `equality_agrees_with_the_comparison` pins it.
 
 ### `compass-core::telemetry` — two C++ bugs deliberately **not** reproduced
 
