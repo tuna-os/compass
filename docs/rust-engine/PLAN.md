@@ -1888,12 +1888,14 @@ against reality.
 | Criterion | State | Evidence |
 |---|---|---|
 | mock-Shell-bus suite green | 🟢 **met** | `crates/compass-shell/tests/mock_bus.rs` — **21 tests**, plus 12 in `contract_introspection.rs` over the versioned interface XML, and 13 unit tests. |
-| clipboard DB readable and writable by **both engines interchangeably** | 🟡 **pinned, not round-tripped** | the stored contract is pinned *against the C++ source*: `cpp_enum_values.rs` parses the C++ header so a member inserted mid-enum — the natural way to add a kind, and the one that relabels every existing row — fails here; `compass-crypto`'s `cpp_constants.rs` does the same for the crypto parameters. Our own side is covered by 76 tests across migrations, the write path and history queries. **What does not exist is a round trip:** no test has the C++ engine write a row the Rust engine reads, or the reverse. The pinning tests say so themselves — *"it reads text, not semantics"*. |
+| clipboard DB readable and writable by **both engines interchangeably** | 🟡 **the crypto is cross-verified; the database file is not** | **An earlier revision of this row said no cross-engine test existed at all. That was wrong, and `src/lib/crypto/probe/main.cpp` says so in its own header.** The crypto half is genuinely interchangeable and checked per-PR: the probe speaks a request/response protocol and the driver uses it for **cross-decryption — C++ encrypts and Rust decrypts, then the reverse** — deliberately rather than byte-diffing, because the IV comes from `RAND_bytes` and two correct implementations differ on every call. `deriveKey` is deterministic and is diffed directly, and the tamper control asserts the specific `AuthFailed` rather than "it errored". On top of that the stored contract is pinned against the C++ source by `cpp_enum_values.rs` and `cpp_constants.rs`, and our own side has 76 tests. **What remains is one layer up: no database FILE written by one engine is opened by the other.** Every clipboard test opens a database the Rust side created. That is the SQLCipher and schema layer — page size, KDF iterations, migrations, column order — and it is exactly where a silent divergence would sit, since the crypto beneath it is now known to agree. |
 | extension-absent and version-mismatch paths both tested | 🟢 **met** | the capability probe treats a bus error as an absence rather than a failure (`probe_errors_are_an_absence`), and the versioned contract is introspected rather than assumed. |
 | a week of dogfooding by ≥2 people on Bluefin | 🔴 **not started** | needs people, not code. Nothing in CI can stand in for it, and it should not be quietly reinterpreted as something that can. |
 
-**And a dangling reference, which is the third of its kind.** Phase 3's gate
-cites *"the mock-Shell-bus suite (§8.4a)"*. **There is no §8.4a.** The suite
+**And a dangling reference, which is the third of its kind — cited twice.**
+Phase 3's gate cites *"the mock-Shell-bus suite (§8.4a)"*, and
+`src/lib/crypto/probe/main.cpp` opens by citing §8.4a as well. **There is no
+§8.4a.** The suite
 exists and is green, so the gate is satisfiable — but its citation points
 nowhere, exactly as Suite 0's gate cited a `vicinae --engine=cpp --json query`
 that never existed (§8.1a) and Phase 2's cited a C++ `doctor` that never
@@ -1907,7 +1909,7 @@ cites, at the time it is written.**
 |---|---|
 | Phase 1 | GNOME 51 — a second image, a cost decision (§11.2) |
 | Phase 2 | met |
-| Phase 3 | a clipboard round trip between the two engines; dogfooding |
+| Phase 3 | a clipboard **database-file** round trip — the crypto layer is already cross-verified per-PR; dogfooding |
 | Phase 4+ | `compass-extension-api` exists at 5.5k LOC and 73 tests; the Node host is the open half |
 
 ## 12. Immediate next steps
