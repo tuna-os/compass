@@ -19,6 +19,7 @@ thiserror.workspace = true
 dirs.workspace = true
 tracing.workspace = true
 unicode-normalization.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 compass-testkit.workspace = true

@@ -761,6 +761,7 @@ dependencies = [
 name = "compass-core"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "compass-search",
  "compass-testkit",
  "compass-xdg",

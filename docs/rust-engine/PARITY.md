@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,004 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the indexer's entry filter and query policy |
+| `compass-core` | 1,059 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the indexer's entry filter and query policy |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **2,106** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,161** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,106 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,161 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -163,7 +163,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
-| `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/script-command` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
@@ -333,6 +333,29 @@ store behind it is ported too (`compass-core::shortcut_store`): the JSON file, t
 the two different not-found sentences, the rollback when a write fails after the list already
 changed, and the `value_or({})` that turns a corrupt file into an empty list rather than a refusal
 to start. Still C++-only: the migration from the old `OmniDatabase`, and `resolveApp`.
+
+**`src/services/script-command` → `compass-core::script_scan`** — the header parser was already
+ported (`src/lib/script-command`); this is the layer around it. The scan's rules are ported with
+their order intact, and the order is observable: a directory is classified **before** the duplicate
+check, so a directory never consumes an id and one named like an already-seen script still
+contributes its children; and the duplicate check comes **before** the extension check, so nothing
+a rejected `.md` does can shadow a real script of the same id found later in the walk. Also ported:
+the `.template` marker matched **anywhere** in a name rather than only as a suffix, the
+`depth + 1 < MAX_DEPTH` comparison that lists a directory at depth 4 without opening it, the
+"is this text?" test that is nothing more than a NUL byte in the first 8 KiB (so an empty file
+passes and reaches the parser), custom directories searched before the packaged ones so a user's
+script shadows a stock one, and the case-**sensitive** extension check that lets `README.MD`
+through. The command line is ported with its zip: extra values are dropped rather than appended and
+a short call passes fewer arguments rather than empty ones, and `percentEncoded` is applied per
+argument over bytes, not characters. `packageName` shows an inline script's last line of output —
+`No data` until it has run — in the slot a package name would occupy, so declaring one on an inline
+script has no effect. The icon chain is emoji, path as written, path beside the script, `https`
+URL, then the tinted `code` glyph; `http` is refused because the C++ tests the scheme for `https`
+exactly. The metadata store keeps each line base64-encoded for the reason the C++ comment gives —
+the output is arbitrary bytes from someone else's script — and a corrupt file leaves an empty store
+rather than an error, because a lost output cache is no reason to stop listing scripts. Still
+C++-only: the service's own Qt machinery (the filesystem watcher, its 100 ms debounce and the
+15-minute refresh), the output tokenizer, the script actions and the executor view host.
 
 **`src/services/app-service` → `compass-core::app_service`** — the lookups are ported:
 `findById` (with its `.desktop` retry), `findByClass`, `find`'s id-then-class order,
