@@ -185,7 +185,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/clipboard` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -259,6 +259,13 @@ methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. Wh
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
+
+**`src/builtins/developer` → `compass-core::create_extension`** — the Create Extension form's
+validation and what follows it: all six checks run every time so every mistake shows at once, the
+description is held to 16 characters where the rest need 3, the location is the one check that asks
+the filesystem, `expandPath` handles `~` and `~/` only (so `~root/x` is taken literally and fails),
+and a success *replaces* the form on the navigation stack rather than stacking on it. Still
+C++-only: the QML form itself, the boilerplate generator, and the success view's contents.
 
 **`src/builtins/theme` → `compass-core::theme_picker`** — the list model and the view's own logic
 are ported: the current/available split (and that the configured theme is filtered out like any
