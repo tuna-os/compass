@@ -111,7 +111,26 @@ std::string Omnicast::commandSocketName() { return vicinae::serverSocketName(); 
 fs::path Omnicast::pidFile() { return runtimeDir() / "vicinae.pid"; }
 
 void Omnicast::ensureDirectories() {
-  for (auto const &dir : {runtimeDir(), dataDir(), stateDir(), configDir(), cacheDir()}) {
+  // The runtime and state directories can land in a shared root -- `/tmp` --
+  // when XDG_RUNTIME_DIR and XDG_STATE_HOME are unset, so they go through
+  // `ensurePrivateDir`, which creates them 0700 and REFUSES one that already
+  // exists and is not exclusively ours. `create_directories` adopts an existing
+  // directory and leaves its mode alone, which is what let another local user
+  // pre-create the path and keep write access to the socket inside it (#59; the
+  // same bug as #88 on the Rust side).
+  //
+  // The other three are under $HOME or $XDG_*_HOME and are the session's to get
+  // right, so they keep the plain call: refusing to start because a user chose
+  // an unusual mode on their own config directory would be a regression.
+  for (auto const &dir : {runtimeDir(), stateDir()}) {
+    std::error_code ec;
+    if (!vicinae::ensurePrivateDir(dir, ec)) {
+      qWarning() << "Refusing to use directory" << dir.c_str() << ec.message().c_str()
+                 << "-- it exists and is not exclusively yours";
+    }
+  }
+
+  for (auto const &dir : {dataDir(), configDir(), cacheDir()}) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     if (ec) { qWarning() << "Failed to create directory" << dir.c_str() << ec.message(); }
