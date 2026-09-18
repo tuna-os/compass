@@ -190,7 +190,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -259,6 +259,14 @@ methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. Wh
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
+
+**`src/builtins/power-management` → `compass-core::power_commands`** — the catalogue and the run
+plan are ported: eight commands in registration order with their titles, long descriptions and
+keywords, the `confirm` preference (on for everything but Lock), the `customProgram` escape hatch
+that exists only where a shell makes sense, and the two failure messages per command — whose
+"can't" / "cannot" wording is inconsistent and stays that way, because these strings are
+translated. The logind calls behind them are `compass-power`. Still C++-only: wiring the plan to a
+confirmation dialog and a toast.
 
 **`src/builtins/system` → `compass-core::browse_apps`** — the "Search Applications" builtin's
 *model* is ported: the field weights (name 1.0, description 0.5, keywords 0.3 — **not** the root

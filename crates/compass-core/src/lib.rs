@@ -46,6 +46,7 @@ pub mod glyph;
 pub mod keybinding;
 pub mod list_navigation;
 pub mod manifest;
+pub mod power_commands;
 pub mod rank;
 pub mod root_items;
 pub mod script_command;
