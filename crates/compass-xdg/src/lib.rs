@@ -30,6 +30,7 @@ pub mod mime_subclasses;
 pub mod mimeapps;
 pub mod reader;
 pub mod scan;
+pub mod terminal;
 pub mod value;
 pub mod xdg_dirs;
 

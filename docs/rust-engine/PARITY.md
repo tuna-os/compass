@@ -63,7 +63,7 @@ that. The plan has been corrected.
 | `compass-core` | 1,483 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
-| `compass-xdg` | 200 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
+| `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
 | `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
 | `compass-extension-api` | 73 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
 | `compass-ipc` | 73 | framing, transport, single-instance |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,813** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,839** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,813 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,839 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -243,8 +243,9 @@ Tracked here so a 🟡 does not quietly become a ✅.
 **`src/lib/xdgpp` → `compass-xdg`** — the desktop-entry, locale, value, reader and exec layers are
 ported (47 C++ cases, verbatim inputs). Still C++-only:
 
-- the `xdg-terminal-exec` draft extension (`X-TerminalArg*` typed accessors; the keys are readable
-  through `Reader` today);
+- the `xdg-terminal-exec` draft extension's *parsing* beyond what `Reader` gives (the
+  `X-TerminalArg*` keys now have typed reading and a per-terminal table in `compass-xdg::terminal` —
+  26 tests, 17 controls);
 - the sibling modules below (the `DesktopFile` layer itself is now ported as
   `compass_xdg::desktop_file`: `relativeId`, `fromId`'s two-candidate lookup, and the standalone
   filename id, with 24 tests and 16 controls);
@@ -750,6 +751,27 @@ the output is arbitrary bytes from someone else's script — and a corrupt file 
 rather than an error, because a lost output cache is no reason to stop listing scripts. Still
 C++-only: the service's own Qt machinery (the filesystem watcher, its 100 ms debounce and the
 15-minute refresh), the output tokenizer, the script actions and the executor view host.
+
+
+**`compass-xdg::terminal`** — how to run a command inside a terminal emulator, from
+`XdgAppDatabase::inferTermExec` and the `X-TerminalArg*` keys.
+
+There is no specification for any of this, so it is a table of what each emulator actually accepts,
+and the gaps in it carry as much weight as the entries. An absent flag means *this terminal has no
+such flag*, not "use the default": passing `--title` to konsole is an error and no window, not an
+untitled one, so the absence has to survive into the caller. Two entries are the kind of thing a
+tidy-up would break — the new GNOME Console takes `working-directory` with **no leading dashes**,
+and `mate-terminal` and `xfce4-terminal` kept `-x` where GNOME moved to `--`.
+
+The table is keyed on the *program* rather than the desktop id, because the same emulator ships
+under different ids on different distributions while the binary keeps its name. A terminal's own
+desktop file beats the table, since it is the only source that can be right about one released after
+the table was written; `X-TerminalArgExec` is the gate, because a file that cannot say how to run a
+command is not describing a terminal this can drive, whatever else it declares.
+
+The fallback guesses `-e` and **nothing else**, deliberately: a terminal nobody has listed still
+opens, it just gets no title, directory or hold. Guessing more would not be an improvement — a wrong
+`--title` is an error and no window, where a missing one is a window with the wrong name.
 
 **`src/services/app-service` → `compass-core::app_service`, with the MIME hierarchy in
 `compass-xdg::mime_subclasses`** — the lookups are ported:
