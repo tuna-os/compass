@@ -244,10 +244,10 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 
 **`src/extension/api` → `compass-worker-host`** — the extension API's service adapters. `Storage`,
 three of `OAuth`'s four, `UI/render`, `FileSearch/search` and all four `Clipboard` methods are
-ported and pinned: 14 of the 49 methods `figura/tsapi.fig` declares. `FileSearch` and `Clipboard`
-sit behind traits (`FileIndexer`, `Clipboard`) that mirror the C++'s own indirection, so the
-adapters are finished and tested while the backends they will call — the file index, the Wayland
-clipboard — are still ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
+ported and pinned, as are all five `Application` methods: 19 of the 49 methods `figura/tsapi.fig`
+declares. `FileSearch`, `Clipboard` and `Application` sit behind traits (`FileIndexer`, `Clipboard`,
+`Apps`) that mirror the C++'s own indirection, so the adapters are finished and tested while the
+backends they will call — the file index, the Wayland clipboard, the launcher — are still ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
 
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in

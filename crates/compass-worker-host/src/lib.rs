@@ -539,6 +539,7 @@ mod reader_tests {
 /// codegen builds `{ paramName: value, ... }` — and the method string is
 /// `"<Service>/<method>"`, from
 /// `std::format("{}/{}", s.name, method.name)`.
+pub mod application_service;
 pub mod clipboard_service;
 pub mod extension_manager;
 pub mod file_search_service;

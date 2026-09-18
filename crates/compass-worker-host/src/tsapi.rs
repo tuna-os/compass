@@ -121,6 +121,11 @@ pub const IMPLEMENTED: &[&str] = &[
     "OAuth/removeTokens",
     "UI/render",
     "FileSearch/search",
+    "Application/list",
+    "Application/open",
+    "Application/getDefault",
+    "Application/showInFileBrowser",
+    "Application/runInTerminal",
     "Clipboard/copy",
     "Clipboard/paste",
     "Clipboard/clear",
@@ -267,6 +272,7 @@ mod tests {
             .chain(crate::ui_service::METHODS)
             .chain(crate::file_search_service::METHODS)
             .chain(crate::clipboard_service::METHODS)
+            .chain(crate::application_service::METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
