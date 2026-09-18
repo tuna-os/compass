@@ -60,29 +60,36 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
+| `compass-core` | 244 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
-| `compass-xdg` | 124 | desktop entries, locale, exec, reader — scope gaps listed below |
-| `compass-clipboard` | 76 | history store, ingest, migrations; stored enums pinned to the C++ header |
-| `compass-ipc` | 74 | framing, transport, single-instance |
-| `compass-core` | 74 | app index, frecency, config |
-| `compass-extension-api` | 74 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
-| `compass-search` | 59 | fuzzy, plus an exact port of fzf's coherence rule |
-| `compass-portals` | 55 | XDG portals; availability is a three-state outcome, not a boolean |
-| `compass-shell` | 47 | GNOME Shell DBus client; tests spawn a real `dbus-daemon` |
+| `compass-worker-host` | 171 | the extension host: framing, sandboxed spawn, 44 of tsapi's 49 methods, and the real runtime |
+| `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
+| `compass-clipboard` | 74 | history store, ingest, migrations; stored enums pinned to the C++ header |
+| `compass-extension-api` | 73 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
+| `compass-ipc` | 73 | framing, transport, single-instance |
+| `compass-search` | 58 | fuzzy, plus an exact port of fzf's coherence rule |
+| `compass-portals` | 54 | XDG portals; availability is a three-state outcome, not a boolean |
+| `compass-shell` | 46 | GNOME Shell DBus client; tests spawn a real `dbus-daemon` |
+| `compass-ui` | 29 | the launcher window and its views |
 | `compass-crypto` | 24 | AES-GCM and HKDF; cross-decrypted against the C++ probe per-PR |
-| `compass-worker-host` | 8 | extension-worker framing, pinned to the TypeScript worker |
+| `compass-sandbox` | 23 | Landlock, a seccomp denylist, and the launcher that applies them to itself |
+| `compass-local-storage` | 20 | the extension key-value store, lossy typing and all |
+| `compass-media` | 13 | MPRIS players, with the timeout the C++ has for a reason |
+| `compass-power` | 11 | logind; one C++ bug deliberately not reproduced |
+| `compass-db` | 10 | the shared migration runner and the `vicinae` schema |
+| `compass-oauth-store` | 9 | the extension token store |
+| `compass-sqlcipher-sys` | 8 | SQLCipher and the vendored tokenizer; connection pragmas pinned to the C++ |
 | `compass-testkit` | 8 | corpora — **757 desktop entries, 738 harvested from real hosts** |
+| `compass-notify` | 7 | desktop notifications over D-Bus |
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
-| `compass-wayland` | 2 | |
-| `compass-platform-linux` | 2 | |
-| `compass-sqlcipher-sys` | 1 + 7 | SQLCipher and the vendored tokenizer; connection pragmas pinned to the C++ |
-| **Total** | **849** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| `compass-platform-linux` | 2 |  |
+| `compass-wayland` | 2 |  |
+| **Total** | **1,306** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate>` and sums to 818;
-the 849 is the workspace figure `make check-rust` prints, which additionally
-covers doctests and harnesses not attributable to a single package. Both numbers
-are given rather than one reconciled figure, because quietly picking whichever
-is larger is how a count stops meaning anything.
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,299;
+the 1,306 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+harnesses not attributable to a single package. Both numbers are given rather than one reconciled
+figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
 ## Progress
 
@@ -147,12 +154,12 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/media-control` | `compass-media` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/menu-bar` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/menu-bar` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/news` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/paste` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/permissions` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
