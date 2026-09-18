@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,601 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk and incremental rules |
+| `compass-core` | 1,629 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules and scan scheduling |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,957** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,985** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,957 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,985 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -1319,17 +1319,18 @@ what catches a window the compositor destroyed and replaced rather than moved.
 directory entries the indexer walks into — `compass-core::file_walk` of `filesystem-walker.cpp`,
 which decides which of them are *reached* and in what order,
 `compass-core::incremental_scan` of `incremental-scanner.cpp`, which decides what a re-scan reads
-at all, `compass-core::query_policy` of
+at all, `compass-core::scan_dispatch` of the decisions in `scan-dispatcher.cpp` — when a change
+becomes a scan and which scans run — `compass-core::query_policy` of
 `file-indexer-query-policy.cpp`, which decides what a typed query asks the index,
 `compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
 all, and `compass-core::query_ranking` of the scoring half of `file-indexer-query-engine.cpp`, which
-decides what order the answers come back in. Between them, 197 tests and 143 controls. The row stays
+decides what order the answers come back in. Between them, 225 tests and 159 controls. The row stays
 ❌ anyway.
 
 It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
 its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
-Six files of those fifteen are not the row — about 1,279 lines of the 5,646, not quite a
-quarter — and marking it
+Seven files of those fifteen are not the row — about 1,532 lines of the 5,646, not quite
+three tenths — and marking it
 🟡 would put a colour on this ledger that means "a model landed without its backend" when what
 actually happened is "a fifth of the row landed". The percentage in PLAN.md is only worth anything
 if a row's colour means one thing. **So this work moves the Phase 5 figure by nothing, and that is
@@ -1390,6 +1391,35 @@ not find them and nothing says why. Every rule here leans the same way because o
 ones it starts with; here the check covers both. Unreachable through `scannable_directories`, which
 cannot return a path twice, and the uniform rule is the better one if a caller ever does hand it a
 repeat.
+
+**The scheduling** (`scan-dispatcher.cpp`) is ported for its decisions, not its threads: the
+debounce that turns a burst of filesystem events into one scan, and the queue rules that keep two
+scans off the same directory. 28 tests, 16 controls, all of which fired — three only after a test
+was added that they could fail.
+
+The debounce is a quiet period **with a ceiling**, and both halves earn their place. Saving a file
+in an editor is several filesystem events and a build is thousands, so a scan per event would keep
+the indexer re-reading a tree that is still changing. But a quiet period alone never fires for a
+directory that is never quiet — a log directory, a build tree, a folder mid-download — so the
+deadline is the *earlier* of "five seconds after the last event" and "thirty seconds after the
+first". The `min` is the whole mechanism; a control replacing it with `max` fires, as does one
+measuring the ceiling from the last event rather than the first.
+
+Two keys differ deliberately, and that is not an inconsistency. **Pending** scans are keyed by path
+*and* type, because a full and an incremental scan of one directory do different work and neither
+substitutes for the other. **Accepted** scans are checked by path *alone*, because two scans reading
+one directory race each other's writes whatever kinds they are. One is about what to schedule; the
+other about what may run at the same time.
+
+A scan refused because its path is busy is **re-armed rather than dropped**: the events that asked
+for it are real, and the running scan may have passed those files before they were touched. An
+interrupted scan that is already running stays in the queue — a scanner told to stop has not stopped
+yet, and removing it would let a second scan of that path start beside it.
+
+**Three controls were silent and the tests were the reason.** Every timing test read
+`DEBOUNCE_QUIET_SECS` and friends through the constants, so changing a constant moved the
+expectation with it. The values are now pinned literally in a test of their own: 5 seconds, 30
+seconds, 2 workers. A test written in terms of the thing it is checking cannot check it.
 
 The ranking is the fourth leg. A fuzzy score alone would rank an editor's swap file above the file
 it is a swap of, and `finalreport.pdf` above `report.pdf`. Every multiplier in the engine exists to

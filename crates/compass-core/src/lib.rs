@@ -80,6 +80,7 @@ pub mod raycast_store;
 pub mod raycast_store_view;
 pub mod root_items;
 pub mod root_view;
+pub mod scan_dispatch;
 pub mod script_command;
 pub mod script_scan;
 pub mod selection;
