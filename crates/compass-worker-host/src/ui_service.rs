@@ -10,14 +10,14 @@
 //!   carries a callback id that arrived as an ordinary string prop, and
 //!   [`handler_activated`] builds the event that fires it.
 //!
-//! # What it does not do, and why that is a refusal rather than a stub
+//! # What it does not do
 //!
-//! The other fourteen `UI` methods — toasts, HUD, navigation, alerts,
-//! selected text — all need a front end that does not exist for extensions
-//! yet. A `showToast` that accepted the call and did nothing would be worse
-//! than one that refuses: the extension would believe the user had been told
-//! something. They are not on the ledger, so they get
-//! [`crate::tsapi::unimplemented`], which names the method.
+//! The rest of `UI` — toasts, HUD, navigation, search and selected text — is
+//! [`crate::ui_shell_service`], which delegates to a `Shell` trait rather than
+//! accepting the call and doing nothing: an extension that believed the user
+//! had been told something would be worse off than one whose call failed.
+//! `UI/confirmAlert` is still refused by name, because it answers whenever the
+//! *user* does and the host cannot hold a reply open yet.
 
 use std::sync::Mutex;
 
@@ -142,20 +142,29 @@ mod tests {
     }
 
     #[test]
-    fn the_method_is_on_the_ledger_and_the_rest_of_ui_is_not() {
+    fn render_is_on_the_ledger_and_confirm_alert_is_not() {
         assert!(tsapi::is_implemented("UI/render"));
-        for refused in [
-            "UI/showToast",
-            "UI/closeMainWindow",
-            "UI/popToRoot",
-            "UI/pushView",
-            "UI/getSelectedText",
-        ] {
-            assert!(
-                !tsapi::is_implemented(refused),
-                "{refused} is on the ledger but nothing draws anything; an extension would \
-                 believe the user had been told something"
-            );
+        // The shell half of `UI` now has a home (`crate::ui_shell_service`), so
+        // its methods are on the ledger. `confirmAlert` is not: it answers
+        // whenever the user does, and a host that replied for them would hand
+        // an extension a decision nobody made.
+        assert!(
+            !tsapi::is_implemented("UI/confirmAlert"),
+            "confirmAlert suspends on a person; the host cannot hold a reply open yet"
+        );
+    }
+
+    #[test]
+    fn the_shell_methods_are_not_answered_by_the_render_service() {
+        // Two services, one prefix: a `UI/showToast` that fell through to the
+        // render path would be answered with a render error rather than served.
+        let service = UiService::new();
+        for method in crate::ui_shell_service::METHODS {
+            let call = crate::tsapi::parse(&format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{}}}}"#
+            ))
+            .expect("a well-formed call");
+            assert!(UiService::handle(&service, &call).is_none(), "{method}");
         }
     }
 

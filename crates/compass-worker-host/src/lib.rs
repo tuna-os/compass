@@ -551,6 +551,7 @@ pub mod session;
 pub mod storage_service;
 pub mod tsapi;
 pub mod ui_service;
+pub mod ui_shell_service;
 pub mod wallpaper_service;
 pub mod window_service;
 

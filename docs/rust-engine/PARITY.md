@@ -246,8 +246,9 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 three of `OAuth`'s four, `UI/render`, `FileSearch/search` and all four `Clipboard` methods are
 ported and pinned, as are all five `Application` methods, all four `Command` ones and all seven
 `WindowManagement` ones, plus `Wallpaper/set` and both `BrowserExtension` methods: 33 of the 49
-methods `figura/tsapi.fig` declares. Each sits behind a trait (`FileIndexer`, `Clipboard`, `Apps`,
-`Commands`, `Windows`, `Wallpaper`, `Browser`) mirroring the C++'s own indirection, so the adapters are finished and tested while the backends they will call — the file
+methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. What is left is
+`UI/confirmAlert`, which suspends on a person, and `OAuth/authorize`, which needs a browser. Each sits behind a trait (`FileIndexer`, `Clipboard`, `Apps`,
+`Commands`, `Windows`, `Wallpaper`, `Browser`, `Shell`) mirroring the C++'s own indirection, so the adapters are finished and tested while the backends they will call — the file
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
@@ -389,6 +390,18 @@ the behaviour changes, so a future fix is loud rather than silent.
 Matched deliberately, for the record: field codes are not expanded inside quotes; unknown and
 deprecated field codes expand to nothing; a redeclared group replaces rather than merges; localized
 score ties resolve to the last declaration.
+
+### `compass-worker-host::ui_shell_service` — a method that does nothing, faithfully
+
+`ExtUIService::updateToast` is `{ return Void::ok(); }`. The body is empty: an extension that calls
+`toast.title = "..."` after showing a toast gets a resolved promise and no change on screen. The
+Rust host does the same, and `updating_a_toast_does_nothing_at_all_because_the_cpp_does_nothing`
+pins it — with a control that fires if it ever starts working.
+
+Implementing it would be the more useful behaviour and the wrong port: the extension cannot tell
+from the reply which host it is talking to, so a Compass that updated the toast would show text a
+Vicinae user never sees, and an extension author would tune their toasts against the wrong one. When
+the C++ grows a body, this test is the one that should fail.
 
 ### `compass-core::root_items` — a hash order made deterministic
 

@@ -120,6 +120,17 @@ pub const IMPLEMENTED: &[&str] = &[
     "OAuth/setTokens",
     "OAuth/removeTokens",
     "UI/render",
+    "UI/showToast",
+    "UI/updateToast",
+    "UI/hideToast",
+    "UI/showHud",
+    "UI/closeMainWindow",
+    "UI/popToRoot",
+    "UI/pushView",
+    "UI/popView",
+    "UI/setSearchText",
+    "UI/getSelectedText",
+    "UI/sendDesktopNotification",
     "FileSearch/search",
     "Application/list",
     "Application/open",
@@ -291,6 +302,7 @@ mod tests {
             .chain(crate::window_service::METHODS)
             .chain(crate::wallpaper_service::METHODS)
             .chain(crate::browser_service::METHODS)
+            .chain(crate::ui_shell_service::METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
