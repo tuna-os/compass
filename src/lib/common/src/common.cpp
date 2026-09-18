@@ -141,7 +141,11 @@ bool ensurePrivateDir(const fs::path &dir, std::error_code &ec) {
   fs::create_directories(dir, ec);
   return !ec;
 #else
-  struct stat st {};
+  // Declared without an initialiser on purpose: `lstat` fills it, and the
+  // braced form `struct stat st {}` is spelled differently by different
+  // clang-format versions -- ours wants the space, CI's newer one does not, so
+  // the file cannot satisfy both. No braces, nothing to disagree about.
+  struct stat st;
   if (::lstat(dir.c_str(), &st) == 0) {
     // lstat, not stat: a symlink here could point anywhere we can write, so it
     // is refused on sight rather than followed.

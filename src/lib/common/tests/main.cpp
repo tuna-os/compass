@@ -36,10 +36,9 @@ private:
   fs::path m_root;
 };
 
+/// The permission bits of `p` itself, not of what it points at.
 unsigned mode_of(const fs::path &p) {
-  struct stat st {};
-  REQUIRE(::lstat(p.c_str(), &st) == 0);
-  return st.st_mode & 07777;
+  return static_cast<unsigned>(fs::symlink_status(p).permissions()) & 07777;
 }
 } // namespace
 
@@ -115,8 +114,6 @@ TEST_CASE("the shared-root fallbacks are per-user") {
   const auto uid = std::to_string(::getuid());
 
   for (const auto &dir : {runtime, state}) {
-    if (dir.string().starts_with("/tmp/")) {
-      REQUIRE(dir.filename().string() == "vicinae-" + uid);
-    }
+    if (dir.string().starts_with("/tmp/")) { REQUIRE(dir.filename().string() == "vicinae-" + uid); }
   }
 }
