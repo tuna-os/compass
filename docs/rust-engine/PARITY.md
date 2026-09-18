@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 684 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, the extension store, the indexer's entry filter and query policy |
+| `compass-core` | 709 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, the extension store, the indexer's entry filter and query policy, both extension stores |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,786** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,811** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,779;
-the 1,786 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,804;
+the 1,811 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -161,7 +161,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/paste` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/raycast` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
@@ -589,6 +589,24 @@ hack in its own comment. Narrowing it would start indexing directories people's 
 currently keep out; widening it would drop files they expect to find. Every line of an ignore file
 becomes a pattern too, comments included — a `#comment` glob never matches anything real, which is
 why nobody has noticed.
+
+### `compass-core::raycast_store` — the same escaping fix, and a filter deliberately skipped
+
+`search` and `fetchExtension` build their URLs with `QString::arg` exactly as the Vicinae store's do,
+so the same divergence applies and for the same reason: an extension name containing a `/` would
+otherwise add a path segment and ask the API for something else.
+
+What is *not* changed is the platform filter being skipped on Linux entirely. Raycast is a macOS
+product and its extensions advertise `macos`; filtering on that here would produce an empty store
+rather than a best-effort one, which is what the C++ comment says. The compatibility sheet is the
+other half of the bargain — fetched only on the platform where the filter was skipped, and saying
+which of those extensions actually work. `the_compat_sheet_exists_only_where_the_filter_was_skipped`
+pins that the two conditions are exact opposites, so a platform can never both skip the filter and
+have nothing to consult.
+
+A failed compat fetch is not an error: the C++ warns, returns an empty map, and leaves its
+`m_compatFetched` flag false, so the store keeps working without notes and the next request tries
+again. Both halves are reproduced.
 
 ### `compass-core::extension_store` — a search query that is actually escaped
 
