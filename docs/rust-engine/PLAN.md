@@ -1915,12 +1915,13 @@ cites, at the time it is written.**
 ### 11.4 Phases 4 to 10, evaluated
 
 Scored the same way, and the answer is short: **the Linux path is close to done
-through Phase 3, and Phase 4 onwards is largely unstarted.** Saying so with
-numbers is more useful than a phase list that reads as uniformly in-progress.
+through Phase 3, Phase 4 has a spine and not much breadth, and Phases 5 onwards
+are unstarted.** Saying so with numbers is more useful than a phase list that
+reads as uniformly in-progress.
 
 | Phase | Gate | State | Evidence |
 |---|---|---|---|
-| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **prerequisite done, host not started — and the phase's own wire spec is wrong** | the phase says to *"carve out `compass-extension-api` first, before the Node host is written against it"* — done, **5,546 LOC and 73 tests**. `compass-worker-host` **does not exist as a crate**. See §11.4a: the transport and encoding this phase specifies are not the ones the worker speaks. |
+| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**3,737 LOC, 75 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **8 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio rather than the UDS this phase names — see §11.4a and #101. |
 | **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🔴 **28%** | `PARITY.md` holds **96 ✅, 226 ❌, 18 🟡** — 96 of 340 rows. This is the single largest remaining number in the project and it is a breadth problem, not a hard one: most rows are individual builtins. |
 | **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **one output of several** | the Flatpak builds, is installed and is smoke-tested on every run. Every other packaging workflow — AppImage, Linux tarball, macOS dmg, Windows — is `workflow_dispatch` only, by the deliberate decision to narrow CI to what ships on the first target. |
 | **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
@@ -1932,10 +1933,30 @@ numbers is more useful than a phase list that reads as uniformly in-progress.
 launcher and its foundations, and they are essentially done — the launcher
 opens on a real GNOME session, indexes the host's applications, ranks them at
 100% top-1 parity with the C++ scorer, accepts typing, hides and summons over
-IPC, and idles at 6.2 MB. Phases 4–10 are the *rest of the product*: an
-extension host (§6 costs it at 6–8 weeks), 244 unported parity rows, packaging
-breadth, a cutover and two further platforms. §7's own schedule puts the whole
+IPC, and idles at 6.2 MB. Phases 4–10 are the *rest of the product*. Phase 4 now has a
+working spine — a worker can be spawned confined, a session runs, and a real
+Node process has driven a storage call through the host and read it back — but
+the phase is 8 of 49 API methods and none of its gate. The rest is 226 unported
+parity rows, packaging breadth, a cutover and two further platforms. §7's own schedule puts the whole
 sequence at roughly a year.
+
+#### 11.4b What Phase 4 still needs
+
+Ordered by what blocks what, not by size.
+
+| Piece | State |
+|---|---|
+| framing, manager protocol, tsapi envelope | done, pinned against the IDL and the generator |
+| worker lifecycle (spawn, request, read, shutdown) | done |
+| Landlock boundary + seccomp denylist + launcher | done; the cgroups v2 memory cap is not |
+| session routing (event → service → reply) | done |
+| `Storage` and the three storage `OAuth` methods | done — 8 of tsapi's 49 |
+| `UI` (render, toasts, navigation, HUD, alerts) | **not started**; 15 methods, and the largest remaining piece, because it is where the host meets the front end |
+| `Clipboard`, `Application`, `WindowManagement`, `FileSearch`, `Command`, `Wallpaper`, `BrowserExtension` | **not started**; 24 methods, most of which are a thin call into a service Phase 5 also needs |
+| `EventCore/handlerActivated` | **not started**; 1 event, and the way an action in the UI reaches the extension that owns it |
+| `OAuth/authorize` | **not started**; needs a browser and an overlay |
+| running the real `vicinae-worker-ts` | **not started**; the mock worker in `tests/node_worker.rs` speaks the same wire format, which is not the same claim |
+| Suite 1 (the gate) | **not started** |
 
 #### 11.4a Phase 4 specifies a wire protocol the worker does not speak
 
