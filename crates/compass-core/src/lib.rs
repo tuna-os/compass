@@ -36,6 +36,7 @@
 pub mod app_service;
 pub mod app_windows;
 pub mod apps;
+pub mod browse_apps;
 pub mod builtin_icon;
 pub mod config;
 pub mod file_category;

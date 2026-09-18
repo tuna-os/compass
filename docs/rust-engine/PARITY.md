@@ -195,7 +195,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -259,6 +259,14 @@ methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. Wh
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
 itself rather than hanging the caller.
+
+**`src/builtins/system` → `compass-core::browse_apps`** — the "Search Applications" builtin's
+*model* is ported: the field weights (name 1.0, description 0.5, keywords 0.3 — **not** the root
+list's 0.6), the `Hidden` accessory for a `NoDisplay` entry, and the action panel as data: focus the
+first open window if there is one, open (clearing the search), each desktop action with
+`control+shift+1..9` for the first nine only, then open-location behind the `action.open` keybind,
+copy id, copy location. Still C++-only: the view host, the list widget, and the three other views in
+that directory (`system-run`, `set-default-browser`, `set-default-terminal`).
 
 **`src/services/shortcut` → `compass-core::shortcut`** — `Shortcut::parseLink`'s state machine and
 `insertPlaceholder`'s argument rules are ported: literal text and placeholders in order, reserved
