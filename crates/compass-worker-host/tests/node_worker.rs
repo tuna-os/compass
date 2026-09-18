@@ -116,6 +116,7 @@ fn a_node_worker_loads_stores_and_reads_back_through_the_host() {
             Turn::Answered { method } => answered.push(method),
             Turn::Closed => break,
             Turn::Crashed { reason } => panic!("the worker crashed: {reason}"),
+            Turn::Deferred { method, .. } => panic!("nothing here defers: {method}"),
             Turn::Nothing | Turn::OtherSession { .. } => {}
         }
         if out.exists() {

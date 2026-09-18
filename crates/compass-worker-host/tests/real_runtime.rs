@@ -171,6 +171,7 @@ fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
             Turn::Answered { method } => answered.push(method),
             Turn::Closed => break,
             Turn::Crashed { reason } => panic!("the runtime crashed: {reason}"),
+            Turn::Deferred { method, .. } => panic!("nothing in this command defers: {method}"),
             Turn::Nothing | Turn::OtherSession { .. } => {}
         }
         // Stop pumping once the command has had its last answer. Pumping past

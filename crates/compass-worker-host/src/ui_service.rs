@@ -142,15 +142,24 @@ mod tests {
     }
 
     #[test]
-    fn render_is_on_the_ledger_and_confirm_alert_is_not() {
+    fn confirm_alert_is_served_but_not_by_this_service() {
+        // It is on the ledger now that the host can hold a reply open, but it
+        // is `ui_shell_service`'s and it is answered later. This service must
+        // keep declining it: answering here would hand an extension a decision
+        // nobody made.
         assert!(tsapi::is_implemented("UI/render"));
-        // The shell half of `UI` now has a home (`crate::ui_shell_service`), so
-        // its methods are on the ledger. `confirmAlert` is not: it answers
-        // whenever the user does, and a host that replied for them would hand
-        // an extension a decision nobody made.
-        assert!(
-            !tsapi::is_implemented("UI/confirmAlert"),
-            "confirmAlert suspends on a person; the host cannot hold a reply open yet"
+        assert!(tsapi::is_implemented("UI/confirmAlert"));
+
+        let service = UiService::new();
+        let call: Call = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "UI/confirmAlert",
+            "params": { "title": "?" },
+        }))
+        .expect("a well-formed call");
+        assert_eq!(
+            UiService::handle(&service, &call),
+            None,
+            "the render service must not answer for the shell"
         );
     }
 

@@ -130,6 +130,8 @@ pub const IMPLEMENTED: &[&str] = &[
     "UI/popView",
     "UI/setSearchText",
     "UI/getSelectedText",
+    // Answered later, through `Deferral`, not by a service returning a value.
+    "UI/confirmAlert",
     "UI/sendDesktopNotification",
     "FileSearch/search",
     "Application/list",
@@ -167,12 +169,96 @@ pub trait Service {
     /// The answer, as a payload for `Manager/messageExtension`, or `None` if
     /// this call is not this service's.
     fn handle(&self, call: &Call) -> Option<String>;
+
+    /// Whether this service takes `call` but cannot answer it yet.
+    ///
+    /// Most of the API is a question a backend can answer while the extension
+    /// waits. A few are not: `UI/confirmAlert` answers when a *person* presses
+    /// a button, and `OAuth/authorize` when they finish with a browser. A
+    /// service returning a [`Deferral`] here is saying "this is mine, and the
+    /// reply comes later" — the host sends nothing now and remembers what to
+    /// quote back when the answer arrives.
+    ///
+    /// The default is `None`, so a service that answers everything it takes
+    /// does not have to know this exists.
+    fn defer(&self, _call: &Call) -> Option<Deferral> {
+        None
+    }
+}
+
+/// A call whose reply is owed but not yet known.
+///
+/// It carries the JSON-RPC id because that is the only thing that connects the
+/// eventual answer to the promise the extension is waiting on. Losing it means
+/// an extension that waits for ever; guessing it means resolving some *other*
+/// promise with this answer, which is worse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deferral {
+    /// The id to quote back.
+    pub id: u64,
+    /// Which method is waiting, for whoever has to report on it.
+    pub method: String,
+}
+
+impl Deferral {
+    /// The deferral for `call`, or `None` if it carries no id.
+    ///
+    /// An event has no id and so cannot be deferred: there is nothing to
+    /// answer.
+    #[must_use]
+    pub fn for_call(call: &Call) -> Option<Self> {
+        Some(Self {
+            id: call.id?,
+            method: call.method.clone(),
+        })
+    }
+
+    /// The payload that answers this deferral with `value`.
+    #[must_use]
+    pub fn answer(&self, value: serde_json::Value) -> String {
+        reply(self.id, value)
+    }
+
+    /// The payload that fails this deferral with `message`.
+    #[must_use]
+    pub fn fail(&self, message: &str) -> String {
+        reply_error(self.id, message)
+    }
 }
 
 /// Whether [`IMPLEMENTED`] names `method`.
 #[must_use]
 pub fn is_implemented(method: &str) -> bool {
     IMPLEMENTED.contains(&method)
+}
+
+#[cfg(test)]
+mod deferral_tests {
+    use super::*;
+
+    /// A call, or an event when `id` is `None`.
+    fn call(method: &str, id: Option<u64>) -> Call {
+        serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": method, "params": {},
+        }))
+        .expect("a well-formed message")
+    }
+
+    #[test]
+    fn an_event_cannot_be_deferred() {
+        // Tested directly rather than through the router, which screens events
+        // out before any service sees them: this is the contract of the
+        // function itself, and a deferral over an event would later answer
+        // with an id nobody asked on.
+        assert_eq!(Deferral::for_call(&call("UI/viewPoped", None)), None);
+    }
+
+    #[test]
+    fn a_call_defers_under_its_own_id() {
+        let deferral = Deferral::for_call(&call("UI/confirmAlert", Some(9))).expect("deferred");
+        assert_eq!(deferral.id, 9);
+        assert_eq!(deferral.method, "UI/confirmAlert");
+    }
 }
 
 #[cfg(test)]
@@ -303,6 +389,10 @@ mod tests {
             .chain(crate::wallpaper_service::METHODS)
             .chain(crate::browser_service::METHODS)
             .chain(crate::ui_shell_service::METHODS)
+            // A method that answers later is still a method the host serves,
+            // so the ledger has to count it -- an extension cannot tell from
+            // the wire whether its reply came back on the same turn.
+            .chain(crate::ui_shell_service::DEFERRED_METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();

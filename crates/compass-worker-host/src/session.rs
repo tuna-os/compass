@@ -46,33 +46,72 @@ impl<'a> Router<'a> {
         self
     }
 
-    /// The answer to `payload`, or `None` if none is owed.
+    /// What routing `payload` came to.
     ///
-    /// `None` means one of three things, and none of them is an error: the
-    /// payload was an event, or it was not a call at all. A payload that does
-    /// not parse is not answered because there is no id to answer *to* — a
-    /// reply with a guessed id would resolve a promise the extension is
-    /// waiting on for something else.
+    /// [`Routed::Nothing`] means one of three things, and none of them is an
+    /// error: the payload was an event, or it was not a call at all. A payload
+    /// that does not parse is not answered because there is no id to answer
+    /// *to* — a reply with a guessed id would resolve a promise the extension
+    /// is waiting on for something else.
     #[must_use]
-    pub fn route(&self, payload: &str) -> Option<String> {
-        let call = tsapi::parse(payload).ok()?;
+    pub fn route(&self, payload: &str) -> Routed {
+        let Ok(call) = tsapi::parse(payload) else {
+            return Routed::Nothing;
+        };
         self.route_call(&call)
     }
 
     /// As [`route`](Self::route), for a call that is already parsed.
+    ///
+    /// A service is asked to answer first and to defer second, so a service
+    /// that can answer a call today does not have to be rewritten when some
+    /// other service learns to defer one.
     #[must_use]
-    pub fn route_call(&self, call: &Call) -> Option<String> {
+    pub fn route_call(&self, call: &Call) -> Routed {
         if call.is_event() {
-            return None;
+            return Routed::Nothing;
         }
         for service in &self.services {
             if let Some(answer) = service.handle(call) {
-                return Some(answer);
+                return Routed::Reply(answer);
+            }
+            if let Some(deferral) = service.defer(call) {
+                return Routed::Deferred(deferral);
             }
         }
         // Every call carries an id, and an unanswered one is an extension
         // waiting for ever.
-        call.id.map(|id| tsapi::unimplemented(id, &call.method))
+        call.id.map_or(Routed::Nothing, |id| {
+            Routed::Reply(tsapi::unimplemented(id, &call.method))
+        })
+    }
+}
+
+/// What a router made of one payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Routed {
+    /// Send this, now.
+    Reply(String),
+    /// A service took the call and owes a reply later. Nothing goes out yet,
+    /// and whoever holds the [`tsapi::Deferral`] is now responsible for the
+    /// extension's promise.
+    Deferred(tsapi::Deferral),
+    /// Nothing is owed.
+    Nothing,
+}
+
+impl Routed {
+    /// The payload to send now, if there is one.
+    ///
+    /// Deliberately *not* `From`/`Into`: a caller that treats a deferral as
+    /// "nothing to send" is correct, and a caller that treats it as "nothing
+    /// to do" is not, so the discarding has to be written out.
+    #[must_use]
+    pub fn reply(&self) -> Option<&str> {
+        match self {
+            Self::Reply(payload) => Some(payload),
+            Self::Deferred(_) | Self::Nothing => None,
+        }
     }
 }
 
@@ -87,6 +126,16 @@ pub enum Turn {
     /// A message arrived that needed no answer — an event, or a response to
     /// something the host asked.
     Nothing,
+    /// A call was taken by a service that answers it later — a dialog waiting
+    /// on a person, say. Nothing was sent, and the extension is still waiting;
+    /// whoever receives this owns the reply and must eventually pass the
+    /// deferral to [`Session::answer_deferred`].
+    Deferred {
+        /// Which method.
+        method: String,
+        /// What to quote back when the answer arrives.
+        deferral: tsapi::Deferral,
+    },
     /// The extension crashed. The worker says why.
     Crashed {
         /// What the worker reported.
@@ -160,17 +209,57 @@ impl<'a> Session<'a> {
                 if session_id != self.session_id {
                     return Ok(Turn::OtherSession { session_id });
                 }
-                let Some(reply) = self.router.route(&payload) else {
-                    return Ok(Turn::Nothing);
-                };
                 let method = tsapi::parse(&payload)
                     .map(|call| call.method)
                     .unwrap_or_default();
 
-                ManagerClient::new(&mut self.worker).message_extension(&self.session_id, &reply)?;
-                Ok(Turn::Answered { method })
+                match self.router.route(&payload) {
+                    Routed::Nothing => Ok(Turn::Nothing),
+                    Routed::Deferred(deferral) => Ok(Turn::Deferred { method, deferral }),
+                    Routed::Reply(reply) => {
+                        ManagerClient::new(&mut self.worker)
+                            .message_extension(&self.session_id, &reply)?;
+                        Ok(Turn::Answered { method })
+                    }
+                }
             }
         }
+    }
+
+    /// Send the answer a [`Turn::Deferred`] left owed.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's stream fails.
+    pub fn answer_deferred(
+        &mut self,
+        deferral: &tsapi::Deferral,
+        value: serde_json::Value,
+    ) -> Result<(), WorkerError> {
+        let payload = deferral.answer(value);
+        ManagerClient::new(&mut self.worker)
+            .message_extension(&self.session_id, &payload)
+            .map(drop)
+    }
+
+    /// Fail the call a [`Turn::Deferred`] left owed.
+    ///
+    /// A deferred call that can no longer be answered — the window closed, the
+    /// extension is being torn down — must still be *settled*, or the
+    /// extension waits for ever on a promise nothing will resolve.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's stream fails.
+    pub fn fail_deferred(
+        &mut self,
+        deferral: &tsapi::Deferral,
+        message: &str,
+    ) -> Result<(), WorkerError> {
+        let payload = deferral.fail(message);
+        ManagerClient::new(&mut self.worker)
+            .message_extension(&self.session_id, &payload)
+            .map(drop)
     }
 }
 
@@ -197,6 +286,137 @@ mod tests {
         }
     }
 
+    /// A service that takes one method and never answers it, so the deferral
+    /// path can be tested without a dialog.
+    struct Defers {
+        method: &'static str,
+    }
+
+    impl Service for Defers {
+        fn handle(&self, _call: &Call) -> Option<String> {
+            None
+        }
+
+        fn defer(&self, call: &Call) -> Option<tsapi::Deferral> {
+            (call.method == self.method).then(|| tsapi::Deferral::for_call(call))?
+        }
+    }
+
+    #[test]
+    fn a_deferred_call_sends_nothing_and_names_what_is_owed() {
+        let service = Defers {
+            method: "UI/confirmAlert",
+        };
+        let router = Router::new().with(&service);
+
+        let routed = router.route(&call("UI/confirmAlert", Some(3)));
+        let Routed::Deferred(deferral) = routed else {
+            panic!("expected a deferral, got {routed:?}");
+        };
+        assert_eq!(deferral.id, 3);
+        assert_eq!(deferral.method, "UI/confirmAlert");
+        assert_eq!(
+            Routed::Deferred(deferral).reply(),
+            None,
+            "nothing goes out now"
+        );
+    }
+
+    #[test]
+    fn a_service_that_defers_one_method_still_declines_the_others() {
+        let service = Defers {
+            method: "UI/confirmAlert",
+        };
+        let router = Router::new().with(&service);
+
+        // Nobody answers it, so the router refuses it by name rather than
+        // leaving the extension waiting on a deferral nobody holds.
+        let routed = router.route(&call("Wallpaper/set", Some(4)));
+        assert!(
+            routed.reply().is_some_and(|r| r.contains("Wallpaper/set")),
+            "{routed:?}"
+        );
+    }
+
+    #[test]
+    fn answering_beats_deferring_when_a_service_could_do_both() {
+        // handle is asked before defer, so a method that grows a synchronous
+        // answer starts using it without the deferring service being touched.
+        struct Both;
+        impl Service for Both {
+            fn handle(&self, call: &Call) -> Option<String> {
+                call.id.map(|id| tsapi::reply(id, serde_json::json!("now")))
+            }
+            fn defer(&self, call: &Call) -> Option<tsapi::Deferral> {
+                tsapi::Deferral::for_call(call)
+            }
+        }
+        let service = Both;
+        let router = Router::new().with(&service);
+
+        let routed = router.route(&call("UI/confirmAlert", Some(5)));
+        assert!(
+            routed.reply().is_some_and(|r| r.contains("now")),
+            "{routed:?}"
+        );
+    }
+
+    #[test]
+    fn an_event_reaches_no_service_at_all() {
+        // Not just "is not deferred": an event must not reach handle either.
+        // A service acting on one would act twice, once here and once wherever
+        // events are really handled — and with no id there is nothing to
+        // answer, so there would be no reply to notice it by.
+        struct Greedy {
+            seen: std::cell::RefCell<Vec<String>>,
+        }
+        impl Service for Greedy {
+            fn handle(&self, call: &Call) -> Option<String> {
+                self.seen.borrow_mut().push(call.method.clone());
+                None
+            }
+            fn defer(&self, call: &Call) -> Option<tsapi::Deferral> {
+                self.seen.borrow_mut().push(call.method.clone());
+                Some(tsapi::Deferral {
+                    id: 0,
+                    method: call.method.clone(),
+                })
+            }
+        }
+
+        let service = Greedy {
+            seen: std::cell::RefCell::new(Vec::new()),
+        };
+        let router = Router::new().with(&service);
+
+        assert_eq!(router.route(&call("UI/viewPoped", None)), Routed::Nothing);
+        assert!(
+            service.seen.borrow().is_empty(),
+            "an event was offered to a service: {:?}",
+            service.seen.borrow()
+        );
+    }
+
+    #[test]
+    fn a_deferral_settles_either_way_and_quotes_the_id_back() {
+        let deferral = tsapi::Deferral {
+            id: 11,
+            method: "UI/confirmAlert".to_owned(),
+        };
+
+        let answered: serde_json::Value =
+            serde_json::from_str(&deferral.answer(serde_json::json!(false))).expect("JSON");
+        assert_eq!(answered["id"], 11);
+        assert_eq!(answered["result"], false);
+
+        // A deferral that can no longer be answered still has to be settled,
+        // or the extension waits for ever.
+        let failed: serde_json::Value =
+            serde_json::from_str(&deferral.fail("the window closed")).expect("JSON");
+        assert_eq!(failed["id"], 11);
+        assert_eq!(failed["error"], "the window closed");
+    }
+
     fn call(method: &str, id: Option<u64>) -> String {
         let mut value = serde_json::json!({
             "jsonrpc": rpc::VERSION,
@@ -221,7 +441,11 @@ mod tests {
         };
         let router = Router::new().with(&first).with(&second);
 
-        let reply = router.route(&call("UI/render", Some(1))).expect("answered");
+        let reply = router
+            .route(&call("UI/render", Some(1)))
+            .reply()
+            .expect("answered")
+            .to_owned();
         let value: serde_json::Value = serde_json::from_str(&reply).expect("JSON");
         assert_eq!(value["result"], "first", "services are asked in order");
         assert_eq!(value["id"], 1);
@@ -235,7 +459,9 @@ mod tests {
         let router = Router::new();
         let reply = router
             .route(&call("Wallpaper/set", Some(7)))
-            .expect("refused");
+            .reply()
+            .expect("refused")
+            .to_owned();
         let value: serde_json::Value = serde_json::from_str(&reply).expect("JSON");
         assert_eq!(value["id"], 7);
         assert!(
@@ -251,12 +477,12 @@ mod tests {
         let router = Router::new();
         assert_eq!(
             router.route(&call("UI/viewPoped", None)),
-            None,
+            Routed::Nothing,
             "an event expects no answer"
         );
         assert_eq!(
             router.route("not json at all"),
-            None,
+            Routed::Nothing,
             "there is no id to answer to, and a guessed one would resolve someone else's promise"
         );
     }

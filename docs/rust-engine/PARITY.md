@@ -62,7 +62,7 @@ that. The plan has been corrected.
 |---|---|---|
 | `compass-core` | 424 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
-| `compass-worker-host` | 171 | the extension host: framing, sandboxed spawn, 44 of tsapi's 49 methods, and the real runtime |
+| `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
 | `compass-clipboard` | 74 | history store, ingest, migrations; stored enums pinned to the C++ header |
 | `compass-extension-api` | 73 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,510** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,526** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,503;
-the 1,510 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,519;
+the 1,526 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -253,8 +253,10 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 three of `OAuth`'s four, `UI/render`, `FileSearch/search` and all four `Clipboard` methods are
 ported and pinned, as are all five `Application` methods, all four `Command` ones and all seven
 `WindowManagement` ones, plus `Wallpaper/set` and both `BrowserExtension` methods: 33 of the 49
-methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 44 of 49. What is left is
-`UI/confirmAlert`, which suspends on a person, and `OAuth/authorize`, which needs a browser. Each sits behind a trait (`FileIndexer`, `Clipboard`, `Apps`,
+methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 45 of 49. `UI/confirmAlert` joined them
+once the host learned to hold a reply open: it is answered through `tsapi::Deferral` rather than by
+a service returning a value, which is what a call that waits on a *person* needs. What is left is
+`OAuth/authorize`, which needs a browser. Each sits behind a trait (`FileIndexer`, `Clipboard`, `Apps`,
 `Commands`, `Windows`, `Wallpaper`, `Browser`, `Shell`) mirroring the C++'s own indirection, so the adapters are finished and tested while the backends they will call — the file
 index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
 ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming

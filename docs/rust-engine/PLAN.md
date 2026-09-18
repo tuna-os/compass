@@ -1936,7 +1936,7 @@ opens on a real GNOME session, indexes the host's applications, ranks them at
 IPC, and idles at 6.2 MB. Phases 4–10 are the *rest of the product*. Phase 4 now has a
 working spine — a worker can be spawned confined, a session runs, and a real
 Node process has driven a storage call through the host and read it back — but
-the phase is 44 of 49 API methods and none of its gate. The rest is 226 unported
+the phase is 45 of 49 API methods and none of its gate. The rest is 226 unported
 parity rows, packaging breadth, a cutover and two further platforms. §7's own schedule puts the whole
 sequence at roughly a year.
 
@@ -1959,7 +1959,7 @@ Ordered by what blocks what, not by size.
 | `FileSearch/search` | the adapter is done and pinned (`compass-worker-host::file_search_service`), behind a `FileIndexer` trait — 10 of 49. The index it would query is Phase 6 and does not exist yet, so no real backend implements the trait |
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
-| `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 44 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
+| `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
 | `UI/confirmAlert` | **not started**; it answers whenever the *user* does, and the host has no way to hold a reply open across a dialog |
 | `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
 | `OAuth/authorize` | **not started**; needs a browser and an overlay |

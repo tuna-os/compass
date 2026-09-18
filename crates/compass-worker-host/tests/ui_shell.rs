@@ -3,7 +3,8 @@
 
 use std::cell::RefCell;
 
-use compass_worker_host::tsapi::Call;
+use compass_core::alert::{Alert, SemanticColor};
+use compass_worker_host::tsapi::{Call, Deferral};
 use compass_worker_host::ui_shell_service::{
     CLOSE_MAIN_WINDOW_DELAY_MS, CloseWindow, CommandInfo, Notification, PopToRoot, Shell,
     ToastStyle, UiShellService, Urgency, view_popped, view_pushed,
@@ -21,6 +22,7 @@ enum Did {
     SetSearchText(String),
     SelectedText,
     SendNotification(Notification),
+    ShowAlert(Alert, Deferral),
 }
 
 #[derive(Default)]
@@ -34,6 +36,11 @@ impl Shell for Stub {
         self.did
             .borrow_mut()
             .push(Did::SetToast(title.to_owned(), style, message.to_owned()));
+    }
+    fn show_alert(&self, alert: &Alert, deferral: &Deferral) {
+        self.did
+            .borrow_mut()
+            .push(Did::ShowAlert(alert.clone(), deferral.clone()));
     }
     fn clear_toast(&self) {
         self.did.borrow_mut().push(Did::ClearToast);
@@ -366,10 +373,12 @@ fn a_notification_maps_its_urgency_and_carries_the_icon_source() {
 }
 
 #[test]
-fn confirm_alert_is_still_refused_rather_than_answered() {
-    // It suspends on a person, which this host cannot do yet. Not on the
-    // ledger, so the session refuses it by name.
-    assert!(!compass_worker_host::tsapi::is_implemented(
+fn confirm_alert_is_on_the_ledger_and_handle_still_declines_it() {
+    // It suspends on a person, so it is served through `defer` and never by
+    // `handle`. Both halves matter: on the ledger, because an extension cannot
+    // tell from the wire that its reply came back on a later turn; declined by
+    // `handle`, because an answer there would be the host deciding for them.
+    assert!(compass_worker_host::tsapi::is_implemented(
         "UI/confirmAlert"
     ));
     let service = service();
@@ -403,4 +412,210 @@ fn an_event_is_not_answered_and_touches_nothing() {
 
     assert!(service.handle(&event).is_none());
     assert!(did(&service).is_empty());
+}
+
+/// The alert the stub was shown, and what it owes.
+fn shown_alert(stub: &Stub) -> (Alert, Deferral) {
+    stub.did
+        .borrow()
+        .iter()
+        .find_map(|did| match did {
+            Did::ShowAlert(alert, deferral) => Some((alert.clone(), deferral.clone())),
+            _ => None,
+        })
+        .expect("an alert was shown")
+}
+
+#[test]
+fn confirm_alert_is_taken_but_not_answered() {
+    // The whole point of the deferral: the dialog is up and the extension is
+    // still waiting. A reply now would resolve its promise before the person
+    // has looked at the dialog.
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    let call = confirm_alert_call();
+
+    assert_eq!(
+        service.handle(&call),
+        None,
+        "handle must not answer a call that answers later"
+    );
+    let deferral = UiShellService::defer(&service, &call).expect("taken");
+    assert_eq!(deferral.id, 42);
+    assert_eq!(deferral.method, "UI/confirmAlert");
+}
+
+#[test]
+fn confirm_alert_passes_the_payloads_text_to_the_shell() {
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    let call = confirm_alert_call();
+    UiShellService::defer(&service, &call).expect("taken");
+
+    let (alert, deferral) = shown_alert(service.shell());
+    assert_eq!(alert.title, "Delete everything?");
+    assert_eq!(alert.message, "This cannot be undone");
+    assert_eq!(alert.confirm_text, "Delete");
+    assert_eq!(alert.cancel_text, "Keep");
+    assert_eq!(deferral.id, 42, "the shell needs the id to answer with");
+}
+
+#[test]
+fn the_primary_action_is_red_whatever_style_the_extension_asked_for() {
+    // confirmAlert hardcodes SemanticColor::Red for the primary action and
+    // Foreground for the dismiss one; the payload's `style` never reaches the
+    // colour. An extension asking for Default does not get a safe-looking
+    // button on a destructive action.
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    let call = call_with_id(
+        "UI/confirmAlert",
+        42,
+        serde_json::json!({
+            "title": "Go on?",
+            "description": "Really?",
+            "primaryAction": { "title": "Yes", "style": "Default" },
+            "dismissAction": { "title": "No", "style": "Cancel" },
+        }),
+    );
+    UiShellService::defer(&service, &call).expect("taken");
+
+    let (alert, _) = shown_alert(service.shell());
+    assert_eq!(alert.confirm_color, SemanticColor::RED);
+    assert_eq!(alert.cancel_color, SemanticColor::FOREGROUND);
+}
+
+#[test]
+fn an_action_with_an_empty_title_falls_back_too() {
+    // A button with no text on it is not a button. The TypeScript client fills
+    // these in, but the host is what the wire reaches, and an extension that
+    // hand-rolls the call can send "".
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    let call = call_with_id(
+        "UI/confirmAlert",
+        42,
+        serde_json::json!({
+            "title": "Go on?",
+            "description": "Really?",
+            "primaryAction": { "title": "" },
+            "dismissAction": { "title": "" },
+        }),
+    );
+    UiShellService::defer(&service, &call).expect("taken");
+
+    let (alert, _) = shown_alert(service.shell());
+    assert_eq!(alert.confirm_text, "Confirm");
+    assert_eq!(alert.cancel_text, "Cancel");
+}
+
+#[test]
+fn missing_action_titles_fall_back_to_confirm_and_cancel() {
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    let call = call_with_id(
+        "UI/confirmAlert",
+        42,
+        serde_json::json!({ "title": "Go on?", "description": "Really?" }),
+    );
+    UiShellService::defer(&service, &call).expect("taken");
+
+    let (alert, _) = shown_alert(service.shell());
+    assert_eq!(alert.confirm_text, "Confirm");
+    assert_eq!(alert.cancel_text, "Cancel");
+}
+
+#[test]
+fn an_alert_with_no_icon_in_the_payload_keeps_the_default_warning() {
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    let call = confirm_alert_call();
+    UiShellService::defer(&service, &call).expect("taken");
+
+    let (alert, _) = shown_alert(service.shell());
+    let icon = alert.icon.expect("the default survives");
+    assert_eq!(icon.source, "warning");
+    assert_eq!(icon.fill, Some(SemanticColor::RED));
+}
+
+#[test]
+fn a_builtin_icon_in_the_payload_is_tinted_and_anything_else_is_not() {
+    for (source, tinted) in [("trash", true), ("file:///tmp/photo.png", false)] {
+        let stub = Stub::default();
+        let service = UiShellService::new(stub, CommandInfo::default());
+        let call = call_with_id(
+            "UI/confirmAlert",
+            42,
+            serde_json::json!({
+                "title": "Go on?",
+                "description": "Really?",
+                "icon": { "source": source },
+            }),
+        );
+        UiShellService::defer(&service, &call).expect("taken");
+
+        let (alert, _) = shown_alert(service.shell());
+        let icon = alert.icon.expect("the payload's icon");
+        assert_eq!(icon.source, source);
+        assert_eq!(
+            icon.fill.is_some(),
+            tinted,
+            "{source} should{} be tinted",
+            if tinted { "" } else { " not" }
+        );
+    }
+}
+
+#[test]
+fn nothing_else_defers() {
+    // Every other method answers now. A method that started deferring by
+    // accident would leave its extension waiting for a person who is never
+    // asked.
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    for method in ["UI/showToast", "UI/popToRoot", "UI/getSelectedText"] {
+        let call = call_with_id(method, 7, serde_json::json!({}));
+        assert_eq!(
+            UiShellService::defer(&service, &call),
+            None,
+            "{method} must not defer"
+        );
+    }
+}
+
+#[test]
+fn the_deferral_answers_with_the_calls_own_id() {
+    // The id is the only thing connecting the answer to the promise. Answering
+    // with any other would resolve some other call.
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    let call = confirm_alert_call();
+    let deferral = UiShellService::defer(&service, &call).expect("taken");
+
+    let value: serde_json::Value =
+        serde_json::from_str(&deferral.answer(serde_json::json!(true))).expect("JSON");
+    assert_eq!(value["id"], 42);
+    assert_eq!(value["result"], true);
+}
+
+/// A call with an explicit id, for tests that check the id is quoted back.
+fn call_with_id(method: &str, id: u64, params: serde_json::Value) -> Call {
+    serde_json::from_value(serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": method, "params": params,
+    }))
+    .expect("a well-formed call")
+}
+
+/// A `UI/confirmAlert` call with every field set.
+fn confirm_alert_call() -> Call {
+    call_with_id(
+        "UI/confirmAlert",
+        42,
+        serde_json::json!({
+            "title": "Delete everything?",
+            "description": "This cannot be undone",
+            "primaryAction": { "title": "Delete", "style": "Destructive" },
+            "dismissAction": { "title": "Keep", "style": "Cancel" },
+        }),
+    )
 }

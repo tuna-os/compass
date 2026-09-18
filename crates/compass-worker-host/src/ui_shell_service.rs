@@ -6,10 +6,18 @@
 //! `UI/render` and the navigation stack; this is everything that asks the shell
 //! around the view to do something, behind a [`Shell`] trait.
 //!
-//! `UI/confirmAlert` is deliberately still unimplemented: it shows a dialog and
-//! answers whenever the *user* does, which is not a call into a backend but a
-//! suspended reply, and the host has no way to hold one open yet. A `Shell`
-//! method returning a bool would have to block the whole session on a person.
+//! # `UI/confirmAlert` answers later, and that is the point
+//!
+//! It is not a call into a backend: it shows a dialog and answers whenever the
+//! *person* does. A `Shell` method returning a bool would have to block the
+//! whole session on them, so it goes through [`tsapi::Deferral`] instead — the
+//! service takes the call, the shell is handed the alert and the deferral, and
+//! whoever owns the window answers when a button is pressed. See
+//! [`crate::session::Routed::Deferred`].
+
+use compass_core::alert::{
+    Alert, AlertIcon, DEFAULT_CANCEL_TEXT, DEFAULT_CONFIRM_TEXT, SemanticColor,
+};
 
 use crate::tsapi::{self, Call};
 
@@ -27,6 +35,13 @@ pub const METHODS: &[&str] = &[
     "UI/getSelectedText",
     "UI/sendDesktopNotification",
 ];
+
+/// The methods this takes but answers later.
+///
+/// Kept apart from [`METHODS`] rather than added to it because `handle`'s last
+/// arm is the desktop-notification one: a method listed there and not matched
+/// above it would be answered as a notification.
+pub const DEFERRED_METHODS: &[&str] = &["UI/confirmAlert"];
 
 /// The toast kinds the shell knows.
 ///
@@ -179,6 +194,15 @@ pub trait Shell {
 
     /// `DesktopNotificationClient::send`.
     fn send_notification(&self, notification: &Notification);
+
+    /// `NavigationController::setDialog` with a `CallbackAlertWidget`.
+    ///
+    /// The shell keeps `deferral` and answers it with `true` or `false` when
+    /// the person decides — including when they decide by navigating away or
+    /// by triggering a second alert, both of which are `false`. See
+    /// [`compass_core::alert::AlertModel`], which is the state machine that
+    /// tells it which.
+    fn show_alert(&self, alert: &Alert, deferral: &tsapi::Deferral);
 }
 
 /// Serves the shell half of `UI` for one running command.
@@ -306,9 +330,74 @@ impl<S: Shell> UiShellService<S> {
     }
 }
 
+impl<S: Shell> UiShellService<S> {
+    /// Takes `UI/confirmAlert`, shows the dialog, and owes a reply.
+    ///
+    /// The payload's fields map onto the alert the same way
+    /// `ExtUIService::confirmAlert` maps them: the primary action is always
+    /// red and the dismiss action always the foreground colour, whatever
+    /// `style` the extension asked for, and a built-in icon is tinted red
+    /// while anything else is left alone.
+    #[must_use]
+    pub fn defer(&self, call: &Call) -> Option<tsapi::Deferral> {
+        if !DEFERRED_METHODS.contains(&call.method.as_str()) {
+            return None;
+        }
+        let deferral = tsapi::Deferral::for_call(call)?;
+
+        let string = |name: &str| {
+            call.params
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+        };
+        let action_title = |name: &str, fallback: &str| {
+            call.params
+                .get(name)
+                .and_then(|action| action.get("title"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|title| !title.is_empty())
+                .unwrap_or(fallback)
+                .to_owned()
+        };
+
+        let icon = call
+            .params
+            .get("icon")
+            .filter(|icon| !icon.is_null())
+            .and_then(|icon| icon.get("source").or(Some(icon)))
+            .and_then(serde_json::Value::as_str)
+            .map(|source| {
+                AlertIcon::from_payload(source, compass_core::builtin_icon::is_builtin(source))
+            });
+
+        let mut alert = Alert::new()
+            .with_title(string("title"))
+            .with_message(string("description"))
+            .with_confirm(
+                action_title("primaryAction", DEFAULT_CONFIRM_TEXT),
+                SemanticColor::RED,
+            )
+            .with_cancel(
+                action_title("dismissAction", DEFAULT_CANCEL_TEXT),
+                SemanticColor::FOREGROUND,
+            );
+        if let Some(icon) = icon {
+            alert = alert.with_icon(Some(icon));
+        }
+
+        self.shell.show_alert(&alert, &deferral);
+        Some(deferral)
+    }
+}
+
 impl<S: Shell> tsapi::Service for UiShellService<S> {
     fn handle(&self, call: &Call) -> Option<String> {
         Self::handle(self, call)
+    }
+
+    fn defer(&self, call: &Call) -> Option<tsapi::Deferral> {
+        Self::defer(self, call)
     }
 }
 
