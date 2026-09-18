@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,413 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the indexer's entry filter, query policy and result ranking |
+| `compass-core` | 1,452 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,602** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,641** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,602 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,641 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -956,6 +956,47 @@ purpose and reordering them would silently change every URL a new build writes.
 And `resolveThemedLocalPath` inserts `@dark` before the first dot *after the last separator*, not
 before the last dot: `a.tar.gz` becomes `a@dark.tar.gz`, and `~/.local/share/logo` becomes
 `logo@dark` rather than being confused by the dot in the directory above it.
+
+### `src/services/window-manager` stays ❌ although its dispatch layer is ported
+
+`compass-core::window_manager` is a complete port of `window-manager.cpp` — which backend gets
+picked, and the focus bookkeeping that lets the launcher act on the window the user was in *before*
+they opened it. 39 tests and 32 controls.
+
+The row covers 5,380 lines across thirteen files, and twelve of them are per-compositor providers:
+Hyprland, GNOME, KDE, X11, Niri, generic Wayland, Windows virtual desktops, and the event listeners
+under each. One file of thirteen is not the row, on the same rule that keeps `src/file-indexer` ❌.
+**So this moves the Phase 3 gate by nothing**, and that is the right answer rather than a
+disappointing one.
+
+What it is worth is the part that is not compositor-specific and therefore not testable by running
+one. The provider order *is* the mechanism: the first candidate that says it can run wins, and the
+generic Wayland provider is offered **last** because it is good enough for most standalone
+compositors and would otherwise claim Hyprland and Niri too — and then neither would get its own
+workspace support. A test pins that ordering, with two activatable candidates rather than one,
+because with one the first and the last are the same and the test would pass against either rule.
+
+The focus memory is the other half. The launcher takes keyboard focus when it opens, so "the focused
+window" is almost always its own, and every action that means "do this to what I was looking at"
+depends on remembering. Three rules carry it, and each is pinned:
+
+- A compositor that reports the *frontmost* window is trusted outright and no memory is kept at all,
+  because it knows what is in front even while the launcher holds focus.
+- The launcher's own window is never remembered and **does not clear** the memory. That is the whole
+  point: opening the launcher must not lose what was underneath it.
+- Nothing focused clears the memory only when the launcher does not have focus either — otherwise
+  the memory is still the answer.
+
+`isOnActiveWorkspace` answers **yes** at every unknown: no workspaces, no workspace on the window, an
+empty workspace id, no active workspace. That is deliberate rather than lax. Callers use it to decide
+whether to act on a window at all, so on a compositor reporting partial data, saying no would refuse
+every action; saying yes only risks acting on a window the user cannot see.
+
+Two C++ looseness are reproduced rather than tightened. An application's windows are matched by class
+*or* by the window title equalling the application's display name case-insensitively — loose enough
+that a document window titled after its file will not match, but it is what finds a window that
+carries no usable class. And the remembered window is checked by **id** on every refresh, which is
+what catches a window the compositor destroyed and replaced rather than moved.
 
 ### `src/file-indexer` stays ❌ although part of it is ported
 

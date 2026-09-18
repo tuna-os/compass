@@ -98,6 +98,7 @@ pub mod update;
 pub mod vocabulary;
 pub mod wallpaper;
 pub mod window_effects;
+pub mod window_manager;
 pub mod window_switcher;
 pub mod xdg_dirs;
 
