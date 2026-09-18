@@ -24,6 +24,7 @@ pub mod entry;
 pub mod exec;
 pub mod icon;
 pub mod locale;
+pub mod mimeapps;
 pub mod reader;
 pub mod scan;
 pub mod value;
