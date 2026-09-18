@@ -1921,7 +1921,7 @@ reads as uniformly in-progress.
 
 | Phase | Gate | State | Evidence |
 |---|---|---|---|
-| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**3,737 LOC, 75 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **8 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio rather than the UDS this phase names — see §11.4a and #101. |
+| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**3,737 LOC, 75 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **9 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio rather than the UDS this phase names — see §11.4a and #101. |
 | **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🔴 **28%** | `PARITY.md` holds **96 ✅, 226 ❌, 18 🟡** — 96 of 340 rows. This is the single largest remaining number in the project and it is a breadth problem, not a hard one: most rows are individual builtins. |
 | **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **one output of several** | the Flatpak builds, is installed and is smoke-tested on every run. Every other packaging workflow — AppImage, Linux tarball, macOS dmg, Windows — is `workflow_dispatch` only, by the deliberate decision to narrow CI to what ships on the first target. |
 | **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
@@ -1950,10 +1950,10 @@ Ordered by what blocks what, not by size.
 | worker lifecycle (spawn, request, read, shutdown) | done |
 | Landlock boundary + seccomp denylist + launcher | done; the cgroups v2 memory cap is not |
 | session routing (event → service → reply) | done |
-| `Storage` and the three storage `OAuth` methods | done — 8 of tsapi's 49 |
-| `UI` (render, toasts, navigation, HUD, alerts) | **not started**; 15 methods, and the largest remaining piece, because it is where the host meets the front end |
+| `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
+| `UI` (toasts, navigation, HUD, alerts, selected text) | **not started**; 14 of `UI`'s 15 methods. `render` lands the tree and the handler-activation event; the rest need a front end for extensions, and a `showToast` that accepted the call and did nothing would leave an extension believing the user had been told something |
 | `Clipboard`, `Application`, `WindowManagement`, `FileSearch`, `Command`, `Wallpaper`, `BrowserExtension` | **not started**; 24 methods, most of which are a thin call into a service Phase 5 also needs |
-| `EventCore/handlerActivated` | **not started**; 1 event, and the way an action in the UI reaches the extension that owns it |
+| `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
 | `OAuth/authorize` | **not started**; needs a browser and an overlay |
 | running the real `vicinae-worker-ts` | **not started**; the mock worker in `tests/node_worker.rs` speaks the same wire format, which is not the same claim |
 | Suite 1 (the gate) | **not started** |

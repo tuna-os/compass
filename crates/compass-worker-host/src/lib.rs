@@ -541,9 +541,11 @@ mod reader_tests {
 /// `std::format("{}/{}", s.name, method.name)`.
 pub mod extension_manager;
 pub mod oauth_service;
+pub mod render;
 pub mod session;
 pub mod storage_service;
 pub mod tsapi;
+pub mod ui_service;
 
 pub mod rpc {
     use serde::{Deserialize, Serialize};

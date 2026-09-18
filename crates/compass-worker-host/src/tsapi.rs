@@ -119,6 +119,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "OAuth/getTokens",
     "OAuth/setTokens",
     "OAuth/removeTokens",
+    "UI/render",
 ];
 
 /// Something that answers some of the extension API.
@@ -258,6 +259,7 @@ mod tests {
         let mut claimed: Vec<&str> = crate::storage_service::METHODS
             .iter()
             .chain(crate::oauth_service::METHODS)
+            .chain(crate::ui_service::METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
