@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 470 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff |
+| `compass-core` | 500 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,572** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,602** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,565;
-the 1,572 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,595;
+the 1,602 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -168,7 +168,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
@@ -554,6 +554,31 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `compass-core::telemetry` — two C++ bugs deliberately **not** reproduced
+
+`TelemetryService::setEnabled` remembers its previous value in a *function-local `static`*. That
+makes the flag process-wide rather than per-instance: it is shared by every `TelemetryService` and
+survives one being destroyed. With a single service per process this is invisible, which is
+presumably why it has lasted. With two, the second one's first `setEnabled(true)` is swallowed as
+"no change" and its telemetry silently never starts. The port keeps the flag on the instance, which
+is what the code reads as though it did.
+`each_service_keeps_its_own_enabled_flag` pins it.
+
+`loadState` warns on an unreadable state file and carries on with whatever glaze left in `m_state` —
+for a parse failure that is a default-constructed `State`, so `userId` is the empty string and every
+record from then on is filed under `""`. Not a crash, and not visible locally: it just quietly
+detaches that machine's records from each other. The port generates a fresh id instead and writes it
+back, so the records stay attributable to *a* machine and the next run is stable again.
+`a_corrupt_state_file_gets_a_fresh_id_rather_than_an_empty_one` pins both halves.
+
+Neither divergence changes what is collected, only whether it is coherent. What *is* reproduced
+exactly is the record's shape: glaze serialises C++ member names as written, so the wire keys are
+`userId`, `vicinaeVersion`, `systemInfoLastSentAt` and the rest in camelCase, and the port renames
+its snake_case fields to match. Also reproduced is which fields are lowercased — `architecture`,
+`buildProvenance`, `vicinaeVersion` and each entry of `desktops`, and not the other seven. That
+asymmetry looks accidental, but normalising the rest would make this engine's records group
+differently from the C++'s in the same dataset.
 
 ### `compass-core::paste` — a copy that happens even when the paste cannot
 

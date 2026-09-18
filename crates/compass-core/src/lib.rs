@@ -65,6 +65,7 @@ pub mod slug;
 pub mod snippet;
 pub mod snippet_form;
 pub mod system_run;
+pub mod telemetry;
 pub mod theme_picker;
 pub mod toast;
 pub mod xdg_dirs;
