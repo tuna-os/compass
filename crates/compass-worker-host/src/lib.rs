@@ -516,3 +516,268 @@ mod reader_tests {
         }
     }
 }
+
+/// The JSON-RPC 2.0 envelope the worker speaks inside each frame.
+///
+/// # Read from the generator, not from the plan
+///
+/// PLAN.md describes this boundary and is wrong about the transport; an earlier
+/// revision of §11.4a was then wrong about the encoding, by reading the import
+/// and inferring what it generated. So the shapes here are taken from
+/// `src/lib/figura/src/codegen/typescript.hpp`, which is what actually emits
+/// the worker's side:
+///
+/// ```ts
+/// this.sendMessage({ jsonrpc: '2.0', method, params });          // event
+/// this.sendMessage({ jsonrpc: '2.0', id, method, params });      // request
+/// this.sendMessage({ jsonrpc: '2.0', id, result });              // response
+/// if (msg.id === undefined && msg.method) { /* ... an event */ }
+/// ```
+///
+/// Two details that a reasonable guess would get wrong, and which are therefore
+/// worth stating: **params is a named object, not a positional array** — the
+/// codegen builds `{ paramName: value, ... }` — and the method string is
+/// `"<Service>/<method>"`, from
+/// `std::format("{}/{}", s.name, method.name)`.
+pub mod rpc {
+    use serde::{Deserialize, Serialize};
+
+    /// The only `jsonrpc` value this protocol uses.
+    pub const VERSION: &str = "2.0";
+
+    /// A message from the worker: a response to one of our requests, or an
+    /// event it raised on its own.
+    ///
+    /// The worker distinguishes them by the presence of `id`, so this does too
+    /// rather than by which fields happen to deserialise.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct Incoming {
+        /// Always [`VERSION`].
+        pub jsonrpc: String,
+        /// Present on a response, absent on an event.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub id: Option<u64>,
+        /// Present on an event, absent on a response.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub method: Option<String>,
+        /// An event's arguments.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub params: Option<serde_json::Value>,
+        /// A response's value.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub result: Option<serde_json::Value>,
+    }
+
+    impl Incoming {
+        /// Whether this is an event rather than a response.
+        ///
+        /// Mirrors the worker's own test, `msg.id === undefined && msg.method`.
+        /// A message with neither is malformed and is not an event.
+        #[must_use]
+        pub fn is_event(&self) -> bool {
+            self.id.is_none() && self.method.is_some()
+        }
+    }
+
+    /// A request to the worker.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct Request {
+        /// Always [`VERSION`].
+        pub jsonrpc: String,
+        /// Correlates the response.
+        pub id: u64,
+        /// `"<Service>/<method>"`.
+        pub method: String,
+        /// Named arguments, keyed by parameter name.
+        pub params: serde_json::Value,
+    }
+
+    impl Request {
+        /// Builds a request for `method` with named `params`.
+        #[must_use]
+        pub fn new(id: u64, method: impl Into<String>, params: serde_json::Value) -> Self {
+            Self {
+                jsonrpc: VERSION.to_owned(),
+                id,
+                method: method.into(),
+                params,
+            }
+        }
+    }
+
+    /// The `Manager` service's methods, as they appear on the wire.
+    ///
+    /// Pinned to `figura/manager.fig` by `fig_methods`, because a method name
+    /// that has drifted produces `No handler for method ...` at runtime and
+    /// nothing earlier.
+    pub mod manager {
+        /// Load an extension. Returns a session id.
+        pub const LOAD: &str = "Manager/load";
+        /// Unload a session.
+        pub const UNLOAD: &str = "Manager/unload";
+        /// Tell the worker we are ready to receive that session's messages.
+        ///
+        /// `manager.fig` explains why this exists: without it the host can miss
+        /// an extension's first messages if it loads faster than the host
+        /// stores the session id.
+        pub const READY: &str = "Manager/ready";
+        /// Forward a payload to an extension.
+        pub const MESSAGE_EXTENSION: &str = "Manager/messageExtension";
+
+        /// An extension sent us something.
+        pub const EVENT_EXTENSION_MESSAGE: &str = "Manager/extensionMessage";
+        /// An extension died.
+        pub const EVENT_EXTENSION_CRASH: &str = "Manager/extensionCrash";
+    }
+}
+
+#[cfg(test)]
+mod rpc_tests {
+    use super::rpc::{self, manager};
+    use serde_json::json;
+
+    #[test]
+    fn a_response_is_not_an_event() {
+        let msg: rpc::Incoming =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","id":7,"result":{"session_id":"s"}}"#)
+                .expect("parse");
+        assert!(!msg.is_event());
+        assert_eq!(msg.id, Some(7));
+        assert_eq!(msg.result, Some(json!({"session_id": "s"})));
+    }
+
+    #[test]
+    fn an_event_has_a_method_and_no_id() {
+        let msg: rpc::Incoming = serde_json::from_str(
+            r#"{"jsonrpc":"2.0","method":"Manager/extensionMessage","params":{"session_id":"s","payload":"x"}}"#,
+        )
+        .expect("parse");
+        assert!(msg.is_event());
+        assert_eq!(
+            msg.method.as_deref(),
+            Some(manager::EVENT_EXTENSION_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn a_message_with_neither_id_nor_method_is_not_an_event() {
+        // The worker's own test is `id === undefined && method`. A malformed
+        // message must not be routed as an event with no name.
+        let msg: rpc::Incoming = serde_json::from_str(r#"{"jsonrpc":"2.0"}"#).expect("parse");
+        assert!(!msg.is_event());
+    }
+
+    #[test]
+    fn a_request_serialises_with_named_params() {
+        // Positional params would be accepted by JSON-RPC generally and
+        // rejected by this worker: the codegen builds `{ name: value }`.
+        let req = rpc::Request::new(1, manager::UNLOAD, json!({ "session_id": "abc" }));
+        let text = serde_json::to_string(&req).expect("serialise");
+
+        let back: serde_json::Value = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back["jsonrpc"], "2.0");
+        assert_eq!(back["method"], "Manager/unload");
+        assert_eq!(back["params"]["session_id"], "abc");
+        assert!(
+            back["params"].is_object(),
+            "params must be a named object, not an array: {text}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fig_methods {
+    //! The `Manager` method names are read back out of `figura/manager.fig`.
+    //!
+    //! A drifted method name fails at runtime as the worker's
+    //! `No handler for method ${msg.method}` and nothing earlier, so it is
+    //! worth catching here. The `"<Service>/<method>"` shape is not a guess:
+    //! `src/lib/figura/src/codegen/typescript.hpp` builds it with
+    //! `std::format("{}/{}", s.name, method.name)`.
+    //!
+    //! WHAT IT CANNOT DO
+    //!
+    //! It reads the IDL, not the generated code, so a change to the codegen's
+    //! naming scheme would pass here and break at runtime. The scheme is
+    //! asserted separately, by reading the format string out of the codegen.
+
+    use super::rpc::manager;
+    use std::path::{Path, PathBuf};
+
+    const FIG: &str = "figura/manager.fig";
+    const CODEGEN: &str = "src/lib/figura/src/codegen/typescript.hpp";
+
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("crates/compass-worker-host sits two levels below the repository root")
+            .to_path_buf()
+    }
+
+    fn read(rel: &str) -> String {
+        let path = repo_root().join(rel);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    }
+
+    #[test]
+    fn the_wire_names_are_service_slash_method() {
+        assert!(
+            read(CODEGEN).contains(r#"std::format("{}/{}", s.name, method.name)"#),
+            "{CODEGEN} no longer builds wire method names as `<Service>/<method>`; every \
+             constant in `rpc::manager` is then wrong."
+        );
+    }
+
+    #[test]
+    fn every_manager_method_in_the_idl_has_a_constant() {
+        let fig = read(FIG);
+        let service = fig
+            .split("service Manager {")
+            .nth(1)
+            .unwrap_or_else(|| panic!("{FIG} no longer declares `service Manager`"));
+        let body = service
+            .split('}')
+            .next()
+            .expect("the service block is not closed");
+
+        let mut declared: Vec<String> = Vec::new();
+        for line in body.lines() {
+            let line = line.trim();
+            let Some(rest) = line
+                .strip_prefix("fn ")
+                .or_else(|| line.strip_prefix("event "))
+            else {
+                continue;
+            };
+            let Some(name) = rest.split('(').next() else {
+                continue;
+            };
+            declared.push(format!("Manager/{}", name.trim()));
+        }
+
+        assert!(
+            declared.len() >= 6,
+            "parsed only {} methods from {FIG}; the parser has drifted from the IDL's shape \
+             and is no longer checking anything: {declared:?}",
+            declared.len()
+        );
+
+        let known = [
+            manager::LOAD,
+            manager::UNLOAD,
+            manager::READY,
+            manager::MESSAGE_EXTENSION,
+            manager::EVENT_EXTENSION_MESSAGE,
+            manager::EVENT_EXTENSION_CRASH,
+        ];
+        for name in &declared {
+            assert!(
+                known.contains(&name.as_str()),
+                "{FIG} declares {name}, which has no constant in `rpc::manager`. A host that \
+                 does not know a method the worker offers will not use it; one that spells a \
+                 method wrongly gets `No handler for method` at runtime."
+            );
+        }
+    }
+}
