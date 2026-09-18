@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 424 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog |
+| `compass-core` | 452 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 150 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 2 |  |
-| **Total** | **1,526** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **1,554** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
-The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,519;
-the 1,526 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 1,547;
+the 1,554 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -134,7 +134,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/app-runtime` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/app-service` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ⏳ |
 | `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
@@ -554,6 +554,24 @@ leave the first pointing at the wrong template instead, and rejecting the config
 a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
+
+### `compass-core::audio_control` — a volume that is not a number no longer takes the process down
+
+`toAudioSink` reads a channel's volume with `std::stod(percent)`, which parses the leading number
+and ignores the `%`. On a string with no leading number it does not return anything — it throws
+`std::invalid_argument`, from inside a function with no `try` anywhere above it. A `pactl` that
+printed `"n/a"` for a channel would end the process.
+
+The port reads the leading numeric run and falls back to 0.0, which is what the sink already reports
+when its channel map is empty, so the failure mode is "this sink reads as silent" rather than
+"Compass exited". `a_volume_that_is_not_a_number_reads_as_zero_rather_than_crashing` pins it.
+
+The lexicographic channel rule *is* reproduced: the C++ takes `volume.begin()->second` from a
+`std::map`, so a stereo sink reports its `front-left` level, and this port uses a `BTreeMap` to get
+the same answer. Two controls pin it — taking the last channel instead, and averaging — both of
+which fail the suite. (Swapping the `BTreeMap` for a `HashMap` does *not* reliably fail it, which is
+a defect in that mutation rather than in the test: it makes the result vary per process instead of
+being wrong in a fixed way, so a suite that passed once proves nothing either way.)
 
 ### `compass-core::alert` — a replaced alert is a cancelled alert, and the caller has to be told
 

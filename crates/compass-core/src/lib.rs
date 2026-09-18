@@ -38,6 +38,7 @@ pub mod app_service;
 pub mod app_windows;
 pub mod apps;
 pub mod asset_resolver;
+pub mod audio_control;
 pub mod boilerplate;
 pub mod browse_apps;
 pub mod builtin_icon;
