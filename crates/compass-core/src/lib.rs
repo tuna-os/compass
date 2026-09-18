@@ -84,6 +84,7 @@ pub mod selection;
 pub mod semver;
 pub mod shortcut;
 pub mod shortcut_form;
+pub mod shortcut_service;
 pub mod shortcut_store;
 pub mod slug;
 pub mod snippet;

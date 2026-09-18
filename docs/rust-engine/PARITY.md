@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,539 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, and the staged extension install |
+| `compass-core` | 1,562 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, and the quicklink list |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,895** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,918** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,895 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,918 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -165,7 +165,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -369,11 +369,10 @@ that directory (`system-run`, `set-default-browser`, `set-default-terminal`).
 `insertPlaceholder`'s argument rules are ported: literal text and placeholders in order, reserved
 ids that expand on their own, `name=` / `default=` with and without quotes, and the two behaviours a
 rewrite would "fix" by accident — a repeated key keeps its **first** value (`std::map::insert`), and
-a link that ends inside a placeholder loses everything from the opening brace. Still C++-only: the
-store behind it is ported too (`compass-core::shortcut_store`): the JSON file, the 10,000 limit,
-the two different not-found sentences, the rollback when a write fails after the list already
-changed, and the `value_or({})` that turns a corrupt file into an empty list rather than a refusal
-to start.
+a link that ends inside a placeholder loses everything from the opening brace. The store behind it is ported
+too (`compass-core::shortcut_store`): the JSON file, the 10,000 limit, the two different not-found
+sentences, the rollback when a write fails after the list already changed, and the `value_or({})`
+that turns a corrupt file into an empty list rather than a refusal to start.
 
 The migration from the old `OmniDatabase` and `resolveApp` are ported too — 15 more tests and 15
 controls, closing this row's named gap. The migration's three outcomes are kept apart because they
@@ -399,6 +398,36 @@ runs only into an empty store, so there is no previous list and no good file to 
 still matches the C++; it is just not doing the work the comment claimed. Recorded because a comment
 that overstates what a line does is the kind of thing that survives review and then misleads
 whoever changes it.
+
+**This row is green.** `ShortcutService` — the in-memory list the launcher reads from — is ported as
+`compass-core::shortcut_service`, and with it the last of the directory. 23 tests, 18 controls, 17
+of which fired.
+
+The list holds each quicklink with its link **already parsed**, which is the reason it exists: every
+row that draws a quicklink needs its arguments, and re-parsing on each keystroke of a search would
+parse every link in the store on every keystroke. `lastUsedAt` stays absent when the stored value is
+absent — turning it into 0 would date a quicklink nobody has opened to the epoch, which reads as
+opened rather than as never opened.
+
+One rule arranges the whole type: **the file is written first, and the list changes only if that
+succeeded.** A list showing an edit the file does not have is a launcher that forgets the edit at
+the next start and cannot say why. Three controls cover it — a create, an update and a visit the
+file refused, each of which must leave the list as it was.
+
+**Three guards were removed because no mutation could make them fail.** The C++ looks the entry up
+in its list *after* writing to the database and returns false if it has gone; that is a check for
+the service and the database having drifted apart, and it is real there because they are separate
+objects. Here the service owns the store, so there is nothing to drift: both entries are located
+before anything is written, and read back afterwards without a second check. The conditional around
+`lastOpenedAt` went the same way — after a successful visit the stored value is always present.
+
+Two fixtures were too small and controls said so: with one shortcut in the store, writing to the
+first entry and writing to the *right* entry are the same thing. Both now hold two, and the one that
+was not touched is asserted on.
+
+One thing is **not** claimed: looking the id up before the write rather than after it. A control
+could not make it fail, because the store refuses an unknown id anyway, so it is a shape rather than
+a behaviour.
 
 **`src/data-control-server` → `compass-wayland::data_control`** — the part that decides which of a
 Wayland client's offered MIME types belong in a clipboard entry, and which of them get their bytes
