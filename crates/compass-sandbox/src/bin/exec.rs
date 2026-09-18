@@ -1,0 +1,54 @@
+//! Applies a Landlock policy to itself, then becomes the program it was given.
+//!
+//! This exists because a Landlock ruleset confines the process that applies it.
+//! Confining a child otherwise means running code between fork and exec, which
+//! is `pre_exec` and is `unsafe`; this workspace forbids `unsafe`. Here the
+//! restriction and the `exec` happen in the same process, and Landlock
+//! guarantees the restriction survives `execve`.
+//!
+//! ```text
+//! compass-sandbox-exec --read /usr/share --write /tmp/w -- /usr/bin/node worker.js
+//! ```
+//!
+//! Anything after `--` is the program and its arguments, so a worker whose own
+//! flags happen to be spelled like these is not misread.
+
+use std::os::unix::process::CommandExt as _;
+use std::process::{Command, ExitCode};
+
+/// Refused the arguments.
+const EXIT_USAGE: u8 = 64;
+/// Could not apply the policy — including a kernel that would not enforce it.
+const EXIT_SANDBOX: u8 = 65;
+/// Could not exec the program.
+const EXIT_EXEC: u8 = 66;
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    let (policy, program) = match compass_sandbox::parse_args(&args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("compass-sandbox-exec: {message}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+    };
+
+    let Some((program, program_args)) = program.split_first() else {
+        eprintln!("compass-sandbox-exec: nothing to run after `--`");
+        return ExitCode::from(EXIT_USAGE);
+    };
+
+    // Deliberately before the exec and after nothing: every path the policy
+    // names has already been checked to exist, and from here this process is
+    // confined whatever happens next.
+    if let Err(error) = policy.apply() {
+        eprintln!("compass-sandbox-exec: {error}");
+        return ExitCode::from(EXIT_SANDBOX);
+    }
+
+    // `exec` only returns on failure.
+    let error = Command::new(program).args(program_args).exec();
+    eprintln!("compass-sandbox-exec: could not run {program}: {error}");
+    ExitCode::from(EXIT_EXEC)
+}

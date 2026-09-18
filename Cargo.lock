@@ -879,6 +879,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-sandbox"
+version = "0.1.0"
+dependencies = [
+ "landlock",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "compass-search"
 version = "0.1.0"
 dependencies = [
