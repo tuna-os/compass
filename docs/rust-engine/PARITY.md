@@ -60,7 +60,7 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-core` | 1,519 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking |
+| `compass-core` | 1,539 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, and the staged extension install |
 | `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
@@ -84,10 +84,10 @@ that. The plan has been corrected.
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
-| **Total** | **2,875** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+| **Total** | **2,895** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
 
 The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
-the 2,875 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+the 2,895 is the workspace figure `make check-rust` prints, which additionally covers doctests and
 harnesses not attributable to a single package. Both numbers are given rather than one reconciled
 figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
@@ -566,7 +566,32 @@ One line was written and then removed because a control could not make it fail: 
 printing a whole number without its fraction. Rust's `f64` `Display` already does that, the same way
 `QString::arg(float)` does.
 
-Still C++-only: the HTTP calls themselves, the install-from-zip path, and the QML views.
+Still C++-only: the HTTP calls themselves and the QML views. The install-from-zip path is
+ported in `compass-core::extension_install`, below.
+
+**`src/services/extension-registry` → `compass-core::extension_install`** — `installFromZip`. The
+archive arrives from the network, so the whole shape exists for one property: **a bad download must
+not destroy the installation it was going to replace.**
+
+The module returns the install as an ordered list of steps rather than performing it, because the
+ordering *is* the safety and nothing else about it is interesting. Clear the staging directory, so a
+previous install that died part-way cannot mix two extensions into one; unpack into staging, never
+into the target; check the manifest while still in staging, so a truncated archive is discarded with
+the installed version untouched; only then remove the target; and rename staging into place, which
+is atomic within a filesystem, so there is no moment where the extension is half-written. Staging
+sits *beside* the target rather than in a temporary directory, because a rename across filesystems
+is a copy that can fail halfway; the leading dot keeps it out of the registry's own listing.
+`strip_components` is 1 because a published bundle wraps everything in a directory named after the
+extension, and without stripping it every extension would install one level too deep and its
+manifest would never be found.
+
+Cleanup removes the staging directory and **only** the staging directory, for every failure.
+Reaching for the target in a cleanup path is exactly how a working extension gets deleted because
+its replacement was broken. `may_have_removed_previous` answers true for a failed rename alone — the
+one failure that happens after the target is removed — because "the install did not happen" and "the
+extension is now missing" send someone looking in different places.
+
+Still C++-only: the download itself, the registry's bookkeeping around the install, and the views.
 
 **`src/builtins/internal` → `compass-core::internal_commands`** — a hidden extension holding one
 command: a fixed Markdown document rendered to check that every construct the renderer claims to
