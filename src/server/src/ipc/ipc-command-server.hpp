@@ -34,6 +34,8 @@ public:
   ipc_gen::Result<ipc_gen::DMenuResponse>::Future dmenu(ipc_gen::DMenuRequest req) override;
   ipc_gen::Result<void>::Future browserInit(ipc_gen::BrowserInitRequest req) override;
   ipc_gen::Result<void>::Future browserTabsChanged(std::vector<ipc_gen::BrowserTabInfo> tabs) override;
+  ipc_gen::Result<std::vector<ipc_gen::RootHit>>::Future rootQuery(std::string q,
+                                                                   ipc_gen::RootQueryParams params) override;
   ipc_gen::Result<std::vector<ipc_gen::FileResult>>::Future fsQuery(std::string q,
                                                                     ipc_gen::FsQueryParams params) override;
 

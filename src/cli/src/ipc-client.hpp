@@ -61,6 +61,19 @@ public:
         [&](auto cb) { m_client.ipc().launchCommand(req, std::move(cb)); });
   }
 
+  std::expected<std::vector<ipc::RootHit>, std::string> rootQuery(std::string_view query, int limit = 0,
+                                                                  std::optional<std::string> providerId = {},
+                                                                  bool includeDisabled = false) {
+    ipc::RootQueryParams params{
+        .limit = limit,
+        .providerId = std::move(providerId),
+        .includeDisabled = includeDisabled,
+    };
+
+    return call<std::vector<ipc::RootHit>>(
+        [&](auto cb) { m_client.ipc().rootQuery(std::string{query}, params, std::move(cb)); });
+  }
+
   std::expected<std::vector<ipc::FileResult>, std::string> fsQuery(std::string_view query, int limit = 100,
                                                                    std::optional<std::string> category = {}) {
     ipc::FsQueryParams params{

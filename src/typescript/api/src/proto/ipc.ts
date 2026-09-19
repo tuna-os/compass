@@ -181,6 +181,19 @@ export type FileResult = {
 	mimeType?: string;
 }
 
+export type RootHit = {
+	id: string;
+	title: string;
+	subtitle?: string;
+	score: number;
+}
+
+export type RootQueryParams = {
+	limit: number;
+	providerId?: string;
+	includeDisabled: boolean;
+}
+
 export type FsQueryParams = {
 	limit: number;
 	category?: string;
@@ -223,6 +236,10 @@ class IpcService {
 
 	browserTabsChanged(tabs: BrowserTabInfo[]): Promise<void> {
 		return this.transport.request("Ipc/browserTabsChanged", { tabs});	
+	}
+
+	rootQuery(q: string, params: RootQueryParams): Promise<RootHit[]> {
+		return this.transport.request("Ipc/rootQuery", { q, params});	
 	}
 
 	fsQuery(q: string, params: FsQueryParams): Promise<FileResult[]> {
