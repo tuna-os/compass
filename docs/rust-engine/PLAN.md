@@ -1603,6 +1603,74 @@ Plus `insta` snapshot tests rendering views to a headless framebuffer. Keep thes
 semantic (results list, empty state, detail view, form). Large pixel-snapshot suites get
 rubber-stamped and stop catching anything.
 
+### 8.5b Suite 4b — head to head against the C++ engine
+
+Tracked as #117. **Every row in §8.5 is measured against a budget somebody wrote down. None is
+measured against the thing we are replacing.** For a strangler rewrite that is the wrong
+comparison: a 2.0 ms fuzzy-search SLA says nothing about whether a user will feel the port as an
+improvement or a regression, because the C++ engine is the only baseline they have.
+
+Suite 0 asks *"same results?"*. Suite 4b asks *"at least as fast, in no more memory?"* — same
+corpus, same harness shape, different question. It is the evidence the Phase 7 cutover needs, and
+it should be green before that phase starts rather than reconstructed afterwards.
+
+#### The second engine already exists as a CI artifact
+
+`.github/workflows/cpp-on-target.yaml` configures the C++ engine against Bluefin's actual Qt,
+builds it on the target image, and publishes `vicinae-cpp-bluefin.tar.gz`. Its own closing step
+states what it unblocks: the second engine Suite 0 has been missing, with layering it into the VM
+image named as the next step.
+
+So the prerequisite is not a Qt build — that exists. It is (a) giving `cpp-on-target.yaml` a
+trigger other than `workflow_dispatch`, and (b) layering the tarball into the VM image. **Both are
+shared with §8.1's outstanding parity work, and are done once for both.**
+
+#### What can honestly be compared
+
+Both engines expose a comparable CLI. The overlap is the action set:
+
+| action | timed from → to | comparable |
+|---|---|---|
+| `ping` | request → reply, established connection | yes |
+| `query` | parse → rank → serialise → reply, over the 757-entry corpus | yes |
+| `launch` | request → child spawned | yes |
+| `toggle` / `show` | request → the window's *answer* | partly — not a paint |
+| `close` / `hide` | request → the window's *answer* | partly — not a paint |
+| idle RSS | resident set with the window open, inside the Flatpak | yes |
+| **cold start** | — | **no: excluded** |
+
+**Cold start is excluded rather than fudged.** ADR-0015 made the Rust window resident. If the C++
+engine spawns per summon, the two are answering different questions and the Rust engine "wins" by
+architecture rather than by speed. What users feel is summon, and summon is comparable.
+
+**Nothing inside the guest can observe a frame** (ADR-0010), so the `toggle`/`close` rows end at
+the window's answer, not at a paint, and the harness must say so in its own output rather than let
+a reader assume otherwise. For the same reason the comparable set stops at the engine boundary:
+llvmpipe distorts anything GPU-bound, while ranking and IPC are CPU-bound and fine in the VM.
+
+Fairness is a property of the harness, not an intention:
+
+* the **same corpus** for both, `crates/compass-testkit/corpus/desktop-entries`;
+* the **same warm state** — connection established and index built *before* the timed region. The
+  `compass-ipc` bench learned this the hard way, reporting a 24× miss because it timed its own
+  setup;
+* **interleaved** A/B/A/B runs rather than all-A-then-all-B, so machine drift does not land on one
+  engine;
+* **medians gated, tails reported**, the same argument §8.5 already settled for the fuzzy row.
+
+#### The gate is a second step, deliberately
+
+Per ADR-0010 a threshold is measured before it is invented, so the first deliverable is recorded
+numbers and the gate follows from them. Shape, to be confirmed against the measurements rather
+than assumed: gate the median per action at `rust <= cpp`, allow a tolerance derived from the
+observed run-to-run spread rather than a round number picked for comfort, and fail by **naming the
+action** so a red bench is never a mystery. Actions recorded as not comparable are excluded
+visibly, never dropped quietly.
+
+**If an action cannot be made to match or beat, that is a finding and it gets recorded here** — the
+same treatment the peak-RSS row gets for missing its budget. A bench that can only report good news
+is not a bench.
+
 ### 8.6 Suite 5 — Packaging and deployment
 
 - **Bluefin end-to-end, the headline test:** install the Flatpak on a Bluefin image in CI, bind the
