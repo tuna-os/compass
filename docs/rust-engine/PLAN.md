@@ -1399,6 +1399,45 @@ confident wrong numbers:
   and 2800 µs, which looked like a flaky SLA and was a flaky statistic. A thousand samples puts ten
   above the p99, and the spread above narrowed accordingly.
 
+#### IME and screen readers — Phase 1's "watch for", answered
+
+Issue #4 flags both with a deadline: "Test both here, not in Phase 5 — if Iced can't do them,
+ADR-0001 needs revisiting while that is still cheap." Nothing tested either, so the risk was carried
+rather than resolved. Both are now answered, and **the answers differ**.
+
+**IME works, end to end, and is now pinned by tests.** The chain exists at every layer:
+
+* `winit` 0.30 implements `zwp_text_input_v3` on Wayland
+  (`platform_impl/linux/wayland/seat/text_input/`) and emits
+  `WindowEvent::Ime(Enabled | Preedit | Commit | Disabled)`;
+* `iced_winit` 0.14 converts those to `Event::InputMethod` and drives `set_ime_allowed`,
+  `set_ime_cursor_area` and `set_ime_purpose` from `enable_ime`, which runs when a widget asks for
+  an input method — so a focused search field turns the IME on by itself;
+* `iced_core` carries `InputMethod` and `Preedit`.
+
+`app.rs`'s `ime_tests` drive `Event::InputMethod` through the real widget tree: a committed
+composition reaches the query, and an uncommitted pre-edit does not. **So ADR-0001 does not need
+revisiting on this axis.** The tests exist because that is a claim about libraries, and libraries
+change.
+
+The harness needed a control and the control earned its place immediately. The first version
+asserted that a commit reached the query and *failed* — which reads like "Iced cannot do IME". It
+was not: the simulator does not run `Task`s, so `focus_search` never ran and the field was
+unfocused. A plain-typing control failed in exactly the same way, which is what identified the
+harness rather than the input method. Both now click the field first.
+
+**Screen readers are a different answer: there is no accessibility tree at all.** Neither `iced`
+0.14 nor `winit` 0.30 depends on `accesskit`, and the workspace's `Cargo.lock` contains **zero**
+occurrences of `accesskit`, `atspi` or any AT-SPI binding. Orca — the screen reader GNOME ships and
+enables by default for its users — has nothing to read: not the query field, not the result list,
+not the selected item.
+
+This is the case #4 wanted found early, and it is found. It is **not** a bug to fix in passing:
+adding an accessibility tree means AccessKit support in Iced (upstream work) or an AT-SPI
+implementation of our own, and the choice between waiting, contributing upstream, and accepting the
+gap for now is exactly the kind of decision ADR-0001 exists to record. Flagged here rather than
+decided.
+
 #### Cold start — reported from the VM tier, and not the number the SLA names
 
 `packaging/vmtest/checks.sh launcher-start` now times three points: spawn to

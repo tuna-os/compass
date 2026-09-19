@@ -2662,6 +2662,124 @@ mod preset_tests {
 /// people turn off. Selecting a widget by its text and reading its **layout
 /// bounds** asserts the same structure without depending on how the glyphs came
 /// out.
+/// Input-method behaviour: the "watch for" item on the Phase 1 issue.
+///
+/// #4 flags IME and screen-reader behaviour with an explicit deadline: "Test
+/// both here, not in Phase 5 — if Iced can't do them, ADR-0001 needs
+/// revisiting while that is still cheap." Nothing tested it, so the risk was
+/// carried unresolved rather than answered.
+///
+/// # The stack does support it, end to end
+///
+/// * `winit` 0.30 implements `zwp_text_input_v3` on Wayland
+///   (`platform_impl/linux/wayland/seat/text_input/`) and emits
+///   `WindowEvent::Ime(Enabled | Preedit | Commit | Disabled)`.
+/// * `iced_winit` 0.14 converts those into `Event::InputMethod`
+///   (`conversion.rs`), and calls `set_ime_allowed`, `set_ime_cursor_area` and
+///   `set_ime_purpose` from `enable_ime`, which runs when a widget asks for an
+///   input method — so a focused search field turns the IME on by itself.
+/// * `iced_core` carries `InputMethod` and `Preedit`.
+///
+/// So **ADR-0001 does not need revisiting on this point.** That is a claim
+/// about libraries, and libraries change, which is what these tests are for:
+/// they fail if a future Iced stops routing composed text to the field.
+///
+/// # What these do and do not prove
+///
+/// They drive `Event::InputMethod` through the real widget tree and assert the
+/// query is what a CJK or accented commit should leave behind. They do **not**
+/// prove a real IME works against a real compositor — that needs ibus or fcitx
+/// in the VM tier, and it is a different test. What they rule out is the
+/// cheaper and more likely failure: composed text never reaching the field at
+/// all, which would make the launcher unusable for anyone typing Japanese,
+/// Chinese, Korean or with a compose key, and which no other test would catch.
+#[cfg(test)]
+mod ime_tests {
+    use super::*;
+    use iced_winit::core::input_method;
+
+    fn focused_app() -> LauncherApp {
+        let mut app = LauncherApp::with_index(AppIndex::default());
+        app.apply(AppFlags::default());
+        app
+    }
+
+    /// One simulator, focused, driven by `events`, with the messages applied.
+    ///
+    /// A fresh simulator per interaction would rebuild the widget tree and lose
+    /// focus, so a two-step sequence has to share one. Focus itself comes from
+    /// clicking the placeholder: in the running launcher it arrives via a
+    /// `Task` (`focus_search`, dispatched on show) and the simulator does not
+    /// run tasks.
+    fn drive(app: &mut LauncherApp, events: Vec<Vec<iced_winit::core::Event>>) {
+        let mut out = Vec::new();
+        for batch in events {
+            // Scoped so the borrow of `app.view()` ends before `app.update`.
+            {
+                let mut ui = iced_test::simulator(app.view());
+                ui.click("Search…").expect("the search field is clickable");
+                let _ = ui.simulate(batch);
+                out.extend(ui.into_messages());
+            }
+            for message in out.drain(..) {
+                let _ = app.update(message);
+            }
+        }
+    }
+
+    fn commit(text: &str) -> Vec<iced_winit::core::Event> {
+        vec![iced_winit::core::Event::InputMethod(
+            input_method::Event::Commit(text.to_owned()),
+        )]
+    }
+
+    /// CONTROL. If plain typing does not reach the query in this harness, the
+    /// IME assertions below are measuring the harness, not the input method.
+    /// This failed first — the field was unfocused and nothing reached it —
+    /// which is exactly the false "IME is broken" this control exists to stop.
+    #[test]
+    fn control_typewrite_reaches_the_query() {
+        let mut app = focused_app();
+        let mut ui = iced_test::simulator(app.view());
+        ui.click("Search…").expect("the search field is clickable");
+        let _ = ui.typewrite("abc");
+        for message in ui.into_messages() {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            app.query, "abc",
+            "CONTROL: plain typing did not reach the query, so nothing below measures IME"
+        );
+    }
+
+    #[test]
+    fn a_committed_composition_reaches_the_query() {
+        let mut app = focused_app();
+        drive(&mut app, vec![commit("日本語")]);
+        assert_eq!(
+            app.query, "日本語",
+            "a committed IME composition did not reach the query field. Typed ASCII arrives \
+             as key events and would still work, so every other test here would pass while \
+             the launcher was unusable for anyone composing text"
+        );
+    }
+
+    #[test]
+    fn a_preedit_does_not_commit_early() {
+        let mut app = focused_app();
+        drive(
+            &mut app,
+            vec![vec![iced_winit::core::Event::InputMethod(
+                input_method::Event::Preedit("にほんご".to_owned(), None),
+            )]],
+        );
+        assert_eq!(
+            app.query, "",
+            "an uncommitted IME pre-edit leaked into the query; the launcher would search \
+             for each intermediate composition state"
+        );
+    }
+}
 #[cfg(test)]
 mod view_tests {
     use super::*;
