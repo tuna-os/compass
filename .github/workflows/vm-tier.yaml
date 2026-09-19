@@ -25,35 +25,52 @@ on:
     # stable for a couple of weeks, never straight in.
     - cron: "0 3 * * *"
   workflow_dispatch:
-  # Runs on a PR only when something that affects it changes — which includes
-  # this file, so the job is exercised by the PR that introduces or edits it
-  # rather than shipped unverified and discovered broken at 3am.
+
+  # Releases. This is the tier that tests what users install, so it runs on the
+  # thing users will install. Same `v*` tags `release.yml` builds from, so a
+  # tagged release and the tier answering for it are the same commit.
+  push:
+    tags:
+      - "v*"
+
+  # PRs, for this tier's OWN PLUMBING ONLY.
+  #
+  # WHAT CHANGED AND WHY
+  #
+  # This list used to include the code the tier exercises — `crates/compass-ui/**`,
+  # `crates/compass-ipc/**`, the summon path, the Flatpak manifest. That made
+  # ordinary iteration wait twenty-plus minutes on three VMs, on nearly every
+  # PR touching the launcher, and the concurrency note below records what
+  # actually happened: runs 186-190 were all cancelled by the next push while a
+  # branch was under active development. A tier that only completes on a quiet
+  # branch is a nightly tier with extra steps, and it was charging PR latency
+  # for the privilege.
+  #
+  # So the code paths move to nightly and release, and what stays is the tier's
+  # own scripts. The reason for that split is the one the old comment gave and
+  # it still holds: a change to `checks.sh` or `launcher.sh` that breaks the
+  # tier would otherwise ship unverified and surface at 3am, or — worse now —
+  # at a release, when the tier is the last thing standing between a tag and a
+  # user. These files are small, rarely touched, and self-verifying: the PR
+  # that edits them is the PR that runs them.
+  #
+  # `packaging/flatpak/**` and `flatpak.yaml` are deliberately NOT here any
+  # more. The `Flatpak / build` job already runs on every PR and catches a
+  # broken manifest in minutes without booting anything.
+  #
+  # WHAT THIS COSTS, STATED PLAINLY
+  #
+  # A regression in the launcher's own code is now caught by the nightly run
+  # rather than by the PR that introduced it. That is up to a day of exposure
+  # on main instead of a block before merge. The trade is deliberate: the tier
+  # was not reliably completing on active branches anyway, so what is being
+  # given up is less coverage than the old trigger list implied.
   pull_request:
     paths:
       - .github/workflows/vm-tier.yaml
-      - .github/workflows/flatpak.yaml
       - .github/actions/vm-host/**
       - packaging/vmtest/**
-      - packaging/flatpak/**
       - scripts/vmtest/**
-      # The code this tier actually exercises. Narrower than crates/**, because
-      # a change anywhere in the workspace does not need three VMs to answer
-      # for it.
-      #
-      # `spike.rs` was listed here and DOES NOT EXIST -- the module is
-      # `spike/`, a directory, and has been since it grew a second file. So the
-      # one path filter naming the spike matched nothing and the spike could
-      # not trigger its own tier. Found while adding the entries below.
-      - crates/vicinae/src/spike/**
-      # The summon path: the engine that pushes, the bridge that carries it,
-      # and the window that answers. `launcher.sh` now asserts all three and
-      # would go on passing against a stale Flatpak if a change to them did not
-      # rebuild it.
-      - crates/vicinae/src/serve.rs
-      - crates/vicinae/src/hotkey.rs
-      - crates/vicinae/src/window.rs
-      - crates/compass-ui/**
-      - crates/compass-ipc/**
 
 # `cancel-in-progress: true` is this repository's convention for per-ref
 # workflows and it is right for the fast ones: a superseded build is wasted
@@ -84,6 +101,13 @@ on:
 # The third is what happens today, and it works if whoever is pushing knows to
 # stop and let it finish. That is the part that was not written down, so it is
 # written down now.
+#
+# UPDATE, since the trigger list above narrowed: this mostly stops mattering.
+# The tier no longer runs on PRs that touch launcher code, so the "cancelled by
+# the next push while the branch is being worked on" case needs someone to be
+# actively iterating on the tier's own scripts — rare, and they are the person
+# who knows to wait. Release runs are keyed on a tag ref, so two releases never
+# cancel each other, and nothing else shares their concurrency group.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

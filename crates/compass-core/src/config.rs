@@ -80,6 +80,12 @@ pub const DEFAULT_PRESET: &str = "gnome";
 /// footprint.
 pub const DEFAULT_ICONS: bool = false;
 
+/// Whether the launcher background is translucent when nothing says otherwise.
+///
+/// Off, matching the Spotlight-simple default. **Translucency, not blur:** see
+/// [`AppearanceConfig::tint`] for why the key is not called `blur`.
+pub const DEFAULT_TINT: bool = false;
+
 /// Default for `launcher.keybinding`.
 ///
 /// The literal the C++ writes, and the one `KeyBindingService::getMode` reads
@@ -171,6 +177,8 @@ pub struct AppearanceConfig {
     preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     icons: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tint: Option<bool>,
 
     /// Keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -218,6 +226,34 @@ impl AppearanceConfig {
         self
     }
 
+    /// The explicit `launcher.appearance.tint`, if one was written.
+    #[must_use]
+    pub fn tint_override(&self) -> Option<bool> {
+        self.tint
+    }
+
+    /// Whether the launcher background is translucent (#86).
+    ///
+    /// **This is translucency, and the key is deliberately not called `blur`.**
+    /// Mutter has no blur protocol — what GNOME extensions call blur is the
+    /// shell compositing its own surfaces, which a Wayland client cannot
+    /// request. The only real alternative was capturing the screen through a
+    /// portal and blurring it ourselves, which costs a permission a launcher
+    /// should never need. A `blur` key that does not blur would produce
+    /// correct bug reports forever.
+    ///
+    /// Defaults to [`DEFAULT_TINT`].
+    #[must_use]
+    pub fn tint(&self) -> bool {
+        self.tint.unwrap_or(DEFAULT_TINT)
+    }
+
+    /// Sets `launcher.appearance.tint`. `None` removes the key.
+    pub fn set_tint(&mut self, value: Option<bool>) -> &mut Self {
+        self.tint = value;
+        self
+    }
+
     /// Keys present in the file that this build does not understand.
     #[must_use]
     pub fn unknown_fields(&self) -> &BTreeMap<String, Value> {
@@ -232,9 +268,10 @@ impl AppearanceConfig {
         let Self {
             preset,
             icons,
+            tint,
             unknown,
         } = self;
-        preset.is_none() && icons.is_none() && unknown.is_empty()
+        preset.is_none() && icons.is_none() && tint.is_none() && unknown.is_empty()
     }
 }
 

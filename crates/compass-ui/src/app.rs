@@ -20,7 +20,7 @@ use compass_platform::{AppLauncher, NullLauncher};
 use compass_search::rank_indices;
 
 use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
-use crate::design::{self, Appearance, GEOMETRY};
+use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
@@ -247,7 +247,7 @@ impl Default for AppFlags {
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
-            appearance_preset: crate::preset::resolve(None, None),
+            appearance_preset: crate::preset::resolve(None, None, None),
             started_at: None,
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
@@ -377,6 +377,13 @@ pub struct LauncherApp {
     /// Whether a rule separates the field from the results. See
     /// [`crate::preset::Preset::field_rule`].
     field_rule: bool,
+
+    /// Whether the card background is translucent (#86).
+    ///
+    /// Translucency, not blur — see [`crate::preset::Preset::tint`]. The window
+    /// surface is already transparent (`AppFlags::default`), so this only
+    /// changes the card's own background alpha.
+    tint: bool,
     /// Whether rows show their subtitle. See [`crate::preset::Preset::subtitles`].
     subtitles: bool,
     /// When the first frame was drawn, for the cold-start figure (#13).
@@ -502,6 +509,27 @@ fn chord_direction(
     }
 }
 
+/// The card's background colour, given the surface colour and whether `tint` is on.
+///
+/// Extracted from `view`'s style closure on purpose. A headless renderer can
+/// assert what is laid out but not what colour a container was filled with, so
+/// the alpha decision inside a closure would be untestable without a pixel
+/// baseline — and pixel baselines get rubber-stamped, which is why §8.5 rejects
+/// them. As a function it is an ordinary assertion.
+///
+/// Translucency is applied here rather than in the palette so the theme stays
+/// one set of colours: `tint` is a property of the window, not of the scheme,
+/// and a palette that changed with it would make every other surface's
+/// contrast depend on a background setting.
+fn card_background(surface: design::Rgb, tint: bool) -> iced::Color {
+    let colour = surface.to_iced();
+    if tint {
+        colour.scale_alpha(TINT_ALPHA)
+    } else {
+        colour
+    }
+}
+
 impl LauncherApp {
     /// Create a new launcher application, indexing the environment.
     pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
@@ -527,6 +555,7 @@ impl LauncherApp {
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
+        app.tint = flags.appearance_preset.tint;
         app.subtitles = flags.appearance_preset.subtitles;
         app.started_at = flags.started_at;
         app.icon_lookup = flags.icon_lookup;
@@ -573,6 +602,7 @@ impl LauncherApp {
             icon_cache: crate::icons::IconCache::new(),
             geometry: design::GEOMETRY,
             field_rule: false,
+            tint: false,
             subtitles: true,
             first_frame_at: None,
             started_at: None,
@@ -1224,12 +1254,14 @@ impl LauncherApp {
             None => card_content.into(),
         };
 
+        let card_background = card_background(palette.surface, self.tint);
+
         container(
             container(card_body)
                 .width(Length::Fixed(f32::from(geometry.card_width)))
                 .padding(geometry.card_padding)
                 .style(move |_: &Theme| container::Style {
-                    background: Some(palette.surface.to_iced().into()),
+                    background: Some(card_background.into()),
                     border: Border {
                         color: palette.border.to_iced(),
                         width: 1.0,
@@ -2580,6 +2612,104 @@ mod icon_tests {
     }
 }
 
+/// The `tint` option (#86): translucency, and deliberately not called blur.
+#[cfg(test)]
+mod tint_tests {
+    use super::*;
+    use crate::preset::{self, Preset};
+
+    #[test]
+    fn only_raycast_tints() {
+        // Raycast is the one preset imitating a look built on real compositor
+        // blur, so it gets the closest thing available. The Spotlight-simple
+        // default does not, which is also what keeps the VM tier's pixel gates
+        // seeing an unchanged image.
+        assert!(Preset::Raycast.tint());
+        assert!(!Preset::Gnome.tint());
+        assert!(!Preset::Flow.tint());
+        assert!(!Preset::Rofi.tint());
+    }
+
+    #[test]
+    fn an_explicit_setting_beats_the_preset_both_ways() {
+        // Both directions: a one-way override reads as working until someone
+        // tries to turn the feature off under a preset that enables it.
+        assert!(!preset::resolve(Some("raycast"), None, Some(false)).tint);
+        assert!(preset::resolve(Some("gnome"), None, Some(true)).tint);
+    }
+
+    #[test]
+    fn the_flag_reaches_the_launcher() {
+        // Through `apply`, which is the real assignment list `vicinae::run`
+        // uses -- a helper that set the field itself would be a test of the
+        // helper. This is the control #108 recorded and could not close.
+        let mut app = LauncherApp::with_index(AppIndex::default());
+        app.apply(AppFlags {
+            appearance_preset: preset::resolve(Some("raycast"), None, None),
+            ..AppFlags::default()
+        });
+        assert!(app.tint, "the resolved preset's tint never reached the app");
+
+        app.apply(AppFlags {
+            appearance_preset: preset::resolve(Some("gnome"), None, None),
+            ..AppFlags::default()
+        });
+        assert!(!app.tint);
+    }
+
+    #[test]
+    fn tint_changes_the_card_background_and_only_its_alpha() {
+        let surface = design::DARK.surface;
+        let opaque = card_background(surface, false);
+        let tinted = card_background(surface, true);
+
+        assert!(
+            (opaque.a - 1.0).abs() < f32::EPSILON,
+            "the untinted card must be fully opaque, got alpha {}",
+            opaque.a
+        );
+        assert!(
+            tinted.a < opaque.a,
+            "tint did not make the card more transparent: {} vs {}",
+            tinted.a,
+            opaque.a
+        );
+
+        // Translucency, not a different colour. If the hue moved, this would be
+        // a theme change wearing a transparency setting's name.
+        assert!(
+            (tinted.r - opaque.r).abs() < f32::EPSILON
+                && (tinted.g - opaque.g).abs() < f32::EPSILON
+                && (tinted.b - opaque.b).abs() < f32::EPSILON,
+            "tint changed the card's colour, not just its alpha"
+        );
+    }
+
+    #[test]
+    fn the_tinted_card_stays_legible() {
+        // A launcher bound to Super+Space is text over an arbitrary wallpaper.
+        // There is a temptation to push the alpha down because it looks better
+        // in a screenshot over a photo; this is the floor that stops it.
+        //
+        // Asserted on the colour the view actually fills with, not on
+        // `TINT_ALPHA` directly: clippy rejects an assertion over a constant,
+        // and rightly -- `assert!(SOME_CONST >= 0.75)` is evaluated by the
+        // compiler, not by the test, so it proves nothing about the code path.
+        // The same mistake was already fixed once here in a quick-launch
+        // assertion over `DEFAULT_QUICK_LAUNCH`.
+        let alpha = card_background(design::DARK.surface, true).a;
+        assert!(
+            alpha >= 0.75,
+            "the tinted card fills at alpha {alpha}, low enough that body text over a bright \
+             wallpaper loses contrast. Legibility is not negotiable for the launcher."
+        );
+        assert!(
+            alpha < 1.0,
+            "a tint that fills at alpha {alpha} is not a tint"
+        );
+    }
+}
+
 #[cfg(test)]
 mod preset_tests {
     use super::*;
@@ -2592,7 +2722,7 @@ mod preset_tests {
     /// which is the whole mutation these tests exist to catch. It was written
     /// that way first and the control caught it.
     fn app_with(preset_name: &str, icons: Option<bool>) -> LauncherApp {
-        let resolved = preset::resolve(Some(preset_name), icons);
+        let resolved = preset::resolve(Some(preset_name), icons, None);
         let mut app = LauncherApp::with_index(AppIndex::builder().build());
         app.apply(AppFlags {
             icons: resolved.icons,
@@ -2662,6 +2792,124 @@ mod preset_tests {
 /// people turn off. Selecting a widget by its text and reading its **layout
 /// bounds** asserts the same structure without depending on how the glyphs came
 /// out.
+/// Input-method behaviour: the "watch for" item on the Phase 1 issue.
+///
+/// #4 flags IME and screen-reader behaviour with an explicit deadline: "Test
+/// both here, not in Phase 5 — if Iced can't do them, ADR-0001 needs
+/// revisiting while that is still cheap." Nothing tested it, so the risk was
+/// carried unresolved rather than answered.
+///
+/// # The stack does support it, end to end
+///
+/// * `winit` 0.30 implements `zwp_text_input_v3` on Wayland
+///   (`platform_impl/linux/wayland/seat/text_input/`) and emits
+///   `WindowEvent::Ime(Enabled | Preedit | Commit | Disabled)`.
+/// * `iced_winit` 0.14 converts those into `Event::InputMethod`
+///   (`conversion.rs`), and calls `set_ime_allowed`, `set_ime_cursor_area` and
+///   `set_ime_purpose` from `enable_ime`, which runs when a widget asks for an
+///   input method — so a focused search field turns the IME on by itself.
+/// * `iced_core` carries `InputMethod` and `Preedit`.
+///
+/// So **ADR-0001 does not need revisiting on this point.** That is a claim
+/// about libraries, and libraries change, which is what these tests are for:
+/// they fail if a future Iced stops routing composed text to the field.
+///
+/// # What these do and do not prove
+///
+/// They drive `Event::InputMethod` through the real widget tree and assert the
+/// query is what a CJK or accented commit should leave behind. They do **not**
+/// prove a real IME works against a real compositor — that needs ibus or fcitx
+/// in the VM tier, and it is a different test. What they rule out is the
+/// cheaper and more likely failure: composed text never reaching the field at
+/// all, which would make the launcher unusable for anyone typing Japanese,
+/// Chinese, Korean or with a compose key, and which no other test would catch.
+#[cfg(test)]
+mod ime_tests {
+    use super::*;
+    use iced_winit::core::input_method;
+
+    fn focused_app() -> LauncherApp {
+        let mut app = LauncherApp::with_index(AppIndex::default());
+        app.apply(AppFlags::default());
+        app
+    }
+
+    /// One simulator, focused, driven by `events`, with the messages applied.
+    ///
+    /// A fresh simulator per interaction would rebuild the widget tree and lose
+    /// focus, so a two-step sequence has to share one. Focus itself comes from
+    /// clicking the placeholder: in the running launcher it arrives via a
+    /// `Task` (`focus_search`, dispatched on show) and the simulator does not
+    /// run tasks.
+    fn drive(app: &mut LauncherApp, events: Vec<Vec<iced_winit::core::Event>>) {
+        let mut out = Vec::new();
+        for batch in events {
+            // Scoped so the borrow of `app.view()` ends before `app.update`.
+            {
+                let mut ui = iced_test::simulator(app.view());
+                ui.click("Search…").expect("the search field is clickable");
+                let _ = ui.simulate(batch);
+                out.extend(ui.into_messages());
+            }
+            for message in out.drain(..) {
+                let _ = app.update(message);
+            }
+        }
+    }
+
+    fn commit(text: &str) -> Vec<iced_winit::core::Event> {
+        vec![iced_winit::core::Event::InputMethod(
+            input_method::Event::Commit(text.to_owned()),
+        )]
+    }
+
+    /// CONTROL. If plain typing does not reach the query in this harness, the
+    /// IME assertions below are measuring the harness, not the input method.
+    /// This failed first — the field was unfocused and nothing reached it —
+    /// which is exactly the false "IME is broken" this control exists to stop.
+    #[test]
+    fn control_typewrite_reaches_the_query() {
+        let mut app = focused_app();
+        let mut ui = iced_test::simulator(app.view());
+        ui.click("Search…").expect("the search field is clickable");
+        let _ = ui.typewrite("abc");
+        for message in ui.into_messages() {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            app.query, "abc",
+            "CONTROL: plain typing did not reach the query, so nothing below measures IME"
+        );
+    }
+
+    #[test]
+    fn a_committed_composition_reaches_the_query() {
+        let mut app = focused_app();
+        drive(&mut app, vec![commit("日本語")]);
+        assert_eq!(
+            app.query, "日本語",
+            "a committed IME composition did not reach the query field. Typed ASCII arrives \
+             as key events and would still work, so every other test here would pass while \
+             the launcher was unusable for anyone composing text"
+        );
+    }
+
+    #[test]
+    fn a_preedit_does_not_commit_early() {
+        let mut app = focused_app();
+        drive(
+            &mut app,
+            vec![vec![iced_winit::core::Event::InputMethod(
+                input_method::Event::Preedit("にほんご".to_owned(), None),
+            )]],
+        );
+        assert_eq!(
+            app.query, "",
+            "an uncommitted IME pre-edit leaked into the query; the launcher would search \
+             for each intermediate composition state"
+        );
+    }
+}
 #[cfg(test)]
 mod view_tests {
     use super::*;
@@ -2686,7 +2934,7 @@ mod view_tests {
         }
         let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
         app.apply(AppFlags {
-            appearance_preset: preset::resolve(Some(preset_name), None),
+            appearance_preset: preset::resolve(Some(preset_name), None, None),
             ..AppFlags::default()
         });
         // `fi` matches Firefox and Files, so there is a row beneath the first
