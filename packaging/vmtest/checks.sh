@@ -1098,6 +1098,51 @@ PY
   # Usage: checks.sh ui-state <key=value>...
   # Each argument must appear on the LAST state line. Without arguments the
   # whole sequence is printed and nothing is asserted.
+  # What does cold start cost? (#13 §8.5 -- RECORDED, NOT GATED)
+  #
+  # §8.5 names "cold start to first frame < 120 ms" and nothing has ever
+  # measured it. `LauncherApp` logs `first_draw_ms` when Iced asks for the
+  # first frame, and this surfaces it.
+  #
+  # IT IS A FLOOR ON THE SLA, NOT THE SLA, for two reasons stated here so the
+  # number is not quoted as something it is not:
+  #
+  #   * Iced yields that event on `RedrawRequested` -- the compositor asking
+  #     for a frame, not a frame reaching the screen. The rendering after it
+  #     is unmeasured, and under llvmpipe it is not small.
+  #   * The clock starts inside `vicinae::run`, so dynamic linking is outside
+  #     it, and a binary that links wgpu does not link instantly.
+  #
+  # Both omissions push the figure DOWN, so a reading over 120 ms would be
+  # conclusive while one under it is not. Recorded until there are enough
+  # numbers to say what a threshold should be (ADR-0010).
+  cold-start)
+    if [ ! -s "$UI_ERR" ]; then
+      echo "FAIL: $UI_ERR is empty; the launcher logged nothing at all" >&2
+      exit 1
+    fi
+    # Escapes stripped for the reason ui-state strips them: tracing colours
+    # its output and a literal pattern matches nothing against it.
+    line="$(sed 's/\x1b\[[0-9;]*m//g' "$UI_ERR" | grep -F 'first_draw_ms' | head -1 || true)"
+    if [ -z "$line" ]; then
+      echo "no first-frame line logged; the launcher drew nothing, or the"
+      echo "instrumentation in LauncherApp::update was removed"
+      echo "--- tail of the launcher log ---"
+      tail -n 20 "$UI_ERR"
+      exit 1
+    fi
+    ms="$(printf '%s' "$line" | sed -n 's/.*first_draw_ms=\([0-9]\+\).*/\1/p')"
+    if [ -z "$ms" ]; then
+      echo "FAIL: found the line but not the figure, so the field was renamed:" >&2
+      printf '  %s\n' "$line" >&2
+      exit 1
+    fi
+    printf 'cold start: first frame requested %s ms after vicinae::run was entered\n' "$ms"
+    printf '  §8.5 names 120 ms to first FRAME. This is a floor on that:\n'
+    printf '  it excludes the render after the redraw request, and dynamic\n'
+    printf '  linking before the clock starts. Recorded, not gated.\n'
+    ;;
+
   ui-state)
     shift
     if [ ! -s "$UI_ERR" ]; then

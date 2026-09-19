@@ -425,6 +425,12 @@ echo "=== 3b2. what does the launcher cost at idle? (Phase 1 gate) ==="
 # window is up and before the control application starts competing for memory.
 guest "$checks" launcher-rss
 
+echo "=== 3b3. what does cold start cost? (#13 §8.5, recorded) ==="
+# The first number for a row of §8.5 that has never had one. Gated only on the
+# line existing: a launcher that drew nothing, or instrumentation that was
+# removed, are both real findings. The figure itself is recorded.
+guest "$checks" cold-start
+
 echo "=== 3d. did a launcher window actually appear? (the gate) ==="
 # The first assertion in this tier derived from a measurement rather than from
 # an assumption, and the reason it exists is that its absence let a wrong
