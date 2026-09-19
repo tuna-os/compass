@@ -107,11 +107,96 @@ jobs:
 
       # The log is the finding when this fails, and a failed spike is a result
       # rather than an accident — so it is kept either way.
-      - name: Keep gnome-shell's log
+      - name: Keep the compositor's log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: compositor-log-f${{ matrix.fedora }}
+          path: |
+            /tmp/gnome-shell.log
+            /tmp/wayland-info.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  # The next question, and deliberately a separate job from the one above.
+  #
+  # The compositor spike answers "can a session exist here". This answers "can
+  # the thing we ship run inside it" — and it is a genuinely different
+  # unknown, because Flatpak needs bubblewrap and bubblewrap needs user
+  # namespaces, which a container may or may not grant.
+  #
+  # Asked smallest-first, as the compositor spike was: this runs the Flatpak's
+  # `--version`, not the launcher. If `flatpak run` cannot execute at all, a
+  # failure to paint a window would be a confusing way to find that out.
+  flatpak:
+    name: Flatpak
+    uses: ./.github/workflows/flatpak.yaml
+
+  run-flatpak:
+    name: "Tier 2 spike: can the Flatpak run against that compositor?"
+    needs: [spike, flatpak]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    # One image, not the matrix. The matrix is for a question already known to
+    # have two answers worth having; this one does not have an answer yet.
+    container:
+      image: fedora:44
+      # --privileged, and the smaller hammer was tried first.
+      #
+      # `--security-opt seccomp=unconfined --cap-add SYS_ADMIN` was not enough:
+      #
+      #     bwrap: Failed to make / slave: Permission denied
+      #
+      # That is `mount --make-rslave` on the container's root, which needs more
+      # than SYS_ADMIN grants inside a Docker container — the mount namespace
+      # itself is restricted. Flatpak cannot sandbox without it, so this is
+      # privilege or nothing.
+      #
+      # Acceptable here in a way it would not be elsewhere: an ephemeral
+      # GitHub-hosted runner, executing this repository's own code, to test the
+      # artifact we ship. If it is still not enough, the finding is that
+      # Tier 2 stops at the protocol layer and the Flatpak needs the VM tier —
+      # which is a real answer and #119 records it either way.
+      options: --privileged --shm-size=2g
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a compositor and Flatpak
+        run: |
+          dnf -y install --setopt=install_weak_deps=False \
+            mutter \
+            wayland-utils \
+            dbus-daemon \
+            dbus-tools \
+            dbus-x11 \
+            glib2 \
+            procps-ng \
+            flatpak \
+            bubblewrap
+
+      - name: Fetch the Flatpak bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: /tmp/bundle
+
+      - name: What did we get?
+        run: ls -la /tmp/bundle
+
+      # Against the compositor, because a Flatpak that runs but cannot reach a
+      # Wayland display has not answered the question this tier is about.
+      - name: Can it install and run?
+        run: |
+          scripts/tier2/headless-gnome-spike.sh \
+            scripts/tier2/run-flatpak-probe.sh
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-probe-logs
           path: |
             /tmp/gnome-shell.log
             /tmp/wayland-info.txt

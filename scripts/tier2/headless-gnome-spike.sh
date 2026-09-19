@@ -191,12 +191,44 @@ fi
 
 shell_alive || fail "mutter died while being queried"
 
-log "SPIKE PASSED"
+log "the compositor is up"
 echo "A real Wayland compositor runs headless in a container, serves a client,"
 echo "and advertises the globals this tier needs. §8.8's Tier 2 is buildable."
 echo
 echo "NOT proven, and recorded on #119: GNOME Shell itself needs systemd-logind"
 echo "and does not run here, so anything Shell-resident still needs a VM."
 
+# With no arguments this is the spike: it proved the premise and stops.
+# With arguments it is the tier's harness: bring up a compositor, run the
+# thing under test against it, and let that decide the exit code.
+#
+# One script rather than two so the session a test runs against is the exact
+# session the spike verified — a second copy would drift, and the first thing
+# to drift would be the readiness checks, which are the part that took two
+# runs to get right.
+if [ "$#" -eq 0 ]; then
+  log "SPIKE PASSED"
+  kill "$SHELL_PID" 2>/dev/null || true
+  wait "$SHELL_PID" 2>/dev/null || true
+  exit 0
+fi
+
+WAYLAND_DISPLAY="$(basename "$(compgen -G "${XDG_RUNTIME_DIR}/wayland-[0-9]" | head -1)")"
+export WAYLAND_DISPLAY
+log "running against the compositor: $*"
+echo "WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"
+
+status=0
+"$@" || status=$?
+
+# Reported before exiting, because "the command failed" and "the compositor
+# died under it" are different findings and the second one is invisible if
+# nobody looks.
+if ! shell_alive; then
+  printf '\nNOTE: the compositor did not survive the command.\n' >&2
+  cat "$SHELL_LOG" >&2 || true
+fi
+
 kill "$SHELL_PID" 2>/dev/null || true
 wait "$SHELL_PID" 2>/dev/null || true
+exit "$status"
