@@ -2660,6 +2660,69 @@ mod view_tests {
     }
 
     #[test]
+    fn each_notice_state_says_what_it_should() {
+        // #13 names "results list, empty state, detail view, form" for this
+        // coverage. These are the three the launcher actually has; a detail
+        // view and a form do not exist yet, and inventing tests for them would
+        // be testing nothing.
+        //
+        // Each of these is one branch of the same `if` in `view`, and the
+        // branches are only distinguishable by the words they draw -- which is
+        // exactly what a user distinguishes them by.
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Empty query: the resting state, and the one most people see most.
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::QueryChanged(String::new()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Type to search").is_ok());
+        assert!(
+            ui.find("Files").is_err(),
+            "an empty query should draw no rows"
+        );
+
+        // A query nothing matches.
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::QueryChanged("zzzznotathing".to_owned()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("No results").is_ok());
+        assert!(ui.find("Type to search").is_err());
+
+        // A failed launch, which replaces the list rather than sitting beside
+        // it -- worth pinning, because the error hiding the results is a
+        // deliberate choice and not obviously the right one.
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::Launched(Err("no Exec key".to_owned())));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(
+            ui.find("could not launch: no Exec key").is_ok(),
+            "the failure should name itself"
+        );
+        assert!(
+            ui.find("Files").is_err(),
+            "the error replaces the list while it is shown"
+        );
+    }
+
+    #[test]
+    fn the_action_panel_draws_over_the_list_rather_than_replacing_it() {
+        // The other half of the same claim: `view` stacks the panel on the
+        // card instead of swapping it, and the comment in `view` says so. A
+        // test that only checked the panel was visible would pass either way.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::TogglePanel);
+        assert!(app.panel.is_some(), "precondition: the panel opened");
+
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Open").is_ok(), "the panel's first action");
+        assert!(
+            ui.find("Files").is_ok(),
+            "the list should still be underneath"
+        );
+    }
+
+    #[test]
     fn the_flow_rule_is_actually_drawn() {
         // THE CONTROL #108 COULD NOT CLOSE.
         //
