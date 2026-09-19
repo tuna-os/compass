@@ -47,9 +47,21 @@ project.
 
 What is verified on a real desktop, not just in unit tests: a Bluefin VM tier boots GNOME under
 QEMU, installs the Flatpak, and asserts that the engine starts without painting, finds
-applications, opens a window, receives a typed query in *our* field, hides and returns, and opens
-the action panel on Ctrl+B — each against a control frame, with the changed region required to lie
-inside the window. Everything else in `compass-ui` is covered by its own tests only.
+applications, finds the Flatpaks installed in *both* the system and user roots, opens a window,
+receives a typed query in *our* field, hides and returns, and opens the action panel on Ctrl+B —
+the frame assertions each against a control frame from the same boot, with the changed region
+required to lie inside the window. Everything else in `compass-ui` is covered by its own tests
+only.
+
+The Flatpak check is there because its absence hid a real bug for as long as this tier has
+existed. A Flatpak's exported `.desktop` is a symlink into the application's deploy tree, and the
+sandbox was granted the exports directory but not the tree it points into — so every Flatpak on a
+user's machine was invisible, silently, with no error anywhere ([#105]). The tier could not see
+it: Compass lives in a named extra installation here, and both of the roots the bug lived in were
+empty, so an engine indexing 88 applications and zero Flatpaks looked healthy. It now installs one
+application into each root and asks the engine for it.
+
+[#105]: https://github.com/tuna-os/compass/issues/105
 
 ## Install
 
@@ -69,7 +81,7 @@ engine-dependent commands refuse rather than quietly doing the Rust thing.
 
 **What you can actually do with it today.** Open the launcher, type, move the selection, press Enter
 to launch, and press <kbd>Ctrl</kbd>+<kbd>B</kbd> for the action panel. Run it resident and summon
-it with `toggle`. That is the honest list. A great deal more is *ported* — the clipboard store, the
+it with `toggle`. It draws light or dark to match the desktop, and follows it when you switch. That is the honest list. A great deal more is *ported* — the clipboard store, the
 extension host, the calculator, the emoji picker, snippets, quicklinks and most of the builtins —
 but ported means the logic and its tests exist, not that the launcher can reach it yet. The
 [parity ledger](docs/rust-engine/PARITY.md) is per-row about which is which.
