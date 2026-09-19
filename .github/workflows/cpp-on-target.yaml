@@ -457,27 +457,45 @@ jobs:
 
               if try_rung bare env; then exit 0; fi
 
+              # The bare rung named its own next step, which is why the rungs
+              # are ordered cheapest-first rather than guessed:
+              #
+              #   FATAL - no Qt platform plugin could be initialized
+              #   Available platform plugins are: ... offscreen, minimal, ...
+              #
+              # It wanted a DISPLAY, not a bus -- and it lists `offscreen`
+              # itself. A compositor was the expected answer and would have
+              # been the expensive one; this is an environment variable.
+              if try_rung offscreen env QT_QPA_PLATFORM=offscreen; then exit 0; fi
+
               if command -v dbus-run-session >/dev/null 2>&1; then
                 if try_rung dbus dbus-run-session --; then exit 0; fi
+                if try_rung dbus-offscreen \
+                     dbus-run-session -- env QT_QPA_PLATFORM=offscreen; then
+                  exit 0
+                fi
               else
                 echo "dbus-run-session not in this image"
               fi
 
+              # Only if all of the above failed is a compositor worth the
+              # trouble, and mutter is confirmed present for that rung.
               if command -v mutter >/dev/null 2>&1; then
-                echo "mutter is present; the compositor rung is the next spike"
+                echo "mutter is present; a compositor rung is possible if offscreen is not enough"
               else
                 echo "mutter is NOT in this image; a compositor rung needs it installed"
               fi
 
               echo
               echo "FINDING: the engine did not answer on any rung tried here."
-              echo "It loads (ldd is clean above) but does not serve, so the next"
-              echo "rung is the compositor -- mutter, via the Tier 2 harness."
+              echo "It loads (ldd is clean above) but does not serve, not even"
+              echo "with QT_QPA_PLATFORM=offscreen. The next rung is a real"
+              echo "compositor -- mutter, via the Tier 2 harness."
               {
                 echo "### Suite 0 spike: NO"
                 echo
-                echo "The engine loads but answered \`ping\` on neither the bare nor the"
-                echo "dbus-run-session rung. Next rung: a compositor."
+                echo "The engine loads but answered \`ping\` on no rung, offscreen"
+                echo "included. Next rung: a real compositor."
               } > /src/spike-verdict.md
             '
 
