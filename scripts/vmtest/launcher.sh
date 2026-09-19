@@ -57,6 +57,38 @@ guest() { "${ssh_argv[@]}" "$@"; }
 corral_bin="$(command -v corral)"
 shot() { sudo -E "$corral_bin" screenshot "$vm" -o "$out/$1" ; }
 
+# WHEN A GATE FAILS, TAKE THE GUEST'S JOURNAL WITH US.
+#
+# Every gate below aborts the script under `set -e`, and until now that is all
+# it did: the artifact held screenshots and a framediff line, and anything
+# systemd knew about why -- a portal that exited, a unit that never started, a
+# session that came up wrong -- was gone with the VM thirty seconds later. The
+# next run costs twenty-five minutes, so the evidence has to be collected on
+# the way out rather than asked for afterwards.
+#
+# An EXIT trap rather than ERR: ERR does not fire for a failure inside a
+# function or a compound, and most of this file is both. The status is checked
+# so that a passing run does not pay for a journal nobody will read.
+#
+# `|| true` on the collection itself, twice over. A guest that has stopped
+# answering SSH is exactly when this runs, and a diagnostic that fails must not
+# replace the real exit status with its own -- that would turn a specific gate
+# failure into an unexplained one, which is the opposite of the point.
+collect_diagnostics() {
+  local status=$?
+  trap - EXIT
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  echo
+  echo "=== the run failed (status $status): collecting the guest's journal ==="
+  guest "$checks" journal > "$out/journal.txt" 2>&1 || true
+  tail -n 40 "$out/journal.txt" || true
+  echo "--- the full journal is journal.txt in this job's artifact ---"
+  return "$status"
+}
+trap collect_diagnostics EXIT
+
 # THE CONTAINMENT BOX IS DERIVED FROM THE WINDOW, NOT WRITTEN DOWN TWICE.
 #
 # `--expect-box` asserts the changed region lies inside the window, so the box

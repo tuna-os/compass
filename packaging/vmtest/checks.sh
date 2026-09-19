@@ -944,6 +944,72 @@ PY
     exit "$status"
     ;;
 
+  # Everything systemd knows that a failing gate would want.
+  #
+  # This tier had no journal at all: `launcher-diagnose` reads /proc for a
+  # process that is hung, which says nothing about a unit that never started, a
+  # portal that exited, or a session that came up wrong. Adapted from tunaOS's
+  # `iso-e2e.sh`, which learned the shape of this the expensive way; the three
+  # lessons worth keeping are marked below.
+  journal)
+    echo '=== failed units ==='
+    systemctl --failed --no-pager --full || true
+
+    # LESSON 1: every failed unit, not a hardcoded list. The unit that matters
+    # is the FIRST one to fail, and which one that is differs per failure.
+    echo
+    echo '=== journal for every failed unit (this boot) ==='
+    systemctl --failed --no-legend --plain --no-pager 2>/dev/null | awk '{print $1}' \
+    | while read -r unit; do
+        [ -n "$unit" ] || continue
+        echo "--- $unit ---"
+        journalctl -b --no-pager -o short-precise -u "$unit" | tail -n 60 || true
+      done
+
+    # LESSON 2: display-manager.service is an ALIAS. `systemctl status` follows
+    # the symlink; `journalctl -u` matches the literal unit a message was logged
+    # under, which is always the concrete one. Ask for both.
+    dm="$(systemctl show -P Id display-manager.service 2>/dev/null || true)"
+    [ -n "$dm" ] || dm=display-manager.service
+    echo
+    echo "=== display manager ($dm) ==="
+    systemctl status "$dm" --no-pager --full || true
+    journalctl -b --no-pager -o short-precise -u display-manager.service -u "$dm" \
+      | tail -n 80 || true
+
+    # The units this project actually depends on. Named even when they have not
+    # failed, because "it is running and doing nothing" is a real outcome for a
+    # portal and does not show up above.
+    echo
+    echo '=== portals and the session bus ==='
+    systemctl --no-pager --full list-units 'xdg-desktop-portal*' 'dbus*' || true
+    journalctl -b --no-pager -o short-precise \
+      -u dbus-broker.service -u dbus.socket | tail -n 40 || true
+
+    # Our own processes are started from the CLI rather than by a unit, so they
+    # log to the session journal under the user's uid and appear nowhere above.
+    echo
+    echo "=== everything $SESSION_USER logged this boot ==="
+    journalctl -b --no-pager -o short-precise "_UID=$(uid)" | tail -n 120 || true
+
+    # LESSON 3: a unit that restart-loops or whose dependency was cancelled
+    # never reaches "failed", so it leaves nothing in the loop above. This is
+    # the backstop that catches it.
+    echo
+    echo '=== priority<=err, this boot ==='
+    journalctl -b --no-pager -o short-precise -p err | tail -n 80 || true
+
+    echo
+    echo '=== coredumps ==='
+    # Guarded rather than assumed: an image without systemd-coredump would
+    # otherwise contribute three "not found" lines and no information.
+    if command -v coredumpctl >/dev/null 2>&1; then
+      coredumpctl --no-pager --no-legend list 2>&1 | tail -n 30 || true
+    else
+      echo 'no coredumpctl in this image'
+    fi
+    ;;
+
   harvest-corpus)
     scratch=/tmp/compass-corpus
     rm -rf "$scratch"; mkdir -p "$scratch"
