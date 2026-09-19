@@ -1399,6 +1399,45 @@ confident wrong numbers:
   and 2800 µs, which looked like a flaky SLA and was a flaky statistic. A thousand samples puts ten
   above the p99, and the spread above narrowed accordingly.
 
+#### IME and screen readers — Phase 1's "watch for", answered
+
+Issue #4 flags both with a deadline: "Test both here, not in Phase 5 — if Iced can't do them,
+ADR-0001 needs revisiting while that is still cheap." Nothing tested either, so the risk was carried
+rather than resolved. Both are now answered, and **the answers differ**.
+
+**IME works, end to end, and is now pinned by tests.** The chain exists at every layer:
+
+* `winit` 0.30 implements `zwp_text_input_v3` on Wayland
+  (`platform_impl/linux/wayland/seat/text_input/`) and emits
+  `WindowEvent::Ime(Enabled | Preedit | Commit | Disabled)`;
+* `iced_winit` 0.14 converts those to `Event::InputMethod` and drives `set_ime_allowed`,
+  `set_ime_cursor_area` and `set_ime_purpose` from `enable_ime`, which runs when a widget asks for
+  an input method — so a focused search field turns the IME on by itself;
+* `iced_core` carries `InputMethod` and `Preedit`.
+
+`app.rs`'s `ime_tests` drive `Event::InputMethod` through the real widget tree: a committed
+composition reaches the query, and an uncommitted pre-edit does not. **So ADR-0001 does not need
+revisiting on this axis.** The tests exist because that is a claim about libraries, and libraries
+change.
+
+The harness needed a control and the control earned its place immediately. The first version
+asserted that a commit reached the query and *failed* — which reads like "Iced cannot do IME". It
+was not: the simulator does not run `Task`s, so `focus_search` never ran and the field was
+unfocused. A plain-typing control failed in exactly the same way, which is what identified the
+harness rather than the input method. Both now click the field first.
+
+**Screen readers are a different answer: there is no accessibility tree at all.** Neither `iced`
+0.14 nor `winit` 0.30 depends on `accesskit`, and the workspace's `Cargo.lock` contains **zero**
+occurrences of `accesskit`, `atspi` or any AT-SPI binding. Orca — the screen reader GNOME ships and
+enables by default for its users — has nothing to read: not the query field, not the result list,
+not the selected item.
+
+This is the case #4 wanted found early, and it is found. It is **not** a bug to fix in passing:
+adding an accessibility tree means AccessKit support in Iced (upstream work) or an AT-SPI
+implementation of our own, and the choice between waiting, contributing upstream, and accepting the
+gap for now is exactly the kind of decision ADR-0001 exists to record. Flagged here rather than
+decided.
+
 #### Cold start — reported from the VM tier, and not the number the SLA names
 
 `packaging/vmtest/checks.sh launcher-start` now times three points: spawn to
@@ -1454,20 +1493,72 @@ extensions can be loaded and measured alongside the index:
 | extension 1 / 2 / 3 | **82.1 / 82.0 / 82.1 MB** |
 | **total** | **261 MB against a 150 MB budget** |
 
-**Where the budget goes is more interesting than the miss.** A bare `node -e`
-peaks at **44.0 MB** on the same machine. Three interpreters are therefore
-~132 MB — **88% of the whole budget before a single line of extension code
-runs**. The runtime and the command add ~38 MB on top of each.
+##### The 261 MB figure over-counts, and the real number is 175 MB
 
-So the row is not missed because the runtime is heavy. It is missed because
-"3 extensions" means three node processes under the current model, and the
-150 MB figure was written without that arithmetic. Two things could close it and
-they are not equivalent: move the SLA to a number the process model can meet, or
-move the process model (a shared interpreter with one isolate per extension is
-the obvious candidate, and is a Phase 4 design question, not a tuning one).
-**That is an architectural decision and the test does not make it** — it records
-the number, the same treatment the cold-start figure got, for the same ADR-0010
-reason: measured once is not a threshold.
+**Summing RSS across processes triple-charges the interpreter.** Three node
+processes share its text pages, and RSS bills every one of them in full.
+Measured with `smaps_rollup`:
+
+| | one node alone | three concurrent, each |
+|---|---|---|
+| Rss | 43 104 kB | ~41 000 kB |
+| **Pss** | 41 316 kB | **~18 500 kB** |
+| Shared_Clean | 2 308 kB | **~34 700 kB** |
+| Private_Dirty | 6 340 kB | 6 340 kB |
+
+Counting private memory in full and the shared mapping once gives **175 MB**,
+not 261 MB. Still a miss, but 1.14× rather than 1.7×. `peak_memory.rs` now
+prints both and explains the difference rather than leading with the inflated
+one.
+
+##### Where it actually goes — and it is not node's baseline
+
+Decomposed by `smaps_rollup`, three processes running concurrently so shared
+pages are genuinely shared:
+
+| | private | note |
+|---|---|---|
+| idle node | 6.4 MB | the interpreter's own dirty pages |
+| \+ one empty `worker_thread` | 16.0 MB | **a second V8 isolate costs ~9.6 MB** |
+| a real loaded worker | 39.6 MB | **the bundle and API add ~23.6 MB** |
+
+So node's much-quoted 44 MB is mostly *shared, file-backed* and paid once. Heap
+tuning is a dead end: `--jitless`, `--max-semi-space-size=1` and
+`--max-old-space-size=64` together move the baseline from 45.4 MB to 45.0 MB,
+because the V8 heap is only 5.5 MB of it.
+
+##### The fix: the runtime already multiplexes and the host is not using it
+
+`extension-manager/src/index.ts` keeps `workerMap: Map<sessionId, WorkerInfo>`
+and spawns `new Worker(__filename)` per session — **many extensions, one
+process, one isolate each.** The `session_id` the load reply carries exists for
+precisely this. The host spawns a fresh node process per command anyway, so
+node's fixed cost is paid three times instead of once.
+
+`crates/compass-worker-host/tests/multiplex_memory.rs` measures both
+arrangements back to back, and the result is stable to ±0.1% across runs:
+
+| arrangement | footprint |
+|---|---|
+| three processes — what the host does today | 159.4 MB |
+| one process, three sessions — what the runtime is built for | **108.0 MB** |
+| | **saves 51 MB, 32%** |
+
+With the index's 15.8 MB that is **124 MB against the 150 MB budget — inside
+it.** The marginal cost of a fourth extension falls from ~53 MB to ~19 MB.
+
+**This is not a redesign.** It is using the runtime as written; the host's
+one-process-per-command spawn is the part that has to change, and the protocol
+already carries what it needs. What the change does cost is a shared failure
+domain: three worker threads in one process die together if the process does,
+where three processes do not. `index.ts` already treats a worker exiting
+unexpectedly as a crash and reports it per session, so the reporting path
+exists — but the blast radius is a real trade and belongs to whoever owns
+Phase 4, not to this test.
+
+The row stays **reported, not gated**, for the ADR-0010 reason the cold-start
+figure gets: measured once is not a threshold, and gating now would redden
+every PR over a pre-existing condition no PR caused.
 
 **The measurement had a false green in it, and the control found it.** Summing
 only the pid the host holds reports 1776 kB per extension and a 21 MB total —
@@ -1511,6 +1602,74 @@ yet records.
 Plus `insta` snapshot tests rendering views to a headless framebuffer. Keep these *few* and
 semantic (results list, empty state, detail view, form). Large pixel-snapshot suites get
 rubber-stamped and stop catching anything.
+
+### 8.5b Suite 4b — head to head against the C++ engine
+
+Tracked as #117. **Every row in §8.5 is measured against a budget somebody wrote down. None is
+measured against the thing we are replacing.** For a strangler rewrite that is the wrong
+comparison: a 2.0 ms fuzzy-search SLA says nothing about whether a user will feel the port as an
+improvement or a regression, because the C++ engine is the only baseline they have.
+
+Suite 0 asks *"same results?"*. Suite 4b asks *"at least as fast, in no more memory?"* — same
+corpus, same harness shape, different question. It is the evidence the Phase 7 cutover needs, and
+it should be green before that phase starts rather than reconstructed afterwards.
+
+#### The second engine already exists as a CI artifact
+
+`.github/workflows/cpp-on-target.yaml` configures the C++ engine against Bluefin's actual Qt,
+builds it on the target image, and publishes `vicinae-cpp-bluefin.tar.gz`. Its own closing step
+states what it unblocks: the second engine Suite 0 has been missing, with layering it into the VM
+image named as the next step.
+
+So the prerequisite is not a Qt build — that exists. It is (a) giving `cpp-on-target.yaml` a
+trigger other than `workflow_dispatch`, and (b) layering the tarball into the VM image. **Both are
+shared with §8.1's outstanding parity work, and are done once for both.**
+
+#### What can honestly be compared
+
+Both engines expose a comparable CLI. The overlap is the action set:
+
+| action | timed from → to | comparable |
+|---|---|---|
+| `ping` | request → reply, established connection | yes |
+| `query` | parse → rank → serialise → reply, over the 757-entry corpus | yes |
+| `launch` | request → child spawned | yes |
+| `toggle` / `show` | request → the window's *answer* | partly — not a paint |
+| `close` / `hide` | request → the window's *answer* | partly — not a paint |
+| idle RSS | resident set with the window open, inside the Flatpak | yes |
+| **cold start** | — | **no: excluded** |
+
+**Cold start is excluded rather than fudged.** ADR-0015 made the Rust window resident. If the C++
+engine spawns per summon, the two are answering different questions and the Rust engine "wins" by
+architecture rather than by speed. What users feel is summon, and summon is comparable.
+
+**Nothing inside the guest can observe a frame** (ADR-0010), so the `toggle`/`close` rows end at
+the window's answer, not at a paint, and the harness must say so in its own output rather than let
+a reader assume otherwise. For the same reason the comparable set stops at the engine boundary:
+llvmpipe distorts anything GPU-bound, while ranking and IPC are CPU-bound and fine in the VM.
+
+Fairness is a property of the harness, not an intention:
+
+* the **same corpus** for both, `crates/compass-testkit/corpus/desktop-entries`;
+* the **same warm state** — connection established and index built *before* the timed region. The
+  `compass-ipc` bench learned this the hard way, reporting a 24× miss because it timed its own
+  setup;
+* **interleaved** A/B/A/B runs rather than all-A-then-all-B, so machine drift does not land on one
+  engine;
+* **medians gated, tails reported**, the same argument §8.5 already settled for the fuzzy row.
+
+#### The gate is a second step, deliberately
+
+Per ADR-0010 a threshold is measured before it is invented, so the first deliverable is recorded
+numbers and the gate follows from them. Shape, to be confirmed against the measurements rather
+than assumed: gate the median per action at `rust <= cpp`, allow a tolerance derived from the
+observed run-to-run spread rather than a round number picked for comfort, and fail by **naming the
+action** so a red bench is never a mystery. Actions recorded as not comparable are excluded
+visibly, never dropped quietly.
+
+**If an action cannot be made to match or beat, that is a finding and it gets recorded here** — the
+same treatment the peak-RSS row gets for missing its budget. A bench that can only report good news
+is not a bench.
 
 ### 8.6 Suite 5 — Packaging and deployment
 

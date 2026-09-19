@@ -50,11 +50,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use compass_core::apps::AppIndex;
-use compass_local_storage::{LocalStorage, namespace_for};
-use compass_sqlcipher_sys::Database;
 use compass_worker_host::extension_manager::ManagerClient;
-use compass_worker_host::session::{Router, Session, Turn};
-use compass_worker_host::storage_service::StorageService;
 use compass_worker_host::{Worker, extension_manager};
 
 /// The SLA, in kilobytes. PLAN.md §8.5.
@@ -122,6 +118,45 @@ fn reap(pid: u32) {
         .status();
 }
 
+/// Private memory plus shared memory counted once, in kilobytes.
+///
+/// WHY SUMMED RSS IS THE WRONG TOTAL, AND THIS IS THE RIGHT ONE
+///
+/// Three node processes share the interpreter's text pages, and RSS charges
+/// every one of them the full amount. Measured with `smaps_rollup`: one node
+/// alone reports 43 MB RSS of which 34 MB is `Private_Clean`; three running
+/// concurrently report ~41 MB RSS each but ~18 MB PSS each, because that same
+/// 34 MB has become one `Shared_Clean` mapping. Adding the three RSS figures
+/// counts the interpreter three times.
+///
+/// This takes private memory in full and the shared mapping once, which is
+/// what the machine actually has to find. PSS is printed beside it as a
+/// cross-check; the two agree to within a few percent here, and PSS is not
+/// used as the headline because it divides shared pages by *all* mappers,
+/// which is silently wrong if something outside this set maps them too.
+fn footprint_kb(pids: &[u32]) -> (u64, u64, u64) {
+    let mut private = 0u64;
+    let mut pss = 0u64;
+    let mut shared_max = 0u64;
+    for &pid in pids {
+        for p in process_tree(pid) {
+            let Ok(r) = std::fs::read_to_string(format!("/proc/{p}/smaps_rollup")) else {
+                continue;
+            };
+            let get = |f: &str| -> u64 {
+                r.lines()
+                    .find_map(|l| l.strip_prefix(&format!("{f}:")))
+                    .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
+                    .unwrap_or(0)
+            };
+            private += get("Private_Clean") + get("Private_Dirty");
+            pss += get("Pss");
+            shared_max = shared_max.max(get("Shared_Clean") + get("Shared_Dirty"));
+        }
+    }
+    (private + shared_max, private, pss)
+}
+
 /// A field of `/proc/<pid>/status`, in kilobytes.
 fn status_kb(pid: u32, field: &str) -> Option<u64> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
@@ -175,20 +210,34 @@ fn tree_peak_rss_kb(pid: u32) -> u64 {
         .sum()
 }
 
-/// A command that does real work, says so, and then stays resident.
+/// A command that loads the API, says so, and then stays resident.
 ///
 /// The marker write is what lets the host measure a *loaded* extension rather
 /// than a node process that has not reached the API yet. The never-resolving
 /// promise is what keeps `/proc/<pid>` there to be read.
+///
+/// # Why it does not call back into the host
+///
+/// The first version round-tripped a value through `LocalStorage`, which meant
+/// the test had to pump three sessions round-robin to service those calls.
+/// `Session::pump_once` blocks on a read, so one slow worker stalled the loop;
+/// under a loaded runner the whole test could sit there until `timeout` reaped
+/// the workers at sixty seconds, after which it measured three corpses. That
+/// surfaced as the 16 MB measurement floor failing intermittently — roughly one
+/// run in four of the full workspace suite, and never when the test ran alone.
+///
+/// The floor was right to fire: those *were* broken measurements. But a test
+/// that fails one run in four teaches people to re-run, so the dependency is
+/// removed rather than papered over. `require("@vicinae/api")` is what costs
+/// memory; a storage round trip adds nothing measurable to the resident set,
+/// and `real_runtime.rs` already covers that the calls work.
 fn command_source(marker: &Path) -> String {
     format!(
         r#"
-const {{ LocalStorage }} = require("@vicinae/api");
+require("@vicinae/api");
 
 module.exports.default = async () => {{
-  await LocalStorage.setItem("greeting", "hello");
-  const read = await LocalStorage.getItem("greeting");
-  require("node:fs").writeFileSync({marker:?}, JSON.stringify({{ read }}));
+  require("node:fs").writeFileSync({marker:?}, "loaded");
   await new Promise(() => {{}});
 }};
 "#
@@ -280,11 +329,7 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
     std::fs::create_dir_all(&apps).expect("the applications directory");
     let index_kb = index_cost_kb(&apps);
 
-    let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
-    compass_db::vicinae::run(&db).expect("the migrations apply");
-    let storage = LocalStorage::new(&db);
-
-    let mut sessions = Vec::with_capacity(EXTENSIONS);
+    let mut workers = Vec::with_capacity(EXTENSIONS);
     let mut pids = Vec::with_capacity(EXTENSIONS);
     let mut markers = Vec::with_capacity(EXTENSIONS);
 
@@ -323,38 +368,20 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
             .ready(&session_id)
             .expect("sending ready");
 
-        sessions.push((worker, session_id));
+        workers.push(worker);
         markers.push(marker);
     }
 
-    // Pump every session until each command has had its last answer. Round
-    // robin rather than one at a time: each worker must reach its marker, and
-    // blocking on the first would leave the others unloaded.
-    let services: Vec<StorageService> = (0..EXTENSIONS)
-        .map(|i| StorageService::new(storage.scoped(&namespace_for(&format!("ext{i}")))))
-        .collect();
-    let mut live: Vec<Session> = sessions
-        .into_iter()
-        .zip(&services)
-        .map(|((worker, session_id), service)| {
-            Session::new(worker, &session_id, Router::new().with(service))
-        })
-        .collect();
-
-    for _ in 0..200 {
-        for session in &mut live {
-            match session.pump_once().expect("a turn") {
-                Turn::Crashed { reason } => panic!("a runtime crashed: {reason}"),
-                Turn::Deferred { method, .. } => panic!("nothing here defers: {method}"),
-                Turn::Answered { .. }
-                | Turn::Closed
-                | Turn::Nothing
-                | Turn::OtherSession { .. } => {}
-            }
-        }
+    // Wait for every command to reach its marker. No session pumping: these
+    // commands make no host calls, so there is nothing to answer, and a
+    // blocking `pump_once` is precisely what used to stall this test past the
+    // sixty-second reaper. See `command_source`.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
         if markers.iter().all(|m| m.exists()) {
             break;
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     for (i, marker) in markers.iter().enumerate() {
@@ -364,13 +391,24 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
         );
     }
 
+    // Measuring a process that `timeout` has already reaped reports a few
+    // hundred kB and reads as a lean extension. The floor below would catch it,
+    // but this says what actually went wrong instead of blaming the probe.
+    for (i, &pid) in pids.iter().enumerate() {
+        assert!(
+            std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "extension {i} (pid {pid}) was gone before it could be measured"
+        );
+    }
+
+    let (footprint_kb_total, private_kb, pss_kb) = footprint_kb(&pids);
     let worker_kb: Vec<u64> = pids.iter().map(|&pid| tree_peak_rss_kb(pid)).collect();
 
     // Measured, so they have done their job. Reaped here rather than left to
     // `timeout`, which would hold three node processes for another minute.
     // Deliberately after the measurement and before the assertions: a failing
     // assertion must not leak them either.
-    drop(live);
+    drop(workers);
     for &pid in &pids {
         reap(pid);
     }
@@ -383,6 +421,12 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
          extensions {extensions_kb} kB ({}), total {total_kb} kB against the \
          {BUDGET_KB} kB SLA",
         each.join(" + ")
+    );
+    let honest_total = index_kb + footprint_kb_total;
+    println!(
+        "  the same thing counted without triple-charging the shared interpreter: \
+         extensions {footprint_kb_total} kB (private {private_kb}, pss {pss_kb}), \
+         total {honest_total} kB — see `footprint_kb` for why these differ"
     );
 
     // WHAT THIS FLOOR IS FOR, AND THE BUG IT CAUGHT
@@ -432,11 +476,12 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
     // runtime is heavy; it is missed because "3 extensions" means three node
     // processes under the current model. Whether the SLA moves or the model
     // does is an architectural decision, and it is not this test's to make.
-    if total_kb >= BUDGET_KB {
+    if honest_total >= BUDGET_KB {
         println!(
-            "  MISS: {total_kb} kB against the §8.5 SLA of {BUDGET_KB} kB. Reported rather \
-             than gated — see §8.5 for why, and for the node-floor arithmetic that explains \
-             where the budget goes."
+            "  MISS: {honest_total} kB against the §8.5 SLA of {BUDGET_KB} kB. Reported \
+             rather than gated — see §8.5. `multiplex_memory.rs` measures the fix: hosting \
+             all three in one process, which the runtime's session map already supports, \
+             saves about a third."
         );
     }
 }

@@ -270,3 +270,11 @@ pub fn theme(appearance: Appearance) -> iced::Theme {
         },
     )
 }
+
+/// How opaque the card is when `tint` is on (#86).
+///
+/// 0.82 rather than something lower: the launcher is text over an arbitrary
+/// wallpaper, and legibility is not negotiable for the thing bound to
+/// Super+Space. Enough to read as translucent over a busy background, opaque
+/// enough that body text keeps its contrast over a bright one.
+pub const TINT_ALPHA: f32 = 0.82;

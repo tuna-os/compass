@@ -293,7 +293,7 @@ fn main() {
     let presets: Vec<String> = preset::NAMES
         .iter()
         .map(|(name, _)| {
-            let r = preset::resolve(Some(name), None);
+            let r = preset::resolve(Some(name), None, None);
             format!(
                 r#"{{"name":{},"icons":{},"fieldRule":{},"subtitles":{},"geometry":{}}}"#,
                 quote(name),
