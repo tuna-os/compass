@@ -894,6 +894,7 @@ name = "compass-portals"
 version = "0.1.0"
 dependencies = [
  "ashpd",
+ "futures-util",
  "serde",
  "thiserror 2.0.20",
  "tokio",
@@ -4434,6 +4435,7 @@ dependencies = [
  "compass-portals",
  "compass-testkit",
  "compass-ui",
+ "futures-util",
  "landlock",
  "libc",
  "seccompiler",

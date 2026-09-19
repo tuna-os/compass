@@ -10,8 +10,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-ashpd = { workspace = true, features = ["global_shortcuts", "open_uri", "file_chooser"] }
+ashpd = { workspace = true, features = ["global_shortcuts", "open_uri", "file_chooser", "settings"] }
 zbus.workspace = true
+futures-util.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }
 tracing.workspace = true

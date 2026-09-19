@@ -91,6 +91,7 @@ pub mod error;
 pub mod file_chooser;
 pub mod open_uri;
 pub mod probe;
+pub mod settings;
 pub mod shortcuts;
 
 use std::sync::RwLock;
@@ -99,11 +100,12 @@ use std::time::Duration;
 pub use availability::{
     Availability, CONFIGURE_SHORTCUTS_MIN_VERSION, DESKTOP_DESTINATION, DESKTOP_PATH,
     DegradedFeature, FILE_CHOOSER, GLOBAL_SHORTCUTS, NotQueryable, OPEN_URI, PortalCapabilities,
-    PortalInterface, SCHEME_SUPPORTED_MIN_VERSION, Unavailable,
+    PortalInterface, SCHEME_SUPPORTED_MIN_VERSION, SETTINGS, Unavailable,
 };
 pub use error::{PortalError, Result};
 pub use file_chooser::{FileChooserOutcome, FileChooserPortal, FileChooserRequest};
 pub use open_uri::{OpenOutcome, OpenUriPortal};
+pub use settings::{ColorScheme, SettingsPortal};
 pub use shortcuts::{
     BoundShortcut, GlobalShortcutsSession, Modifiers, ShortcutDescriptor, ShortcutEvent,
     ShortcutEvents, ShortcutsOutcome, Trigger, TriggerParseError,
@@ -221,6 +223,7 @@ impl Portals {
             global_shortcuts: self.availability_of(GLOBAL_SHORTCUTS).await,
             open_uri: self.availability_of(OPEN_URI).await,
             file_chooser: self.availability_of(FILE_CHOOSER).await,
+            settings: self.availability_of(SETTINGS).await,
         };
         let mut guard = self
             .caps
@@ -231,6 +234,7 @@ impl Portals {
                 global_shortcuts = %next.global_shortcuts,
                 open_uri = %next.open_uri,
                 file_chooser = %next.file_chooser,
+                settings = %next.settings,
                 "portal availability changed"
             );
             *guard = next.clone();
@@ -282,6 +286,18 @@ impl Portals {
             self.config.dialog_timeout,
         ))
     }
+
+    /// The Settings client, if the interface is available.
+    pub fn settings(&self) -> Result<SettingsPortal> {
+        let availability = self.capabilities().settings;
+        if !availability.is_available() {
+            return Err(PortalError::unavailable(SETTINGS, availability));
+        }
+        Ok(SettingsPortal::new(
+            self.conn.clone(),
+            self.config.call_timeout,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -293,7 +309,7 @@ mod tests {
         let caps = PortalCapabilities::none();
         assert!(!caps.any_available());
         let degraded = caps.degraded();
-        assert_eq!(degraded.len(), 3);
+        assert_eq!(degraded.len(), 4);
         for feature in degraded {
             assert!(!feature.title().is_empty());
             assert!(feature.explanation().len() > 40, "{feature:?}");

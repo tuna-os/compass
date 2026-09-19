@@ -19,7 +19,7 @@ use serde::Serialize;
 use zbus::message::Header;
 use zbus::names::UniqueName;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Type, as_value};
+use zbus::zvariant::{OwnedObjectPath, OwnedValue, Type, Value, as_value};
 use zbus::{Connection, interface};
 
 use compass_portals::{DESKTOP_DESTINATION, DESKTOP_PATH};
@@ -62,6 +62,13 @@ pub struct MockState {
     pub chooser_options: HashMap<String, OwnedValue>,
     /// URIs the mock will answer the next `FileChooser.OpenFile` with.
     pub chooser_reply: Vec<String>,
+    /// `(namespace, key)` pairs passed to `Settings.Read`.
+    pub settings_read: Vec<(String, String)>,
+    /// What `Settings.Read` answers for `org.freedesktop.appearance`.
+    ///
+    /// `None` is the key being absent, which the portal reports as an error
+    /// rather than as a value -- the case a client must not read as "dark".
+    pub color_scheme: Option<u32>,
 }
 
 /// Shared handle to [`MockState`].
@@ -530,6 +537,50 @@ impl FileChooserIface {
     }
 }
 
+pub struct SettingsIface {
+    pub version: u32,
+    pub state: SharedState,
+}
+
+#[interface(name = "org.freedesktop.portal.Settings")]
+impl SettingsIface {
+    #[zbus(property, name = "version")]
+    fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// `Read` answers a variant-wrapped variant, which is what
+    /// xdg-desktop-portal actually sends and the reason `ashpd` unwraps twice.
+    async fn read(&self, namespace: String, key: String) -> zbus::fdo::Result<OwnedValue> {
+        let scheme = {
+            let mut state = lock(&self.state);
+            state.calls.push("Read");
+            state.settings_read.push((namespace.clone(), key.clone()));
+            state.color_scheme
+        };
+        if namespace != "org.freedesktop.appearance" || key != "color-scheme" {
+            return Err(zbus::fdo::Error::UnknownProperty(format!(
+                "unknown setting {namespace}.{key}"
+            )));
+        }
+        let Some(scheme) = scheme else {
+            return Err(zbus::fdo::Error::UnknownProperty(format!(
+                "{namespace}.{key} is not set"
+            )));
+        };
+        OwnedValue::try_from(Value::Value(Box::new(Value::from(scheme))))
+            .map_err(|err| zbus::fdo::Error::Failed(err.to_string()))
+    }
+
+    #[zbus(signal)]
+    async fn setting_changed(
+        emitter: &SignalEmitter<'_>,
+        namespace: &str,
+        key: &str,
+        value: Value<'_>,
+    ) -> zbus::Result<()>;
+}
+
 // ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
@@ -543,6 +594,8 @@ pub struct MockOptions {
     pub open_uri: bool,
     /// Export FileChooser.
     pub file_chooser: bool,
+    /// Export Settings.
+    pub settings: bool,
     /// Version every exported interface reports.
     pub version: u32,
     /// How requests are answered.
@@ -561,6 +614,7 @@ impl Default for MockOptions {
             global_shortcuts: true,
             open_uri: true,
             file_chooser: true,
+            settings: true,
             version: 2,
             behaviour: Behaviour::Succeed,
             session_behaviour: Behaviour::Succeed,
@@ -641,6 +695,15 @@ impl MockPortal {
                 },
             )?;
         }
+        if options.settings {
+            builder = builder.serve_at(
+                DESKTOP_PATH,
+                SettingsIface {
+                    version: options.version,
+                    state: Arc::clone(&state),
+                },
+            )?;
+        }
         if options.own_name {
             builder = builder.name(DESKTOP_DESTINATION)?;
         }
@@ -649,6 +712,37 @@ impl MockPortal {
             conn: builder.build().await?,
             state,
         })
+    }
+
+    /// What `Settings.Read` will answer with, or `None` for "key not set".
+    pub fn set_color_scheme(&self, scheme: Option<u32>) {
+        lock(&self.state).color_scheme = scheme;
+    }
+
+    /// `(namespace, key)` pairs `Settings.Read` has been asked for.
+    pub fn settings_read(&self) -> Vec<(String, String)> {
+        lock(&self.state).settings_read.clone()
+    }
+
+    /// Emit `SettingChanged` for the appearance colour scheme.
+    ///
+    /// Separate from [`Self::set_color_scheme`] on purpose: the portal sends
+    /// the new value in the signal, and a client that quietly re-read instead
+    /// of using it would pass a test where the two agree and fail in the field
+    /// where they race.
+    pub async fn emit_color_scheme(&self, scheme: u32) -> zbus::Result<()> {
+        let iface = self
+            .conn
+            .object_server()
+            .interface::<_, SettingsIface>(DESKTOP_PATH)
+            .await?;
+        SettingsIface::setting_changed(
+            iface.signal_emitter(),
+            "org.freedesktop.appearance",
+            "color-scheme",
+            Value::from(scheme),
+        )
+        .await
     }
 
     /// Contents of the files handed to `OpenURI.OpenFile` as descriptors.

@@ -59,6 +59,16 @@ pub const FILE_CHOOSER: PortalInterface = PortalInterface {
     newest_known_version: 4,
 };
 
+/// `org.freedesktop.portal.Settings`.
+///
+/// Version 2 added `ReadOne` and deprecated `Read`. We use neither directly --
+/// `ashpd` picks -- so v1 is enough and v2 is simply the newest we know of.
+pub const SETTINGS: PortalInterface = PortalInterface {
+    name: "org.freedesktop.portal.Settings",
+    minimum_version: 1,
+    newest_known_version: 2,
+};
+
 /// Interface version required by `GlobalShortcuts.ConfigureShortcuts`.
 pub const CONFIGURE_SHORTCUTS_MIN_VERSION: u32 = 2;
 
@@ -239,6 +249,8 @@ pub struct PortalCapabilities {
     pub open_uri: Availability,
     /// `org.freedesktop.portal.FileChooser`.
     pub file_chooser: Availability,
+    /// `org.freedesktop.portal.Settings`.
+    pub settings: Availability,
 }
 
 impl PortalCapabilities {
@@ -250,7 +262,8 @@ impl PortalCapabilities {
         Self {
             global_shortcuts: absent.clone(),
             open_uri: absent.clone(),
-            file_chooser: absent,
+            file_chooser: absent.clone(),
+            settings: absent,
         }
     }
 
@@ -259,6 +272,7 @@ impl PortalCapabilities {
         self.global_shortcuts.is_available()
             || self.open_uri.is_available()
             || self.file_chooser.is_available()
+            || self.settings.is_available()
     }
 
     /// Product features unusable in this state, for `vicinae doctor`.
@@ -272,6 +286,9 @@ impl PortalCapabilities {
         }
         if !self.file_chooser.is_available() {
             out.push(DegradedFeature::FilePicker);
+        }
+        if !self.settings.is_available() {
+            out.push(DegradedFeature::DesktopAppearance);
         }
         out
     }
@@ -293,6 +310,8 @@ pub enum DegradedFeature {
     OpenExternally,
     /// Asking the user to pick a file or folder.
     FilePicker,
+    /// Following the desktop's light/dark preference.
+    DesktopAppearance,
 }
 
 impl DegradedFeature {
@@ -302,6 +321,7 @@ impl DegradedFeature {
             Self::GlobalHotkeys => "Global hotkeys",
             Self::OpenExternally => "Open in the default application",
             Self::FilePicker => "File picker",
+            Self::DesktopAppearance => "Light and dark to match the desktop",
         }
     }
 
@@ -325,6 +345,12 @@ impl DegradedFeature {
                 "Compass cannot show a file chooser, so commands that ask the user to pick a file \
                  or folder are unavailable. Inside a Flatpak sandbox the portal is also what grants \
                  access to the chosen path, so a built-in browser would not be a substitute."
+            }
+            Self::DesktopAppearance => {
+                "Compass cannot read the desktop's light/dark preference, so the launcher uses \
+                 its own default instead of following the session. Inside a Flatpak this portal \
+                 is the only way to read org.freedesktop.appearance; reading GSettings directly \
+                 would need a dconf hole in the sandbox and would only work on GNOME."
             }
         }
     }
