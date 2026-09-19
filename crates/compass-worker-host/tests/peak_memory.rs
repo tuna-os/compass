@@ -108,6 +108,20 @@ fn node() -> PathBuf {
     PathBuf::from("node")
 }
 
+/// Ends a worker, rather than leaving `timeout` to reap it a minute later.
+///
+/// These commands never finish by design, so nothing else ends them. Without
+/// this the test returns while three node processes are still resident, which
+/// `cargo nextest` reports as a LEAK and which costs the rest of the suite
+/// real memory on a shared runner. SIGTERM goes to `timeout`, which forwards it
+/// to node; SIGKILL would orphan the child instead.
+fn reap(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
+}
+
 /// A field of `/proc/<pid>/status`, in kilobytes.
 fn status_kb(pid: u32, field: &str) -> Option<u64> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
@@ -351,6 +365,15 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
     }
 
     let worker_kb: Vec<u64> = pids.iter().map(|&pid| tree_peak_rss_kb(pid)).collect();
+
+    // Measured, so they have done their job. Reaped here rather than left to
+    // `timeout`, which would hold three node processes for another minute.
+    // Deliberately after the measurement and before the assertions: a failing
+    // assertion must not leak them either.
+    drop(live);
+    for &pid in &pids {
+        reap(pid);
+    }
     let extensions_kb: u64 = worker_kb.iter().sum();
     let total_kb = index_kb + extensions_kb;
 

@@ -11,6 +11,12 @@ workspace = true
 
 [dependencies]
 nucleo-matcher.workspace = true
+rayon = "1"
+
+[[bench]]
+name = "ranking_experiments"
+harness = false
 
 [dev-dependencies]
+criterion = { version = "0.5" }
 proptest.workspace = true

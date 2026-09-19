@@ -131,6 +131,10 @@ fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
         .env("COMPASS_TEST_OUT", &out);
 
     let mut worker = Worker::spawn(command).expect("the runtime starts");
+    // Kept so the runtime can be ended explicitly below. Without it the process
+    // lives until `timeout` reaps it, which `cargo nextest` reports as a LEAK
+    // and which holds a node process for the rest of the suite.
+    let worker_pid = worker.pid();
 
     let load_id = ManagerClient::new(&mut worker)
         .load(&load_options(&entrypoint))
@@ -205,6 +209,14 @@ fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
         observed["read"], "hello",
         "the command read back something else: {observed}"
     );
+
+    // Before the remaining assertions, so a failure does not leak the process
+    // either. SIGTERM goes to `timeout`, which forwards it to node.
+    drop(session);
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(worker_pid.to_string())
+        .status();
 
     assert_eq!(
         storage

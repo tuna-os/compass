@@ -955,8 +955,10 @@ dependencies = [
 name = "compass-search"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "nucleo-matcher",
  "proptest",
+ "rayon",
 ]
 
 [[package]]

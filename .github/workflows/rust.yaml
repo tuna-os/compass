@@ -33,9 +33,24 @@ jobs:
     name: Build, lint and test
     runs-on: ubuntu-24.04
 
+    # §8.8 gives this job an 8 minute budget and names `sccache` +
+    # `cargo-nextest` as what keeps it honest. sccache caches compilation
+    # keyed on preprocessed input, so a PR that touches one crate stops
+    # rebuilding the dependency graph behind it; the GHA backend keeps that
+    # cache across runs without a self-hosted store.
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
       # rust-toolchain.toml pins the channel and components.
       - name: Show toolchain
@@ -78,8 +93,14 @@ jobs:
       # looks identical to 21 tests passing. The image ships it today (checked
       # in a run's log), and this is what keeps that from being load-bearing
       # and unstated.
+      #
+      # `cargo nextest` rather than `cargo test`: it runs each test in its own
+      # process and schedules them across cores, which is where §8.8's budget
+      # is won back. It deliberately does NOT run doctests -- nextest cannot --
+      # which is why the separate Doctests step below is load-bearing rather
+      # than belt-and-braces.
       - name: Test
-        run: cargo test --workspace --all-targets
+        run: cargo nextest run --workspace --all-targets
         env:
           COMPASS_REQUIRE_DBUS: "1"
 
@@ -104,6 +125,14 @@ jobs:
 
       - name: Doctests
         run: cargo test --workspace --doc
+
+      # Without this the claim "we use sccache" is unverifiable: a wrapper that
+      # is silently missing, or a cache that never hits, looks exactly like one
+      # that works. The hit rate is the number to read when this job's runtime
+      # drifts back up.
+      - name: sccache statistics
+        if: always()
+        run: sccache --show-stats
 
   # `rust-version` in Cargo.toml is a promise, and an unenforced promise rots.
   #

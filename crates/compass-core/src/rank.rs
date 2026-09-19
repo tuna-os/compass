@@ -47,7 +47,7 @@ pub fn rank_with_frecency<'a, T, K, S>(
     store: &S,
 ) -> Vec<Ranked<&'a T>>
 where
-    T: FuzzySearchable,
+    T: FuzzySearchable + Sync,
     K: Fn(&T) -> &str,
     S: FrecencyStore + ?Sized,
 {
