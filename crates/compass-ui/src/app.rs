@@ -370,6 +370,8 @@ pub struct LauncherApp {
     /// Whether a rule separates the field from the results. See
     /// [`crate::preset::Preset::field_rule`].
     field_rule: bool,
+    /// Whether rows show their subtitle. See [`crate::preset::Preset::subtitles`].
+    subtitles: bool,
     /// Whether result rows show the application's icon. See [`AppFlags::icons`].
     icons: bool,
     /// How an `Icon=` name becomes a file. See [`AppFlags::icon_lookup`].
@@ -511,6 +513,7 @@ impl LauncherApp {
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
+        app.subtitles = flags.appearance_preset.subtitles;
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
         app.appearance = flags.appearance;
@@ -555,6 +558,7 @@ impl LauncherApp {
             icon_cache: crate::icons::IconCache::new(),
             geometry: design::GEOMETRY,
             field_rule: false,
+            subtitles: true,
             awaiting: false,
         }
     }
@@ -1276,7 +1280,11 @@ impl LauncherApp {
                 .size(f32::from(geometry.title_size))
                 .color(title_color.to_iced())
         ];
-        if let Some(comment) = item.comment() {
+        // `subtitles` gates this, not just the presence of a comment: the dense
+        // preset's row is one line tall and a second would overflow it.
+        if self.subtitles
+            && let Some(comment) = item.comment()
+        {
             labels = labels.push(
                 text(comment.to_owned())
                     .size(f32::from(geometry.subtitle_size))
@@ -2547,6 +2555,7 @@ mod preset_tests {
         assert_eq!(rofi.geometry.card_radius, 0);
         assert!(!rofi.icons);
         assert!(!rofi.field_rule);
+        assert!(!rofi.subtitles, "the dense preset draws one line per row");
 
         let flow = app_with("flow", None);
         assert!(flow.field_rule, "flow draws the rule under the field");
@@ -2571,5 +2580,183 @@ mod preset_tests {
         // raycast turns icons on; the explicit key turns them back off.
         assert!(app_with("raycast", None).icons);
         assert!(!app_with("raycast", Some(false)).icons);
+    }
+}
+
+/// Tests that render `view` headlessly.
+///
+/// # Why this module exists
+///
+/// Every other test in this crate asserts on state. `view` returns an opaque
+/// `Element`, so a branch inside it could be deleted with nothing failing --
+/// and one was: #108 recorded a control that mutated away the `field_rule`
+/// branch and left all 79 tests green. The design surrogate did not close it
+/// either, because it builds its own DOM from the same tokens and never
+/// executes the Iced tree.
+///
+/// `iced_test` renders the real tree in headless mode, which is what finally
+/// makes those branches reachable from a test.
+///
+/// # Bounds rather than pixels
+///
+/// `Simulator::snapshot` compares against a committed PNG. That would make the
+/// assertion depend on which fonts the machine running it happens to have, and
+/// a gate that reddens when a runner image changes its font package is a gate
+/// people turn off. Selecting a widget by its text and reading its **layout
+/// bounds** asserts the same structure without depending on how the glyphs came
+/// out.
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+    use crate::preset::{self, Preset};
+
+    /// A launcher showing results, built through the code `vicinae` uses.
+    fn app_showing_results(dir: &std::path::Path, preset_name: &str) -> LauncherApp {
+        // Comments matter: the subtitle is what `subtitles` hides, and a
+        // fixture without one would make that assertion measure nothing.
+        for (file, name, comment) in [
+            ("firefox.desktop", "Firefox", "Browse the web"),
+            ("files.desktop", "Files", "Access and organize files"),
+            ("terminal.desktop", "Terminal", "Run commands"),
+        ] {
+            std::fs::write(
+                dir.join(file),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName={name}\nComment={comment}\nExec=/bin/true\n"
+                ),
+            )
+            .expect("write entry");
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        app.apply(AppFlags {
+            appearance_preset: preset::resolve(Some(preset_name), None),
+            ..AppFlags::default()
+        });
+        // `fi` matches Firefox and Files, so there is a row beneath the first
+        // one -- which is the only place a height change is visible.
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        app
+    }
+
+    /// The top of the row whose title is `title`, as the renderer laid it out.
+    fn row_top(app: &LauncherApp, title: &str) -> f32 {
+        let mut ui = iced_test::simulator(app.view());
+        ui.find(title)
+            .unwrap_or_else(|error| panic!("no row titled {title:?}: {error:?}"))
+            .bounds()
+            .y
+    }
+
+    #[test]
+    fn the_view_renders_and_the_results_are_in_it() {
+        // The precondition for everything below. If this fails, the assertions
+        // that follow are measuring nothing.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let app = app_showing_results(dir.path(), "gnome");
+        assert!(!app.results.is_empty(), "precondition: there are rows");
+
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Firefox").is_ok(), "the row should be drawn");
+    }
+
+    #[test]
+    fn the_flow_rule_is_actually_drawn() {
+        // THE CONTROL #108 COULD NOT CLOSE.
+        //
+        // Two launchers identical in every respect except `field_rule`, so the
+        // difference measured is that branch and nothing else -- comparing the
+        // `flow` and `gnome` presets instead would conflate radius, padding and
+        // spacing with the rule.
+        //
+        // The rule is a one-pixel container between the field and the body, so
+        // drawing it moves everything below it down by exactly its height.
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let mut without = app_showing_results(dir.path(), "gnome");
+        without.field_rule = false;
+        let mut with = app_showing_results(dir.path(), "gnome");
+        with.field_rule = true;
+
+        let baseline = row_top(&without, "Firefox");
+        let ruled = row_top(&with, "Firefox");
+
+        assert!(
+            (ruled - baseline - 1.0).abs() < f32::EPSILON,
+            "the rule should push the list down by its own 1px height: \
+             {baseline} without, {ruled} with"
+        );
+    }
+
+    #[test]
+    fn hiding_subtitles_removes_them_from_the_drawn_tree() {
+        // The trait the rendered surrogate caught by eye and no test could.
+        //
+        // Asserted by asking the tree for the subtitle's text rather than by
+        // measuring anything: rows are a fixed height, so hiding the subtitle
+        // re-centres the title inside the row instead of shrinking it, and a
+        // geometric assertion here would be measuring the centring. Whether
+        // the words are on screen is the thing the option is actually about.
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let mut with = app_showing_results(dir.path(), "gnome");
+        with.subtitles = true;
+        let mut without = app_showing_results(dir.path(), "gnome");
+        without.subtitles = false;
+
+        let mut shown = iced_test::simulator(with.view());
+        assert!(
+            shown.find("Access and organize files").is_ok(),
+            "the subtitle should be drawn when subtitles are on"
+        );
+
+        let mut hidden = iced_test::simulator(without.view());
+        assert!(
+            hidden.find("Access and organize files").is_err(),
+            "the subtitle should be gone when subtitles are off"
+        );
+        // And the title is still there, so the row was not simply dropped.
+        assert!(hidden.find("Files").is_ok());
+    }
+
+    #[test]
+    fn the_dense_preset_really_is_denser_on_screen() {
+        // Not a token comparison -- `preset::tests` already does that. This is
+        // the laid-out result, which is the thing a user sees.
+        //
+        // The pitch between two rows, in absolute value: the ranking decides
+        // which of the two is on top, and that is not what this is about.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gnome = app_showing_results(dir.path(), "gnome");
+        let rofi = app_showing_results(dir.path(), "rofi");
+
+        assert!(
+            gnome.results.len() >= 2 && rofi.results.len() >= 2,
+            "precondition: two rows, or there is no pitch to measure"
+        );
+        let gnome_pitch = (row_top(&gnome, "Files") - row_top(&gnome, "Firefox")).abs();
+        let rofi_pitch = (row_top(&rofi, "Files") - row_top(&rofi, "Firefox")).abs();
+
+        assert!(
+            rofi_pitch < gnome_pitch,
+            "rofi's rows should be closer together: {rofi_pitch} vs {gnome_pitch}"
+        );
+
+        // And each pitch is the preset's own row height plus its spacing.
+        //
+        // The inequality above is not enough on its own: `rofi` also sets
+        // `row_spacing` to 0, so a `view` that ignored `row_height` entirely
+        // would still lay rofi out 2 px tighter and satisfy it. A control
+        // caught exactly that. Pinning both pitches to their presets' numbers
+        // means the height has to be read from the preset for either to hold.
+        for (app, preset) in [(&gnome, Preset::Gnome), (&rofi, Preset::Rofi)] {
+            let g = preset.geometry();
+            let expected = f32::from(g.row_height) + f32::from(g.row_spacing);
+            let measured = (row_top(app, "Files") - row_top(app, "Firefox")).abs();
+            assert!(
+                (measured - expected).abs() < 0.01,
+                "{} should lay rows out {expected} apart, measured {measured}",
+                preset.name()
+            );
+        }
     }
 }

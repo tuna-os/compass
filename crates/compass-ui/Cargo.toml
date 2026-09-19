@@ -32,6 +32,9 @@ serde = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+# Renders `view()` headlessly, which nothing else in the workspace can do.
+# See `tests/view.rs` for why that gap mattered.
+iced_test = "0.14"
 # Only so a test can read what `update` logged: the state line is asserted in
 # the VM tier, and a log line nobody can control locally is a log line nobody
 # checks.

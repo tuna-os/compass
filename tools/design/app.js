@@ -1,7 +1,7 @@
 // Renders states.json. Every colour and measurement comes from that file,
 // which the Rust prints; this file decides structure and nothing else.
 
-const state = { data: null, appearance: "light", index: 0, wallpaper: true };
+const state = { data: null, appearance: "light", index: 0, wallpaper: true, preset: "gnome" };
 
 async function load() {
   const response = await fetch("states.json");
@@ -19,6 +19,19 @@ async function load() {
     state.index = Number(select.value);
     render();
   });
+
+  const presets = document.getElementById("preset");
+  for (const p of state.data.presets) {
+    const option = document.createElement("option");
+    option.value = p.name;
+    option.textContent = p.name;
+    presets.append(option);
+  }
+  presets.value = state.preset;
+  presets.addEventListener("change", (event) => {
+    state.preset = event.target.value;
+    render();
+  });
   document.getElementById("appearance").addEventListener("change", (event) => {
     state.appearance = event.target.value;
     render();
@@ -31,8 +44,24 @@ async function load() {
   render();
 }
 
+/// The preset in force, or `gnome` if the name does not resolve.
+///
+/// Mirrors `preset::resolve`'s fallback rather than throwing: a surrogate that
+/// blanks on an unknown name is less useful than one that draws the default,
+/// which is what the launcher itself would do.
+function activePreset() {
+  const presets = state.data.presets ?? [];
+  return presets.find((p) => p.name === state.preset) ?? presets[0];
+}
+
 function applyTokens() {
-  const { geometry, fontStack, appearances } = state.data;
+  const { fontStack, appearances } = state.data;
+  const preset = activePreset();
+  // The preset's geometry, not the file's top-level one. They are equal for
+  // `gnome` by construction -- the Rust resolves that preset to
+  // `design::GEOMETRY` itself -- so reading the preset here is what makes the
+  // other three visible at all.
+  const geometry = preset ? preset.geometry : state.data.geometry;
   const palette = appearances.find((a) => a.name === state.appearance);
   const screen = document.getElementById("screen");
   const root = document.documentElement.style;
@@ -63,6 +92,12 @@ function applyTokens() {
   root.setProperty("--subtitle-size", `${geometry.subtitleSize}px`);
   root.setProperty("--heading-size", `${geometry.headingSize}px`);
   root.setProperty("--query-size", `${geometry.querySize}px`);
+  // Structural traits the preset carries beyond the measurements, as data
+  // attributes so the stylesheet decides how they look.
+  screen.dataset.preset = preset ? preset.name : "gnome";
+  screen.dataset.icons = preset && preset.icons ? "on" : "off";
+  screen.dataset.fieldRule = preset && preset.fieldRule ? "on" : "off";
+  screen.dataset.subtitles = !preset || preset.subtitles ? "on" : "off";
   root.setProperty("--font-stack", fontStack.map((f) => `"${f}"`).join(", ") + ", system-ui, sans-serif");
 
   screen.classList.toggle("bare", !state.wallpaper);
