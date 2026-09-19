@@ -224,12 +224,33 @@ impl LauncherConfig {
     }
 
     /// Whether the section carries nothing at all, known or unknown.
+    ///
+    /// Destructured rather than written as a chain of `self.field.is_none()`,
+    /// and that is the point rather than a style choice. This is
+    /// `Config`'s `skip_serializing_if` for the whole section, so a field it
+    /// forgets is a field a read-modify-write **deletes from the user's file**.
+    /// It had forgotten three: a config holding only `keybinding`,
+    /// `wrap_navigation` or `quick_launch` serialised back out as `{}`. A
+    /// destructuring binding makes the next added field a compile error
+    /// instead of silent data loss.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.hotkey.is_none()
-            && self.close_on_focus_loss.is_none()
-            && self.max_results.is_none()
-            && self.unknown.is_empty()
+        let Self {
+            hotkey,
+            close_on_focus_loss,
+            max_results,
+            keybinding,
+            wrap_navigation,
+            quick_launch,
+            unknown,
+        } = self;
+        hotkey.is_none()
+            && close_on_focus_loss.is_none()
+            && max_results.is_none()
+            && keybinding.is_none()
+            && wrap_navigation.is_none()
+            && quick_launch.is_none()
+            && unknown.is_empty()
     }
 }
 
@@ -278,9 +299,16 @@ impl ExtensionsConfig {
     }
 
     /// Whether the section carries nothing at all, known or unknown.
+    ///
+    /// Destructured for the reason [`LauncherConfig::is_empty`] gives.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.auto_update.is_none() && self.installed.is_none() && self.unknown.is_empty()
+        let Self {
+            auto_update,
+            installed,
+            unknown,
+        } = self;
+        auto_update.is_none() && installed.is_none() && unknown.is_empty()
     }
 }
 
