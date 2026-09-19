@@ -448,9 +448,25 @@ jobs:
                     # the same corpus Suite 0 diffs against.
                     echo "--- indexable entries visible to the engine ---"
                     ls /corpus/applications | wc -l
-                    echo "--- a real query ---"
-                    vicinae query --json firefox | tee /src/spike-query.json \
-                      || echo "(query failed)"
+                    # BOUNDED, because the first corpus run hung here.
+                    #
+                    # The rung answered `ping`, then the query did not return.
+                    # Unbounded, that burns the job's 30-minute timeout and
+                    # reports as "the job timed out" -- which is a different
+                    # and much less useful finding than "the query hangs".
+                    # A spike must bound its own wait.
+                    echo "--- a real query (30s budget) ---"
+                    if timeout 30 vicinae query --json firefox > /src/spike-query.json 2>&1; then
+                      cat /src/spike-query.json
+                    else
+                      status=$?
+                      if [ "$status" -eq 124 ]; then
+                        echo "QUERY HUNG: no answer within 30s with $(ls /corpus/applications | wc -l) entries visible"
+                      else
+                        echo "(query failed, exit $status)"
+                      fi
+                      cat /src/spike-query.json || true
+                    fi
                     {
                       echo "### Suite 0 spike: YES, on the \`$label\` rung"
                       echo
