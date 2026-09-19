@@ -527,6 +527,19 @@ jobs:
                     fi
                     cat /src/spike-query.json
 
+                    # DOES THE ENGINE HAVE ANY ROOT ITEMS AT ALL?
+                    #
+                    # `app ls --json` goes through listCommands, which calls
+                    # RootItemManager::allItems() -- the same collection
+                    # rootQuery ranks over, without the search. If this is
+                    # empty too, the providers never loaded and the question
+                    # is registration, not ranking. If it has entries and the
+                    # query does not, the filter is the culprit.
+                    echo "--- root items the engine knows about ---"
+                    timeout 15 vicinae app ls --json > /src/spike-items.json 2>&1 || true
+                    head -c 600 /src/spike-items.json
+                    echo
+
                     echo "--- and once more, bounded, for the record ---"
                     if timeout 30 vicinae query --json firefox > /src/spike-query.json 2>&1; then
                       cat /src/spike-query.json
@@ -539,14 +552,35 @@ jobs:
                       fi
                       cat /src/spike-query.json || true
                     fi
+                    # THE VERDICT KEYED OFF `ping`, AND PRINTED YES OVER AN
+                    # EMPTY RANKING. That is the exact failure this job exists
+                    # to catch, written by me into the job that catches it.
+                    #
+                    # Serving and ranking are different answers and the
+                    # verdict now says which it got.
                     {
-                      echo "### Suite 0 spike: YES, on the \`$label\` rung"
-                      echo
-                      echo "The parity run needs exactly this much and no compositor."
+                      if [ -n "$ranked" ]; then
+                        echo "### Suite 0 spike: YES, on the \`$label\` rung"
+                        echo
+                        echo "Serves AND ranks. The parity run needs this much and no compositor."
+                      else
+                        echo "### Suite 0 spike: PARTIAL, on the \`$label\` rung"
+                        echo
+                        echo "The engine SERVES here -- \`ping\` answered -- but ranks"
+                        echo "nothing, for 30s, with $(ls /corpus/applications | wc -l) entries visible."
+                        echo "Not a timing race. A parity run built on this would diff two"
+                        echo "empty rankings, agree perfectly, and prove nothing."
+                      fi
                       echo
                       echo "Hits for \`firefox\` over the checked-in corpus:"
                       echo '```json'
                       head -c 400 /src/spike-query.json
+                      echo
+                      echo '```'
+                      echo
+                      echo "Root items the engine knows about at all:"
+                      echo '```'
+                      head -c 400 /src/spike-items.json
                       echo
                       echo '```'
                     } > /src/spike-verdict.md
