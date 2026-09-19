@@ -50,11 +50,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use compass_core::apps::AppIndex;
-use compass_local_storage::{LocalStorage, namespace_for};
-use compass_sqlcipher_sys::Database;
 use compass_worker_host::extension_manager::ManagerClient;
-use compass_worker_host::session::{Router, Session, Turn};
-use compass_worker_host::storage_service::StorageService;
 use compass_worker_host::{Worker, extension_manager};
 
 /// The SLA, in kilobytes. PLAN.md §8.5.
@@ -214,20 +210,34 @@ fn tree_peak_rss_kb(pid: u32) -> u64 {
         .sum()
 }
 
-/// A command that does real work, says so, and then stays resident.
+/// A command that loads the API, says so, and then stays resident.
 ///
 /// The marker write is what lets the host measure a *loaded* extension rather
 /// than a node process that has not reached the API yet. The never-resolving
 /// promise is what keeps `/proc/<pid>` there to be read.
+///
+/// # Why it does not call back into the host
+///
+/// The first version round-tripped a value through `LocalStorage`, which meant
+/// the test had to pump three sessions round-robin to service those calls.
+/// `Session::pump_once` blocks on a read, so one slow worker stalled the loop;
+/// under a loaded runner the whole test could sit there until `timeout` reaped
+/// the workers at sixty seconds, after which it measured three corpses. That
+/// surfaced as the 16 MB measurement floor failing intermittently — roughly one
+/// run in four of the full workspace suite, and never when the test ran alone.
+///
+/// The floor was right to fire: those *were* broken measurements. But a test
+/// that fails one run in four teaches people to re-run, so the dependency is
+/// removed rather than papered over. `require("@vicinae/api")` is what costs
+/// memory; a storage round trip adds nothing measurable to the resident set,
+/// and `real_runtime.rs` already covers that the calls work.
 fn command_source(marker: &Path) -> String {
     format!(
         r#"
-const {{ LocalStorage }} = require("@vicinae/api");
+require("@vicinae/api");
 
 module.exports.default = async () => {{
-  await LocalStorage.setItem("greeting", "hello");
-  const read = await LocalStorage.getItem("greeting");
-  require("node:fs").writeFileSync({marker:?}, JSON.stringify({{ read }}));
+  require("node:fs").writeFileSync({marker:?}, "loaded");
   await new Promise(() => {{}});
 }};
 "#
@@ -319,11 +329,7 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
     std::fs::create_dir_all(&apps).expect("the applications directory");
     let index_kb = index_cost_kb(&apps);
 
-    let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
-    compass_db::vicinae::run(&db).expect("the migrations apply");
-    let storage = LocalStorage::new(&db);
-
-    let mut sessions = Vec::with_capacity(EXTENSIONS);
+    let mut workers = Vec::with_capacity(EXTENSIONS);
     let mut pids = Vec::with_capacity(EXTENSIONS);
     let mut markers = Vec::with_capacity(EXTENSIONS);
 
@@ -362,44 +368,36 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
             .ready(&session_id)
             .expect("sending ready");
 
-        sessions.push((worker, session_id));
+        workers.push(worker);
         markers.push(marker);
     }
 
-    // Pump every session until each command has had its last answer. Round
-    // robin rather than one at a time: each worker must reach its marker, and
-    // blocking on the first would leave the others unloaded.
-    let services: Vec<StorageService> = (0..EXTENSIONS)
-        .map(|i| StorageService::new(storage.scoped(&namespace_for(&format!("ext{i}")))))
-        .collect();
-    let mut live: Vec<Session> = sessions
-        .into_iter()
-        .zip(&services)
-        .map(|((worker, session_id), service)| {
-            Session::new(worker, &session_id, Router::new().with(service))
-        })
-        .collect();
-
-    for _ in 0..200 {
-        for session in &mut live {
-            match session.pump_once().expect("a turn") {
-                Turn::Crashed { reason } => panic!("a runtime crashed: {reason}"),
-                Turn::Deferred { method, .. } => panic!("nothing here defers: {method}"),
-                Turn::Answered { .. }
-                | Turn::Closed
-                | Turn::Nothing
-                | Turn::OtherSession { .. } => {}
-            }
-        }
+    // Wait for every command to reach its marker. No session pumping: these
+    // commands make no host calls, so there is nothing to answer, and a
+    // blocking `pump_once` is precisely what used to stall this test past the
+    // sixty-second reaper. See `command_source`.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
         if markers.iter().all(|m| m.exists()) {
             break;
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     for (i, marker) in markers.iter().enumerate() {
         assert!(
             marker.exists(),
             "extension {i} never reached its marker, so it was not measured loaded"
+        );
+    }
+
+    // Measuring a process that `timeout` has already reaped reports a few
+    // hundred kB and reads as a lean extension. The floor below would catch it,
+    // but this says what actually went wrong instead of blaming the probe.
+    for (i, &pid) in pids.iter().enumerate() {
+        assert!(
+            std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "extension {i} (pid {pid}) was gone before it could be measured"
         );
     }
 
@@ -410,7 +408,7 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
     // `timeout`, which would hold three node processes for another minute.
     // Deliberately after the measurement and before the assertions: a failing
     // assertion must not leak them either.
-    drop(live);
+    drop(workers);
     for &pid in &pids {
         reap(pid);
     }
