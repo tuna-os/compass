@@ -51,6 +51,17 @@ pub const DEFAULT_MAX_RESULTS: usize = 50;
 /// first and last row rather than going round. See [`crate::list_navigation`].
 pub const DEFAULT_WRAP_NAVIGATION: bool = false;
 
+/// Default for `launcher.quick_launch`.
+///
+/// On, per #87: Ctrl+1..9 launches the first through ninth result without
+/// arrowing to it. It costs nothing when unused -- the chords are otherwise
+/// unbound -- and is a real speed-up once learned.
+///
+/// This has no C++ counterpart to match. It sits directly under `launcher`
+/// rather than under an `appearance` section because it is behaviour, not
+/// appearance: it changes what a keystroke does, not what a row looks like.
+pub const DEFAULT_QUICK_LAUNCH: bool = true;
+
 /// Default for `launcher.keybinding`.
 ///
 /// The literal the C++ writes, and the one `KeyBindingService::getMode` reads
@@ -125,6 +136,8 @@ pub struct LauncherConfig {
     keybinding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wrap_navigation: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    quick_launch: Option<bool>,
 
     /// Keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -162,6 +175,14 @@ impl LauncherConfig {
     #[must_use]
     pub fn wrap_navigation(&self) -> bool {
         self.wrap_navigation.unwrap_or(DEFAULT_WRAP_NAVIGATION)
+    }
+
+    /// Whether Ctrl+1..9 launches the first through ninth result (#87).
+    ///
+    /// Defaults to [`DEFAULT_QUICK_LAUNCH`].
+    #[must_use]
+    pub fn quick_launch(&self) -> bool {
+        self.quick_launch.unwrap_or(DEFAULT_QUICK_LAUNCH)
     }
 
     /// The scheme [`keybinding`](Self::keybinding) names.

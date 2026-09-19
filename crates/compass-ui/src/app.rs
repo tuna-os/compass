@@ -69,6 +69,55 @@ fn keyboard_events(
     }
 }
 
+/// Which result `Ctrl+1`..`Ctrl+9` asks for, as a **position in the visible
+/// list** counting from zero.
+///
+/// # The two things this is easy to get wrong
+///
+/// It returns a POSITION, not an item index. `LauncherApp::results` holds
+/// indices into the application index, and the selection is a position within
+/// `results` -- so `Ctrl+3` means the third row on screen, not item 3. Mixing
+/// those up launches something plausible and wrong, which is the worst kind of
+/// bug to have here because nothing looks broken.
+///
+/// And there is no zero. `Ctrl+1` is the first row, so the digit is one-based
+/// and `Ctrl+0` is not a quick-launch chord at all.
+///
+/// Bounds are the caller's: this says which row was asked for, not whether it
+/// exists.
+#[must_use]
+pub fn quick_launch_position(
+    key: iced::keyboard::Key<&str>,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<usize> {
+    use iced::keyboard::Key;
+
+    // Control alone. A chord carrying Alt or Logo as well is somebody else's,
+    // and claiming it would take a binding the desktop may already have.
+    // Shift is excluded too: Ctrl+Shift+1 is a different chord, and on many
+    // layouts it is not a digit at all.
+    if !modifiers.control() || modifiers.alt() || modifiers.logo() || modifiers.shift() {
+        return None;
+    }
+
+    let Key::Character(text) = key else {
+        return None;
+    };
+
+    // `"1".."9"`, and nothing else: not "10", not a digit with anything
+    // attached. `chars().next()` on a longer string would accept "1x".
+    let mut chars = text.chars();
+    let digit = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    let value = digit.to_digit(10)?;
+    if value == 0 {
+        return None;
+    }
+    Some(value as usize - 1)
+}
+
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
@@ -84,6 +133,8 @@ pub struct AppFlags {
     pub keybinding: compass_core::keybinding::Scheme,
     /// Whether the selection wraps, from `launcher.wrap_navigation`.
     pub wrap_navigation: bool,
+    /// Whether Ctrl+1..9 launches the Nth result, from `launcher.quick_launch`.
+    pub quick_launch: bool,
     /// What the window draws before the desktop says otherwise.
     ///
     /// Separate from `appearance_link` because a window has to draw before any
@@ -121,6 +172,7 @@ impl Default for AppFlags {
             },
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
+            quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
@@ -239,6 +291,8 @@ pub struct LauncherApp {
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
+    /// Whether Ctrl+1..9 launches the Nth result. See [`AppFlags::quick_launch`].
+    quick_launch: bool,
     /// Which navigation chords are in force. See [`compass_core::keybinding`].
     ///
     /// Held rather than read per keystroke because it comes from the user's
@@ -354,6 +408,7 @@ impl LauncherApp {
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
+        app.quick_launch = flags.quick_launch;
         app.link = flags.link;
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
@@ -392,6 +447,7 @@ impl LauncherApp {
             appearance_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
+            quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             awaiting: false,
         }
     }
@@ -854,6 +910,33 @@ impl LauncherApp {
                         Some(direction) => self.update(Message::PanelMove(direction)),
                         None => Task::none(),
                     };
+                }
+
+                // Ctrl+1..9 launches the Nth row outright (#87). Above the
+                // arrows because it is a complete action rather than a
+                // movement, and below the panel branch because while the panel
+                // is open the list is not what a keystroke is aimed at.
+                //
+                // OUT OF RANGE DOES NOTHING, deliberately. `max_results` can be
+                // below nine, and a query can match two things; Ctrl+7 then
+                // refers to no row. Launching the last one instead would be a
+                // guess at what the user meant, and the thing it launches is
+                // whatever happens to be at the bottom of an unrelated list.
+                //
+                // An out-of-range position falls through rather than returning
+                // early. The early return was there to stop the chord reaching
+                // the navigation matcher, and a control could not be made to
+                // fire on it: no scheme maps a digit to a direction, so the two
+                // paths are indistinguishable. Rather than keep a branch no
+                // test can tell apart from its absence, it is gone -- and if a
+                // scheme ever does bind digits, the test that catches it is the
+                // one that notices the selection moving.
+                if self.quick_launch
+                    && let Some(position) = quick_launch_position(key.as_ref(), modifiers)
+                    && position < self.results.len()
+                {
+                    self.selected = position;
+                    return self.update(Message::LaunchSelected);
                 }
 
                 match key.as_ref() {
@@ -1564,6 +1647,11 @@ mod tests {
     }
 
     /// Builds a `KeyPressed` for a named key, as the subscription delivers it.
+    /// A `Ctrl`+`digit` press. `chord` below builds it; this names the intent.
+    pub(super) fn ctrl_digit(digit: &str) -> Message {
+        chord(digit, iced::keyboard::Modifiers::CTRL)
+    }
+
     fn pressed(key: iced::keyboard::key::Named) -> Message {
         Message::Keyboard(iced::keyboard::Event::KeyPressed {
             key: iced::keyboard::Key::Named(key),
@@ -1594,7 +1682,7 @@ mod tests {
     }
 
     /// An app over the fixture corpus with several matching rows.
-    fn app_with_rows(dir: &std::path::Path) -> LauncherApp {
+    pub(super) fn app_with_rows(dir: &std::path::Path) -> LauncherApp {
         let mut app = app(dir);
         let _ = app.update(Message::QueryChanged("fi".to_owned()));
         assert!(app.results.len() > 1, "need several rows to move between");
@@ -1889,6 +1977,170 @@ mod tests {
             app.selected,
             expected.len() - 1,
             "and it stayed on the last row, because wrap_navigation is off by default"
+        );
+    }
+}
+
+#[cfg(test)]
+mod quick_launch_tests {
+    use super::*;
+    use iced::keyboard::{Key, Modifiers};
+
+    #[test]
+    fn ctrl_one_through_nine_are_positions_counting_from_zero() {
+        for (digit, want) in [("1", 0), ("2", 1), ("5", 4), ("9", 8)] {
+            assert_eq!(
+                quick_launch_position(Key::Character(digit), Modifiers::CTRL),
+                Some(want),
+                "Ctrl+{digit}"
+            );
+        }
+    }
+
+    #[test]
+    fn there_is_no_ctrl_zero() {
+        // The digits are one-based because the rows are. A zero would have to
+        // mean either "the first" or "the tenth" and neither is what anyone
+        // presses it for.
+        assert_eq!(
+            quick_launch_position(Key::Character("0"), Modifiers::CTRL),
+            None
+        );
+    }
+
+    #[test]
+    fn a_digit_without_control_is_somebody_elses() {
+        // Typing "3" into the search field must reach the field.
+        assert_eq!(
+            quick_launch_position(Key::Character("3"), Modifiers::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn control_plus_another_modifier_is_a_different_chord() {
+        // Not ours to claim: the desktop may already bind these, and on many
+        // layouts Ctrl+Shift+1 is not a digit at all.
+        for extra in [Modifiers::SHIFT, Modifiers::ALT, Modifiers::LOGO] {
+            assert_eq!(
+                quick_launch_position(Key::Character("1"), Modifiers::CTRL | extra),
+                None,
+                "{extra:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_digit_character_is_not_a_quick_launch() {
+        for text in ["b", "-", "", "1x", "12"] {
+            assert_eq!(
+                quick_launch_position(Key::Character(text), Modifiers::CTRL),
+                None,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_n_selects_and_launches_the_nth_visible_row() {
+        // THE BUG THIS IS HERE FOR: `results` holds indices into the
+        // application index, and the selection is a position within `results`.
+        // Ctrl+3 means the third ROW, not item 3. Confusing the two launches
+        // something plausible and wrong, which is the worst kind to have here
+        // because nothing looks broken.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = super::tests::app_with_rows(dir.path());
+
+        let rows: Vec<String> = app
+            .results
+            .iter()
+            .filter_map(|i| app.app_index.items().get(*i))
+            .map(|item| item.name().to_owned())
+            .collect();
+        assert!(rows.len() >= 2, "need several rows: {rows:?}");
+
+        for (position, name) in rows.iter().enumerate().take(9) {
+            let digit = (position + 1).to_string();
+            let _ = app.update(super::tests::ctrl_digit(&digit));
+            assert_eq!(
+                app.selected_item().map(compass_core::AppItem::name),
+                Some(name.as_str()),
+                "Ctrl+{digit} must resolve to row {position}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_that_is_not_there_does_nothing_at_all() {
+        // THE BOUNDS ARE THE ROWS', NOT THE INDEX'S. A query filters the list,
+        // so `results` is shorter than `app_index.items()` -- and a check
+        // against the wrong one accepts a position that has no row, then
+        // selects it. The fixture is queried precisely so the two lengths
+        // differ: a control that swapped them was SILENT until this test did.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = super::tests::app_with_rows(dir.path());
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+
+        let rows = app.results.len();
+        let items = app.app_index.items().len();
+        assert!(
+            rows < items,
+            "the query must narrow the list: {rows} of {items}"
+        );
+        assert!(rows < 9, "and leave fewer than nine rows: {rows}");
+
+        let before = app.selected;
+        // A position with no row, but well inside the item index.
+        let _ = app.update(super::tests::ctrl_digit(&(rows + 1).to_string()));
+        assert_eq!(app.selected, before, "the selection must not move either");
+    }
+
+    #[test]
+    fn the_setting_turns_it_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = super::tests::app_with_rows(dir.path());
+        app.quick_launch = false;
+        app.selected = 1;
+
+        let _ = app.update(super::tests::ctrl_digit("1"));
+        assert_eq!(
+            app.selected, 1,
+            "with quick_launch off, Ctrl+1 must not move the selection"
+        );
+    }
+
+    #[test]
+    fn it_is_on_by_default() {
+        // #87 asks for on by default: it costs nothing when unused, because
+        // the chords are otherwise unbound.
+        assert!(compass_core::config::LauncherConfig::default().quick_launch());
+        assert!(AppFlags::default().quick_launch);
+    }
+
+    #[test]
+    fn the_panel_takes_the_chord_while_it_is_open() {
+        // While the panel is open the list is not what a keystroke is aimed
+        // at, and launching a row out from under an open action panel would be
+        // a surprise.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = super::tests::app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        assert!(app.panel.is_some(), "precondition");
+        app.selected = 1;
+
+        let _ = app.update(super::tests::ctrl_digit("1"));
+        assert_eq!(app.selected, 1, "the row under the panel did not move");
+        assert!(app.panel.is_some(), "and the panel is still open");
+    }
+
+    #[test]
+    fn a_named_key_is_not_a_quick_launch() {
+        assert_eq!(
+            quick_launch_position(
+                Key::Named(iced::keyboard::key::Named::Enter),
+                Modifiers::CTRL
+            ),
+            None
         );
     }
 }
