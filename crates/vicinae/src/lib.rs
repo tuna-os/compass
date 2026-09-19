@@ -60,6 +60,11 @@ pub fn main() -> ExitCode {
 /// ranking a query is CPU work and on a single thread one slow query would
 /// stall every other connection.
 pub fn run(cli: Cli) -> Result<ExitCode> {
+    // As early as a process can see of itself. Everything before this --
+    // dynamic linking, which is not free for a binary that links wgpu -- is
+    // outside it, which is why the figure derived from it is documented as a
+    // floor. See `Message::FrameDrawn`.
+    let started_at = std::time::Instant::now();
     // Before any runtime exists, and deliberately. Iced owns the thread it is
     // started on, and on Wayland that has to be the process's main thread —
     // so the launcher cannot be dispatched from inside `block_on` like every
@@ -146,6 +151,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             quick_launch,
             icons: appearance_preset.icons,
             appearance_preset,
+            started_at: Some(started_at),
             appearance,
             appearance_link,
             ..compass_ui::AppFlags::default()

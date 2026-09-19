@@ -186,6 +186,12 @@ pub struct AppFlags {
     pub wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result, from `launcher.quick_launch`.
     pub quick_launch: bool,
+    /// When the process started, for the cold-start figure (#13).
+    ///
+    /// `None` in a test or anywhere nobody is timing, which simply means no
+    /// figure is logged. Taken by the binary on entry rather than here, so it
+    /// covers as much of the startup as a process can see of itself.
+    pub started_at: Option<std::time::Instant>,
     /// The resolved appearance preset (#84): geometry and structural flags.
     pub appearance_preset: crate::preset::Resolved,
     /// Whether result rows show the application's icon, from
@@ -242,6 +248,7 @@ impl Default for AppFlags {
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             appearance_preset: crate::preset::resolve(None, None),
+            started_at: None,
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
@@ -372,6 +379,13 @@ pub struct LauncherApp {
     field_rule: bool,
     /// Whether rows show their subtitle. See [`crate::preset::Preset::subtitles`].
     subtitles: bool,
+    /// When the first frame was drawn, for the cold-start figure (#13).
+    ///
+    /// `None` until it happens, which is also what keeps the per-frame
+    /// subscription from running for the life of the process.
+    first_frame_at: Option<std::time::Instant>,
+    /// When the process started. See [`AppFlags::started_at`].
+    started_at: Option<std::time::Instant>,
     /// Whether result rows show the application's icon. See [`AppFlags::icons`].
     icons: bool,
     /// How an `Icon=` name becomes a file. See [`AppFlags::icon_lookup`].
@@ -514,6 +528,7 @@ impl LauncherApp {
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
         app.subtitles = flags.appearance_preset.subtitles;
+        app.started_at = flags.started_at;
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
         app.appearance = flags.appearance;
@@ -559,6 +574,8 @@ impl LauncherApp {
             geometry: design::GEOMETRY,
             field_rule: false,
             subtitles: true,
+            first_frame_at: None,
+            started_at: None,
             awaiting: false,
         }
     }
@@ -793,6 +810,12 @@ impl LauncherApp {
             iced::event::listen_with(keyboard_events),
             window::close_events().map(Message::Closed),
         ];
+        // Only while the first frame is still owed. Once it has been reported
+        // this stream is dropped, so the per-frame message stops entirely
+        // rather than being produced and discarded at the refresh rate.
+        if self.first_frame_at.is_none() {
+            streams.push(window::frames().map(|_| Message::FrameDrawn));
+        }
         if let Some(link) = &self.link {
             streams.push(link.subscription().map(Message::Command));
         }
@@ -849,6 +872,40 @@ impl LauncherApp {
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Initialize => Task::none(),
+
+            // COLD START, RECORDED -- AND IT IS A LOWER BOUND, NOT THE SLA.
+            //
+            // §8.5 names "cold start to first frame < 120 ms" and nothing has
+            // ever measured it. This is the first number.
+            //
+            // Iced yields this on `RedrawRequested`, which is the compositor
+            // asking for a frame, NOT the frame reaching the screen. The
+            // rendering that follows is unmeasured here and under llvmpipe it
+            // is not small, so the figure is a floor on what a user waits for.
+            // It is logged as `first_draw_ms` rather than `first_frame_ms` so
+            // nobody reads it as the thing the SLA names.
+            //
+            // The elapsed time is from `AppFlags::started_at`, which `vicinae`
+            // takes on entry -- so it excludes dynamic linking, and a wgpu
+            // binary's is not free either. The VM tier measures from spawn to
+            // this line and catches both.
+            //
+            // Recorded, not gated: ADR-0010. A threshold comes from the
+            // numbers, once there are some.
+            Message::FrameDrawn => {
+                if self.first_frame_at.is_none() {
+                    let now = std::time::Instant::now();
+                    self.first_frame_at = Some(now);
+                    if let Some(started) = self.started_at {
+                        tracing::info!(
+                            target: "compass_ui::startup",
+                            first_draw_ms = now.duration_since(started).as_millis() as u64,
+                            "first frame requested (a floor on cold start, not the §8.5 figure)"
+                        );
+                    }
+                }
+                Task::none()
+            }
             Message::AppearanceChanged(appearance) => {
                 self.appearance = appearance;
                 Task::none()
@@ -2660,6 +2717,69 @@ mod view_tests {
     }
 
     #[test]
+    fn each_notice_state_says_what_it_should() {
+        // #13 names "results list, empty state, detail view, form" for this
+        // coverage. These are the three the launcher actually has; a detail
+        // view and a form do not exist yet, and inventing tests for them would
+        // be testing nothing.
+        //
+        // Each of these is one branch of the same `if` in `view`, and the
+        // branches are only distinguishable by the words they draw -- which is
+        // exactly what a user distinguishes them by.
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Empty query: the resting state, and the one most people see most.
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::QueryChanged(String::new()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Type to search").is_ok());
+        assert!(
+            ui.find("Files").is_err(),
+            "an empty query should draw no rows"
+        );
+
+        // A query nothing matches.
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::QueryChanged("zzzznotathing".to_owned()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("No results").is_ok());
+        assert!(ui.find("Type to search").is_err());
+
+        // A failed launch, which replaces the list rather than sitting beside
+        // it -- worth pinning, because the error hiding the results is a
+        // deliberate choice and not obviously the right one.
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::Launched(Err("no Exec key".to_owned())));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(
+            ui.find("could not launch: no Exec key").is_ok(),
+            "the failure should name itself"
+        );
+        assert!(
+            ui.find("Files").is_err(),
+            "the error replaces the list while it is shown"
+        );
+    }
+
+    #[test]
+    fn the_action_panel_draws_over_the_list_rather_than_replacing_it() {
+        // The other half of the same claim: `view` stacks the panel on the
+        // card instead of swapping it, and the comment in `view` says so. A
+        // test that only checked the panel was visible would pass either way.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::TogglePanel);
+        assert!(app.panel.is_some(), "precondition: the panel opened");
+
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Open").is_ok(), "the panel's first action");
+        assert!(
+            ui.find("Files").is_ok(),
+            "the list should still be underneath"
+        );
+    }
+
+    #[test]
     fn the_flow_rule_is_actually_drawn() {
         // THE CONTROL #108 COULD NOT CLOSE.
         //
@@ -2758,5 +2878,65 @@ mod view_tests {
                 preset.name()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod cold_start_tests {
+    use super::*;
+
+    #[test]
+    fn the_first_frame_is_recorded_once_and_only_once() {
+        // The latch is the whole mechanism. Without it the figure would be
+        // rewritten at the refresh rate and report the time between the last
+        // two frames rather than the time to the first.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        app.started_at = Some(std::time::Instant::now());
+
+        assert!(app.first_frame_at.is_none(), "nothing drawn yet");
+
+        let _ = app.update(Message::FrameDrawn);
+        let first = app.first_frame_at.expect("the first frame was recorded");
+
+        for _ in 0..5 {
+            let _ = app.update(Message::FrameDrawn);
+        }
+        assert_eq!(
+            app.first_frame_at,
+            Some(first),
+            "a later frame must not overwrite the first"
+        );
+    }
+
+    // NOT TESTED, AND RECORDED RATHER THAN FAKED: that `subscription` stops
+    // asking for frames once the first has arrived.
+    //
+    // `window::frames()` yields at the refresh rate, so leaving it subscribed
+    // would push a message sixty times a second for the life of the process.
+    // The guard in `subscription` is what prevents that, and removing it is a
+    // mutation no test here catches: `iced::Subscription` is opaque -- its
+    // `Debug` is the bare string "Subscription" -- so a test cannot see which
+    // streams a batch contains. Asserting on a predicate extracted from the
+    // guard would test the predicate, not the guard, and would pass with the
+    // guard deleted.
+    //
+    // The cost of the miss is wasted work rather than wrong behaviour: the
+    // latch below keeps a late frame from overwriting the figure either way.
+
+    #[test]
+    fn without_a_start_time_nothing_is_claimed() {
+        // A test, or any caller that is not timing, sets no start. The frame
+        // is still latched -- that is what stops the subscription -- but no
+        // figure is logged, because there would be nothing to measure from.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        assert!(app.started_at.is_none(), "precondition");
+
+        let _ = app.update(Message::FrameDrawn);
+        assert!(
+            app.first_frame_at.is_some(),
+            "the latch still closes, or the subscription would never stop"
+        );
     }
 }

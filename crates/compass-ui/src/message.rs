@@ -21,6 +21,14 @@ pub enum Direction {
 pub enum Message {
     /// Initialize the application (connect portals, bind shortcuts).
     Initialize,
+    /// The window is about to draw a frame.
+    ///
+    /// Only the first one is acted on, to time cold start (#13 §8.5). Iced
+    /// yields this on `RedrawRequested`, which is the moment the compositor
+    /// asks for a frame rather than the moment one reaches the screen -- see
+    /// [`crate::app::LauncherApp`]'s handling for why that distinction is
+    /// recorded rather than glossed.
+    FrameDrawn,
     /// The search query changed.
     QueryChanged(String),
     /// A result was selected (by keyboard navigation).
