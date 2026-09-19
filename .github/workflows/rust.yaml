@@ -118,6 +118,17 @@ jobs:
       # Scoped to the two budget tests rather than the workspace: a cold release
       # build of just these is about twelve seconds, against minutes for
       # everything including the renderer.
+      # Per-commit idle RSS (#13). Its own step, and NOT under `nextest`, for a
+      # reason worth stating: nextest suppresses stdout for passing tests, so
+      # the figure this test exists to report never reached the log. It ran,
+      # it passed, and it tracked nothing — a measurement nobody can read is
+      # the same defect as `launcher-rss` passing on `0 kB`.
+      #
+      # `cargo test -- --nocapture` is what the SLA step below already uses,
+      # and for the same reason: the number IS the output.
+      - name: Idle RSS, per commit
+        run: cargo test -p vicinae --test idle_memory -- --nocapture
+
       - name: SLA budgets, in release
         run: |
           cargo test --release -p compass-search --test ranking_budget -- --nocapture
