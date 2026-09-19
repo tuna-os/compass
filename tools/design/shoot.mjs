@@ -6,11 +6,63 @@
 // time: a screenshot that differs because of a blink is a diff nobody can
 // read.
 
-import { chromium } from "playwright";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, extname, join, resolve } from "node:path";
-import { createReadStream, mkdirSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { execFileSync } from "node:child_process";
+
+// Playwright is resolved rather than imported, because where it lives depends
+// on the machine and the point of this harness is that it runs in seconds on
+// any of them. A bare `import "playwright"` works only when it sits in a
+// node_modules beside the repository, and ESM ignores NODE_PATH -- so on a CI
+// image with a global install the fast path failed with ERR_MODULE_NOT_FOUND
+// and the only way to look at a design change was the twenty-minute VM tier.
+//
+// PLAYWRIGHT_ROOT wins if it is set. Otherwise: a local install, then npm's
+// global root, then the paths a couple of common images use.
+async function loadChromium() {
+  const candidates = [];
+  if (process.env.PLAYWRIGHT_ROOT) candidates.push(process.env.PLAYWRIGHT_ROOT);
+  try {
+    const root = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+    if (root) candidates.push(join(root, "playwright"));
+  } catch {
+    // No npm on PATH is not an error; the other candidates may still work.
+  }
+  candidates.push("/opt/node22/lib/node_modules/playwright", "/usr/lib/node_modules/playwright");
+
+  // A global install is CommonJS, so the named export is not there and the
+  // module arrives under `default`. Reading only `.chromium` yielded
+  // `undefined` and the failure surfaced forty lines later as
+  // "Cannot read properties of undefined (reading 'launch')" -- so a module
+  // that resolves without a usable `chromium` is treated as a miss here
+  // rather than passed on.
+  const chromiumOf = (module) => module?.chromium ?? module?.default?.chromium;
+
+  try {
+    const found = chromiumOf(await import("playwright"));
+    if (found) return found;
+  } catch (error) {
+    if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
+  }
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    try {
+      const found = chromiumOf(await import(pathToFileURL(join(candidate, "index.js")).href));
+      if (found) return found;
+    } catch (error) {
+      if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
+    }
+  }
+  const looked = candidates.length ? `\n  looked in:\n    ${candidates.join("\n    ")}` : "";
+  throw new Error(
+    `playwright is not installed. Install it (npm i -D playwright) or point ` +
+      `PLAYWRIGHT_ROOT at an existing install.${looked}`,
+  );
+}
+
+const chromium = await loadChromium();
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = resolve(process.argv[2] ?? join(here, "shots"));
@@ -22,7 +74,14 @@ const states = JSON.parse(readFileSync(join(here, "states.json"), "utf8"));
 // which will not match every Playwright release. CHROMIUM_PATH lets a caller
 // point at it rather than downloading a second browser; without it Playwright
 // uses its own, which is right on a developer machine.
-const executablePath = process.env.CHROMIUM_PATH || undefined;
+// Same reasoning as the resolver above: the harness is only useful if it runs
+// without ceremony. If CHROMIUM_PATH is unset, a pre-installed browser at the
+// path our images use is picked up automatically; failing that Playwright
+// downloads and manages its own, which is right on a developer machine.
+const PREINSTALLED_CHROMIUM = "/opt/pw-browsers/chromium";
+const executablePath =
+  process.env.CHROMIUM_PATH ||
+  (existsSync(PREINSTALLED_CHROMIUM) ? PREINSTALLED_CHROMIUM : undefined);
 // Served over http rather than opened as a file: Chromium refuses `fetch`
 // on `file://`, so the page would load and then sit empty forever. Ten lines
 // of static server beats inlining the JSON into the HTML, which would put a

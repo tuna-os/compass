@@ -8,12 +8,14 @@
 
 pub mod action_panel;
 pub mod app;
+pub mod appearance;
 pub mod design;
 pub mod message;
 pub mod resident;
 pub mod root_list;
 
 pub use app::{AppFlags, Dismissal, LauncherApp, next_selection};
+pub use appearance::{AppearanceLink, AppearanceSender};
 
 /// Opens the launcher window and runs until it closes.
 ///

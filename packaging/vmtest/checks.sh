@@ -609,8 +609,8 @@ PY
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$2/bus" \
         WAYLAND_DISPLAY="$3" \
         XDG_SESSION_TYPE=wayland \
-        RUST_LOG="info,wgpu=debug,wgpu_hal=debug,iced_wgpu=debug,winit=debug,\
-sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=debug" \
+        RUST_LOG="info,compass_ui::state=debug,wgpu=debug,wgpu_hal=debug,iced_wgpu=debug,\
+winit=debug,sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=debug" \
         RUST_BACKTRACE=1 \
         flatpak run --installation="$4" "$5" ui \
         > "$6" 2>&1
@@ -839,6 +839,262 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   # tarball goes out with the artifacts and a person decides what to keep — a
   # corpus is test input that shapes every ranking assertion, and it should not
   # grow by a job quietly appending to it.
+  # Are the machine's Flatpak applications in the index? (#105)
+  #
+  # A Flatpak export is a SYMLINK, not a file. flatpak-dir.c builds it with the
+  # prefix `../app/<id>/current/active/export`, so the entry a launcher reads
+  # lives in the deploy tree and the exports directory holds only pointers into
+  # it. Our sandbox granted the exports directories and not the deploy trees,
+  # which meant every Flatpak on the machine was a dangling link inside it --
+  # invisible, with no error anywhere, because the scan still lists the name and
+  # the read fails one step later.
+  #
+  # Unit tests pin the shape of that (compass-xdg) and the manifest invariant
+  # (xdg_dirs), but only a real session can answer whether the sandbox actually
+  # resolves them. That is what this is: two applications installed by flatpak
+  # itself, one in the system root and one in the user's, queried through the
+  # running engine from inside the Flatpak.
+  #
+  # The display name is read from the export rather than written here, so the
+  # check does not break when an upstream renames its application; the app id is
+  # what is asserted, because that is what the index keys on.
+  flatpak-apps)
+    # THE SYSTEM ROOT IS GATED; THE USER ROOT IS RECORDED. The image installs a
+    # probe application into the system root only: a container build is the
+    # wrong place to populate a USER installation, and two attempts proved it
+    # (gpgme has no session to work in, and flatpak refuses `--user` as root).
+    # The follow-up installs it in the booted guest from a staged bundle, where
+    # there is a real session.
+    #
+    # So an empty user root is reported as UNCOVERED and does not fail, while a
+    # user root that HAS an export is gated exactly like the system one -- the
+    # day the follow-up lands, this starts gating it with no change here. What
+    # is never allowed is silence: a root with nothing in it says so, loudly,
+    # every run.
+    status=0
+    for spec in \
+      "system:/var/lib/flatpak/exports/share/applications:gated" \
+      "user:/var/home/$SESSION_USER/.local/share/flatpak/exports/share/applications:recorded"
+    do
+      root="${spec%%:*}"
+      rest="${spec#*:}"
+      dir="${rest%%:*}"
+      mode="${rest##*:}"
+
+      if [ ! -d "$dir" ]; then
+        if [ "$mode" = recorded ]; then
+          echo "UNCOVERED: $root: $dir does not exist; no probe app is installed in this root yet"
+          continue
+        fi
+        echo "FAIL: $root: $dir does not exist, so the image never installed a probe app" >&2
+        status=1
+        continue
+      fi
+
+      found=0
+      for entry in "$dir"/*.desktop; do
+        # `-e` follows the link, so a DANGLING export fails it and the glob's
+        # own literal fallback fails it too. Testing `-L` as well keeps the two
+        # apart: a dangling link here is a broken image and must be reported as
+        # one, not skipped into "no exports at all", which is what the first
+        # draft of this did.
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        found=1
+        app_id="$(basename "$entry" .desktop)"
+
+        if [ ! -L "$entry" ]; then
+          echo "note: $root: $app_id is not a symlink; flatpak's export layout has changed" >&2
+        elif [ ! -e "$entry" ]; then
+          # Note this is the view from OUTSIDE the sandbox, as root. #105 is a
+          # link that dangles only *inside* it, which no check here can see --
+          # the query below is what answers that. A link broken out here is a
+          # different and worse thing: the image itself is wrong.
+          echo "FAIL: $root: $app_id is a dangling symlink on the host: $(readlink "$entry")" >&2
+          echo "  the image installed it and then lost the deploy tree; this is not #105" >&2
+          status=1
+          continue
+        fi
+
+        name="$(sed -n 's/^Name=//p' "$entry" | head -1)"
+        if [ -z "$name" ]; then
+          echo "FAIL: $root: no Name= in $entry" >&2
+          status=1
+          continue
+        fi
+
+        echo "--- $root: $app_id ($name) ---"
+        if compass_cli query --json "$name" \
+             > /tmp/flatpak-query.json 2>/tmp/flatpak-query.err
+        then
+          APP_ID="$app_id" NAME="$name" ROOT="$root" python3 - <<'PY' || status=1
+import json, os, sys
+
+app_id = os.environ["APP_ID"]
+name = os.environ["NAME"]
+root = os.environ["ROOT"]
+hits = json.load(open("/tmp/flatpak-query.json"))
+for hit in hits[:5]:
+    print(f"  {hit['score']:3} {hit['id']}  {hit['title']}")
+if any(hit["id"] in (f"{app_id}.desktop", app_id) for hit in hits):
+    print(f"  ok: the {root} Flatpak {app_id} is in the index")
+    sys.exit(0)
+sys.exit(
+    f"FAIL: querying {name!r} did not return the {root} Flatpak {app_id}.\n"
+    "  Its exported .desktop is a symlink into the deploy tree; if the sandbox "
+    "cannot read that tree the entry is invisible and every Flatpak on the "
+    "machine disappears from search (#105).\n"
+    "  Check --filesystem=/var/lib/flatpak/app:ro and "
+    "--filesystem=xdg-data/flatpak/app:ro in the manifest."
+)
+PY
+        else
+          echo "FAIL: $root: the query itself failed" >&2
+          cat /tmp/flatpak-query.err >&2
+          status=1
+        fi
+      done
+
+      if [ "$found" -eq 0 ]; then
+        if [ "$mode" = recorded ]; then
+          echo "UNCOVERED: $root: no .desktop exports in $dir; nothing installed in this root yet"
+        else
+          echo "FAIL: $root: no .desktop exports in $dir; the image installed no probe app" >&2
+          status=1
+        fi
+      fi
+    done
+    exit "$status"
+    ;;
+
+  # Everything systemd knows that a failing gate would want.
+  #
+  # This tier had no journal at all: `launcher-diagnose` reads /proc for a
+  # process that is hung, which says nothing about a unit that never started, a
+  # portal that exited, or a session that came up wrong. Adapted from tunaOS's
+  # `iso-e2e.sh`, which learned the shape of this the expensive way; the three
+  # lessons worth keeping are marked below.
+  journal)
+    echo '=== failed units ==='
+    systemctl --failed --no-pager --full || true
+
+    # LESSON 1: every failed unit, not a hardcoded list. The unit that matters
+    # is the FIRST one to fail, and which one that is differs per failure.
+    echo
+    echo '=== journal for every failed unit (this boot) ==='
+    systemctl --failed --no-legend --plain --no-pager 2>/dev/null | awk '{print $1}' \
+    | while read -r unit; do
+        [ -n "$unit" ] || continue
+        echo "--- $unit ---"
+        journalctl -b --no-pager -o short-precise -u "$unit" | tail -n 60 || true
+      done
+
+    # LESSON 2: display-manager.service is an ALIAS. `systemctl status` follows
+    # the symlink; `journalctl -u` matches the literal unit a message was logged
+    # under, which is always the concrete one. Ask for both.
+    dm="$(systemctl show -P Id display-manager.service 2>/dev/null || true)"
+    [ -n "$dm" ] || dm=display-manager.service
+    echo
+    echo "=== display manager ($dm) ==="
+    systemctl status "$dm" --no-pager --full || true
+    journalctl -b --no-pager -o short-precise -u display-manager.service -u "$dm" \
+      | tail -n 80 || true
+
+    # The units this project actually depends on. Named even when they have not
+    # failed, because "it is running and doing nothing" is a real outcome for a
+    # portal and does not show up above.
+    echo
+    echo '=== portals and the session bus ==='
+    systemctl --no-pager --full list-units 'xdg-desktop-portal*' 'dbus*' || true
+    journalctl -b --no-pager -o short-precise \
+      -u dbus-broker.service -u dbus.socket | tail -n 40 || true
+
+    # Our own processes are started from the CLI rather than by a unit, so they
+    # log to the session journal under the user's uid and appear nowhere above.
+    echo
+    echo "=== everything $SESSION_USER logged this boot ==="
+    journalctl -b --no-pager -o short-precise "_UID=$(uid)" | tail -n 120 || true
+
+    # LESSON 3: a unit that restart-loops or whose dependency was cancelled
+    # never reaches "failed", so it leaves nothing in the loop above. This is
+    # the backstop that catches it.
+    echo
+    echo '=== priority<=err, this boot ==='
+    journalctl -b --no-pager -o short-precise -p err | tail -n 80 || true
+
+    echo
+    echo '=== coredumps ==='
+    # Guarded rather than assumed: an image without systemd-coredump would
+    # otherwise contribute three "not found" lines and no information.
+    if command -v coredumpctl >/dev/null 2>&1; then
+      coredumpctl --no-pager --no-legend list 2>&1 | tail -n 30 || true
+    else
+      echo 'no coredumpctl in this image'
+    fi
+    ;;
+
+  # WHAT THE LAUNCHER ACTUALLY DID, from its own account rather than from pixels.
+  #
+  # Every gate in this tier asserts a percentage of changed pixels inside a box.
+  # That is the only way to prove something reached the screen, and it is bad at
+  # everything else: "5.44% of pixels in a box changed" cannot say which row is
+  # selected, what the query matched, or what the panel contains, and it moves
+  # with the font, the theme and the card geometry. Two runs of this tier were
+  # spent on a containment box that had gone stale and was asserting nothing
+  # about the launcher at all.
+  #
+  # `compass_ui::state` logs one line per message (LauncherApp::state_line), so
+  # those claims can be made exactly. What this CANNOT do is replace the pixel
+  # gates: the line is written by the same code under test and says nothing
+  # about whether anything was drawn -- a launcher rendering a blank surface
+  # logs exactly this. That is the failure --require-paint exists for, and the
+  # two halves answer different questions.
+  #
+  # Usage: checks.sh ui-state <key=value>...
+  # Each argument must appear on the LAST state line. Without arguments the
+  # whole sequence is printed and nothing is asserted.
+  ui-state)
+    shift
+    if [ ! -s "$UI_ERR" ]; then
+      echo "FAIL: $UI_ERR is empty; the launcher logged nothing at all" >&2
+      exit 1
+    fi
+
+    # The escapes are stripped for the same reason engine-index strips them:
+    # tracing colours its output, and a pattern with a literal `query=` matches
+    # nothing against `^[[3mquery^[[0m=`. That cost a false negative once
+    # already and a grep in a gate should not be the thing that notices.
+    sed 's/\x1b\[[0-9;]*m//g' "$UI_ERR" | grep -F 'compass_ui::state' > /tmp/ui-state.log || true
+
+    if [ ! -s /tmp/ui-state.log ]; then
+      echo "FAIL: the launcher never logged a state line." >&2
+      echo "  Either RUST_LOG no longer enables compass_ui::state=debug, or" >&2
+      echo "  LauncherApp::update stopped emitting one." >&2
+      echo "--- what it did log ---" >&2
+      tail -n 40 "$UI_ERR" >&2
+      exit 1
+    fi
+
+    echo "--- every state the launcher passed through ---"
+    # The whole sequence, in the job output, which is the point: a human
+    # reading a failed run sees what the launcher did without downloading an
+    # artifact and comparing images.
+    sed 's/.*compass_ui::state: //' /tmp/ui-state.log | cat -n
+    last="$(tail -n 1 /tmp/ui-state.log)"
+    echo "--- asserting against the last line ---"
+    echo "  $last"
+
+    status=0
+    for want in "$@"; do
+      if printf '%s' "$last" | grep -qF -- "$want"; then
+        echo "  ok: $want"
+      else
+        echo "  FAIL: expected $want" >&2
+        status=1
+      fi
+    done
+    exit "$status"
+    ;;
+
   harvest-corpus)
     scratch=/tmp/compass-corpus
     rm -rf "$scratch"; mkdir -p "$scratch"

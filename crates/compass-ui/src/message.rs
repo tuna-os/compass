@@ -57,6 +57,8 @@ pub enum Message {
     EventOccurred(Event),
     /// The engine asked the window to show, hide or toggle.
     Command(UiCommand),
+    /// The desktop's light/dark preference changed.
+    AppearanceChanged(crate::design::Appearance),
     /// A window finished opening, and this is its id.
     ///
     /// Carried separately from `Command(Show)` because the honest moment to

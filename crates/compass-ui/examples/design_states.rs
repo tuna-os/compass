@@ -162,9 +162,23 @@ fn list_state(name: &str, description: &str, query: &str, selected: usize) -> St
     )
 }
 
-fn panel_state(name: &str, description: &str, filter: &str, selected: isize) -> String {
+/// A panel as it looks *when it opens*, which is the only way it is drawn here.
+///
+/// The selection is asked of `action_panel::selection_after_filter` rather
+/// than passed in. It used to be a hard-coded `1`, which drew the highlight on
+/// "Open in New Window" -- a state the launcher never opens in, since the
+/// selection goes to the first selectable row. The VM tier's own frame shows
+/// the caret on "Open", so the surrogate was the thing that was wrong, and a
+/// surrogate that disagrees with the real launcher about which row is selected
+/// is worse than no surrogate.
+///
+/// A future state showing the selection moved should call `next_selectable`
+/// for the same reason: the answer comes from the ported logic, never from a
+/// number typed here.
+fn panel_state(name: &str, description: &str, filter: &str) -> String {
     let sections = panel_sections();
     let rows = action_panel::flatten(&sections, filter);
+    let selected = action_panel::selection_after_filter(&rows);
 
     let drawn: Vec<String> = rows
         .iter()
@@ -238,13 +252,11 @@ fn main() {
             "panel",
             "The action panel over the list, opened with Ctrl+B.",
             "",
-            1,
         ),
         panel_state(
             "panel-filtered",
             "The panel with a filter typed, which hides whole sections.",
             "copy",
-            1,
         ),
     ];
 

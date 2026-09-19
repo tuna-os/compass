@@ -21,6 +21,7 @@ workspace = true
 compass-core.workspace = true
 compass-ipc.workspace = true
 compass-portals.workspace = true
+futures-util.workspace = true
 compass-ui.workspace = true
 compass-platform-linux.workspace = true
 anyhow.workspace = true

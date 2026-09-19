@@ -320,4 +320,59 @@ mod tests {
              drifted from its format and this test is no longer checking anything"
         );
     }
+
+    /// Every granted Flatpak `exports` tree needs its `app` tree granted too.
+    ///
+    /// This is #105, and the test above could not have caught it: that one
+    /// checks a grant is searched, and the exports directories *were* granted
+    /// and *were* searched. The trouble is what is in them. `flatpak-dir.c`'s
+    /// `export_dir` writes symlinks with the prefix
+    /// `../app/<id>/current/active/export`, so every entry in
+    /// `exports/share/applications` points into the deploy tree and the file a
+    /// launcher reads is there, not here.
+    ///
+    /// Grant one without the other and the sandbox sees a directory of links
+    /// resolving to nothing. No error is raised anywhere -- the scan still
+    /// lists the names, and the read fails one step later -- so every Flatpak
+    /// application vanishes from search with nothing to show for it. That is
+    /// why this is an assertion about the manifest rather than a comment in it.
+    #[test]
+    fn a_granted_flatpak_exports_tree_has_its_deploy_tree_granted() {
+        let manifest = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packaging/flatpak/com.vicinae.Vicinae.yaml"
+        );
+        let text =
+            std::fs::read_to_string(manifest).unwrap_or_else(|e| panic!("read {manifest}: {e}"));
+
+        let grants: Vec<&str> = text
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("- --filesystem="))
+            .map(|grant| grant.split(':').next().unwrap_or_default())
+            .collect();
+
+        let mut checked = 0;
+        for grant in &grants {
+            // The installation root is everything before `/exports/`, which is
+            // `/var/lib/flatpak` for the system one and `xdg-data/flatpak` for
+            // the user's.
+            let Some((root, _)) = grant.split_once("/exports/") else {
+                continue;
+            };
+            let deploy = format!("{root}/app");
+            assert!(
+                grants.contains(&deploy.as_str()),
+                "the manifest grants {grant}, whose entries are symlinks into {deploy} -- but \
+                 {deploy} is not granted, so they resolve to nothing inside the sandbox and \
+                 every Flatpak application disappears from search (#105).\ngrants: {grants:#?}"
+            );
+            checked += 1;
+        }
+
+        assert!(
+            checked >= 4,
+            "found only {checked} flatpak exports grants; the parser has probably drifted from \
+             the manifest's format and this test is no longer checking anything"
+        );
+    }
 }

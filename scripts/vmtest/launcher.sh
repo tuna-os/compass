@@ -57,6 +57,38 @@ guest() { "${ssh_argv[@]}" "$@"; }
 corral_bin="$(command -v corral)"
 shot() { sudo -E "$corral_bin" screenshot "$vm" -o "$out/$1" ; }
 
+# WHEN A GATE FAILS, TAKE THE GUEST'S JOURNAL WITH US.
+#
+# Every gate below aborts the script under `set -e`, and until now that is all
+# it did: the artifact held screenshots and a framediff line, and anything
+# systemd knew about why -- a portal that exited, a unit that never started, a
+# session that came up wrong -- was gone with the VM thirty seconds later. The
+# next run costs twenty-five minutes, so the evidence has to be collected on
+# the way out rather than asked for afterwards.
+#
+# An EXIT trap rather than ERR: ERR does not fire for a failure inside a
+# function or a compound, and most of this file is both. The status is checked
+# so that a passing run does not pay for a journal nobody will read.
+#
+# `|| true` on the collection itself, twice over. A guest that has stopped
+# answering SSH is exactly when this runs, and a diagnostic that fails must not
+# replace the real exit status with its own -- that would turn a specific gate
+# failure into an unexplained one, which is the opposite of the point.
+collect_diagnostics() {
+  local status=$?
+  trap - EXIT
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  echo
+  echo "=== the run failed (status $status): collecting the guest's journal ==="
+  guest "$checks" journal > "$out/journal.txt" 2>&1 || true
+  tail -n 40 "$out/journal.txt" || true
+  echo "--- the full journal is journal.txt in this job's artifact ---"
+  return "$status"
+}
+trap collect_diagnostics EXIT
+
 # THE CONTAINMENT BOX IS DERIVED FROM THE WINDOW, NOT WRITTEN DOWN TWICE.
 #
 # `--expect-box` asserts the changed region lies inside the window, so the box
@@ -186,6 +218,22 @@ echo "=== 0b2. did the engine find any applications? (the gate, #95) ==="
 # and because failing here says "the index is empty" instead of letting it present three steps
 # later as a launcher that draws fine and finds nothing.
 guest "$checks" engine-index
+
+echo
+echo "=== 0b3. are the machine's Flatpak applications in the index? (the gate, #105) ==="
+# The index being non-empty says nothing about Flatpaks: on this image every
+# host application comes from the base OS, and until now the system and user
+# Flatpak roots were both empty, so the code path #105 lived in was never run
+# here.
+#
+# A Flatpak export is a symlink into the deploy tree, and our sandbox granted
+# the exports directory without it -- which made every Flatpak on a user's
+# machine invisible, silently. The image now installs one application into each
+# root and this asks the running engine for them by name.
+#
+# Gated. There is no threshold to calibrate and nothing to record first: either
+# the query returns the application or the sandbox cannot see it.
+guest "$checks" flatpak-apps
 
 echo
 echo "=== 0c. the desktop with the engine up (THE CONTROL for every gate) ==="
@@ -341,6 +389,27 @@ python3 scripts/vmtest/framediff.py \
   "$out/launcher-01-open.png" "$out/launcher-02-typed.png" \
   --min-percent 0.1 "${expect_box[@]}" \
   --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799
+
+echo
+echo "=== 3a2. and what does the launcher say it did? (the exact version of 3a) ==="
+# 3a proves a keystroke changed the screen inside our window. It cannot say the
+# query reached the FIELD rather than, say, a tooltip -- that was read out of
+# the frames by eye once and has been assumed since. This asserts it.
+#
+# LAUNCHER_QUERY is what the step above typed, so the assertion follows the
+# fixture instead of restating it.
+#
+# THE BACKSLASHES ARE LOAD-BEARING. `guest` is ssh, and ssh joins its argv into
+# one string that the REMOTE shell parses again -- so a plain "query=\"fi\""
+# arrives as `query=fi`, the quotes eaten in transit, and the gate looks for a
+# string the log does not contain. Verified against a shell that re-parses its
+# argv the way sshd does, rather than discovered twenty-five minutes into a VM
+# run. `\\"` survives both passes and arrives as `"`.
+#
+# The quotes cannot simply be dropped: `panel_title=Open` without them is a
+# prefix of `panel_title=Open in New Window`, which is exactly the distinction
+# run 199 had to read out of a screenshot by eye.
+guest "$checks" ui-state "query=\\\"$query\\\"" "window=open"
 
 echo
 echo "=== 3b. and is it blocked in the same place after the keystroke? ==="
@@ -527,6 +596,22 @@ if sudo -E "$corral_bin" key "$vm" ctrl b; then
 else
   echo "NOT GATED: corral could not send the chord. That says nothing about the panel."
 fi
+
+echo
+echo "=== 3d4c. did the panel open, in the launcher's own words? (the gate) ==="
+# The framediff above is deliberately ungated while the card geometry settles.
+# This is not: whether Ctrl+B reached the application and opened the panel is a
+# question about the state machine, not about pixels, and it has an exact
+# answer that no threshold has to be fitted to.
+#
+# Outside the `if` above on purpose. Those branches are about whether corral
+# could send a chord and take a picture; the launcher's own account of what it
+# did survives either of them failing, and is worth having precisely then.
+#
+# `panel_title="Open"` is the first SELECTABLE row. Run 199's frames had to be
+# read by eye to confirm the caret was not on the header above it; this is that
+# same claim, checked rather than looked at.
+guest "$checks" ui-state "panel=open" 'panel_title=\"Open\"'
 
 echo
 echo "=== 3d5. what did the engine make of the hotkey? (recorded, not gated) ==="

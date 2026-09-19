@@ -123,7 +123,7 @@ fs::path runtimeDir() {
 fs::path stateDir() {
 #ifdef __APPLE__
   if (const char *h = std::getenv("HOME")) return fs::path(h) / ".local" / "state" / "vicinae";
-  return "/tmp/vicinae";
+  return fs::path("/tmp") / sharedRootName();
 #elif defined(_WIN32)
   if (const char *l = std::getenv("LOCALAPPDATA")) return fs::path(l) / "vicinae" / "state";
   return fs::temp_directory_path() / "vicinae" / "state";

@@ -84,6 +84,19 @@ pub struct AppFlags {
     pub keybinding: compass_core::keybinding::Scheme,
     /// Whether the selection wraps, from `launcher.wrap_navigation`.
     pub wrap_navigation: bool,
+    /// What the window draws before the desktop says otherwise.
+    ///
+    /// Separate from `appearance_link` because a window has to draw before any
+    /// change can arrive: this is the first frame's colour, and the link only
+    /// carries what comes after.
+    pub appearance: Appearance,
+    /// Changes to the desktop's light/dark preference, when something is
+    /// feeding them.
+    ///
+    /// `None` is a desktop with no Settings portal, or a test. The window then
+    /// stays on `appearance` for its whole life, which is the honest outcome:
+    /// nothing is telling it otherwise.
+    pub appearance_link: Option<crate::appearance::AppearanceLink>,
     /// The engine driving this window, when there is one.
     ///
     /// `None` is the standalone case -- `vicinae ui` run by hand with no daemon
@@ -114,6 +127,12 @@ impl Default for AppFlags {
             // exists to end. `vicinae` sets this explicitly.
             launcher: Arc::new(NullLauncher),
             link: None,
+            // Dark, until a desktop says otherwise. Not a preference: it is
+            // what the launcher has always drawn, so a machine with no
+            // Settings portal keeps the appearance it had rather than
+            // switching the day this landed.
+            appearance: Appearance::Dark,
+            appearance_link: None,
         }
     }
 }
@@ -215,6 +234,8 @@ pub struct LauncherApp {
     window_config: window::Settings,
     /// Which palette to draw with. See [`LauncherApp::theme`].
     appearance: Appearance,
+    /// Where later appearance changes arrive. See [`AppFlags::appearance_link`].
+    appearance_link: Option<crate::appearance::AppearanceLink>,
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
@@ -334,6 +355,8 @@ impl LauncherApp {
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
         app.link = flags.link;
+        app.appearance = flags.appearance;
+        app.appearance_link = flags.appearance_link;
         (app, Task::none())
     }
 
@@ -366,6 +389,7 @@ impl LauncherApp {
             window: None,
             window_config: AppFlags::default().window_config,
             appearance: Appearance::Dark,
+            appearance_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             awaiting: false,
@@ -473,6 +497,86 @@ impl LauncherApp {
         self.app_index.items().get(index)
     }
 
+    /// One line saying what the launcher is showing, for a log.
+    ///
+    /// # Why this exists, and why it is a function rather than a `tracing!`
+    ///
+    /// The VM tier asserts what the launcher did by counting changed pixels.
+    /// That is the only way to prove something reached the screen, and it is
+    /// terrible at everything else: "5.44% of pixels in a box changed" cannot
+    /// say *which* row is selected, what the query matched, or what the panel
+    /// contains, and it moves with the font, the theme and the card geometry.
+    /// Two of this tier's runs were spent on a containment box that had gone
+    /// stale, asserting nothing about the launcher at all.
+    ///
+    /// So the state machine says what it did, in a line a grep can check
+    /// exactly, and the pixels go back to proving only the thing they are
+    /// uniquely good for: that a window was drawn.
+    ///
+    /// It is a pure function returning a `String` rather than a `tracing`
+    /// macro at the call site so that its content is unit-testable. A log line
+    /// asserted only inside a 25-minute VM run is a log line nobody can
+    /// control.
+    ///
+    /// The shape is `key=value`, space separated, with titles quoted, because
+    /// that is what survives being grepped out of a log interleaved with
+    /// wgpu's debug output.
+    #[must_use]
+    pub fn state_line(&self) -> String {
+        let mut line = format!(
+            "query={:?} results={} selected={}",
+            self.query,
+            self.results.len(),
+            self.selected
+        );
+        // The title, not just the index: an index is only meaningful against a
+        // corpus the reader cannot see, and "selected=0" is equally true of a
+        // right and a wrong first row.
+        match self.selected_item() {
+            Some(item) => line.push_str(&format!(" selected_title={:?}", item.name())),
+            None => line.push_str(" selected_title=none"),
+        }
+        match &self.panel {
+            None => line.push_str(" panel=closed"),
+            Some(panel) => {
+                line.push_str(&format!(
+                    " panel=open panel_filter={:?} panel_rows={} panel_selected={}",
+                    panel.filter,
+                    panel.rows.len(),
+                    panel.selected
+                ));
+                let title = usize::try_from(panel.selected)
+                    .ok()
+                    .and_then(|index| panel.rows.get(index))
+                    .and_then(|row| {
+                        let action = row.action?;
+                        Some(
+                            panel
+                                .sections
+                                .get(row.section)?
+                                .actions
+                                .get(action)?
+                                .title
+                                .as_str(),
+                        )
+                    });
+                match title {
+                    Some(title) => line.push_str(&format!(" panel_title={title:?}")),
+                    None => line.push_str(" panel_title=none"),
+                }
+            }
+        }
+        if let Some(error) = &self.error {
+            line.push_str(&format!(" error={error:?}"));
+        }
+        line.push_str(if self.window.is_some() {
+            " window=open"
+        } else {
+            " window=hidden"
+        });
+        line
+    }
+
     /// The application title.
     pub fn title(&self) -> String {
         "Vicinae".to_owned()
@@ -485,10 +589,9 @@ impl LauncherApp {
     /// and the browser surrogate under `tools/design/` is served the same
     /// ones, which is what keeps the two renderings honest about each other.
     ///
-    /// The appearance is fixed for now. Following the desktop's light/dark
-    /// preference needs the `org.freedesktop.appearance` setting read and
-    /// watched; `design::ColorScheme` already has the mapping and its tests,
-    /// and the plumbing is the next piece rather than this one.
+    /// The appearance follows the desktop when something is feeding
+    /// [`AppFlags::appearance_link`], and otherwise stays on
+    /// [`AppFlags::appearance`] for the window's whole life.
     pub fn theme(&self) -> Theme {
         design::theme(self.appearance)
     }
@@ -519,16 +622,17 @@ impl LauncherApp {
     /// in `update`. The VM tier types but never presses Escape, so it would not
     /// catch it either.
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        let keyboard = iced::event::listen_with(keyboard_events);
-        let closed = window::close_events().map(Message::Closed);
-        match &self.link {
-            Some(link) => iced::Subscription::batch([
-                keyboard,
-                closed,
-                link.subscription().map(Message::Command),
-            ]),
-            None => iced::Subscription::batch([keyboard, closed]),
+        let mut streams = vec![
+            iced::event::listen_with(keyboard_events),
+            window::close_events().map(Message::Closed),
+        ];
+        if let Some(link) = &self.link {
+            streams.push(link.subscription().map(Message::Command));
         }
+        if let Some(link) = &self.appearance_link {
+            streams.push(link.subscription().map(Message::AppearanceChanged));
+        }
+        iced::Subscription::batch(streams)
     }
 
     /// Acts on a command from the engine and reports what happened.
@@ -564,9 +668,24 @@ impl LauncherApp {
     }
 
     /// Update the application state.
+    ///
+    /// Every message leaves a line in the log saying what the launcher now
+    /// shows -- see [`LauncherApp::state_line`] for why. `debug`, not `info`:
+    /// a line per keystroke is what makes a failure readable afterwards and is
+    /// not what someone running the launcher wants in their terminal.
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.update_inner(message);
+        tracing::debug!(target: "compass_ui::state", "{}", self.state_line());
+        task
+    }
+
+    fn update_inner(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Initialize => Task::none(),
+            Message::AppearanceChanged(appearance) => {
+                self.appearance = appearance;
+                Task::none()
+            }
             Message::QueryChanged(query) => {
                 self.query = query;
                 self.error = None;
@@ -1134,6 +1253,236 @@ mod tests {
         assert_eq!(next_selection(3, 2, Direction::Down, false), 2);
         assert_eq!(next_selection(3, 0, Direction::Down, false), 1);
         assert_eq!(next_selection(3, 2, Direction::Up, false), 1);
+    }
+
+    /// Themes compare by value, and a failed comparison prints two whole
+    /// palettes. The name is what distinguishes ours, so assert on that.
+    fn theme_name(app: &LauncherApp) -> String {
+        app.theme().to_string()
+    }
+
+    /// The log every test in this binary writes into, installed once.
+    ///
+    /// A thread-local `with_default` subscriber was the obvious way to do this
+    /// and does not work here: `tracing` keeps a PROCESS-GLOBAL max-level
+    /// hint, so with tests running in parallel a `debug!` can be filtered out
+    /// while a thread-local DEBUG subscriber is active. The test passed alone
+    /// and failed in the suite -- 38/38 pass under `--test-threads=1`, which
+    /// is how that was pinned down rather than guessed.
+    ///
+    /// Installing one global subscriber at DEBUG raises that hint for the
+    /// whole run and keeps it raised, so there is no race to lose.
+    fn log() -> &'static std::sync::Mutex<Vec<u8>> {
+        use std::sync::{Mutex, OnceLock};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        static LOG: OnceLock<&'static Mutex<Vec<u8>>> = OnceLock::new();
+
+        #[derive(Clone, Copy)]
+        struct Writer(&'static Mutex<Vec<u8>>);
+
+        impl std::io::Write for Writer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for Writer {
+            type Writer = Self;
+            fn make_writer(&'a self) -> Self::Writer {
+                *self
+            }
+        }
+
+        LOG.get_or_init(|| {
+            let buffer: &'static Mutex<Vec<u8>> = Box::leak(Box::new(Mutex::new(Vec::new())));
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::DEBUG)
+                .with_writer(Writer(buffer))
+                .without_time()
+                .finish();
+            // Another test binary in the same process may have got here first;
+            // either way a DEBUG subscriber is installed, which is what this
+            // needs.
+            let _ = tracing::subscriber::set_global_default(subscriber);
+            buffer
+        })
+    }
+
+    fn logged() -> String {
+        let bytes = log()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    #[test]
+    fn every_message_leaves_its_state_in_the_log() {
+        // A query no other test uses, so the lines below are this test's even
+        // though every test in the binary shares one log. Counting lines that
+        // merely say `compass_ui::state` would race with whatever else is
+        // running.
+        const QUERY: &str = "firef";
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _ = log();
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged(QUERY.to_owned()));
+        let _ = app.update(Message::TogglePanel);
+
+        let log = logged();
+        let mine: Vec<&str> = log
+            .lines()
+            .filter(|line| line.contains(&format!(r#"query="{QUERY}""#)))
+            .collect();
+
+        // If `update` stops emitting, this fails here in milliseconds instead
+        // of in a 25-minute VM run against a line the launcher no longer
+        // writes. A control confirmed the other state-line tests do NOT catch
+        // that: deleting the `tracing::debug!` left all of them green.
+        assert_eq!(
+            mine.len(),
+            2,
+            "one line per message, no more and no fewer:\n{log}"
+        );
+        assert!(mine[0].contains("compass_ui::state"), "{:?}", mine[0]);
+        assert!(mine[0].contains("panel=closed"), "{:?}", mine[0]);
+        assert!(mine[1].contains("panel=open"), "{:?}", mine[1]);
+    }
+
+    #[test]
+    fn the_state_line_names_what_is_on_screen() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+        let line = app.state_line();
+        // Everything the VM tier wants to assert, in one greppable line.
+        assert!(line.contains(r#"query="fir""#), "{line}");
+        assert!(line.contains("results=1"), "{line}");
+        assert!(line.contains("selected=0"), "{line}");
+        assert!(line.contains(r#"selected_title="Firefox""#), "{line}");
+        assert!(line.contains("panel=closed"), "{line}");
+    }
+
+    #[test]
+    fn the_state_line_follows_the_selection_rather_than_the_index_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+
+        // A query matching more than one row, so moving down has somewhere to
+        // go. Not the empty query: the launcher shows nothing for that, which
+        // this test discovered. The title is what makes "selected=1" mean
+        // anything.
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        let first = app.state_line();
+        let _ = app.update(Message::MoveSelection(Direction::Down));
+        let second = app.state_line();
+
+        assert!(first.contains("selected=0"), "{first}");
+        assert!(second.contains("selected=1"), "{second}");
+        assert_ne!(
+            first
+                .split_once("selected_title=")
+                .map(|(_, rest)| rest.to_owned()),
+            second
+                .split_once("selected_title=")
+                .map(|(_, rest)| rest.to_owned()),
+            "the title must move with the selection, not just the number"
+        );
+    }
+
+    #[test]
+    fn the_state_line_describes_the_panel_when_it_is_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+
+        assert!(app.state_line().contains("panel=closed"));
+
+        let _ = app.update(Message::TogglePanel);
+        let line = app.state_line();
+        assert!(line.contains("panel=open"), "{line}");
+        assert!(line.contains("panel_selected=0"), "{line}");
+        // The first SELECTABLE row, which is the thing the VM frame had to be
+        // read by eye to confirm. Now it is a string.
+        assert!(line.contains(r#"panel_title="Open""#), "{line}");
+
+        let _ = app.update(Message::PanelFilterChanged("copy".to_owned()));
+        let filtered = app.state_line();
+        assert!(filtered.contains(r#"panel_filter="copy""#), "{filtered}");
+        assert!(filtered.contains(r#"panel_title="Copy"#), "{filtered}");
+
+        let _ = app.update(Message::TogglePanel);
+        assert!(app.state_line().contains("panel=closed"));
+    }
+
+    #[test]
+    fn the_state_line_says_when_nothing_matched() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("zzzz".to_owned()));
+        let line = app.state_line();
+        // "results=0" and "no window" are different failures and the tier has
+        // to be able to tell them apart from a log.
+        assert!(line.contains("results=0"), "{line}");
+        assert!(line.contains("selected_title=none"), "{line}");
+    }
+
+    #[test]
+    fn an_appearance_change_reaches_the_theme() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        assert_eq!(
+            theme_name(&app),
+            design::theme(Appearance::Dark).to_string()
+        );
+
+        let _ = app.update(Message::AppearanceChanged(Appearance::Light));
+        // Asserted through `theme()` rather than the field, because the field
+        // being right while the theme is built from something else is exactly
+        // the bug worth catching.
+        assert_eq!(
+            theme_name(&app),
+            design::theme(Appearance::Light).to_string()
+        );
+    }
+
+    #[test]
+    fn a_window_nobody_is_feeding_keeps_the_appearance_it_started_with() {
+        let (mut app, _task) = LauncherApp::new(AppFlags {
+            appearance: Appearance::Light,
+            appearance_link: None,
+            ..AppFlags::default()
+        });
+
+        // No portal, no feeder: whatever it opened as is what it stays as. A
+        // launcher that fell back to dark here would change colour on every
+        // desktop without a Settings portal.
+        let opened_as = theme_name(&app);
+        assert_eq!(opened_as, design::theme(Appearance::Light).to_string());
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(theme_name(&app), opened_as);
+    }
+
+    #[test]
+    fn the_starting_appearance_is_what_the_flags_say() {
+        for appearance in Appearance::ALL {
+            let (app, _task) = LauncherApp::new(AppFlags {
+                appearance,
+                ..AppFlags::default()
+            });
+            assert_eq!(theme_name(&app), design::theme(appearance).to_string());
+        }
     }
 
     #[test]

@@ -75,6 +75,23 @@ finish-args:
   - --filesystem=xdg-data/flatpak/exports/share/icons:ro
   - --filesystem=/var/lib/flatpak/exports/share/applications:ro
   - --filesystem=/var/lib/flatpak/exports/share/icons:ro
+  # THE EXPORTS DIRECTORIES ABOVE CONTAIN SYMLINKS, NOT FILES, and the grants
+  # below are what makes them resolve. flatpak-dir.c's export_dir builds every
+  # link with the prefix `../app/<id>/current/active/export`, so
+  #
+  #   exports/share/applications/com.google.Chrome.desktop
+  #     -> ../../../app/com.google.Chrome/current/active/export/share/applications/...
+  #
+  # and the entry a launcher actually reads lives in the deploy tree. Granting
+  # only the exports directory gives us a directory full of links pointing at
+  # nothing: every Flatpak application on the machine disappears from search,
+  # silently, with no error anywhere -- which is #105.
+  #
+  # `current` and `active` are themselves symlinks into a commit directory, so
+  # the whole `app` tree is the grant; there is no narrower one that resolves.
+  # Read-only, and the repo/ and runtime/ trees stay ungranted.
+  - --filesystem=xdg-data/flatpak/app:ro
+  - --filesystem=/var/lib/flatpak/app:ro
   # Bluefin puts CLI tooling in Homebrew, and users expect those to be findable.
   - --filesystem=/home/linuxbrew/.linuxbrew/share/applications:ro
 

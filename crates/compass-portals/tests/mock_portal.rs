@@ -16,10 +16,12 @@ mod support;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use futures_util::StreamExt;
+
 use compass_portals::{
-    Availability, DegradedFeature, FileChooserOutcome, FileChooserRequest, GLOBAL_SHORTCUTS,
-    Modifiers, NotQueryable, OpenOutcome, PortalConfig, PortalError, Portals, ShortcutDescriptor,
-    ShortcutEvent, ShortcutsOutcome, Trigger, Unavailable,
+    Availability, ColorScheme, DegradedFeature, FileChooserOutcome, FileChooserRequest,
+    GLOBAL_SHORTCUTS, Modifiers, NotQueryable, OpenOutcome, PortalConfig, PortalError, Portals,
+    ShortcutDescriptor, ShortcutEvent, ShortcutsOutcome, Trigger, Unavailable,
 };
 use support::bus::{TestBus, start_or_skip};
 use support::mock::{Behaviour, MockOptions, MockPortal, start_unresponsive_portal};
@@ -922,6 +924,7 @@ async fn every_degradation_explains_itself_for_doctor() {
             DegradedFeature::GlobalHotkeys,
             DegradedFeature::OpenExternally,
             DegradedFeature::FilePicker,
+            DegradedFeature::DesktopAppearance,
         ]
     );
     for feature in degraded {
@@ -952,4 +955,188 @@ async fn re_probing_picks_up_a_backend_that_appears_later() {
     let caps = deadline("re-probe", portals.probe()).await;
     assert!(caps.global_shortcuts.is_available());
     assert!(portals.capabilities().global_shortcuts.is_available());
+}
+
+// ---------------------------------------------------------------------------
+// Settings — the desktop's light/dark preference
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_colour_scheme_is_read_from_the_appearance_namespace() {
+    let Some(bus) = start_or_skip("the_colour_scheme_is_read_from_the_appearance_namespace") else {
+        return;
+    };
+    let mock = MockPortal::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    mock.set_color_scheme(Some(ColorScheme::PreferLight.value()));
+
+    let portals = deadline("connect", portals(&bus)).await;
+    deadline("probe", portals.probe()).await;
+    let settings = portals.settings().expect("settings available");
+
+    let scheme = deadline("read", settings.color_scheme())
+        .await
+        .expect("read succeeds");
+    assert_eq!(scheme, ColorScheme::PreferLight);
+
+    // The key it asked for is the cross-desktop one, not a GNOME GSettings
+    // path. Getting this wrong works on GNOME and silently does nothing
+    // everywhere else, which is the failure this pins.
+    assert_eq!(
+        mock.settings_read(),
+        vec![(
+            "org.freedesktop.appearance".to_owned(),
+            "color-scheme".to_owned()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn every_scheme_the_portal_can_send_arrives_intact() {
+    let Some(bus) = start_or_skip("every_scheme_the_portal_can_send_arrives_intact") else {
+        return;
+    };
+    let mock = MockPortal::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    let portals = deadline("connect", portals(&bus)).await;
+    deadline("probe", portals.probe()).await;
+    let settings = portals.settings().expect("settings available");
+
+    for expected in [
+        ColorScheme::NoPreference,
+        ColorScheme::PreferDark,
+        ColorScheme::PreferLight,
+    ] {
+        mock.set_color_scheme(Some(expected.value()));
+        let scheme = deadline("read", settings.color_scheme())
+            .await
+            .expect("read succeeds");
+        assert_eq!(scheme, expected, "wire value {}", expected.value());
+    }
+}
+
+#[tokio::test]
+async fn an_unset_key_is_an_error_and_not_a_preference() {
+    let Some(bus) = start_or_skip("an_unset_key_is_an_error_and_not_a_preference") else {
+        return;
+    };
+    let mock = MockPortal::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    mock.set_color_scheme(None);
+
+    let portals = deadline("connect", portals(&bus)).await;
+    deadline("probe", portals.probe()).await;
+    let settings = portals.settings().expect("settings available");
+
+    // A portal that has no value for the key raises an error. Mapping that to
+    // NoPreference here would make "we could not ask" and "the desktop does
+    // not care" the same fact, and the caller's fallback for the two is not
+    // necessarily the same.
+    let error = deadline("read", settings.color_scheme())
+        .await
+        .expect_err("an unset key is an error");
+    assert!(!error.is_unavailable(), "{error}");
+}
+
+#[tokio::test]
+async fn a_desktop_without_the_settings_portal_degrades_rather_than_fails() {
+    let Some(bus) =
+        start_or_skip("a_desktop_without_the_settings_portal_degrades_rather_than_fails")
+    else {
+        return;
+    };
+    let _mock = MockPortal::start(
+        bus.address(),
+        MockOptions {
+            settings: false,
+            ..MockOptions::default()
+        },
+    )
+    .await
+    .expect("mock");
+
+    let portals = deadline("connect", portals(&bus)).await;
+    let caps = deadline("probe", portals.probe()).await;
+    assert!(!caps.settings.is_available());
+    assert!(
+        caps.global_shortcuts.is_available(),
+        "the rest of the frontend is healthy"
+    );
+    assert!(
+        caps.degraded()
+            .contains(&DegradedFeature::DesktopAppearance)
+    );
+
+    // Asking anyway is a refusal, not a hang and not a panic.
+    let error = portals.settings().expect_err("no settings portal");
+    assert!(error.is_unavailable(), "{error}");
+}
+
+#[tokio::test]
+async fn a_change_arrives_on_the_watch_stream_carrying_its_new_value() {
+    let Some(bus) = start_or_skip("a_change_arrives_on_the_watch_stream_carrying_its_new_value")
+    else {
+        return;
+    };
+    let mock = MockPortal::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    mock.set_color_scheme(Some(ColorScheme::PreferLight.value()));
+
+    let portals = deadline("connect", portals(&bus)).await;
+    deadline("probe", portals.probe()).await;
+    let settings = portals.settings().expect("settings available");
+
+    // Subscribed before anything is emitted, so the match rule is installed
+    // and the bus orders what follows. Nothing sleeps.
+    let stream = deadline("subscribe", settings.watch())
+        .await
+        .expect("subscribe succeeds");
+    let mut stream = Box::pin(stream);
+
+    deadline(
+        "emit",
+        mock.emit_color_scheme(ColorScheme::PreferDark.value()),
+    )
+    .await
+    .expect("emit");
+
+    let seen = deadline("change", stream.next())
+        .await
+        .expect("the stream yields the change");
+    assert_eq!(seen, ColorScheme::PreferDark);
+}
+
+#[tokio::test]
+async fn subscribing_is_not_a_read() {
+    let Some(bus) = start_or_skip("subscribing_is_not_a_read") else {
+        return;
+    };
+    let mock = MockPortal::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    mock.set_color_scheme(Some(ColorScheme::PreferLight.value()));
+
+    let portals = deadline("connect", portals(&bus)).await;
+    deadline("probe", portals.probe()).await;
+    let settings = portals.settings().expect("settings available");
+    let stream = deadline("subscribe", settings.watch())
+        .await
+        .expect("subscribe succeeds");
+    let mut stream = Box::pin(stream);
+
+    // The portal emits SettingChanged only on a change, so a subscriber that
+    // never saw one has nothing to report. A caller wanting the current value
+    // must read it, and this is what says so.
+    assert!(
+        tokio::time::timeout(SHORT, stream.next()).await.is_err(),
+        "the stream should not yield the current value"
+    );
+    assert!(
+        mock.settings_read().is_empty(),
+        "subscribing must not perform a Read"
+    );
 }
