@@ -46,11 +46,18 @@ jobs:
       # scripts/runners, because that directory also holds the inherited arch/
       # and appimage/ scripts, which are not.
       #
+      # THIS LIST IS THE COST OF THAT PRECISION: a new directory of our own
+      # scripts is NOT covered until it is named here, and nothing fails to
+      # remind you. `scripts/tier2` was added in the same change that created
+      # it, after noticing its spike script would otherwise have shipped
+      # unshellchecked — which is the same defect shape as a path filter that
+      # matches nothing.
+      #
       # Written to a file rather than a step output, so nothing this job runs is
       # assembled by string-interpolating a path into a shell command.
       - name: Collect
         run: |
-          find packaging/vmtest scripts/vmtest scripts/flatpak scripts/runners/bluefin -name '*.sh' -type f | sort > /tmp/ours.txt
+          find packaging/vmtest scripts/vmtest scripts/tier2 scripts/flatpak scripts/runners/bluefin -name '*.sh' -type f | sort > /tmp/ours.txt
           test -s /tmp/ours.txt || { echo "::error::no scripts found — the paths have moved"; exit 1; }
           sed 's/^/  /' /tmp/ours.txt
 

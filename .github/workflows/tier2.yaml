@@ -1,0 +1,101 @@
+# Tier 2: headless GNOME in a container.
+#
+# PLAN.md §8.8 names four tiers. THIS ONE WAS NEVER BUILT — until this file,
+# grepping the repository for `gnome-shell --headless` returned exactly one
+# hit, the paragraph describing it. So what shipped was Tier 1 (seconds, no
+# display) and Tier 3 (QEMU, twenty-plus minutes) with nothing in between.
+#
+# That gap widened deliberately when the VM tier moved off launcher PRs, so a
+# launcher integration regression is currently caught by the nightly run rather
+# than by the PR that introduced it. Tier 2 is what §8.8 designed to fill it, at
+# a fraction of the cost.
+#
+# THIS FILE IS A SPIKE, NOT THE TIER.
+#
+# It answers one question — does `gnome-shell --headless --virtual-monitor`
+# actually come up on a hosted runner, in a container, and serve its bus name?
+# — and nothing else. No Flatpak, no launcher, no assertions about our own
+# software. The tier gets built on top of this only if the answer is yes.
+#
+# The repository already has this shape: "Spike A: does the portal give us
+# Super+Space?" is a named job answering one question, and it exists because
+# building on an unverified premise is how the plan accumulated interfaces that
+# were documented and absent (`cargo bench --bench slas`, the `parity` binary,
+# Suite 0's `--engine=cpp --json query`).
+#
+# WHY IT RUNS ON PRs THAT TOUCH IT
+#
+# Same argument as the VM tier's own plumbing: the PR editing a spike is the PR
+# that should run it. It costs minutes, not the VM tier's twenty.
+name: Tier 2 (headless GNOME)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/tier2.yaml
+      - scripts/tier2/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    name: "Tier 2 spike: does headless GNOME start in a container?"
+    runs-on: ubuntu-24.04
+    # §8.8 budgets the real Tier 2 job at under 10 minutes. The spike installs
+    # a desktop's worth of packages, so it is allowed more than the tier will
+    # be — but not unbounded, because "how long does this take" is part of what
+    # the spike is measuring.
+    timeout-minutes: 30
+
+    strategy:
+      # Both, because Suite 3b needs GNOME 50 AND 51 and the whole point of
+      # spiking is to find out now if one of them does not work. fail-fast off
+      # so a failure on one still reports the other: "44 works, 45 does not" is
+      # a far more useful finding than "something failed".
+      fail-fast: false
+      matrix:
+        fedora: ["44", "45"]
+
+    container:
+      image: fedora:${{ matrix.fedora }}
+      # The shell needs a writable runtime dir and its own tmpfs; without
+      # --privileged this is the smaller hammer that usually suffices.
+      options: --shm-size=2g
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Listed explicitly rather than pulling a desktop group: a group would
+      # drag in a display manager and a browser, and the question is what the
+      # MINIMUM is for the real tier to stay inside its ten-minute budget.
+      - name: Install a headless GNOME
+        run: |
+          dnf -y install --setopt=install_weak_deps=False \
+            gnome-shell \
+            mutter \
+            xdg-desktop-portal \
+            xdg-desktop-portal-gnome \
+            dbus-daemon \
+            dbus-tools \
+            glib2 \
+            procps-ng
+
+      - name: Does headless GNOME start?
+        run: scripts/tier2/headless-gnome-spike.sh
+
+      # The log is the finding when this fails, and a failed spike is a result
+      # rather than an accident — so it is kept either way.
+      - name: Keep gnome-shell's log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnome-shell-log-f${{ matrix.fedora }}
+          path: /tmp/gnome-shell.log
+          if-no-files-found: warn
+          retention-days: 7
