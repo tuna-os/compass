@@ -175,3 +175,18 @@ body {
 .panel-filter { font-size: 12px; color: var(--muted); padding: 6px 10px 2px; }
 
 .card-wrap { position: relative; }
+
+/* The field rule the `flow` preset draws (#84).
+   A data attribute rather than a class, because the preset's structural traits
+   arrive as data from states.json and the stylesheet should read them the same
+   way it reads the measurements. */
+#screen[data-field-rule="on"] .field {
+  border-bottom: 1px solid var(--border);
+}
+
+/* The dense preset draws one line per row (#84). Hidden rather than omitted
+   from the DOM, because the surrogate's job is to show what the launcher draws
+   and the launcher still has the comment -- it just does not render it. */
+#screen[data-subtitles="off"] .row .subtitle {
+  display: none;
+}

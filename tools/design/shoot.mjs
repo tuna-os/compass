@@ -114,6 +114,9 @@ await page.addStyleTag({ content: "*, *::before, *::after { animation: none !imp
 await page.goto(origin);
 await page.waitForFunction(() => document.querySelectorAll("#state option").length > 0);
 
+// Every state, in the default preset. This is the set that existed before
+// presets did, and its filenames are unchanged so a comparison against an
+// older run still lines up.
 for (const appearance of states.appearances.map((a) => a.name)) {
   await page.selectOption("#appearance", appearance);
   for (const [index, state] of states.states.entries()) {
@@ -125,6 +128,37 @@ for (const appearance of states.appearances.map((a) => a.name)) {
     console.log(`${appearance}/${state.name} -> ${file}`);
   }
 }
+
+// Then every preset, in one representative state (#84).
+//
+// One state rather than all six: the presets differ in chrome, and six near
+// identical pictures per preset is the kind of large snapshot set that gets
+// rubber-stamped -- the same argument #13 makes for keeping the snapshot suite
+// deliberately small. `typing` is chosen because it is the only state showing
+// the field, a populated list and a selection at once, which is where every
+// trait a preset varies is visible.
+const REPRESENTATIVE = "typing";
+const representativeIndex = states.states.findIndex((s) => s.name === REPRESENTATIVE);
+if (representativeIndex < 0) {
+  throw new Error(`no "${REPRESENTATIVE}" state to shoot the presets in — it was renamed or removed`);
+}
+if (!states.presets?.length) {
+  throw new Error("states.json carries no presets — the Rust emitter changed");
+}
+
+await page.selectOption("#state", String(representativeIndex));
+for (const appearance of states.appearances.map((a) => a.name)) {
+  await page.selectOption("#appearance", appearance);
+  for (const preset of states.presets) {
+    await page.selectOption("#preset", preset.name);
+    await page.addStyleTag({ content: "* { animation: none !important; }" });
+    const screen = page.locator("#screen");
+    const file = join(out, `${appearance}-preset-${preset.name}.png`);
+    await screen.screenshot({ path: file });
+    console.log(`${appearance}/preset ${preset.name} -> ${file}`);
+  }
+}
+await page.selectOption("#preset", "gnome");
 
 await browser.close();
 server.close();

@@ -370,6 +370,8 @@ pub struct LauncherApp {
     /// Whether a rule separates the field from the results. See
     /// [`crate::preset::Preset::field_rule`].
     field_rule: bool,
+    /// Whether rows show their subtitle. See [`crate::preset::Preset::subtitles`].
+    subtitles: bool,
     /// Whether result rows show the application's icon. See [`AppFlags::icons`].
     icons: bool,
     /// How an `Icon=` name becomes a file. See [`AppFlags::icon_lookup`].
@@ -511,6 +513,7 @@ impl LauncherApp {
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
+        app.subtitles = flags.appearance_preset.subtitles;
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
         app.appearance = flags.appearance;
@@ -555,6 +558,7 @@ impl LauncherApp {
             icon_cache: crate::icons::IconCache::new(),
             geometry: design::GEOMETRY,
             field_rule: false,
+            subtitles: true,
             awaiting: false,
         }
     }
@@ -1276,7 +1280,11 @@ impl LauncherApp {
                 .size(f32::from(geometry.title_size))
                 .color(title_color.to_iced())
         ];
-        if let Some(comment) = item.comment() {
+        // `subtitles` gates this, not just the presence of a comment: the dense
+        // preset's row is one line tall and a second would overflow it.
+        if self.subtitles
+            && let Some(comment) = item.comment()
+        {
             labels = labels.push(
                 text(comment.to_owned())
                     .size(f32::from(geometry.subtitle_size))
@@ -2547,6 +2555,7 @@ mod preset_tests {
         assert_eq!(rofi.geometry.card_radius, 0);
         assert!(!rofi.icons);
         assert!(!rofi.field_rule);
+        assert!(!rofi.subtitles, "the dense preset draws one line per row");
 
         let flow = app_with("flow", None);
         assert!(flow.field_rule, "flow draws the rule under the field");

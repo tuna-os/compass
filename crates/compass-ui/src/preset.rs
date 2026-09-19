@@ -147,6 +147,24 @@ impl Preset {
     pub const fn field_rule(self) -> bool {
         matches!(self, Preset::Flow)
     }
+
+    /// Whether a result row shows its subtitle under the title.
+    ///
+    /// **`rofi` does not, and this was found by looking rather than reasoning.**
+    /// The first version of these presets gave `rofi` a 30 px row and kept the
+    /// subtitle, which every unit test was happy with -- the numbers resolved
+    /// exactly as asserted. The rendered picture showed the subtitle spilling
+    /// past the selection band into the row beneath it.
+    ///
+    /// Raising the row height would have fixed the overflow and thrown away the
+    /// density that is the whole point of the preset. Real rofi is a
+    /// single-line list, so the honest fix is the one that is also faithful:
+    /// the dense preset shows one line, and 30 px is then the right height
+    /// rather than a cramped one.
+    #[must_use]
+    pub const fn subtitles(self) -> bool {
+        !matches!(self, Preset::Rofi)
+    }
 }
 
 /// An appearance, resolved from a preset and the keys written alongside it.
@@ -160,6 +178,8 @@ pub struct Resolved {
     pub icons: bool,
     /// Whether a rule separates the field from the results.
     pub field_rule: bool,
+    /// Whether result rows show their subtitle.
+    pub subtitles: bool,
     /// The name that was written but not recognised, if one was.
     ///
     /// Carried rather than discarded so the caller can warn. Silently drawing
@@ -187,6 +207,7 @@ pub fn resolve(preset: Option<&str>, icons: Option<bool>) -> Resolved {
         geometry: preset.geometry(),
         icons: icons.unwrap_or_else(|| preset.icons()),
         field_rule: preset.field_rule(),
+        subtitles: preset.subtitles(),
         unknown_name,
     }
 }
@@ -209,6 +230,7 @@ mod tests {
         );
         assert!(!resolved.icons, "#83 specifies gnome as no icons");
         assert!(!resolved.field_rule);
+        assert!(resolved.subtitles);
     }
 
     #[test]
@@ -237,6 +259,11 @@ mod tests {
         assert_eq!(rofi.geometry.card_radius, 0, "sharp corners");
         assert_eq!(rofi.geometry.row_spacing, 0);
         assert!(!rofi.icons, "keyboard-first and minimal");
+        assert!(
+            !rofi.subtitles,
+            "a 30 px row cannot hold two lines; the dense preset is single-line"
+        );
+        assert!(gnome.subtitles && raycast.subtitles && flow.subtitles);
     }
 
     #[test]
@@ -246,7 +273,10 @@ mod tests {
             .iter()
             .map(|(name, _)| {
                 let r = resolve(Some(name), None);
-                format!("{:?}|{}|{}", r.geometry, r.icons, r.field_rule)
+                format!(
+                    "{:?}|{}|{}|{}",
+                    r.geometry, r.icons, r.field_rule, r.subtitles
+                )
             })
             .collect();
         for (i, a) in shapes.iter().enumerate() {

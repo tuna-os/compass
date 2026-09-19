@@ -10,6 +10,7 @@
 use compass_core::root_items::{RootItem, RootItemMeta};
 use compass_ui::action_panel::{self, Action, PanelSection};
 use compass_ui::design::{self, Appearance};
+use compass_ui::preset;
 use compass_ui::root_list;
 
 /// A fixed clock, so frecency ordering is the same on every run and a
@@ -284,8 +285,44 @@ fn main() {
     let g = design::GEOMETRY;
     let fonts: Vec<String> = design::FONT_STACK.iter().map(|f| quote(f)).collect();
 
+    // The appearance presets (#84), each with the geometry it resolves to.
+    //
+    // Emitted from `preset::resolve` rather than transcribed, for the reason
+    // the whole surrogate exists: a picture drawn from a second copy of the
+    // numbers shows what someone believed the presets were, not what they are.
+    let presets: Vec<String> = preset::NAMES
+        .iter()
+        .map(|(name, _)| {
+            let r = preset::resolve(Some(name), None);
+            format!(
+                r#"{{"name":{},"icons":{},"fieldRule":{},"subtitles":{},"geometry":{}}}"#,
+                quote(name),
+                r.icons,
+                r.field_rule,
+                r.subtitles,
+                geometry_json(&r.geometry)
+            )
+        })
+        .collect();
+
     println!(
-        r#"{{"generatedBy":"cargo run -p compass-ui --example design_states","geometry":{{"cardWidth":{},"cardMaxHeight":{},"cardRadius":{},"cardTopFraction":{},"cardPadding":{},"fieldHeight":{},"fieldRadius":{},"rowHeight":{},"rowRadius":{},"rowSpacing":{},"iconSize":{},"titleSize":{},"subtitleSize":{},"headingSize":{},"querySize":{}}},"fontStack":[{}],"appearances":[{}],"states":[{}]}}"#,
+        r#"{{"generatedBy":"cargo run -p compass-ui --example design_states","geometry":{},"presets":[{}],"fontStack":[{}],"appearances":[{}],"states":[{}]}}"#,
+        geometry_json(&g),
+        presets.join(","),
+        fonts.join(","),
+        appearances.join(","),
+        states.join(",")
+    );
+}
+
+/// A `Geometry` as the surrogate's JSON object.
+///
+/// One function rather than two format strings, so the default geometry and a
+/// preset's cannot describe themselves with different key sets -- which would
+/// make the browser silently fall back on whichever keys it happened to find.
+fn geometry_json(g: &design::Geometry) -> String {
+    format!(
+        r#"{{"cardWidth":{},"cardMaxHeight":{},"cardRadius":{},"cardTopFraction":{},"cardPadding":{},"fieldHeight":{},"fieldRadius":{},"rowHeight":{},"rowRadius":{},"rowSpacing":{},"iconSize":{},"titleSize":{},"subtitleSize":{},"headingSize":{},"querySize":{}}}"#,
         g.card_width,
         g.card_max_height,
         g.card_radius,
@@ -300,9 +337,6 @@ fn main() {
         g.title_size,
         g.subtitle_size,
         g.heading_size,
-        g.query_size,
-        fonts.join(","),
-        appearances.join(","),
-        states.join(",")
-    );
+        g.query_size
+    )
 }
