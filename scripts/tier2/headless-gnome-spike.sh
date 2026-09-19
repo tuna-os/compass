@@ -66,6 +66,16 @@ echo "fedora: $(rpm -E %fedora 2>/dev/null || echo unknown)"
 echo "mutter: $(rpm -q mutter 2>/dev/null || echo 'not installed')"
 echo "portal: $(rpm -q xdg-desktop-portal-gnome 2>/dev/null || echo 'not installed')"
 
+# Checked up front so a missing tool is one clear line rather than a "command
+# not found" followed by a `set -u` unbound-variable cascade, which is how the
+# first run of this spike reported that dbus-launch lives in dbus-x11.
+log "checking the tools this spike needs"
+for tool in dbus-launch gdbus gnome-shell; do
+  command -v "$tool" >/dev/null 2>&1 \
+    || fail "${tool} is not installed — the container's package list is wrong, not the premise"
+  printf 'have: %s (%s)\n' "$tool" "$(command -v "$tool")"
+done
+
 log "starting a session bus"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
 mkdir -p "$XDG_RUNTIME_DIR"

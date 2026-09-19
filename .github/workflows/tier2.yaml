@@ -74,6 +74,10 @@ jobs:
       # Listed explicitly rather than pulling a desktop group: a group would
       # drag in a display manager and a browser, and the question is what the
       # MINIMUM is for the real tier to stay inside its ten-minute budget.
+      #
+      # dbus-x11 is here for `dbus-launch`, which is NOT in dbus-daemon or
+      # dbus-tools despite the names — the spike's first run found that out by
+      # failing on it, which is what a spike is for.
       - name: Install a headless GNOME
         run: |
           dnf -y install --setopt=install_weak_deps=False \
@@ -83,6 +87,7 @@ jobs:
             xdg-desktop-portal-gnome \
             dbus-daemon \
             dbus-tools \
+            dbus-x11 \
             glib2 \
             procps-ng
 
