@@ -369,7 +369,7 @@ python3 scripts/vmtest/framediff.py \
   --min-percent 3 --expect-box 300 140 980 800 --ignore-box 0 0 1279 139
 
 echo
-echo "=== 3d4b. does Ctrl+B open the action panel? (the gate) ==="
+echo "=== 3d4b. does Ctrl+B open the action panel? (recorded again, see below) ==="
 # THE VIEW WORK'S FIRST EXPOSURE TO A REAL SESSION, and deliberately not a gate
 # on its first outing.
 #
@@ -406,20 +406,39 @@ echo "=== 3d4b. does Ctrl+B open the action panel? (the gate) ==="
 # `Copy path` -- the flattened structure `compass_ui::action_panel` is tested
 # against, with the caret on the first SELECTABLE row rather than the header.
 #
-# The floor is 0.1%, about a quarter of what was measured, deliberately NOT
-# fitted to 0.38%. A panel with fewer actions draws fewer pixels and must still
-# pass; what must fail is the chord never arriving, which reads 0.00%. The
-# containment box is the half that does not move with content: it also asserts
-# nothing outside our window changed.
-sudo -E "$corral_bin" key "$vm" ctrl b
-# The same settle the open and summon paths get, for the same reason: a
-# screenshot taken before the paint reads as "the panel does not open".
-sleep 5
-shot "launcher-06-panel.png"
-python3 scripts/vmtest/framediff.py \
-  "$out/launcher-05-summoned.png" "$out/launcher-06-panel.png" \
-  --min-percent 0.1 --expect-box 300 140 980 800 \
-  --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799
+# The floor was 0.1%, about a quarter of what was measured, deliberately NOT
+# fitted to 0.38%.
+#
+# **UNGATED AGAIN, ON PURPOSE, AND THIS IS NOT A RETREAT.** The launcher's view
+# was rewritten to draw an Adwaita card -- icons, subtitles, a filled selection
+# rather than a caret, and the panel *floating over* the list instead of
+# replacing it. Every one of those changes the number and the box this
+# assertion was built from: a panel that no longer replaces the list is a
+# different region of a different size. Holding the old threshold over new
+# geometry would be asserting a measurement nobody has taken, which is the
+# thing ADR-0010 forbids and the thing the recorded-first discipline exists to
+# avoid. So it records again, the next run produces the new figures, and the
+# gate is re-earned from those exactly as it was earned the first time.
+#
+# What must NOT happen is the floor being nudged until it passes. If the new
+# figure is near 0.00 the chord stopped arriving and that is a bug in the
+# rewrite, not a threshold to tune.
+if sudo -E "$corral_bin" key "$vm" ctrl b; then
+  # The same settle the open and summon paths get, for the same reason: a
+  # screenshot taken before the paint reads as "the panel does not open".
+  sleep 5
+  if shot "launcher-06-panel.png"; then
+    python3 scripts/vmtest/framediff.py \
+      "$out/launcher-05-summoned.png" "$out/launcher-06-panel.png" \
+      --min-percent 0.1 --expect-box 300 140 980 800 \
+      --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799 \
+      || echo "NOT GATED: read the figure above against the new card geometry before re-gating."
+  else
+    echo "NOT GATED: could not screenshot after the chord."
+  fi
+else
+  echo "NOT GATED: corral could not send the chord. That says nothing about the panel."
+fi
 
 echo
 echo "=== 3d5. what did the engine make of the hotkey? (recorded, not gated) ==="

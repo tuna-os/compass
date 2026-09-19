@@ -8,8 +8,8 @@
 //! by ordinary unit tests, and only the drawing needs a compositor.
 
 use iced::{
-    Element, Length, Task, Theme,
-    widget::{Space, column, container, row, text, text_input},
+    Alignment, Border, Color, Element, Length, Padding, Task, Theme,
+    widget::{Space, column, container, row, stack, text, text_input},
     window,
 };
 
@@ -20,6 +20,7 @@ use compass_platform::{AppLauncher, NullLauncher};
 use compass_search::rank_indices;
 
 use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
+use crate::design::{self, Appearance, GEOMETRY};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
@@ -95,7 +96,10 @@ impl Default for AppFlags {
     fn default() -> Self {
         Self {
             window_config: window::Settings {
-                size: iced::Size::new(640.0, 480.0),
+                size: iced::Size::new(
+                    f32::from(GEOMETRY.card_width),
+                    f32::from(GEOMETRY.card_max_height),
+                ),
                 position: window::Position::Centered,
                 resizable: false,
                 decorations: false,
@@ -209,6 +213,8 @@ pub struct LauncherApp {
     window: Option<window::Id>,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
+    /// Which palette to draw with. See [`LauncherApp::theme`].
+    appearance: Appearance,
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
@@ -359,6 +365,7 @@ impl LauncherApp {
             link: None,
             window: None,
             window_config: AppFlags::default().window_config,
+            appearance: Appearance::Dark,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             awaiting: false,
@@ -472,8 +479,18 @@ impl LauncherApp {
     }
 
     /// The application theme.
+    ///
+    /// Adwaita's palette rather than one of Iced's built-ins, so the launcher
+    /// looks like the desktop it sits on. [`crate::design`] holds the colours
+    /// and the browser surrogate under `tools/design/` is served the same
+    /// ones, which is what keeps the two renderings honest about each other.
+    ///
+    /// The appearance is fixed for now. Following the desktop's light/dark
+    /// preference needs the `org.freedesktop.appearance` setting read and
+    /// watched; `design::ColorScheme` already has the mapping and its tests,
+    /// and the plumbing is the next piece rather than this one.
     pub fn theme(&self) -> Theme {
-        Theme::CatppuccinMocha
+        design::theme(self.appearance)
     }
 
     /// Every keyboard event, consumed by a widget or not.
@@ -744,106 +761,323 @@ impl LauncherApp {
     }
 
     /// View the application.
+    ///
+    /// A card: a search field over a list of rows, each row an icon, a title
+    /// and a subtitle, with the selection drawn as a filled rounded rectangle
+    /// rather than a caret.
+    ///
+    /// **The caret is gone and that is deliberate.** It was there because a
+    /// comment said "under llvmpipe at 1280x800 a background tint is not
+    /// identifiable in a captured frame". `framediff.py` compares raw RGB
+    /// bytes for exact inequality, with no threshold, so a tinted row of
+    /// roughly 600x30 is about 18,000 changed pixels -- some seven times the
+    /// 2,697 the action-panel assertion already detects reliably. A highlight
+    /// is *easier* for the tier to see than a caret, not harder.
     pub fn view(&self) -> Element<'_, Message> {
-        let input = text_input("Search...", &self.query)
+        let palette = design::palette(self.appearance);
+
+        let input = text_input("Search…", &self.query)
             .id(SEARCH_INPUT)
             .on_input(Message::QueryChanged)
-            .padding(12)
-            .size(24)
+            .padding(Padding::new(0.0).left(14).right(14))
+            .size(f32::from(GEOMETRY.query_size))
             .on_submit(Message::LaunchSelected);
 
-        let results_content: Element<Message> = if let Some(err) = &self.error {
-            text(format!("could not launch: {err}")).size(16).into()
+        let field = container(input)
+            .height(Length::Fixed(f32::from(GEOMETRY.field_height)))
+            .width(Length::Fill)
+            .align_y(Alignment::Center)
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.field.to_iced().into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: f32::from(GEOMETRY.field_radius).into(),
+                },
+                ..container::Style::default()
+            });
+
+        let body: Element<Message> = if let Some(err) = &self.error {
+            self.notice(&format!("could not launch: {err}"))
         } else if self.query.is_empty() {
-            text("Type to search...").size(16).into()
+            self.notice("Type to search")
         } else if self.results.is_empty() {
-            text("No results").size(16).into()
+            self.notice("No results")
         } else {
-            let mut col = column![].spacing(4);
+            let mut list = column![].spacing(f32::from(GEOMETRY.row_spacing));
             for (position, index) in self.results.iter().enumerate() {
                 let Some(item) = self.app_index.items().get(*index) else {
                     continue;
                 };
-                // A caret rather than a colour: the selected row has to be
-                // identifiable in a screenshot the VM tier captures, and under
-                // llvmpipe at 1280x800 a background tint is not.
-                let marker = if position == self.selected {
-                    "> "
-                } else {
-                    "  "
-                };
-                col = col.push(row![text(marker).size(16), text(item.name()).size(16)]);
+                list = list.push(self.result_row(item, position == self.selected));
             }
-            container(col).width(Length::Fill).padding(20).into()
+            container(list).padding(Padding::new(6.0).top(8)).into()
         };
 
-        // The panel replaces the results rather than floating over them. A
-        // real overlay needs a stacking widget and a backdrop; what the tier
-        // has to be able to see is that the panel is on screen and which row
-        // is selected, and replacing the list shows both without either.
-        let body: Element<Message> = match &self.panel {
-            Some(panel) => self.view_panel(panel),
-            None => results_content,
+        let card_content = column![field, body].width(Length::Fill);
+
+        // The panel floats over the list rather than replacing it. The old
+        // comment said an overlay "needs a stacking widget and a backdrop" --
+        // `stack!` is that widget, and the backdrop turned out to be
+        // unnecessary because the panel is opaque and bounded.
+        let card_body: Element<Message> = match &self.panel {
+            Some(panel) => stack![
+                card_content,
+                container(self.view_panel(panel))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::End)
+                    .padding(8)
+            ]
+            .into(),
+            None => card_content.into(),
         };
 
-        let content = column![
-            Space::new(),
-            container(input).width(Length::Fill).padding(20),
-            Space::new(),
-            body,
-            Space::new(),
-        ]
-        .align_x(iced::Alignment::Center);
+        container(
+            container(card_body)
+                .width(Length::Fixed(f32::from(GEOMETRY.card_width)))
+                .padding(GEOMETRY.card_padding)
+                .style(move |_: &Theme| container::Style {
+                    background: Some(palette.surface.to_iced().into()),
+                    border: Border {
+                        color: palette.border.to_iced(),
+                        width: 1.0,
+                        radius: f32::from(GEOMETRY.card_radius).into(),
+                    },
+                    ..container::Style::default()
+                }),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Alignment::Center)
+        .into()
+    }
 
-        container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(20)
-            .into()
+    /// A line of explanation where the list would be.
+    fn notice(&self, message: &str) -> Element<'_, Message> {
+        let palette = design::palette(self.appearance);
+        container(
+            text(message.to_owned())
+                .size(f32::from(GEOMETRY.title_size))
+                .color(palette.muted.to_iced()),
+        )
+        .width(Length::Fill)
+        .padding(28)
+        .align_x(Alignment::Center)
+        .into()
+    }
+
+    /// One result: icon, title, subtitle.
+    ///
+    /// The icon is the first letter in a tinted square. `AppItem` has an icon
+    /// *name*, and resolving it through the XDG icon theme is its own piece of
+    /// work; a letter at the right size keeps the row's proportions honest
+    /// until then, and is what the design surrogate draws for the same reason.
+    fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
+        let palette = design::palette(self.appearance);
+        let title_color = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        };
+        let subtitle_color = if selected {
+            palette.selection_text
+        } else {
+            palette.muted
+        };
+
+        let initial = item
+            .name()
+            .chars()
+            .next()
+            .map_or_else(String::new, |c| c.to_uppercase().to_string());
+
+        let icon = container(
+            text(initial)
+                .size(f32::from(GEOMETRY.icon_size) / 2.0)
+                .color(title_color.to_iced()),
+        )
+        .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+        .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(move |_: &Theme| container::Style {
+            background: Some(
+                Color {
+                    a: 0.18,
+                    ..palette.accent.to_iced()
+                }
+                .into(),
+            ),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        });
+
+        let mut labels = column![
+            text(item.name().to_owned())
+                .size(f32::from(GEOMETRY.title_size))
+                .color(title_color.to_iced())
+        ];
+        if let Some(comment) = item.comment() {
+            labels = labels.push(
+                text(comment.to_owned())
+                    .size(f32::from(GEOMETRY.subtitle_size))
+                    .color(subtitle_color.to_iced()),
+            );
+        }
+
+        container(
+            row![icon, labels]
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .padding(Padding::new(0.0).left(12).right(12)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(f32::from(GEOMETRY.row_height)))
+        .style(move |_: &Theme| {
+            if selected {
+                container::Style {
+                    background: Some(palette.selection.to_iced().into()),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: f32::from(GEOMETRY.row_radius).into(),
+                    },
+                    ..container::Style::default()
+                }
+            } else {
+                container::Style::default()
+            }
+        })
+        .into()
     }
 
     /// Draw the action panel.
     ///
-    /// Every row kind gets a different left margin, and a caret marks the
-    /// selection -- the same convention the results list uses, and for the same
-    /// reason: under llvmpipe at 1280x800 a background tint is not identifiable
-    /// in a captured frame, and a caret is.
+    /// A floating card at the bottom right, the way Raycast's sits. Headers
+    /// and dividers are drawn as themselves rather than as indented text, and
+    /// the selection is the same filled rectangle the result list uses.
     fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
-        let mut col = column![text("Actions").size(14)].spacing(4);
+        let palette = design::palette(self.appearance);
+        let mut col = column![].spacing(f32::from(GEOMETRY.row_spacing));
 
         for (index, panel_row) in panel.rows.iter().enumerate() {
-            let line = match panel_row.kind {
-                RowKind::Divider => text("  ---".to_owned()).size(14),
+            let element: Element<Message> = match panel_row.kind {
+                RowKind::Divider => container(Space::new().height(Length::Fixed(1.0)))
+                    .width(Length::Fill)
+                    .padding(Padding::new(0.0).top(5).bottom(5).left(8).right(8))
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(palette.border.to_iced().into()),
+                        ..container::Style::default()
+                    })
+                    .into(),
                 RowKind::Header => {
                     let name = panel
                         .sections
                         .get(panel_row.section)
                         .map_or("", |section| section.name.as_str());
-                    text(format!("  {name}")).size(14)
+                    container(
+                        text(name.to_uppercase())
+                            .size(f32::from(GEOMETRY.heading_size))
+                            .color(palette.muted.to_iced()),
+                    )
+                    .padding(Padding::new(0.0).top(8).bottom(4).left(10))
+                    .into()
                 }
                 RowKind::Item => {
-                    let title = panel_row
-                        .action
-                        .and_then(|position| {
-                            panel.sections.get(panel_row.section)?.actions.get(position)
-                        })
-                        .map_or("", |action| action.title.as_str());
-                    let marker = if index as isize == panel.selected {
-                        "> "
-                    } else {
-                        "  "
-                    };
-                    text(format!("{marker}  {title}")).size(16)
+                    let action = panel_row.action.and_then(|position| {
+                        panel.sections.get(panel_row.section)?.actions.get(position)
+                    });
+                    let title = action.map_or("", |action| action.title.as_str());
+                    let shortcut = action.and_then(|action| action.shortcut.clone());
+                    let selected = isize::try_from(index).unwrap_or(isize::MAX) == panel.selected;
+                    self.panel_item(title, shortcut.as_deref(), selected)
                 }
             };
-            col = col.push(line);
+            col = col.push(element);
         }
 
         if panel.rows.is_empty() {
-            col = col.push(text("No actions").size(16));
+            col = col.push(self.notice("No actions"));
         }
 
-        container(col).width(Length::Fill).padding(20).into()
+        container(col)
+            .width(Length::Fixed(300.0))
+            .padding(6)
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.surface.to_iced().into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// One action row, with its shortcut right-aligned.
+    fn panel_item(
+        &self,
+        title: &str,
+        shortcut: Option<&str>,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let palette = design::palette(self.appearance);
+        let colour = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        };
+
+        let mut line = row![
+            text(title.to_owned())
+                .size(f32::from(GEOMETRY.title_size))
+                .color(colour.to_iced())
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
+        if let Some(shortcut) = shortcut {
+            line = line.push(Space::new().width(Length::Fill));
+            line = line.push(
+                text(shortcut.to_owned())
+                    .size(f32::from(GEOMETRY.subtitle_size))
+                    .color(
+                        if selected {
+                            palette.selection_text
+                        } else {
+                            palette.muted
+                        }
+                        .to_iced(),
+                    ),
+            );
+        }
+
+        container(line.padding(Padding::new(0.0).left(10).right(10)))
+            .width(Length::Fill)
+            .height(Length::Fixed(34.0))
+            .style(move |_: &Theme| {
+                if selected {
+                    container::Style {
+                        background: Some(palette.selection.to_iced().into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 8.0.into(),
+                        },
+                        ..container::Style::default()
+                    }
+                } else {
+                    container::Style::default()
+                }
+            })
+            .into()
     }
 
     /// Re-rank against the current query.
