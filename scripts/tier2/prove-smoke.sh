@@ -71,6 +71,14 @@ fi
 
 banner "RUN 2 of 2: without the fixture, the smoke must FAIL"
 rm -f "$FIXTURE"
+
+# Belt and braces with smoke.sh's own check. The first version of this proof
+# failed here for a real reason: the engine from run 1 outlived `flatpak run`
+# and answered run 2 from a stale index, so the fixture "existed" after being
+# deleted. Killing the app between runs is what makes the two runs independent,
+# and independence is the entire basis for attributing the difference to the
+# fixture.
+flatpak kill com.vicinae.Vicinae 2>/dev/null || true
 if "$SMOKE"; then
   cat >&2 <<'WHY'
 PROOF FAILED: the smoke PASSED with its fixture deleted.

@@ -58,15 +58,35 @@ fi
 
 log "starting the engine inside the sandbox"
 socket="${XDG_RUNTIME_DIR}/tier2-smoke.sock"
-rm -f "$socket"
-run_in_flatpak --socket "$socket" serve >/tmp/tier2-engine.log 2>&1 &
-engine_pid=$!
 
+# KILLING `flatpak run` DOES NOT KILL THE ENGINE, AND THAT COST A RUN.
+#
+# `$!` is the pid of the `flatpak run` wrapper on this side of the sandbox, not
+# of the process inside it. The first version killed the wrapper, the engine
+# survived, kept the socket, and answered the NEXT invocation — so
+# `prove-smoke.sh`'s control run queried a stale index, found the fixture it had
+# just deleted, and the smoke "passed" when it had to fail.
+#
+# `flatpak kill` addresses the app instance itself, which is the thing actually
+# holding the socket.
 cleanup() {
+  flatpak kill "$APP_ID" 2>/dev/null || true
   kill "$engine_pid" 2>/dev/null || true
   wait "$engine_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+# A stale engine is not a nuisance here, it is a wrong answer: it would serve
+# an index built before whatever this run is meant to measure. So it is a
+# failure, not something to clean up and continue past.
+flatpak kill "$APP_ID" 2>/dev/null || true
+rm -f "$socket"
+if flatpak --user run --command=vicinae "$APP_ID" --socket "$socket" ping >/dev/null 2>&1; then
+  fail "something is already answering on ${socket}. A previous engine outlived its run, and anything measured now would be its stale index rather than this run's"
+fi
+
+run_in_flatpak --socket "$socket" serve >/tmp/tier2-engine.log 2>&1 &
+engine_pid=$!
 
 # Polled, not slept: an engine still indexing has not finished allocating or
 # reading, and a fixed sleep would make this pass or fail on runner speed.
