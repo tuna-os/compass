@@ -16,6 +16,21 @@ use crate::kind::{EncryptionType, OfferKind};
 /// its docs for the one place this cannot follow exactly.
 pub const MAX_INDEXED_CONTENT: usize = 1 << 16;
 
+/// The selection insert, named so [`cpp_write_parity`] can pin it.
+const INSERT_SELECTION: &str = "INSERT INTO selection (id, kind, offer_count, hash_md5, \
+     preferred_mime_type, source, created_at, updated_at) \
+     VALUES (:id, :kind, :offer_count, :hash_md5, :preferred_mime_type, :source, :epoch, :epoch)";
+
+/// The offer insert, named so [`cpp_write_parity`] can pin it.
+const INSERT_OFFER: &str = "INSERT INTO data_offer (id, selection_id, mime_type, text_preview, \
+     content_hash_md5, encryption_type, size, kind, url_host) \
+     VALUES (:id, :selection_id, :mime_type, :text_preview, :content_hash_md5, :encryption, \
+     :size, :kind, :url_host)";
+
+/// The search-index insert, named so [`cpp_write_parity`] can pin it.
+const INSERT_INDEXED_CONTENT: &str =
+    "INSERT INTO selection_fts (selection_id, content) VALUES (:id, :content)";
+
 /// What to record about a new selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewSelection<'a> {
@@ -87,11 +102,7 @@ fn now() -> i64 {
 /// Returns [`Error::Database`] if the insert fails — including on a duplicate
 /// id, which the primary key rejects.
 pub fn insert_selection(db: &Database, selection: &NewSelection<'_>) -> Result<()> {
-    let mut stmt = db.prepare(
-        "INSERT INTO selection (id, kind, offer_count, hash_md5, preferred_mime_type, source, \
-         created_at, updated_at) \
-         VALUES (:id, :kind, :offer_count, :hash_md5, :preferred_mime_type, :source, :epoch, :epoch)",
-    )?;
+    let mut stmt = db.prepare(INSERT_SELECTION)?;
     stmt.bind_text(":id", selection.id)?;
     stmt.bind_int64(":kind", selection.kind.to_stored())?;
     stmt.bind_int64(":offer_count", selection.offer_count)?;
@@ -112,12 +123,7 @@ pub fn insert_selection(db: &Database, selection: &NewSelection<'_>) -> Result<(
 ///
 /// Returns [`Error::Database`] if the insert fails.
 pub fn insert_offer(db: &Database, offer: &NewOffer<'_>) -> Result<()> {
-    let mut stmt = db.prepare(
-        "INSERT INTO data_offer (id, selection_id, mime_type, text_preview, content_hash_md5, \
-         encryption_type, size, kind, url_host) \
-         VALUES (:id, :selection_id, :mime_type, :text_preview, :content_hash_md5, :encryption, \
-         :size, :kind, :url_host)",
-    )?;
+    let mut stmt = db.prepare(INSERT_OFFER)?;
     stmt.bind_text(":id", offer.id)?;
     stmt.bind_text(":selection_id", offer.selection_id)?;
     stmt.bind_text(":mime_type", offer.mime_type)?;
@@ -162,8 +168,7 @@ pub fn truncate_for_index(content: &str) -> &str {
 ///
 /// Returns [`Error::Database`] if the insert fails.
 pub fn index_content(db: &Database, selection_id: &str, content: &str) -> Result<()> {
-    let mut stmt =
-        db.prepare("INSERT INTO selection_fts (selection_id, content) VALUES (:id, :content)")?;
+    let mut stmt = db.prepare(INSERT_INDEXED_CONTENT)?;
     stmt.bind_text(":id", selection_id)?;
     stmt.bind_text(":content", truncate_for_index(content))?;
     stmt.step()?;
@@ -589,4 +594,198 @@ pub fn find_preferred_offer(db: &Database, selection_id: &str) -> Result<Option<
             })
         })?,
     }))
+}
+
+/// The write statements, pinned against the C++ engine's.
+///
+/// # Why this is not covered by the migration pin
+///
+/// [`crate::schema`] and `migration_manifests_agree` establish that both
+/// engines bring the *same schema* into being. They say nothing about what
+/// either engine then puts in it. Both write to the same `clipboard.db` for as
+/// long as the two ship side by side, so a column one engine fills and the
+/// other leaves `NULL` — or, worse, a column the two fill from different
+/// sources — is a divergence neither language would flag. It would surface as
+/// history entries that lose their source application, or previews that show
+/// a hash.
+///
+/// The realistic way it happens is a new migration adding a column: whoever
+/// adds it wires up one engine's insert and not the other's. That edit is a
+/// source change on both sides, which is exactly what this can see.
+///
+/// # What it compares
+///
+/// For each `INSERT`, the table, the column list **in order**, and a shape
+/// fingerprint of the `VALUES` list — each slot rendered as the index of its
+/// placeholder's first appearance. The fingerprint is name-independent on
+/// purpose: `selection_fts` binds `:selection_id` in C++ and `:id` here, which
+/// is a naming difference and not a divergence. What it does encode is
+/// *reuse*, so `selection`'s single `:epoch` filling both `created_at` and
+/// `updated_at` is pinned, and an engine that split them would fail.
+///
+/// # What it cannot
+///
+/// It does not know where a bound value comes from. Two inserts that agree on
+/// every column and bind the wrong variable to one of them look identical
+/// here. And it reads only `INSERT`s: the one `UPDATE` that differs
+/// (`bubble_up`, which adds `RETURNING id` — see its docs) is a declared
+/// divergence, and declared divergences are recorded in PARITY.md rather than
+/// asserted away here.
+#[cfg(test)]
+mod cpp_write_parity {
+    use std::path::{Path, PathBuf};
+
+    const CPP: &str = "src/server/src/services/clipboard/clipboard-db.cpp";
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct Insert {
+        table: String,
+        columns: Vec<String>,
+        shape: Vec<usize>,
+    }
+
+    fn repo() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("crates/<name> sits two levels below the root")
+            .to_path_buf()
+    }
+
+    /// The contents of the next balanced parenthesis group, and what follows.
+    fn parenthesised(rest: &str) -> Option<(&str, &str)> {
+        let open = rest.find('(')?;
+        let close = rest[open..].find(')')? + open;
+        Some((&rest[open + 1..close], &rest[close + 1..]))
+    }
+
+    fn items(list: &str) -> Vec<String> {
+        list.split(',').map(|item| item.trim().to_owned()).collect()
+    }
+
+    /// Every `INSERT INTO ... (...) VALUES (...)` in `source`, in order.
+    ///
+    /// Whitespace is collapsed first so that the C++ raw-string statements,
+    /// which are written across several lines, parse the same as the
+    /// single-line constants above.
+    fn inserts(source: &str) -> Vec<Insert> {
+        let flat = source.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut out = Vec::new();
+
+        for start in flat.match_indices("INSERT INTO ").map(|(at, _)| at) {
+            let rest = &flat[start + "INSERT INTO ".len()..];
+            let table = rest
+                .split([' ', '('])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            let Some((columns, after)) = parenthesised(rest) else {
+                continue;
+            };
+            let Some(values) = after.trim_start().strip_prefix("VALUES") else {
+                continue;
+            };
+            let Some((values, _)) = parenthesised(values) else {
+                continue;
+            };
+
+            let placeholders = items(values);
+            let mut first_seen: Vec<&String> = Vec::with_capacity(placeholders.len());
+            let mut shape = Vec::with_capacity(placeholders.len());
+            for placeholder in &placeholders {
+                let index = first_seen.iter().position(|seen| *seen == placeholder);
+                shape.push(index.unwrap_or_else(|| {
+                    first_seen.push(placeholder);
+                    first_seen.len() - 1
+                }));
+            }
+
+            out.push(Insert {
+                table,
+                columns: items(columns),
+                shape,
+            });
+        }
+
+        out
+    }
+
+    fn from_cpp() -> Vec<Insert> {
+        let path = repo().join(CPP);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+        let parsed = inserts(&source);
+        assert!(
+            !parsed.is_empty(),
+            "parsed no INSERT out of {} — the statements moved or changed shape, \
+             and this test would now pass by finding nothing",
+            path.display()
+        );
+        parsed
+    }
+
+    fn ours() -> Vec<Insert> {
+        inserts(
+            &[
+                super::INSERT_SELECTION,
+                super::INSERT_OFFER,
+                super::INSERT_INDEXED_CONTENT,
+            ]
+            .join(" "),
+        )
+    }
+
+    #[test]
+    fn both_engines_write_the_same_columns() {
+        let cpp = from_cpp();
+        let rust = ours();
+
+        for mine in &rust {
+            let theirs = cpp
+                .iter()
+                .find(|candidate| candidate.table == mine.table)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} writes to `{}` and {CPP} has no INSERT into it. Both \
+                         engines share one clipboard.db; a table only one of them \
+                         fills is a divergence.",
+                        env!("CARGO_PKG_NAME"),
+                        mine.table
+                    )
+                });
+
+            assert_eq!(
+                theirs.columns, mine.columns,
+                "the two engines insert different columns into `{}`.\n  \
+                 {CPP}: {:?}\n  compass-clipboard: {:?}\n\
+                 Adding a column means editing both inserts. Editing one leaves \
+                 rows the other engine reads back incomplete.",
+                mine.table, theirs.columns, mine.columns
+            );
+
+            assert_eq!(
+                theirs.shape, mine.shape,
+                "the two engines bind `{}`'s values differently.\n  \
+                 {CPP}: {:?}\n  compass-clipboard: {:?}\n\
+                 Each slot is the index of its placeholder's first use, so this \
+                 differs when one engine reuses a bound value where the other \
+                 does not — `created_at`/`updated_at` sharing `:epoch`, for \
+                 instance.",
+                mine.table, theirs.shape, mine.shape
+            );
+        }
+
+        let unmatched: Vec<&str> = cpp
+            .iter()
+            .map(|insert| insert.table.as_str())
+            .filter(|table| !rust.iter().any(|mine| mine.table == *table))
+            .collect();
+        assert!(
+            unmatched.is_empty(),
+            "{CPP} inserts into {unmatched:?} and compass-clipboard never does. \
+             A table only the C++ engine fills is history the Rust engine will \
+             not record."
+        );
+    }
 }
