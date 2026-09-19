@@ -47,7 +47,7 @@ project.
 
 What is verified on a real desktop, not just in unit tests: a Bluefin VM tier boots GNOME under
 QEMU, installs the Flatpak, and asserts that the engine starts without painting, finds
-applications, finds the Flatpaks installed in *both* the system and user roots, opens a window,
+applications, finds a Flatpak installed in the system root, opens a window,
 receives a typed query in *our* field, hides and returns, and opens the action panel on Ctrl+B —
 the frame assertions each against a control frame from the same boot, with the changed region
 required to lie inside the window. Everything else in `compass-ui` is covered by its own tests
@@ -59,7 +59,10 @@ sandbox was granted the exports directory but not the tree it points into — so
 user's machine was invisible, silently, with no error anywhere ([#105]). The tier could not see
 it: Compass lives in a named extra installation here, and both of the roots the bug lived in were
 empty, so an engine indexing 88 applications and zero Flatpaks looked healthy. It now installs one
-application into each root and asks the engine for it.
+application into the system root and asks the engine for it. The user root is reported as
+uncovered on every run rather than passed over: populating a *user* installation from a container
+build does not work (gpgme has no session there, and flatpak refuses `--user` as root), so it needs
+a bundle staged into the image and installed in the booted session, which is a follow-up.
 
 [#105]: https://github.com/tuna-os/compass/issues/105
 

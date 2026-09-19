@@ -859,15 +859,33 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   # check does not break when an upstream renames its application; the app id is
   # what is asserted, because that is what the index keys on.
   flatpak-apps)
+    # THE SYSTEM ROOT IS GATED; THE USER ROOT IS RECORDED. The image installs a
+    # probe application into the system root only: a container build is the
+    # wrong place to populate a USER installation, and two attempts proved it
+    # (gpgme has no session to work in, and flatpak refuses `--user` as root).
+    # The follow-up installs it in the booted guest from a staged bundle, where
+    # there is a real session.
+    #
+    # So an empty user root is reported as UNCOVERED and does not fail, while a
+    # user root that HAS an export is gated exactly like the system one -- the
+    # day the follow-up lands, this starts gating it with no change here. What
+    # is never allowed is silence: a root with nothing in it says so, loudly,
+    # every run.
     status=0
     for spec in \
-      "system:/var/lib/flatpak/exports/share/applications" \
-      "user:/var/home/$SESSION_USER/.local/share/flatpak/exports/share/applications"
+      "system:/var/lib/flatpak/exports/share/applications:gated" \
+      "user:/var/home/$SESSION_USER/.local/share/flatpak/exports/share/applications:recorded"
     do
       root="${spec%%:*}"
-      dir="${spec#*:}"
+      rest="${spec#*:}"
+      dir="${rest%%:*}"
+      mode="${rest##*:}"
 
       if [ ! -d "$dir" ]; then
+        if [ "$mode" = recorded ]; then
+          echo "UNCOVERED: $root: $dir does not exist; no probe app is installed in this root yet"
+          continue
+        fi
         echo "FAIL: $root: $dir does not exist, so the image never installed a probe app" >&2
         status=1
         continue
@@ -937,8 +955,12 @@ PY
       done
 
       if [ "$found" -eq 0 ]; then
-        echo "FAIL: $root: no .desktop exports in $dir; the image installed no probe app" >&2
-        status=1
+        if [ "$mode" = recorded ]; then
+          echo "UNCOVERED: $root: no .desktop exports in $dir; nothing installed in this root yet"
+        else
+          echo "FAIL: $root: no .desktop exports in $dir; the image installed no probe app" >&2
+          status=1
+        fi
       fi
     done
     exit "$status"
