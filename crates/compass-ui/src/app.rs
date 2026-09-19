@@ -487,7 +487,7 @@ impl LauncherApp {
 
     /// What dismissing does, given whether anything could bring the window back.
     ///
-    /// Split out from [`LauncherApp::conceal`] because the two outcomes it
+    /// Split out from `LauncherApp::conceal` because the two outcomes it
     /// chooses between are both opaque `Task`s: a test can see that the window
     /// closed, but not that the process was told to exit. This is the decision
     /// itself, and it is what the tests assert on.

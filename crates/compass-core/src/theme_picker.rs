@@ -8,7 +8,7 @@
 //!
 //! The view applies a theme as soon as its row is selected and restores the
 //! configured one in `beforePop`, so browsing the list is a live preview and
-//! leaving it is an undo. [`Selection`] and [`leaving`] are that pair; a port
+//! leaving it is an undo. [`selection`] and [`leaving`] are that pair; a port
 //! that only applied the theme on "enter" would look reasonable and feel
 //! completely different.
 

@@ -18,7 +18,7 @@
 //! `deriveKey` is HKDF-SHA256 with an empty salt and the label as `info`.
 //!
 //! `crates/compass-testkit` diffs this against the real C++ implementation on
-//! every PR — see [`docs/rust-engine/PLAN.md`] §8.4a for why that harness
+//! every PR — see `docs/rust-engine/PLAN.md` §8.4a for why that harness
 //! cross-decrypts instead of comparing ciphertexts.
 //!
 //! # Why RustCrypto and not the `openssl` crate

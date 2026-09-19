@@ -61,6 +61,16 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The module docs carry a lot of the reasoning in this repo, and an
+      # intra-doc link that stops resolving is invisible to every other gate:
+      # `cargo build`, clippy and the tests all pass with a dead `[`Foo`]`.
+      # Five had already rotted in `vicinae::doctor` by the time anyone ran
+      # rustdoc over it, four of them from a type the module no longer names.
+      - name: Docs
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
       # COMPASS_REQUIRE_DBUS turns compass-shell's "no dbus-daemon, skipping"
       # path into a failure. Suite 3a is 21 tests against a private session
       # bus, and on a runner image without `dbus-daemon` every one of them

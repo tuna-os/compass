@@ -274,7 +274,7 @@ impl Lists {
     /// machine can actually run; the C++ asks `appMap` plus `isExecutable`, and
     /// this crate has no application index, so the caller supplies the answer.
     ///
-    /// Falls back to the first of [`openers_for`], which is what the C++ does
+    /// Falls back to the first of [`Lists::openers_for`], which is what the C++ does
     /// when no `Default Applications` entry names something runnable.
     #[must_use]
     pub fn default_for(&self, mime: &str, usable: &impl Fn(&str) -> bool) -> Option<String> {

@@ -8,7 +8,7 @@
 //!   [`PortalError::Unavailable`] — which callers are expected to treat as a
 //!   degraded feature, not a failure.
 //! - The user denying a permission dialog is not an error either. It comes back
-//!   as [`BindOutcome::Denied`](crate::BindOutcome::Denied) or
+//!   as [`ShortcutsOutcome::Denied`](crate::shortcuts::ShortcutsOutcome::Denied) or
 //!   [`Dismissed`](crate::OpenOutcome::Dismissed), so it can be matched on
 //!   rather than string-matched.
 //!

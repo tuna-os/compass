@@ -3,7 +3,7 @@
 //!
 //! A port of `power-management-extension.cpp`
 //! (`src/server/src/builtins/power-management/`). The commands themselves are
-//! one logind call each — [`compass_power`] makes those — so what is here is
+//! one logind call each — `compass_power` makes those — so what is here is
 //! everything around the call: the catalogue, the confirmation preference, the
 //! custom-program escape hatch, and the two failure messages per command, whose
 //! wording is not consistent and is reproduced as it is.

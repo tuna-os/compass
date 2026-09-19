@@ -8,7 +8,7 @@
 //!   inside the subquery so it counts every row rather than the page. SQL
 //!   applies `LIMIT` after window functions, which is what makes that work.
 //! * **Filtered** joins `selection_fts`, `AND`s the conditions
-//!   [`search::plan`](crate::search::plan) produced, groups by selection, and
+//!   [`crate::search::plan`] produced, groups by selection, and
 //!   wraps the whole thing in `SELECT * FROM (...) LIMIT ? OFFSET ?`.
 //!
 //! The `GROUP BY` is load-bearing rather than defensive: `selection_fts` holds

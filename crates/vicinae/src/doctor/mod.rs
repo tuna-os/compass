@@ -17,13 +17,13 @@
 //!
 //! # Status meanings
 //!
-//! * [`DoctorStatus::Ok`] — works.
-//! * [`DoctorStatus::Warn`] — degraded in a way this build is designed to
+//! * [`DoctorStatus::Ok`](compass_ipc::DoctorStatus::Ok) — works.
+//! * [`DoctorStatus::Warn`](compass_ipc::DoctorStatus::Warn) — degraded in a way this build is designed to
 //!   survive (PLAN §3.5.1: nothing critical-path needs the Shell extension), or
 //!   a fact worth stating in a bug report.
-//! * [`DoctorStatus::Fail`] — something the launcher needs is broken.
+//! * [`DoctorStatus::Fail`](compass_ipc::DoctorStatus::Fail) — something the launcher needs is broken.
 //!
-//! Only [`DoctorStatus::Fail`] makes `--check-only` exit non-zero.
+//! Only [`DoctorStatus::Fail`](compass_ipc::DoctorStatus::Fail) makes `--check-only` exit non-zero.
 
 pub mod bus;
 pub mod checks;

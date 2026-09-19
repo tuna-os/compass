@@ -9,7 +9,7 @@
 //! * [`search`] — how a query in the search box becomes the FTS match phrases
 //!   and substring terms the SQL layer binds.
 //! * [`store`] — reading history back: the paginated query.
-//! * [`write`] — inserts, indexing, deletion and eviction.
+//! * [`crate::write`] — inserts, indexing, deletion and eviction.
 //! * [`ingest`] — recording one observed copy, as delivered by the GNOME
 //!   helper extension's `ClipboardChanged` signal.
 //!
