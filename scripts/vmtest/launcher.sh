@@ -391,6 +391,27 @@ python3 scripts/vmtest/framediff.py \
   --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799
 
 echo
+echo "=== 3a2. and what does the launcher say it did? (the exact version of 3a) ==="
+# 3a proves a keystroke changed the screen inside our window. It cannot say the
+# query reached the FIELD rather than, say, a tooltip -- that was read out of
+# the frames by eye once and has been assumed since. This asserts it.
+#
+# LAUNCHER_QUERY is what the step above typed, so the assertion follows the
+# fixture instead of restating it.
+#
+# THE BACKSLASHES ARE LOAD-BEARING. `guest` is ssh, and ssh joins its argv into
+# one string that the REMOTE shell parses again -- so a plain "query=\"fi\""
+# arrives as `query=fi`, the quotes eaten in transit, and the gate looks for a
+# string the log does not contain. Verified against a shell that re-parses its
+# argv the way sshd does, rather than discovered twenty-five minutes into a VM
+# run. `\\"` survives both passes and arrives as `"`.
+#
+# The quotes cannot simply be dropped: `panel_title=Open` without them is a
+# prefix of `panel_title=Open in New Window`, which is exactly the distinction
+# run 199 had to read out of a screenshot by eye.
+guest "$checks" ui-state "query=\\\"$query\\\"" "window=open"
+
+echo
 echo "=== 3b. and is it blocked in the same place after the keystroke? ==="
 # The same probe again, deliberately. A process parked in the same syscall on
 # the same socket both times is stuck; one that has moved is merely slow, and
@@ -575,6 +596,22 @@ if sudo -E "$corral_bin" key "$vm" ctrl b; then
 else
   echo "NOT GATED: corral could not send the chord. That says nothing about the panel."
 fi
+
+echo
+echo "=== 3d4c. did the panel open, in the launcher's own words? (the gate) ==="
+# The framediff above is deliberately ungated while the card geometry settles.
+# This is not: whether Ctrl+B reached the application and opened the panel is a
+# question about the state machine, not about pixels, and it has an exact
+# answer that no threshold has to be fitted to.
+#
+# Outside the `if` above on purpose. Those branches are about whether corral
+# could send a chord and take a picture; the launcher's own account of what it
+# did survives either of them failing, and is worth having precisely then.
+#
+# `panel_title="Open"` is the first SELECTABLE row. Run 199's frames had to be
+# read by eye to confirm the caret was not on the header above it; this is that
+# same claim, checked rather than looked at.
+guest "$checks" ui-state "panel=open" 'panel_title=\"Open\"'
 
 echo
 echo "=== 3d5. what did the engine make of the hotkey? (recorded, not gated) ==="

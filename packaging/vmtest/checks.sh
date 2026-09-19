@@ -609,8 +609,8 @@ PY
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$2/bus" \
         WAYLAND_DISPLAY="$3" \
         XDG_SESSION_TYPE=wayland \
-        RUST_LOG="info,wgpu=debug,wgpu_hal=debug,iced_wgpu=debug,winit=debug,\
-sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=debug" \
+        RUST_LOG="info,compass_ui::state=debug,wgpu=debug,wgpu_hal=debug,iced_wgpu=debug,\
+winit=debug,sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=debug" \
         RUST_BACKTRACE=1 \
         flatpak run --installation="$4" "$5" ui \
         > "$6" 2>&1
@@ -1008,6 +1008,69 @@ PY
     else
       echo 'no coredumpctl in this image'
     fi
+    ;;
+
+  # WHAT THE LAUNCHER ACTUALLY DID, from its own account rather than from pixels.
+  #
+  # Every gate in this tier asserts a percentage of changed pixels inside a box.
+  # That is the only way to prove something reached the screen, and it is bad at
+  # everything else: "5.44% of pixels in a box changed" cannot say which row is
+  # selected, what the query matched, or what the panel contains, and it moves
+  # with the font, the theme and the card geometry. Two runs of this tier were
+  # spent on a containment box that had gone stale and was asserting nothing
+  # about the launcher at all.
+  #
+  # `compass_ui::state` logs one line per message (LauncherApp::state_line), so
+  # those claims can be made exactly. What this CANNOT do is replace the pixel
+  # gates: the line is written by the same code under test and says nothing
+  # about whether anything was drawn -- a launcher rendering a blank surface
+  # logs exactly this. That is the failure --require-paint exists for, and the
+  # two halves answer different questions.
+  #
+  # Usage: checks.sh ui-state <key=value>...
+  # Each argument must appear on the LAST state line. Without arguments the
+  # whole sequence is printed and nothing is asserted.
+  ui-state)
+    shift
+    if [ ! -s "$UI_ERR" ]; then
+      echo "FAIL: $UI_ERR is empty; the launcher logged nothing at all" >&2
+      exit 1
+    fi
+
+    # The escapes are stripped for the same reason engine-index strips them:
+    # tracing colours its output, and a pattern with a literal `query=` matches
+    # nothing against `^[[3mquery^[[0m=`. That cost a false negative once
+    # already and a grep in a gate should not be the thing that notices.
+    sed 's/\x1b\[[0-9;]*m//g' "$UI_ERR" | grep -F 'compass_ui::state' > /tmp/ui-state.log || true
+
+    if [ ! -s /tmp/ui-state.log ]; then
+      echo "FAIL: the launcher never logged a state line." >&2
+      echo "  Either RUST_LOG no longer enables compass_ui::state=debug, or" >&2
+      echo "  LauncherApp::update stopped emitting one." >&2
+      echo "--- what it did log ---" >&2
+      tail -n 40 "$UI_ERR" >&2
+      exit 1
+    fi
+
+    echo "--- every state the launcher passed through ---"
+    # The whole sequence, in the job output, which is the point: a human
+    # reading a failed run sees what the launcher did without downloading an
+    # artifact and comparing images.
+    sed 's/.*compass_ui::state: //' /tmp/ui-state.log | cat -n
+    last="$(tail -n 1 /tmp/ui-state.log)"
+    echo "--- asserting against the last line ---"
+    echo "  $last"
+
+    status=0
+    for want in "$@"; do
+      if printf '%s' "$last" | grep -qF -- "$want"; then
+        echo "  ok: $want"
+      else
+        echo "  FAIL: expected $want" >&2
+        status=1
+      fi
+    done
+    exit "$status"
     ;;
 
   harvest-corpus)
