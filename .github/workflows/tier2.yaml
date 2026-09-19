@@ -142,10 +142,23 @@ jobs:
     # have two answers worth having; this one does not have an answer yet.
     container:
       image: fedora:44
-      # bubblewrap needs to create user namespaces, which the default seccomp
-      # and capability set does not allow. This is the smaller hammer than
-      # --privileged, and if it is not enough that is itself the finding.
-      options: --shm-size=2g --security-opt seccomp=unconfined --cap-add SYS_ADMIN
+      # --privileged, and the smaller hammer was tried first.
+      #
+      # `--security-opt seccomp=unconfined --cap-add SYS_ADMIN` was not enough:
+      #
+      #     bwrap: Failed to make / slave: Permission denied
+      #
+      # That is `mount --make-rslave` on the container's root, which needs more
+      # than SYS_ADMIN grants inside a Docker container — the mount namespace
+      # itself is restricted. Flatpak cannot sandbox without it, so this is
+      # privilege or nothing.
+      #
+      # Acceptable here in a way it would not be elsewhere: an ephemeral
+      # GitHub-hosted runner, executing this repository's own code, to test the
+      # artifact we ship. If it is still not enough, the finding is that
+      # Tier 2 stops at the protocol layer and the Flatpak needs the VM tier —
+      # which is a real answer and #119 records it either way.
+      options: --privileged --shm-size=2g
 
     steps:
       - uses: actions/checkout@v4
