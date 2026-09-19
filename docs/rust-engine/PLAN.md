@@ -1515,15 +1515,37 @@ Bluefin's own primary target is x86_64.
 5. Drive the hotkey path through the console keyboard, screenshotting each step.
 6. Upload the artifact directory unconditionally.
 
-**Assert over IPC, not over pixels.** Screenshots are evidence for humans; `--require-paint` is the
-one pixel assertion worth gating on, because "did anything draw" is a question no other probe
-answers. Everything else goes through our own IPC socket and `doctor`. Pixel-scraping a desktop
-session is the classic way to build an e2e suite everyone learns to ignore.
+**"Assert over IPC, not over pixels" was half right, and the half that was wrong cost a bug.** This
+section used to say `--require-paint` was the one pixel assertion worth gating on, everything else
+belonging on the IPC socket, because pixel-scraping a desktop is how an e2e suite becomes one
+everybody ignores. The tier now gates on six frame comparisons, and the reason is #91: the launcher
+drew a search box, accepted no keystrokes, and **every IPC probe passed** — the socket answered, the
+process was healthy, `doctor` was content. `launcher-02-typed.png` came back byte-identical to
+`launcher-01-open.png`, and only a pixel could say so. Iced delivers typed characters to a
+`text_input` holding widget focus and nothing had focused ours; a person clicks the box without
+noticing, so only a harness that types finds it.
 
-**Two things this tier will be bad at, stated up front.** Under llvmpipe software rendering a GNOME
+What the original advice got right is the *reference* it warned against. A screenshot diff against a
+stored image does break on every font, theme and Bluefin update, and none exists here. Every
+assertion in the tier compares **two frames from the same run** — before against after, each pair
+taken seconds apart on one boot — which is immune to all three, because whatever the theme renders
+renders identically in both. Two properties make that a gate rather than a vibe: a floor on how much
+changed, and `--expect-box`, which fails if the change lands anywhere but our window and so doubles
+as "nothing else moved".
+
+The six: the engine starting must paint **nothing**; the launcher window appearing must paint
+something; a typed query must reach our field (#91); hiding must return the desktop and summoning
+must bring the window back (ADR-0015, and the pair matters — a frame that never changes passes one
+and fails the other); and Ctrl+B must open the action panel. That last one is the newest and shows
+the discipline the rest were earned by: it ran **recorded, not gated** for two runs first, because
+ADR-0010 forbids inventing a threshold before seeing one. Both runs printed 2,697 pixels in the same
+box, byte-identical; the frames were then read to confirm the panel — not merely *a* change — had
+drawn; and the floor was set at roughly a quarter of the measurement rather than fitted to it, so a
+panel with fewer actions still passes while a chord that never arrives (0.00%) fails.
+
+**The thing this tier is still bad at, stated up front.** Under llvmpipe software rendering a GNOME
 session is slow and its timing is variable, so any assertion phrased as "within N seconds" will
-flake; phrase them as "after this marker appears". And a screenshot diff against a stored reference
-will break on every font, theme and Bluefin update — which is why none is proposed here.
+flake; phrase them as "after this marker appears".
 
 **Promote it; do not start with it.** Run it nightly first and move it into the merge queue only once
 it has been stable for a couple of weeks. Then hold it to the same rule as everything else: a
@@ -1791,8 +1813,8 @@ answerable today.
 | Gate criterion | State | Evidence |
 |---|---|---|
 | Suite 0 parity for app-search ranking on the **500-entry corpus** | 🟢 **corpus met; top-1 ranking parity met** | **757** entries, past the 500 the gate names. The engines pick the **same top result on 100% of queries** (920 of them contested), and the same top 3 on 97.2%. Scores differ on 20.8% — the declared nucleo-vs-fzf divergence — but the ranking absorbs it (§8.1a). Full-order parity is 84.4%. |
-| Runs from a Flatpak on Bluefin with **GNOME 50 and 51** | 🟡 **half** | it runs from a Flatpak on Bluefin in CI on every change. One GNOME, not two, and the version was not recorded — the evidence check now prints `gnome-shell --version`. |
-| **Idle RSS < 30 MB** | 🟡 **now measured** | never measured before, because there was nothing running to measure. `checks.sh launcher-rss` reads `VmRSS` once the window is up. Reported, not gated. |
+| Runs from a Flatpak on Bluefin with **GNOME 50 and 51** | 🟡 **50 met with a version behind it; 51 is blocked upstream, not on us** | it runs from a Flatpak on Bluefin in CI on every change, on **GNOME Shell 50.3** — recorded by the evidence check rather than assumed. The 51 half is **not a cost decision**, which an earlier revision of this row called it: Bluefin's current stable stream (`stable-20260915`, Fedora 44) ships GNOME **50.3**, so there is no Bluefin image to run 51 on. The trigger is upstream shipping it, and the cheap move when they do is a second matrix leg on the same job rather than a new tier. Until then this criterion is unsatisfiable as written, and saying so is better than leaving it looking like work nobody has got round to. Not checked: whether a non-stable Bluefin tag or a different Fedora base carries 51 today. |
+| **Idle RSS < 30 MB** | 🟡 **measured, and the 135 MB was the wrong process** | the window idles at ~135 MB under llvmpipe and that was read as five times over budget. Most of it is wgpu's software renderer, which lives in that process's RSS in a VM and not on hardware. **The engine — the part that is actually resident, holds the index, serves IPC and draws nothing — idles at 6.2 MB**, measured on an ordinary container outside any VM. `launcher-rss` now reports both, labelled. Still reported rather than gated: a threshold set from a software-rendered number would be fiction. |
 | **Works with no Shell extension installed** | ✅ **met** | we ship none at all (ADR-0004), the VM has none, and `doctor` records `gnome.shell-extension` as evidence rather than gating on it. |
 
 **A correction to this section's own first draft.** It said the corpus was the
@@ -1862,6 +1884,195 @@ evaluated" hid:
   deviation was: one sample is not a budget, and a memory gate set from a single
   software-rendered run would be the deviation mistake again in a different
   costume. It goes in the log so the gate can be set from a distribution.
+
+### 11.3 Phases 2 and 3, evaluated
+
+§11.2 scored Phase 1 because the launcher finally existed to score. The same
+is now true one and two phases further on, and the answer is further along than
+§12's ordering implies: `compass-shell`, `compass-clipboard` and
+`compass-crypto` are built and tested, so these gates can be read against
+evidence rather than deferred.
+
+**Phase 2's gate**
+
+| Criterion | State | Evidence |
+|---|---|---|
+| IPC round-trip **p99 < 0.5 ms** | 🟢 **met** | **47.9 µs**, ~10× headroom, asserted by `crates/compass-ipc/tests/roundtrip_budget.rs` rather than printed. §8.5 records how the previous benchmark reported 11.9 ms by timing its own setup. |
+| `doctor` diffed against the C++ build | ⚪ **withdrawn, with reasons** | the C++ engine has no `doctor`. §6 sets out why the diff would mostly prove nothing even if built: nine of eleven checks probe the *environment*, which two processes on one machine agree about by construction. |
+| `doctor` reports each degradation with the extension uninstalled | 🟢 **met** | the VM has no extension, and `checks.sh doctor` plus `doctor-assert` run inside a real GNOME session every tier run. `gnome.shell-extension` is recorded as evidence rather than gated, which is the honest shape for a capability we deliberately do not ship (ADR-0004). |
+
+So **Phase 2's gate is met**, once the withdrawn criterion is read as §6 restates
+it: that `doctor`'s picture of the machine is accurate, tested non-differentially
+against reality.
+
+**Phase 3's gate**
+
+| Criterion | State | Evidence |
+|---|---|---|
+| mock-Shell-bus suite green | 🟢 **met** | `crates/compass-shell/tests/mock_bus.rs` — **21 tests**, plus 12 in `contract_introspection.rs` over the versioned interface XML, and 13 unit tests. |
+| clipboard DB readable and writable by **both engines interchangeably** | 🟡 **the crypto is cross-verified; the database file is not** | **An earlier revision of this row said no cross-engine test existed at all. That was wrong, and `src/lib/crypto/probe/main.cpp` says so in its own header.** The crypto half is genuinely interchangeable and checked per-PR: the probe speaks a request/response protocol and the driver uses it for **cross-decryption — C++ encrypts and Rust decrypts, then the reverse** — deliberately rather than byte-diffing, because the IV comes from `RAND_bytes` and two correct implementations differ on every call. `deriveKey` is deterministic and is diffed directly, and the tamper control asserts the specific `AuthFailed` rather than "it errored". On top of that the stored contract is pinned against the C++ source by `cpp_enum_values.rs` and `cpp_constants.rs`, and our own side has 76 tests. **A second correction, in the other direction: the structural layer is in better shape than the first two revisions of this row said.** Going to look turned up that `compass-clipboard`'s `MIGRATIONS` does not *copy* the C++ schema — it `include_str!`s the very files the C++ engine compiles in as Qt resources (`src/server/database/clipboard/migrations/001_init.sql` and `002_trigram_fts.sql`). There is one copy of the DDL, shared, so the tables, indexes, triggers and the FTS tokenizer cannot drift by construction. The `schema_migrations` contract is ported deliberately down to MD5 checksums — *"a port that wrote SHA-256 there would make every existing row unreadable to the other engine"*. The connection pragmas are now pinned too, by parsing `CLIPBOARD_PRAGMAS` out of `clipboard-db.cpp` and comparing in order, because `journal_mode` is a property of the *database* rather than the connection and `foreign_keys` decides whether one engine orphans rows the other would refuse to. **So crypto, DDL, stored enums, crypto constants and pragmas are each shared or pinned.** What is genuinely left is only the end-to-end artefact: a database file written by the C++ *binary* and opened by Rust. That is a smaller and much more specific thing than "the database file is not cross-verified", which is what this row said twice. |
+| extension-absent and version-mismatch paths both tested | 🟢 **met** | the capability probe treats a bus error as an absence rather than a failure (`probe_errors_are_an_absence`), and the versioned contract is introspected rather than assumed. |
+| a week of dogfooding by ≥2 people on Bluefin | 🔴 **not started** | needs people, not code. Nothing in CI can stand in for it, and it should not be quietly reinterpreted as something that can. |
+
+**And a dangling reference, which is the third of its kind — cited twice.**
+Phase 3's gate cites *"the mock-Shell-bus suite (§8.4a)"*, and
+`src/lib/crypto/probe/main.cpp` opens by citing §8.4a as well. **There is no
+§8.4a.** The suite
+exists and is green, so the gate is satisfiable — but its citation points
+nowhere, exactly as Suite 0's gate cited a `vicinae --engine=cpp --json query`
+that never existed (§8.1a) and Phase 2's cited a C++ `doctor` that never
+existed. Three gates written against an imagined artefact is a pattern worth
+naming: **a gate that cites something should be checked against the thing it
+cites, at the time it is written.**
+
+**What actually remains on the Linux path**, with the phases above scored:
+
+| | |
+|---|---|
+| Phase 1 | GNOME 51 — **blocked upstream**: Bluefin stable is 50.3 (§11.2) |
+| Phase 2 | met |
+| Phase 3 | one end-to-end artefact test (a DB written by the C++ *binary*, opened by Rust) — crypto, DDL, enums and pragmas are already shared or pinned; dogfooding |
+| Phase 4+ | `compass-extension-api` exists at 5.5k LOC and 73 tests; the Node host is the open half |
+
+### 11.4 Phases 4 to 10, evaluated
+
+Scored the same way, and the answer is short: **the Linux path is close to done
+through Phase 3, Phase 4 has a spine and not much breadth, and Phases 5 onwards
+are unstarted.** Saying so with numbers is more useful than a phase list that
+reads as uniformly in-progress.
+
+| Phase | Gate | State | Evidence |
+|---|---|---|---|
+| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**8,610 LOC, 170 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **44 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio rather than the UDS this phase names — see §11.4a and #101. |
+| **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🔴 **44%** | `PARITY.md` holds **70 ✅, 21 ❌, 67 🟡** over the 158 cells of the two columns that measure this port — `Rust ✓` and `parity test ✓`, across 87 rows — plus 16 marked n/a. Counted by `scripts/ci/parity-score.py`, which also prints the other two columns. **The earlier 37% was wrong, and wrong in our favour.** It was taken over all four checkbox columns, which meant counting `C++ ✓` — 87 rows, every one of them ✅, because that column says the C++ exists, not that anything was ported. Those 87 free greens were three quarters of the "120 ✅" the figure was built on. It also counted `C++ deleted ✓`, which by this ledger's own rule cannot go green before Phase 8. Restating over the two columns that are Phase 5 work puts the real figure at 70 of 158. Nothing regressed to cause the drop from 37% to 35%; the earlier number was measuring the wrong thing. Ported rows have since carried the corrected figure back up past it, which was a coincidence of arithmetic and not a return to the old method: the corrected figure is 70 of 158 over two columns, the old one was 120 of 331 over four. Of the 70, only 13 rows are green in `Rust ✓` — the rest are rows with a passing parity test over a model that has no view yet. (Earlier revisions said 115 of 331 and 96 of 340 on the same inflated basis.) This remains the single largest number in the project. It was described here as "a breadth problem rather than a hard one: most rows are individual builtins", and that has stopped being true — the builtins are ported. `scripts/ci/parity-score.py` now reports what the remainder *is*, by reading the `Still C++-only:` sentences the notes carry, and at the time of writing it is: **view 12, backend 7, process 2, storage 1, network 1**. Twelve of the nineteen named gaps are drawing, seven are DBus, MPRIS or compositor providers. The view figure has gone *up* as rows landed, which is not a regression: each newly written note names what its row still lacks, and what these rows lack is drawing. One of the changes since is a correction rather than movement: a `Still C++-only:` sentence in the shortcut row had been edited into saying the opposite of what it opened with, and was being counted as a storage gap that no longer existed. None of that is transcription, and most of it cannot be verified in a container — the VM tier is what answers for the drawing, and it runs on this PR rather than only nightly. The number to watch is no longer the percentage on its own but that breakdown beside it: a ledger at 44% whose remainder is typing and one whose remainder is compositor integration are not the same project. |
+| **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **one output of several** | the Flatpak builds, is installed and is smoke-tested on every run. Every other packaging workflow — AppImage, Linux tarball, macOS dmg, Windows — is `workflow_dispatch` only, by the deliberate decision to narrow CI to what ships on the first target. |
+| **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
+| **8 — Remove the Linux C++ engine** | — | ⚪ **not startable** | requires 7. Several tests are written to die with `src/` at this point and say so (`cpp_enum_values.rs`, `cpp_constants.rs`, the new pragma pin), which is the intended shape. |
+| **9 — macOS** | — | ⚪ **sequenced, not blocked** | ADR-0013 makes Linux-first a sequence rather than a scope limit. 102 `Q_OS_MAC` sites are inventoried in #78. |
+| **10 — Windows, Qt leaves** | — | ⚪ **sequenced** | #79. |
+
+**What this means for "the roadmap", stated plainly.** Phases 0–3 are the
+launcher and its foundations, and they are essentially done — the launcher
+opens on a real GNOME session, indexes the host's applications, ranks them at
+100% top-1 parity with the C++ scorer, accepts typing, hides and summons over
+IPC, and idles at 6.2 MB. Phases 4–10 are the *rest of the product*. Phase 4 now has a
+working spine — a worker can be spawned confined, a session runs, and a real
+Node process has driven a storage call through the host and read it back — but
+the phase is 45 of 49 API methods and none of its gate. The rest is 226 unported
+parity rows, packaging breadth, a cutover and two further platforms. §7's own schedule puts the whole
+sequence at roughly a year.
+
+#### 11.4b What Phase 4 still needs
+
+Ordered by what blocks what, not by size.
+
+| Piece | State |
+|---|---|
+| framing, manager protocol, tsapi envelope | done, pinned against the IDL and the generator |
+| worker lifecycle (spawn, request, read, shutdown) | done |
+| Landlock boundary + seccomp denylist + launcher | done; the cgroups v2 memory cap is not |
+| session routing (event → service → reply) | done |
+| `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
+| `Wallpaper/set`, `BrowserExtension` (both) | the adapters are done and pinned (`wallpaper_service`, `browser_service`) — 33 of 49. The wallpaper backends and the browser bridge are Phase 5/6 work |
+| `WindowManagement` (all seven) | the adapter is done and pinned (`compass-worker-host::window_service`), behind a `Windows` trait — 30 of 49. The compositor protocols behind it (`compass-wayland`, the GNOME provider) are Phase 3/6 work |
+| `Command` (all four) | the adapter is done and pinned (`compass-worker-host::command_service`), behind a `Commands` trait — 23 of 49. The registry walk, the navigation controller and the settings window behind it are Phase 4/5 work |
+| `Application` (all five) | the adapter is done and pinned (`compass-worker-host::application_service`), behind an `Apps` trait — 19 of 49. `compass-core::AppIndex` and `compass-xdg::mimeapps` already answer most of what the trait needs; wiring them together, launching, and the terminal are still ahead |
+| `Clipboard` (all four) | the adapter is done and pinned (`compass-worker-host::clipboard_service`), behind a `Clipboard` trait — 14 of 49. The Wayland backend behind it is Phase 3/5 work and does not exist yet |
+| `FileSearch/search` | the adapter is done and pinned (`compass-worker-host::file_search_service`), behind a `FileIndexer` trait — 10 of 49. The index it would query is Phase 6 and does not exist yet, so no real backend implements the trait |
+| reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
+| finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
+| `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
+| `UI/confirmAlert` | **not started**; it answers whenever the *user* does, and the host has no way to hold a reply open across a dialog |
+| `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
+| `OAuth/authorize` | **not started**; needs a browser and an overlay |
+| running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
+| Suite 1 (the gate) | **not started** |
+
+#### 11.4a Phase 4 specifies a wire protocol the worker does not speak
+
+Phase 4 says the host *"spawns `vicinae-worker-ts` per extension **over UDS with
+JSON-RPC 2.0**"*, and in the same breath that **`src/typescript/` is not
+rewritten** — the reconciler and the `@raycast/api` shim keep working. Those two
+sentences are in conflict, because the worker that is not to be rewritten speaks
+neither of those things.
+
+What `src/typescript/extension-manager/src/index.ts` actually does:
+
+```ts
+private async writePacket(message: Buffer) {
+  const packet = Buffer.allocUnsafe(message.length + 4);
+  packet.writeUint32BE(message.length, 0);      // 4-byte big-endian length
+  message.copy(packet, 4, 0);
+  process.stdout.write(packet);                  // ... over STDOUT
+}
+```
+
+and on the way in it reads a `UInt32BE` length, slices that many bytes, and hands
+them to `manager.Server`.
+
+So, measured against the running code rather than the design note:
+
+| Phase 4 says | the worker does |
+|---|---|
+| UDS | **stdio** — `process.stdout` / `process.stdin` |
+| JSON-RPC 2.0 | **JSON-RPC 2.0** — the plan is right, and an earlier revision of this section said otherwise |
+| — | framing is a **4-byte big-endian length prefix**, not `Content-Length` headers and not newline-delimited |
+
+**A correction, made in the same sitting that introduced the error.** This
+section first claimed the payload was "figura-generated RPC, not JSON-RPC 2.0",
+reasoning from `import * as manager from "./proto/manager"` and assuming a
+binary codec behind it. Reading figura's own code settles it the other way.
+`src/lib/figura/src/codegen/typescript.hpp` emits
+
+```ts
+jsonrpc: "2.0";
+this.sendMessage({ jsonrpc: '2.0', method, params });
+this.transport.send(JSON.stringify(msg));
+const msg = JSON.parse(data) as JsonRpcMessage;
+```
+
+and the glaze backend emits a matching `std::string jsonrpc` with
+`glz::raw_json params`. `index.ts` corroborates it from the other end: it does
+`packet.toString("utf8")` before routing, which no binary codec would want.
+
+**figura is an IDL that generates JSON-RPC 2.0 bindings**, not a wire format of
+its own. So the payload is JSON text and the plan's encoding was never wrong —
+only its transport.
+
+`figura/` is the project's own IDL: `manager.fig` and `manager-extension.fig`
+define this boundary in 120 lines, and `figura_compile` generates both sides.
+`manager.fig`'s own header describes the layering — the manager is *"unaware
+what the payload is made of"*, because the payload is a second RPC message from
+the `vicinae↔extension` spec (`tsapi.fig`, 357 lines).
+
+**With the encoding settled, what is left to decide is much smaller.** The host
+needs JSON-RPC 2.0 — which is off-the-shelf — inside a four-byte length prefix,
+over stdio rather than a socket. The `.fig` files define the method names and
+payload shapes, so the Rust types can be generated from them or hand-written and
+pinned to them, the way three other boundaries in this repository already are.
+
+The one real decision is the transport: **keep stdio**, which is what the worker
+does and what `src/typescript/` not being rewritten requires, or add UDS to the
+worker, which contradicts that constraint for no capability the host needs.
+Keeping stdio is the obvious answer; it is recorded here so that it is a
+decision rather than a default nobody noticed.
+
+Nothing here is hard. What makes it worth a section is *when* it is found: the
+phase is costed at 6–8 weeks, and the wire format is the first thing a host
+commits to. The transport error joins Suite 0's `vicinae --engine=cpp --json
+query`, Phase 2's C++ `doctor`, and §8.4a — four specs written against an
+artefact nobody checked.
+
+And this section's own first draft joins them, which is the more useful half of
+the lesson: **reading one layer and inferring the next is the same mistake as
+not reading at all.** `./proto/manager` was read; what it generated was assumed.
+The rule, stated for both: before building to a spec — this document's or an
+import's — read the thing it describes, all the way down to the bytes.
+
+So the remaining roadmap is not a list of oversights to be closed in a sitting.
+It is the bulk of the port, and the honest next move is Phase 4's first slice:
+`compass-worker-host`, built the way `compass-ipc` was — transport and framing
+first, with the protocol pinned by tests, before anything is spawned.
 
 ## 12. Immediate next steps
 
@@ -2083,8 +2294,13 @@ Ordered by what unblocks the most:
      ordering case from upstream issue #946. Neither can be closed without shipping our own fold
      table or reproducing fzf's bonus constants, so neither is a to-do — they are decisions.
 
-   What genuinely remains under this heading is the corpus itself: 8 harvested entries from one
-   host is a thin sample, and `scripts/harvest-desktop-corpus.sh` is how it grows.
+   ~~What genuinely remains under this heading is the corpus itself: 8 harvested entries from one
+   host is a thin sample.~~ **Stale, and it contradicted item 4 three paragraphs above.** The
+   harvested set is **738 real entries** against 19 synthetic, so the thin-sample concern this
+   sentence described was answered by the same harvests item 4 records. `scripts/harvest-desktop-corpus.sh`
+   remains how it grows, and one distribution's application set is still one sample — §8.1a's
+   divergence table is the standing reminder that a 115-entry corpus produced a generalisation the
+   738-entry one destroyed. But nothing under this heading is now outstanding.
 6. **Promote the VM tier to the merge queue** once it has been stable for a couple of weeks
    (ADR-0010). It has three consecutive green runs; that is not two weeks.
 

@@ -33,6 +33,19 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     "vicinae",
     // The test harness drives Linux surfaces on purpose.
     "compass-testkit",
+    // A freedesktop notification client is a Linux backend by definition:
+    // `org.freedesktop.Notifications` is the session-bus service macOS and
+    // Windows do not have, and the C++ has a separate client for each of the
+    // three. The seam for it belongs in `compass-platform` when a second
+    // platform needs one; until then this is the Linux half and nothing
+    // shared depends on it.
+    "compass-notify",
+    // Same story: logind is the Linux mechanism, and the C++ has a separate
+    // power manager for each platform.
+    "compass-power",
+    // MPRIS is a session-bus protocol; the C++ has a Windows media backend
+    // beside this one for the same reason.
+    "compass-media",
 ];
 
 /// Crates whose presence in a manifest makes that crate Linux-bound.

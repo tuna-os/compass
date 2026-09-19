@@ -2,6 +2,7 @@
 .kilo
 /build
 /build-*
+/.build
 .vscode
 CMakeUserPresets.json
 .tmp
@@ -57,3 +58,8 @@ BACKUP/
 /build-flatpak
 /.flatpak-builder
 __pycache__/
+
+# Control-harness backups. The mutation harnesses copy a module to <name>.bak
+# before editing it and restore from that copy afterwards; nineteen of them
+# reached a review branch via `git add -A` before this rule existed.
+*.bak

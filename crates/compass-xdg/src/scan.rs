@@ -157,6 +157,29 @@ fn collect(root: &Path, dir: &Path, depth: usize, scan: &mut DesktopScan) {
 /// Computes the desktop file ID of `path` relative to the applications directory `root`.
 ///
 /// Returns `None` for a path outside `root` or one containing a non-Unicode component.
+///
+/// # Which separator, and why this one
+///
+/// The XDG specification says a desktop file ID joins nested components with
+/// `-`. The C++ joins them with `.`
+/// ([`crate::desktop_file::relative_id_dotted`]), and **this follows the C++**.
+///
+/// The id is not a display string, it is a key: `xdg-app-database.cpp` stores
+/// an application's frecency score, alias, and enabled state under it. The two
+/// engines disagreeing means neither finds the other's records for any nested
+/// application, which is where distribution-packaged KDE and GNOME
+/// applications live.
+///
+/// So the question is which engine changes, and the answer is the one with no
+/// users: the C++ has shipped and written these keys on real machines, and the
+/// Rust engine has no tagged release. Matching the specification here would
+/// orphan existing records to fix a divergence nobody can observe — the
+/// separator is never shown, and the ambiguity it creates (`kde4.konsole.desktop`
+/// could be a nested `konsole` or a flat file of that name) needs a file
+/// deliberately named to collide.
+///
+/// Inherited rather than endorsed. If the ids are ever migrated, this is the
+/// line to change and [`crate::desktop_file`] holds both spellings.
 #[must_use]
 pub fn desktop_file_id(root: &Path, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
@@ -164,7 +187,7 @@ pub fn desktop_file_id(root: &Path, path: &Path) -> Option<String> {
     for component in relative.components() {
         let part = component.as_os_str().to_str()?;
         if !id.is_empty() {
-            id.push('-');
+            id.push('.');
         }
         id.push_str(part);
     }

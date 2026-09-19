@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Compass launcher — design surrogate</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <strong>Compass launcher</strong>
+  <span class="note">design surrogate — not the Iced renderer</span>
+  <label>appearance
+    <select id="appearance"><option value="light">light</option><option value="dark">dark</option></select>
+  </label>
+  <label>state <select id="state"></select></label>
+  <label><input type="checkbox" id="wallpaper" checked> desktop behind</label>
+</header>
+<p id="description" class="description"></p>
+<div id="screen" class="screen"><div id="card" class="card"></div></div>
+<script src="app.js"></script>
+</body>
+</html>

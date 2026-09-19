@@ -55,6 +55,35 @@ on:
       - crates/compass-ui/**
       - crates/compass-ipc/**
 
+# `cancel-in-progress: true` is this repository's convention for per-ref
+# workflows and it is right for the fast ones: a superseded build is wasted
+# work. THIS TIER IS DIFFERENT AND THE DIFFERENCE HAS BEEN MEASURED.
+#
+# It takes upwards of twenty minutes to reach the job that matters -- queue for
+# a KVM-capable runner, build the Flatpak, boot three VMs -- and the launcher
+# job is last. So any push inside that window kills it before it has said
+# anything. On 2026-09-18 runs 186 through 190 were all cancelled that way
+# while a branch was under active development; run 188 got as far as booting
+# Bluefin and its "The launcher opens in a real GNOME session" job never
+# started at all.
+#
+# The effect is backwards: the tier stops running exactly when the branch is
+# being worked on, which is when it would find something. A tier that only
+# completes on a quiet branch is a nightly tier with extra steps.
+#
+# NOT CHANGED HERE, because the fix is not free and the choice is not obvious:
+#
+#   cancel-in-progress: false  lets each push queue another twenty-minute
+#                              three-VM run. On a busy branch that is a real
+#                              bill, and the runs behind the newest one answer
+#                              for commits nobody will look at again.
+#   a longer debounce          would need a scheduler this does not have.
+#   leave it                   and accept that the tier answers for whatever
+#                              was pushed last before a pause.
+#
+# The third is what happens today, and it works if whoever is pushing knows to
+# stop and let it finish. That is the part that was not written down, so it is
+# written down now.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

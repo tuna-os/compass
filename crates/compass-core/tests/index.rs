@@ -32,8 +32,12 @@ fn nested_entries_are_indexed_with_a_flattened_id() {
     let index = builder().dir(dir.path()).build();
 
     assert_eq!(index.len(), 1);
-    assert_eq!(index.items()[0].desktop_id(), "kde4-konsole.desktop");
-    assert!(index.get("kde4-konsole.desktop").is_some());
+    // A dot, matching the C++'s `DesktopFile::relativeId`, and not the XDG
+    // specification's dash. The id is the key frecency, aliases and
+    // enable/disable state are stored under, and the C++ has written those
+    // keys on real machines — see `compass_xdg::scan::desktop_file_id`.
+    assert_eq!(index.items()[0].desktop_id(), "kde4.konsole.desktop");
+    assert!(index.get("kde4.konsole.desktop").is_some());
 }
 
 /// The bug this whole ordering exists to prevent: a user override must replace the system entry,

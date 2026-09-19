@@ -8,8 +8,8 @@
 //! by ordinary unit tests, and only the drawing needs a compositor.
 
 use iced::{
-    Element, Length, Task, Theme,
-    widget::{Space, column, container, row, text, text_input},
+    Alignment, Border, Color, Element, Length, Padding, Task, Theme,
+    widget::{Space, column, container, row, stack, text, text_input},
     window,
 };
 
@@ -19,6 +19,8 @@ use compass_core::{AppIndex, AppItem};
 use compass_platform::{AppLauncher, NullLauncher};
 use compass_search::rank_indices;
 
+use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
+use crate::design::{self, Appearance, GEOMETRY};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
@@ -78,6 +80,10 @@ pub struct AppFlags {
     /// is on Linux. `vicinae` supplies `compass-platform-linux`'s launcher;
     /// tests supply their own. See ADR-0013.
     pub launcher: Arc<dyn AppLauncher>,
+    /// The navigation chord scheme, from `launcher.keybinding`.
+    pub keybinding: compass_core::keybinding::Scheme,
+    /// Whether the selection wraps, from `launcher.wrap_navigation`.
+    pub wrap_navigation: bool,
     /// The engine driving this window, when there is one.
     ///
     /// `None` is the standalone case -- `vicinae ui` run by hand with no daemon
@@ -90,13 +96,18 @@ impl Default for AppFlags {
     fn default() -> Self {
         Self {
             window_config: window::Settings {
-                size: iced::Size::new(640.0, 480.0),
+                size: iced::Size::new(
+                    f32::from(GEOMETRY.card_width),
+                    f32::from(GEOMETRY.card_max_height),
+                ),
                 position: window::Position::Centered,
                 resizable: false,
                 decorations: false,
                 transparent: true,
                 ..Default::default()
             },
+            keybinding: compass_core::keybinding::Scheme::default(),
+            wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
@@ -105,6 +116,75 @@ impl Default for AppFlags {
             link: None,
         }
     }
+}
+
+/// The action panel's own state while it is open.
+///
+/// Its selection is an `isize` because -1 means "nothing selectable", which is
+/// a real state for a panel filtered down to nothing and is not the same as
+/// row 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelState {
+    /// The sections, as the command supplied them.
+    pub sections: Vec<PanelSection>,
+    /// What has been typed into the panel's own filter.
+    pub filter: String,
+    /// The flattened rows under that filter.
+    pub rows: Vec<Row>,
+    /// The selected row, or -1.
+    pub selected: isize,
+}
+
+impl PanelState {
+    /// Open a panel over `sections`, selecting its first action.
+    #[must_use]
+    pub fn new(sections: Vec<PanelSection>) -> Self {
+        let rows = action_panel::flatten(&sections, "");
+        let selected = action_panel::selection_after_filter(&rows);
+        Self {
+            sections,
+            filter: String::new(),
+            rows,
+            selected,
+        }
+    }
+
+    /// Re-filter, and put the selection back on the first row of what is left.
+    pub fn set_filter(&mut self, filter: String) {
+        self.filter = filter;
+        self.rows = action_panel::flatten(&self.sections, &self.filter);
+        self.selected = action_panel::selection_after_filter(&self.rows);
+    }
+
+    /// The action the selection is on, if any.
+    #[must_use]
+    pub fn selected_action(&self) -> Option<&Action> {
+        let row = self.rows.get(usize::try_from(self.selected).ok()?)?;
+        self.sections.get(row.section)?.actions.get(row.action?)
+    }
+}
+
+/// The actions offered for an application.
+///
+/// Launching is first because it is what the return key does, and the panel's
+/// first row is the one the return key runs -- so the panel opening does not
+/// change what enter means.
+#[must_use]
+pub fn actions_for_app(item: &AppItem) -> Vec<PanelSection> {
+    let mut copy = vec![Action::new("Copy name")];
+    if item.path().is_some() {
+        copy.push(Action::new("Copy path"));
+    }
+    vec![
+        PanelSection {
+            name: String::new(),
+            actions: vec![Action::new("Open").with_shortcut("enter")],
+        },
+        PanelSection {
+            name: "Copy".to_owned(),
+            actions: copy,
+        },
+    ]
 }
 
 /// The launcher application state.
@@ -133,6 +213,23 @@ pub struct LauncherApp {
     window: Option<window::Id>,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
+    /// Which palette to draw with. See [`LauncherApp::theme`].
+    appearance: Appearance,
+    /// Whether the selection wraps at the ends. See
+    /// [`compass_core::list_navigation`].
+    wrap_navigation: bool,
+    /// Which navigation chords are in force. See [`compass_core::keybinding`].
+    ///
+    /// Held rather than read per keystroke because it comes from the user's
+    /// configuration, which is read once.
+    keybinding: compass_core::keybinding::Scheme,
+    /// The action panel, when it is open.
+    ///
+    /// `None` is closed. Holding the whole state rather than a bare flag is
+    /// what lets the panel keep its own filter and selection while the list
+    /// underneath keeps its own -- they are two lists on screen at once, and
+    /// sharing either would make one of them jump when the other moved.
+    panel: Option<PanelState>,
     /// Whether the engine is waiting for an outcome right now.
     ///
     /// # Every report must answer a command, or the stream goes out of step
@@ -162,19 +259,69 @@ pub enum Dismissal {
 
 /// Where the selection lands after moving one row in `direction`.
 ///
-/// Wraps at both ends, which is what every launcher does and what makes the
-/// first Up press useful. Returns 0 for an empty list so callers never index
-/// into nothing.
+/// `wrap` is `launcher.wrap_navigation`, which is **false** by default -- the
+/// C++ `Config::wrapNavigation` is, and the selection clamps at the first and
+/// last row. An earlier version of this function wrapped unconditionally, with
+/// a comment saying that is "what every launcher does"; the launcher being
+/// ported does not.
+///
+/// Returns 0 for an empty list so callers never index into nothing.
 #[must_use]
-pub fn next_selection(len: usize, current: usize, direction: Direction) -> usize {
+pub fn next_selection(len: usize, current: usize, direction: Direction, wrap: bool) -> usize {
+    use compass_core::list_navigation::{Step, next};
+
     if len == 0 {
         return 0;
     }
+    // Clamp the incoming index first: the list may have shrunk since it was
+    // set, and `next` would otherwise step from somewhere that is not there.
+    let current = current.min(len - 1);
     match direction {
-        Direction::Down => (current + 1) % len,
-        // `current` can exceed `len` only if the list shrank without the
-        // selection being reset; saturating keeps that from underflowing.
-        Direction::Up => current.checked_sub(1).unwrap_or(len - 1).min(len - 1),
+        Direction::Down => next(current, Step::Forward, len, wrap),
+        Direction::Up => next(current, Step::Backward, len, wrap),
+    }
+}
+
+/// The direction an iced key press moves the selection, under `scheme`.
+///
+/// Returns `None` for `Left` and `Right` as well as for a key that is not a
+/// chord: the results list is one column, so `Ctrl+H` and `Ctrl+L` have
+/// nowhere to go here. They are recognised by `compass-core` and dropped here
+/// deliberately, rather than being quietly bound to something they do not
+/// mean.
+fn chord_direction(
+    scheme: compass_core::keybinding::Scheme,
+    key: iced::keyboard::Key<&str>,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Direction> {
+    use compass_core::keybinding::{Chord, Modifiers as CoreModifiers, navigation};
+
+    let iced::keyboard::Key::Character(text) = key else {
+        return None;
+    };
+    let mut chars = text.chars();
+    let (character, None) = (chars.next()?, chars.next()) else {
+        return None;
+    };
+
+    let chord = Chord::new(
+        character,
+        CoreModifiers {
+            // iced reports the physical Control key as `control` on every
+            // platform, which is what these chords want.
+            ctrl: modifiers.control(),
+            alt: modifiers.alt(),
+            shift: modifiers.shift(),
+            logo: modifiers.logo(),
+        },
+    );
+
+    match navigation(scheme, chord)? {
+        compass_core::keybinding::Direction::Up => Some(Direction::Up),
+        compass_core::keybinding::Direction::Down => Some(Direction::Down),
+        compass_core::keybinding::Direction::Left | compass_core::keybinding::Direction::Right => {
+            None
+        }
     }
 }
 
@@ -184,6 +331,8 @@ impl LauncherApp {
         let mut app = Self::with_index(AppIndex::from_environment());
         app.launcher = flags.launcher;
         app.window_config = flags.window_config;
+        app.keybinding = flags.keybinding;
+        app.wrap_navigation = flags.wrap_navigation;
         app.link = flags.link;
         (app, Task::none())
     }
@@ -210,11 +359,15 @@ impl LauncherApp {
             query: String::new(),
             results: Vec::new(),
             selected: 0,
+            panel: None,
             error: None,
             launcher: Arc::new(NullLauncher),
             link: None,
             window: None,
             window_config: AppFlags::default().window_config,
+            appearance: Appearance::Dark,
+            keybinding: compass_core::keybinding::Scheme::default(),
+            wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             awaiting: false,
         }
     }
@@ -326,8 +479,18 @@ impl LauncherApp {
     }
 
     /// The application theme.
+    ///
+    /// Adwaita's palette rather than one of Iced's built-ins, so the launcher
+    /// looks like the desktop it sits on. [`crate::design`] holds the colours
+    /// and the browser surrogate under `tools/design/` is served the same
+    /// ones, which is what keeps the two renderings honest about each other.
+    ///
+    /// The appearance is fixed for now. Following the desktop's light/dark
+    /// preference needs the `org.freedesktop.appearance` setting read and
+    /// watched; `design::ColorScheme` already has the mapping and its tests,
+    /// and the plumbing is the next piece rather than this one.
     pub fn theme(&self) -> Theme {
-        Theme::CatppuccinMocha
+        design::theme(self.appearance)
     }
 
     /// Every keyboard event, consumed by a widget or not.
@@ -417,7 +580,12 @@ impl LauncherApp {
                 Task::none()
             }
             Message::MoveSelection(direction) => {
-                self.selected = next_selection(self.results.len(), self.selected, direction);
+                self.selected = next_selection(
+                    self.results.len(),
+                    self.selected,
+                    direction,
+                    self.wrap_navigation,
+                );
                 Task::none()
             }
             Message::LaunchSelected => {
@@ -475,20 +643,117 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::TogglePanel => {
+                if self.panel.is_some() {
+                    self.panel = None;
+                } else if let Some(item) = self.selected_item() {
+                    // Only over a selected row. A panel of actions for nothing
+                    // would be a panel whose every action fails.
+                    self.panel = Some(PanelState::new(actions_for_app(item)));
+                }
+                Task::none()
+            }
+            Message::PanelFilterChanged(filter) => {
+                if let Some(panel) = self.panel.as_mut() {
+                    panel.set_filter(filter);
+                }
+                Task::none()
+            }
+            Message::PanelMove(direction) => {
+                if let Some(panel) = self.panel.as_mut() {
+                    let step = match direction {
+                        Direction::Up => Step::Up,
+                        Direction::Down => Step::Down,
+                    };
+                    panel.selected = action_panel::next_selectable(
+                        &panel.rows,
+                        panel.selected,
+                        step,
+                        self.wrap_navigation,
+                    );
+                }
+                Task::none()
+            }
+            Message::PanelActivate => {
+                let Some(panel) = self.panel.as_ref() else {
+                    return Task::none();
+                };
+                let Some(action) = panel.selected_action() else {
+                    return Task::none();
+                };
+                // Only `Open` does anything yet; the copies need a clipboard
+                // this crate does not have. Closing the panel either way is
+                // deliberate -- an action that ran and one that is not wired up
+                // both leave the panel with nothing more to say, and leaving it
+                // open would look like the key had not registered.
+                let launches = action.title == "Open";
+                self.panel = None;
+                if launches {
+                    return self.update(Message::LaunchSelected);
+                }
+                Task::none()
+            }
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
             Message::EventOccurred(_) => Task::none(),
-            Message::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
+            Message::Keyboard(iced::keyboard::Event::KeyPressed {
+                ref key, modifiers, ..
+            }) => {
                 use iced::keyboard::{Key, key::Named};
+
+                // Ctrl+B opens and closes the panel, over the list either way.
+                //
+                // Ctrl+B and not Ctrl+K, which is what the C++ binds on macOS
+                // only: on Linux Ctrl+K is the vim chord for "move up", and
+                // taking it here would have broken navigation for every user
+                // of the default scheme. `keybind-manager.cpp` has the same
+                // `#ifdef`, for the same reason.
+                if modifiers.control() && key.as_ref() == Key::Character("b") {
+                    return self.update(Message::TogglePanel);
+                }
+
+                // While the panel is open it takes the keys the list would
+                // otherwise take. Escape closes the panel rather than the
+                // launcher, because a panel opened by mistake should cost one
+                // key and not the whole window.
+                if self.panel.is_some() {
+                    match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => {
+                            return self.update(Message::PanelMove(Direction::Down));
+                        }
+                        Key::Named(Named::ArrowUp) => {
+                            return self.update(Message::PanelMove(Direction::Up));
+                        }
+                        Key::Named(Named::Enter) => return self.update(Message::PanelActivate),
+                        Key::Named(Named::Escape) => {
+                            self.panel = None;
+                            return Task::none();
+                        }
+                        _ => {}
+                    }
+                    return match chord_direction(self.keybinding, key.as_ref(), modifiers) {
+                        Some(direction) => self.update(Message::PanelMove(direction)),
+                        None => Task::none(),
+                    };
+                }
+
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
-                        self.update(Message::MoveSelection(Direction::Down))
+                        return self.update(Message::MoveSelection(Direction::Down));
                     }
                     Key::Named(Named::ArrowUp) => {
-                        self.update(Message::MoveSelection(Direction::Up))
+                        return self.update(Message::MoveSelection(Direction::Up));
                     }
-                    Key::Named(Named::Escape) => self.update(Message::Dismiss),
-                    _ => Task::none(),
+                    Key::Named(Named::Escape) => return self.update(Message::Dismiss),
+                    _ => {}
+                }
+
+                // A chord, if this one is. The scheme decides; `compass-core`
+                // owns which chords each scheme has, so this front end does
+                // not have a second opinion about it.
+                match chord_direction(self.keybinding, key.as_ref(), modifiers) {
+                    Some(direction) => self.update(Message::MoveSelection(direction)),
+                    None => Task::none(),
                 }
             }
             Message::Keyboard(_) => Task::none(),
@@ -496,52 +761,322 @@ impl LauncherApp {
     }
 
     /// View the application.
+    ///
+    /// A card: a search field over a list of rows, each row an icon, a title
+    /// and a subtitle, with the selection drawn as a filled rounded rectangle
+    /// rather than a caret.
+    ///
+    /// **The caret is gone and that is deliberate.** It was there because a
+    /// comment said "under llvmpipe at 1280x800 a background tint is not
+    /// identifiable in a captured frame". `framediff.py` compares raw RGB
+    /// bytes for exact inequality, with no threshold, so a tinted row of
+    /// roughly 600x30 is about 18,000 changed pixels -- some seven times the
+    /// 2,697 the action-panel assertion already detects reliably. A highlight
+    /// is *easier* for the tier to see than a caret, not harder.
     pub fn view(&self) -> Element<'_, Message> {
-        let input = text_input("Search...", &self.query)
+        let palette = design::palette(self.appearance);
+
+        let input = text_input("Search…", &self.query)
             .id(SEARCH_INPUT)
             .on_input(Message::QueryChanged)
-            .padding(12)
-            .size(24)
+            .padding(Padding::new(0.0).left(14).right(14))
+            .size(f32::from(GEOMETRY.query_size))
             .on_submit(Message::LaunchSelected);
 
-        let results_content: Element<Message> = if let Some(err) = &self.error {
-            text(format!("could not launch: {err}")).size(16).into()
+        let field = container(input)
+            .height(Length::Fixed(f32::from(GEOMETRY.field_height)))
+            .width(Length::Fill)
+            .align_y(Alignment::Center)
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.field.to_iced().into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: f32::from(GEOMETRY.field_radius).into(),
+                },
+                ..container::Style::default()
+            });
+
+        let body: Element<Message> = if let Some(err) = &self.error {
+            self.notice(&format!("could not launch: {err}"))
         } else if self.query.is_empty() {
-            text("Type to search...").size(16).into()
+            self.notice("Type to search")
         } else if self.results.is_empty() {
-            text("No results").size(16).into()
+            self.notice("No results")
         } else {
-            let mut col = column![].spacing(4);
+            let mut list = column![].spacing(f32::from(GEOMETRY.row_spacing));
             for (position, index) in self.results.iter().enumerate() {
                 let Some(item) = self.app_index.items().get(*index) else {
                     continue;
                 };
-                // A caret rather than a colour: the selected row has to be
-                // identifiable in a screenshot the VM tier captures, and under
-                // llvmpipe at 1280x800 a background tint is not.
-                let marker = if position == self.selected {
-                    "> "
-                } else {
-                    "  "
-                };
-                col = col.push(row![text(marker).size(16), text(item.name()).size(16)]);
+                list = list.push(self.result_row(item, position == self.selected));
             }
-            container(col).width(Length::Fill).padding(20).into()
+            container(list).padding(Padding::new(6.0).top(8)).into()
         };
 
-        let content = column![
-            Space::new(),
-            container(input).width(Length::Fill).padding(20),
-            Space::new(),
-            results_content,
-            Space::new(),
-        ]
-        .align_x(iced::Alignment::Center);
+        let card_content = column![field, body].width(Length::Fill);
 
-        container(content)
+        // The panel floats over the list rather than replacing it. The old
+        // comment said an overlay "needs a stacking widget and a backdrop" --
+        // `stack!` is that widget, and the backdrop turned out to be
+        // unnecessary because the panel is opaque and bounded.
+        let card_body: Element<Message> = match &self.panel {
+            Some(panel) => stack![
+                card_content,
+                container(self.view_panel(panel))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::End)
+                    .padding(8)
+            ]
+            .into(),
+            None => card_content.into(),
+        };
+
+        container(
+            container(card_body)
+                .width(Length::Fixed(f32::from(GEOMETRY.card_width)))
+                .padding(GEOMETRY.card_padding)
+                .style(move |_: &Theme| container::Style {
+                    background: Some(palette.surface.to_iced().into()),
+                    border: Border {
+                        color: palette.border.to_iced(),
+                        width: 1.0,
+                        radius: f32::from(GEOMETRY.card_radius).into(),
+                    },
+                    ..container::Style::default()
+                }),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Alignment::Center)
+        .into()
+    }
+
+    /// A line of explanation where the list would be.
+    fn notice(&self, message: &str) -> Element<'_, Message> {
+        let palette = design::palette(self.appearance);
+        container(
+            text(message.to_owned())
+                .size(f32::from(GEOMETRY.title_size))
+                .color(palette.muted.to_iced()),
+        )
+        .width(Length::Fill)
+        .padding(28)
+        .align_x(Alignment::Center)
+        .into()
+    }
+
+    /// One result: icon, title, subtitle.
+    ///
+    /// The icon is the first letter in a tinted square. `AppItem` has an icon
+    /// *name*, and resolving it through the XDG icon theme is its own piece of
+    /// work; a letter at the right size keeps the row's proportions honest
+    /// until then, and is what the design surrogate draws for the same reason.
+    fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
+        let palette = design::palette(self.appearance);
+        let title_color = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        };
+        let subtitle_color = if selected {
+            palette.selection_text
+        } else {
+            palette.muted
+        };
+
+        let initial = item
+            .name()
+            .chars()
+            .next()
+            .map_or_else(String::new, |c| c.to_uppercase().to_string());
+
+        let icon = container(
+            text(initial)
+                .size(f32::from(GEOMETRY.icon_size) / 2.0)
+                .color(title_color.to_iced()),
+        )
+        .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+        .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(move |_: &Theme| container::Style {
+            background: Some(
+                Color {
+                    a: 0.18,
+                    ..palette.accent.to_iced()
+                }
+                .into(),
+            ),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        });
+
+        let mut labels = column![
+            text(item.name().to_owned())
+                .size(f32::from(GEOMETRY.title_size))
+                .color(title_color.to_iced())
+        ];
+        if let Some(comment) = item.comment() {
+            labels = labels.push(
+                text(comment.to_owned())
+                    .size(f32::from(GEOMETRY.subtitle_size))
+                    .color(subtitle_color.to_iced()),
+            );
+        }
+
+        container(
+            row![icon, labels]
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .padding(Padding::new(0.0).left(12).right(12)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(f32::from(GEOMETRY.row_height)))
+        .style(move |_: &Theme| {
+            if selected {
+                container::Style {
+                    background: Some(palette.selection.to_iced().into()),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: f32::from(GEOMETRY.row_radius).into(),
+                    },
+                    ..container::Style::default()
+                }
+            } else {
+                container::Style::default()
+            }
+        })
+        .into()
+    }
+
+    /// Draw the action panel.
+    ///
+    /// A floating card at the bottom right, the way Raycast's sits. Headers
+    /// and dividers are drawn as themselves rather than as indented text, and
+    /// the selection is the same filled rectangle the result list uses.
+    fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
+        let palette = design::palette(self.appearance);
+        let mut col = column![].spacing(f32::from(GEOMETRY.row_spacing));
+
+        for (index, panel_row) in panel.rows.iter().enumerate() {
+            let element: Element<Message> = match panel_row.kind {
+                RowKind::Divider => container(Space::new().height(Length::Fixed(1.0)))
+                    .width(Length::Fill)
+                    .padding(Padding::new(0.0).top(5).bottom(5).left(8).right(8))
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(palette.border.to_iced().into()),
+                        ..container::Style::default()
+                    })
+                    .into(),
+                RowKind::Header => {
+                    let name = panel
+                        .sections
+                        .get(panel_row.section)
+                        .map_or("", |section| section.name.as_str());
+                    container(
+                        text(name.to_uppercase())
+                            .size(f32::from(GEOMETRY.heading_size))
+                            .color(palette.muted.to_iced()),
+                    )
+                    .padding(Padding::new(0.0).top(8).bottom(4).left(10))
+                    .into()
+                }
+                RowKind::Item => {
+                    let action = panel_row.action.and_then(|position| {
+                        panel.sections.get(panel_row.section)?.actions.get(position)
+                    });
+                    let title = action.map_or("", |action| action.title.as_str());
+                    let shortcut = action.and_then(|action| action.shortcut.clone());
+                    let selected = isize::try_from(index).unwrap_or(isize::MAX) == panel.selected;
+                    self.panel_item(title, shortcut.as_deref(), selected)
+                }
+            };
+            col = col.push(element);
+        }
+
+        if panel.rows.is_empty() {
+            col = col.push(self.notice("No actions"));
+        }
+
+        container(col)
+            .width(Length::Fixed(300.0))
+            .padding(6)
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.surface.to_iced().into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// One action row, with its shortcut right-aligned.
+    fn panel_item(
+        &self,
+        title: &str,
+        shortcut: Option<&str>,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let palette = design::palette(self.appearance);
+        let colour = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        };
+
+        let mut line = row![
+            text(title.to_owned())
+                .size(f32::from(GEOMETRY.title_size))
+                .color(colour.to_iced())
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
+        if let Some(shortcut) = shortcut {
+            line = line.push(Space::new().width(Length::Fill));
+            line = line.push(
+                text(shortcut.to_owned())
+                    .size(f32::from(GEOMETRY.subtitle_size))
+                    .color(
+                        if selected {
+                            palette.selection_text
+                        } else {
+                            palette.muted
+                        }
+                        .to_iced(),
+                    ),
+            );
+        }
+
+        container(line.padding(Padding::new(0.0).left(10).right(10)))
             .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(20)
+            .height(Length::Fixed(34.0))
+            .style(move |_: &Theme| {
+                if selected {
+                    container::Style {
+                        background: Some(palette.selection.to_iced().into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 8.0.into(),
+                        },
+                        ..container::Style::default()
+                    }
+                } else {
+                    container::Style::default()
+                }
+            })
             .into()
     }
 
@@ -591,27 +1126,34 @@ mod tests {
     }
 
     #[test]
-    fn selection_wraps_at_both_ends() {
-        // The first Up press is the one people actually use — it should land on
-        // the last row, not sit at the top doing nothing.
-        assert_eq!(next_selection(3, 0, Direction::Up), 2);
-        assert_eq!(next_selection(3, 2, Direction::Down), 0);
-        assert_eq!(next_selection(3, 0, Direction::Down), 1);
-        assert_eq!(next_selection(3, 2, Direction::Up), 1);
+    fn the_selection_clamps_by_default_because_the_cpp_does() {
+        // This used to assert the opposite. `Config::wrapNavigation` is
+        // `false` in the engine being ported, so Up at the top stays at the
+        // top -- and `compass_core::list_navigation` holds the rule.
+        assert_eq!(next_selection(3, 0, Direction::Up, false), 0);
+        assert_eq!(next_selection(3, 2, Direction::Down, false), 2);
+        assert_eq!(next_selection(3, 0, Direction::Down, false), 1);
+        assert_eq!(next_selection(3, 2, Direction::Up, false), 1);
+    }
+
+    #[test]
+    fn the_selection_wraps_when_the_setting_asks_for_it() {
+        assert_eq!(next_selection(3, 0, Direction::Up, true), 2);
+        assert_eq!(next_selection(3, 2, Direction::Down, true), 0);
     }
 
     #[test]
     fn selection_on_an_empty_list_is_not_an_index_into_nothing() {
-        assert_eq!(next_selection(0, 0, Direction::Up), 0);
-        assert_eq!(next_selection(0, 0, Direction::Down), 0);
+        assert_eq!(next_selection(0, 0, Direction::Up, false), 0);
+        assert_eq!(next_selection(0, 0, Direction::Down, true), 0);
     }
 
     #[test]
     fn a_selection_left_past_the_end_is_clamped_rather_than_underflowing() {
         // Reachable if a list shrinks without the selection being reset. The
         // arithmetic here is unsigned, so getting this wrong is a panic.
-        assert_eq!(next_selection(2, 9, Direction::Up), 1);
-        assert_eq!(next_selection(1, 5, Direction::Down), 0);
+        assert_eq!(next_selection(2, 9, Direction::Up, false), 0);
+        assert_eq!(next_selection(1, 5, Direction::Down, false), 0);
     }
 
     #[test]
@@ -685,6 +1227,237 @@ mod tests {
             text: None,
             repeat: false,
         })
+    }
+
+    /// A `KeyPressed` for a character key with modifiers.
+    fn chord(character: &str, modifiers: iced::keyboard::Modifiers) -> Message {
+        Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Character(character.into()),
+            modified_key: iced::keyboard::Key::Character(character.into()),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    /// An app over the fixture corpus with several matching rows.
+    fn app_with_rows(dir: &std::path::Path) -> LauncherApp {
+        let mut app = app(dir);
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        assert!(app.results.len() > 1, "need several rows to move between");
+        app
+    }
+
+    #[test]
+    fn the_action_panel_is_not_bound_to_the_vim_chord() {
+        // Ctrl+K is "move up" in the default Linux scheme. The C++ binds the
+        // panel to Ctrl+K on macOS only and Ctrl+B everywhere else, and this
+        // is why -- taking Ctrl+K here would break navigation for every user
+        // who has configured nothing.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "precondition: Ctrl+J moved down");
+
+        let _ = app.update(chord("k", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none(), "Ctrl+K must not open the panel");
+        assert_eq!(app.selected, 0, "Ctrl+K still moves up");
+    }
+
+    #[test]
+    fn ctrl_b_opens_and_closes_the_panel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_some(), "Ctrl+B opened it");
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none(), "and Ctrl+B closed it again");
+    }
+
+    #[test]
+    fn the_panel_does_not_open_over_nothing() {
+        // A panel of actions for no selected row is a panel whose every action
+        // fails.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("zzzzzzzz".to_owned()));
+        assert!(
+            app.selected_item().is_none(),
+            "precondition: nothing selected"
+        );
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn the_panel_takes_the_arrow_keys_while_it_is_open() {
+        // Otherwise the list underneath moves out from under a panel whose
+        // actions are for the row that was selected when it opened.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let before = app.selected;
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(app.selected, before, "the list did not move");
+        // Row 1 is the divider and row 2 the heading, so the next selectable
+        // row is 3. Expecting 1 would have been expecting the selection to
+        // land on a divider.
+        assert_eq!(
+            app.panel.as_ref().map(|panel| panel.selected),
+            Some(3),
+            "the panel did"
+        );
+    }
+
+    #[test]
+    fn typing_the_panels_letter_without_ctrl_does_not_open_it() {
+        // The search field takes ordinary characters, and a launcher whose
+        // search box opens a panel when someone types `b` is unusable.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::default()));
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn escape_closes_the_panel_rather_than_the_launcher() {
+        // A panel opened by mistake should cost one key, not the whole window.
+        // The window has to be open for this to mean anything -- with no
+        // window, "the window did not close" is true however Escape is routed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::Opened(window::Id::unique()));
+        assert!(app.window.is_some(), "precondition: a window is open");
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.panel.is_none(), "the panel closed");
+        assert!(app.window.is_some(), "and the window did not");
+
+        // HALF OF THIS IS NOT CONTROL-BACKED, and it is worth saying which.
+        //
+        // "The panel closed" fires under a mutation. "The window did not"
+        // does not: `conceal` closes the window through a Task and clears
+        // `self.window` only when `Message::Closed` comes back, and with no
+        // engine link `on_dismiss` returns `Exit`, so a mutation that made
+        // Escape dismiss as well as close the panel changes nothing this test
+        // can see. Proving it would need an app built around a live
+        // `EngineLink`, which is a harness this crate does not have yet.
+        //
+        // Recorded rather than left looking covered.
+    }
+
+    #[test]
+    fn the_panel_stops_intercepting_once_it_is_closed() {
+        // The follow-on from the test above: with the panel gone, Escape is
+        // the launcher's again. What it *does* then is `conceal`, which closes
+        // the window through a Task and so is not observable from here — so
+        // this asserts the routing rather than the closing, and the test above
+        // asserts that the routing was different while the panel was open.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::Opened(window::Id::unique()));
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.panel.is_none(), "the panel closed");
+
+        // Arrows reach the list again, which the panel was taking.
+        let before = app.selected;
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_ne!(app.selected, before, "the list moved again");
+    }
+
+    #[test]
+    fn the_vim_chords_move_the_panel_while_it_is_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let before = app.selected;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, before, "the list did not move");
+        assert_eq!(app.panel.as_ref().map(|panel| panel.selected), Some(3));
+    }
+
+    #[test]
+    fn running_an_action_closes_the_panel() {
+        // An action that ran and one that is not wired up both leave the panel
+        // with nothing more to say, and leaving it open would look like the key
+        // had not registered.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.panel.is_none());
+    }
+
+    #[test]
+    fn the_vim_chords_move_the_selection_because_they_are_the_linux_default() {
+        // `KeyBindingService::getMode` falls back to vim off macOS, so a user
+        // who has configured nothing still expects Ctrl+J and Ctrl+K to work.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+        assert_eq!(app.selected, 0);
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "Ctrl+J moved down");
+
+        let _ = app.update(chord("k", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0, "and Ctrl+K moved back");
+    }
+
+    #[test]
+    fn a_bare_letter_is_not_a_chord() {
+        // The negative that matters most: a handler that ignored modifiers
+        // would make the search field unusable, because every `j` typed would
+        // also move the selection.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::empty()));
+        assert_eq!(app.selected, 0, "a bare `j` moved the selection");
+    }
+
+    #[test]
+    fn a_chord_from_another_scheme_does_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Emacs;
+
+        let _ = app.update(chord("j", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0, "Ctrl+J is vim's, not emacs'");
+
+        let _ = app.update(chord("n", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 1, "Ctrl+N is emacs' down");
+    }
+
+    #[test]
+    fn the_horizontal_chords_do_nothing_in_a_one_column_list() {
+        // Recognised by `compass-core`, dropped here on purpose rather than
+        // bound to something they do not mean.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        app.keybinding = compass_core::keybinding::Scheme::Vim;
+
+        let _ = app.update(chord("l", iced::keyboard::Modifiers::CTRL));
+        let _ = app.update(chord("h", iced::keyboard::Modifiers::CTRL));
+        assert_eq!(app.selected, 0);
     }
 
     #[test]
@@ -763,6 +1536,10 @@ mod tests {
             );
             let _ = app.update(Message::MoveSelection(Direction::Down));
         }
-        assert_eq!(app.selected, 0, "and it wrapped back to the top");
+        assert_eq!(
+            app.selected,
+            expected.len() - 1,
+            "and it stayed on the last row, because wrap_navigation is off by default"
+        );
     }
 }

@@ -11,6 +11,7 @@
 #![deny(missing_docs)]
 
 pub mod activation;
+pub mod data_control;
 pub mod keyboard_inhibit;
 
 pub use activation::{ActivationError, ActivationManager, ActivationToken};

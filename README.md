@@ -30,17 +30,49 @@ installations. See [ADR-0012](docs/rust-engine/adr/0012-compass-public-brand.md)
 - [Roadmap epic](https://github.com/tuna-os/compass/issues/2)
 - [Architecture decisions](docs/rust-engine/adr/README.md)
 
-The current Rust vertical slice opens a native Iced launcher, indexes desktop applications, ranks
-them with the ported fuzzy-search semantics, launches the selected result, exposes IPC and
-diagnostics, and is exercised in Flatpak and Bluefin VM CI. Clipboard, extension-host and builtin
-feature parity are still in progress; the parity ledger is the source of truth.
+**Where it stands: 70 of 158 parity cells are green (44%), across 3,099 tests.** Both figures are
+measured rather than estimated — `scripts/ci/parity-score.py` counts the ledger and `make
+check-rust` reports the tests — and the [parity ledger](docs/rust-engine/PARITY.md) is the source
+of truth for any single row.
+
+Done, in the sense that the row is green or its remaining files are backends: the builtins, the
+extension host (45 of tsapi's 49 methods), the clipboard store, the search and ranking semantics,
+the desktop-entry layer, and ten of the file indexer's fifteen files.
+
+Not done, and this is the part a percentage hides: the remainder is **12 drawing gaps and 7 that
+need a live D-Bus, MPRIS or a compositor**, plus two process, one storage and one network item.
+The same script prints that breakdown beside the percentage, because a ledger at 44% whose
+remainder is transcription and one whose remainder is compositor integration are not the same
+project.
+
+What is verified on a real desktop, not just in unit tests: a Bluefin VM tier boots GNOME under
+QEMU, installs the Flatpak, and asserts that the engine starts without painting, finds
+applications, opens a window, receives a typed query in *our* field, hides and returns, and opens
+the action panel on Ctrl+B — each against a control frame, with the changed region required to lie
+inside the window. Everything else in `compass-ui` is covered by its own tests only.
 
 ## Install
 
 > **There is no tagged release and Compass is not on Flathub yet.** Every path below builds or
-> installs a development build. The Rust port is [not yet the default engine](#migration-status),
-> so expect a launcher that opens, searches applications and launches them — not feature parity
-> with the screenshot above.
+> installs a development build.
+
+**Every path below gives you the pure Rust engine, and only that.** This is worth stating plainly
+because [Migration status](#migration-status) says the Rust port is not the default engine, and the
+two can be read as contradicting each other. They do not: `main` carries both engines so they can
+be compared, and the C++ one is what a *Vicinae* user runs today — but the Flatpak manifest here
+builds `cargo build --release -p vicinae` and nothing else. There is no Qt, no CMake and no C++ in
+the artifact. If you are following these instructions, the Rust engine is the only thing you get.
+
+To confirm it on your own machine rather than taking that on trust, `doctor` reports which engine
+is running. The binary *is* the engine: `--engine cpp` parses and is reported, and makes
+engine-dependent commands refuse rather than quietly doing the Rust thing.
+
+**What you can actually do with it today.** Open the launcher, type, move the selection, press Enter
+to launch, and press <kbd>Ctrl</kbd>+<kbd>B</kbd> for the action panel. Run it resident and summon
+it with `toggle`. That is the honest list. A great deal more is *ported* — the clipboard store, the
+extension host, the calculator, the emoji picker, snippets, quicklinks and most of the builtins —
+but ported means the logic and its tests exist, not that the launcher can reach it yet. The
+[parity ledger](docs/rust-engine/PARITY.md) is per-row about which is which.
 
 **Requirements.** A Wayland session; GNOME is the first target and the only one covered by CI.
 There is no X11 fallback — the engine is Wayland-only by design. The Flatpak paths also need
@@ -117,6 +149,28 @@ GlobalShortcuts backend.
 
 The legacy `vicinae` and `com.vicinae.Vicinae` identifiers in these commands are intentional
 migration compatibility, not the public brand.
+
+### Trying it, and what to report
+
+A run that takes a couple of minutes and tells you whether the engine works on your machine:
+
+1. `doctor` first. It prints the session type, bus, portals, engine and index state. If it reports
+   a failure, stop there — that is the bug, and its output is the whole report.
+2. `ui` to open the launcher. An empty field over a card means indexing found nothing; a list of
+   applications means it worked.
+3. Type a few letters of something installed. Matching is fuzzy, so `fox` should reach Firefox.
+4. <kbd>Up</kbd>/<kbd>Down</kbd> to move, <kbd>Enter</kbd> to launch. The window hides as the
+   application starts.
+5. <kbd>Ctrl</kbd>+<kbd>B</kbd> opens the action panel over the list; <kbd>Esc</kbd> closes it, then
+   closes the launcher.
+6. `serve` in one terminal and `toggle` from another, to check resident mode and the portal hotkey.
+
+Anything outside those six steps is not wired up yet rather than broken — see the list above.
+
+When something does go wrong, [open an issue](https://github.com/tuna-os/compass/issues/new) with
+the full `doctor` output, your distribution and desktop version, and whether you installed the
+bundle, built the Flatpak or ran from source. `doctor` is the single most useful thing to paste:
+almost every report so far has been resolved from it.
 
 ### Hacking on it
 

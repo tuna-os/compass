@@ -45,6 +45,15 @@ Here are a few rules to keep in mind:
 - Constants: use `UPPER_SNAKE_CASE` for `constexpr` and `static const` values.
 - Do not overuse comments, only add them when they provide actual value
 
+## Seeing the launcher
+
+The launcher is graphical and this repository is usually worked on without a
+compositor. There are three harnesses and they prove different things — a
+browser surrogate for design (seconds), a wasm/wgpu canvas for renderer
+fidelity (not built yet), and the VM tier for the truth (half an hour). Read
+`docs/rust-engine/RENDER-HARNESSES.md` before reaching for any of them, and
+especially before letting a cheap one answer an expensive one's question.
+
 ## Linting and formatting
 
 We format all our code using `clang-format`. We have a `make format` rule that will automatically format the entire codebase if necessary.

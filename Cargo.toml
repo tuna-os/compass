@@ -21,6 +21,7 @@ compass-testkit = { path = "crates/compass-testkit" }
 compass-core = { path = "crates/compass-core" }
 compass-ipc = { path = "crates/compass-ipc" }
 compass-shell = { path = "crates/compass-shell" }
+compass-worker-host = { path = "crates/compass-worker-host" }
 compass-extension-api = { path = "crates/compass-extension-api" }
 compass-portals = { path = "crates/compass-portals" }
 compass-wayland = { path = "crates/compass-wayland" }
@@ -45,6 +46,9 @@ clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
 ashpd = { version = "0.13", default-features = false, features = ["tokio"] }
 toml = "0.9"
+# `slugify` normalises to NFD before stripping non-ASCII, so an accented
+# letter keeps its base form. See crates/compass-core/src/slug.rs.
+unicode-normalization = "0.1"
 
 # Clipboard-at-rest crypto. See crates/compass-crypto/src/lib.rs for why these
 # and not the `openssl` crate.
@@ -60,6 +64,8 @@ base64 = "0.22"
 landlock = "0.4"
 seccompiler = "0.5"
 libc = "0.2"
+# Safe wrappers for the syscalls the sandbox tests have to call on purpose.
+nix = { version = "0.29", features = ["ptrace"] }
 
 # dev
 insta = "1"

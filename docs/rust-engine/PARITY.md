@@ -60,22 +60,46 @@ that. The plan has been corrected.
 
 | Crate | Tests | State |
 |---|---|---|
-| `compass-xdg` | 110 | desktop entries, locale, exec, reader — scope gaps listed below |
-| `compass-search` | 52 | fuzzy, plus an exact port of fzf's coherence rule |
-| `compass-ipc` | 57 | framing, transport, single-instance |
-| `compass-core` | 71 | app index, frecency, config |
-| `compass-shell` | 36 | GNOME Shell DBus client; 22 tests spawn a real `dbus-daemon` |
-| `compass-portals` | 55 | XDG portals; availability is a three-state outcome, not a boolean |
-| `compass-extension-api` | 74 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
-| `vicinae` | 137 | CLI, an 11-check `doctor`, and **the engine daemon** |
-| `compass-testkit` | 5 | corpora — 115 desktop entries, 96 of them harvested from a real Bluefin |
-| **Total** | **597** | all green under fmt, clippy `-D warnings`, doctests |
+| `compass-core` | 1,743 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction, the index reconciliation, the watch policy and script output styling |
+| `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
+| `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
+| `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
+| `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
+| `compass-extension-api` | 73 | view tree, derived identity, diff, dispatch, capabilities, controlled inputs |
+| `compass-ipc` | 73 | framing, transport, single-instance |
+| `compass-search` | 58 | fuzzy, plus an exact port of fzf's coherence rule |
+| `compass-portals` | 54 | XDG portals; availability is a three-state outcome, not a boolean |
+| `compass-shell` | 46 | GNOME Shell DBus client; tests spawn a real `dbus-daemon` |
+| `compass-ui` | 118 | the launcher window and its views, the root list's sections and selection, and the action panel — open, filtered, navigated and drawn |
+| `compass-crypto` | 24 | AES-GCM and HKDF; cross-decrypted against the C++ probe per-PR |
+| `compass-sandbox` | 23 | Landlock, a seccomp denylist, and the launcher that applies them to itself |
+| `compass-local-storage` | 36 | the extension key-value store, lossy typing and all, and the calculator history with its time grouping |
+| `compass-media` | 13 | MPRIS players, with the timeout the C++ has for a reason |
+| `compass-power` | 11 | logind; one C++ bug deliberately not reproduced |
+| `compass-db` | 10 | the shared migration runner and the `vicinae` schema |
+| `compass-oauth-store` | 9 | the extension token store |
+| `compass-sqlcipher-sys` | 8 | SQLCipher and the vendored tokenizer; connection pragmas pinned to the C++ |
+| `compass-testkit` | 8 | corpora — **757 desktop entries, 738 harvested from real hosts** |
+| `compass-notify` | 7 | desktop notifications over D-Bus |
+| `compass-platform` | 6 | the launcher seam (ADR-0013) |
+| `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
+| `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
+| **Total** | **3,099** | what `make check-rust` reports, doctests included, all green under fmt and clippy `-D warnings` |
+
+The per-crate column is measured with `cargo test -p <crate> --all-targets` and sums to 2,071;
+the 3,099 is the workspace figure `make check-rust` prints, which additionally covers doctests and
+harnesses not attributable to a single package. Both numbers are given rather than one reconciled
+figure, because quietly picking whichever is larger is how a count stops meaning anything.
 
 ## Progress
 
-Scaffolding, corpora and CI are in place, and nine crates have landed: 597 tests across the
-workspace, all green, each count verified in a clean `git worktree` checkout of the committed tree
-rather than in the working tree.
+Scaffolding, corpora and CI are in place, and **twenty** crates have landed: **1,151 tests** across
+the workspace, all green. `compass-db` (the shared migration runner and the `vicinae` schema, extracted from
+`compass-clipboard`), `compass-local-storage`, `compass-oauth-store` and `compass-sandbox` are the four newest. An earlier revision of this
+paragraph said nine crates and 597 tests, and both had drifted — `compass-clipboard`,
+`compass-crypto`, `compass-sqlcipher-sys`, `compass-platform`, `compass-platform-linux`,
+`compass-wayland` and `compass-worker-host` were missing from the table entirely, and the corpus
+line still read 115 entries against an actual 757.
 
 Almost no row is fully green, and no C++ directory may be deleted yet — see the partial markers and
 the divergences below. 🟡 means implemented but not to the full scope of the C++ source. A green
@@ -90,91 +114,91 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
 | `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
 | `src/lib/crypto` | `compass-crypto` | Phase 3 | ✅ | ✅ | ✅ | ⏳ |
-| `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/lib/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/lib/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ✅ | 🟡 | ⏳ |
 | `src/lib/figura` | `compass-ipc` | Phase 2 | ✅ | n/a | n/a | ⏳ |
-| `src/lib/common` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
-| `src/lib/linux-utils` | `compass-platform` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
+| `src/lib/common` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
+| `src/lib/linux-utils` | `compass-platform-linux` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
 | `src/lib/soulver` | `—` | n/a (macOS) | ✅ | ❌ | ❌ | ❌ |
 | `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 
 ## Services
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/services/app-runtime` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/app-runtime` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/app-service` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ⏳ |
-| `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/autostart` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
-| `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/calculator-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/calculator-service` | `compass-local-storage` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/services/desktop-notification` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/files-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/desktop-notification` | `compass-notify` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/font-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/input-server` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/local-storage` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/media-control` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/menu-bar` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/news` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/oauth` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/paste` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/permissions` | `compass-core` | Phase 2 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/power-manager` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | 🟡 | ⏳ |
-| `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/selection` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/toast` | `compass-core` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/tray` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/update` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/url-scheme` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/input-server` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/media-control` | `compass-media` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/menu-bar` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
+| `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/news` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/paste` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
+| `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/raycast` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
+| `src/services/script-command` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/selection` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/tray` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/update` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
+| `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
-| `src/services/window-material` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/window-material` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 ## Builtins
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
-| `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/clipboard` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 ## The window
 
@@ -193,7 +217,7 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 | `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ❌ | ❌ |
 | `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/alert` | 279 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
+| `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 The single 🟡 is `windows`, and it is generous: `compass-ui` opens one window, shows a text input
 and a result list, moves a selection with the arrow keys, launches on Enter and dismisses on
@@ -219,11 +243,742 @@ Tracked here so a 🟡 does not quietly become a ✅.
 **`src/lib/xdgpp` → `compass-xdg`** — the desktop-entry, locale, value, reader and exec layers are
 ported (47 C++ cases, verbatim inputs). Still C++-only:
 
-- the `xdg-terminal-exec` draft extension (`X-TerminalArg*` typed accessors; the keys are readable
-  through `Reader` today);
-- the `DesktopFile` layer — `fromId`, `relativeId`, directory search. `from_file` and
-  `ParseOptions::{id,path}` exist, but id computation and lookup are a separate pass;
+- the `xdg-terminal-exec` draft extension's *parsing* beyond what `Reader` gives (the
+  `X-TerminalArg*` keys now have typed reading and a per-terminal table in `compass-xdg::terminal` —
+  26 tests, 17 controls);
+- the sibling modules below (the `DesktopFile` layer itself is now ported as
+  `compass_xdg::desktop_file`: `relativeId`, `fromId`'s two-candidate lookup, and the standalone
+  filename id, with 24 tests and 16 controls);
 - the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
+
+
+#### An unresolved disagreement: two desktop file id schemes
+
+Porting `relativeId` turned up a disagreement between the two engines that nothing was recording.
+
+The XDG Desktop Entry Specification says a desktop file ID is the path below the applications
+directory with `/` turned into **`-`**. The C++ turns it into **`.`**. For a file directly in the
+directory the two agree; for anything nested they do not — `kde4/konsole.desktop` is
+`kde4-konsole.desktop` by the specification and `kde4.konsole.desktop` by the C++.
+
+This matters because the id is the key. `xdg-app-database.cpp` keys every application by
+`relativeId`, and that id is what an application's frecency score, alias, and enabled or disabled
+state are stored under. `compass_xdg::scan` keys by `desktop_file_id`, which follows the
+specification. **So the two engines would not find each other's records for any nested
+application** — a user moving from one to the other would silently lose per-app state for anything
+installed in a subdirectory, which is where distribution-packaged KDE and GNOME applications often
+live.
+
+**Resolved: the Rust engine keys on the C++'s dotted id.** `compass_xdg::scan::desktop_file_id` now
+joins with `.`, and the application index, its tests and the parity tests follow.
+
+The reasoning is which engine has users. The id is a key, not a display string — the separator is
+never shown to anyone — and the C++ has already written these keys on real machines, while the Rust
+engine has no tagged release and therefore no stored records to protect. Matching the specification
+would have orphaned existing frecency scores, aliases and enable/disable state for every nested
+application in order to fix a divergence nobody can observe.
+
+The one cost is the ambiguity the dotted scheme carries: `kde4.konsole.desktop` could be a nested
+`konsole` or a flat file of that exact name, and nothing recovers the difference. That needs a file
+deliberately named to collide, which is a smaller risk than silently losing everyone's settings.
+
+Inherited rather than endorsed. Both spellings live in `compass_xdg::desktop_file`, a test asserts
+the scan and the C++ agree, and a second records that the specification's separator is deliberately
+unused — so if the ids are ever migrated, the tests to change first are named.
+
+The dotted scheme has a second property worth knowing if it is kept: because the `.desktop` suffix
+is part of the id, it is indistinguishable from a separator. An id of `kde4.konsole.desktop` could
+be a nested `konsole` or a flat file of that exact name, and nothing recovers the difference.
+
+**`src/extension/api` → `compass-worker-host`** — the extension API's service adapters. `Storage`,
+three of `OAuth`'s four, `UI/render`, `FileSearch/search` and all four `Clipboard` methods are
+ported and pinned, as are all five `Application` methods, all four `Command` ones and all seven
+`WindowManagement` ones, plus `Wallpaper/set` and both `BrowserExtension` methods: 33 of the 49
+methods `figura/tsapi.fig` declares; with `UI`'s shell half that is 45 of 49. `UI/confirmAlert` joined them
+once the host learned to hold a reply open: it is answered through `tsapi::Deferral` rather than by
+a service returning a value, which is what a call that waits on a *person* needs. What is left is
+`OAuth/authorize`, which needs a browser. Each sits behind a trait (`FileIndexer`, `Clipboard`, `Apps`,
+`Commands`, `Windows`, `Wallpaper`, `Browser`, `Shell`) mirroring the C++'s own indirection, so the adapters are finished and tested while the backends they will call — the file
+index, the Wayland clipboard, the launcher, the navigation and settings controllers — are still
+ahead. A method not on `tsapi::IMPLEMENTED` answers with an error naming
+itself rather than hanging the caller.
+
+**`src/services/asset-resolver` → `compass-core::asset_resolver`** — ported **whole**, which is why
+this row is green rather than amber: the base-path list, the first-match lookup, and the two
+behaviours that make shared asset directories work — `addPath` does not deduplicate and `removePath`
+erases one entry, so the first command to unload does not blind the second. The C++ singleton is an
+ordinary value here; a singleton is how that file is reached, not what it does.
+
+**`src/builtins/snippet` → `compass-core::snippet_form`** — the snippet form's validation and
+`Expansion::validateKeyword`: a two-character minimum name, non-empty content with at most one
+`{cursor}`, and a keyword that is optional but, when given, must be printable ASCII with no spaces
+and at most 32 bytes. The two success toasts are not symmetrical ("Snippet updated" against
+"Snippet successfully created") and are copied as they are. Still C++-only: the QML form, the
+snippet store, and the manage-snippets list.
+
+**`src/builtins/shortcut` → `compass-core::shortcut_form`** — the quicklink form: what each mode
+prefills (`Copy of %1` only when duplicating, the quoted navigation titles), the reverts to
+`default` when the saved app or icon no longer exists, the three required fields — link, app and
+icon, but **not** the name — the `default` icon being stored as whatever it resolved to rather than
+as the word, the favicon-over-opener rule for `http*` links, and the three link completions with the
+cursor offset that lands inside `{argument name="|"}`. Duplicating takes the *create* path, as the
+C++ does by branching on `Mode::Edit` alone. Still C++-only: the QML form, the favicon request, and
+the manage-shortcuts list's action panel.
+
+**`src/builtins/font` → `compass-core::font_browser`** — the grid model's decisions are ported:
+the category dropdown (only categories some installed font belongs to, "All" at index 0, the
+index-minus-one arithmetic, and the remembered choice that is restored only when it is not "All"),
+the two headings with their counts, the search that scores the display name alone, the missing-glyph
+placeholder and the colour-font rule that leaves an emoji font untinted, and the action panel whose
+*primary* action is Preview rather than apply. The thirty-three-category table itself belongs to
+`src/services/font-service`, which is its own row. Still C++-only: the grid widget and the specimen
+view.
+
+**`src/builtins/developer` → `compass-core::create_extension`** — the Create Extension form's
+validation and what follows it: all six checks run every time so every mistake shows at once, the
+description is held to 16 characters where the rest need 3, the location is the one check that asks
+the filesystem, `expandPath` handles `~` and `~/` only (so `~root/x` is taken literally and fails),
+and a success *replaces* the form on the navigation stack rather than stacking on it. Still
+C++-only: the QML form itself, the boilerplate generator, and the success view's contents.
+
+**`src/builtins/theme` → `compass-core::theme_picker`** — the list model and the view's own logic
+are ported: the current/available split (and that the configured theme is filtered out like any
+other when it does not match), the sort that only happens when something is typed, the name/
+description weights with the id *not* searchable, the `Default theme description` fallback
+subtitle, the eight palette swatches in the row's order, the action panel's two conditional
+actions, and the live preview — selecting a row applies the theme and leaving the view puts the
+configured one back. Still C++-only: the view host and the swatch rendering.
+
+**`src/builtins/power-management` → `compass-core::power_commands`** — the catalogue and the run
+plan are ported: eight commands in registration order with their titles, long descriptions and
+keywords, the `confirm` preference (on for everything but Lock), the `customProgram` escape hatch
+that exists only where a shell makes sense, and the two failure messages per command — whose
+"can't" / "cannot" wording is inconsistent and stays that way, because these strings are
+translated. The logind calls behind them are `compass-power`. Still C++-only: wiring the plan to a
+confirmation dialog and a toast.
+
+**`src/builtins/system` → `compass-core::browse_apps`** — the "Search Applications" builtin's
+*model* is ported: the field weights (name 1.0, description 0.5, keywords 0.3 — **not** the root
+list's 0.6), the `Hidden` accessory for a `NoDisplay` entry, and the action panel as data: focus the
+first open window if there is one, open (clearing the search), each desktop action with
+`control+shift+1..9` for the first nine only, then open-location behind the `action.open` keybind,
+copy id, copy location. Still C++-only: the view host, the list widget, and the three other views in
+that directory (`system-run`, `set-default-browser`, `set-default-terminal`).
+
+**`src/services/shortcut` → `compass-core::shortcut`** — `Shortcut::parseLink`'s state machine and
+`insertPlaceholder`'s argument rules are ported: literal text and placeholders in order, reserved
+ids that expand on their own, `name=` / `default=` with and without quotes, and the two behaviours a
+rewrite would "fix" by accident — a repeated key keeps its **first** value (`std::map::insert`), and
+a link that ends inside a placeholder loses everything from the opening brace. The store behind it is ported
+too (`compass-core::shortcut_store`): the JSON file, the 10,000 limit, the two different not-found
+sentences, the rollback when a write fails after the list already changed, and the `value_or({})`
+that turns a corrupt file into an empty list rather than a refusal to start.
+
+The migration from the old `OmniDatabase` and `resolveApp` are ported too — 15 more tests and 15
+controls, closing this row's named gap. The migration's three outcomes are kept apart because they
+mean different things: a **missing table** is every installation that never ran the old version, an
+**empty table** writes nothing *at all* (an empty write would still create the JSON file and make
+the next start think a migration had happened), and rows are written whole — including
+`last_used_at`, the one nullable column, where turning a null into 0 would make a shortcut nobody
+has opened look used at the epoch. It runs only into an empty store: anything already there has
+been migrated or used since, and re-running would duplicate every shortcut or overwrite work done
+after the move.
+
+`resolveApp` narrows in three steps. A shortcut naming an application uses it even if that
+application is gone — the lookup returns nothing and the caller reports it, which is better than
+silently opening something else. A shortcut set to the default uses whatever opens *that target*,
+which for a `mailto:` is the mail client; the web browser is the last resort and not the rule,
+because it is right for a quicklink and wrong for anything else. That middle step only became
+portable once the MIME parent-chain walk landed.
+
+**Two claims were written into this port and then removed, because no mutation could make a test
+fail on either**: restoring the previous list when the write fails, and a comment saying the
+write-then-reload order was load-bearing. Neither is observable, for the same reason — the migration
+runs only into an empty store, so there is no previous list and no good file to clobber. The order
+still matches the C++; it is just not doing the work the comment claimed. Recorded because a comment
+that overstates what a line does is the kind of thing that survives review and then misleads
+whoever changes it.
+
+**This row is green.** `ShortcutService` — the in-memory list the launcher reads from — is ported as
+`compass-core::shortcut_service`, and with it the last of the directory. 23 tests, 18 controls, 17
+of which fired.
+
+The list holds each quicklink with its link **already parsed**, which is the reason it exists: every
+row that draws a quicklink needs its arguments, and re-parsing on each keystroke of a search would
+parse every link in the store on every keystroke. `lastUsedAt` stays absent when the stored value is
+absent — turning it into 0 would date a quicklink nobody has opened to the epoch, which reads as
+opened rather than as never opened.
+
+One rule arranges the whole type: **the file is written first, and the list changes only if that
+succeeded.** A list showing an edit the file does not have is a launcher that forgets the edit at
+the next start and cannot say why. Three controls cover it — a create, an update and a visit the
+file refused, each of which must leave the list as it was.
+
+**Three guards were removed because no mutation could make them fail.** The C++ looks the entry up
+in its list *after* writing to the database and returns false if it has gone; that is a check for
+the service and the database having drifted apart, and it is real there because they are separate
+objects. Here the service owns the store, so there is nothing to drift: both entries are located
+before anything is written, and read back afterwards without a second check. The conditional around
+`lastOpenedAt` went the same way — after a successful visit the stored value is always present.
+
+Two fixtures were too small and controls said so: with one shortcut in the store, writing to the
+first entry and writing to the *right* entry are the same thing. Both now hold two, and the one that
+was not touched is asserted on.
+
+One thing is **not** claimed: looking the id up before the write rather than after it. A control
+could not make it fail, because the store refuses an unknown id anyway, so it is a shape rather than
+a behaviour.
+
+**`src/data-control-server` → `compass-wayland::data_control`** — the part that decides which of a
+Wayland client's offered MIME types belong in a clipboard entry, and which of them get their bytes
+read over a pipe. Ported: the accept test (`text/`, `image/`, `application/`, plus
+`x-special/gnome-copied-files` by name) with `application/x-qt-image` checked against the ignore
+list **first**, so the hint that an image exists does not survive its own prefix; the flag types,
+kept for their presence and never read, which is the only way a password hint survives at all;
+the single-image rule, where a later encoding must be **strictly** better ranked to displace an
+earlier one, so two encodings the preference list does not name keep the first offered rather than
+the last; and the drop of `text/plain` when `text/plain;charset=utf-8` is also there, matched on
+that one spelling and not on any charset. The primary selection is much stricter and is ported that
+way: a concealed selection is dropped without being read, only plain text is kept (UTF-8 first, and
+the loop breaks so both spellings never both appear), and a selection over 1 MiB is dropped rather
+than truncated *and not retried* with the other spelling.
+
+One test here is not control-backed and says so in place: the offers come back in lexicographic
+order because the C++ collects into a `std::set` and the port returns a `BTreeSet`, so the ordering
+is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
+Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
+reads, and the process that carries them.
+
+**`src/builtins/vicinae` → `compass-core::{emoji_grid, bug_report}`** — the largest builtin
+directory (2,800 lines across 45 files). Two of its pieces are ported, the two with arithmetic and
+rules in them rather than view plumbing.
+
+**The emoji picker.** A skin tone goes after the **first** codepoint, not at the end, because in a
+person-joined-to-an-object sequence the tone belongs to the person. Every variation selector in what
+follows is then stripped, and the C++ comment gives a reason that is not cosmetic: a tone modifier
+already forces the coloured presentation, and leaving the selector in produces a sequence some fonts
+refuse to compose, so the glyph breaks apart into its parts. The `Default` tone carries an **empty**
+modifier, which is what makes applying it a no-op rather than a special case in the applier. A
+glyph's own remembered tone beats the picker's, because someone who set a tone on one glyph meant
+that glyph. The copied codepoint is the **first** one only — a sequence reports the codepoint of the
+thing it is a sequence *of*, which is the number someone looking it up wants.
+
+The tone menu's two exclusions each do something. Skipping the tone already in force keeps the panel
+from offering to do nothing; skipping the picker's default keeps it from offering a second route to
+what the "reset to preference" row already does — and that row only appears when the glyph is
+actually overriding, because otherwise there is nothing to reset to. Only copying and pasting
+register a visit: copying a glyph's *name* or codepoint is looking something up, and counting it
+would let a search for a name drift the picker's ordering.
+
+**The bug report.** The template was copied out of the C++ mechanically and its measurements are
+pinned. An extension bug goes to a different repository *and* a different path
+(`/issues/new/choose`, not `/issues/new`), because that repository offers templates. An empty title
+is left out rather than sent empty, which would leave GitHub's own placeholder unused and the field
+looking filled in. The two OS descriptions are deliberately different shapes — a dash between the
+os-release fields, parentheses around the architecture — so a reader can tell which one they are
+looking at.
+
+**The fallback manager.** A command that cannot be a fallback appears in *neither* list: the manager
+is not a list of everything with a switch beside it, and showing commands that cannot be turned on
+would be showing switches that do nothing. The enabled list is ordered by the stored fallback order
+rather than by relevance, because a fallback's position decides which of them answers a query first
+— any other order would show a ranking that is not the one in force.
+
+Still C++-only, and it is most of the directory: the store views and detail host, the installed
+extensions list, the OAuth token store, the local-storage browser, the menu-bar and tray searches,
+the builtin-icon gallery, and the extension registration in `vicinae-extension.cpp`.
+
+**`src/builtins/root` → `compass-core::root_view`** — the root list's own behaviour: the clock in
+the title bar, the space-bar alias shortcut, and reaching back through past searches with the up
+arrow.
+
+The clock's next tick is `interval - (now % interval)`, which lands on a multiple of the interval
+rather than one interval from now — so a clock showing minutes updates *on* the minute instead of
+drifting to whenever the window happened to open, and one re-enabled mid-interval falls back into
+step with a single short tick. Turning it off clears the title as well as stopping the timer, which
+matters as much: leaving the last time on screen would show a clock that had silently stopped.
+
+The space-bar shortcut fires only when what was typed *is* the selected item's alias, compared
+lowercased. With a completer open the space goes to the completer instead — but only while every
+completion field is still empty, because once something has been typed into one, stealing the space
+would make the arguments unwritable. Without a completer the item has to support the shortcut; a
+no-view command does not, as there would be nothing to show for it. The completer branch returns
+*before* the support check, so a completer overrides the item's own answer either way.
+
+Reaching history with the up arrow needs two things, and the first is a **conflict rather than a
+preference**: wrapping navigation makes the up arrow at the top jump to the bottom, so it cannot
+also mean "previous search" — where wrapping is on, history is unreachable by design. The second is
+that the selection is already on the first row. The first press takes offset 0, so one press reaches
+the last thing typed, and the skip past an entry equal to the current text is a **loop**: history
+can hold the same query several times in a row, and stopping after one would leave the arrow doing
+nothing on the second press.
+
+A control found a gap the suite had: nothing covered an empty query against an item with **no**
+alias — the one case that separates an absent alias from an empty one, where treating the two alike
+would make every press of space over an empty search box activate whatever was selected. There is a
+test for it now.
+
+Still C++-only: the search sources and their models (`root-search-sources.cpp`,
+`root-search-model.cpp`, 768 lines between them), the provider search view, and everything the
+actions do.
+
+**`src/builtins/clipboard` → `compass-clipboard::history_view`** — the history command's own
+decisions. The ledger had this row down for `compass-core`; it landed in `compass-clipboard`
+instead, because everything it decides is decided *about* `OfferKind` and `EncryptionType`, which
+live there — and `compass-core` does not depend on that crate. The crate column was a plan; the
+types decide.
+
+The query controller is **single-flight with one waiting slot**, and the port keeps both halves. At
+most one query runs and at most one waits; a third request while one is running collapses into the
+same slot rather than queueing, because only the newest matters. And a result that arrives while
+something newer is wanted is **dropped without ever reaching the list** — the C++ comment says why,
+and it is not about wasted work: each delivery consumes the view's one-shot "select the first row"
+flag, so a stale delivery would move the selection out from under whoever was reading. The same
+flag is what makes every delivery after the first *incremental*: a pin, a rename, or a new copy
+landing while the list is open leaves the selection where it is.
+
+The action panel is gated in three independent ways. An entry whose contents cannot be read — an
+encrypted one before the keyring is unlocked — offers a way into the settings and **neither** copy
+nor paste, rather than an action that would fail. Where pasting is unsupported only copying appears.
+And where both appear, the stored preference decides only their *order*, the first being what the
+return key runs; only the exact string `paste` selects pasting, and everything else falls back to
+copying, which is the safer of the two to get wrong.
+
+Opening is ported with its asymmetry. A file entry holds a URI list, and open actions appear only
+when it holds **exactly one** entry that still exists — a copy of three files has no single thing to
+open, and a copy of one that has since been deleted would offer to open nothing. A link needs no
+such check, because the payload *is* the target. In both cases the chooser appears whenever the
+target is usable and `open` additionally needs a default application, so a file type nothing claims
+still gets a chooser.
+
+The filter's stored vocabulary is the enum's and not the interface's — the option reads `Images` and
+stores `image` — and keeping them apart is what lets either change without the other. A kind with no
+option (`Unknown`, and the enum's count sentinel) answers index 0 rather than an out-of-range index
+that would select nothing.
+
+One fixture was too permissive and a control caught it: an `exists` stub that accepted every path
+let a mangled path through, so splitting the URI list on the wrong separator — which leaves a stray
+carriage return — looked correct. The stub now names the paths it knows.
+
+Still C++-only: the QML views, the detail pane, the drag payload, and the actions' effects.
+
+**`src/builtins/raycast` → `compass-core::raycast_store_view`** — the store's two views. Its API
+client was already ported (`compass-core::raycast_store`); this is what the views do with what it
+returns.
+
+The list is a **rendezvous, not a sequence**. The page and the compatibility sheet are fetched
+independently and may finish in either order, and whichever lands second is what draws the list —
+drawing on the page alone would show every row with no badge and then flicker when the sheet
+arrived. The two stale-result guards differ correctly: the browsable list is only ever shown for the
+empty query, so it checks that the box is *still* empty, while a search compares against the query
+it was sent for.
+
+Three distinctions in the compatibility handling are ported because each means something different.
+A platform with **no sheet** shows no badge at all, which is not the same as an `Unknown` badge —
+one says the question does not apply, the other that it was asked and not answered; the view model
+separates them with `-1`. An extension the sheet does not mention gets a *different* muted banner
+from one the sheet mentions with an unrecognised status: "may or may not work" against "no data is
+available". They look identical and read differently, and only the first can be fixed by someone
+adding a row to the sheet. And an unrecognised status is `Unknown` rather than an error, so a status
+the sheet gains later degrades instead of breaking.
+
+`formatCount` is ported with its arithmetic intact: both thresholds are **strict**, so exactly 1,000
+prints as `1000` and 1,000,000 prints as `1000K`; and the figure is rounded to one decimal by
+*ceiling*, so 1,001 downloads reads as `1.1K`. That is generous and it is what ships.
+
+**Ported as-is rather than fixed:** a failed fetch leaves the spinner running. Both handlers report
+the failure and return before clearing the loading state. It is visible behaviour, and correcting it
+here would make the two implementations disagree while the C++ is still the one shipping, so it is
+pinned by a constant and a test instead.
+
+One line was written and then removed because a control could not make it fail: a special case for
+printing a whole number without its fraction. Rust's `f64` `Display` already does that, the same way
+`QString::arg(float)` does.
+
+Still C++-only: the HTTP calls themselves and the QML views. The install-from-zip path is
+ported in `compass-core::extension_install`, below.
+
+**`src/services/extension-registry` → `compass-core::extension_install`** — `installFromZip`. The
+archive arrives from the network, so the whole shape exists for one property: **a bad download must
+not destroy the installation it was going to replace.**
+
+The module returns the install as an ordered list of steps rather than performing it, because the
+ordering *is* the safety and nothing else about it is interesting. Clear the staging directory, so a
+previous install that died part-way cannot mix two extensions into one; unpack into staging, never
+into the target; check the manifest while still in staging, so a truncated archive is discarded with
+the installed version untouched; only then remove the target; and rename staging into place, which
+is atomic within a filesystem, so there is no moment where the extension is half-written. Staging
+sits *beside* the target rather than in a temporary directory, because a rename across filesystems
+is a copy that can fail halfway; the leading dot keeps it out of the registry's own listing.
+`strip_components` is 1 because a published bundle wraps everything in a directory named after the
+extension, and without stripping it every extension would install one level too deep and its
+manifest would never be found.
+
+Cleanup removes the staging directory and **only** the staging directory, for every failure.
+Reaching for the target in a cleanup path is exactly how a working extension gets deleted because
+its replacement was broken. `may_have_removed_previous` answers true for a failed rename alone — the
+one failure that happens after the target is removed — because "the install did not happen" and "the
+extension is now missing" send someone looking in different places.
+
+Still C++-only: the download itself, the registry's bookkeeping around the install, and the views.
+
+**`src/builtins/internal` → `compass-core::internal_commands`** — a hidden extension holding one
+command: a fixed Markdown document rendered to check that every construct the renderer claims to
+support actually renders. This row is **green rather than partial**, because there is nothing else
+in the directory — the view that displays the document is shared with the store intro and belongs to
+that row.
+
+The document is a *test fixture that ships*, and it is treated as one. It was copied out of the C++
+raw string literal mechanically rather than retyped, because a fixture whose job is to exercise a
+renderer is exactly where a character typed wrong still looks right in review; its byte and line
+counts are pinned so a later edit cannot quietly resize it. The tests then enumerate what it must
+contain — five heading levels, the five inline styles, both kinds of line break, six labelled code
+languages *and* an unlabelled fence, both list kinds, a table with all three column alignments,
+inline formatting inside a list item and inside a table cell, both blockquote shapes including the
+empty quoted line that makes a second paragraph, all five callout kinds, a plain image and an image
+wrapped in a link, a horizontal rule, and the closing line that is the only way to see from the
+rendered page that nothing was truncated. Each of those is a separate path through the renderer, so
+a missing one is a missing code path rather than a missing sentence, and every one of them has a
+control that deletes it from the document.
+
+One thing is kept as it is: the extension's display name and description are the same string in the
+C++. It is not meant to be found by searching, so a description distinguishing it from its own name
+would be describing it to nobody.
+
+**`src/builtins/file` → `compass-core::file_search`** — when a query is read as a path rather than a
+search, which of three result modes the view is in, how a late answer is discarded, and how the
+category filter is stored and read back.
+
+The path test is deliberately anchored: `~`, `.` and `..` count only as the *whole* query, and the
+prefixed forms need their separator, so `~notes` stays a search rather than becoming a home-relative
+path that does not exist and `notes..txt` is not mistaken for a traversal. The direct-path branch
+then needs three things at once — the text must look like a path, the path must exist, and it must
+not be `/`. That last one matters: the root exists everywhere, and matching it would turn a single
+slash into a one-item list instead of a search for names containing a slash. When a category filter
+excludes the named file the result is an **empty** direct-path section rather than a fall-through to
+the index: the user asked for that file, and answering with a list of other files would be a
+different question.
+
+The three stale-result guards are ported as three, because each catches something the others do not:
+the task may have been cancelled, the view may have changed mode (a direct path typed while a search
+was in flight), and the query may have moved on — the last being what stops out-of-order answers
+leaving the list showing a question already finished with. Recent files are guarded differently and
+correctly so: they are only ever requested for the empty query, so the test is that the box is
+*still* empty rather than that it matches a remembered string.
+
+The filter stores the **untranslated** key, so a filter chosen in one language is still readable in
+another, and `restored_filter_index` folds three cases into one: nothing stored, an unknown value,
+and `All` all restore nothing — which is what the C++'s `index <= 0` means, `-1` being not-found.
+
+Two lines are noted rather than silently kept or dropped. The C++'s empty-string guard in the path
+test is unreachable here (none of the tests below can match an empty string) and is left out rather
+than carried over as a line no mutation can reach. The `index >= 0` bound check *is* kept although
+the cast to `usize` already covers it, because it says what is meant and survives a future signed
+comparison. Rebuilding the index is written and deliberately unregistered in the C++, with a comment
+saying the indexer's timed sweeps and deleting its cache directory have the same effect; the port
+keeps it unregistered for the same reason, and a test pins that.
+
+Still C++-only: the indexer behind the search, the file preview in the detail pane, the drag payload
+and the per-platform preference sets.
+
+**`src/builtins/media` → `compass-core::media_commands`** — which commands exist on which platform,
+how a player is chosen from what was typed, what the on-screen display says, and which speaker glyph
+goes with a volume. The player commands need MPRIS and are registered only where it exists; the
+volume commands go through the audio service and are registered everywhere, so a platform without
+MPRIS gets a shorter list rather than commands that fail.
+
+`trackLabel` narrows in a fixed order and the order is only visible in one case: with a title but no
+artist, or an artist but no title, either order gives the same answer — it is the player with
+*neither* that shows it, where testing the artist first would return the empty title and leave the
+row blank. A test covers exactly that case. Choosing a player is two different things: an empty
+query takes the player the media service already considers active, and anything else is a search.
+Their two failure messages are different sentences on purpose — one is a fact about the system, the
+other quotes the query back, which is what says "you misspelled it" rather than "your music
+stopped".
+
+The play/pause message is built from the state *before* the toggle, because reading it back after
+would race the player's own reply. A skip asks the player whether it can before calling, so the
+refusal names the player instead of reporting a bare failure.
+
+The four speaker bands put each boundary in the *lower* band, and silence is its own case rather
+than the bottom of the first, so a muted system shows a crossed-out speaker and not a quiet one.
+The percentage is rounded half away from zero, the way `qRound` does and unlike Rust's default
+`round`-to-even would be if written casually — so a nudge that changed something never reads as if
+it changed nothing.
+
+Two things are ported as they are rather than tidied:
+
+- The preset list disagrees with `volumeIcon`. 50% is listed with the *low* speaker while
+  `volumeIcon(0.5)` returns the *down* one. The list is written out by hand in the C++ and drifted
+  from the function. Changing either changes what someone sees today and neither is more right, so
+  both are kept and a test pins the disagreement.
+- `volume-down 5` turns the volume **up** by five. Both commands share one `adjustVolume` call and
+  neither negates its argument, so the defaults are the only thing carrying the direction. Pinned
+  rather than quietly corrected.
+
+Still C++-only: the MPRIS provider, the audio provider, and the Now Playing view.
+
+**`src/builtins/wm` → `compass-core::window_switcher`** — which commands the window-management
+extension offers and how a window and a workspace are described in the list. Switching windows is
+unconditional; everything else is gated on a capability, because a command certain to fail is worse
+than a command that is absent. The C++ also tests `SetSticky` and registers nothing in that branch;
+the port keeps the empty test rather than tidying it away, because the capability *is* used — a
+window's action panel offers pinning when it is present — so the branch is the only written record
+that someone meant a command to go there.
+
+A window's row falls back twice and the two are independent: the subtitle is the application's
+display name or the raw `WM_CLASS`, and the icon is the application's or the generic window glyph.
+The accessory has three distinct cases, not two: a named workspace shows its name, a numbered one
+shows `WS n`, and a window on no workspace shows nothing at all — an absent accessory is not the
+same as `WS ` with nothing after it. The rule that decides between the first two is the subtle one:
+a compositor with no workspace names reports the **id as the name**, so a name equal to the id is
+treated as no name, which is what keeps a bare `3` out of the slot where a name belongs. Searching
+keeps the `WM_CLASS` at low weight even when an application was recognised, so someone who knows a
+window as `org.gnome.Geary` still finds it when the desktop entry calls it Mail.
+
+A workspace's applications are deduplicated but its windows are counted, so three terminals show one
+icon and the subtitle still says three; an unrecognised window is counted and contributes no icon.
+The applications are searchable at low weight, which is what lets someone find "the workspace with
+the browser on it" without knowing its name. The Windows/other naming split is a compile-time
+`#ifdef` in the C++ and an argument here, so both namings are reachable from one build and both are
+tested.
+
+**A declared divergence.** The C++ writes the count as Qt's `tr("%n window(s)", "", n)`. Qt applies
+plural forms only where a translation supplies them, and there is no English entry for this string —
+Russian and Ukrainian have real plural forms and English falls back to the source text. The shipped
+English therefore reads `3 window(s)`, with the translator's placeholder left in the interface. The
+port writes `1 window` and `3 windows`: what every translated locale already does, and what English
+would do if the entry existed. A test pins it.
+
+Still C++-only: the window manager providers themselves and everything the actions do.
+
+**`src/builtins/calculator` → `compass-core::calculator_history`, and the grouping in
+`compass-local-storage::calculator`** — the view's own decisions and the half of `CalculatorService`
+that is not persistence. The live-calculation gate is ported with both of its rules: three
+characters before the search box is also read as a sum (below that almost anything parses as
+*something*, and a result flickering in on the way to typing a word is worse than none), and a
+leading `=` that gets under the length rule entirely and is stripped before the rest is computed —
+including the bare `=`, which the C++ hands to the backend to decline rather than short-circuiting.
+The length is counted in characters, so a two-character accented word does not slip through a byte
+count. Also ported: the `question = answer` title with its spaces, the conversion/arithmetic icon
+split with its `default` arm, and both action panels as sections — pinning alone, the three copies
+with **the answer** primary, then the two destructive actions behind a section break, which is the
+only thing standing between them and the primary action.
+
+`group_records_by_time` is a **sequential scan, not a classification**, and the port keeps it that
+way because the difference is visible. Each group consumes a *prefix* of the rows and stops at the
+first that does not match, leaving the rest to the next group; nothing rewinds. Two things follow.
+A row older than every boundary reaches `A few years ago` without any group needing a lower bound.
+And a row out of order cannot go back to an earlier group — which is safe only because the query
+sorts `pinned_at DESC, created_at DESC`, so the `ORDER BY` and this scan are one mechanism and not
+two. Every group is produced on every call, including the empty ones, and the view drops those;
+that split is the C++'s and is pinned on both sides. `query` is a filter and not a ranking, and an
+empty query short-circuits to the full list rather than matching everything — which is what makes
+an empty search box show the grouped history rather than a fuzzy-ordered one.
+
+The calendar arithmetic is **not** ported: `group_records_by_time` takes the eight boundary instants
+as an argument rather than reading a clock. Computing them belongs to whoever owns the clock, and
+keeping them out is what lets the scan be tested without freezing a timezone. The `dividers` vector
+the C++ declares at the top of that function is dead — nothing reads it — and is not carried over.
+Still C++-only: the backends (unported by design, see the crate docs), the preference dropdown that
+selects one, and the refresh-rates command.
+
+**`src/services/script-command` → `compass-core::script_scan`** — the header parser was already
+ported (`src/lib/script-command`); this is the layer around it. The scan's rules are ported with
+their order intact, and the order is observable: a directory is classified **before** the duplicate
+check, so a directory never consumes an id and one named like an already-seen script still
+contributes its children; and the duplicate check comes **before** the extension check, so nothing
+a rejected `.md` does can shadow a real script of the same id found later in the walk. Also ported:
+the `.template` marker matched **anywhere** in a name rather than only as a suffix, the
+`depth + 1 < MAX_DEPTH` comparison that lists a directory at depth 4 without opening it, the
+"is this text?" test that is nothing more than a NUL byte in the first 8 KiB (so an empty file
+passes and reaches the parser), custom directories searched before the packaged ones so a user's
+script shadows a stock one, and the case-**sensitive** extension check that lets `README.MD`
+through. The command line is ported with its zip: extra values are dropped rather than appended and
+a short call passes fewer arguments rather than empty ones, and `percentEncoded` is applied per
+argument over bytes, not characters. `packageName` shows an inline script's last line of output —
+`No data` until it has run — in the slot a package name would occupy, so declaring one on an inline
+script has no effect. The icon chain is emoji, path as written, path beside the script, `https`
+URL, then the tinted `code` glyph; `http` is refused because the C++ tests the scheme for `https`
+exactly. The metadata store keeps each line base64-encoded for the reason the C++ comment gives —
+the output is arbitrary bytes from someone else's script — and a corrupt file leaves an empty store
+rather than an error, because a lost output cache is no reason to stop listing scripts. The output tokenizer is ported too, as
+`compass-core::script_output`: 32 tests, 18 controls, all of which fired.
+
+A script's stdout is arbitrary bytes from someone else's program and the launcher renders it, so
+this decides what is a link, what is coloured, and what is neither. Three of its rules are the kind
+that only a test notices:
+
+- Three of the four states end a run **without consuming the character that ended it**, so the next
+  call sees it again in the new state. That is what starts a link at the `h` of `http` rather than
+  one character late, and what keeps the character after a link from being dropped.
+- A link that runs to the end of the output is **not** marked as a link — the loop falls out of the
+  end and returns the run with the flag unset. Visible behaviour: the last link in a stream is not
+  clickable until more output arrives after it. Pinned rather than fixed.
+- Quotes and brackets end a link, because a URL printed inside them — how most prose prints one —
+  would otherwise swallow the closing mark and produce a link that 404s.
+
+37 is deliberately absent from the colour table, so white text draws in the theme's ordinary
+foreground; a script colouring its output white would otherwise be invisible on a light theme. Two
+arms of the C++ switch, for 0 and 97, **cannot be reached** — everything is normalised into 30–37
+before the lookup — and are not ported.
+
+**Three controls were silent and each needed an input that could tell the two readings apart.** Two
+sequences with no text between them is the only case where the one-format-per-run check does
+anything, because with text between them the text flush ends the run first. `ESC 3 1 m [ 3 2 m` is
+the malformed escape that distinguishes "swallow everything until `[`" from the other reading.
+And `ESC[287m` is red, because the accumulator is a `uint8_t` and 287 wraps to 31 — with 999,
+wrapping and saturating are indistinguishable.
+
+Still C++-only: the service's own Qt machinery (the filesystem watcher, its 100 ms debounce and the
+15-minute refresh), the script actions and the executor view host.
+
+
+**`compass-xdg::terminal`** — how to run a command inside a terminal emulator, from
+`XdgAppDatabase::inferTermExec` and the `X-TerminalArg*` keys.
+
+There is no specification for any of this, so it is a table of what each emulator actually accepts,
+and the gaps in it carry as much weight as the entries. An absent flag means *this terminal has no
+such flag*, not "use the default": passing `--title` to konsole is an error and no window, not an
+untitled one, so the absence has to survive into the caller. Two entries are the kind of thing a
+tidy-up would break — the new GNOME Console takes `working-directory` with **no leading dashes**,
+and `mate-terminal` and `xfce4-terminal` kept `-x` where GNOME moved to `--`.
+
+The table is keyed on the *program* rather than the desktop id, because the same emulator ships
+under different ids on different distributions while the binary keeps its name. A terminal's own
+desktop file beats the table, since it is the only source that can be right about one released after
+the table was written; `X-TerminalArgExec` is the gate, because a file that cannot say how to run a
+command is not describing a terminal this can drive, whatever else it declares.
+
+The fallback guesses `-e` and **nothing else**, deliberately: a terminal nobody has listed still
+opens, it just gets no title, directory or hold. Guessing more would not be an improvement — a wrong
+`--title` is an error and no window, where a missing one is a window with the wrong name.
+
+**`src/services/app-service` → `compass-core::app_service`, with the MIME hierarchy in
+`compass-xdg::mime_subclasses`** — the lookups are ported:
+`findById` (with its `.desktop` retry), `findByClass`, `find`'s id-then-class order,
+`findCuratedOpeners`' dedupe by display name, and `list`'s case-insensitive sort. Still C++-only:
+everything that starts a process (launch, the file browser, the terminal), which belongs to whoever
+owns the session rather than to a lookup table.
+
+`findOpeners` / `findDefaultOpener` are no longer among them. The per-type lookup was already in
+`compass-xdg::mimeapps`; what was missing was the **parent-chain walk**, which the C++ gets from
+`QMimeDatabase` and which now has its own shared-mime-info reader in `compass-xdg::mime_subclasses`
+— 30 tests and 17 controls.
+
+Without the walk, a `.tar.gz` typed as `application/x-compressed-tar` finds nothing unless something
+registered for that exact name, even with an archive manager installed that registered for
+`application/gzip`. The walk is breadth-first, so a type's own associations are considered before its
+parents' and a near ancestor before a distant one — which is what makes a reader registered for
+`application/pdf` beat one registered for `application/octet-stream`. An application claiming both a
+type and its parent appears once, in the position its *nearest* claim earned.
+
+The table is parsed forgivingly: a malformed line is skipped rather than refusing the file, because
+it is generated by `update-mime-database` from whatever packages installed and one bad line should
+not cost every association on the system. Comments need their own check and not just a field count —
+a two-word comment has exactly the two fields a real line has, and would otherwise register `#` as a
+type.
+
+**A declared divergence.** The C++ keeps no record of which types it has already walked. A type
+reachable by two routes is visited twice (harmless — the association lookup deduplicates by
+application), but a **cycle in the table loops forever**. `subclasses` is generated, so a cycle would
+be a bug in `update-mime-database` or in a package's XML rather than something a user writes; it is
+still a file on disk that this reads, and a launcher that hangs on a malformed system file is worse
+than one that copes. This keeps a visited set, which terminates on any input and removes the
+duplicate visits at the same time. Two tests pin it, one for a cycle and one for a self-referential
+type.
+
+
+**`src/root-search/apps` → `compass-core::root_items`** — what an application looks like in the root
+list, ported so `compass_ui::root_list` has something real to arrange. 14 tests, 12 controls.
+
+The provider is spelled **`applications`**, not `apps`: it is half of every application's entrypoint
+id and so is written into the config file, which makes the spelling a stored format rather than a
+label. The entrypoint half is the desktop id with `.desktop` removed, and the C++ uses
+`QString::remove`, which takes out **every** occurrence rather than the suffix. For an ordinary id
+that is the same thing; with dotted ids it is reachable — a file named `desktop.desktop` in a
+directory called `my` has the id `my.desktop.desktop` and loses both — and the port keeps the C++'s
+answer, because the result is a stored key.
+
+Three things in the conversion are deliberate and each has a test saying so. The **subtitle is
+empty**, because an application's comment is its description in the settings and filling it would
+give every row a paragraph. The **unlocalized name joins the keywords**, so someone who knows an
+application by its English name still finds it on a localised desktop where the title is something
+else. And `enabled` starts true: the root item manager's merge is what turns an item off, and an
+application is not disabled by being converted.
+
+**Not wired into the launcher yet, deliberately.** `compass_ui::root_list` and this conversion are
+both tested, but the launcher still searches the application index directly. Flipping that is a
+change to the one path the VM tier has actually verified — it is where #91 was found — and changing
+it blind, in a container with no compositor, would trade a working launcher for an untested one. The
+pieces are ready; the switch waits for a run that can answer for it.
+
+**`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
+full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
+the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the
+enabled/provider/favourite filters, and the stable sort with its alias-prefix prioritisation. Twelve
+tests, twelve controls, each read off `root-item-manager.cpp`. `mergeConfigWithMetadata`,
+`registerVisit` and `resetRanking` are ported too — the enabled precedence (the item's own default,
+then the user's per-item setting, then a *disabled* provider, which wins), aliases, shortcuts,
+favourite positions and fallback flags. `searchGroupedByProvider` is ported
+too, with its two rules that differ from the flat search — a provider whose *display name* matches
+contributes all of its items, including ones scoring zero, and `providerId` is not applied — for
+another nine tests and nine controls.
+
+The manager's state changes are ported too, and this note previously understated that:
+`mergeConfigWithMetadata` and `registerVisit` were already done when it was written, and the config
+writes behind `setAlias`, `setShortcut`, `setItemEnabled` and `setProviderEnabled` are done now —
+seventeen more tests and fourteen controls. A write is a *merge*: setting an alias must not clear a
+shortcut set earlier, and the provider and entrypoint entries are created on first write because the
+config file holds only what the user changed. Each pairing writes **both** halves, memory and file,
+because doing only the first is a change that shows immediately and vanishes on restart.
+
+`setItemEnabled` deliberately writes only the file. The merge applies the provider's setting *after*
+the item's, so enabling an item whose provider is off does not make it appear — and only the merge
+knows about the provider. There is a test for that interaction end to end rather than for the
+absence of a line.
+
+**A declared divergence in `setShortcut`.** The C++ is asymmetric and the asymmetry is a bug: an
+empty shortcut *resets* the metadata but still writes `std::string{""}` into the config. On the next
+merge that stored empty string is present, so `if (auto shortcut = itemConfig->shortcut)` takes it
+and the metadata comes back as `Some("")` rather than `None`. Clearing a shortcut therefore looks as
+though it worked until the launcher restarts, and then the item has an empty shortcut instead of
+none. This port writes `None`, and two tests pin it — one on the write, one on the round trip
+through a merge.
+
+Still C++-only: loading items from the providers themselves, which is the extension registry, the
+application database and the rest of the backends rather than logic.
+
+**`src/services/tray-host` → `compass-core::tray_host`** — `TrayItem` and `TrayMenuItem` are
+ported: the item key is the bus name *and* the object path, because one application can export
+several items on one connection; a menu path of `/` means no menu at all; and the icon falls back
+through resolved theme path, raw pixmap, theme name, then `application-x-executable`. Each
+attention field falls back **on its own**, so an application that sets an attention icon name but
+no attention pixmap still shows its ordinary pixmap rather than nothing. `resolve_icon` keeps
+`findIconInThemePath`'s first line — an empty name or an empty theme path returns before any
+directory is walked — and `best_icon` returns an SVG immediately and otherwise takes a *strictly*
+larger file, so equal-sized candidates take the first and the answer does not depend on directory
+read order. `plain_label` strips a single `_` mnemonic and folds `__` to one literal underscore,
+iterating by `char` so a label with accented text is not cut mid-codepoint. 
+The `com.canonical.dbusmenu` layout is read here too (`menu_item_from_layout`, 22 tests and 20
+controls): the transport is the bus's, but turning a property bag into a menu entry is not, and
+every default in it is the protocol's rather than a guess.
+
+Three of those defaults carry weight. `enabled` and `visible` default to **true**, because an
+application that sends neither wants an ordinary entry and defaulting either way round renders a
+menu of grey nothing. `toggle-state` is read only when the key is **present**, because its default
+is `-1` — indeterminate — and that is a different state from `0`, which is off: a checkbox nobody has
+answered is not an unchecked one. And an unknown `toggle-type` falls back to none, so a type the
+protocol gains later draws as a plain entry rather than an empty checkbox.
+
+Two more are about a bus that is loosely typed and carries whatever an application sends. A property
+of the wrong shape takes its default rather than refusing the menu, and an **empty** `icon-data`
+payload is no icon rather than an empty one — which would draw as a blank space where the
+application meant nothing at all. The menu itself is the root node's *children*: returning the root
+would put an unnamed entry above every menu.
+
+Still C++-only: the DBus plumbing (the StatusNotifierWatcher registration, the `GetLayout` call and
+the property-change signals), which belongs to whoever owns the bus connection.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
 itself, built from the same C the C++ engine links (ADR-0014). `Database::open` does what
@@ -351,6 +1106,759 @@ the behaviour changes, so a future fix is loud rather than silent.
 Matched deliberately, for the record: field codes are not expanded inside quotes; unknown and
 deprecated field codes expand to nothing; a redeclared group replaces rather than merges; localized
 score ties resolve to the last declaration.
+
+### `compass-core::default_app` — one picker sorts stably and the other does not
+
+`set-default-browser-view-host.hpp` sorts its candidates with `std::ranges::stable_sort`;
+`set-default-terminal-view-host.hpp`, which is otherwise a copy of it, uses `std::ranges::sort`.
+Both comparators are `isDefault(a) > isDefault(b)` and say nothing about two non-defaults, so the
+terminal list below the current default is in an unspecified order — two runs of the same binary may
+disagree, and nothing in the view depends on it being one way or the other.
+
+Compass sorts both stably, so the rest keep the order the application database gave them.
+`the_rest_keep_the_order_the_database_gave_them` pins it for the browser picker, where the C++ makes
+the same promise; the terminal picker shares the implementation, so it inherits a guarantee the C++
+does not make rather than a different behaviour.
+
+### `compass-core::root_items` — an unfavourited item that stays unfavourited
+
+`mergeConfigWithMetadata` only *assigns* `favoriteIdx` when the entrypoint id is in `cfg.favorites`:
+
+```cpp
+if (auto it = std::ranges::find(cfg.favorites, std::string{entrypointId}); it != cfg.favorites.end()) {
+  meta.favoriteIdx = std::distance(cfg.favorites.begin(), it);
+}
+```
+
+`m_metadata` is a map that outlives the merge, so removing an item from favourites leaves the old
+index in place. Every search that passes `includeFavorites = false` — the root list, which renders
+favourites separately — keeps dropping that item until the launcher restarts. `meta.fallback` two
+lines below is assigned unconditionally and does not have the bug.
+
+Compass clears the index when the id is absent. `unfavouriting_clears_the_index_rather_than_leaving_it_behind`
+pins the fixed behaviour; `a_fallback_that_is_removed_stops_being_one` pins the neighbouring line
+that was already right, so a future "fix" that changed the wrong one would be caught.
+
+### `compass-worker-host::ui_shell_service` — a method that does nothing, faithfully
+
+`ExtUIService::updateToast` is `{ return Void::ok(); }`. The body is empty: an extension that calls
+`toast.title = "..."` after showing a toast gets a resolved promise and no change on screen. The
+Rust host does the same, and `updating_a_toast_does_nothing_at_all_because_the_cpp_does_nothing`
+pins it — with a control that fires if it ever starts working.
+
+Implementing it would be the more useful behaviour and the wrong port: the extension cannot tell
+from the reply which host it is talking to, so a Compass that updated the toast would show text a
+Vicinae user never sees, and an extension author would tune their toasts against the wrong one. When
+the C++ grows a body, this test is the one that should fail.
+
+### `compass-core::slug` — two regex passes that reach the same string as one
+
+Qt's `slugify` replaces `[\s_]+` with the separator, which collapses a run of whitespace in that
+one pass, and then collapses runs of the separator in a later pass. The Rust port writes one
+separator per whitespace character and lets the later collapse do both jobs. It also drops the
+C++'s early return on an empty input, which cannot change the result because an empty string falls
+through every remaining step unchanged.
+
+This is recorded rather than silently done because it was found by a control that did not fire:
+mutating the whitespace-run logic changed nothing observable, because the collapse pass rescued it.
+A behaviour guarded twice is a behaviour whose guard cannot be tested, so the redundant guard went.
+`a_run_of_whitespace_makes_one_separator_not_many` still pins the property, and now fails when the
+single remaining rule is broken.
+
+### `compass-core::boilerplate` — two commands with the same slug, and the first one wins
+
+`QFile::copy` refuses to overwrite an existing destination and reports the failure through a return
+value the C++ does not check. So an extension generated with two commands whose titles slugify alike
+— "Show Things" and "show things" — gets two entries in its manifest and one source file, holding
+the *first* command's template. The second command points at a file that is not the template it
+asked for.
+
+The port reproduces this, and `two_commands_that_slugify_alike_do_not_clobber_each_other` pins it,
+because the alternative readings are both worse: overwriting would make the *second* command win and
+leave the first pointing at the wrong template instead, and rejecting the config outright would fail
+a generation the C++ completes. It is a bug worth fixing upstream, not worth diverging on here — the
+test is named for what it protects, and is the one that should fail when the C++ starts checking
+that return value.
+
+### `src/server/src/ui/image` stays ❌ although its wire format and its contrast maths are ported
+
+`compass-core::image_url` is a complete port of `url.cpp` — the `icon://` scheme every icon in the
+system is referred to by — and `compass-core::contrast` of `contrast-helper.hpp`, which picks a
+colour that can be read against another one. Between them, 53 tests and 43 controls. The row stays
+❌, for the same reason
+`src/file-indexer` does: the directory is 2,154 lines across fourteen files, and what is ported is
+one of them. The renderer, the streaming decoder, the painter and the platform icon loaders are the
+rest, and they are the part that needs a UI layer.
+
+The contrast maths splits into a standard and a judgement, and they are tested differently on
+purpose. `getRelativeLuminance` and `getContrastRatio` are WCAG 2.x, defined to the digit, so they
+are pinned against the standard's own values — black on white is exactly 21:1, and a pure green is
+0.7152 where a pure blue is 0.0722. `getTonalContrastColor` is not a standard: it is this project's
+answer to "given an album cover, what colour do I write on it", and what is pinned there is the
+properties it must hold — it moves away from the background, it keeps the background's hue, and it
+gives up after thirty steps rather than looping, because on a mid grey no lightness reaches 4.5 and
+a search without the bound would never end.
+
+One thing this port does *not* verify is that its HSL conversion agrees with Qt's to the last bit.
+The tests hold the properties rather than exact RGB triples for that reason; a caller needing the
+same pixel as the C++ would need a cross-check that does not exist yet.
+
+It was worth porting ahead of them because an `ImageURL` is a *string*, not a widget. That string
+crosses every boundary in the system: it is what a root-search row stores, what an extension gets
+handed back, what an alert carries. Two details in it are load-bearing for data already written
+down, and neither is obvious from reading the code once:
+
+`nameForType` returns the *first* table entry for a type, so `Builtin` prints as `omnicast` rather
+than `builtin`, and `Https` prints as `http`. Both spellings parse, so the tables are asymmetric on
+purpose and reordering them would silently change every URL a new build writes.
+
+And `resolveThemedLocalPath` inserts `@dark` before the first dot *after the last separator*, not
+before the last dot: `a.tar.gz` becomes `a@dark.tar.gz`, and `~/.local/share/logo` becomes
+`logo@dark` rather than being confused by the dot in the directory above it.
+
+
+### The first view-layer work: the root list's sections and selection
+
+Every row still 🟡 is 🟡 for the same reason — the model is ported and tested, and the *backend* is
+not. Counted across the notes below, what is left is views (4), providers (3), QML (2), MPRIS and
+HTTP. That is the engine rather than more transcription, and it is where the remaining Phase 5
+percentage lives.
+
+**What the VM tier proves about this work, and what it does not.** Run 195 is green on `443efa6`:
+stock Bluefin boots under QEMU, the Flatpak installs, the engine starts *without putting anything on
+screen*, it finds applications (#95), a launcher window appears, a typed query reaches **our** field
+(#91), and the window hides and comes back (ADR-0015) — each against a control frame, with the
+changed region asserted to lie inside a box so that "something else moved" fails too.
+
+**The action panel has now been seen in a real session.** `scripts/vmtest/launcher.sh` presses
+Ctrl+B after the hide/summon pair, and run 199 on `3da5283` is the first measurement:
+
+```
+2697 of 716800 pixels differ (0.38%)  box x 360..466 (107w) y 315..447 (133h)
+ok: 0.38% >= 0.10%
+ok: changed region is inside 300,140..980,800
+```
+
+Two things follow, and only the first is a framediff's to say. The chord **reached the
+application** — which was genuinely open, because the launcher had just been hidden and summoned
+and nothing established that our window still held keyboard focus afterwards. And reading
+`launcher-06-panel.png` against `launcher-05-summoned.png` in that box, what drew is the panel
+itself: the root list's `> Firewall / Files / New Window` is replaced by an `Actions` header, `>
+Open`, a `---` divider, a `Copy` section header, and `Copy name` / `Copy path` beneath it.
+
+That is the flattened structure `compass_ui::action_panel`'s tests pin, confirmed on screen: a
+header, selectable rows, a divider, a section header and its rows — **and the caret on `Open`,
+the first *selectable* row**, not on the `Actions` header above it. The unit tests assert that the
+selection skips headers and dividers; this is the same claim, drawn by a real compositor.
+
+**It is now a gate.** Run 200 on `317940f` printed the same figure from a separate VM boot —
+2,697 pixels, 0.38%, the same box — byte-identical rather than merely close, which is what makes a
+threshold defensible after two runs instead of a dozen: there is no spread to fit to. The floor is
+0.1%, about a quarter of what was measured and deliberately *not* fitted to 0.38%, because a panel
+with fewer actions must still pass; what must fail is the chord never arriving, which reads 0.00%.
+The containment box carries the half that does not move with content, and also asserts that nothing
+outside our window changed. The root list's sections and the
+selection moving through *them* still have no VM coverage, only the tests in this crate. The tier answers "does the launcher paint and
+receive keystrokes in a real GNOME session", which is the question #91 came from; it does not yet
+answer "is what it paints the right thing". Saying otherwise — as an earlier version of this PR's
+description did — would claim verification that no assertion performs.
+
+`compass_ui::root_list` is the first piece of it. The launcher's main list is not one list: it is
+favourites, then results, then — when nothing matched — the fallbacks, each under its own heading.
+The arrangement and the selection moving *through* it are kept out of the Iced `view` function, so
+they can be tested in a container with no display server; only the drawing needs a compositor. 31
+tests, 29 controls.
+
+The selection arithmetic is deliberately **flat**, and the sections are invisible to it. A heading
+is not a position, so nothing ever lands on one and nothing is skipped crossing a boundary — which
+is the bug this shape prevents, and one that is invisible until someone tries a list with more than
+one section. Two tests walk the whole list rather than taking one step, because a one-step test
+passes against an off-by-one that makes the last row unreachable.
+
+Favourites lead the empty query and vanish once something is typed: a favourite that does not match
+is not an answer, and keeping it above the results would push the thing asked for down the page. One
+that *does* match appears among the results instead — not hidden, just without its special position.
+The search excludes favourites for the empty query precisely so the same row is not drawn twice, and
+a test checks for the duplicate rather than trusting the flag.
+
+Fallbacks appear only when nothing matched, which is what makes them fallbacks rather than a section
+always on screen. An empty section is never drawn, because a heading with nothing under it is a
+heading that lies.
+
+
+`compass_ui::action_panel` is the second piece, and the one every command needs: the panel its
+actions are shown in. Ported from `action-panel-model.cpp`. 41 tests, 29 controls.
+
+A panel is sections flattened into rows, where headings and dividers are rows that cannot be
+selected — so almost all of it is the difference between a row and a selectable row. Three
+flattening rules, each a thing that looks wrong on screen if it is missed: a section filtered down to
+nothing contributes **no heading and no divider** (a heading over an empty space being the most
+visible way to get it wrong); the divider is emitted *before* the next section's heading rather than
+after the previous section's last action, which is what keeps "between" true when a middle section
+drops out under the filter; and an unnamed section gets its divider but no heading, because the
+separation is what the section is for even when it has nothing to say about itself.
+
+Moving by *section* has the asymmetry the C++ has, and it is a good one: down goes to the first
+action of the next section, while up goes to the top of the **current** section when the selection
+is not already there. One press takes you to the top of what you are in, a second to the section
+above, and neither requires counting rows. Moving up onto a section's first row scrolls to its
+heading, without which the heading sits just above the viewport and the first row of a section looks
+like the middle of the one before.
+
+A shortcut runs the first bound action in panel order. Two actions sharing one is a mistake nothing
+reports, so the order decides it rather than nothing happening — and a shortcut on an action the
+filter has removed is not reachable, because running something not on screen is worse than the key
+doing nothing.
+
+Two guards were written and then deleted because no mutation could reach them: an empty-filter early
+return (`all` over an empty iterator is already true) and an empty-panel early return (both search
+loops are bounded by the row count). Three controls found tests that proved less than they looked
+like they did — the section-down test started from the last row of its section, where the next row is
+already the next section and the rule under test never fires.
+
+
+The panel is now *in* the launcher rather than beside it: Ctrl+B opens it over the selected row, it
+takes the arrow keys and the vim chords while it is open, Escape closes it rather than the window,
+and running an action closes it either way.
+
+**Ctrl+B and not Ctrl+K, and the reason is in the C++.** `keybind-manager.cpp` binds the panel to
+Ctrl+K on macOS and Ctrl+B everywhere else. I had written Ctrl+K before reading that, which would
+have taken the vim chord for "move up" from every Linux user of the default scheme — there is a test
+asserting that chord, and it would have caught the clash a moment later. Reading the source first
+was cheaper.
+
+Three test premises were wrong and the suite said so, and one of them is the shape of this component
+in miniature: the panel's second *selectable* row is index 3, not 1, because index 1 is a divider
+and index 2 a heading. Expecting 1 was expecting the selection to land on a divider — which is the
+exact bug the flattening is built to prevent, written into a test of it.
+
+**One assertion is not control-backed and says so in place.** "Escape closes the panel and *not* the
+window" — the first half fires under a mutation, the second cannot: `conceal` closes the window
+through a Task and clears the field only when `Message::Closed` returns, and with no engine link
+`on_dismiss` exits instead. Proving it needs an app built around a live `EngineLink`, which this
+crate has no harness for. Recorded rather than left looking covered.
+
+### `src/services/window-manager` stays ❌ although its dispatch layer is ported
+
+`compass-core::window_manager` is a complete port of `window-manager.cpp` — which backend gets
+picked, and the focus bookkeeping that lets the launcher act on the window the user was in *before*
+they opened it. 39 tests and 32 controls.
+
+The row covers 5,380 lines across thirteen files, and twelve of them are per-compositor providers:
+Hyprland, GNOME, KDE, X11, Niri, generic Wayland, Windows virtual desktops, and the event listeners
+under each. One file of thirteen is not the row, on the same rule that keeps `src/file-indexer` ❌.
+**So this moves the Phase 3 gate by nothing**, and that is the right answer rather than a
+disappointing one.
+
+What it is worth is the part that is not compositor-specific and therefore not testable by running
+one. The provider order *is* the mechanism: the first candidate that says it can run wins, and the
+generic Wayland provider is offered **last** because it is good enough for most standalone
+compositors and would otherwise claim Hyprland and Niri too — and then neither would get its own
+workspace support. A test pins that ordering, with two activatable candidates rather than one,
+because with one the first and the last are the same and the test would pass against either rule.
+
+The focus memory is the other half. The launcher takes keyboard focus when it opens, so "the focused
+window" is almost always its own, and every action that means "do this to what I was looking at"
+depends on remembering. Three rules carry it, and each is pinned:
+
+- A compositor that reports the *frontmost* window is trusted outright and no memory is kept at all,
+  because it knows what is in front even while the launcher holds focus.
+- The launcher's own window is never remembered and **does not clear** the memory. That is the whole
+  point: opening the launcher must not lose what was underneath it.
+- Nothing focused clears the memory only when the launcher does not have focus either — otherwise
+  the memory is still the answer.
+
+`isOnActiveWorkspace` answers **yes** at every unknown: no workspaces, no workspace on the window, an
+empty workspace id, no active workspace. That is deliberate rather than lax. Callers use it to decide
+whether to act on a window at all, so on a compositor reporting partial data, saying no would refuse
+every action; saying yes only risks acting on a window the user cannot see.
+
+Two C++ looseness are reproduced rather than tightened. An application's windows are matched by class
+*or* by the window title equalling the application's display name case-insensitively — loose enough
+that a document window titled after its file will not match, but it is what finds a window that
+carries no usable class. And the remembered window is checked by **id** on every refresh, which is
+what catches a window the compositor destroyed and replaced rather than moved.
+
+### `src/file-indexer` stays ❌ although part of it is ported
+
+`compass-core::entry_filter` is a complete port of `entry-filter.cpp` — the rules deciding which
+directory entries the indexer walks into — `compass-core::file_walk` of `filesystem-walker.cpp`,
+which decides which of them are *reached* and in what order,
+`compass-core::incremental_scan` of `incremental-scanner.cpp`, which decides what a re-scan reads
+at all, `compass-core::scan_dispatch` of the decisions in `scan-dispatcher.cpp` — when a change
+becomes a scan and which scans run — `compass-core::scan_roots` of the path arithmetic in
+`util.hpp`, `compass-core::index_reconcile` of what a settings change and a startup do,
+`compass-core::watch_policy` of which directories earn an inotify watch, `compass-core::query_policy` of
+`file-indexer-query-policy.cpp`, which decides what a typed query asks the index,
+`compass-core::vocabulary` of `vocabulary.hpp`, which decides what words a file is findable by at
+all, and `compass-core::query_ranking` of the scoring half of `file-indexer-query-engine.cpp`, which
+decides what order the answers come back in. Between them, 307 tests and 215 controls. The row stays
+❌ anyway.
+
+It covers 5,646 lines across fifteen files: the SQLite schema and its writer, the query engine and
+its policy, the incremental scanner, the scan dispatcher, the filesystem walker and the watchers.
+Ten files of those fifteen are not the row — about 2,265 lines of the 5,646, two fifths — and marking it
+🟡 would put a colour on this ledger that means "a model landed without its backend" when what
+actually happened is "a fifth of the row landed". The percentage in PLAN.md is only worth anything
+if a row's colour means one thing. **So this work moves the Phase 5 figure by nothing, and that is
+the right answer rather than a disappointing one.**
+
+**The walk** (`filesystem-walker.cpp`) is ported with the tree supplied by the caller, because every
+rule in it is about which entries are reached rather than about how to read a directory. 16 tests,
+12 controls, all of which fired.
+
+Four of its rules are load-bearing and none of them is obvious:
+
+- It is a **stack, not a queue**. The last directory listed is the first entered, which decides
+  which half of a large tree is indexed first when a scan is interrupted — and scans are interrupted
+  routinely.
+- A `CACHEDIR.TAG` abandons its directory **whole**, including the entries already listed *before*
+  the tag turned up: the C++ breaks out of the listing loop and drops the vector it was filling. So
+  what a cache directory contributes does not depend on where in the filesystem's listing order the
+  tag happens to sit. Two tests cover it, one with the tag first and one with it in the middle.
+- `depth <= maxDepth` bounds what is **entered**, and entering a directory reports its contents, so
+  a limit of 1 yields entries at depth 2. That is off by one against the obvious reading of the
+  name, and it is what ships. Controls for both directions of the comparison fire.
+- The root is never reported. The walk answers what is *in* a tree, and a caller that wanted the
+  root already had it.
+
+A fixture was too weak and a control said so: the non-directory root check could be deleted without
+failing anything, because the fake tree had nothing to list at that path either way. It now lists
+contents there, so only the check stands between the walk and reporting them.
+
+**The incremental rules** (`incremental-scanner.cpp`) are ported as decisions over a supplied disk
+and index. 23 tests, 14 controls, all of which fired.
+
+A full scan reads everything and needs no decisions. An incremental one exists to read as little as
+possible, and **the two failures are not symmetric**: reading a directory needlessly costs one
+listing, and failing to read one loses its files from the index silently — the search simply does
+not find them and nothing says why. Every rule here leans the same way because of that.
+
+- `lastModified >= cutOff` is **not** strict. Filesystem timestamps and scan records both land on
+  whole seconds, so a strict comparison drops the directory written while the scan was finishing,
+  which is the one most likely to have changed.
+- The test is `changed **or** not tracked`. A directory can be older than the cut-off and still
+  unknown to the index — a mounted disk, a restored backup, a folder moved with its timestamps
+  intact — and an mtime test alone walks straight past it.
+- A timestamp that cannot be read means **yes**, same asymmetry.
+- The pruned scan's cut-off is found by walking *up* the parents, because a scan of `~` is what
+  makes `~/code/project` up to date; asking only about the exact path finds nothing. With no record
+  anywhere the cut-off is 0, so everything is newer and the whole tree is read, which is right for
+  an index that has never been built.
+- The scan path is read **however recently it was scanned** — it is the one directory the scan was
+  asked about — but a path never scanned to completion yields only itself and the tree is not
+  walked. An incremental pass with no cut-off to be incremental against would re-read everything
+  while calling itself incremental.
+- Deletion is *absence*: a path the index holds and the re-read listing did not produce. Nothing
+  tells the scanner a file is gone, so a listing it re-read is the only evidence there is.
+- The queue is first-in-first-out, so a scan interrupted early has covered the breadth it was asked
+  about rather than one deep branch of it.
+
+**One deliberate difference, declared.** The C++ dedupes the directories it *discovers* but not the
+ones it starts with; here the check covers both. Unreachable through `scannable_directories`, which
+cannot return a path twice, and the uniform rule is the better one if a caller ever does hand it a
+repeat.
+
+**The scheduling** (`scan-dispatcher.cpp`) is ported for its decisions, not its threads: the
+debounce that turns a burst of filesystem events into one scan, and the queue rules that keep two
+scans off the same directory. 28 tests, 16 controls, all of which fired — three only after a test
+was added that they could fail.
+
+The debounce is a quiet period **with a ceiling**, and both halves earn their place. Saving a file
+in an editor is several filesystem events and a build is thousands, so a scan per event would keep
+the indexer re-reading a tree that is still changing. But a quiet period alone never fires for a
+directory that is never quiet — a log directory, a build tree, a folder mid-download — so the
+deadline is the *earlier* of "five seconds after the last event" and "thirty seconds after the
+first". The `min` is the whole mechanism; a control replacing it with `max` fires, as does one
+measuring the ceiling from the last event rather than the first.
+
+Two keys differ deliberately, and that is not an inconsistency. **Pending** scans are keyed by path
+*and* type, because a full and an incremental scan of one directory do different work and neither
+substitutes for the other. **Accepted** scans are checked by path *alone*, because two scans reading
+one directory race each other's writes whatever kinds they are. One is about what to schedule; the
+other about what may run at the same time.
+
+A scan refused because its path is busy is **re-armed rather than dropped**: the events that asked
+for it are real, and the running scan may have passed those files before they were touched. An
+interrupted scan that is already running stays in the queue — a scanner told to stop has not stopped
+yet, and removing it would let a second scan of that path start beside it.
+
+**Three controls were silent and the tests were the reason.** Every timing test read
+`DEBOUNCE_QUIET_SECS` and friends through the constants, so changing a constant moved the
+expectation with it. The values are now pinned literally in a test of their own: 5 seconds, 30
+seconds, 2 workers. A test written in terms of the thing it is checking cannot check it.
+
+**The scan roots** (`util.hpp`) decide which directories are handed to all of the above. The list
+comes from settings a user edits by hand, so it arrives with duplicates, relative paths and
+overlapping subtrees, and scanning `~` and `~/code` separately does not merely waste a pass — the
+two scans race each other's writes for the same rows. 29 tests, 15 controls, all of which fired.
+
+Descent is compared **component by component**, never as text. `/home/user2` starts with the
+characters of `/home/user` and is not inside it, and a string prefix test would silently drop one of
+the two from the scan set — a bug that appears only for the user whose name is a prefix of someone
+else's. The control replacing the comparison with `starts_with` fires.
+
+The compaction sorts by **component count first**, then alphabetically, and the first half is what
+makes it correct: an ancestor always has fewer components than its descendants, so it is accepted
+before them. A plain alphabetical sort is not enough — `/a/b/c` sorts before `/a/bb`, so the
+descendant would be weighed against a set that did not yet hold `/a/b`. The alphabetical tie-break
+keeps the answer stable, which matters because a scan interrupted halfway should cover the same half
+next time.
+
+**Two controls were silent for a reason worth writing down.** `Path`'s own `Components` iterator
+drops `.` on its own, and `PathBuf` compares by components — so a test asserting
+`PathBuf == PathBuf` cannot tell a normalised path from an unnormalised one, and a `.` in the middle
+of a path never reaches the code that removes it. The assertions now compare rendered text, and a
+leading `.` — the only one the match arm ever sees — has a case of its own.
+
+**Reconciliation and startup** (`file-indexer.cpp`) answer the same question from two directions:
+which files should be in the index and are not, and which are in it and should not be. The second is
+the worse to get wrong — a search returning files the user asked it to forget. 31 tests, 20 controls,
+19 of which fired.
+
+The settings diff has four rules and one of them turns on a single word. A new root is skipped when
+an old root already covers it — but only when that old root **stays**. An old root that is itself
+being removed is no coverage at all, because its rows are about to be deleted, and treating it as
+coverage leaves the new root unscanned with its files gone from the index. The control dropping the
+"stays" half fires.
+
+The other three: a root the new settings no longer cover is deleted; a new exclusion is deleted
+unless it was already excluded, since then there is nothing of it indexed to remove; and an
+exclusion that has been **lifted** is scanned, but only inside a root — those files were skipped
+while it stood and nothing else would ever go back for them.
+
+The pending-full-scan set is what makes a full scan survive a restart. A full scan of a large tree
+takes minutes and the launcher can be closed inside one; without the set, a settings change followed
+by a restart leaves a root that was never scanned and never will be, because the config already
+lists it and the startup path sees nothing to do. A finished scan clears everything **beneath** its
+root rather than an exact match, and `roots_for` reports without pruning — a config change that is
+later undone must not have lost the roots it was about to drop.
+
+Startup has three cases and the middle one is why the other two are not enough. A full scan that did
+not succeed means the index holds *part* of that tree with nothing recording how much: an
+incremental pass would compare against the cut-off the interrupted scan wrote and skip everything it
+never reached. So it is redone whole, and the old record is marked interrupted so it stops being
+read as a cut-off. The watcher waits until no full scan is needed, because a full scan is already
+walking the tree the watcher would report on.
+
+**One guard was not ported because no mutation could make it fail.** The C++ skips an old exclusion
+that is still excluded before deciding whether to rescan it; the drop that runs a few lines later
+removes exactly the same paths. A guard whose whole effect is undone by a later line reads like it
+is carrying weight, and it is not.
+
+**The watch policy** (`important-dir-watcher-linux.cpp`) decides which directories earn an inotify
+watch, which is a finite and *shared* resource: `fs.inotify.max_user_watches` is 8,192 on many
+systems and every program on the desktop draws from it. A launcher that watched a whole home
+directory would take all of them and break whatever asked next. 22 tests, 21 controls, all of which
+fired.
+
+The answer is not to watch less accurately but to watch **shallowly**, and to treat running out as
+an expected outcome rather than an error. Two levels below each important root are watched;
+`~/code/project/src` is not, and a change in it still shows up within a scan cycle, for a budget
+that instead covers a hundred other projects' top levels. When the budget runs out the remaining
+directories fall back to the scan cadence — which would have covered them anyway.
+
+The walk is **breadth-first, and that is the whole design**: with a budget that can run out, the
+order decides what is covered when it does. Depth-first would spend the budget inside the first root
+and leave the others entirely unwatched; breadth-first covers every root's top level before any
+root's second.
+
+The roots are the home directory, its visible subdirectories, and then the XDG config and data
+homes — which are hidden, so the enumeration skips them, and which are indexed regardless. Adding
+them back explicitly is the only reason the function is not simply "list the home directory". With
+no home there are no roots **at all**, the XDG directories included, because the C++ returns before
+reaching them.
+
+The two constants are pinned literally, having learned that from `scan_dispatch`: every other test
+reads them through the names, so nothing else would notice them changing.
+
+The ranking is the fourth leg. A fuzzy score alone would rank an editor's swap file above the file
+it is a swap of, and `finalreport.pdf` above `report.pdf`. Every multiplier in the engine exists to
+stop one of those, and each is now pinned with a test naming what it prevents:
+
+- The substring bonus applies to the **remaining headroom** — `score + (100 - score) * bonus` —
+  rather than multiplying the score. A candidate already near 100 gains almost nothing and one at 40
+  gains a lot, so the bonus re-orders the middle of the list without letting a weak match overtake a
+  strong one, and cannot push anything past 100.
+- A token-start match is worth 1.5 and an inner one 1.05. The second is a tie-break rather than a
+  ranking, because a query buried inside a longer word is weak evidence; treating it as strong is
+  exactly what would put `finalreport.pdf` above `report.pdf`. The boundary test is
+  **alphanumeric**, so `2024report` is one word to the ranker as it is to a reader.
+- Editor and compiler leavings are **demoted, not removed**: a swap file is sometimes what you are
+  looking for right after a crash, and a search that cannot find it is worse than one that ranks it
+  last.
+- A correction plan is an **and**. One word scoring zero drops the whole plan, because a correction
+  finding files that match two of its three words is not a reading of the query but a different
+  query. The surviving words are averaged rather than summed, so a three-word plan is not worth
+  three times a one-word plan, and each is normalised against what it scores against *itself*, or a
+  six-letter word would always outscore a three-letter one on the same quality of match.
+- The four sort keys each exist because the one before it ties, and the third is the interesting
+  one: a file comes before a directory, because a directory matching as well as a file inside it is
+  usually not what was meant — the file is the thing you open.
+
+One line of the C++ is deliberately not carried over, and a control is why: the guard against a
+query longer than the text is unreachable here, since the loop's own bound already covers it. The
+*empty*-query guard beside it is kept and is load-bearing — `find("")` succeeds at offset 0, which
+would make every text a token-start match.
+
+What the ports are worth is not in the score. An indexer that walks `/proc` never finishes, and one
+that walks `~/.cargo/registry` fills the index with vendored sources that rank above the file
+somebody wanted. Those rules are a long list of specific names rather than a general principle, and
+a name quietly dropped from the list is not a bug anyone reports — it is a search that stops being
+useful. So the list is now pinned, whatever colour the row is.
+
+The query policy is the other half of that argument. Splitting and quoting a query is mechanical;
+deciding *which* misspellings to try is not. Too few and a typo finds nothing, too many and the
+index is asked several questions per keystroke, each ranking worse than the one the person meant.
+None of that fails anything — it makes search feel slightly unreliable. Every rule now has a test
+naming what it prevents: why a word the corpus knows well is left alone, why only one word per
+family is tried and why the shorter one wins it, and why every plan after the first differs from it
+in exactly one word rather than enumerating combinations nobody typed.
+
+The tokenizer is the third leg of the same argument: a file turns up in a search only if one of its
+tokens matches what was typed. Split too coarsely and `AnnualReport2024.pdf` is findable only by its
+whole name; too finely and the index fills with fragments matching everything. Its two junk rules
+are narrow on purpose — anything over 24 bytes, and anything twelve bytes or longer that is entirely
+hexadecimal — because the twelve-byte floor is what stops the hash rule eating `deface`, `facade`
+and `decade`, all of which are hex-shaped. Porting it turned up two bugs in the port rather than in
+the C++: accumulating a token as `char`s corrupts a UTF-8 filename, and the C++'s length limits are
+in bytes rather than characters, which makes them stricter for a non-Latin name.
+
+Two C++ behaviours it reproduces rather than fixes, both in `GitIgnoreReader`: only the *filename* is
+matched against a pattern, so `build/*.o` never matches anything, and a leading `/` is stripped
+rather than anchoring, so `/target` matches a `target` anywhere in the tree. The C++ calls this a
+hack in its own comment. Narrowing it would start indexing directories people's `.gitignore` files
+currently keep out; widening it would drop files they expect to find. Every line of an ignore file
+becomes a pattern too, comments included — a `#comment` glob never matches anything real, which is
+why nobody has noticed.
+
+### `compass-core::raycast_store` — the same escaping fix, and a filter deliberately skipped
+
+`search` and `fetchExtension` build their URLs with `QString::arg` exactly as the Vicinae store's do,
+so the same divergence applies and for the same reason: an extension name containing a `/` would
+otherwise add a path segment and ask the API for something else.
+
+What is *not* changed is the platform filter being skipped on Linux entirely. Raycast is a macOS
+product and its extensions advertise `macos`; filtering on that here would produce an empty store
+rather than a best-effort one, which is what the C++ comment says. The compatibility sheet is the
+other half of the bargain — fetched only on the platform where the filter was skipped, and saying
+which of those extensions actually work. `the_compat_sheet_exists_only_where_the_filter_was_skipped`
+pins that the two conditions are exact opposites, so a platform can never both skip the filter and
+have nothing to consult.
+
+A failed compat fetch is not an error: the C++ warns, returns an empty map, and leaves its
+`m_compatFetched` flag false, so the store keeps working without notes and the next request tries
+again. Both halves are reproduced.
+
+### `compass-core::extension_store` — a search query that is actually escaped
+
+`VicinaeStoreService::search` builds its URL with
+`QString("/store/search?q=%1").arg(query)`, which substitutes the query verbatim. A query containing
+`&`, `#` or `=` therefore changes the *shape* of the URL rather than the value of `q`: searching the
+store for `a & b` asks the server for `q=a ` plus a parameter called ` b`, and searching for `c#`
+sends `q=c` with a fragment.
+
+The port percent-encodes the value. Everything unreserved is left alone, so an ordinary search
+produces byte-identical output to the C++ and only the queries that were already broken change.
+`an_ordinary_search_makes_the_url_it_always_made` pins the first half and
+`a_search_containing_an_ampersand_stays_one_parameter` the second.
+
+### `compass-core::semver` — an overflowing component is refused rather than wrapped
+
+`Semver::parse` accumulates into an `unsigned` with `current * 10 + digit` and no overflow check, so
+a component past 2^32 wraps. `4294967296.0.0` therefore compares equal to `0.0.0`, and a release
+tagged that way would look like no release at all. The port returns `None`, which makes the tag "not
+a release tag" — a refusal the update service already knows how to ignore — rather than a wrong
+answer it would act on.
+
+What is *not* changed is that `Semver` is not semver. It parses a dotted run of decimal integers and
+nothing else: `v1.2.3-rc1` does not parse. That is load-bearing, because it is what keeps release
+candidates from being offered as updates without anyone having to filter them, and
+`a_prerelease_tag_does_not_parse_at_all` says so where someone might otherwise "fix" it.
+
+One bug found while porting, in the port rather than the C++: deriving `PartialEq` compares the
+component lists structurally, which would make `1.0` and `1.0.0` unequal *and* neither greater — a
+contradiction a sort or a hash map can act on. The C++ defines `operator==` in terms of `<=>`; the
+port now does the same, and hashes on the components with trailing zeroes removed so `Hash` agrees
+with `Eq`. `equality_agrees_with_the_comparison` pins it.
+
+### `compass-core::telemetry` — two C++ bugs deliberately **not** reproduced
+
+`TelemetryService::setEnabled` remembers its previous value in a *function-local `static`*. That
+makes the flag process-wide rather than per-instance: it is shared by every `TelemetryService` and
+survives one being destroyed. With a single service per process this is invisible, which is
+presumably why it has lasted. With two, the second one's first `setEnabled(true)` is swallowed as
+"no change" and its telemetry silently never starts. The port keeps the flag on the instance, which
+is what the code reads as though it did.
+`each_service_keeps_its_own_enabled_flag` pins it.
+
+`loadState` warns on an unreadable state file and carries on with whatever glaze left in `m_state` —
+for a parse failure that is a default-constructed `State`, so `userId` is the empty string and every
+record from then on is filed under `""`. Not a crash, and not visible locally: it just quietly
+detaches that machine's records from each other. The port generates a fresh id instead and writes it
+back, so the records stay attributable to *a* machine and the next run is stable again.
+`a_corrupt_state_file_gets_a_fresh_id_rather_than_an_empty_one` pins both halves.
+
+Neither divergence changes what is collected, only whether it is coherent. What *is* reproduced
+exactly is the record's shape: glaze serialises C++ member names as written, so the wire keys are
+`userId`, `vicinaeVersion`, `systemInfoLastSentAt` and the rest in camelCase, and the port renames
+its snake_case fields to match. Also reproduced is which fields are lowercased — `architecture`,
+`buildProvenance`, `vicinaeVersion` and each entry of `desktops`, and not the other seven. That
+asymmetry looks accidental, but normalising the rest would make this engine's records group
+differently from the C++'s in the same dataset.
+
+### `compass-core::paste` — a copy that happens even when the paste cannot
+
+`PasteService::pasteContent` calls `copyContent` first and only then asks whether the platform
+supports pasting. On a platform that does not, the content is on the clipboard and the caller is
+told `false`.
+
+Reproduced rather than tidied. It is arguably the more useful outcome — the person can paste it
+themselves — and reordering would break a caller that retried on `false`, which would then copy
+twice. `a_platform_that_cannot_paste_still_gets_the_copy` pins both halves: the copy happened, and
+nothing was scheduled.
+
+The timeout path is the same kind of thing and is pinned the same way: when focus never lands the
+paste is dropped and the clipboard is *not* restored, so what was copied is still there. A port that
+helpfully restored it would take away the only consolation prize the failure has.
+
+### `compass-core::audio_control` — a volume that is not a number no longer takes the process down
+
+`toAudioSink` reads a channel's volume with `std::stod(percent)`, which parses the leading number
+and ignores the `%`. On a string with no leading number it does not return anything — it throws
+`std::invalid_argument`, from inside a function with no `try` anywhere above it. A `pactl` that
+printed `"n/a"` for a channel would end the process.
+
+The port reads the leading numeric run and falls back to 0.0, which is what the sink already reports
+when its channel map is empty, so the failure mode is "this sink reads as silent" rather than
+"Compass exited". `a_volume_that_is_not_a_number_reads_as_zero_rather_than_crashing` pins it.
+
+The lexicographic channel rule *is* reproduced: the C++ takes `volume.begin()->second` from a
+`std::map`, so a stereo sink reports its `front-left` level, and this port uses a `BTreeMap` to get
+the same answer. Two controls pin it — taking the last channel instead, and averaging — both of
+which fail the suite. (Swapping the `BTreeMap` for a `HashMap` does *not* reliably fail it, which is
+a defect in that mutation rather than in the test: it makes the result vary per process instead of
+being wrong in a fixed way, so a suite that passed once proves nothing either way.)
+
+### `compass-core::snippet_expander` — an argument value is not marked as a placeholder
+
+Every substitution the expander makes is pushed with `placeholder = true` except one: an argument's
+value goes in through `result.parts.emplace_back(it2->second)`, which takes the struct's default of
+`false`. So whatever highlights placeholders in a preview shows a clipboard or a date as
+substituted and an argument's value as ordinary text.
+
+Reproduced rather than unified. It is arguably the right answer — the person typed that value, so it
+*is* their text — and changing it would alter what an existing preview highlights without anyone
+having asked. `substituted_placeholders_are_marked_and_arguments_are_not` pins it either way.
+
+Two more worth knowing, both found by writing the tests rather than by reading the code. A shell
+placeholder whose command contains spaces must be quoted: the parser ends an unquoted value at the
+first space and then drops the whole placeholder, so `{shell code=rm -rf /tmp/x}` expands to nothing
+at all. That is the safe failure — nothing dangerous is half-run — and it now has a test saying so.
+And the shell result index advances whether or not a result was available, so a run that returned
+fewer outputs than there were placeholders shows each remaining one as its own `$(code)` rather than
+shifting every later one onto the wrong command.
+
+### `compass-core::font_service` — two tables extracted, not retyped
+
+The category names and the per-script pangrams were pulled out of the C++ with a script and written
+into the Rust source mechanically. That is not laziness: a pangram exists to exercise every letter
+of a script, and one retyped with a character wrong still looks right to anyone reviewing the diff
+— particularly in Thai, Devanagari or Arabic. Earlier in this session three power-command
+descriptions were written from memory and all three were wrong, which is the same failure caught
+late rather than avoided.
+
+Two classification rules are worth reading twice. A Nerd Font outranks monospace, because a patched
+font is almost always a monospace Latin one and without that order the Monospace section would
+contain nothing else; both are still tagged, so filtering by either finds it. And a font covering
+several distinctive scripts *plus* a European one is filed under Latin rather than under the first
+of them — that is a pan-Unicode font, and burying it under Gujarati would hide a general-purpose
+font from everyone.
+
+### `compass-core::window_effects` — two registries whose support checks are in opposite orders
+
+`WaylandShortcutInhibitManager::inhibit` tests whether the window already has an inhibitor *before*
+it tests whether the compositor still supports the protocol.
+`ExtBackgroundEffectV1Manager::apply` does it the other way round: `if (!isSupported()) return
+false;` comes first, so a window that already has a blur is told the apply failed once blur goes
+away.
+
+Reading it once, that looks like an inconsistency to tidy. It is the right way round. A Wayland
+global can be withdrawn while the process runs, and the two stale states are not comparable: a blur
+that lingers is cosmetic, while an inhibitor that lingers means the keyboard is still grabbed. A
+manager answering "no" for a grab it is still holding would invite its caller to stop tracking it,
+and the person is then locked out of their own desktop shortcuts with nothing to release them.
+
+Both orders are pinned, and pinning them needed the support flag to be *settable* — with support
+fixed at construction there is no way to reach the case that distinguishes the two, which is why
+the port models `isActive()` as something that changes rather than as a constructor argument.
+
+### `compass-core::alert` — a replaced alert is a cancelled alert, and the caller has to be told
+
+`AlertModel::handleAlertRequested` calls `triggerCancel()` on the alert already showing before it
+takes the new one. The TypeScript API documents the consequence — "Calling this function when
+another alert is currently pending will result in the pending alert to be automatically canceled" —
+and it matters because the cancelled alert is some extension's un-settled promise.
+
+So [`AlertModel::show`] returns the previous alert's resolution rather than dropping it. That is a
+shape change from the C++, where the resolution goes out through a callback the widget owns, and it
+is deliberate: a caller that ignores a `#[must_use]`-shaped return is a caller a compiler can
+complain about, where a caller that forgets to connect a signal is not.
+
+The port also keeps the C++'s routing of *every* exit that is not the confirm button — cancel,
+navigating away, being replaced — through one place that answers `false`. A fifth exit added later
+should have to opt in to `true` rather than out of it.
+
+### `compass-platform-linux::keyboard` — four modifiers that are declared and ignored
+
+`UInputKeyboard::Modifier` names six modifiers. `applyMods` and `clearMods` test two of them. A
+caller passing `Alt`, `Logo`, `Altgr` or `Capslock` gets a bare keystroke with no modifier held —
+and still gets the *slow* path, because the C++ chooses its delay on `mods ? ... : ...`, the raw
+integer, before deciding what to do with it. So an ignored modifier costs 10ms per key and changes
+nothing.
+
+Both halves are reproduced and pinned. Making Alt work would be the obvious fix and the wrong port:
+a snippet bound to Alt+F would send a keystroke on Compass that it does not send on Vicinae, with no
+way for the caller to tell which build it is on. The tests are named for what they protect, and are
+the ones that should fail when the C++ grows the other four branches.
+
+Two trailing `SYN_REPORT`s in `sendKey(code, mods)` are likewise redundant — `sendKey(code)` already
+ends with one — and likewise kept, with `a_shifted_keystroke_is_exactly_this_sequence` pinning the
+whole wire in order.
+
+### `compass-core::fetch_queue` — an abort that frees a slot without filling it
+
+`NetworkFetcher`'s abort handler erases the reply from the in-flight map and emits
+`abortRequested`. It does not call `startRequests`. So aborting an in-flight image fetch leaves one
+of the six slots empty until some *other* request finishes, and a queued request that could have
+taken it waits instead.
+
+The port reproduces this, and `aborting_an_in_flight_request_does_not_start_the_next_one` pins it
+with a control that fires the moment the slot is refilled. Calling `start_requests` there is the
+better scheduler and the wrong port: a person scrolling a list of remote icons fast enough to
+cancel requests would see Compass issue a different number of them than Vicinae, at different
+times, and any comparison of the two under load would be measuring this difference rather than the
+thing being compared. `the_slot_an_abort_freed_is_taken_by_the_next_completion` pins the other half
+— the queue is delayed, not wedged.
+
+### `compass-core::root_items` — a hash order made deterministic
+
+`searchGroupedByProvider` buckets into a `std::unordered_map<std::string, Bucket>` and then stable-sorts
+the groups by score. Stable sort preserves the order it was given, and the order it is given is the
+map's iteration order — a hash order over the provider ids present. Two groups that score equally
+therefore come out in an order that depends on which other providers matched, and can change between
+builds of the same binary.
+
+Compass buckets in first-appearance order instead: the first item belonging to a provider creates its
+group, so a tie resolves to the order the items were registered in. `groups_that_tie_keep_first_appearance_order`
+pins it. There is no "fails if the C++ is fixed" test to pair with this one, because the C++ is not
+wrong in a way a test can name — it is unspecified, and this is a choice within it.
+
+### `compass-power` — one C++ bug deliberately **not** reproduced
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | `SystemdPowerManager::can` calls `CanPowerOff`/`CanSuspend`/`CanHibernate`/`CanReboot` and then answers `!reply.arguments().isEmpty()` — it never reads the reply. logind answers with a *string*: `"yes"`, `"no"`, `"challenge"` or `"na"`. All four are a non-empty argument list, so a machine that cannot hibernate is offered Hibernate, and the menu entry does nothing. | Read the string. `Capability::is_offerable` is true for `yes` and `challenge` (polkit will ask), false for `no`, `na` and anything this build does not recognise. | `logind_replies_are_read_rather_than_counted`, `the_capability_reply_is_read_and_not_merely_counted` (drives a real reply through a mock logind), and `the_cpp_still_has_the_bug_this_port_declines_to_copy`, which fails if the C++ is fixed |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 

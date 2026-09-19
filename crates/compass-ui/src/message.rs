@@ -37,6 +37,14 @@ pub enum Message {
     Launched(Result<(), String>),
     /// Dismiss the launcher without launching anything.
     Dismiss,
+    /// Open or close the action panel over the results.
+    TogglePanel,
+    /// The action panel's filter changed.
+    PanelFilterChanged(String),
+    /// Move the action panel's selection one row.
+    PanelMove(Direction),
+    /// Run the action panel's selected action.
+    PanelActivate,
     /// A global shortcut was activated.
     ShortcutActivated(String),
     /// Window focus changed.

@@ -7,7 +7,9 @@
 //!   "launcher": {
 //!     "hotkey": "super+space",
 //!     "close_on_focus_loss": false,
-//!     "max_results": 50
+//!     "max_results": 50,
+//!     "keybinding": "default",
+//!     "wrap_navigation": false
 //!   },
 //!   "extensions": {
 //!     "auto_update": true,
@@ -42,6 +44,19 @@ pub const DEFAULT_CLOSE_ON_FOCUS_LOSS: bool = false;
 
 /// Default for `launcher.max_results`.
 pub const DEFAULT_MAX_RESULTS: usize = 50;
+
+/// Default for `launcher.wrap_navigation`.
+///
+/// `Config::wrapNavigation` is `false` in the C++: the selection clamps at the
+/// first and last row rather than going round. See [`crate::list_navigation`].
+pub const DEFAULT_WRAP_NAVIGATION: bool = false;
+
+/// Default for `launcher.keybinding`.
+///
+/// The literal the C++ writes, and the one `KeyBindingService::getMode` reads
+/// as "the platform default" -- which on Linux is the vim chords. See
+/// [`crate::keybinding`].
+pub const DEFAULT_KEYBINDING: &str = "default";
 
 /// Default for `extensions.auto_update`.
 pub const DEFAULT_AUTO_UPDATE: bool = true;
@@ -106,6 +121,10 @@ pub struct LauncherConfig {
     close_on_focus_loss: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     max_results: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    keybinding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wrap_navigation: Option<bool>,
 
     /// Keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -125,6 +144,30 @@ impl LauncherConfig {
     pub fn close_on_focus_loss(&self) -> bool {
         self.close_on_focus_loss
             .unwrap_or(DEFAULT_CLOSE_ON_FOCUS_LOSS)
+    }
+
+    /// The navigation chord scheme, as [`crate::keybinding::Scheme::from_config`] reads it.
+    ///
+    /// Defaults to [`DEFAULT_KEYBINDING`], which is the platform default and
+    /// therefore the vim chords on Linux.
+    #[must_use]
+    pub fn keybinding(&self) -> &str {
+        self.keybinding.as_deref().unwrap_or(DEFAULT_KEYBINDING)
+    }
+
+    /// Whether the selection wraps at the ends of a list.
+    ///
+    /// Defaults to [`DEFAULT_WRAP_NAVIGATION`], which is the C++'s default:
+    /// clamp.
+    #[must_use]
+    pub fn wrap_navigation(&self) -> bool {
+        self.wrap_navigation.unwrap_or(DEFAULT_WRAP_NAVIGATION)
+    }
+
+    /// The scheme [`keybinding`](Self::keybinding) names.
+    #[must_use]
+    pub fn keybinding_scheme(&self) -> crate::keybinding::Scheme {
+        crate::keybinding::Scheme::from_config(self.keybinding())
     }
 
     /// How many results the launcher shows. Defaults to [`DEFAULT_MAX_RESULTS`].
