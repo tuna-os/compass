@@ -1333,24 +1333,60 @@ alongside the percentile discussion below rather than as a separate result: crit
 mean, `ranking_budget.rs` asserts a median, and the two agreeing this closely on the line is the
 same marginality seen from a second direction.
 
-#### Fuzzy search, top-20 of 10,000 — met at the median, marginal at the tail
+#### Fuzzy search, top-20 of 10,000 — met at the tail, and now gated there
 
-`crates/compass-search/tests/ranking_budget.rs`. Five release runs of 1000 samples:
+`crates/compass-search/tests/ranking_budget.rs`. Five release runs of 1000 samples, before and
+after ranking moved onto rayon's pool:
 
-| | |
+| | single-threaded | **parallel** |
+|---|---|---|
+| p50 | 1209–1242 µs | **788–806 µs** |
+| **p99** | **1589–2548 µs — over budget in two runs of five** | **1116–1237 µs — over in none of five** |
+| max | 2277–2654 µs | 2325–6269 µs |
+
+**The row does not say which statistic it means, and for a long time the answer mattered.** At the
+median the SLA was met with ~1.6× headroom; at p99 it was not reliably met on an unloaded machine,
+so the test asserted the median and only reported the tail — gating a number that failed two runs
+in five teaches people to re-run until it passes.
+
+**That question is now moot, so the gate is the strict reading.** p99 sits ~1.6× inside the budget
+across five runs, so `ranking_budget.rs` asserts p99 as well as p50. The stricter interpretation of
+the row is the one that holds, which is a better outcome than picking a percentile by argument.
+
+**`max` is still not asserted, and is now noisier than it was.** A worker pool trades a tighter p99
+for a longer tail: a sample landing while the pool wakes costs milliseconds, which is scheduling
+rather than ranking. Asserting the single worst sample of a thousand would reintroduce exactly the
+flaky gate this section argues against.
+
+##### What was tried, and what did not work
+
+Three experiments, measured rather than reasoned about. The haystack matters: the SLA bench uses
+`&str` items with **one** weighted field, while `AppItem::fuzzy_fields` emits **five**, so real
+ranking does roughly 4.3× the work the SLA bench measures (`"ed"` over 10,000: 2.13 ms plain
+against 9.21 ms rich).
+
+| experiment | result |
 |---|---|
-| p50 | 1209–1242 µs — stable, comfortably inside |
-| **p99** | **1589–2548 µs — over the 2.0 ms budget in two runs of five** |
-| max | 2277–2654 µs |
+| Swap the matcher for a different crate | **Not attempted, and should not be.** `compass-search` already uses `nucleo-matcher`, the fzf-class matcher from Helix. It is the right crate. |
+| Subsequence prefilter before the alignment | **Rejected — 1.8× *slower*.** Folding each haystack char through `chars::normalize` costs more than the alignment it skips (2.13 → 3.97 ms plain, 9.21 → 16.6 ms rich). An ASCII fast path recovered it to ~9% better than baseline, which is not worth the parity surface. nucleo already prefilters internally; this was duplicating its work. |
+| Score across rayon's pool | **Adopted — 1.8–2.7× faster, with identical output.** |
 
-**The row does not say which statistic it means, and here the answer depends entirely on that
-missing word.** At the median the SLA is met with ~1.6× headroom; at p99 it is not reliably met on
-an unloaded machine.
+The pool wins at every corpus size on four cores, with no crossover where its overhead dominates,
+which is why it is the default path rather than an opt-in:
 
-The test asserts the **median** and reports the tail. Gating on p99 would invent a stricter promise
-than §8.5 makes, and a gate that fails two runs in five teaches people to re-run until it passes —
-the argument §11.2 already makes for reporting RSS rather than gating on one sample. **The tail is
-a real performance question for whoever owns ranking, not a measurement artefact.**
+| corpus | sequential | parallel |
+|---|---|---|
+| 200 (a typical desktop) | 77.1 µs | 42.5 µs |
+| 757 (the Bluefin harvest) | 291 µs | 126 µs |
+| 2 000 | 778 µs | 335 µs |
+| 10 000 (the SLA's number) | 3.89 ms | 1.44 ms |
+
+**Identical, not equivalent.** Ranking order is a contract — §8.1's Suite 0 diffs ranked output
+against the C++ engine — so `tests/parallel_equivalence.rs` compares the two implementations
+element for element across 18 query shapes on a corpus built with deliberate score ties, and
+`rank_indices_sequential` is kept public precisely so the parallel ranker has something to be
+checked against. Removing the index tiebreak from the parallel merge makes query `"f"` diverge at
+rank 0, so the control fires.
 
 Two measurement errors were made getting here, both worth recording because both produced
 confident wrong numbers:

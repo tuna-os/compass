@@ -21,9 +21,10 @@ pub use coherence::is_coherent;
 pub use matcher::{MatchResult, Matcher};
 pub use query::{Query, Variant, Word};
 pub use rank::{
-    BiasedScored, RankOptions, Scored, rank, rank_indices, rank_indices_with_options,
-    rank_indices_with_query, rank_indices_with_query_and_options, rank_with_bias,
-    rank_with_options, rank_with_query, rank_with_query_and_bias, rank_with_query_and_options,
+    BiasedScored, RankOptions, Scored, rank, rank_indices, rank_indices_sequential,
+    rank_indices_with_options, rank_indices_with_query, rank_indices_with_query_and_options,
+    rank_with_bias, rank_with_options, rank_with_query, rank_with_query_and_bias,
+    rank_with_query_and_options,
 };
 pub use searchable::{
     FRECENCY_WEIGHT, FuzzySearchable, MIN_QUALITY, Match, WeightedField, frecency, score_item,

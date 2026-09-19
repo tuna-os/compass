@@ -152,26 +152,38 @@ fn top_20_of_10k_is_within_the_sla() {
     // WHICH PERCENTILE THE SLA MEANS IS NOT WRITTEN DOWN, and it matters here in
     // a way it did not for IPC.
     //
-    // §8.5 says "Fuzzy search, top-20 of 10,000 items — < 2.0 ms" without
-    // naming a statistic. Measured over five release runs of 1000 samples each:
+    // WHICH PERCENTILE THE SLA MEANS — the question this used to leave open
+    //
+    // §8.5 says "Fuzzy search, top-20 of 10,000 items — < 2.0 ms" without naming
+    // a statistic, and for a long time the answer mattered. Five release runs
+    // against the single-threaded ranker:
     //
     //   p50   1209-1242 µs   comfortably inside, and stable across runs
     //   p99   1589-2548 µs   OVER the budget in two runs of five
     //   max   2277-2654 µs
     //
-    // So the answer depends entirely on the missing word. At the median the SLA
-    // is met with ~1.6x headroom; at p99 it is not reliably met at all, on an
-    // unloaded machine.
+    // So this asserted the median and only reported the tail: gating a number
+    // that failed two runs in five teaches people to re-run until it passes,
+    // which is worse than no gate.
     //
-    // This asserts the median and REPORTS the tail, for two reasons. The SLA as
-    // written does not name p99, so gating on it would be inventing a stricter
-    // promise than the document makes. And a gate that fails two runs in five
-    // teaches people to re-run until it passes, which is worse than no gate —
-    // PLAN §11.2 makes the same argument for reporting RSS rather than gating
-    // it on one sample.
+    // Ranking is now scored across rayon's pool, and the question is moot. Five
+    // runs of the same shape:
     //
-    // The tail is a real question for whoever owns ranking performance, and it
-    // is recorded in §8.5 rather than buried here.
+    //   p50    790-806 µs    ~2.5x inside
+    //   p99   1116-1237 µs   ~1.6x inside, over the budget in NONE of five
+    //   max   2325-6044 µs   noisier than before, and deliberately not asserted
+    //
+    // So the tail is now gated rather than reported, because it can be. The
+    // stricter reading of the row is the one that holds, which makes arguing
+    // about the missing word unnecessary.
+    //
+    // MAX IS STILL NOT ASSERTED, and is now *noisier* than it was. A worker
+    // pool trades a tighter p99 for a longer tail: a sample that happens to
+    // land while the pool is waking costs milliseconds. That is a property of
+    // scheduling, not of ranking, and asserting a single worst sample out of a
+    // thousand would reintroduce exactly the flaky gate this comment argues
+    // against — see the SAMPLES doc above for the same mistake made with a
+    // 100-sample "p99".
     if cfg!(debug_assertions) {
         println!(
             "  (debug build: the §8.5 SLA of {BUDGET_US} µs is a release property and is \
@@ -192,11 +204,11 @@ fn top_20_of_10k_is_within_the_sla() {
          (p99 {p99} µs, max {max} µs) for the top 20 of {ITEMS} items"
     );
 
-    if p99 >= BUDGET_US {
-        println!(
-            "  note: p99 {p99} µs is at or over the {BUDGET_US} µs SLA. The median is inside it \
-             and that is what this asserts, because §8.5 does not name a percentile. The tail is \
-             a genuine performance question, not a measurement artefact — see §8.5."
-        );
-    }
+    assert!(
+        p99 < BUDGET_US,
+        "fuzzy search p99 is {p99} µs, over the §8.5 SLA of {BUDGET_US} µs \
+         (p50 {p50} µs, max {max} µs) for the top 20 of {ITEMS} items. This gate was \
+         tightened from the median to the tail once the parallel ranker put p99 at \
+         1116-1237 µs across five runs; a p99 back over 2000 µs means that headroom is gone"
+    );
 }
