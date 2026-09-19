@@ -9,7 +9,9 @@
 //!     "close_on_focus_loss": false,
 //!     "max_results": 50,
 //!     "keybinding": "default",
-//!     "wrap_navigation": false
+//!     "wrap_navigation": false,
+//!     "quick_launch": true,
+//!     "appearance": { "icons": false }
 //!   },
 //!   "extensions": {
 //!     "auto_update": true,
@@ -61,6 +63,15 @@ pub const DEFAULT_WRAP_NAVIGATION: bool = false;
 /// rather than under an `appearance` section because it is behaviour, not
 /// appearance: it changes what a keystroke does, not what a row looks like.
 pub const DEFAULT_QUICK_LAUNCH: bool = true;
+
+/// Default for `launcher.appearance.icons`.
+///
+/// Off, per #85. The default look is Spotlight-simple, and icons are what make
+/// it busier. The row already reserves the space -- an unresolved or disabled
+/// icon draws the application's initial in a tinted square of the same size --
+/// so turning this on changes what is in the slot, not the launcher's
+/// footprint.
+pub const DEFAULT_ICONS: bool = false;
 
 /// Default for `launcher.keybinding`.
 ///
@@ -138,10 +149,54 @@ pub struct LauncherConfig {
     wrap_navigation: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     quick_launch: Option<bool>,
+    #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
+    appearance: AppearanceConfig,
 
     /// Keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
     unknown: BTreeMap<String, Value>,
+}
+
+/// The `launcher.appearance` section: what a row looks like, not what it does.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AppearanceConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icons: Option<bool>,
+
+    /// Keys this build does not know about, preserved verbatim.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+impl AppearanceConfig {
+    /// Whether result rows show the application's icon (#85).
+    ///
+    /// Defaults to [`DEFAULT_ICONS`].
+    #[must_use]
+    pub fn icons(&self) -> bool {
+        self.icons.unwrap_or(DEFAULT_ICONS)
+    }
+
+    /// Sets `launcher.appearance.icons`. `None` removes the key.
+    pub fn set_icons(&mut self, value: Option<bool>) -> &mut Self {
+        self.icons = value;
+        self
+    }
+
+    /// Keys present in the file that this build does not understand.
+    #[must_use]
+    pub fn unknown_fields(&self) -> &BTreeMap<String, Value> {
+        &self.unknown
+    }
+
+    /// Whether the section carries nothing at all, known or unknown.
+    ///
+    /// Destructured for the reason [`LauncherConfig::is_empty`] gives.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let Self { icons, unknown } = self;
+        icons.is_none() && unknown.is_empty()
+    }
 }
 
 impl LauncherConfig {
@@ -217,6 +272,17 @@ impl LauncherConfig {
         self
     }
 
+    /// The `launcher.appearance` section.
+    #[must_use]
+    pub fn appearance(&self) -> &AppearanceConfig {
+        &self.appearance
+    }
+
+    /// The `launcher.appearance` section, mutably.
+    pub fn appearance_mut(&mut self) -> &mut AppearanceConfig {
+        &mut self.appearance
+    }
+
     /// Keys present in the file that this build does not understand.
     #[must_use]
     pub fn unknown_fields(&self) -> &BTreeMap<String, Value> {
@@ -242,6 +308,7 @@ impl LauncherConfig {
             keybinding,
             wrap_navigation,
             quick_launch,
+            appearance,
             unknown,
         } = self;
         hotkey.is_none()
@@ -250,6 +317,7 @@ impl LauncherConfig {
             && keybinding.is_none()
             && wrap_navigation.is_none()
             && quick_launch.is_none()
+            && appearance.is_empty()
             && unknown.is_empty()
     }
 }

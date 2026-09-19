@@ -10,6 +10,7 @@ pub mod action_panel;
 pub mod app;
 pub mod appearance;
 pub mod design;
+pub mod icons;
 pub mod message;
 pub mod resident;
 pub mod root_list;

@@ -182,6 +182,10 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
             r#"{"extensions":{"installed":["com.example.clock"]}}"#,
             "installed",
         ),
+        (
+            r#"{"launcher":{"appearance":{"icons":true}}}"#,
+            "appearance.icons",
+        ),
     ];
 
     for (original, key) in cases {
@@ -203,15 +207,38 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
         "max_results": 12,
         "keybinding": "vim",
         "wrap_navigation": true,
-        "quick_launch": false
+        "quick_launch": false,
+        "appearance": { "icons": true }
       },
       "extensions": { "auto_update": false, "installed": ["com.example.clock"] }
     }"#;
     let written: serde_json::Value =
         serde_json::from_str(&parse(everything).to_json_pretty().unwrap()).unwrap();
     let covered: std::collections::BTreeSet<&str> = cases.iter().map(|(_, k)| *k).collect();
+
+    // Descends into nested sections, so `appearance.icons` is checked rather
+    // than just `appearance`.
+    fn leaves(value: &serde_json::Value, prefix: &str, out: &mut Vec<String>) {
+        match value.as_object() {
+            Some(map) => {
+                for (key, child) in map {
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
+                    leaves(child, &path, out);
+                }
+            }
+            None => out.push(prefix.to_owned()),
+        }
+    }
+
     for section in ["launcher", "extensions"] {
-        for key in written[section].as_object().expect(section).keys() {
+        let mut found = Vec::new();
+        leaves(&written[section], "", &mut found);
+        assert!(!found.is_empty(), "`{section}` wrote nothing");
+        for key in found {
             assert!(
                 covered.contains(key.as_str()),
                 "`{section}.{key}` has no round-trip case above"
