@@ -45,7 +45,7 @@ permissions:
 
 jobs:
   spike:
-    name: "Tier 2 spike: does headless GNOME start in a container?"
+    name: "Tier 2 spike: does a compositor come up headless in a container?"
     runs-on: ubuntu-24.04
     # §8.8 budgets the real Tier 2 job at under 10 minutes. The spike installs
     # a desktop's worth of packages, so it is allowed more than the tier will
@@ -78,11 +78,22 @@ jobs:
       # dbus-x11 is here for `dbus-launch`, which is NOT in dbus-daemon or
       # dbus-tools despite the names — the spike's first run found that out by
       # failing on it, which is what a spike is for.
+      #
+      # wayland-utils provides `wayland-info`, the real client this spike
+      # connects with. A socket file proves a bind(); a client reading the
+      # global registry proves a compositor.
+      #
+      # gnome-shell stays installed although it is no longer started: the
+      # second run established it cannot run without systemd-logind, and
+      # leaving it here makes that finding visible (`gnome-shell --version`
+      # succeeds, the session still does not use it) rather than looking like
+      # an oversight.
       - name: Install a headless GNOME
         run: |
           dnf -y install --setopt=install_weak_deps=False \
             gnome-shell \
             mutter \
+            wayland-utils \
             xdg-desktop-portal \
             xdg-desktop-portal-gnome \
             dbus-daemon \
@@ -91,7 +102,7 @@ jobs:
             glib2 \
             procps-ng
 
-      - name: Does headless GNOME start?
+      - name: Does a compositor come up, and serve a client?
         run: scripts/tier2/headless-gnome-spike.sh
 
       # The log is the finding when this fails, and a failed spike is a result
@@ -100,7 +111,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gnome-shell-log-f${{ matrix.fedora }}
-          path: /tmp/gnome-shell.log
+          name: compositor-log-f${{ matrix.fedora }}
+          path: |
+            /tmp/gnome-shell.log
+            /tmp/wayland-info.txt
           if-no-files-found: warn
           retention-days: 7
