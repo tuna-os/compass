@@ -190,6 +190,10 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
             r#"{"launcher":{"appearance":{"preset":"rofi"}}}"#,
             "appearance.preset",
         ),
+        (
+            r#"{"launcher":{"appearance":{"tint":true}}}"#,
+            "appearance.tint",
+        ),
     ];
 
     for (original, key) in cases {
@@ -212,7 +216,7 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
         "keybinding": "vim",
         "wrap_navigation": true,
         "quick_launch": false,
-        "appearance": { "preset": "rofi", "icons": true }
+        "appearance": { "preset": "rofi", "icons": true, "tint": true }
       },
       "extensions": { "auto_update": false, "installed": ["com.example.clock"] }
     }"#;
@@ -380,4 +384,41 @@ fn saving_leaves_no_temporary_file_behind() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["vicinae.json"]);
+}
+
+/// `tint` is a *known* key, not an unknown one that survives by accident.
+///
+/// The round-trip test above cannot tell these apart, and I assumed it could.
+/// Marking the field `#[serde(skip)]` — which should break a known key
+/// completely — left that test green, because the key then falls into the
+/// `#[serde(flatten)]` unknown map and is written back out verbatim.
+///
+/// Forward-compatibility preserving unknown keys is a feature. It also means
+/// round-tripping proves nothing about whether *this build* understands a key.
+/// Reading it back through the typed accessor is what does.
+#[test]
+fn tint_is_understood_and_not_merely_preserved() {
+    let config = parse(r#"{"launcher":{"appearance":{"tint":true}}}"#);
+    let appearance = config.launcher().appearance();
+
+    assert_eq!(
+        appearance.tint_override(),
+        Some(true),
+        "`tint` did not reach the typed accessor; it is being carried as an unknown key, so \
+         this build does not actually understand it"
+    );
+    assert!(appearance.tint());
+    assert!(
+        !appearance.unknown_fields().contains_key("tint"),
+        "`tint` is being held as an unknown key as well as a known one"
+    );
+
+    // And the default when nothing is written.
+    let empty = parse("{}");
+    assert_eq!(empty.launcher().appearance().tint_override(), None);
+    assert!(
+        !empty.launcher().appearance().tint(),
+        "tint must default off: the Spotlight-simple default is what the VM tier's pixel \
+         gates are calibrated against"
+    );
 }

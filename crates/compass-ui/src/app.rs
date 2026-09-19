@@ -20,7 +20,7 @@ use compass_platform::{AppLauncher, NullLauncher};
 use compass_search::rank_indices;
 
 use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
-use crate::design::{self, Appearance, GEOMETRY};
+use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
@@ -247,7 +247,7 @@ impl Default for AppFlags {
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
-            appearance_preset: crate::preset::resolve(None, None),
+            appearance_preset: crate::preset::resolve(None, None, None),
             started_at: None,
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
@@ -377,6 +377,13 @@ pub struct LauncherApp {
     /// Whether a rule separates the field from the results. See
     /// [`crate::preset::Preset::field_rule`].
     field_rule: bool,
+
+    /// Whether the card background is translucent (#86).
+    ///
+    /// Translucency, not blur — see [`crate::preset::Preset::tint`]. The window
+    /// surface is already transparent (`AppFlags::default`), so this only
+    /// changes the card's own background alpha.
+    tint: bool,
     /// Whether rows show their subtitle. See [`crate::preset::Preset::subtitles`].
     subtitles: bool,
     /// When the first frame was drawn, for the cold-start figure (#13).
@@ -502,6 +509,27 @@ fn chord_direction(
     }
 }
 
+/// The card's background colour, given the surface colour and whether `tint` is on.
+///
+/// Extracted from `view`'s style closure on purpose. A headless renderer can
+/// assert what is laid out but not what colour a container was filled with, so
+/// the alpha decision inside a closure would be untestable without a pixel
+/// baseline — and pixel baselines get rubber-stamped, which is why §8.5 rejects
+/// them. As a function it is an ordinary assertion.
+///
+/// Translucency is applied here rather than in the palette so the theme stays
+/// one set of colours: `tint` is a property of the window, not of the scheme,
+/// and a palette that changed with it would make every other surface's
+/// contrast depend on a background setting.
+fn card_background(surface: design::Rgb, tint: bool) -> iced::Color {
+    let colour = surface.to_iced();
+    if tint {
+        colour.scale_alpha(TINT_ALPHA)
+    } else {
+        colour
+    }
+}
+
 impl LauncherApp {
     /// Create a new launcher application, indexing the environment.
     pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
@@ -527,6 +555,7 @@ impl LauncherApp {
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
+        app.tint = flags.appearance_preset.tint;
         app.subtitles = flags.appearance_preset.subtitles;
         app.started_at = flags.started_at;
         app.icon_lookup = flags.icon_lookup;
@@ -573,6 +602,7 @@ impl LauncherApp {
             icon_cache: crate::icons::IconCache::new(),
             geometry: design::GEOMETRY,
             field_rule: false,
+            tint: false,
             subtitles: true,
             first_frame_at: None,
             started_at: None,
@@ -1224,12 +1254,14 @@ impl LauncherApp {
             None => card_content.into(),
         };
 
+        let card_background = card_background(palette.surface, self.tint);
+
         container(
             container(card_body)
                 .width(Length::Fixed(f32::from(geometry.card_width)))
                 .padding(geometry.card_padding)
                 .style(move |_: &Theme| container::Style {
-                    background: Some(palette.surface.to_iced().into()),
+                    background: Some(card_background.into()),
                     border: Border {
                         color: palette.border.to_iced(),
                         width: 1.0,
@@ -2580,6 +2612,101 @@ mod icon_tests {
     }
 }
 
+/// The `tint` option (#86): translucency, and deliberately not called blur.
+#[cfg(test)]
+mod tint_tests {
+    use super::*;
+    use crate::preset::{self, Preset};
+
+    #[test]
+    fn only_raycast_tints() {
+        // Raycast is the one preset imitating a look built on real compositor
+        // blur, so it gets the closest thing available. The Spotlight-simple
+        // default does not, which is also what keeps the VM tier's pixel gates
+        // seeing an unchanged image.
+        assert!(Preset::Raycast.tint());
+        assert!(!Preset::Gnome.tint());
+        assert!(!Preset::Flow.tint());
+        assert!(!Preset::Rofi.tint());
+    }
+
+    #[test]
+    fn an_explicit_setting_beats_the_preset_both_ways() {
+        // Both directions: a one-way override reads as working until someone
+        // tries to turn the feature off under a preset that enables it.
+        assert!(!preset::resolve(Some("raycast"), None, Some(false)).tint);
+        assert!(preset::resolve(Some("gnome"), None, Some(true)).tint);
+    }
+
+    #[test]
+    fn the_flag_reaches_the_launcher() {
+        // Through `apply`, which is the real assignment list `vicinae::run`
+        // uses -- a helper that set the field itself would be a test of the
+        // helper. This is the control #108 recorded and could not close.
+        let mut app = LauncherApp::with_index(AppIndex::default());
+        app.apply(AppFlags {
+            appearance_preset: preset::resolve(Some("raycast"), None, None),
+            ..AppFlags::default()
+        });
+        assert!(app.tint, "the resolved preset's tint never reached the app");
+
+        app.apply(AppFlags {
+            appearance_preset: preset::resolve(Some("gnome"), None, None),
+            ..AppFlags::default()
+        });
+        assert!(!app.tint);
+    }
+
+    #[test]
+    fn tint_changes_the_card_background_and_only_its_alpha() {
+        let surface = design::DARK.surface;
+        let opaque = card_background(surface, false);
+        let tinted = card_background(surface, true);
+
+        assert!(
+            (opaque.a - 1.0).abs() < f32::EPSILON,
+            "the untinted card must be fully opaque, got alpha {}",
+            opaque.a
+        );
+        assert!(
+            tinted.a < opaque.a,
+            "tint did not make the card more transparent: {} vs {}",
+            tinted.a,
+            opaque.a
+        );
+
+        // Translucency, not a different colour. If the hue moved, this would be
+        // a theme change wearing a transparency setting's name.
+        assert!(
+            (tinted.r - opaque.r).abs() < f32::EPSILON
+                && (tinted.g - opaque.g).abs() < f32::EPSILON
+                && (tinted.b - opaque.b).abs() < f32::EPSILON,
+            "tint changed the card's colour, not just its alpha"
+        );
+    }
+
+    #[test]
+    fn the_tinted_card_stays_legible() {
+        // A launcher bound to Super+Space is text over an arbitrary wallpaper.
+        // There is a temptation to push the alpha down because it looks better
+        // in a screenshot over a photo; this is the floor that stops it.
+        //
+        // Asserted on the colour the view actually fills with, not on
+        // `TINT_ALPHA` directly: clippy rejects an assertion over a constant,
+        // and rightly -- `assert!(SOME_CONST >= 0.75)` is evaluated by the
+        // compiler, not by the test, so it proves nothing about the code path.
+        // The same mistake was already fixed once here in a quick-launch
+        // assertion over `DEFAULT_QUICK_LAUNCH`.
+        let alpha = card_background(design::DARK.surface, true).a;
+        assert!(
+            alpha >= 0.75,
+            "the tinted card fills at alpha {alpha}, low enough that body text over a bright \
+             wallpaper loses contrast. Legibility is not negotiable for the launcher."
+        );
+        assert!(alpha < 1.0, "a tint that fills at alpha {alpha} is not a tint");
+    }
+}
+
 #[cfg(test)]
 mod preset_tests {
     use super::*;
@@ -2592,7 +2719,7 @@ mod preset_tests {
     /// which is the whole mutation these tests exist to catch. It was written
     /// that way first and the control caught it.
     fn app_with(preset_name: &str, icons: Option<bool>) -> LauncherApp {
-        let resolved = preset::resolve(Some(preset_name), icons);
+        let resolved = preset::resolve(Some(preset_name), icons, None);
         let mut app = LauncherApp::with_index(AppIndex::builder().build());
         app.apply(AppFlags {
             icons: resolved.icons,
@@ -2804,7 +2931,7 @@ mod view_tests {
         }
         let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
         app.apply(AppFlags {
-            appearance_preset: preset::resolve(Some(preset_name), None),
+            appearance_preset: preset::resolve(Some(preset_name), None, None),
             ..AppFlags::default()
         });
         // `fi` matches Firefox and Files, so there is a row beneath the first

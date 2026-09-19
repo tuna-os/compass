@@ -111,6 +111,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                         compass_ui::preset::resolve(
                             Some(appearance.preset()),
                             appearance.icons_override(),
+                            appearance.tint_override(),
                         ),
                     )
                 }
@@ -120,7 +121,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                         compass_core::keybinding::Scheme::default(),
                         compass_core::config::DEFAULT_WRAP_NAVIGATION,
                         compass_core::config::DEFAULT_QUICK_LAUNCH,
-                        compass_ui::preset::resolve(None, None),
+                        compass_ui::preset::resolve(None, None, None),
                     )
                 }
             };

@@ -140,6 +140,25 @@ impl Preset {
         }
     }
 
+    /// Whether the launcher background is translucent (#86).
+    ///
+    /// **This is translucency, not blur, and the name says so deliberately.**
+    /// Mutter has no blur protocol: what GNOME extensions call blur is the
+    /// shell compositing its own surfaces, which a Wayland client cannot ask
+    /// for. The alternatives were capture-and-blur through a screen-capture
+    /// portal — a permission a launcher should never need, per frame, racing
+    /// anything moving underneath — or this. A `blur` key that does not blur
+    /// would generate correct bug reports forever, so it is `tint`.
+    #[must_use]
+    pub const fn tint(self) -> bool {
+        match self {
+            // The one preset imitating a look built on real compositor blur,
+            // so it gets the closest thing available.
+            Preset::Raycast => true,
+            Preset::Gnome | Preset::Flow | Preset::Rofi => false,
+        }
+    }
+
     /// Whether a full-width hairline rule separates the field from the results.
     ///
     /// Flow's most legible structural trait after the band selection.
@@ -180,6 +199,8 @@ pub struct Resolved {
     pub field_rule: bool,
     /// Whether result rows show their subtitle.
     pub subtitles: bool,
+    /// Whether the launcher background is translucent. See [`Preset::tint`].
+    pub tint: bool,
     /// The name that was written but not recognised, if one was.
     ///
     /// Carried rather than discarded so the caller can warn. Silently drawing
@@ -190,10 +211,11 @@ pub struct Resolved {
 
 /// Resolve an appearance.
 ///
-/// `preset` is `launcher.appearance.preset`; `icons` is the explicit
-/// `launcher.appearance.icons`, which wins over whatever the preset says.
+/// `preset` is `launcher.appearance.preset`. `icons` and `tint` are the
+/// explicit `launcher.appearance.*` keys, each of which wins over whatever the
+/// preset says.
 #[must_use]
-pub fn resolve(preset: Option<&str>, icons: Option<bool>) -> Resolved {
+pub fn resolve(preset: Option<&str>, icons: Option<bool>, tint: Option<bool>) -> Resolved {
     let named = preset.map(str::trim).filter(|name| !name.is_empty());
     let found = named.and_then(Preset::from_name);
     let unknown_name = match (named, found) {
@@ -208,6 +230,7 @@ pub fn resolve(preset: Option<&str>, icons: Option<bool>) -> Resolved {
         icons: icons.unwrap_or_else(|| preset.icons()),
         field_rule: preset.field_rule(),
         subtitles: preset.subtitles(),
+        tint: tint.unwrap_or_else(|| preset.tint()),
         unknown_name,
     }
 }
@@ -222,7 +245,7 @@ mod tests {
         // shifted the default by a pixel would move the VM tier's containment
         // box, and #84 is explicit that the box's numbers come from
         // measurement and must not be widened to fit.
-        let resolved = resolve(None, None);
+        let resolved = resolve(None, None, None);
         assert_eq!(resolved.preset, Preset::Gnome);
         assert_eq!(
             format!("{:?}", resolved.geometry),
@@ -237,10 +260,10 @@ mod tests {
     fn every_preset_resolves_to_its_own_values() {
         // One case per preset, so a preset that silently stops setting
         // something fails here rather than quietly reverting to the default.
-        let gnome = resolve(Some("gnome"), None);
-        let raycast = resolve(Some("raycast"), None);
-        let flow = resolve(Some("flow"), None);
-        let rofi = resolve(Some("rofi"), None);
+        let gnome = resolve(Some("gnome"), None, None);
+        let raycast = resolve(Some("raycast"), None, None);
+        let flow = resolve(Some("flow"), None, None);
+        let rofi = resolve(Some("rofi"), None, None);
 
         assert_eq!(gnome.geometry.row_height, design::GEOMETRY.row_height);
         assert!(!gnome.icons);
@@ -272,7 +295,7 @@ mod tests {
         let shapes: Vec<String> = NAMES
             .iter()
             .map(|(name, _)| {
-                let r = resolve(Some(name), None);
+                let r = resolve(Some(name), None, None);
                 format!(
                     "{:?}|{}|{}|{}",
                     r.geometry, r.icons, r.field_rule, r.subtitles
@@ -296,11 +319,11 @@ mod tests {
         // The whole point of presets-with-knobs: a preset is defaults, not a
         // lock.
         assert!(
-            !resolve(Some("raycast"), Some(false)).icons,
+            !resolve(Some("raycast"), Some(false), None).icons,
             "raycast turns icons on, but the user said off"
         );
         assert!(
-            resolve(Some("gnome"), Some(true)).icons,
+            resolve(Some("gnome"), Some(true), None).icons,
             "gnome turns icons off, but the user said on"
         );
     }
@@ -310,7 +333,7 @@ mod tests {
         // A config file is written by hand.
         for name in ["Raycast", "RAYCAST", "  raycast  "] {
             assert_eq!(
-                resolve(Some(name), None).preset,
+                resolve(Some(name), None, None).preset,
                 Preset::Raycast,
                 "{name:?}"
             );
@@ -323,7 +346,7 @@ mod tests {
         // a misspelt theme name would be the wrong trade. But not silent:
         // drawing the default without a word leaves someone adjusting a
         // setting nothing is reading.
-        let resolved = resolve(Some("dracula"), None);
+        let resolved = resolve(Some("dracula"), None, None);
         assert_eq!(resolved.preset, Preset::Gnome);
         assert_eq!(resolved.unknown_name.as_deref(), Some("dracula"));
     }
@@ -331,9 +354,9 @@ mod tests {
     #[test]
     fn an_absent_or_empty_name_is_not_an_unknown_one() {
         // Nothing was written, so there is nothing to warn about.
-        assert_eq!(resolve(None, None).unknown_name, None);
-        assert_eq!(resolve(Some(""), None).unknown_name, None);
-        assert_eq!(resolve(Some("   "), None).unknown_name, None);
+        assert_eq!(resolve(None, None, None).unknown_name, None);
+        assert_eq!(resolve(Some(""), None, None).unknown_name, None);
+        assert_eq!(resolve(Some("   "), None, None).unknown_name, None);
     }
 
     #[test]
