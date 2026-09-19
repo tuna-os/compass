@@ -10,31 +10,73 @@
 # than by the PR that introduced it. Tier 2 is what §8.8 designed to fill it, at
 # a fraction of the cost.
 #
-# THIS FILE IS A SPIKE, NOT THE TIER.
+# IT WAS BUILT AS A SEQUENCE OF SPIKES, AND EACH ONE FOUND SOMETHING.
 #
-# It answers one question — does `gnome-shell --headless --virtual-monitor`
-# actually come up on a hosted runner, in a container, and serve its bus name?
-# — and nothing else. No Flatpak, no launcher, no assertions about our own
-# software. The tier gets built on top of this only if the answer is yes.
+# The premise was never verified, so it was asked one question at a time rather
+# than written whole and hoped over. Four answers, all of which would have been
+# baffling failures inside a finished tier:
 #
-# The repository already has this shape: "Spike A: does the portal give us
-# Super+Space?" is a named job answering one question, and it exists because
-# building on an unverified premise is how the plan accumulated interfaces that
-# were documented and absent (`cargo bench --bench slas`, the `parity` binary,
-# Suite 0's `--engine=cpp --json query`).
+#   1. `dbus-launch` is in `dbus-x11`, not `dbus-daemon` or `dbus-tools`.
+#   2. GNOME SHELL DOES NOT RUN HERE. It needs systemd-logind and dies in its
+#      JS UI layer building the background. Mutter is fine — surfaceless
+#      renderer, virtual monitor, wayland-0 — so this tier runs the compositor
+#      and NOT the Shell. Anything Shell-resident, our GNOME Shell extension
+#      above all, still needs the VM tier.
+#   3. Flatpak needs `--privileged`. `SYS_ADMIN` plus unconfined seccomp is not
+#      enough for `mount --make-rslave`, which bubblewrap requires.
+#   4. Killing `flatpak run` does not kill the engine inside the sandbox, so a
+#      stale engine answered the next run from an index built before it. The
+#      smoke's own control caught that, before merge.
 #
-# WHY IT RUNS ON PRs THAT TOUCH IT
+# That last one is why `prove-smoke.sh` exists and is not optional. A tier that
+# has only ever been green is indistinguishable from one that tests nothing —
+# a defect this repository has found four times (`launcher-rss` on `0 kB`, the
+# unwired `parity` binary, the absent `--bench slas` target, the `spike.rs`
+# path filter naming a directory). So the smoke is run twice on every
+# invocation: with its fixture, which must pass, and without, which must fail.
 #
-# Same argument as the VM tier's own plumbing: the PR editing a spike is the PR
-# that should run it. It costs minutes, not the VM tier's twenty.
-name: Tier 2 (headless GNOME)
+# WHAT IT COVERS, AND WHAT IT CANNOT
+#
+# Covers: a real Mutter compositor advertising the globals that matter
+# (`xdg_activation_v1` among them), the shipped Flatpak installed from its own
+# bundle, and a desktop entry found through exactly the permissions
+# `com.vicinae.Vicinae.yaml` grants — which is the sandbox seam Tier 1 cannot
+# reach by construction.
+#
+# Cannot: the Shell, per (2). The VM tier stays the only tier that boots what
+# users actually install.
+name: Tier 2 (headless compositor)
 
 on:
   workflow_dispatch:
+  # PRs — the tier's own plumbing AND the code it exercises.
+  #
+  # The VM tier gave these paths up: twenty-plus minutes on three VMs,
+  # cancelled by the next push more often than not. This tier does comparable
+  # integration work in **92 seconds**, measured rather than estimated:
+  #
+  #     compositor, Fedora 44 / 45          54s / 45s
+  #     Flatpak install + smoke + control   92s
+  #
+  # §8.8 budgets it under ten minutes. It uses a sixth of that, so the per-PR
+  # coverage the VM tier could not afford is affordable here.
   pull_request:
     paths:
+      # The tier itself.
       - .github/workflows/tier2.yaml
       - scripts/tier2/**
+      # What it packages and runs.
+      - .github/workflows/flatpak.yaml
+      - packaging/flatpak/**
+      # The code it exercises: the engine that answers, the indexing that
+      # decides what it answers with, and the sandbox seam between them.
+      # Narrower than `crates/**` — a change to the clipboard crypto does not
+      # need a compositor to answer for it.
+      - crates/vicinae/**
+      - crates/compass-core/**
+      - crates/compass-xdg/**
+      - crates/compass-ipc/**
+      - crates/compass-ui/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
