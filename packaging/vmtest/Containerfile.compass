@@ -74,6 +74,21 @@ RUN flatpak remote-add --installation=compass --if-not-exists \
 # Installed here, during the image build, for the same reason the runtime is:
 # there is network here and none in the guest. /var is seeded from the image at
 # install time, so both roots reach the booted system.
+# What the system step printed the first time it ran, which is the whole
+# premise of the #105 fix, observed rather than argued:
+#
+#   + test -L /var/lib/flatpak/exports/share/applications/org.pipewire.Helvum.desktop
+#   + readlink -f …
+#   /var/lib/flatpak/app/org.pipewire.Helvum/x86_64/stable/022868f8…/export/share/applications/org.pipewire.Helvum.desktop
+#
+# The export is a symlink, and it resolves into the deploy tree. A sandbox
+# granted only the exports directory cannot follow it.
+#
+# The `bwrap: Creating new namespace failed: Operation not permitted` lines that
+# accompany the install are flatpak's post-install triggers (the desktop and
+# mime database updates) failing inside a container build, which has no
+# namespace privileges. They are noise, not failure: the install completes and
+# the export is written, as the readlink above shows.
 ARG PROBE_SYSTEM_APP=org.pipewire.Helvum
 ARG PROBE_USER_APP=org.gottcode.CuteMaze
 RUN set -eux; \
@@ -117,21 +132,38 @@ RUN mkdir -p /var/home && \
     useradd --create-home --home-dir /var/home/compass --shell /bin/bash compass && \
     id compass
 
-# The user half, which needs the account to exist. `flatpak --user` writes to
-# $HOME, so HOME is set explicitly rather than inherited from the build.
+# The user half, which needs the account to exist.
 #
-# The `test -L` is the assertion that matters: if flatpak ever stops exporting
-# by symlink, the bug this guards against stops existing and the guard should
-# say so loudly rather than keep passing for the wrong reason.
+# DONE AS ROOT AND THEN CHOWNED, not with `runuser -u compass`. That was the
+# first shape and it failed the image build:
+#
+#   + runuser -u compass -- env HOME=/var/home/compass flatpak remote-add --user …
+#   error: GPG: Unable to configure context: Permission denied
+#
+# gpgme wants somewhere of its own to work in, and a `runuser` inside a
+# container build is not a session: there is no XDG_RUNTIME_DIR and no
+# /run/user/1000 for it to use. The same command as root, which already
+# installed the system half two steps up, has no such trouble.
+#
+# `flatpak --user` picks its installation from $XDG_DATA_HOME, so that is set
+# explicitly rather than left to be derived from $HOME -- a stray XDG_DATA_HOME
+# in the build environment would otherwise silently put the app somewhere
+# nobody looks. The path is the one the compass user's session will resolve to.
+#
+# The chown is what makes it theirs. Without it the files are root's and the
+# user's flatpak would refuse its own installation.
+ARG PROBE_USER_DATA=/var/home/compass/.local/share
 RUN set -eux; \
-    runuser -u compass -- env HOME=/var/home/compass \
+    env HOME=/var/home/compass XDG_DATA_HOME="$PROBE_USER_DATA" \
       flatpak remote-add --user --if-not-exists \
         flathub https://flathub.org/repo/flathub.flatpakrepo; \
-    runuser -u compass -- env HOME=/var/home/compass \
+    env HOME=/var/home/compass XDG_DATA_HOME="$PROBE_USER_DATA" \
       flatpak install --user --noninteractive --assumeyes --no-deps \
         flathub "$PROBE_USER_APP"; \
-    test -L "/var/home/compass/.local/share/flatpak/exports/share/applications/$PROBE_USER_APP.desktop"; \
-    readlink -f "/var/home/compass/.local/share/flatpak/exports/share/applications/$PROBE_USER_APP.desktop"
+    chown -R compass:compass /var/home/compass; \
+    test -L "$PROBE_USER_DATA/flatpak/exports/share/applications/$PROBE_USER_APP.desktop"; \
+    readlink -f "$PROBE_USER_DATA/flatpak/exports/share/applications/$PROBE_USER_APP.desktop"; \
+    test "$(stat -c %U "$PROBE_USER_DATA/flatpak")" = compass
 
 # ── no first-run tour ────────────────────────────────────────────────────────
 #

@@ -110,6 +110,13 @@ jobs:
       - name: Parse the shell embedded in workflow YAML
         run: python3 scripts/ci/check-workflow-payloads.py
 
+      # The VM tier's images are built from Containerfiles, and a shell mistake
+      # inside a RUN is a 25-minute round trip to find: the image build is the
+      # first thing the tier does and the last thing anything else can report
+      # on. shellcheck is pointed at *.sh and a Containerfile is not one.
+      - name: Parse the shell inside every Containerfile RUN
+        run: python3 scripts/ci/check-containerfile-run.py
+
       - name: Compile the standalone Python
         run: |
           mapfile -t files < <(find packaging/vmtest scripts/vmtest scripts/flatpak scripts/ci \
