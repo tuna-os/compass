@@ -1297,12 +1297,41 @@ the number users see is the sandboxed one.
 
 The workspace contained **exactly one benchmark**, `compass-ipc`'s. **No CI job ran `cargo bench`
 at all**, so no benchmark could have failed anything even had it been correct. And §8.7's
-pre-flight command invokes `cargo bench --bench slas`, **a target that does not exist** — the third
+pre-flight command invoked `cargo bench --bench slas`, **a target that did not exist** — the third
 documented-but-absent interface found this week, after Suite 0's `--engine=cpp --json query` and
 the C++ `doctor`.
 
 The fix for the two that are measurable without a display or a sandbox is to assert them in
 **tests**, which CI already runs on every PR, rather than in benches, which it does not run at all.
+
+##### The `slas` target now exists, and it is a baseline rather than a gate
+
+`crates/compass-testkit/benches/slas.rs`. The documented command runs:
+
+```
+$ cargo bench --bench slas -- --save-baseline pr
+slas/fuzzy_rank_top20_of_10k   time: [2.0104 ms 2.0106 ms 2.0113 ms]
+slas/ipc_roundtrip_ping        time: [44.318 µs 45.323 µs 45.574 µs]
+```
+
+Only the two rows that are honestly measurable in-process are in it. The other four need a
+display, a compositor or the shipped process inside its sandbox, and a bench that printed a number
+for them would be measuring the harness — the mistake this section was written to undo.
+
+**It does not enforce anything, on purpose.** A criterion bench exits zero whatever it prints,
+which is how `compass-ipc`'s 24x miss went unnoticed; the thresholds stay in tests. What the target
+adds is the thing a threshold cannot give: `--save-baseline pr` against `--baseline main` turns
+"is this over the line" into "did this change move", which is the only way to see a 4% regression
+that never crosses a limit.
+
+Both measurements were control-tested before being believed. Shrinking the haystack from 10,000 to
+200 items moved the fuzzy figure from 2.011 ms to 36.9 µs; a 1 ms sleep in the server's request
+handler moved the round trip from 45.3 µs to 2.200 ms. Neither number is scaffolding.
+
+The fuzzy figure landing at 2.0106 ms — within 0.5% of its own 2.0 ms SLA — is worth reading
+alongside the percentile discussion below rather than as a separate result: criterion reports a
+mean, `ranking_budget.rs` asserts a median, and the two agreeing this closely on the line is the
+same marginality seen from a second direction.
 
 #### Fuzzy search, top-20 of 10,000 — met at the median, marginal at the tail
 
