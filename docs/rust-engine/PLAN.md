@@ -1293,7 +1293,7 @@ the number users see is the sandboxed one.
 | Cold start to first frame | no benchmark — **nearest observable proxy now reported**, see below |
 | Summon to first frame | no benchmark — **the round trip is now reported**, see below; still not a frame |
 | Idle RSS | VM tier reports it; documented as reported-not-gated (§11.2) |
-| Peak RSS, 10k index + 3 extensions | no benchmark — **index half now measured**, see below |
+| Peak RSS, 10k index + 3 extensions | no benchmark — **now measured end to end, and missed 1.7x**, see below |
 
 The workspace contained **exactly one benchmark**, `compass-ipc`'s. **No CI job ran `cargo bench`
 at all**, so no benchmark could have failed anything even had it been correct. And §8.7's
@@ -1400,16 +1400,48 @@ Stable to within 1% over repeated runs and near-identical between profiles,
 which is what one would expect of memory and is worth stating because the
 timing rows above are nothing like that stable.
 
-**This does not evaluate the SLA, and the test says so.** The row is "10k index
-+ **3 extensions** < 150 MB", and the extension host does not exist — that is
-Phase 4. What the number gives is the remaining budget: the index takes about
-10%, leaving roughly **134 MB for three extensions** when there is something to
-measure.
+**That test does not evaluate the SLA, and says so.** The row is "10k index
++ **3 extensions** < 150 MB", and when it was written the extension host did not
+exist. It asserts a loose 100 MB ceiling rather than the 150 MB SLA, because
+asserting the SLA there would quietly convert a whole-system budget into an
+index-only one and report it met.
 
-The test asserts a loose 100 MB ceiling rather than the 150 MB SLA. Asserting
-the SLA here would quietly convert a whole-system budget into an index-only one
-and report it met — the same error as reading a green tick on a check that
-measures the wrong thing.
+##### The other half now exists, and the row is missed by 1.7x
+
+`crates/compass-worker-host/tests/peak_memory.rs`. The host drives the real
+runtime — the bundle the C++ engine ships as `vicinae-worker-ts` — so three
+extensions can be loaded and measured alongside the index:
+
+| | |
+|---|---|
+| index, 10,000 entries | **15.7 MB** (agrees with `index_memory.rs`'s 15.4–15.6 MB) |
+| extension 1 / 2 / 3 | **82.1 / 82.0 / 82.1 MB** |
+| **total** | **261 MB against a 150 MB budget** |
+
+**Where the budget goes is more interesting than the miss.** A bare `node -e`
+peaks at **44.0 MB** on the same machine. Three interpreters are therefore
+~132 MB — **88% of the whole budget before a single line of extension code
+runs**. The runtime and the command add ~38 MB on top of each.
+
+So the row is not missed because the runtime is heavy. It is missed because
+"3 extensions" means three node processes under the current model, and the
+150 MB figure was written without that arithmetic. Two things could close it and
+they are not equivalent: move the SLA to a number the process model can meet, or
+move the process model (a shared interpreter with one isolate per extension is
+the obvious candidate, and is a Phase 4 design question, not a tuning one).
+**That is an architectural decision and the test does not make it** — it records
+the number, the same treatment the cold-start figure got, for the same ADR-0010
+reason: measured once is not a threshold.
+
+**The measurement had a false green in it, and the control found it.** Summing
+only the pid the host holds reports 1776 kB per extension and a 21 MB total —
+comfortably *inside* the SLA. The pid the host holds is `timeout`'s, not node's,
+so the real worker was never being read. The test walks the process tree for
+this reason, and carries a 16 MB per-extension floor to catch the mistake
+returning; 16 MB is a third of an empty interpreter, so it fails a broken probe
+without policing memory. The earlier 1 MB floor would have let the false green
+through, which is the same defect as the VM tier's RSS gate reading `0 kB` and
+calling it lean.
 
 #### The IPC row
 
