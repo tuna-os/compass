@@ -423,7 +423,7 @@ echo "=== 3b2. what does the launcher cost at idle? (Phase 1 gate) ==="
 # Phase 1's gate says "idle RSS < 30 MB" and nobody had measured it, because
 # until the launcher drew there was nothing to measure. Taken here, after the
 # window is up and before the control application starts competing for memory.
-guest "$checks" launcher-rss || true
+guest "$checks" launcher-rss
 
 echo "=== 3d. did a launcher window actually appear? (the gate) ==="
 # The first assertion in this tier derived from a measurement rather than from

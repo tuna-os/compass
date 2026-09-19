@@ -813,18 +813,64 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
       printf 'engine   pid %s: VmRSS %s kB (%s MB) -- resident, draws nothing\n' \
         "$engine_pid" "$erss_kb" "$((erss_kb / 1024))"
     else
-      echo 'engine: no pid recorded, so only the window could be measured'
+      erss_kb=""
     fi
 
     printf 'Phase 1 gate is "idle RSS < 30 MB".\n'
-    printf '  engine   %s MB — %s\n' "$((${erss_kb:-0} / 1024))" \
-      "$( [ "$((${erss_kb:-0} / 1024))" -lt 30 ] && echo 'under' || echo 'OVER' )"
-    printf '  launcher %s MB — %s\n' "$((rss_kb / 1024))" \
-      "$( [ "$((rss_kb / 1024))" -lt 30 ] && echo 'under' || echo 'OVER' )"
+    printf '  launcher %s MB — recorded, not gated\n' "$((rss_kb / 1024))"
     # Under llvmpipe the renderer keeps its own buffers, so a VM number is not
     # a hardware number. Said here so nobody reads it as one.
     echo 'note: the launcher figure includes wgpu under software rendering, so it is'
     echo '      an upper bound rather than the shipping figure; the engine figure is not.'
+
+    # THE ENGINE FIGURE IS NOW GATED, AND THE CEILING COMES FROM MEASUREMENT.
+    #
+    # ADR-0010: recorded before gated. It has been recorded, and the numbers
+    # are steady --
+    #
+    #   10,064 kB (9 MB)   run on 4254ba3
+    #   10,484 kB (10 MB)  run on f6bc770
+    #    ~6,300 kB (6.2 MB) on an ordinary x86-64 container, no VM
+    #
+    # -- a 4% spread across two VM runs, so a ceiling is defensible where an
+    # equality would not be.
+    #
+    # ENGINE_RSS_CEILING_MB is 20: about double the measured value, and
+    # two-thirds of the #13 SLA. Deliberately not tight to the measurement,
+    # because the index grows with the image's application set and somebody
+    # else's Bluefin rebase must not turn our run red. Deliberately not 30
+    # either -- sitting on the SLA would let the engine triple before anything
+    # complained, which is the decay this gate exists to prevent.
+    #
+    # Only the engine is gated. The launcher's figure is mostly llvmpipe, so
+    # gating it would gate Mesa.
+    ENGINE_RSS_CEILING_MB=20
+    if [ -z "$erss_kb" ]; then
+      # Not a pass. A memory gate that quietly skips when it cannot find its
+      # process reports the same green as one that measured and was satisfied.
+      echo "FAIL: no engine pid recorded, so the idle-RSS gate did not run" >&2
+      exit 1
+    fi
+    engine_mb=$((erss_kb / 1024))
+    # A floor as well as a ceiling, and it is not defensive padding: the read
+    # above is `awk ... || echo 0`, so an unreadable /proc entry -- or a process
+    # that exits between the existence check and the read -- yields 0, and 0 is
+    # comfortably under any ceiling. An engine reporting no resident memory is a
+    # failed measurement, not a lean engine, and it must not report green. This
+    # is the same defect the index floor had when it asserted `-gt 0`.
+    if [ "$erss_kb" -lt 1024 ]; then
+      echo "FAIL: engine idle RSS read as ${erss_kb} kB, which is not a measurement" >&2
+      echo "      /proc/$engine_pid/status was unreadable, or the engine exited." >&2
+      exit 1
+    fi
+    if [ "$engine_mb" -ge "$ENGINE_RSS_CEILING_MB" ]; then
+      echo "FAIL: engine idle RSS is ${engine_mb} MB, at or over the ${ENGINE_RSS_CEILING_MB} MB ceiling" >&2
+      echo "      (measured at 9-10 MB when this ceiling was set; the #13 SLA is 30 MB)" >&2
+      echo "      Find what grew. Do not raise the ceiling to fit." >&2
+      exit 1
+    fi
+    printf '  engine   %s MB — under the %s MB ceiling (SLA 30 MB)\n' \
+      "$engine_mb" "$ENGINE_RSS_CEILING_MB"
     ;;
 
   # Harvest a real desktop-entry corpus from this Bluefin box.
