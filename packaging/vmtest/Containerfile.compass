@@ -132,35 +132,58 @@ RUN mkdir -p /var/home && \
     useradd --create-home --home-dir /var/home/compass --shell /bin/bash compass && \
     id compass
 
-# The user half, which needs the account to exist.
+# The user half, which needs the account to exist. Two failed shapes are
+# recorded here because the third is not obviously right either, and the next
+# person should not have to rediscover the pair of them.
 #
-# DONE AS ROOT AND THEN CHOWNED, not with `runuser -u compass`. That was the
-# first shape and it failed the image build:
+#   1. `runuser -u compass -- flatpak remote-add --user …`
+#      error: GPG: Unable to configure context: Permission denied
 #
-#   + runuser -u compass -- env HOME=/var/home/compass flatpak remote-add --user …
-#   error: GPG: Unable to configure context: Permission denied
+#      gpgme wants somewhere of its own to work in, and a `runuser` inside a
+#      container build is not a session: no XDG_RUNTIME_DIR, no /run/user/1000.
 #
-# gpgme wants somewhere of its own to work in, and a `runuser` inside a
-# container build is not a session: there is no XDG_RUNTIME_DIR and no
-# /run/user/1000 for it to use. The same command as root, which already
-# installed the system half two steps up, has no such trouble.
+#   2. the same as root, with XDG_DATA_HOME pointed at the user's tree
+#      error: Refusing to operate on a user installation as root!
 #
-# `flatpak --user` picks its installation from $XDG_DATA_HOME, so that is set
-# explicitly rather than left to be derived from $HOME -- a stray XDG_DATA_HOME
-# in the build environment would otherwise silently put the app somewhere
-# nobody looks. The path is the one the compass user's session will resolve to.
+#      flatpak refuses outright, and it is right to -- that is exactly the
+#      "incorrect file ownership" its message warns about. (`remote-add --user`
+#      as root *is* allowed, which is what made shape 2 look plausible: it got
+#      one command further before failing.)
 #
-# The chown is what makes it theirs. Without it the files are root's and the
-# user's flatpak would refuse its own installation.
+# So: as the user, with the gpg dependency removed rather than worked around.
+# `--no-gpg-verify` is what makes shape 1's error moot, and it is a defensible
+# thing to do HERE and nowhere else: this is a throwaway probe application in a
+# test image, fetched from Flathub over TLS at build time, and what the tier
+# asserts about it is that its exported desktop entry reaches the index. It is
+# not testing flatpak's signature verification, and nothing that ships is
+# affected.
+#
+# XDG_RUNTIME_DIR is provided too, because a session normally has one and
+# flatpak reaches for it. It is created inside THIS step rather than its own:
+# /run is a tmpfs in a container build and does not survive into the next
+# layer, so a directory made in a separate RUN would be gone by the time
+# flatpak looked for it.
+#
+# Which of the two -- the runtime directory or --no-gpg-verify -- is what
+# actually fixes shape 1 is NOT established here. Both are applied at once
+# because each VM cycle costs twelve minutes, and this is test scaffolding
+# rather than a claim about how the product behaves. Said plainly rather than
+# written up as though the cause were isolated.
 ARG PROBE_USER_DATA=/var/home/compass/.local/share
 RUN set -eux; \
-    env HOME=/var/home/compass XDG_DATA_HOME="$PROBE_USER_DATA" \
-      flatpak remote-add --user --if-not-exists \
-        flathub https://flathub.org/repo/flathub.flatpakrepo; \
-    env HOME=/var/home/compass XDG_DATA_HOME="$PROBE_USER_DATA" \
+    install -d -o compass -g compass -m 0700 /run/user/1000; \
+    runuser -u compass -- env \
+      HOME=/var/home/compass \
+      XDG_DATA_HOME="$PROBE_USER_DATA" \
+      XDG_RUNTIME_DIR=/run/user/1000 \
+      flatpak remote-add --user --if-not-exists --no-gpg-verify \
+        probe https://flathub.org/repo/flathub.flatpakrepo; \
+    runuser -u compass -- env \
+      HOME=/var/home/compass \
+      XDG_DATA_HOME="$PROBE_USER_DATA" \
+      XDG_RUNTIME_DIR=/run/user/1000 \
       flatpak install --user --noninteractive --assumeyes --no-deps \
-        flathub "$PROBE_USER_APP"; \
-    chown -R compass:compass /var/home/compass; \
+        probe "$PROBE_USER_APP"; \
     test -L "$PROBE_USER_DATA/flatpak/exports/share/applications/$PROBE_USER_APP.desktop"; \
     readlink -f "$PROBE_USER_DATA/flatpak/exports/share/applications/$PROBE_USER_APP.desktop"; \
     test "$(stat -c %U "$PROBE_USER_DATA/flatpak")" = compass
