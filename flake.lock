@@ -1,5 +1,26 @@
 {
   "nodes": {
+    "crane": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1716080854,
+        "narHash": "sha256-uQ86AUtKiTCMciMCZjWGm4aaq+bJ5O9Ot+f7Y4qEXo4=",
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "a4e51f57553ecf537c20065fb8294d5e226b43b5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "ref": "v0.17.0",
+        "repo": "crane",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1787900134,
@@ -55,6 +76,7 @@
     },
     "root": {
       "inputs": {
+        "crane": "crane",
         "nixpkgs": "nixpkgs",
         "numen": "numen",
         "soulver-cpp": "soulver-cpp",
