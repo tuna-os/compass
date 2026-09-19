@@ -1515,15 +1515,37 @@ Bluefin's own primary target is x86_64.
 5. Drive the hotkey path through the console keyboard, screenshotting each step.
 6. Upload the artifact directory unconditionally.
 
-**Assert over IPC, not over pixels.** Screenshots are evidence for humans; `--require-paint` is the
-one pixel assertion worth gating on, because "did anything draw" is a question no other probe
-answers. Everything else goes through our own IPC socket and `doctor`. Pixel-scraping a desktop
-session is the classic way to build an e2e suite everyone learns to ignore.
+**"Assert over IPC, not over pixels" was half right, and the half that was wrong cost a bug.** This
+section used to say `--require-paint` was the one pixel assertion worth gating on, everything else
+belonging on the IPC socket, because pixel-scraping a desktop is how an e2e suite becomes one
+everybody ignores. The tier now gates on six frame comparisons, and the reason is #91: the launcher
+drew a search box, accepted no keystrokes, and **every IPC probe passed** — the socket answered, the
+process was healthy, `doctor` was content. `launcher-02-typed.png` came back byte-identical to
+`launcher-01-open.png`, and only a pixel could say so. Iced delivers typed characters to a
+`text_input` holding widget focus and nothing had focused ours; a person clicks the box without
+noticing, so only a harness that types finds it.
 
-**Two things this tier will be bad at, stated up front.** Under llvmpipe software rendering a GNOME
+What the original advice got right is the *reference* it warned against. A screenshot diff against a
+stored image does break on every font, theme and Bluefin update, and none exists here. Every
+assertion in the tier compares **two frames from the same run** — before against after, each pair
+taken seconds apart on one boot — which is immune to all three, because whatever the theme renders
+renders identically in both. Two properties make that a gate rather than a vibe: a floor on how much
+changed, and `--expect-box`, which fails if the change lands anywhere but our window and so doubles
+as "nothing else moved".
+
+The six: the engine starting must paint **nothing**; the launcher window appearing must paint
+something; a typed query must reach our field (#91); hiding must return the desktop and summoning
+must bring the window back (ADR-0015, and the pair matters — a frame that never changes passes one
+and fails the other); and Ctrl+B must open the action panel. That last one is the newest and shows
+the discipline the rest were earned by: it ran **recorded, not gated** for two runs first, because
+ADR-0010 forbids inventing a threshold before seeing one. Both runs printed 2,697 pixels in the same
+box, byte-identical; the frames were then read to confirm the panel — not merely *a* change — had
+drawn; and the floor was set at roughly a quarter of the measurement rather than fitted to it, so a
+panel with fewer actions still passes while a chord that never arrives (0.00%) fails.
+
+**The thing this tier is still bad at, stated up front.** Under llvmpipe software rendering a GNOME
 session is slow and its timing is variable, so any assertion phrased as "within N seconds" will
-flake; phrase them as "after this marker appears". And a screenshot diff against a stored reference
-will break on every font, theme and Bluefin update — which is why none is proposed here.
+flake; phrase them as "after this marker appears".
 
 **Promote it; do not start with it.** Run it nightly first and move it into the merge queue only once
 it has been stable for a couple of weeks. Then hold it to the same rule as everything else: a

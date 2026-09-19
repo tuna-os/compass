@@ -30,10 +30,26 @@ installations. See [ADR-0012](docs/rust-engine/adr/0012-compass-public-brand.md)
 - [Roadmap epic](https://github.com/tuna-os/compass/issues/2)
 - [Architecture decisions](docs/rust-engine/adr/README.md)
 
-The current Rust vertical slice opens a native Iced launcher, indexes desktop applications, ranks
-them with the ported fuzzy-search semantics, launches the selected result, exposes IPC and
-diagnostics, and is exercised in Flatpak and Bluefin VM CI. Clipboard, extension-host and builtin
-feature parity are still in progress; the parity ledger is the source of truth.
+**Where it stands: 70 of 158 parity cells are green (44%), across 3,099 tests.** Both figures are
+measured rather than estimated — `scripts/ci/parity-score.py` counts the ledger and `make
+check-rust` reports the tests — and the [parity ledger](docs/rust-engine/PARITY.md) is the source
+of truth for any single row.
+
+Done, in the sense that the row is green or its remaining files are backends: the builtins, the
+extension host (45 of tsapi's 49 methods), the clipboard store, the search and ranking semantics,
+the desktop-entry layer, and ten of the file indexer's fifteen files.
+
+Not done, and this is the part a percentage hides: the remainder is **12 drawing gaps and 7 that
+need a live D-Bus, MPRIS or a compositor**, plus two process, one storage and one network item.
+The same script prints that breakdown beside the percentage, because a ledger at 44% whose
+remainder is transcription and one whose remainder is compositor integration are not the same
+project.
+
+What is verified on a real desktop, not just in unit tests: a Bluefin VM tier boots GNOME under
+QEMU, installs the Flatpak, and asserts that the engine starts without painting, finds
+applications, opens a window, receives a typed query in *our* field, hides and returns, and opens
+the action panel on Ctrl+B — each against a control frame, with the changed region required to lie
+inside the window. Everything else in `compass-ui` is covered by its own tests only.
 
 ## Install
 
