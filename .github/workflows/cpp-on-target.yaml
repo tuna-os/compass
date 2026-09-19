@@ -329,8 +329,23 @@ jobs:
   # a compositor, may need a session bus, or may need neither.
   #
   # So this asks exactly that, smallest question first, and records the answer
-  # either way. `continue-on-error` is deliberate: a NO is a finding that
-  # belongs in the log, not a red X on a build that succeeded.
+  # either way.
+  #
+  # THE EXIT CONTRACT, which the first run got wrong.
+  #
+  # It was `continue-on-error: true` and exited 1 on "no rung answered". That
+  # conflates two different things and GitHub reports both as a red X anyway --
+  # continue-on-error does not change a check run's conclusion, so the first
+  # NO paged as a CI failure on a PR whose code was fine.
+  #
+  # A spike that ANSWERS has succeeded, whatever the answer. So:
+  #
+  #   exit 0  the question was asked and answered, yes or no
+  #   exit 1  the question could not be asked -- the tarball is wrong, or the
+  #           engine cannot even load, which the ldd check below catches
+  #
+  # The verdict is written to the step summary either way, so a NO is loud
+  # without being red.
   #
   # Three rungs, in order, so a failure says WHICH thing is missing:
   #
@@ -346,7 +361,6 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -423,6 +437,11 @@ jobs:
                     echo "ANSWERED after ${i}00ms: $label"
                     echo "--- a real query ---"
                     vicinae query --json firefox || echo "(query failed)"
+                    {
+                      echo "### Suite 0 spike: YES, on the \`$label\` rung"
+                      echo
+                      echo "The parity run needs exactly this much and no compositor."
+                    } > /src/spike-verdict.md
                     kill "$pid" 2>/dev/null || true
                     return 0
                   fi
@@ -452,10 +471,29 @@ jobs:
 
               echo
               echo "FINDING: the engine did not answer on any rung tried here."
-              echo "That is a result, not a failure of this job — it tells the"
-              echo "parity run which harness it needs, which is what a spike is for."
-              exit 1
+              echo "It loads (ldd is clean above) but does not serve, so the next"
+              echo "rung is the compositor -- mutter, via the Tier 2 harness."
+              {
+                echo "### Suite 0 spike: NO"
+                echo
+                echo "The engine loads but answered \`ping\` on neither the bare nor the"
+                echo "dbus-run-session rung. Next rung: a compositor."
+              } > /src/spike-verdict.md
             '
+
+      # The verdict, where a reader will see it. The container cannot write to
+      # $GITHUB_STEP_SUMMARY, so it leaves the file on the bind mount and this
+      # step publishes it. Asserted rather than best-effort: a spike that
+      # produced no verdict did not answer its question, and that IS a failure
+      # of the job even though a NO is not.
+      - name: The verdict
+        if: always()
+        run: |
+          test -f spike-verdict.md || {
+            echo "::error::the spike left no verdict — it did not reach an answer"
+            exit 1
+          }
+          cat spike-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the engine logs
         if: always()
