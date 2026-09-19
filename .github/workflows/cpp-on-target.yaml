@@ -44,6 +44,35 @@ on:
 #       - '.github/workflows/cpp-on-target.yaml'
   workflow_dispatch:
 
+  # Nightly, so the artifact this job publishes actually exists when something
+  # needs it.
+  #
+  # WHY THIS WAS ADDED
+  #
+  # This job's own closing step says what it is for: `vicinae-cpp-bluefin.tar.gz`
+  # is "the second engine Suite 0 has been missing" — `compass-testkit`'s
+  # `parity` binary takes `--cpp` and has never run because there was nothing
+  # to point it at. #117's head-to-head bench needs the same artifact.
+  #
+  # On `workflow_dispatch` alone that artifact only exists when somebody
+  # remembers to press a button, and it expires after 7 days. So both #12's
+  # remaining parity work and #117 were blocked on a build that already worked,
+  # for want of a trigger. Nightly keeps a fresh tarball available without
+  # putting a full Qt build on anyone's pull request.
+  #
+  # 02:00 rather than the VM tier's 03:00: that tier is the consumer, so the
+  # producer runs first. Not a dependency — GitHub does not order scheduled
+  # workflows — but an hour is ample for this build, and having them collide is
+  # avoidable for free.
+  schedule:
+    - cron: "0 2 * * *"
+
+  # Releases, matching the VM tier. If a tagged build is what users install,
+  # the C++ engine it is compared against should be built from the same tag.
+  push:
+    tags:
+      - "v*"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
