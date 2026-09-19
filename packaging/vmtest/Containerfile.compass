@@ -53,6 +53,37 @@ RUN flatpak remote-add --installation=compass --if-not-exists \
     rm -f /tmp/com.vicinae.Vicinae.flatpak && \
     flatpak --installation=compass list --columns=ref,origin
 
+# ── two probe Flatpaks, one per installation root ────────────────────────────
+#
+# #105: Flatpak applications did not appear in search, because the manifest
+# granted the `exports/share/applications` directories and not the `app` trees
+# they symlink into. Nothing caught it, and this is why: the VM has Compass in
+# a *named extra* installation and nothing at all in the system or user roots,
+# so the two code paths the bug lived in were never exercised here.
+#
+# So one small application goes into each. What is asserted is that the engine
+# finds them (`checks.sh flatpak-apps`), which is only true if the exported
+# symlink resolves inside our sandbox.
+#
+# `--no-deps`, deliberately. These are never run — the test is that they are
+# *indexed* — and without it each would drag in a runtime we have no use for.
+# It also removes a dependency on which runtime version a third party happens
+# to build against this month, which is the kind of thing that turns someone
+# else's release into our red run.
+#
+# Installed here, during the image build, for the same reason the runtime is:
+# there is network here and none in the guest. /var is seeded from the image at
+# install time, so both roots reach the booted system.
+ARG PROBE_SYSTEM_APP=org.pipewire.Helvum
+ARG PROBE_USER_APP=org.gottcode.CuteMaze
+RUN set -eux; \
+    flatpak remote-add --system --if-not-exists \
+      flathub https://flathub.org/repo/flathub.flatpakrepo; \
+    flatpak install --system --noninteractive --assumeyes --no-deps \
+      flathub "$PROBE_SYSTEM_APP"; \
+    test -L "/var/lib/flatpak/exports/share/applications/$PROBE_SYSTEM_APP.desktop"; \
+    readlink -f "/var/lib/flatpak/exports/share/applications/$PROBE_SYSTEM_APP.desktop"
+
 # ── the session user, and autologin ──────────────────────────────────────────
 #
 # The account is created HERE rather than by corral's `--user compass`, and that
@@ -85,6 +116,22 @@ RUN flatpak remote-add --installation=compass --if-not-exists \
 RUN mkdir -p /var/home && \
     useradd --create-home --home-dir /var/home/compass --shell /bin/bash compass && \
     id compass
+
+# The user half, which needs the account to exist. `flatpak --user` writes to
+# $HOME, so HOME is set explicitly rather than inherited from the build.
+#
+# The `test -L` is the assertion that matters: if flatpak ever stops exporting
+# by symlink, the bug this guards against stops existing and the guard should
+# say so loudly rather than keep passing for the wrong reason.
+RUN set -eux; \
+    runuser -u compass -- env HOME=/var/home/compass \
+      flatpak remote-add --user --if-not-exists \
+        flathub https://flathub.org/repo/flathub.flatpakrepo; \
+    runuser -u compass -- env HOME=/var/home/compass \
+      flatpak install --user --noninteractive --assumeyes --no-deps \
+        flathub "$PROBE_USER_APP"; \
+    test -L "/var/home/compass/.local/share/flatpak/exports/share/applications/$PROBE_USER_APP.desktop"; \
+    readlink -f "/var/home/compass/.local/share/flatpak/exports/share/applications/$PROBE_USER_APP.desktop"
 
 # ── no first-run tour ────────────────────────────────────────────────────────
 #

@@ -188,6 +188,22 @@ echo "=== 0b2. did the engine find any applications? (the gate, #95) ==="
 guest "$checks" engine-index
 
 echo
+echo "=== 0b3. are the machine's Flatpak applications in the index? (the gate, #105) ==="
+# The index being non-empty says nothing about Flatpaks: on this image every
+# host application comes from the base OS, and until now the system and user
+# Flatpak roots were both empty, so the code path #105 lived in was never run
+# here.
+#
+# A Flatpak export is a symlink into the deploy tree, and our sandbox granted
+# the exports directory without it -- which made every Flatpak on a user's
+# machine invisible, silently. The image now installs one application into each
+# root and this asks the running engine for them by name.
+#
+# Gated. There is no threshold to calibrate and nothing to record first: either
+# the query returns the application or the sandbox cannot see it.
+guest "$checks" flatpak-apps
+
+echo
 echo "=== 0c. the desktop with the engine up (THE CONTROL for every gate) ==="
 # THE CONTROL MOVED, AND THAT IS THE POINT.
 #

@@ -839,6 +839,111 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   # tarball goes out with the artifacts and a person decides what to keep — a
   # corpus is test input that shapes every ranking assertion, and it should not
   # grow by a job quietly appending to it.
+  # Are the machine's Flatpak applications in the index? (#105)
+  #
+  # A Flatpak export is a SYMLINK, not a file. flatpak-dir.c builds it with the
+  # prefix `../app/<id>/current/active/export`, so the entry a launcher reads
+  # lives in the deploy tree and the exports directory holds only pointers into
+  # it. Our sandbox granted the exports directories and not the deploy trees,
+  # which meant every Flatpak on the machine was a dangling link inside it --
+  # invisible, with no error anywhere, because the scan still lists the name and
+  # the read fails one step later.
+  #
+  # Unit tests pin the shape of that (compass-xdg) and the manifest invariant
+  # (xdg_dirs), but only a real session can answer whether the sandbox actually
+  # resolves them. That is what this is: two applications installed by flatpak
+  # itself, one in the system root and one in the user's, queried through the
+  # running engine from inside the Flatpak.
+  #
+  # The display name is read from the export rather than written here, so the
+  # check does not break when an upstream renames its application; the app id is
+  # what is asserted, because that is what the index keys on.
+  flatpak-apps)
+    status=0
+    for spec in \
+      "system:/var/lib/flatpak/exports/share/applications" \
+      "user:/var/home/$SESSION_USER/.local/share/flatpak/exports/share/applications"
+    do
+      root="${spec%%:*}"
+      dir="${spec#*:}"
+
+      if [ ! -d "$dir" ]; then
+        echo "FAIL: $root: $dir does not exist, so the image never installed a probe app" >&2
+        status=1
+        continue
+      fi
+
+      found=0
+      for entry in "$dir"/*.desktop; do
+        # `-e` follows the link, so a DANGLING export fails it and the glob's
+        # own literal fallback fails it too. Testing `-L` as well keeps the two
+        # apart: a dangling link here is a broken image and must be reported as
+        # one, not skipped into "no exports at all", which is what the first
+        # draft of this did.
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        found=1
+        app_id="$(basename "$entry" .desktop)"
+
+        if [ ! -L "$entry" ]; then
+          echo "note: $root: $app_id is not a symlink; flatpak's export layout has changed" >&2
+        elif [ ! -e "$entry" ]; then
+          # Note this is the view from OUTSIDE the sandbox, as root. #105 is a
+          # link that dangles only *inside* it, which no check here can see --
+          # the query below is what answers that. A link broken out here is a
+          # different and worse thing: the image itself is wrong.
+          echo "FAIL: $root: $app_id is a dangling symlink on the host: $(readlink "$entry")" >&2
+          echo "  the image installed it and then lost the deploy tree; this is not #105" >&2
+          status=1
+          continue
+        fi
+
+        name="$(sed -n 's/^Name=//p' "$entry" | head -1)"
+        if [ -z "$name" ]; then
+          echo "FAIL: $root: no Name= in $entry" >&2
+          status=1
+          continue
+        fi
+
+        echo "--- $root: $app_id ($name) ---"
+        if compass_cli query --json "$name" \
+             > /tmp/flatpak-query.json 2>/tmp/flatpak-query.err
+        then
+          APP_ID="$app_id" NAME="$name" ROOT="$root" python3 - <<'PY' || status=1
+import json, os, sys
+
+app_id = os.environ["APP_ID"]
+name = os.environ["NAME"]
+root = os.environ["ROOT"]
+hits = json.load(open("/tmp/flatpak-query.json"))
+for hit in hits[:5]:
+    print(f"  {hit['score']:3} {hit['id']}  {hit['title']}")
+if any(hit["id"] in (f"{app_id}.desktop", app_id) for hit in hits):
+    print(f"  ok: the {root} Flatpak {app_id} is in the index")
+    sys.exit(0)
+sys.exit(
+    f"FAIL: querying {name!r} did not return the {root} Flatpak {app_id}.\n"
+    "  Its exported .desktop is a symlink into the deploy tree; if the sandbox "
+    "cannot read that tree the entry is invisible and every Flatpak on the "
+    "machine disappears from search (#105).\n"
+    "  Check --filesystem=/var/lib/flatpak/app:ro and "
+    "--filesystem=xdg-data/flatpak/app:ro in the manifest."
+)
+PY
+        else
+          echo "FAIL: $root: the query itself failed" >&2
+          cat /tmp/flatpak-query.err >&2
+          status=1
+        fi
+      done
+
+      if [ "$found" -eq 0 ]; then
+        echo "FAIL: $root: no .desktop exports in $dir; the image installed no probe app" >&2
+        status=1
+      fi
+    done
+    exit "$status"
+    ;;
+
   harvest-corpus)
     scratch=/tmp/compass-corpus
     rm -rf "$scratch"; mkdir -p "$scratch"
