@@ -99,20 +99,34 @@ for field in win_w win_h; do
   fi
 done
 box_x0=$(( (screen_w - win_w) / 2 - margin ))
-box_y0=$(( (screen_h - win_h) / 2 - margin ))
 box_x1=$(( box_x0 + win_w + 2 * margin ))
-box_y1=$(( box_y0 + win_h + 2 * margin ))
-# The top bar is excluded from every comparison below (see step 3), and with a
-# 560-tall window the top of the card now falls inside that strip. Clamping the
-# box to the strip's edge keeps the two consistent: the box never claims a
-# region the comparison is not looking at.
 # `if`, not `[ ... ] && ...`: under `set -e` a false test makes the whole list
 # return 1 and takes the script with it.
-top_bar_h=140
-if [ "$box_y0" -lt "$top_bar_h" ]; then box_y0=$top_bar_h; fi
-if [ "$box_y1" -gt "$screen_h" ]; then box_y1=$screen_h; fi
 if [ "$box_x0" -lt 0 ]; then box_x0=0; fi
 if [ "$box_x1" -gt "$screen_w" ]; then box_x1=$screen_w; fi
+
+# ONLY THE HORIZONTAL BOUND COMES FROM THE WINDOW. The vertical one is the
+# whole screen below the top bar, and that is not slack -- it is what the two
+# gates using this box actually compare.
+#
+# The first draft derived both axes from the window and produced y 140..700 for
+# a 720x560 card. The open gate failed with
+#
+#   FAIL: changed region x 280..999 y 140..796 is not inside 260,140..1020,700
+#
+# and the region was right: the open gate and the came-back gate do NOT ignore
+# the bottom strip the way steps 3a and 3d4b do, so the dock reacting to a new
+# window is a legitimate part of what changed. The literals this replaced ended
+# at 800 for exactly that reason, and tightening to the window silently changed
+# what the gate meant.
+#
+# So: horizontally the box tracks the card, which is the assertion worth having
+# -- a launcher painting at either edge of the screen still fails. Vertically it
+# is the region the comparison looks at, which is a property of the ignore
+# strips rather than of the card.
+top_bar_h=140
+box_y0=$top_bar_h
+box_y1=$screen_h
 # A containment box that covers the screen asserts nothing. That is not
 # hypothetical: at a card width of 1240 the derivation above clamps to
 # 0..1280 and the gate silently stops being a gate. Refuse rather than pass.

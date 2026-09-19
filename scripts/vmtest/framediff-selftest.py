@@ -384,6 +384,12 @@ def _check_box_derivation(launcher: str) -> None:
             )
         return tuple(int(value) for value in done.stdout.split())
 
+    # Only the horizontal bound is the window's. Vertically the box is the whole
+    # screen below the top bar, because the two gates that use it do not ignore
+    # the bottom strip and the dock reacting to a new window is part of what
+    # they legitimately see. A draft that derived both axes produced y 140..700
+    # and failed the open gate against a region reaching y 796 -- so the
+    # vertical bound is asserted to be that strip, not to hug the window.
     screen_w, screen_h, top_bar = 1280, 800, 140
     for width, height in ((720, 560), (640, 480), (480, 360)):
         x0, y0, x1, y1 = derive(width, height)
@@ -392,8 +398,12 @@ def _check_box_derivation(launcher: str) -> None:
         problems = []
         if x0 > win_x0 or x1 < win_x1:
             problems.append(f"does not contain the window's {win_x0}..{win_x1} horizontally")
-        if y0 > max(win_y0, top_bar) or y1 < win_y1:
-            problems.append(f"does not contain the window's {win_y0}..{win_y1} vertically")
+        if (y0, y1) != (top_bar, screen_h):
+            problems.append(
+                f"spans {y0}..{y1} vertically rather than the compared strip {top_bar}..{screen_h}"
+            )
+        if y1 < win_y1:
+            problems.append(f"does not reach the window's bottom edge at {win_y1}")
         if problems:
             raise SystemExit(
                 f"for a {width}x{height} window centred on {screen_w}x{screen_h}, launcher.sh "
