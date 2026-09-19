@@ -1251,11 +1251,13 @@ header, selectable rows, a divider, a section header and its rows — **and the 
 the first *selectable* row**, not on the `Actions` header above it. The unit tests assert that the
 selection skips headers and dividers; this is the same claim, drawn by a real compositor.
 
-The step stays **recorded, not gated** for one more reason than caution: the panel's contents depend
-on which item is selected, so the pixel count is a property of the fixture as much as of the code,
-and 0.38% is one data point. ADR-0010 forbids fitting a floor to a single run. What a future gate
-should assert is the part that does not move with content — the containment box, which already
-passes — with a floor well under 0.38% once a few runs agree. The root list's sections and the
+**It is now a gate.** Run 200 on `317940f` printed the same figure from a separate VM boot —
+2,697 pixels, 0.38%, the same box — byte-identical rather than merely close, which is what makes a
+threshold defensible after two runs instead of a dozen: there is no spread to fit to. The floor is
+0.1%, about a quarter of what was measured and deliberately *not* fitted to 0.38%, because a panel
+with fewer actions must still pass; what must fail is the chord never arriving, which reads 0.00%.
+The containment box carries the half that does not move with content, and also asserts that nothing
+outside our window changed. The root list's sections and the
 selection moving through *them* still have no VM coverage, only the tests in this crate. The tier answers "does the launcher paint and
 receive keystrokes in a real GNOME session", which is the question #91 came from; it does not yet
 answer "is what it paints the right thing". Saying otherwise — as an earlier version of this PR's

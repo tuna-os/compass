@@ -369,7 +369,7 @@ python3 scripts/vmtest/framediff.py \
   --min-percent 3 --expect-box 300 140 980 800 --ignore-box 0 0 1279 139
 
 echo
-echo "=== 3d4b. does Ctrl+B open the action panel? (recorded, not gated) ==="
+echo "=== 3d4b. does Ctrl+B open the action panel? (the gate) ==="
 # THE VIEW WORK'S FIRST EXPOSURE TO A REAL SESSION, and deliberately not a gate
 # on its first outing.
 #
@@ -388,37 +388,38 @@ echo "=== 3d4b. does Ctrl+B open the action panel? (recorded, not gated) ==="
 # which is what a chord needs -- `corral type` would send the characters one
 # after another and never hold the modifier.
 #
-# NOT GATED YET, on purpose. Two things are unmeasured: whether our window still
-# holds keyboard focus after the hide/summon pair above, and how many pixels a
-# panel over a mostly-empty list actually moves. ADR-0010 is explicit that
-# inventing a threshold before seeing one is how a tier starts flaking, and #91
-# is the standing proof that a *wrong* assertion here costs runs rather than
-# finding bugs. So this prints the real figure and exits 0 either way; the next
-# person turns it into a gate from the number this produces, the same way step
-# 3's floor is waiting on data.
+# IT RAN UNGATED FIRST, and the two runs it took to earn the threshold are the
+# reason there is one. ADR-0010 forbids inventing a floor before seeing a
+# number, and #91 is the standing proof that a wrong assertion here costs runs
+# rather than finding bugs.
 #
-# What to read in the output: a percentage near 0.00 means the chord did not
-# reach the application -- which is a finding about focus after summon, not
-# about the panel. A percentage that moves means something drew.
-# `set -e` is on and this step is not a gate, so nothing in it may abort the
-# job -- not the chord, not the screenshot, not the comparison. A step that
-# cannot fail the run is the whole point of recording before gating.
-if sudo -E "$corral_bin" key "$vm" ctrl b; then
-  # The same settle the open and summon paths get, for the same reason: a
-  # screenshot taken before the paint reads as "the panel does not open".
-  sleep 5
-  if shot "launcher-06-panel.png"; then
-    python3 scripts/vmtest/framediff.py \
-      "$out/launcher-05-summoned.png" "$out/launcher-06-panel.png" \
-      --min-percent 0.1 --expect-box 300 140 980 800 \
-      --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799 \
-      || echo "NOT GATED: the chord moved less than the placeholder floor, or moved something outside the window. Read the figure above and launcher-06-panel.png before turning this into a gate."
-  else
-    echo "NOT GATED: could not screenshot after the chord."
-  fi
-else
-  echo "NOT GATED: corral could not send the chord. That says nothing about the panel."
-fi
+# Runs 199 (3da5283) and 200 (317940f) both printed, from separate VM boots:
+#
+#   2697 of 716800 pixels differ (0.38%)  box x 360..466 (107w) y 315..447 (133h)
+#
+# Byte-identical, not merely close, which is what makes a floor defensible after
+# two runs rather than a dozen: there is no spread to fit to.
+#
+# The frames were read rather than trusted. In that box the root list
+# (`> Firewall / Files / New Window`) is replaced by an `Actions` header,
+# `> Open`, a `---` divider, a `Copy` section header, and `Copy name` /
+# `Copy path` -- the flattened structure `compass_ui::action_panel` is tested
+# against, with the caret on the first SELECTABLE row rather than the header.
+#
+# The floor is 0.1%, about a quarter of what was measured, deliberately NOT
+# fitted to 0.38%. A panel with fewer actions draws fewer pixels and must still
+# pass; what must fail is the chord never arriving, which reads 0.00%. The
+# containment box is the half that does not move with content: it also asserts
+# nothing outside our window changed.
+sudo -E "$corral_bin" key "$vm" ctrl b
+# The same settle the open and summon paths get, for the same reason: a
+# screenshot taken before the paint reads as "the panel does not open".
+sleep 5
+shot "launcher-06-panel.png"
+python3 scripts/vmtest/framediff.py \
+  "$out/launcher-05-summoned.png" "$out/launcher-06-panel.png" \
+  --min-percent 0.1 --expect-box 300 140 980 800 \
+  --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799
 
 echo
 echo "=== 3d5. what did the engine make of the hotkey? (recorded, not gated) ==="
