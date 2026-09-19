@@ -218,14 +218,24 @@ def assert_gate_matches_launcher_sh() -> None:
     # The open gate and the came-back gate use identical flags, so a flags-only
     # check is satisfied by either of them -- a control confirmed that deleting
     # the came-back invocation left this guard green.
+    #
+    # The containment box is `"${expect_box[@]}"` rather than four numbers.
+    # It used to be the literal `--expect-box 300 140 980 800`, taken from a
+    # 640x480 window, and when the card was rewritten to 720x560 the window
+    # grew past its own gate and the run failed on containment. The box is now
+    # computed from `design::GEOMETRY` at the top of launcher.sh, so what this
+    # check can pin is that each gate is still *passed* one -- the shape of the
+    # box is the derivation's business, and `the box is derived` below asserts
+    # the derivation exists.
+    EXPECT_BOX = '"${expect_box[@]}"'
     wanted = {
         "the open gate": ("launcher-01-open.png", "--min-percent 3",
-                          "--expect-box 300 140 980 800", "--ignore-box 0 0 1279 139"),
+                          EXPECT_BOX, "--ignore-box 0 0 1279 139"),
         "the went-away gate": ("launcher-04-hidden.png", "--max-percent 3",
                                "--ignore-box 0 0 1279 139",
                                "--ignore-box 0 700 1279 799"),
         "the came-back gate": ("launcher-05-summoned.png", "--min-percent 3",
-                               "--expect-box 300 140 980 800", "--ignore-box 0 0 1279 139"),
+                               EXPECT_BOX, "--ignore-box 0 0 1279 139"),
         # Starting the engine must be invisible, now that it runs --no-hotkey.
         # A tighter bound than the others on purpose: there is nothing legitimate
         # for it to draw at all, so the only slack is the shell's own furniture.
@@ -246,6 +256,34 @@ def assert_gate_matches_launcher_sh() -> None:
                     for inv in invocations
                 )
                 + "\n  Update the gates in this file and re-run the controls."
+            )
+
+    # The gates above are only as good as the box they are handed, and a box
+    # built from nothing would satisfy every check above. So the derivation is
+    # pinned too: launcher.sh must read the window size out of design.rs rather
+    # than carry its own copy of it, which is the mistake that made the literal
+    # box go stale in the first place.
+    derivation = (
+        # The whole expression, not the `expect_box=(--expect-box` prefix: a
+        # control that replaced the computed values with the old literals kept
+        # that prefix and this check stayed silent, which made it a test of
+        # nothing. The variables are what say the box was computed.
+        ('expect_box=(--expect-box "$box_x0" "$box_y0" "$box_x1" "$box_y1")',
+         "launcher.sh does not build expect_box from the computed corners"),
+        ("card_width", "launcher.sh does not read card_width from the design tokens"),
+        ("card_max_height", "launcher.sh does not read card_max_height from the design tokens"),
+        ("design.rs", "launcher.sh does not name design.rs as the source of the geometry"),
+    )
+    _check_box_derivation(launcher)
+
+    for needle, complaint in derivation:
+        if needle not in launcher:
+            raise SystemExit(
+                f"{complaint} (looked for {needle!r}).\n"
+                "  The containment box must be derived from design::GEOMETRY: a box written "
+                "down here goes stale the next time the card is resized, which is #100's "
+                "launcher-gate failure.\n"
+                "  Update the gates in this file and re-run the controls."
             )
 
 
@@ -291,5 +329,82 @@ def main() -> int:
     return 0
 
 
+def _check_box_derivation(launcher: str) -> None:
+    """Run launcher.sh's box derivation and check the box against the window.
+
+    The text checks below can see that the box is built from variables; they
+    cannot see whether those variables are computed. A control that froze one
+    corner (`box_x1=980`) left every one of them green, which made them a test
+    of spelling rather than of behaviour.
+
+    So the derivation is extracted and executed against real and edited design
+    tokens, and what is asserted is the property that matters: the box contains
+    the window, centred, with the top clamped to the ignored strip. A frozen
+    corner fails the moment the window moves away from it.
+    """
+    import pathlib
+    import re
+    import subprocess
+    import tempfile
+
+    lines = launcher.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.startswith("screen_w="))
+        end = next(i for i, line in enumerate(lines) if line.startswith("expect_box="))
+    except StopIteration:
+        raise SystemExit(
+            "launcher.sh no longer has a `screen_w=`..`expect_box=` derivation block, so the "
+            "containment box cannot be checked. Update the gates in this file and re-run the "
+            "controls."
+        ) from None
+
+    block = "\n".join(lines[start : end + 1])
+    root = pathlib.Path(__file__).resolve().parents[2]
+    design = root / "crates/compass-ui/src/design.rs"
+    source = design.read_text(encoding="utf-8")
+
+    def derive(width: int, height: int) -> tuple[int, int, int, int]:
+        edited = re.sub(r"card_width: \d+,", f"card_width: {width},", source, count=1)
+        edited = re.sub(r"card_max_height: \d+,", f"card_max_height: {height},", edited, count=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            staged = pathlib.Path(tmp) / design.relative_to(root)
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            staged.write_text(edited, encoding="utf-8")
+            script = f"{block}\necho \"$box_x0 $box_y0 $box_x1 $box_y1\"\n"
+            done = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", script],
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+            )
+        if done.returncode != 0:
+            raise SystemExit(
+                f"launcher.sh's box derivation failed for a {width}x{height} window:\n"
+                f"{done.stderr.strip()}\n  Update the gates in this file and re-run the controls."
+            )
+        return tuple(int(value) for value in done.stdout.split())
+
+    screen_w, screen_h, top_bar = 1280, 800, 140
+    for width, height in ((720, 560), (640, 480), (480, 360)):
+        x0, y0, x1, y1 = derive(width, height)
+        win_x0, win_x1 = (screen_w - width) // 2, (screen_w + width) // 2
+        win_y0, win_y1 = (screen_h - height) // 2, (screen_h + height) // 2
+        problems = []
+        if x0 > win_x0 or x1 < win_x1:
+            problems.append(f"does not contain the window's {win_x0}..{win_x1} horizontally")
+        if y0 > max(win_y0, top_bar) or y1 < win_y1:
+            problems.append(f"does not contain the window's {win_y0}..{win_y1} vertically")
+        if problems:
+            raise SystemExit(
+                f"for a {width}x{height} window centred on {screen_w}x{screen_h}, launcher.sh "
+                f"derives the containment box {x0},{y0}..{x1},{y1}, which "
+                + " and ".join(problems)
+                + ".\n  That is #100's launcher-gate failure: a box that does not track the "
+                "window fails every run once the card is resized.\n"
+                "  Update the gates in this file and re-run the controls."
+            )
+
+
 if __name__ == "__main__":
     sys.exit(main())
+
