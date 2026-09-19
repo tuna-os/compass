@@ -494,7 +494,40 @@ jobs:
                     # reports as "the job timed out" -- which is a different
                     # and much less useful finding than "the query hangs".
                     # A spike must bound its own wait.
-                    echo "--- a real query (30s budget) ---"
+                    # READINESS IS A STATE, AND `ping` IS THE WRONG STATE.
+                    #
+                    # ADR-0010 says poll the condition, not the clock, and the
+                    # loop above does -- for LIVENESS. Ranking needs a
+                    # different condition. `AppService` debounces its rescan
+                    # by 500ms (app-service.cpp:178) and the engine answered
+                    # `ping` at 600ms, so a query issued the instant the
+                    # socket opens can race an index that is not built yet.
+                    #
+                    # So poll the query itself. A non-empty ranking is the
+                    # readiness signal a parity run actually needs, and the
+                    # time it took is the number worth knowing.
+                    echo "--- polling the query until it ranks something (30s) ---"
+                    ranked=""
+                    for attempt in $(seq 1 60); do
+                      if timeout 5 vicinae query --json firefox > /src/spike-query.json 2>&1 \
+                         && [ -s /src/spike-query.json ] \
+                         && ! grep -qx "\[\]" /src/spike-query.json; then
+                        echo "RANKED after $((attempt * 500))ms"
+                        ranked="yes"
+                        break
+                      fi
+                      sleep 0.5
+                    done
+
+                    if [ -z "$ranked" ]; then
+                      echo "STILL EMPTY after 30s with $(ls /corpus/applications | wc -l) entries visible."
+                      echo "Not a timing race, then -- the engine answers and ranks nothing."
+                      echo "Next suspect: rootQuery without --provider does not reach"
+                      echo "the apps provider in this container."
+                    fi
+                    cat /src/spike-query.json
+
+                    echo "--- and once more, bounded, for the record ---"
                     if timeout 30 vicinae query --json firefox > /src/spike-query.json 2>&1; then
                       cat /src/spike-query.json
                     else
