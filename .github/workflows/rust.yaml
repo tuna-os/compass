@@ -434,7 +434,15 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: slas-criterion-${{ github.sha }}
+          # The PR HEAD, not `github.sha`.
+          #
+          # On a pull_request event `github.sha` is the merge commit GitHub
+          # synthesises, which exists in no history and changes whenever the
+          # base moves. The first run of this job proved it: head 9e8e8b4
+          # uploaded `slas-criterion-3ad85c0c...`. A baseline series keyed to
+          # those is unusable, and a series is the only reason this artifact
+          # exists.
+          name: slas-criterion-${{ github.event.pull_request.head.sha || github.sha }}
           path: target/criterion/slas/*/new/estimates.json
           # warn, not error: the report step above already fails when a row has
           # no estimates, and `always()` would otherwise turn one failed bench

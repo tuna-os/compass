@@ -91,8 +91,16 @@ on:
     tags:
       - "v*"
 
+# The event is part of the key, and that is not cosmetic.
+#
+# Without it, a `workflow_dispatch` run and a `pull_request` run on the same
+# branch share a group and cancel each other. They are not interchangeable:
+# the pull_request run skips `build` (see its `if:` below), so a push silently
+# killed the only run that compiles anything. That happened TWICE while
+# validating the rung-2 handler — a dispatched build, a push, and a result
+# that never existed to read.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
