@@ -34,12 +34,25 @@
 set -euo pipefail
 
 readonly VIRTUAL_MONITOR="${VIRTUAL_MONITOR:-1280x800}"
+readonly SHELL_LOG="${SHELL_LOG:-/tmp/gnome-shell.log}"
 readonly STARTUP_TIMEOUT_S="${STARTUP_TIMEOUT_S:-60}"
 
 log() { printf '\n=== %s ===\n' "$*"; }
 
+# Prints the compositor's own log, because that is where the answer is.
+#
+# This used to live at one call site, after `wait_for`. It never ran: `fail`
+# exits, and `wait_for` calls `fail`, so the branch after `wait_for` was
+# unreachable. The first real failure of this spike reported "timed out
+# waiting for org.gnome.Shell" and nothing else, and the actual cause — a
+# missing logind — was only visible by downloading the artifact. Printing from
+# `fail` covers every path instead of the one I remembered to handle.
 fail() {
   printf 'SPIKE FAILED: %s\n' "$*" >&2
+  if [ -s "$SHELL_LOG" ]; then
+    printf '\n--- %s ---\n' "$SHELL_LOG" >&2
+    cat "$SHELL_LOG" >&2
+  fi
   exit 1
 }
 
@@ -90,7 +103,7 @@ log "starting gnome-shell --headless --virtual-monitor ${VIRTUAL_MONITOR}"
 # output is the only thing that says why, and a spike that loses it wastes the
 # whole run.
 gnome-shell --headless --virtual-monitor "$VIRTUAL_MONITOR" \
-  >/tmp/gnome-shell.log 2>&1 &
+  >"$SHELL_LOG" 2>&1 &
 readonly SHELL_PID=$!
 echo "gnome-shell pid ${SHELL_PID}"
 
@@ -105,7 +118,6 @@ shell_on_bus() {
 # and "gnome-shell is up but not on the bus" are different findings with
 # different fixes, and a single timeout would conflate them.
 if ! shell_alive; then
-  cat /tmp/gnome-shell.log >&2 || true
   fail "gnome-shell exited immediately"
 fi
 
@@ -113,10 +125,7 @@ log "waiting for the compositor to listen"
 wait_for "a wayland socket in ${XDG_RUNTIME_DIR}" "$STARTUP_TIMEOUT_S" wayland_socket
 
 log "waiting for org.gnome.Shell on the session bus"
-if ! wait_for "org.gnome.Shell to answer" "$STARTUP_TIMEOUT_S" shell_on_bus; then
-  cat /tmp/gnome-shell.log >&2 || true
-  exit 1
-fi
+wait_for "org.gnome.Shell to answer" "$STARTUP_TIMEOUT_S" shell_on_bus
 
 log "the session is up"
 echo "wayland sockets: $(compgen -G "${XDG_RUNTIME_DIR}/wayland-*" | tr '\n' ' ')"
