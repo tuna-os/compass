@@ -313,3 +313,129 @@ jobs:
           echo
           echo 'Layering it into the VM image and running parity there is the'
           echo 'next step, and it is a separate change.'
+
+  # CAN THE C++ ENGINE ANSWER A QUERY WITHOUT A USER SITTING IN FRONT OF IT?
+  #
+  # This is a spike, and it is a separate job from the parity run it is meant
+  # to unblock, because the parity run cannot be designed until this is
+  # answered.
+  #
+  # Rung 2 gave the C++ engine `vicinae query --json` and the Bluefin build
+  # compiles it. What nothing has established is whether the engine it talks to
+  # will START here. `vicinae server` execs a Qt application, and Tier 2 spent
+  # four spikes learning what a container does and does not give a desktop
+  # stack — GNOME Shell needs systemd-logind and dies in its JS UI layer;
+  # Flatpak needs --privileged for `mount --make-rslave`. A Qt engine may need
+  # a compositor, may need a session bus, or may need neither.
+  #
+  # So this asks exactly that, smallest question first, and records the answer
+  # either way. `continue-on-error` is deliberate: a NO is a finding that
+  # belongs in the log, not a red X on a build that succeeded.
+  #
+  # Three rungs, in order, so a failure says WHICH thing is missing:
+  #
+  #   1. bare              — no bus, no display
+  #   2. + dbus-run-session — a session bus
+  #   3. + mutter           — a wayland compositor, via the Tier 2 harness
+  #
+  # Whichever is the first to answer `ping` is what the parity run will need,
+  # and that is the design decision this job exists to make.
+  parity-spike:
+    name: "Suite 0 spike: does the C++ engine serve headless?"
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the engine this workflow just built
+        uses: actions/download-artifact@v4
+        with:
+          name: vicinae-cpp-bluefin
+
+      - name: Ask, one rung at a time
+        run: |
+          set -o pipefail
+          podman run --rm \
+            -v "$PWD:/src:z" \
+            -e HOME=/tmp/home \
+            -w /src \
+            --shm-size=2g \
+            ghcr.io/ublue-os/bluefin:stable bash -euo pipefail -c '
+              mkdir -p "$HOME"
+              tar -C / -xzf /src/vicinae-bluefin.tar.gz
+
+              # Asserted, not assumed: an unpack that put nothing where we
+              # expect would otherwise look like a clean "engine does not run".
+              test -x /usr/bin/vicinae
+              test -x /usr/libexec/vicinae/vicinae-server
+              echo "--- version ---"
+              vicinae version || echo "(version failed)"
+
+              # Its own runtime dir, because that is how Suite 0 isolates this
+              # engine: vicinae::serverSocketName() is runtimeDir()/vicinae.sock
+              # and runtimeDir() reads XDG_RUNTIME_DIR. No --socket flag exists
+              # on this side and none is needed.
+              export XDG_RUNTIME_DIR=/tmp/rt
+              mkdir -p "$XDG_RUNTIME_DIR"
+              chmod 700 "$XDG_RUNTIME_DIR"
+
+              # Readiness is a state, not a moment (ADR-0010): poll ping rather
+              # than sleeping a plausible number of seconds.
+              try_rung() {
+                local label="$1"; shift
+                echo "=== rung: $label ==="
+                rm -rf "$XDG_RUNTIME_DIR"/*
+                "$@" vicinae server >"/tmp/$label.log" 2>&1 &
+                local pid=$!
+                local i
+                for i in $(seq 1 60); do
+                  if vicinae ping >/dev/null 2>&1; then
+                    echo "ANSWERED after ${i}00ms: $label"
+                    echo "--- a real query ---"
+                    vicinae query --json firefox || echo "(query failed)"
+                    kill "$pid" 2>/dev/null || true
+                    return 0
+                  fi
+                  kill -0 "$pid" 2>/dev/null || { echo "engine exited"; break; }
+                  sleep 0.1
+                done
+                echo "NO ANSWER: $label"
+                echo "--- its log ---"
+                tail -40 "/tmp/$label.log" || true
+                kill "$pid" 2>/dev/null || true
+                return 1
+              }
+
+              if try_rung bare env; then exit 0; fi
+
+              if command -v dbus-run-session >/dev/null 2>&1; then
+                if try_rung dbus dbus-run-session --; then exit 0; fi
+              else
+                echo "dbus-run-session not in this image"
+              fi
+
+              if command -v mutter >/dev/null 2>&1; then
+                echo "mutter is present; the compositor rung is the next spike"
+              else
+                echo "mutter is NOT in this image; a compositor rung needs it installed"
+              fi
+
+              echo
+              echo "FINDING: the engine did not answer on any rung tried here."
+              echo "That is a result, not a failure of this job — it tells the"
+              echo "parity run which harness it needs, which is what a spike is for."
+              exit 1
+            '
+
+      - name: Keep the engine logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-spike-logs
+          path: /tmp/*.log
+          if-no-files-found: ignore
+          retention-days: 7
