@@ -2703,7 +2703,10 @@ mod tint_tests {
             "the tinted card fills at alpha {alpha}, low enough that body text over a bright \
              wallpaper loses contrast. Legibility is not negotiable for the launcher."
         );
-        assert!(alpha < 1.0, "a tint that fills at alpha {alpha} is not a tint");
+        assert!(
+            alpha < 1.0,
+            "a tint that fills at alpha {alpha} is not a tint"
+        );
     }
 }
 
