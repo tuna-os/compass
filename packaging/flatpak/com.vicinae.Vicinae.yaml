@@ -18,7 +18,7 @@ app-id: com.vicinae.Vicinae
 # with Iced/wgpu and needs neither Qt nor GTK at runtime. The smaller runtime is also a smaller
 # attack surface and a faster download.
 runtime: org.freedesktop.Platform
-runtime-version: '24.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable

@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 # The minimum we support, not the version we develop on -- rust-toolchain.toml pins
 # that, and the two are deliberately different. This one is set by what the Flatpak
-# ships inside: org.freedesktop.Sdk.Extension.rust-stable//24.08 carries rustc 1.89,
+# ships inside: org.freedesktop.Sdk.Extension.rust-stable//26.08 carries rustc 1.98,
 # so anything higher here makes the Flatpak unbuildable. CI's `msrv` job builds the
 # shipped binary on exactly this version, because an unenforced MSRV is a guess.
 rust-version = "1.89"
