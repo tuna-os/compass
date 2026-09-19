@@ -57,6 +57,76 @@ guest() { "${ssh_argv[@]}" "$@"; }
 corral_bin="$(command -v corral)"
 shot() { sudo -E "$corral_bin" screenshot "$vm" -o "$out/$1" ; }
 
+# THE CONTAINMENT BOX IS DERIVED FROM THE WINDOW, NOT WRITTEN DOWN TWICE.
+#
+# `--expect-box` asserts the changed region lies inside the window, so the box
+# is a property of the window's size. It used to be four literals -- 300 140
+# 980 800 -- taken from a 640x480 centred window. When the card was rewritten
+# to 720x560 the window grew past its own gate's box and the run failed with
+#
+#   FAIL: changed region x 280..999 y 159..369 is not inside 300,140..980,800
+#
+# which is the gate working: 280..999 is exactly a 720-wide window centred on a
+# 1280-wide screen, to the pixel. Widening the literals until it passed would
+# have been the loosening this file warns against twice already, and would have
+# left the same trap for the next person to change the geometry.
+#
+# So the box is computed from `design::GEOMETRY`, read out of the source. A
+# future resize moves the gate with it instead of breaking it, and a rename
+# that stops this finding the constants fails loudly below rather than silently
+# asserting nothing.
+#
+# MARGIN is slack on each side for the drop shadow and for subpixel placement.
+# It is not room to be wrong about where the window is: at 720 wide on a 1280
+# screen the box is still 740 of 1280, so a launcher painting at either edge of
+# the screen fails containment exactly as before.
+screen_w=1280
+screen_h=800
+margin=20
+design=crates/compass-ui/src/design.rs
+# `exit` inside a command substitution leaves only the subshell, so the check
+# is here rather than in the function -- a rename would otherwise reach the
+# arithmetic below as an empty string.
+geometry_field() {
+  sed -n "s/^[[:space:]]*$1: \([0-9]\+\),.*/\1/p" "$design" | head -1
+}
+win_w=$(geometry_field card_width)
+win_h=$(geometry_field card_max_height)
+for field in win_w win_h; do
+  if [ -z "${!field}" ]; then
+    echo "launcher.sh: could not read the window geometry from $design" >&2
+    exit 1
+  fi
+done
+box_x0=$(( (screen_w - win_w) / 2 - margin ))
+box_y0=$(( (screen_h - win_h) / 2 - margin ))
+box_x1=$(( box_x0 + win_w + 2 * margin ))
+box_y1=$(( box_y0 + win_h + 2 * margin ))
+# The top bar is excluded from every comparison below (see step 3), and with a
+# 560-tall window the top of the card now falls inside that strip. Clamping the
+# box to the strip's edge keeps the two consistent: the box never claims a
+# region the comparison is not looking at.
+# `if`, not `[ ... ] && ...`: under `set -e` a false test makes the whole list
+# return 1 and takes the script with it.
+top_bar_h=140
+if [ "$box_y0" -lt "$top_bar_h" ]; then box_y0=$top_bar_h; fi
+if [ "$box_y1" -gt "$screen_h" ]; then box_y1=$screen_h; fi
+if [ "$box_x0" -lt 0 ]; then box_x0=0; fi
+if [ "$box_x1" -gt "$screen_w" ]; then box_x1=$screen_w; fi
+# A containment box that covers the screen asserts nothing. That is not
+# hypothetical: at a card width of 1240 the derivation above clamps to
+# 0..1280 and the gate silently stops being a gate. Refuse rather than pass.
+box_w=$(( box_x1 - box_x0 ))
+if [ $(( box_w * 100 / screen_w )) -gt 80 ]; then
+  echo "launcher.sh: a ${win_w}px window leaves a containment box ${box_w} of" \
+       "${screen_w} wide, which asserts almost nothing. Widen the screen or" \
+       "narrow the card before trusting this gate." >&2
+  exit 1
+fi
+expect_box=(--expect-box "$box_x0" "$box_y0" "$box_x1" "$box_y1")
+echo "window ${win_w}x${win_h} centred on ${screen_w}x${screen_h}" \
+     "-> containment box ${box_x0},${box_y0}..${box_x1},${box_y1}"
+
 echo "=== 0. what the session is actually showing at login ==="
 # Evidence only, and kept separate from the bare desktop below because they
 # turned out not to be the same picture.
@@ -255,7 +325,7 @@ echo
 echo "=== 3a. did the query reach OUR field? (the gate, #91) ==="
 python3 scripts/vmtest/framediff.py \
   "$out/launcher-01-open.png" "$out/launcher-02-typed.png" \
-  --min-percent 0.1 --expect-box 300 140 980 800 \
+  --min-percent 0.1 "${expect_box[@]}" \
   --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799
 
 echo
@@ -285,10 +355,14 @@ echo "=== 3d. did a launcher window actually appear? (the gate) ==="
 # The numbers are taken from two consecutive runs that agreed to the pixel:
 # 84150 changed (8.22%) in a box at x 335..942, y 152..796, against a window
 # configured 640x480 centred, i.e. x 320..960, y 160..640. The gate is set well
-# below and around that — 3% rather than 8.22%, and a box with room on every
-# side — because the point is to catch "nothing was drawn", not to pin the
-# exact pixels of a theme. A tighter bound would break on the first font change
-# and teach everyone to ignore it.
+# below and around that — 3% rather than 8.22% — because the point is to catch
+# "nothing was drawn", not to pin the exact pixels of a theme. A tighter bound
+# would break on the first font change and teach everyone to ignore it.
+#
+# The box is no longer written here; it is derived from `design::GEOMETRY` at
+# the top of this file, and at 640x480 that derivation reproduces the literals
+# this paragraph was written against. The percentage floor stays a measurement,
+# because it is one; the box is geometry, and geometry can be computed.
 #
 # THE TOP BAR IS IGNORED, and that is not a loosening of the gate.
 #
@@ -315,7 +389,7 @@ echo "=== 3d. did a launcher window actually appear? (the gate) ==="
 # painted only in the ignored strip would now change ~0% and fail there.
 python3 scripts/vmtest/framediff.py \
   "$out/launcher-00-before.png" "$out/launcher-01-open.png" \
-  --min-percent 3 --expect-box 300 140 980 800 --ignore-box 0 0 1279 139
+  --min-percent 3 "${expect_box[@]}" --ignore-box 0 0 1279 139
 
 echo
 echo "=== 3d2. can the engine hide and summon the window? (the ADR-0015 gate) ==="
@@ -366,7 +440,7 @@ python3 scripts/vmtest/framediff.py \
 echo "--- and came back: summoned should look like the launcher did ---"
 python3 scripts/vmtest/framediff.py \
   "$out/launcher-00-before.png" "$out/launcher-05-summoned.png" \
-  --min-percent 3 --expect-box 300 140 980 800 --ignore-box 0 0 1279 139
+  --min-percent 3 "${expect_box[@]}" --ignore-box 0 0 1279 139
 
 echo
 echo "=== 3d4b. does Ctrl+B open the action panel? (recorded again, see below) ==="
@@ -430,7 +504,7 @@ if sudo -E "$corral_bin" key "$vm" ctrl b; then
   if shot "launcher-06-panel.png"; then
     python3 scripts/vmtest/framediff.py \
       "$out/launcher-05-summoned.png" "$out/launcher-06-panel.png" \
-      --min-percent 0.1 --expect-box 300 140 980 800 \
+      --min-percent 0.1 "${expect_box[@]}" \
       --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799 \
       || echo "NOT GATED: read the figure above against the new card geometry before re-gating."
   else
