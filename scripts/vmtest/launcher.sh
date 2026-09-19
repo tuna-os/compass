@@ -369,6 +369,58 @@ python3 scripts/vmtest/framediff.py \
   --min-percent 3 --expect-box 300 140 980 800 --ignore-box 0 0 1279 139
 
 echo
+echo "=== 3d4b. does Ctrl+B open the action panel? (recorded, not gated) ==="
+# THE VIEW WORK'S FIRST EXPOSURE TO A REAL SESSION, and deliberately not a gate
+# on its first outing.
+#
+# Everything above answers "does the launcher paint, and do keystrokes reach
+# it". Nothing above answers "is what it paints the right thing" -- and the
+# action panel is the one piece of view work with a keystroke of its own, so it
+# is the one piece this tier can reach at all. Until this step existed, the
+# panel had no verification outside its own unit tests, and the PR description
+# said otherwise for a while.
+#
+# Ctrl+B and not Ctrl+K: the C++ binds Ctrl+K on macOS only, because Ctrl+K is
+# the vim "move up" chord everywhere else. `keybind-manager.cpp` is the source
+# for that and the Rust engine follows it.
+#
+# `corral key` presses one combination together (QMP send-key with both qcodes),
+# which is what a chord needs -- `corral type` would send the characters one
+# after another and never hold the modifier.
+#
+# NOT GATED YET, on purpose. Two things are unmeasured: whether our window still
+# holds keyboard focus after the hide/summon pair above, and how many pixels a
+# panel over a mostly-empty list actually moves. ADR-0010 is explicit that
+# inventing a threshold before seeing one is how a tier starts flaking, and #91
+# is the standing proof that a *wrong* assertion here costs runs rather than
+# finding bugs. So this prints the real figure and exits 0 either way; the next
+# person turns it into a gate from the number this produces, the same way step
+# 3's floor is waiting on data.
+#
+# What to read in the output: a percentage near 0.00 means the chord did not
+# reach the application -- which is a finding about focus after summon, not
+# about the panel. A percentage that moves means something drew.
+# `set -e` is on and this step is not a gate, so nothing in it may abort the
+# job -- not the chord, not the screenshot, not the comparison. A step that
+# cannot fail the run is the whole point of recording before gating.
+if sudo -E "$corral_bin" key "$vm" ctrl b; then
+  # The same settle the open and summon paths get, for the same reason: a
+  # screenshot taken before the paint reads as "the panel does not open".
+  sleep 5
+  if shot "launcher-06-panel.png"; then
+    python3 scripts/vmtest/framediff.py \
+      "$out/launcher-05-summoned.png" "$out/launcher-06-panel.png" \
+      --min-percent 0.1 --expect-box 300 140 980 800 \
+      --ignore-box 0 0 1279 139 --ignore-box 0 700 1279 799 \
+      || echo "NOT GATED: the chord moved less than the placeholder floor, or moved something outside the window. Read the figure above and launcher-06-panel.png before turning this into a gate."
+  else
+    echo "NOT GATED: could not screenshot after the chord."
+  fi
+else
+  echo "NOT GATED: corral could not send the chord. That says nothing about the panel."
+fi
+
+echo
 echo "=== 3d5. what did the engine make of the hotkey? (recorded, not gated) ==="
 # Whether GNOME grants LOGO+space is the user's decision through a permission
 # dialog, and an unattended session may well be refused. That is a real outcome

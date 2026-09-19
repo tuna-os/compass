@@ -1230,9 +1230,14 @@ screen*, it finds applications (#95), a launcher window appears, a typed query r
 (#91), and the window hides and comes back (ADR-0015) — each against a control frame, with the
 changed region asserted to lie inside a box so that "something else moved" fails too.
 
-It does **not** touch the action panel. `scripts/vmtest/launcher.sh` never presses Ctrl+B and never
-looks for the caret: the panel, the root list's sections and the selection moving through them have
-no VM coverage at all, only the tests in this crate. The tier answers "does the launcher paint and
+It does **not** yet *gate* on the action panel. `scripts/vmtest/launcher.sh` now presses Ctrl+B
+after the hide/summon pair and records how much the frame moved, but the step is deliberately
+**recorded, not gated**: two things are unmeasured — whether our window still holds keyboard focus
+after a summon, and how many pixels a panel over a mostly-empty list actually moves — and ADR-0010
+is explicit that inventing a threshold before seeing one is how a tier starts flaking. #91 is the
+standing proof that a wrong assertion here costs runs instead of finding bugs. Nothing in the step
+can fail the job; it prints the figure a gate should be built from. The root list's sections and the
+selection moving through them still have no VM coverage at all, only the tests in this crate. The tier answers "does the launcher paint and
 receive keystrokes in a real GNOME session", which is the question #91 came from; it does not yet
 answer "is what it paints the right thing". Saying otherwise — as an earlier version of this PR's
 description did — would claim verification that no assertion performs.
