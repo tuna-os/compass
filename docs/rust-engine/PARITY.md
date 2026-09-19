@@ -1230,14 +1230,33 @@ screen*, it finds applications (#95), a launcher window appears, a typed query r
 (#91), and the window hides and comes back (ADR-0015) — each against a control frame, with the
 changed region asserted to lie inside a box so that "something else moved" fails too.
 
-It does **not** yet *gate* on the action panel. `scripts/vmtest/launcher.sh` now presses Ctrl+B
-after the hide/summon pair and records how much the frame moved, but the step is deliberately
-**recorded, not gated**: two things are unmeasured — whether our window still holds keyboard focus
-after a summon, and how many pixels a panel over a mostly-empty list actually moves — and ADR-0010
-is explicit that inventing a threshold before seeing one is how a tier starts flaking. #91 is the
-standing proof that a wrong assertion here costs runs instead of finding bugs. Nothing in the step
-can fail the job; it prints the figure a gate should be built from. The root list's sections and the
-selection moving through them still have no VM coverage at all, only the tests in this crate. The tier answers "does the launcher paint and
+**The action panel has now been seen in a real session.** `scripts/vmtest/launcher.sh` presses
+Ctrl+B after the hide/summon pair, and run 199 on `3da5283` is the first measurement:
+
+```
+2697 of 716800 pixels differ (0.38%)  box x 360..466 (107w) y 315..447 (133h)
+ok: 0.38% >= 0.10%
+ok: changed region is inside 300,140..980,800
+```
+
+Two things follow, and only the first is a framediff's to say. The chord **reached the
+application** — which was genuinely open, because the launcher had just been hidden and summoned
+and nothing established that our window still held keyboard focus afterwards. And reading
+`launcher-06-panel.png` against `launcher-05-summoned.png` in that box, what drew is the panel
+itself: the root list's `> Firewall / Files / New Window` is replaced by an `Actions` header, `>
+Open`, a `---` divider, a `Copy` section header, and `Copy name` / `Copy path` beneath it.
+
+That is the flattened structure `compass_ui::action_panel`'s tests pin, confirmed on screen: a
+header, selectable rows, a divider, a section header and its rows — **and the caret on `Open`,
+the first *selectable* row**, not on the `Actions` header above it. The unit tests assert that the
+selection skips headers and dividers; this is the same claim, drawn by a real compositor.
+
+The step stays **recorded, not gated** for one more reason than caution: the panel's contents depend
+on which item is selected, so the pixel count is a property of the fixture as much as of the code,
+and 0.38% is one data point. ADR-0010 forbids fitting a floor to a single run. What a future gate
+should assert is the part that does not move with content — the containment box, which already
+passes — with a floor well under 0.38% once a few runs agree. The root list's sections and the
+selection moving through *them* still have no VM coverage, only the tests in this crate. The tier answers "does the launcher paint and
 receive keystrokes in a real GNOME session", which is the question #91 came from; it does not yet
 answer "is what it paints the right thing". Saying otherwise — as an earlier version of this PR's
 description did — would claim verification that no assertion performs.
