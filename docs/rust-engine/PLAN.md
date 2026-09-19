@@ -1454,20 +1454,72 @@ extensions can be loaded and measured alongside the index:
 | extension 1 / 2 / 3 | **82.1 / 82.0 / 82.1 MB** |
 | **total** | **261 MB against a 150 MB budget** |
 
-**Where the budget goes is more interesting than the miss.** A bare `node -e`
-peaks at **44.0 MB** on the same machine. Three interpreters are therefore
-~132 MB — **88% of the whole budget before a single line of extension code
-runs**. The runtime and the command add ~38 MB on top of each.
+##### The 261 MB figure over-counts, and the real number is 175 MB
 
-So the row is not missed because the runtime is heavy. It is missed because
-"3 extensions" means three node processes under the current model, and the
-150 MB figure was written without that arithmetic. Two things could close it and
-they are not equivalent: move the SLA to a number the process model can meet, or
-move the process model (a shared interpreter with one isolate per extension is
-the obvious candidate, and is a Phase 4 design question, not a tuning one).
-**That is an architectural decision and the test does not make it** — it records
-the number, the same treatment the cold-start figure got, for the same ADR-0010
-reason: measured once is not a threshold.
+**Summing RSS across processes triple-charges the interpreter.** Three node
+processes share its text pages, and RSS bills every one of them in full.
+Measured with `smaps_rollup`:
+
+| | one node alone | three concurrent, each |
+|---|---|---|
+| Rss | 43 104 kB | ~41 000 kB |
+| **Pss** | 41 316 kB | **~18 500 kB** |
+| Shared_Clean | 2 308 kB | **~34 700 kB** |
+| Private_Dirty | 6 340 kB | 6 340 kB |
+
+Counting private memory in full and the shared mapping once gives **175 MB**,
+not 261 MB. Still a miss, but 1.14× rather than 1.7×. `peak_memory.rs` now
+prints both and explains the difference rather than leading with the inflated
+one.
+
+##### Where it actually goes — and it is not node's baseline
+
+Decomposed by `smaps_rollup`, three processes running concurrently so shared
+pages are genuinely shared:
+
+| | private | note |
+|---|---|---|
+| idle node | 6.4 MB | the interpreter's own dirty pages |
+| \+ one empty `worker_thread` | 16.0 MB | **a second V8 isolate costs ~9.6 MB** |
+| a real loaded worker | 39.6 MB | **the bundle and API add ~23.6 MB** |
+
+So node's much-quoted 44 MB is mostly *shared, file-backed* and paid once. Heap
+tuning is a dead end: `--jitless`, `--max-semi-space-size=1` and
+`--max-old-space-size=64` together move the baseline from 45.4 MB to 45.0 MB,
+because the V8 heap is only 5.5 MB of it.
+
+##### The fix: the runtime already multiplexes and the host is not using it
+
+`extension-manager/src/index.ts` keeps `workerMap: Map<sessionId, WorkerInfo>`
+and spawns `new Worker(__filename)` per session — **many extensions, one
+process, one isolate each.** The `session_id` the load reply carries exists for
+precisely this. The host spawns a fresh node process per command anyway, so
+node's fixed cost is paid three times instead of once.
+
+`crates/compass-worker-host/tests/multiplex_memory.rs` measures both
+arrangements back to back, and the result is stable to ±0.1% across runs:
+
+| arrangement | footprint |
+|---|---|
+| three processes — what the host does today | 159.4 MB |
+| one process, three sessions — what the runtime is built for | **108.0 MB** |
+| | **saves 51 MB, 32%** |
+
+With the index's 15.8 MB that is **124 MB against the 150 MB budget — inside
+it.** The marginal cost of a fourth extension falls from ~53 MB to ~19 MB.
+
+**This is not a redesign.** It is using the runtime as written; the host's
+one-process-per-command spawn is the part that has to change, and the protocol
+already carries what it needs. What the change does cost is a shared failure
+domain: three worker threads in one process die together if the process does,
+where three processes do not. `index.ts` already treats a worker exiting
+unexpectedly as a crash and reports it per session, so the reporting path
+exists — but the blast radius is a real trade and belongs to whoever owns
+Phase 4, not to this test.
+
+The row stays **reported, not gated**, for the ADR-0010 reason the cold-start
+figure gets: measured once is not a threshold, and gating now would redden
+every PR over a pre-existing condition no PR caused.
 
 **The measurement had a false green in it, and the control found it.** Summing
 only the pid the host holds reports 1776 kB per extension and a 21 MB total —

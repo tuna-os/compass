@@ -122,6 +122,45 @@ fn reap(pid: u32) {
         .status();
 }
 
+/// Private memory plus shared memory counted once, in kilobytes.
+///
+/// WHY SUMMED RSS IS THE WRONG TOTAL, AND THIS IS THE RIGHT ONE
+///
+/// Three node processes share the interpreter's text pages, and RSS charges
+/// every one of them the full amount. Measured with `smaps_rollup`: one node
+/// alone reports 43 MB RSS of which 34 MB is `Private_Clean`; three running
+/// concurrently report ~41 MB RSS each but ~18 MB PSS each, because that same
+/// 34 MB has become one `Shared_Clean` mapping. Adding the three RSS figures
+/// counts the interpreter three times.
+///
+/// This takes private memory in full and the shared mapping once, which is
+/// what the machine actually has to find. PSS is printed beside it as a
+/// cross-check; the two agree to within a few percent here, and PSS is not
+/// used as the headline because it divides shared pages by *all* mappers,
+/// which is silently wrong if something outside this set maps them too.
+fn footprint_kb(pids: &[u32]) -> (u64, u64, u64) {
+    let mut private = 0u64;
+    let mut pss = 0u64;
+    let mut shared_max = 0u64;
+    for &pid in pids {
+        for p in process_tree(pid) {
+            let Ok(r) = std::fs::read_to_string(format!("/proc/{p}/smaps_rollup")) else {
+                continue;
+            };
+            let get = |f: &str| -> u64 {
+                r.lines()
+                    .find_map(|l| l.strip_prefix(&format!("{f}:")))
+                    .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
+                    .unwrap_or(0)
+            };
+            private += get("Private_Clean") + get("Private_Dirty");
+            pss += get("Pss");
+            shared_max = shared_max.max(get("Shared_Clean") + get("Shared_Dirty"));
+        }
+    }
+    (private + shared_max, private, pss)
+}
+
 /// A field of `/proc/<pid>/status`, in kilobytes.
 fn status_kb(pid: u32, field: &str) -> Option<u64> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
@@ -364,6 +403,7 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
         );
     }
 
+    let (footprint_kb_total, private_kb, pss_kb) = footprint_kb(&pids);
     let worker_kb: Vec<u64> = pids.iter().map(|&pid| tree_peak_rss_kb(pid)).collect();
 
     // Measured, so they have done their job. Reaped here rather than left to
@@ -383,6 +423,12 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
          extensions {extensions_kb} kB ({}), total {total_kb} kB against the \
          {BUDGET_KB} kB SLA",
         each.join(" + ")
+    );
+    let honest_total = index_kb + footprint_kb_total;
+    println!(
+        "  the same thing counted without triple-charging the shared interpreter: \
+         extensions {footprint_kb_total} kB (private {private_kb}, pss {pss_kb}), \
+         total {honest_total} kB — see `footprint_kb` for why these differ"
     );
 
     // WHAT THIS FLOOR IS FOR, AND THE BUG IT CAUGHT
@@ -432,11 +478,12 @@ fn ten_thousand_entries_and_three_extensions_fit_the_budget() {
     // runtime is heavy; it is missed because "3 extensions" means three node
     // processes under the current model. Whether the SLA moves or the model
     // does is an architectural decision, and it is not this test's to make.
-    if total_kb >= BUDGET_KB {
+    if honest_total >= BUDGET_KB {
         println!(
-            "  MISS: {total_kb} kB against the §8.5 SLA of {BUDGET_KB} kB. Reported rather \
-             than gated — see §8.5 for why, and for the node-floor arithmetic that explains \
-             where the budget goes."
+            "  MISS: {honest_total} kB against the §8.5 SLA of {BUDGET_KB} kB. Reported \
+             rather than gated — see §8.5. `multiplex_memory.rs` measures the fix: hosting \
+             all three in one process, which the runtime's session map already supports, \
+             saves about a third."
         );
     }
 }
