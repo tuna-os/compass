@@ -115,6 +115,8 @@ jobs:
           path: |
             /tmp/gnome-shell.log
             /tmp/wayland-info.txt
+            /tmp/tier2-engine.log
+            /tmp/tier2-query.err
           if-no-files-found: warn
           retention-days: 7
 
@@ -191,6 +193,25 @@ jobs:
         run: |
           scripts/tier2/headless-gnome-spike.sh \
             scripts/tier2/run-flatpak-probe.sh
+
+      # The smoke, and the proof that it can fail, in one step.
+      #
+      # `prove-smoke.sh` runs the smoke twice against the same sandbox and
+      # compositor: with its fixture installed (must pass) and with it deleted
+      # (must fail). The second run is the control, and it is not optional —
+      # a tier that has only ever been green is indistinguishable from one that
+      # tests nothing, which is a defect this repository has found four times
+      # (`launcher-rss` on `0 kB`, the unwired `parity` binary, the absent
+      # `--bench slas` target, the `spike.rs` path filter matching a directory
+      # that is not a file).
+      #
+      # Both runs share one compositor: bringing it up twice would make the
+      # two outcomes differ by more than the fixture, and then the control
+      # would prove nothing.
+      - name: Does the smoke work, and can it fail?
+        run: |
+          scripts/tier2/headless-gnome-spike.sh \
+            scripts/tier2/prove-smoke.sh
 
       - name: Keep the logs
         if: always()
