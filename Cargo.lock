@@ -989,10 +989,14 @@ dependencies = [
  "anyhow",
  "compass-core",
  "compass-crypto",
+ "compass-ipc",
  "compass-search",
  "compass-xdg",
+ "criterion",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
  "walkdir",
 ]
 
