@@ -12,6 +12,7 @@ pub mod appearance;
 pub mod design;
 pub mod icons;
 pub mod message;
+pub mod preset;
 pub mod resident;
 pub mod root_list;
 
