@@ -366,14 +366,40 @@ jobs:
             --shm-size=2g \
             ghcr.io/ublue-os/bluefin:stable bash -euo pipefail -c '
               mkdir -p "$HOME"
+
+              # THE FIRST RUN OF THIS SPIKE DIED HERE, AND THAT WAS THE POINT.
+              #
+              #   vicinae-server: error while loading shared libraries:
+              #   libKF6SyntaxHighlighting.so.6: cannot open shared object file
+              #
+              # Not a display, not a bus -- the engine never loaded. The build
+              # job installs its dependencies into ITS container; this is a
+              # fresh image with a tarball unpacked over it, and a staged tree
+              # is not a package with requires. So the runtime deps go in here
+              # too, from the same script the build uses, which is also what a
+              # user gets when they install the real package.
+              ./scripts/runners/bluefin/install-deps.sh
+
               tar -C / -xzf /src/vicinae-bluefin.tar.gz
 
-              # Asserted, not assumed: an unpack that put nothing where we
-              # expect would otherwise look like a clean "engine does not run".
+              # Existing is not running, and the first run proved the
+              # difference: both these asserts passed and `vicinae version`
+              # printed, while vicinae-server could not resolve a library. The
+              # CLI links against far less than the engine does.
               test -x /usr/bin/vicinae
               test -x /usr/libexec/vicinae/vicinae-server
               echo "--- version ---"
               vicinae version || echo "(version failed)"
+
+              # So check the engine can LOAD before asking it to serve. ldd
+              # names every unresolved library at once; a start-and-poll finds
+              # them one restart at a time.
+              echo "--- unresolved libraries, if any ---"
+              if ldd /usr/libexec/vicinae/vicinae-server | grep -F "not found"; then
+                echo "the engine cannot load; the rungs below would all report the same thing"
+                exit 1
+              fi
+              echo "(none)"
 
               # Its own runtime dir, because that is how Suite 0 isolates this
               # engine: vicinae::serverSocketName() is runtimeDir()/vicinae.sock
@@ -389,7 +415,7 @@ jobs:
                 local label="$1"; shift
                 echo "=== rung: $label ==="
                 rm -rf "$XDG_RUNTIME_DIR"/*
-                "$@" vicinae server >"/tmp/$label.log" 2>&1 &
+                "$@" vicinae server >"/src/spike-$label.log" 2>&1 &
                 local pid=$!
                 local i
                 for i in $(seq 1 60); do
@@ -405,7 +431,7 @@ jobs:
                 done
                 echo "NO ANSWER: $label"
                 echo "--- its log ---"
-                tail -40 "/tmp/$label.log" || true
+                tail -40 "/src/spike-$label.log" || true
                 kill "$pid" 2>/dev/null || true
                 return 1
               }
@@ -436,6 +462,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: parity-spike-logs
-          path: /tmp/*.log
+          # On the bind mount, not the container's /tmp. The first run
+          # uploaded nothing -- "No files were found with the provided path"
+          # -- because the logs never left the container.
+          path: spike-*.log
           if-no-files-found: ignore
           retention-days: 7
