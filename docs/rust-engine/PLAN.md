@@ -460,8 +460,15 @@ interchangeably; extension-absent and version-mismatch paths both tested; a week
   capability registry, the view tree and action dispatch, with no knowledge of Node, JSON-RPC or
   Rhai. This is the seam that makes the Rhai tier (§2.2) a binding exercise instead of a parallel
   stack. It costs perhaps three days now and saves weeks in Phase 5.
-- `compass-worker-host` spawns `vicinae-worker-ts` per extension over UDS with JSON-RPC 2.0,
-  consuming `compass-extension-api` rather than defining its own view model.
+- `compass-worker-host` spawns `vicinae-worker-ts` per extension over **stdio**, speaking
+  **JSON-RPC 2.0 inside a four-byte big-endian length prefix**, consuming `compass-extension-api`
+  rather than defining its own view model.
+
+  This line used to say "over UDS", which contradicted the next bullet: the worker that is not to
+  be rewritten speaks stdio, and adding a socket to it would rewrite it for no capability the host
+  needs. The encoding was never in dispute — figura is an IDL that generates JSON-RPC 2.0
+  bindings, not a wire format of its own — so keeping stdio costs nothing and the conflict was
+  only ever the transport. §11.4a has the evidence and #101 the history.
 - **`src/typescript/` is not rewritten.** The React reconciler and `@raycast/api` shim keep working;
   only the host changes. Any change forced on the SDK is a design smell — escalate it.
 - Sandbox: **Landlock** for the filesystem boundary (unprivileged, no bind mounts — a better fit for
@@ -1943,7 +1950,7 @@ reads as uniformly in-progress.
 
 | Phase | Gate | State | Evidence |
 |---|---|---|---|
-| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**8,610 LOC, 170 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **44 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio rather than the UDS this phase names — see §11.4a and #101. |
+| **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**8,610 LOC, 170 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **44 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio, which §6 now names after this was reconciled — see §11.4a and #101. |
 | **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🔴 **44%** | `PARITY.md` holds **70 ✅, 21 ❌, 67 🟡** over the 158 cells of the two columns that measure this port — `Rust ✓` and `parity test ✓`, across 87 rows — plus 16 marked n/a. Counted by `scripts/ci/parity-score.py`, which also prints the other two columns. **The earlier 37% was wrong, and wrong in our favour.** It was taken over all four checkbox columns, which meant counting `C++ ✓` — 87 rows, every one of them ✅, because that column says the C++ exists, not that anything was ported. Those 87 free greens were three quarters of the "120 ✅" the figure was built on. It also counted `C++ deleted ✓`, which by this ledger's own rule cannot go green before Phase 8. Restating over the two columns that are Phase 5 work puts the real figure at 70 of 158. Nothing regressed to cause the drop from 37% to 35%; the earlier number was measuring the wrong thing. Ported rows have since carried the corrected figure back up past it, which was a coincidence of arithmetic and not a return to the old method: the corrected figure is 70 of 158 over two columns, the old one was 120 of 331 over four. Of the 70, only 13 rows are green in `Rust ✓` — the rest are rows with a passing parity test over a model that has no view yet. (Earlier revisions said 115 of 331 and 96 of 340 on the same inflated basis.) This remains the single largest number in the project. It was described here as "a breadth problem rather than a hard one: most rows are individual builtins", and that has stopped being true — the builtins are ported. `scripts/ci/parity-score.py` now reports what the remainder *is*, by reading the `Still C++-only:` sentences the notes carry, and at the time of writing it is: **view 12, backend 7, process 2, storage 1, network 1**. Twelve of the nineteen named gaps are drawing, seven are DBus, MPRIS or compositor providers. The view figure has gone *up* as rows landed, which is not a regression: each newly written note names what its row still lacks, and what these rows lack is drawing. One of the changes since is a correction rather than movement: a `Still C++-only:` sentence in the shortcut row had been edited into saying the opposite of what it opened with, and was being counted as a storage gap that no longer existed. None of that is transcription, and most of it cannot be verified in a container — the VM tier is what answers for the drawing, and it runs on this PR rather than only nightly. The number to watch is no longer the percentage on its own but that breakdown beside it: a ledger at 44% whose remainder is typing and one whose remainder is compositor integration are not the same project. |
 | **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **one output of several** | the Flatpak builds, is installed and is smoke-tested on every run. Every other packaging workflow — AppImage, Linux tarball, macOS dmg, Windows — is `workflow_dispatch` only, by the deliberate decision to narrow CI to what ships on the first target. |
 | **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
@@ -1988,13 +1995,17 @@ Ordered by what blocks what, not by size.
 | running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
 | Suite 1 (the gate) | **not started** |
 
-#### 11.4a Phase 4 specifies a wire protocol the worker does not speak
+#### 11.4a Phase 4 specified a transport the worker does not speak — resolved
 
-Phase 4 says the host *"spawns `vicinae-worker-ts` per extension **over UDS with
-JSON-RPC 2.0**"*, and in the same breath that **`src/typescript/` is not
-rewritten** — the reconciler and the `@raycast/api` shim keep working. Those two
-sentences are in conflict, because the worker that is not to be rewritten speaks
-neither of those things.
+**Resolved: §6 now names stdio, which is what the host already does.** What
+follows is the reasoning and the evidence, kept because the *shape* of the
+mistake is the lesson rather than the mistake itself.
+
+Phase 4 used to say the host *"spawns `vicinae-worker-ts` per extension **over
+UDS with JSON-RPC 2.0**"*, and in the same breath that **`src/typescript/` is
+not rewritten** — the reconciler and the `@raycast/api` shim keep working. Those
+two sentences were in conflict, because the worker that is not to be rewritten
+does not speak UDS.
 
 What `src/typescript/extension-manager/src/index.ts` actually does:
 
@@ -2051,11 +2062,17 @@ over stdio rather than a socket. The `.fig` files define the method names and
 payload shapes, so the Rust types can be generated from them or hand-written and
 pinned to them, the way three other boundaries in this repository already are.
 
-The one real decision is the transport: **keep stdio**, which is what the worker
-does and what `src/typescript/` not being rewritten requires, or add UDS to the
-worker, which contradicts that constraint for no capability the host needs.
-Keeping stdio is the obvious answer; it is recorded here so that it is a
-decision rather than a default nobody noticed.
+The one real decision was the transport: **keep stdio**, which is what the
+worker does and what `src/typescript/` not being rewritten requires, or add UDS
+to the worker, which contradicts that constraint for no capability the host
+needs.
+
+**Taken: keep stdio.** §6's bullet now says so, so the spec and the code agree
+and nobody building to §6 alone is sent at a socket. Recorded here so it is a
+decision rather than a default nobody noticed — and it was very nearly the
+latter: `compass-worker-host` had already been written against stdio while §6
+still said UDS, which is how a default becomes a fact without anyone choosing
+it.
 
 Nothing here is hard. What makes it worth a section is *when* it is found: the
 phase is costed at 6–8 weeks, and the wire format is the first thing a host
