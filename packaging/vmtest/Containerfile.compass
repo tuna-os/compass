@@ -47,7 +47,7 @@ COPY com.vicinae.Vicinae.flatpak /tmp/com.vicinae.Vicinae.flatpak
 RUN flatpak remote-add --installation=compass --if-not-exists \
       flathub https://flathub.org/repo/flathub.flatpakrepo && \
     flatpak install --installation=compass --noninteractive --assumeyes \
-      flathub org.freedesktop.Platform//24.08 && \
+      flathub org.freedesktop.Platform//26.08 && \
     flatpak install --installation=compass --noninteractive --assumeyes \
       --bundle /tmp/com.vicinae.Vicinae.flatpak && \
     rm -f /tmp/com.vicinae.Vicinae.flatpak && \

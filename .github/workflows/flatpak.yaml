@@ -100,9 +100,9 @@ jobs:
       - name: Install the runtime and SDK
         run: |
           flatpak install --user --noninteractive --or-update flathub \
-            org.freedesktop.Platform//24.08 \
-            org.freedesktop.Sdk//24.08 \
-            org.freedesktop.Sdk.Extension.rust-stable//24.08
+            org.freedesktop.Platform//26.08 \
+            org.freedesktop.Sdk//26.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//26.08
 
       # This step earned its keep on the very first run: the build failed with
       # "rustc 1.89.0 is not supported ... requires rustc 1.94" after vendoring all
@@ -118,7 +118,7 @@ jobs:
           echo "dev pin (rust-toolchain.toml): $(grep -oP 'channel\s*=\s*"\K[^"]+' rust-toolchain.toml || echo 'none')"
           echo "declared MSRV (Cargo.toml):    $(grep -m1 '^rust-version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
           echo -n "SDK ships:                     "
-          flatpak run --user --command=sh --devel org.freedesktop.Sdk//24.08 \
+          flatpak run --user --command=sh --devel org.freedesktop.Sdk//26.08 \
             -c 'PATH=/usr/lib/sdk/rust-stable/bin:$PATH rustc --version' || echo "could not query"
 
       - name: Build

@@ -44,7 +44,7 @@ feature parity are still in progress; the parity ledger is the source of truth.
 
 **Requirements.** A Wayland session; GNOME is the first target and the only one covered by CI.
 There is no X11 fallback — the engine is Wayland-only by design. The Flatpak paths also need
-`flatpak` and access to Flathub for the `org.freedesktop.Platform//24.08` runtime.
+`flatpak` and access to Flathub for the `org.freedesktop.Platform//26.08` runtime.
 
 ### From a CI build
 
