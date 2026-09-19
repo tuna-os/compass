@@ -294,6 +294,17 @@ check-format-rust:
 .PHONY: check-format-rust
 
 # Everything CI runs for the Rust workspace, in the same order.
+.PHONY: design design-shots design-states
+design-states: ## Print the launcher's design tokens and states to tools/design/states.json
+	cargo run -q -p compass-ui --example design_states > tools/design/states.json
+
+design: design-states ## Serve the design surrogate at http://127.0.0.1:8173
+	@echo "http://127.0.0.1:8173 — Ctrl-C to stop"
+	@cd tools/design && python3 -m http.server 8173
+
+design-shots: design-states ## Screenshot every design state, both appearances
+	node tools/design/shoot.mjs
+
 check-rust: check-format-rust lint-rust test-rust
 .PHONY: check-rust
 

@@ -20,6 +20,7 @@ compass-core.workspace = true
 compass-search.workspace = true
 compass-xdg.workspace = true
 compass-platform.workspace = true
+serde = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
