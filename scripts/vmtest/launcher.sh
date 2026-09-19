@@ -423,7 +423,7 @@ echo "=== 3b2. what does the launcher cost at idle? (Phase 1 gate) ==="
 # Phase 1's gate says "idle RSS < 30 MB" and nobody had measured it, because
 # until the launcher drew there was nothing to measure. Taken here, after the
 # window is up and before the control application starts competing for memory.
-guest "$checks" launcher-rss || true
+guest "$checks" launcher-rss
 
 echo "=== 3d. did a launcher window actually appear? (the gate) ==="
 # The first assertion in this tier derived from a measurement rather than from
@@ -489,6 +489,23 @@ echo "=== 3d2. can the engine hide and summon the window? (the ADR-0015 gate) ==
 # is the portal delivering an activation. Everything after the activation is
 # exercised.
 guest "$checks" window-attached
+# THE SAME SETTLE THE SUMMON PATH GETS, AND FOR THE MIRROR-IMAGE REASON.
+#
+# This screenshot used to be taken the instant the toggle was acknowledged. The
+# toggle returning means the window was *told* to hide, not that the compositor
+# has finished un-mapping it and repainted the desktop underneath -- and under
+# llvmpipe that is not instant, which is exactly what the comment on the summon
+# side below says about painting.
+#
+# So the gate below was racing, and it lost on a17680e: `launcher-04-hidden.png`
+# and `launcher-05-summoned.png` both came back with corral deviation 0.3842,
+# identical to four decimals, because the "hidden" frame still had the launcher
+# in it. The assertion then reported 55.85% of pixels changed against a 3%
+# ceiling and read as "hide is broken", which it was not.
+#
+# Symmetry is the fix: the appearing frame is waited for, so the disappearing
+# one must be too.
+sleep 5
 shot "launcher-04-hidden.png"
 
 echo
