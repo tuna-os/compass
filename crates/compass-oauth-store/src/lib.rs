@@ -11,7 +11,7 @@
 //! **An absent provider is the empty string.** The C++ binds
 //! `providerId.value_or(QString(""))` on every path, and the column is
 //! `NOT NULL DEFAULT ''`. So an extension with one provider and an extension
-//! that passes no provider id share a row, deliberately. [`list`] turns `""`
+//! that passes no provider id share a row, deliberately. [`TokenStore::list`] turns `""`
 //! back into `None`; a lookup does not need to, because it was given the id it
 //! is looking for.
 //!

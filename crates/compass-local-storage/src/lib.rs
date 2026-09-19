@@ -22,7 +22,7 @@
 //! reads back as `""`. That is not a bug this port fixes: a database written by
 //! either engine is read by the other, and an extension that stored an object
 //! yesterday must get the same answer today. [`Value::from_json`] does the same
-//! thing, and [`store_an_object_and_it_comes_back_empty`] pins it so that
+//! thing, and the `store_an_object_and_it_comes_back_empty` test pins it so that
 //! nobody "corrects" it by accident.
 //!
 //! Extensions that want structured data go through `JSON.stringify` on their

@@ -13,7 +13,15 @@ workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-iced = { version = "0.14", features = ["wayland"] }
+# `image-without-codecs` rather than `image`, plus PNG on our own `image`
+# dependency. The full `image` feature turns on every codec the crate has --
+# AVIF encoding, OpenEXR, TIFF, GIF -- none of which an icon theme ships, and
+# all of which would be built into a launcher that draws icons only when asked
+# to. Icon themes are PNG and SVG; `crate::icons::classify` accepts exactly
+# those two and nothing else, so a format we cannot decode falls back to the
+# row's initial rather than drawing an empty box.
+iced = { version = "0.14", features = ["wayland", "image-without-codecs", "svg"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 iced_winit = { version = "0.14", features = ["wayland"] }
 winit = { version = "0.30", features = ["wayland"] }
 compass-core.workspace = true

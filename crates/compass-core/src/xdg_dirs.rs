@@ -55,15 +55,85 @@ pub fn data_dirs() -> Vec<PathBuf> {
         .collect()
 }
 
-/// The desktop names in `$XDG_CURRENT_DESKTOP`, e.g. `["GNOME"]`.
+/// The desktop names `OnlyShowIn`/`NotShowIn` are matched against, e.g. `["GNOME"]`.
+///
+/// Reads `$XDG_CURRENT_DESKTOP`, and falls back to `$XDG_SESSION_DESKTOP` and then
+/// `$DESKTOP_SESSION` when it is unset. See [`desktops_from`] for why.
 #[must_use]
 pub fn current_desktops() -> Vec<String> {
-    std::env::var("XDG_CURRENT_DESKTOP")
-        .unwrap_or_default()
-        .split(':')
-        .filter(|part| !part.is_empty())
-        .map(str::to_owned)
-        .collect()
+    let read = |name: &str| std::env::var(name).ok();
+    desktops_from(
+        read("XDG_CURRENT_DESKTOP").as_deref(),
+        read("XDG_SESSION_DESKTOP").as_deref(),
+        read("DESKTOP_SESSION").as_deref(),
+    )
+}
+
+/// The desktop names, from the three variables that carry them.
+///
+/// # Why there is a fallback at all
+///
+/// `$XDG_CURRENT_DESKTOP` is the specified source and the only one the C++ engine reads
+/// (`xdgpp::currentDesktop`). Inside our Flatpak it can be unset -- `doctor` reports it that way
+/// on the VM tier -- and an unset value is not neutral: an entry marked `OnlyShowIn=GNOME` is
+/// then hidden **on GNOME**, which is the opposite of what the key asks for (#97). `NotShowIn`
+/// fails the same way in the other direction, admitting entries meant to be excluded.
+///
+/// So when the specified variable says nothing, two conventional ones are consulted. Both are set
+/// by systemd/logind and the display manager, and neither is a guess about what the desktop *is*
+/// -- they are the session's own record of what it launched.
+///
+/// # Why an inferred name is emitted in two casings
+///
+/// The specification compares these names **case-sensitively**, and `matches_desktop` does
+/// exactly that, byte for byte as the C++ does. But `$XDG_SESSION_DESKTOP` is conventionally
+/// lowercase (`gnome`) while entries are written against the registered name (`GNOME`), so a
+/// fallback that passed the raw value through would find nothing and quietly change no behaviour
+/// at all.
+///
+/// Rather than loosen the comparison -- which would diverge from the C++ everywhere, for the sake
+/// of a case that only arises here -- an INFERRED name is contributed in both its own casing and
+/// ASCII uppercase. `$XDG_CURRENT_DESKTOP` is authoritative and is passed through untouched: when
+/// the session states its identity there is nothing to guess at, and uppercasing e.g.
+/// `X-Cinnamon` would break a name that was already correct.
+#[must_use]
+pub fn desktops_from(
+    current: Option<&str>,
+    session: Option<&str>,
+    desktop_session: Option<&str>,
+) -> Vec<String> {
+    let split = |raw: &str| -> Vec<String> {
+        raw.split(':')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+
+    // The authoritative source, verbatim.
+    let authoritative = current.map(split).unwrap_or_default();
+    if !authoritative.is_empty() {
+        return authoritative;
+    }
+
+    // Inferred, in both casings. `first()` rather than a merge of the two: they name the same
+    // session, and a session that set only the second is not also running the first.
+    let inferred = [session, desktop_session]
+        .into_iter()
+        .flatten()
+        .map(split)
+        .find(|names| !names.is_empty())
+        .unwrap_or_default();
+
+    let mut out = Vec::with_capacity(inferred.len() * 2);
+    for name in inferred {
+        let upper = name.to_ascii_uppercase();
+        if upper != name {
+            out.push(upper);
+        }
+        out.push(name);
+    }
+    out
 }
 
 /// The directories in `$PATH`.
@@ -72,4 +142,82 @@ pub fn exec_search_path() -> Vec<PathBuf> {
     std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::desktops_from;
+
+    #[test]
+    fn the_specified_variable_wins_and_is_passed_through_verbatim() {
+        assert_eq!(
+            desktops_from(Some("ubuntu:GNOME"), Some("gnome"), Some("gnome")),
+            ["ubuntu", "GNOME"]
+        );
+        // Not uppercased: a session that states its identity is not guessing, and
+        // `X-Cinnamon` is already the registered spelling.
+        assert_eq!(
+            desktops_from(Some("X-Cinnamon"), None, None),
+            ["X-Cinnamon"]
+        );
+    }
+
+    #[test]
+    fn an_unset_specified_variable_falls_back_to_the_session() {
+        // This is #97: inside the Flatpak the first is unset, and without a fallback an
+        // `OnlyShowIn=GNOME` entry is hidden on GNOME.
+        let names = desktops_from(None, Some("gnome"), None);
+        assert!(names.contains(&"GNOME".to_owned()), "{names:?}");
+        assert!(names.contains(&"gnome".to_owned()), "{names:?}");
+    }
+
+    #[test]
+    fn an_inferred_name_is_offered_in_both_casings() {
+        // `matches_desktop` compares case-sensitively, byte for byte as the C++ does.
+        // `XDG_SESSION_DESKTOP` is conventionally lowercase and entries are written against the
+        // registered name, so passing the raw value alone would match nothing and the fallback
+        // would change no behaviour whatsoever.
+        assert_eq!(desktops_from(None, Some("gnome"), None), ["GNOME", "gnome"]);
+        // Already uppercase: contributed once, not twice.
+        assert_eq!(desktops_from(None, Some("GNOME"), None), ["GNOME"]);
+    }
+
+    #[test]
+    fn desktop_session_is_the_last_resort() {
+        assert_eq!(
+            desktops_from(None, None, Some("plasma")),
+            ["PLASMA", "plasma"]
+        );
+    }
+
+    #[test]
+    fn the_first_source_that_says_anything_wins_outright() {
+        // Not a merge. The two variables name the same session, so a session that set only the
+        // second is not also running the first, and concatenating them would claim both.
+        assert_eq!(
+            desktops_from(None, Some("gnome"), Some("plasma")),
+            ["GNOME", "gnome"]
+        );
+    }
+
+    #[test]
+    fn empty_and_whitespace_values_are_not_a_desktop() {
+        assert!(desktops_from(Some(""), None, None).is_empty());
+        assert!(desktops_from(Some("  "), None, None).is_empty());
+        // An empty authoritative value falls through rather than winning with nothing.
+        assert_eq!(
+            desktops_from(Some(""), Some("gnome"), None),
+            ["GNOME", "gnome"]
+        );
+        assert!(desktops_from(None, None, None).is_empty());
+    }
+
+    #[test]
+    fn separators_and_padding_are_handled_like_the_specified_form() {
+        assert_eq!(desktops_from(Some("a::b"), None, None), ["a", "b"]);
+        assert_eq!(
+            desktops_from(Some(" GNOME : Unity "), None, None),
+            ["GNOME", "Unity"]
+        );
+    }
 }

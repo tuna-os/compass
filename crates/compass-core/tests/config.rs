@@ -151,6 +151,102 @@ fn unknown_fields_survive_a_round_trip() {
     );
 }
 
+/// Every *known* key must survive a round trip on its own, too.
+///
+/// `unknown_fields_survive_a_round_trip` above cannot catch this: its document
+/// carries unknown keys in every section, so no section is ever empty and
+/// `skip_serializing_if` never fires. A config holding only `keybinding`
+/// serialised back out as `{}` -- the section's `is_empty` had not been
+/// updated when the key was added, so a read-modify-write deleted the user's
+/// setting. Two more keys had the same hole.
+///
+/// Driven from a list that is itself checked for completeness below, so a key
+/// added without a case here fails rather than going untested.
+#[test]
+fn every_known_key_survives_a_round_trip_on_its_own() {
+    let cases = [
+        (r#"{"launcher":{"hotkey":"ctrl+space"}}"#, "hotkey"),
+        (
+            r#"{"launcher":{"close_on_focus_loss":true}}"#,
+            "close_on_focus_loss",
+        ),
+        (r#"{"launcher":{"max_results":12}}"#, "max_results"),
+        (r#"{"launcher":{"keybinding":"vim"}}"#, "keybinding"),
+        (
+            r#"{"launcher":{"wrap_navigation":true}}"#,
+            "wrap_navigation",
+        ),
+        (r#"{"launcher":{"quick_launch":false}}"#, "quick_launch"),
+        (r#"{"extensions":{"auto_update":false}}"#, "auto_update"),
+        (
+            r#"{"extensions":{"installed":["com.example.clock"]}}"#,
+            "installed",
+        ),
+        (
+            r#"{"launcher":{"appearance":{"icons":true}}}"#,
+            "appearance.icons",
+        ),
+    ];
+
+    for (original, key) in cases {
+        let rewritten = parse(original).to_json_pretty().unwrap();
+        let before: serde_json::Value = serde_json::from_str(original).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&rewritten).unwrap();
+        assert_eq!(
+            before, after,
+            "a config holding only `{key}` did not survive:\n{rewritten}"
+        );
+    }
+
+    // Completeness: every key a fully-populated config writes must have a case
+    // above. Without this the list rots the same way `is_empty` did.
+    let everything = r#"{
+      "launcher": {
+        "hotkey": "ctrl+space",
+        "close_on_focus_loss": true,
+        "max_results": 12,
+        "keybinding": "vim",
+        "wrap_navigation": true,
+        "quick_launch": false,
+        "appearance": { "icons": true }
+      },
+      "extensions": { "auto_update": false, "installed": ["com.example.clock"] }
+    }"#;
+    let written: serde_json::Value =
+        serde_json::from_str(&parse(everything).to_json_pretty().unwrap()).unwrap();
+    let covered: std::collections::BTreeSet<&str> = cases.iter().map(|(_, k)| *k).collect();
+
+    // Descends into nested sections, so `appearance.icons` is checked rather
+    // than just `appearance`.
+    fn leaves(value: &serde_json::Value, prefix: &str, out: &mut Vec<String>) {
+        match value.as_object() {
+            Some(map) => {
+                for (key, child) in map {
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
+                    leaves(child, &path, out);
+                }
+            }
+            None => out.push(prefix.to_owned()),
+        }
+    }
+
+    for section in ["launcher", "extensions"] {
+        let mut found = Vec::new();
+        leaves(&written[section], "", &mut found);
+        assert!(!found.is_empty(), "`{section}` wrote nothing");
+        for key in found {
+            assert!(
+                covered.contains(key.as_str()),
+                "`{section}.{key}` has no round-trip case above"
+            );
+        }
+    }
+}
+
 #[test]
 fn unknown_fields_survive_an_edit_by_an_older_build() {
     let dir = tempfile::tempdir().unwrap();

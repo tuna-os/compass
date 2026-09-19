@@ -26,7 +26,7 @@
 //!
 //! The host APIs themselves. [`IMPLEMENTED`] is the ledger, and
 //! `the_ledger_names_only_methods_the_idl_declares` keeps it honest; a method
-//! not on it gets [`unimplemented`], which is an error naming the method rather
+//! not on it gets [`unimplemented()`], which is an error naming the method rather
 //! than a silent hang. An extension calling one gets a rejected promise it can
 //! report, which is the difference between a bug and a mystery.
 

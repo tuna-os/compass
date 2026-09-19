@@ -2,7 +2,7 @@
 //!
 //! Ports `ExtApplicationService`
 //! (`src/server/src/extension/api/application-service.hpp`): five methods over
-//! the application database, which sits behind [`Apps`] here for the same
+//! the application database, which sits behind [`Apps`](crate::application_service::Apps) here for the same
 //! reason `AppService` is injected there.
 //!
 //! The database itself is `compass-core`'s [`crate::application_service`]-free

@@ -9,7 +9,9 @@
 //!     "close_on_focus_loss": false,
 //!     "max_results": 50,
 //!     "keybinding": "default",
-//!     "wrap_navigation": false
+//!     "wrap_navigation": false,
+//!     "quick_launch": true,
+//!     "appearance": { "icons": false }
 //!   },
 //!   "extensions": {
 //!     "auto_update": true,
@@ -50,6 +52,26 @@ pub const DEFAULT_MAX_RESULTS: usize = 50;
 /// `Config::wrapNavigation` is `false` in the C++: the selection clamps at the
 /// first and last row rather than going round. See [`crate::list_navigation`].
 pub const DEFAULT_WRAP_NAVIGATION: bool = false;
+
+/// Default for `launcher.quick_launch`.
+///
+/// On, per #87: Ctrl+1..9 launches the first through ninth result without
+/// arrowing to it. It costs nothing when unused -- the chords are otherwise
+/// unbound -- and is a real speed-up once learned.
+///
+/// This has no C++ counterpart to match. It sits directly under `launcher`
+/// rather than under an `appearance` section because it is behaviour, not
+/// appearance: it changes what a keystroke does, not what a row looks like.
+pub const DEFAULT_QUICK_LAUNCH: bool = true;
+
+/// Default for `launcher.appearance.icons`.
+///
+/// Off, per #85. The default look is Spotlight-simple, and icons are what make
+/// it busier. The row already reserves the space -- an unresolved or disabled
+/// icon draws the application's initial in a tinted square of the same size --
+/// so turning this on changes what is in the slot, not the launcher's
+/// footprint.
+pub const DEFAULT_ICONS: bool = false;
 
 /// Default for `launcher.keybinding`.
 ///
@@ -125,10 +147,56 @@ pub struct LauncherConfig {
     keybinding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wrap_navigation: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    quick_launch: Option<bool>,
+    #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
+    appearance: AppearanceConfig,
 
     /// Keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
     unknown: BTreeMap<String, Value>,
+}
+
+/// The `launcher.appearance` section: what a row looks like, not what it does.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AppearanceConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icons: Option<bool>,
+
+    /// Keys this build does not know about, preserved verbatim.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+impl AppearanceConfig {
+    /// Whether result rows show the application's icon (#85).
+    ///
+    /// Defaults to [`DEFAULT_ICONS`].
+    #[must_use]
+    pub fn icons(&self) -> bool {
+        self.icons.unwrap_or(DEFAULT_ICONS)
+    }
+
+    /// Sets `launcher.appearance.icons`. `None` removes the key.
+    pub fn set_icons(&mut self, value: Option<bool>) -> &mut Self {
+        self.icons = value;
+        self
+    }
+
+    /// Keys present in the file that this build does not understand.
+    #[must_use]
+    pub fn unknown_fields(&self) -> &BTreeMap<String, Value> {
+        &self.unknown
+    }
+
+    /// Whether the section carries nothing at all, known or unknown.
+    ///
+    /// Destructured for the reason [`LauncherConfig::is_empty`] gives.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let Self { icons, unknown } = self;
+        icons.is_none() && unknown.is_empty()
+    }
 }
 
 impl LauncherConfig {
@@ -164,6 +232,14 @@ impl LauncherConfig {
         self.wrap_navigation.unwrap_or(DEFAULT_WRAP_NAVIGATION)
     }
 
+    /// Whether Ctrl+1..9 launches the first through ninth result (#87).
+    ///
+    /// Defaults to [`DEFAULT_QUICK_LAUNCH`].
+    #[must_use]
+    pub fn quick_launch(&self) -> bool {
+        self.quick_launch.unwrap_or(DEFAULT_QUICK_LAUNCH)
+    }
+
     /// The scheme [`keybinding`](Self::keybinding) names.
     #[must_use]
     pub fn keybinding_scheme(&self) -> crate::keybinding::Scheme {
@@ -196,6 +272,17 @@ impl LauncherConfig {
         self
     }
 
+    /// The `launcher.appearance` section.
+    #[must_use]
+    pub fn appearance(&self) -> &AppearanceConfig {
+        &self.appearance
+    }
+
+    /// The `launcher.appearance` section, mutably.
+    pub fn appearance_mut(&mut self) -> &mut AppearanceConfig {
+        &mut self.appearance
+    }
+
     /// Keys present in the file that this build does not understand.
     #[must_use]
     pub fn unknown_fields(&self) -> &BTreeMap<String, Value> {
@@ -203,12 +290,35 @@ impl LauncherConfig {
     }
 
     /// Whether the section carries nothing at all, known or unknown.
+    ///
+    /// Destructured rather than written as a chain of `self.field.is_none()`,
+    /// and that is the point rather than a style choice. This is
+    /// `Config`'s `skip_serializing_if` for the whole section, so a field it
+    /// forgets is a field a read-modify-write **deletes from the user's file**.
+    /// It had forgotten three: a config holding only `keybinding`,
+    /// `wrap_navigation` or `quick_launch` serialised back out as `{}`. A
+    /// destructuring binding makes the next added field a compile error
+    /// instead of silent data loss.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.hotkey.is_none()
-            && self.close_on_focus_loss.is_none()
-            && self.max_results.is_none()
-            && self.unknown.is_empty()
+        let Self {
+            hotkey,
+            close_on_focus_loss,
+            max_results,
+            keybinding,
+            wrap_navigation,
+            quick_launch,
+            appearance,
+            unknown,
+        } = self;
+        hotkey.is_none()
+            && close_on_focus_loss.is_none()
+            && max_results.is_none()
+            && keybinding.is_none()
+            && wrap_navigation.is_none()
+            && quick_launch.is_none()
+            && appearance.is_empty()
+            && unknown.is_empty()
     }
 }
 
@@ -257,9 +367,16 @@ impl ExtensionsConfig {
     }
 
     /// Whether the section carries nothing at all, known or unknown.
+    ///
+    /// Destructured for the reason [`LauncherConfig::is_empty`] gives.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.auto_update.is_none() && self.installed.is_none() && self.unknown.is_empty()
+        let Self {
+            auto_update,
+            installed,
+            unknown,
+        } = self;
+        auto_update.is_none() && installed.is_none() && unknown.is_empty()
     }
 }
 

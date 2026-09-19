@@ -74,7 +74,7 @@ impl ShortcutService {
     ///
     /// Any migration from the old database belongs *before* this
     /// ([`crate::shortcut_store::should_migrate`] and
-    /// [`crate::shortcut_store::migrate_from_legacy`]), as it does in the C++
+    /// [`ShortcutStore::migrate_from_legacy`](crate::shortcut_store::ShortcutStore::migrate_from_legacy)), as it does in the C++
     /// constructor: a list built first would be the empty one the migration
     /// was about to fill.
     #[must_use]

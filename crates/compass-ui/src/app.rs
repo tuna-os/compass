@@ -9,7 +9,7 @@
 
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
-    widget::{Space, column, container, row, stack, text, text_input},
+    widget::{Space, column, container, image, row, stack, svg, text, text_input},
     window,
 };
 
@@ -43,6 +43,14 @@ use crate::resident::{EngineLink, UiCommand, UiOutcome};
 /// `advanced` feature for one constant; both call sites take `impl Into<Id>`.
 const SEARCH_INPUT: &str = "compass-search-input";
 
+/// The nominal pixel size asked of the icon theme.
+///
+/// [`design::GEOMETRY`]'s `icon_size`, which is the square the row reserves.
+/// Asking the theme for that size rather than a fixed 32 keeps the two from
+/// drifting: a design change that grows the slot asks for a larger icon
+/// instead of scaling a small one up.
+const ICON_PIXELS: u32 = GEOMETRY.icon_size as u32;
+
 /// Focus the search field.
 ///
 /// Every path that puts the window on screen ends in one of these, because
@@ -69,6 +77,98 @@ fn keyboard_events(
     }
 }
 
+/// Which result `Ctrl+1`..`Ctrl+9` asks for, as a **position in the visible
+/// list** counting from zero.
+///
+/// # The two things this is easy to get wrong
+///
+/// It returns a POSITION, not an item index. `LauncherApp::results` holds
+/// indices into the application index, and the selection is a position within
+/// `results` -- so `Ctrl+3` means the third row on screen, not item 3. Mixing
+/// those up launches something plausible and wrong, which is the worst kind of
+/// bug to have here because nothing looks broken.
+///
+/// And there is no zero. `Ctrl+1` is the first row, so the digit is one-based
+/// and `Ctrl+0` is not a quick-launch chord at all.
+///
+/// Bounds are the caller's: this says which row was asked for, not whether it
+/// exists.
+#[must_use]
+pub fn quick_launch_position(
+    key: iced::keyboard::Key<&str>,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<usize> {
+    use iced::keyboard::Key;
+
+    // Control alone. A chord carrying Alt or Logo as well is somebody else's,
+    // and claiming it would take a binding the desktop may already have.
+    // Shift is excluded too: Ctrl+Shift+1 is a different chord, and on many
+    // layouts it is not a digit at all.
+    if !modifiers.control() || modifiers.alt() || modifiers.logo() || modifiers.shift() {
+        return None;
+    }
+
+    let Key::Character(text) = key else {
+        return None;
+    };
+
+    // `"1".."9"`, and nothing else: not "10", not a digit with anything
+    // attached. `chars().next()` on a longer string would accept "1x".
+    let mut chars = text.chars();
+    let digit = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    let value = digit.to_digit(10)?;
+    if value == 0 {
+        return None;
+    }
+    Some(value as usize - 1)
+}
+
+type IconFinder = dyn Fn(&str) -> Option<std::path::PathBuf> + Send + Sync;
+
+/// Resolves an `Icon=` name to a file. See [`AppFlags::icon_lookup`].
+///
+/// A named type rather than a bare `Arc<dyn Fn…>` so it can carry a `Debug`
+/// impl: [`AppFlags`] derives `Debug`, and a closure does not.
+#[derive(Clone)]
+pub struct IconLookup(Arc<IconFinder>);
+
+impl IconLookup {
+    /// Wraps a lookup.
+    #[must_use]
+    pub fn new(find: impl Fn(&str) -> Option<std::path::PathBuf> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(find))
+    }
+
+    /// The file for `name`, if the lookup can find one.
+    #[must_use]
+    pub fn find(&self, name: &str) -> Option<std::path::PathBuf> {
+        (self.0)(name)
+    }
+}
+
+impl std::fmt::Debug for IconLookup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IconLookup(..)")
+    }
+}
+
+impl Default for IconLookup {
+    /// The XDG icon themes, at the size the row reserves.
+    fn default() -> Self {
+        Self::new(|name: &str| {
+            compass_xdg::find_icon(
+                name,
+                Some(&compass_xdg::default_theme()),
+                Some(ICON_PIXELS),
+                1.0,
+            )
+        })
+    }
+}
+
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
@@ -84,6 +184,18 @@ pub struct AppFlags {
     pub keybinding: compass_core::keybinding::Scheme,
     /// Whether the selection wraps, from `launcher.wrap_navigation`.
     pub wrap_navigation: bool,
+    /// Whether Ctrl+1..9 launches the Nth result, from `launcher.quick_launch`.
+    pub quick_launch: bool,
+    /// Whether result rows show the application's icon, from
+    /// `launcher.appearance.icons` (#85).
+    pub icons: bool,
+    /// How an `Icon=` name becomes a file on disk.
+    ///
+    /// Injected for the reason [`AppFlags::launcher`] is: the default walks the
+    /// XDG icon themes, so a test that did not replace it would assert against
+    /// whatever the machine running it happens to have installed. See
+    /// ADR-0013.
+    pub icon_lookup: IconLookup,
     /// What the window draws before the desktop says otherwise.
     ///
     /// Separate from `appearance_link` because a window has to draw before any
@@ -121,6 +233,9 @@ impl Default for AppFlags {
             },
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
+            quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
+            icons: compass_core::config::DEFAULT_ICONS,
+            icon_lookup: IconLookup::default(),
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
@@ -239,6 +354,17 @@ pub struct LauncherApp {
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
+    /// Whether Ctrl+1..9 launches the Nth result. See [`AppFlags::quick_launch`].
+    quick_launch: bool,
+    /// Whether result rows show the application's icon. See [`AppFlags::icons`].
+    icons: bool,
+    /// How an `Icon=` name becomes a file. See [`AppFlags::icon_lookup`].
+    icon_lookup: IconLookup,
+    /// Icons resolved for rows that have been on screen (#85).
+    ///
+    /// Warmed from `update`, never from `view`: resolving a name walks the
+    /// theme directories, which is disk work that does not belong in a draw.
+    icon_cache: crate::icons::IconCache,
     /// Which navigation chords are in force. See [`compass_core::keybinding`].
     ///
     /// Held rather than read per keystroke because it comes from the user's
@@ -354,6 +480,9 @@ impl LauncherApp {
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
+        app.quick_launch = flags.quick_launch;
+        app.icons = flags.icons;
+        app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
@@ -392,6 +521,10 @@ impl LauncherApp {
             appearance_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
+            quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
+            icons: compass_core::config::DEFAULT_ICONS,
+            icon_lookup: IconLookup::default(),
+            icon_cache: crate::icons::IconCache::new(),
             awaiting: false,
         }
     }
@@ -431,7 +564,7 @@ impl LauncherApp {
 
     /// What dismissing does, given whether anything could bring the window back.
     ///
-    /// Split out from [`LauncherApp::conceal`] because the two outcomes it
+    /// Split out from `LauncherApp::conceal` because the two outcomes it
     /// chooses between are both opaque `Task`s: a test can see that the window
     /// closed, but not that the process was told to exit. This is the decision
     /// itself, and it is what the tests assert on.
@@ -856,6 +989,33 @@ impl LauncherApp {
                     };
                 }
 
+                // Ctrl+1..9 launches the Nth row outright (#87). Above the
+                // arrows because it is a complete action rather than a
+                // movement, and below the panel branch because while the panel
+                // is open the list is not what a keystroke is aimed at.
+                //
+                // OUT OF RANGE DOES NOTHING, deliberately. `max_results` can be
+                // below nine, and a query can match two things; Ctrl+7 then
+                // refers to no row. Launching the last one instead would be a
+                // guess at what the user meant, and the thing it launches is
+                // whatever happens to be at the bottom of an unrelated list.
+                //
+                // An out-of-range position falls through rather than returning
+                // early. The early return was there to stop the chord reaching
+                // the navigation matcher, and a control could not be made to
+                // fire on it: no scheme maps a digit to a direction, so the two
+                // paths are indistinguishable. Rather than keep a branch no
+                // test can tell apart from its absence, it is gone -- and if a
+                // scheme ever does bind digits, the test that catches it is the
+                // one that notices the selection moving.
+                if self.quick_launch
+                    && let Some(position) = quick_launch_position(key.as_ref(), modifiers)
+                    && position < self.results.len()
+                {
+                    self.selected = position;
+                    return self.update(Message::LaunchSelected);
+                }
+
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
                         return self.update(Message::MoveSelection(Direction::Down));
@@ -989,10 +1149,15 @@ impl LauncherApp {
 
     /// One result: icon, title, subtitle.
     ///
-    /// The icon is the first letter in a tinted square. `AppItem` has an icon
-    /// *name*, and resolving it through the XDG icon theme is its own piece of
-    /// work; a letter at the right size keeps the row's proportions honest
-    /// until then, and is what the design surrogate draws for the same reason.
+    /// The icon slot is a fixed square of `GEOMETRY.icon_size`, and what goes
+    /// in it depends on `launcher.appearance.icons` (#85). Off, or on with a
+    /// name the theme cannot resolve, it is the application's first letter in a
+    /// tinted square. On and resolved, it is the icon itself.
+    ///
+    /// **The slot is the same size either way**, which is what keeps the
+    /// fallback from being visible as a defect: a missing icon leaves the row's
+    /// proportions and the title's position exactly where the others are, and
+    /// the VM tier's window box does not move when the option is turned on.
     fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
         let palette = design::palette(self.appearance);
         let title_color = if selected {
@@ -1006,36 +1171,53 @@ impl LauncherApp {
             palette.muted
         };
 
-        let initial = item
-            .name()
-            .chars()
-            .next()
-            .map_or_else(String::new, |c| c.to_uppercase().to_string());
+        let icon: Element<Message> = match self.row_art(item) {
+            Some(crate::icons::IconArt::Raster(path)) => {
+                container(image(path).width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                    .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                    .into()
+            }
+            Some(crate::icons::IconArt::Vector(path)) => {
+                container(svg(path).width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                    .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                    .into()
+            }
+            None => {
+                let initial = item
+                    .name()
+                    .chars()
+                    .next()
+                    .map_or_else(String::new, |c| c.to_uppercase().to_string());
 
-        let icon = container(
-            text(initial)
-                .size(f32::from(GEOMETRY.icon_size) / 2.0)
-                .color(title_color.to_iced()),
-        )
-        .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
-        .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
-        .style(move |_: &Theme| container::Style {
-            background: Some(
-                Color {
-                    a: 0.18,
-                    ..palette.accent.to_iced()
-                }
-                .into(),
-            ),
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: 8.0.into(),
-            },
-            ..container::Style::default()
-        });
+                container(
+                    text(initial)
+                        .size(f32::from(GEOMETRY.icon_size) / 2.0)
+                        .color(title_color.to_iced()),
+                )
+                .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .style(move |_: &Theme| container::Style {
+                    background: Some(
+                        Color {
+                            a: 0.18,
+                            ..palette.accent.to_iced()
+                        }
+                        .into(),
+                    ),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 8.0.into(),
+                    },
+                    ..container::Style::default()
+                })
+                .into()
+            }
+        };
 
         let mut labels = column![
             text(item.name().to_owned())
@@ -1215,6 +1397,45 @@ impl LauncherApp {
         // different list, and keeping its position would silently select an
         // unrelated application.
         self.selected = 0;
+        self.warm_icons();
+    }
+
+    /// What goes in a row's icon slot: resolved art, or nothing for the initial.
+    ///
+    /// The three ways to get nothing -- icons off, an entry with no `Icon=`,
+    /// and a name the theme could not resolve -- are deliberately one answer.
+    /// They all mean the same thing to the row, and collapsing them here is
+    /// what keeps `view` from having to know the difference.
+    fn row_art(&self, item: &AppItem) -> Option<&crate::icons::IconArt> {
+        if !self.icons {
+            return None;
+        }
+        item.icon().and_then(|name| self.icon_cache.cached(name))
+    }
+
+    /// Resolve the icons of the rows now on screen.
+    ///
+    /// Here rather than in `view` because resolution walks the theme
+    /// directories, and a launcher re-ranks on every keystroke: doing disk work
+    /// per draw is the cost #85 warns about. Bounded to the current results, so
+    /// it is the size of the visible list rather than of the index, and the
+    /// cache makes each name at most one walk for the life of the process.
+    ///
+    /// A no-op when icons are off, so the default configuration does no lookup
+    /// at all.
+    fn warm_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+
+        let names: Vec<&str> = self
+            .results
+            .iter()
+            .filter_map(|index| self.app_index.items().get(*index))
+            .filter_map(AppItem::icon)
+            .collect();
+        let find = self.icon_lookup.clone();
+        self.icon_cache.warm(names, &|name| find.find(name));
     }
 }
 
@@ -1564,6 +1785,11 @@ mod tests {
     }
 
     /// Builds a `KeyPressed` for a named key, as the subscription delivers it.
+    /// A `Ctrl`+`digit` press. `chord` below builds it; this names the intent.
+    pub(super) fn ctrl_digit(digit: &str) -> Message {
+        chord(digit, iced::keyboard::Modifiers::CTRL)
+    }
+
     fn pressed(key: iced::keyboard::key::Named) -> Message {
         Message::Keyboard(iced::keyboard::Event::KeyPressed {
             key: iced::keyboard::Key::Named(key),
@@ -1594,7 +1820,7 @@ mod tests {
     }
 
     /// An app over the fixture corpus with several matching rows.
-    fn app_with_rows(dir: &std::path::Path) -> LauncherApp {
+    pub(super) fn app_with_rows(dir: &std::path::Path) -> LauncherApp {
         let mut app = app(dir);
         let _ = app.update(Message::QueryChanged("fi".to_owned()));
         assert!(app.results.len() > 1, "need several rows to move between");
@@ -1890,5 +2116,347 @@ mod tests {
             expected.len() - 1,
             "and it stayed on the last row, because wrap_navigation is off by default"
         );
+    }
+}
+
+#[cfg(test)]
+mod quick_launch_tests {
+    use super::*;
+    use iced::keyboard::{Key, Modifiers};
+
+    #[test]
+    fn ctrl_one_through_nine_are_positions_counting_from_zero() {
+        for (digit, want) in [("1", 0), ("2", 1), ("5", 4), ("9", 8)] {
+            assert_eq!(
+                quick_launch_position(Key::Character(digit), Modifiers::CTRL),
+                Some(want),
+                "Ctrl+{digit}"
+            );
+        }
+    }
+
+    #[test]
+    fn there_is_no_ctrl_zero() {
+        // The digits are one-based because the rows are. A zero would have to
+        // mean either "the first" or "the tenth" and neither is what anyone
+        // presses it for.
+        assert_eq!(
+            quick_launch_position(Key::Character("0"), Modifiers::CTRL),
+            None
+        );
+    }
+
+    #[test]
+    fn a_digit_without_control_is_somebody_elses() {
+        // Typing "3" into the search field must reach the field.
+        assert_eq!(
+            quick_launch_position(Key::Character("3"), Modifiers::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn control_plus_another_modifier_is_a_different_chord() {
+        // Not ours to claim: the desktop may already bind these, and on many
+        // layouts Ctrl+Shift+1 is not a digit at all.
+        for extra in [Modifiers::SHIFT, Modifiers::ALT, Modifiers::LOGO] {
+            assert_eq!(
+                quick_launch_position(Key::Character("1"), Modifiers::CTRL | extra),
+                None,
+                "{extra:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_digit_character_is_not_a_quick_launch() {
+        for text in ["b", "-", "", "1x", "12"] {
+            assert_eq!(
+                quick_launch_position(Key::Character(text), Modifiers::CTRL),
+                None,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_n_selects_and_launches_the_nth_visible_row() {
+        // THE BUG THIS IS HERE FOR: `results` holds indices into the
+        // application index, and the selection is a position within `results`.
+        // Ctrl+3 means the third ROW, not item 3. Confusing the two launches
+        // something plausible and wrong, which is the worst kind to have here
+        // because nothing looks broken.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = super::tests::app_with_rows(dir.path());
+
+        let rows: Vec<String> = app
+            .results
+            .iter()
+            .filter_map(|i| app.app_index.items().get(*i))
+            .map(|item| item.name().to_owned())
+            .collect();
+        assert!(rows.len() >= 2, "need several rows: {rows:?}");
+
+        for (position, name) in rows.iter().enumerate().take(9) {
+            let digit = (position + 1).to_string();
+            let _ = app.update(super::tests::ctrl_digit(&digit));
+            assert_eq!(
+                app.selected_item().map(compass_core::AppItem::name),
+                Some(name.as_str()),
+                "Ctrl+{digit} must resolve to row {position}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_that_is_not_there_does_nothing_at_all() {
+        // THE BOUNDS ARE THE ROWS', NOT THE INDEX'S. A query filters the list,
+        // so `results` is shorter than `app_index.items()` -- and a check
+        // against the wrong one accepts a position that has no row, then
+        // selects it. The fixture is queried precisely so the two lengths
+        // differ: a control that swapped them was SILENT until this test did.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = super::tests::app_with_rows(dir.path());
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+
+        let rows = app.results.len();
+        let items = app.app_index.items().len();
+        assert!(
+            rows < items,
+            "the query must narrow the list: {rows} of {items}"
+        );
+        assert!(rows < 9, "and leave fewer than nine rows: {rows}");
+
+        let before = app.selected;
+        // A position with no row, but well inside the item index.
+        let _ = app.update(super::tests::ctrl_digit(&(rows + 1).to_string()));
+        assert_eq!(app.selected, before, "the selection must not move either");
+    }
+
+    #[test]
+    fn the_setting_turns_it_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = super::tests::app_with_rows(dir.path());
+        app.quick_launch = false;
+        app.selected = 1;
+
+        let _ = app.update(super::tests::ctrl_digit("1"));
+        assert_eq!(
+            app.selected, 1,
+            "with quick_launch off, Ctrl+1 must not move the selection"
+        );
+    }
+
+    #[test]
+    fn it_is_on_by_default() {
+        // #87 asks for on by default: it costs nothing when unused, because
+        // the chords are otherwise unbound.
+        assert!(compass_core::config::LauncherConfig::default().quick_launch());
+        assert!(AppFlags::default().quick_launch);
+    }
+
+    #[test]
+    fn the_panel_takes_the_chord_while_it_is_open() {
+        // While the panel is open the list is not what a keystroke is aimed
+        // at, and launching a row out from under an open action panel would be
+        // a surprise.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = super::tests::app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        assert!(app.panel.is_some(), "precondition");
+        app.selected = 1;
+
+        let _ = app.update(super::tests::ctrl_digit("1"));
+        assert_eq!(app.selected, 1, "the row under the panel did not move");
+        assert!(app.panel.is_some(), "and the panel is still open");
+    }
+
+    #[test]
+    fn a_named_key_is_not_a_quick_launch() {
+        assert_eq!(
+            quick_launch_position(
+                Key::Named(iced::keyboard::key::Named::Enter),
+                Modifiers::CTRL
+            ),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::icons::IconArt;
+
+    /// Three entries, two of which name an icon.
+    fn app_with_icons(dir: &std::path::Path) -> LauncherApp {
+        for (file, name, icon) in [
+            ("firefox.desktop", "Firefox", Some("firefox")),
+            ("files.desktop", "Files", Some("system-file-manager")),
+            ("terminal.desktop", "Terminal", None),
+        ] {
+            let icon_line = icon.map_or_else(String::new, |value| format!("Icon={value}\n"));
+            fs::write(
+                dir.join(file),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName={name}\nExec=/bin/true\n{icon_line}"
+                ),
+            )
+            .expect("write entry");
+        }
+        LauncherApp::with_index(AppIndex::builder().dir(dir).build())
+    }
+
+    /// A lookup that answers for `hits` and records every name it is asked.
+    fn recording(hits: &[&str]) -> (Arc<Mutex<Vec<String>>>, IconLookup) {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&asked);
+        let hits: Vec<String> = hits.iter().map(|hit| (*hit).to_owned()).collect();
+        let lookup = IconLookup::new(move |name: &str| {
+            log.lock().expect("lock").push(name.to_owned());
+            hits.iter()
+                .any(|hit| hit == name)
+                .then(|| PathBuf::from(format!("/i/{name}.svg")))
+        });
+        (asked, lookup)
+    }
+
+    fn asked(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+        log.lock().expect("lock").clone()
+    }
+
+    fn row<'a>(app: &'a LauncherApp, name: &str) -> &'a AppItem {
+        app.results
+            .iter()
+            .filter_map(|index| app.app_index.items().get(*index))
+            .find(|item| item.name() == name)
+            .unwrap_or_else(|| panic!("{name} is not a row"))
+    }
+
+    #[test]
+    fn icons_off_looks_nothing_up_at_all() {
+        // The default configuration must cost nothing: not a directory walk,
+        // not even a cached miss.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        assert!(!app.icons, "precondition: off by default");
+
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+
+        assert!(!app.results.is_empty(), "precondition: there are rows");
+        assert!(asked(&log).is_empty(), "{:?}", asked(&log));
+        assert!(app.icon_cache.is_empty());
+    }
+
+    #[test]
+    fn icons_on_warms_only_the_rows_on_screen() {
+        // Bounded by the visible list rather than by the index: that is the
+        // whole reason resolution happens in `update` and not in `view`.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("firefox".to_owned()));
+
+        assert_eq!(asked(&log), ["firefox"], "{:?}", asked(&log));
+    }
+
+    #[test]
+    fn an_entry_with_no_icon_key_is_never_looked_up() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (log, lookup) = recording(&[]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("terminal".to_owned()));
+
+        assert!(!app.results.is_empty(), "precondition: Terminal is a row");
+        assert!(asked(&log).is_empty(), "{:?}", asked(&log));
+    }
+
+    #[test]
+    fn the_same_name_is_resolved_once_however_many_keystrokes() {
+        // A launcher re-ranks on every keystroke. Without the cache this is
+        // one theme walk per character typed.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        for query in ["f", "fi", "fir", "fire", "firef"] {
+            let _ = app.update(Message::QueryChanged(query.to_owned()));
+        }
+
+        let names = asked(&log);
+        assert_eq!(
+            names.iter().filter(|name| *name == "firefox").count(),
+            1,
+            "{names:?}"
+        );
+    }
+
+    #[test]
+    fn a_resolved_row_draws_its_icon_and_an_unresolved_one_falls_back() {
+        // The ordinary state of a mixed desktop: the theme has one of them.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (_log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("f".to_owned()));
+
+        assert_eq!(
+            app.row_art(row(&app, "Firefox")),
+            Some(&IconArt::Vector(PathBuf::from("/i/firefox.svg")))
+        );
+        assert_eq!(
+            app.row_art(row(&app, "Files")),
+            None,
+            "an icon the theme does not have must fall back to the initial"
+        );
+    }
+
+    #[test]
+    fn a_resolved_icon_is_still_not_drawn_once_icons_are_turned_off() {
+        // The cache outlives the toggle, so the gate has to be at the draw and
+        // not only at the warm.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_icons(dir.path());
+        app.icons = true;
+
+        let (_log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        let _ = app.update(Message::QueryChanged("firefox".to_owned()));
+
+        assert!(
+            app.row_art(row(&app, "Firefox")).is_some(),
+            "precondition: resolved"
+        );
+
+        app.icons = false;
+        assert_eq!(app.row_art(row(&app, "Firefox")), None);
+    }
+
+    #[test]
+    fn it_is_off_by_default() {
+        // #85 asks for off by default: the default look is Spotlight-simple,
+        // and icons are what make it busier.
+        assert!(
+            !compass_core::config::LauncherConfig::default()
+                .appearance()
+                .icons()
+        );
+        assert!(!AppFlags::default().icons);
     }
 }

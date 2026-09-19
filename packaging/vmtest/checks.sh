@@ -1435,8 +1435,39 @@ PY
 
     count="${line##*=}"
     echo "the engine indexed $count applications"
-    if [ "$count" -eq 0 ]; then
-      echo "the engine indexed ZERO applications: the launcher can see nothing to launch (#95)" >&2
+
+    # THE FLOOR IS DERIVED FROM A MEASUREMENT, not from "more than nothing".
+    #
+    # This asserted `-gt 0` because nobody had a real number. #97 produced one by
+    # reconciling the image's 88 entries against what the engine reports:
+    #
+    #   88 entries on disk
+    #   -70 NoDisplay=true        <- almost all of the filtering
+    #    -3 Hidden=true
+    #   ---
+    #    11 visible with no desktop identified
+    #    +4 desktop actions on those
+    #   ---
+    #    15   exactly what the engine reported
+    #
+    # So 15 is the floor's evidence, and 10 is the floor: well under the measured value, well
+    # over zero. A floor rather than an equality because the image's application set moves when
+    # Bluefin rebases, and an equality would turn somebody else's release into our red run.
+    #
+    # The number should now be HIGHER than 15, not lower: #97's fallback lets the session be
+    # identified, which admits the OnlyShowIn=GNOME entries that were being hidden on GNOME (one
+    # on this image, more on others). That is why the floor is not set at 15 -- it is set below
+    # the number this gate was calibrated against, so the fix cannot trip it either way.
+    INDEX_FLOOR=10
+    if [ "$count" -lt "$INDEX_FLOOR" ]; then
+      if [ "$count" -eq 0 ]; then
+        echo "the engine indexed ZERO applications: the launcher can see nothing to launch (#95)" >&2
+      else
+        echo "the engine indexed only $count applications, under the floor of $INDEX_FLOOR" >&2
+        echo "  #97 reconciled this image to 15 (11 visible entries + 4 desktop actions)." >&2
+        echo "  A count this low means entries are being filtered that should not be -- check" >&2
+        echo "  the sandbox's application dirs and whether the desktop is being identified." >&2
+      fi
       echo "--- where the doctor looked ---" >&2
       compass_cli doctor 2>&1 | grep -A 20 'xdg.application-dirs' >&2 || true
       exit 1

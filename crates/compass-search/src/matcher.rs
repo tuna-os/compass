@@ -29,7 +29,7 @@ pub struct MatchResult {
     /// Whether this alignment reads as a match a human would recognize, in the
     /// sense of the C++ `fzf::Result::coherent`: it is `false` when the match
     /// spreads over several words *and* some run of consecutive matched
-    /// characters starts mid-word ("time" in "S[t]art [I]nput [Me]thod").
+    /// characters starts mid-word ("time" in `S[t]art [I]nput [Me]thod`).
     ///
     /// Incoherent matches are excluded from [`Match::quality`](crate::Match::quality)
     /// and so cannot clear the [`MIN_QUALITY`](crate::MIN_QUALITY) gate. See

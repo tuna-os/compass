@@ -38,7 +38,7 @@ pub const MIGRATIONS: &[Migration] = &[
 ///
 /// # Errors
 ///
-/// See [`compass_db::run`].
+/// See [`crate::run`].
 pub fn run(db: &Database) -> Result<(), Error> {
     crate::run(db, MIGRATIONS)
 }
