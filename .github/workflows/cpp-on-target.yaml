@@ -376,6 +376,8 @@ jobs:
           podman run --rm \
             -v "$PWD:/src:z" \
             -e HOME=/tmp/home \
+            -e XDG_DATA_DIRS=/corpus \
+            -v "$PWD/crates/compass-testkit/corpus/desktop-entries/real:/corpus/applications:ro,z" \
             -w /src \
             --shm-size=2g \
             ghcr.io/ublue-os/bluefin:stable bash -euo pipefail -c '
@@ -435,12 +437,30 @@ jobs:
                 for i in $(seq 1 60); do
                   if vicinae ping >/dev/null 2>&1; then
                     echo "ANSWERED after ${i}00ms: $label"
+
+                    # A QUERY IS NOT ANSWERED UNTIL IT RANKS SOMETHING.
+                    #
+                    # The first YES returned `[]`, and an empty array is what a
+                    # BROKEN query path returns too. The container ships no
+                    # applications, so there was nothing to rank and nothing to
+                    # tell the two apart. XDG_DATA_DIRS now points at the
+                    # 757-entry corpus this repo already harvested, which is
+                    # the same corpus Suite 0 diffs against.
+                    echo "--- indexable entries visible to the engine ---"
+                    ls /corpus/applications | wc -l
                     echo "--- a real query ---"
-                    vicinae query --json firefox || echo "(query failed)"
+                    vicinae query --json firefox | tee /src/spike-query.json \
+                      || echo "(query failed)"
                     {
                       echo "### Suite 0 spike: YES, on the \`$label\` rung"
                       echo
                       echo "The parity run needs exactly this much and no compositor."
+                      echo
+                      echo "Hits for \`firefox\` over the checked-in corpus:"
+                      echo '```json'
+                      head -c 400 /src/spike-query.json
+                      echo
+                      echo '```'
                     } > /src/spike-verdict.md
                     kill "$pid" 2>/dev/null || true
                     return 0
