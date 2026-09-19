@@ -84,6 +84,19 @@ pub struct AppFlags {
     pub keybinding: compass_core::keybinding::Scheme,
     /// Whether the selection wraps, from `launcher.wrap_navigation`.
     pub wrap_navigation: bool,
+    /// What the window draws before the desktop says otherwise.
+    ///
+    /// Separate from `appearance_link` because a window has to draw before any
+    /// change can arrive: this is the first frame's colour, and the link only
+    /// carries what comes after.
+    pub appearance: Appearance,
+    /// Changes to the desktop's light/dark preference, when something is
+    /// feeding them.
+    ///
+    /// `None` is a desktop with no Settings portal, or a test. The window then
+    /// stays on `appearance` for its whole life, which is the honest outcome:
+    /// nothing is telling it otherwise.
+    pub appearance_link: Option<crate::appearance::AppearanceLink>,
     /// The engine driving this window, when there is one.
     ///
     /// `None` is the standalone case -- `vicinae ui` run by hand with no daemon
@@ -114,6 +127,12 @@ impl Default for AppFlags {
             // exists to end. `vicinae` sets this explicitly.
             launcher: Arc::new(NullLauncher),
             link: None,
+            // Dark, until a desktop says otherwise. Not a preference: it is
+            // what the launcher has always drawn, so a machine with no
+            // Settings portal keeps the appearance it had rather than
+            // switching the day this landed.
+            appearance: Appearance::Dark,
+            appearance_link: None,
         }
     }
 }
@@ -215,6 +234,8 @@ pub struct LauncherApp {
     window_config: window::Settings,
     /// Which palette to draw with. See [`LauncherApp::theme`].
     appearance: Appearance,
+    /// Where later appearance changes arrive. See [`AppFlags::appearance_link`].
+    appearance_link: Option<crate::appearance::AppearanceLink>,
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
@@ -334,6 +355,8 @@ impl LauncherApp {
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
         app.link = flags.link;
+        app.appearance = flags.appearance;
+        app.appearance_link = flags.appearance_link;
         (app, Task::none())
     }
 
@@ -366,6 +389,7 @@ impl LauncherApp {
             window: None,
             window_config: AppFlags::default().window_config,
             appearance: Appearance::Dark,
+            appearance_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             awaiting: false,
@@ -485,10 +509,9 @@ impl LauncherApp {
     /// and the browser surrogate under `tools/design/` is served the same
     /// ones, which is what keeps the two renderings honest about each other.
     ///
-    /// The appearance is fixed for now. Following the desktop's light/dark
-    /// preference needs the `org.freedesktop.appearance` setting read and
-    /// watched; `design::ColorScheme` already has the mapping and its tests,
-    /// and the plumbing is the next piece rather than this one.
+    /// The appearance follows the desktop when something is feeding
+    /// [`AppFlags::appearance_link`], and otherwise stays on
+    /// [`AppFlags::appearance`] for the window's whole life.
     pub fn theme(&self) -> Theme {
         design::theme(self.appearance)
     }
@@ -519,16 +542,17 @@ impl LauncherApp {
     /// in `update`. The VM tier types but never presses Escape, so it would not
     /// catch it either.
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        let keyboard = iced::event::listen_with(keyboard_events);
-        let closed = window::close_events().map(Message::Closed);
-        match &self.link {
-            Some(link) => iced::Subscription::batch([
-                keyboard,
-                closed,
-                link.subscription().map(Message::Command),
-            ]),
-            None => iced::Subscription::batch([keyboard, closed]),
+        let mut streams = vec![
+            iced::event::listen_with(keyboard_events),
+            window::close_events().map(Message::Closed),
+        ];
+        if let Some(link) = &self.link {
+            streams.push(link.subscription().map(Message::Command));
         }
+        if let Some(link) = &self.appearance_link {
+            streams.push(link.subscription().map(Message::AppearanceChanged));
+        }
+        iced::Subscription::batch(streams)
     }
 
     /// Acts on a command from the engine and reports what happened.
@@ -567,6 +591,10 @@ impl LauncherApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Initialize => Task::none(),
+            Message::AppearanceChanged(appearance) => {
+                self.appearance = appearance;
+                Task::none()
+            }
             Message::QueryChanged(query) => {
                 self.query = query;
                 self.error = None;
@@ -1134,6 +1162,60 @@ mod tests {
         assert_eq!(next_selection(3, 2, Direction::Down, false), 2);
         assert_eq!(next_selection(3, 0, Direction::Down, false), 1);
         assert_eq!(next_selection(3, 2, Direction::Up, false), 1);
+    }
+
+    /// Themes compare by value, and a failed comparison prints two whole
+    /// palettes. The name is what distinguishes ours, so assert on that.
+    fn theme_name(app: &LauncherApp) -> String {
+        app.theme().to_string()
+    }
+
+    #[test]
+    fn an_appearance_change_reaches_the_theme() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        assert_eq!(
+            theme_name(&app),
+            design::theme(Appearance::Dark).to_string()
+        );
+
+        let _ = app.update(Message::AppearanceChanged(Appearance::Light));
+        // Asserted through `theme()` rather than the field, because the field
+        // being right while the theme is built from something else is exactly
+        // the bug worth catching.
+        assert_eq!(
+            theme_name(&app),
+            design::theme(Appearance::Light).to_string()
+        );
+    }
+
+    #[test]
+    fn a_window_nobody_is_feeding_keeps_the_appearance_it_started_with() {
+        let (mut app, _task) = LauncherApp::new(AppFlags {
+            appearance: Appearance::Light,
+            appearance_link: None,
+            ..AppFlags::default()
+        });
+
+        // No portal, no feeder: whatever it opened as is what it stays as. A
+        // launcher that fell back to dark here would change colour on every
+        // desktop without a Settings portal.
+        let opened_as = theme_name(&app);
+        assert_eq!(opened_as, design::theme(Appearance::Light).to_string());
+        let _ = app.update(Message::QueryChanged("fir".to_owned()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(theme_name(&app), opened_as);
+    }
+
+    #[test]
+    fn the_starting_appearance_is_what_the_flags_say() {
+        for appearance in Appearance::ALL {
+            let (app, _task) = LauncherApp::new(AppFlags {
+                appearance,
+                ..AppFlags::default()
+            });
+            assert_eq!(theme_name(&app), design::theme(appearance).to_string());
+        }
     }
 
     #[test]

@@ -11,6 +11,7 @@
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
 
+pub mod appearance;
 pub mod cli;
 pub mod doctor;
 pub mod engine;
@@ -108,11 +109,17 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             }
         };
 
+        // Read before the window opens so the first frame is the right
+        // colour; see `appearance` for what happens when the portal is slow.
+        let (appearance, appearance_link) = appearance::follow();
+
         compass_ui::run_resident(compass_ui::AppFlags {
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             link,
             keybinding,
             wrap_navigation,
+            appearance,
+            appearance_link,
             ..compass_ui::AppFlags::default()
         })
         .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
