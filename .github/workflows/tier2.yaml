@@ -107,11 +107,83 @@ jobs:
 
       # The log is the finding when this fails, and a failed spike is a result
       # rather than an accident — so it is kept either way.
-      - name: Keep gnome-shell's log
+      - name: Keep the compositor's log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: compositor-log-f${{ matrix.fedora }}
+          path: |
+            /tmp/gnome-shell.log
+            /tmp/wayland-info.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  # The next question, and deliberately a separate job from the one above.
+  #
+  # The compositor spike answers "can a session exist here". This answers "can
+  # the thing we ship run inside it" — and it is a genuinely different
+  # unknown, because Flatpak needs bubblewrap and bubblewrap needs user
+  # namespaces, which a container may or may not grant.
+  #
+  # Asked smallest-first, as the compositor spike was: this runs the Flatpak's
+  # `--version`, not the launcher. If `flatpak run` cannot execute at all, a
+  # failure to paint a window would be a confusing way to find that out.
+  flatpak:
+    name: Flatpak
+    uses: ./.github/workflows/flatpak.yaml
+
+  run-flatpak:
+    name: "Tier 2 spike: can the Flatpak run against that compositor?"
+    needs: [spike, flatpak]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    # One image, not the matrix. The matrix is for a question already known to
+    # have two answers worth having; this one does not have an answer yet.
+    container:
+      image: fedora:44
+      # bubblewrap needs to create user namespaces, which the default seccomp
+      # and capability set does not allow. This is the smaller hammer than
+      # --privileged, and if it is not enough that is itself the finding.
+      options: --shm-size=2g --security-opt seccomp=unconfined --cap-add SYS_ADMIN
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a compositor and Flatpak
+        run: |
+          dnf -y install --setopt=install_weak_deps=False \
+            mutter \
+            wayland-utils \
+            dbus-daemon \
+            dbus-tools \
+            dbus-x11 \
+            glib2 \
+            procps-ng \
+            flatpak \
+            bubblewrap
+
+      - name: Fetch the Flatpak bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: /tmp/bundle
+
+      - name: What did we get?
+        run: ls -la /tmp/bundle
+
+      # Against the compositor, because a Flatpak that runs but cannot reach a
+      # Wayland display has not answered the question this tier is about.
+      - name: Can it install and run?
+        run: |
+          scripts/tier2/headless-gnome-spike.sh \
+            scripts/tier2/run-flatpak-probe.sh
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-probe-logs
           path: |
             /tmp/gnome-shell.log
             /tmp/wayland-info.txt
