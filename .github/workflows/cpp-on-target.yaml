@@ -29,19 +29,37 @@ name: C++ on the target
 # on every pull request is work nobody reads. The Flatpak is what ships on
 # Bluefin, so it is the one that stays.
 #
-# This is a trigger change, not a deletion. The jobs below are unchanged and
-# still run from the Actions tab (`workflow_dispatch`); deleting the leading
-# `# ` from the commented lines below restores them exactly, indentation
-# included. Re-enable before Phase 9 starts, or earlier if a change here needs
-# proving on a platform this no longer covers.
+# THE ABOVE STOPPED DESCRIBING THIS FILE, AND TOOK C++ PR COVERAGE WITH IT.
+#
+# That reasoning disabled the whole `pull_request` trigger, and the two jobs
+# left here are `configure` and `build` — both `ubuntu-24.04`, both against
+# Bluefin's Qt. There is no non-Linux build in this file to save. So the effect
+# was not "stop building macOS on PRs", it was **nothing compiles C++ on a pull
+# request at all**: of the seven workflows with a `pull_request` trigger, the
+# Flatpak packages the Rust engine and `format.yaml` only runs `clang-format`
+# over `src/`. A change to 144k lines of C++23 was found out about at 02:00 UTC,
+# or not at all.
+#
+# That matters now rather than in the abstract: §8.1a rung 2 — the ranked-output
+# path the Suite 0 differential needs (#12) — is an IPC method, a server handler
+# and a CLI command, all in this tree. Writing it against a build nothing runs
+# on the PR is a speculative push by construction.
+#
+# So `configure` comes back for pull requests, and `build` does not. Configure
+# is about a minute and exercises every `find_package(Qt6 COMPONENTS …)` and the
+# whole CMake graph, which is what catches a new source file missing from a
+# target or a regenerated protocol that breaks the wiring. `build` is twenty
+# minutes plus and stays on the nightly schedule and the Actions tab, where it
+# has always been.
 on:
-#   pull_request:
-#     paths:
-#       - 'CMakeLists.txt'
-#       - 'cmake/**'
-#       - 'src/**'
-#       - 'scripts/runners/**'
-#       - '.github/workflows/cpp-on-target.yaml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'figura/**'
+      - 'scripts/runners/**'
+      - '.github/workflows/cpp-on-target.yaml'
   workflow_dispatch:
 
   # Nightly, so the artifact this job publishes actually exists when something
@@ -147,6 +165,12 @@ jobs:
   build:
     name: The C++ engine builds on Bluefin
     needs: configure
+    # Not on pull requests. `configure` is the PR-affordable half — a minute
+    # against this job's twenty-plus — and running both on every C++ change
+    # would spend the budget that made restoring the trigger defensible.
+    # Nightly and `workflow_dispatch` still build, which is where the
+    # `vicinae-cpp-bluefin.tar.gz` Suite 0 needs comes from.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
