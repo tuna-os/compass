@@ -10,6 +10,9 @@
 # than by the PR that introduced it. Tier 2 is what §8.8 designed to fill it, at
 # a fraction of the cost.
 #
+# It also carries SUITE 3b: the launcher exercised on GNOME 50 and 51, which
+# §8.8 asks for and #4's exit gate requires.
+#
 # IT WAS BUILT AS A SEQUENCE OF SPIKES, AND EACH ONE FOUND SOMETHING.
 #
 # The premise was never verified, so it was asked one question at a time rather
@@ -177,15 +180,36 @@ jobs:
     uses: ./.github/workflows/flatpak.yaml
 
   run-flatpak:
-    name: "Tier 2 spike: can the Flatpak run against that compositor?"
+    name: "Suite 3b: the launcher on GNOME ${{ matrix.gnome }}"
     needs: [spike, flatpak]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
-    # One image, not the matrix. The matrix is for a question already known to
-    # have two answers worth having; this one does not have an answer yet.
+    # SUITE 3b. §8.8 asks for "a scripted session against both GNOME 50 and
+    # 51", and #4's exit gate requires the launcher to run "under GNOME 50 AND
+    # 51" — a matrix that existed nowhere, so "runs under 50" was true by
+    # accident and "runs under 51" was untested.
+    #
+    # It started as one image deliberately: a matrix is for a question already
+    # known to have two answers worth having, and "can a Flatpak run in a
+    # container at all" had no answer yet. It does now — proven on 44 — so the
+    # second leg is the cheap part, and the job is named for what it tests
+    # rather than for the version of Fedora that happens to carry it.
+    #
+    # fail-fast off for the same reason the compositor matrix has it: "50 works,
+    # 51 does not" is a finding, and losing it to a cancelled sibling would
+    # waste the run that found it.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fedora: "44"
+            gnome: "50"
+          - fedora: "45"
+            gnome: "51"
+
     container:
-      image: fedora:44
+      image: fedora:${{ matrix.fedora }}
       # --privileged, and the smaller hammer was tried first.
       #
       # `--security-opt seccomp=unconfined --cap-add SYS_ADMIN` was not enough:
@@ -259,7 +283,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: flatpak-probe-logs
+          name: flatpak-probe-logs-gnome${{ matrix.gnome }}
           path: |
             /tmp/gnome-shell.log
             /tmp/wayland-info.txt
