@@ -373,7 +373,22 @@ jobs:
       - name: Ask, one rung at a time
         run: |
           set -o pipefail
-          podman run --rm \
+          # BOUNDED AT THE CONTAINER, not just inside it.
+          #
+          # The query has its own 30s budget, but that only covers the one
+          # place I predicted could block. A run that hangs anywhere else --
+          # and the likeliest candidate is a backgrounded engine surviving
+          # `kill` and holding the stdout pipe open, so `podman run` never
+          # returns -- would otherwise sit until the 30-minute job timeout and
+          # report as "the job timed out".
+          #
+          # That is the same shape as the Flatpak wrapper-PID problem
+          # prove-smoke.sh was written to catch: killing the thing you spawned
+          # is not the same as killing the thing that is running.
+          #
+          # 8 minutes is generous against the ~2 this takes when it works, and
+          # turns any hang into a named one within a readable budget.
+          timeout --signal=KILL 480 podman run --rm \
             -v "$PWD:/src:z" \
             -e HOME=/tmp/home \
             -e XDG_DATA_DIRS=/corpus \
@@ -490,6 +505,17 @@ jobs:
                 kill "$pid" 2>/dev/null || true
                 return 1
               }
+
+              # Nothing backgrounded may outlive this script. A rung that
+              # answered leaves an engine running, and an engine holding the
+              # stdout pipe keeps `podman run` alive after bash has exited.
+              # `kill "$pid"` alone did not prove sufficient, so the trap
+              # sweeps by name as well.
+              cleanup() {
+                pkill -KILL -f vicinae-server 2>/dev/null || true
+                pkill -KILL -f "vicinae server" 2>/dev/null || true
+              }
+              trap cleanup EXIT
 
               if try_rung bare env; then exit 0; fi
 
