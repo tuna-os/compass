@@ -43,6 +43,9 @@ Two smaller gaps, both visible on the page:
 - **Text metrics are approximate.** The page is given the same font stack, but
   a browser and wgpu do not lay out glyphs identically.
 
+See `../../docs/rust-engine/RENDER-HARNESSES.md` for how this fits beside the
+other two harnesses, and for the Playwright mechanics that bite.
+
 ## A higher-fidelity option, not taken yet
 
 Iced 0.14 builds for `wasm32` — `iced_winit` carries `web-sys` and
