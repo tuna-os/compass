@@ -95,24 +95,44 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // The user's chord scheme. A configuration that cannot be read is not
         // a reason to refuse to start: the launcher runs with the defaults and
         // says so, which is what every other unreadable setting here does.
-        let (keybinding, wrap_navigation, quick_launch, icons) = match compass_core::Config::load()
-        {
-            Ok(config) => (
-                config.launcher().keybinding_scheme(),
-                config.launcher().wrap_navigation(),
-                config.launcher().quick_launch(),
-                config.launcher().appearance().icons(),
-            ),
-            Err(error) => {
-                tracing::warn!(%error, "could not read the configuration; using the defaults");
-                (
-                    compass_core::keybinding::Scheme::default(),
-                    compass_core::config::DEFAULT_WRAP_NAVIGATION,
-                    compass_core::config::DEFAULT_QUICK_LAUNCH,
-                    compass_core::config::DEFAULT_ICONS,
-                )
-            }
-        };
+        let (keybinding, wrap_navigation, quick_launch, appearance_preset) =
+            match compass_core::Config::load() {
+                Ok(config) => {
+                    let appearance = config.launcher().appearance();
+                    (
+                        config.launcher().keybinding_scheme(),
+                        config.launcher().wrap_navigation(),
+                        config.launcher().quick_launch(),
+                        compass_ui::preset::resolve(
+                            Some(appearance.preset()),
+                            appearance.icons_override(),
+                        ),
+                    )
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "could not read the configuration; using the defaults");
+                    (
+                        compass_core::keybinding::Scheme::default(),
+                        compass_core::config::DEFAULT_WRAP_NAVIGATION,
+                        compass_core::config::DEFAULT_QUICK_LAUNCH,
+                        compass_ui::preset::resolve(None, None),
+                    )
+                }
+            };
+
+        // Said rather than swallowed: drawing the default for a name the user
+        // typed leaves them adjusting a setting nothing is reading.
+        if let Some(unknown) = &appearance_preset.unknown_name {
+            let known: Vec<&str> = compass_ui::preset::NAMES
+                .iter()
+                .map(|(name, _)| *name)
+                .collect();
+            tracing::warn!(
+                preset = %unknown,
+                known = %known.join(", "),
+                "unknown launcher.appearance.preset; using the default"
+            );
+        }
 
         // Read before the window opens so the first frame is the right
         // colour; see `appearance` for what happens when the portal is slow.
@@ -124,7 +144,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             keybinding,
             wrap_navigation,
             quick_launch,
-            icons,
+            icons: appearance_preset.icons,
+            appearance_preset,
             appearance,
             appearance_link,
             ..compass_ui::AppFlags::default()

@@ -11,7 +11,7 @@
 //!     "keybinding": "default",
 //!     "wrap_navigation": false,
 //!     "quick_launch": true,
-//!     "appearance": { "icons": false }
+//!     "appearance": { "preset": "gnome", "icons": false }
 //!   },
 //!   "extensions": {
 //!     "auto_update": true,
@@ -63,6 +63,13 @@ pub const DEFAULT_WRAP_NAVIGATION: bool = false;
 /// rather than under an `appearance` section because it is behaviour, not
 /// appearance: it changes what a keystroke does, not what a row looks like.
 pub const DEFAULT_QUICK_LAUNCH: bool = true;
+
+/// Default for `launcher.appearance.preset`.
+///
+/// The GNOME preset, per #83: Spotlight-simple, and recognisably the desktop
+/// it ships on. It resolves to exactly the geometry that ships today, so the
+/// default appearance is unchanged by the presets existing.
+pub const DEFAULT_PRESET: &str = "gnome";
 
 /// Default for `launcher.appearance.icons`.
 ///
@@ -161,6 +168,8 @@ pub struct LauncherConfig {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppearanceConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    preset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     icons: Option<bool>,
 
     /// Keys this build does not know about, preserved verbatim.
@@ -169,6 +178,32 @@ pub struct AppearanceConfig {
 }
 
 impl AppearanceConfig {
+    /// The named preset supplying the defaults for this section (#84).
+    ///
+    /// Defaults to [`DEFAULT_PRESET`]. Returned as written rather than parsed
+    /// here: `compass-core` has no opinion about what a preset looks like, and
+    /// `compass_ui::preset` is where the names are known.
+    #[must_use]
+    pub fn preset(&self) -> &str {
+        self.preset.as_deref().unwrap_or(DEFAULT_PRESET)
+    }
+
+    /// Sets `launcher.appearance.preset`. `None` removes the key.
+    pub fn set_preset(&mut self, value: Option<String>) -> &mut Self {
+        self.preset = value;
+        self
+    }
+
+    /// The explicit `launcher.appearance.icons`, if one was written.
+    ///
+    /// Distinct from [`AppearanceConfig::icons`]: a preset supplies the
+    /// default, so the resolver needs to know whether the user wrote the key
+    /// at all rather than what it falls back to.
+    #[must_use]
+    pub fn icons_override(&self) -> Option<bool> {
+        self.icons
+    }
+
     /// Whether result rows show the application's icon (#85).
     ///
     /// Defaults to [`DEFAULT_ICONS`].
@@ -194,8 +229,12 @@ impl AppearanceConfig {
     /// Destructured for the reason [`LauncherConfig::is_empty`] gives.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        let Self { icons, unknown } = self;
-        icons.is_none() && unknown.is_empty()
+        let Self {
+            preset,
+            icons,
+            unknown,
+        } = self;
+        preset.is_none() && icons.is_none() && unknown.is_empty()
     }
 }
 

@@ -186,6 +186,10 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
             r#"{"launcher":{"appearance":{"icons":true}}}"#,
             "appearance.icons",
         ),
+        (
+            r#"{"launcher":{"appearance":{"preset":"rofi"}}}"#,
+            "appearance.preset",
+        ),
     ];
 
     for (original, key) in cases {
@@ -208,7 +212,7 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
         "keybinding": "vim",
         "wrap_navigation": true,
         "quick_launch": false,
-        "appearance": { "icons": true }
+        "appearance": { "preset": "rofi", "icons": true }
       },
       "extensions": { "auto_update": false, "installed": ["com.example.clock"] }
     }"#;

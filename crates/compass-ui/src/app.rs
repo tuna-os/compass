@@ -186,8 +186,13 @@ pub struct AppFlags {
     pub wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result, from `launcher.quick_launch`.
     pub quick_launch: bool,
+    /// The resolved appearance preset (#84): geometry and structural flags.
+    pub appearance_preset: crate::preset::Resolved,
     /// Whether result rows show the application's icon, from
     /// `launcher.appearance.icons` (#85).
+    ///
+    /// Resolved from the preset and any explicit key, so this is the answer
+    /// rather than the configured value. See [`crate::preset::resolve`].
     pub icons: bool,
     /// How an `Icon=` name becomes a file on disk.
     ///
@@ -236,6 +241,7 @@ impl Default for AppFlags {
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
+            appearance_preset: crate::preset::resolve(None, None),
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
@@ -356,6 +362,14 @@ pub struct LauncherApp {
     wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result. See [`AppFlags::quick_launch`].
     quick_launch: bool,
+    /// Sizes and spacing, from the resolved appearance preset (#84).
+    ///
+    /// Held rather than read from [`design::GEOMETRY`] at each draw: a preset
+    /// varies it, and `view` must not have to know which one is in force.
+    geometry: design::Geometry,
+    /// Whether a rule separates the field from the results. See
+    /// [`crate::preset::Preset::field_rule`].
+    field_rule: bool,
     /// Whether result rows show the application's icon. See [`AppFlags::icons`].
     icons: bool,
     /// How an `Icon=` name becomes a file. See [`AppFlags::icon_lookup`].
@@ -476,17 +490,31 @@ impl LauncherApp {
     /// Create a new launcher application, indexing the environment.
     pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
         let mut app = Self::with_index(AppIndex::from_environment());
+        app.apply(flags);
+        (app, Task::none())
+    }
+
+    /// Copy the flags onto an already-built state.
+    ///
+    /// Split out of [`LauncherApp::new`] so the copying is reachable without
+    /// `AppIndex::from_environment`, which reads the invoking user's real
+    /// application directories. A test that reproduced this assignment list
+    /// instead of calling it would pass while the real one stopped copying a
+    /// field -- which is exactly the mutation it is meant to catch.
+    fn apply(&mut self, flags: AppFlags) {
+        let app = self;
         app.launcher = flags.launcher;
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
         app.quick_launch = flags.quick_launch;
         app.icons = flags.icons;
+        app.geometry = flags.appearance_preset.geometry;
+        app.field_rule = flags.appearance_preset.field_rule;
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
-        (app, Task::none())
     }
 
     /// Builds the state and opens the first window, for [`crate::run_resident`].
@@ -525,6 +553,8 @@ impl LauncherApp {
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
+            geometry: design::GEOMETRY,
+            field_rule: false,
             awaiting: false,
         }
     }
@@ -1053,17 +1083,18 @@ impl LauncherApp {
     /// 2,697 the action-panel assertion already detects reliably. A highlight
     /// is *easier* for the tier to see than a caret, not harder.
     pub fn view(&self) -> Element<'_, Message> {
+        let geometry = self.geometry;
         let palette = design::palette(self.appearance);
 
         let input = text_input("Search…", &self.query)
             .id(SEARCH_INPUT)
             .on_input(Message::QueryChanged)
             .padding(Padding::new(0.0).left(14).right(14))
-            .size(f32::from(GEOMETRY.query_size))
+            .size(f32::from(geometry.query_size))
             .on_submit(Message::LaunchSelected);
 
         let field = container(input)
-            .height(Length::Fixed(f32::from(GEOMETRY.field_height)))
+            .height(Length::Fixed(f32::from(geometry.field_height)))
             .width(Length::Fill)
             .align_y(Alignment::Center)
             .style(move |_: &Theme| container::Style {
@@ -1071,7 +1102,7 @@ impl LauncherApp {
                 border: Border {
                     color: palette.border.to_iced(),
                     width: 1.0,
-                    radius: f32::from(GEOMETRY.field_radius).into(),
+                    radius: f32::from(geometry.field_radius).into(),
                 },
                 ..container::Style::default()
             });
@@ -1083,7 +1114,7 @@ impl LauncherApp {
         } else if self.results.is_empty() {
             self.notice("No results")
         } else {
-            let mut list = column![].spacing(f32::from(GEOMETRY.row_spacing));
+            let mut list = column![].spacing(f32::from(geometry.row_spacing));
             for (position, index) in self.results.iter().enumerate() {
                 let Some(item) = self.app_index.items().get(*index) else {
                     continue;
@@ -1093,7 +1124,26 @@ impl LauncherApp {
             container(list).padding(Padding::new(6.0).top(8)).into()
         };
 
-        let card_content = column![field, body].width(Length::Fill);
+        // Flow's hairline rule under the query field (#84). A one-pixel
+        // container rather than a border on the field, because the field has
+        // its own rounded border in the other presets and a rule has to span
+        // the card's full width regardless of the field's radius.
+        let card_content = if self.field_rule {
+            column![
+                field,
+                container(Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(1.0))
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(palette.border.to_iced().into()),
+                        ..container::Style::default()
+                    }),
+                body
+            ]
+            .width(Length::Fill)
+        } else {
+            column![field, body].width(Length::Fill)
+        };
 
         // The panel floats over the list rather than replacing it. The old
         // comment said an overlay "needs a stacking widget and a backdrop" --
@@ -1115,14 +1165,14 @@ impl LauncherApp {
 
         container(
             container(card_body)
-                .width(Length::Fixed(f32::from(GEOMETRY.card_width)))
-                .padding(GEOMETRY.card_padding)
+                .width(Length::Fixed(f32::from(geometry.card_width)))
+                .padding(geometry.card_padding)
                 .style(move |_: &Theme| container::Style {
                     background: Some(palette.surface.to_iced().into()),
                     border: Border {
                         color: palette.border.to_iced(),
                         width: 1.0,
-                        radius: f32::from(GEOMETRY.card_radius).into(),
+                        radius: f32::from(geometry.card_radius).into(),
                     },
                     ..container::Style::default()
                 }),
@@ -1135,10 +1185,11 @@ impl LauncherApp {
 
     /// A line of explanation where the list would be.
     fn notice(&self, message: &str) -> Element<'_, Message> {
+        let geometry = self.geometry;
         let palette = design::palette(self.appearance);
         container(
             text(message.to_owned())
-                .size(f32::from(GEOMETRY.title_size))
+                .size(f32::from(geometry.title_size))
                 .color(palette.muted.to_iced()),
         )
         .width(Length::Fill)
@@ -1149,7 +1200,7 @@ impl LauncherApp {
 
     /// One result: icon, title, subtitle.
     ///
-    /// The icon slot is a fixed square of `GEOMETRY.icon_size`, and what goes
+    /// The icon slot is a fixed square of `geometry.icon_size`, and what goes
     /// in it depends on `launcher.appearance.icons` (#85). Off, or on with a
     /// name the theme cannot resolve, it is the application's first letter in a
     /// tinted square. On and resolved, it is the icon itself.
@@ -1159,6 +1210,7 @@ impl LauncherApp {
     /// proportions and the title's position exactly where the others are, and
     /// the VM tier's window box does not move when the option is turned on.
     fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
+        let geometry = self.geometry;
         let palette = design::palette(self.appearance);
         let title_color = if selected {
             palette.selection_text
@@ -1174,14 +1226,14 @@ impl LauncherApp {
         let icon: Element<Message> = match self.row_art(item) {
             Some(crate::icons::IconArt::Raster(path)) => {
                 container(image(path).width(Length::Fill).height(Length::Fill))
-                    .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
-                    .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                    .width(Length::Fixed(f32::from(geometry.icon_size)))
+                    .height(Length::Fixed(f32::from(geometry.icon_size)))
                     .into()
             }
             Some(crate::icons::IconArt::Vector(path)) => {
                 container(svg(path).width(Length::Fill).height(Length::Fill))
-                    .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
-                    .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                    .width(Length::Fixed(f32::from(geometry.icon_size)))
+                    .height(Length::Fixed(f32::from(geometry.icon_size)))
                     .into()
             }
             None => {
@@ -1193,11 +1245,11 @@ impl LauncherApp {
 
                 container(
                     text(initial)
-                        .size(f32::from(GEOMETRY.icon_size) / 2.0)
+                        .size(f32::from(geometry.icon_size) / 2.0)
                         .color(title_color.to_iced()),
                 )
-                .width(Length::Fixed(f32::from(GEOMETRY.icon_size)))
-                .height(Length::Fixed(f32::from(GEOMETRY.icon_size)))
+                .width(Length::Fixed(f32::from(geometry.icon_size)))
+                .height(Length::Fixed(f32::from(geometry.icon_size)))
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center)
                 .style(move |_: &Theme| container::Style {
@@ -1221,13 +1273,13 @@ impl LauncherApp {
 
         let mut labels = column![
             text(item.name().to_owned())
-                .size(f32::from(GEOMETRY.title_size))
+                .size(f32::from(geometry.title_size))
                 .color(title_color.to_iced())
         ];
         if let Some(comment) = item.comment() {
             labels = labels.push(
                 text(comment.to_owned())
-                    .size(f32::from(GEOMETRY.subtitle_size))
+                    .size(f32::from(geometry.subtitle_size))
                     .color(subtitle_color.to_iced()),
             );
         }
@@ -1239,7 +1291,7 @@ impl LauncherApp {
                 .padding(Padding::new(0.0).left(12).right(12)),
         )
         .width(Length::Fill)
-        .height(Length::Fixed(f32::from(GEOMETRY.row_height)))
+        .height(Length::Fixed(f32::from(geometry.row_height)))
         .style(move |_: &Theme| {
             if selected {
                 container::Style {
@@ -1247,7 +1299,7 @@ impl LauncherApp {
                     border: Border {
                         color: Color::TRANSPARENT,
                         width: 0.0,
-                        radius: f32::from(GEOMETRY.row_radius).into(),
+                        radius: f32::from(geometry.row_radius).into(),
                     },
                     ..container::Style::default()
                 }
@@ -1264,8 +1316,9 @@ impl LauncherApp {
     /// and dividers are drawn as themselves rather than as indented text, and
     /// the selection is the same filled rectangle the result list uses.
     fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
+        let geometry = self.geometry;
         let palette = design::palette(self.appearance);
-        let mut col = column![].spacing(f32::from(GEOMETRY.row_spacing));
+        let mut col = column![].spacing(f32::from(geometry.row_spacing));
 
         for (index, panel_row) in panel.rows.iter().enumerate() {
             let element: Element<Message> = match panel_row.kind {
@@ -1284,7 +1337,7 @@ impl LauncherApp {
                         .map_or("", |section| section.name.as_str());
                     container(
                         text(name.to_uppercase())
-                            .size(f32::from(GEOMETRY.heading_size))
+                            .size(f32::from(geometry.heading_size))
                             .color(palette.muted.to_iced()),
                     )
                     .padding(Padding::new(0.0).top(8).bottom(4).left(10))
@@ -1329,6 +1382,7 @@ impl LauncherApp {
         shortcut: Option<&str>,
         selected: bool,
     ) -> Element<'_, Message> {
+        let geometry = self.geometry;
         let palette = design::palette(self.appearance);
         let colour = if selected {
             palette.selection_text
@@ -1338,7 +1392,7 @@ impl LauncherApp {
 
         let mut line = row![
             text(title.to_owned())
-                .size(f32::from(GEOMETRY.title_size))
+                .size(f32::from(geometry.title_size))
                 .color(colour.to_iced())
         ]
         .spacing(8)
@@ -1348,7 +1402,7 @@ impl LauncherApp {
             line = line.push(Space::new().width(Length::Fill));
             line = line.push(
                 text(shortcut.to_owned())
-                    .size(f32::from(GEOMETRY.subtitle_size))
+                    .size(f32::from(geometry.subtitle_size))
                     .color(
                         if selected {
                             palette.selection_text
@@ -2458,5 +2512,64 @@ mod icon_tests {
                 .icons()
         );
         assert!(!AppFlags::default().icons);
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+    use crate::preset::{self, Preset};
+
+    /// A launcher built from flags, through the code `vicinae` uses.
+    ///
+    /// `apply` rather than a hand-written assignment list: a helper that set
+    /// the fields itself would pass while the real copying silently stopped,
+    /// which is the whole mutation these tests exist to catch. It was written
+    /// that way first and the control caught it.
+    fn app_with(preset_name: &str, icons: Option<bool>) -> LauncherApp {
+        let resolved = preset::resolve(Some(preset_name), icons);
+        let mut app = LauncherApp::with_index(AppIndex::builder().build());
+        app.apply(AppFlags {
+            icons: resolved.icons,
+            appearance_preset: resolved,
+            ..AppFlags::default()
+        });
+        app
+    }
+
+    #[test]
+    fn the_preset_reaches_the_state_that_draws() {
+        // The wiring, not the resolver: `preset::resolve` is tested on its
+        // own, and this is the half that would silently do nothing if the
+        // flags stopped being copied across.
+        let rofi = app_with("rofi", None);
+        assert_eq!(rofi.geometry.row_height, Preset::Rofi.geometry().row_height);
+        assert_eq!(rofi.geometry.card_radius, 0);
+        assert!(!rofi.icons);
+        assert!(!rofi.field_rule);
+
+        let flow = app_with("flow", None);
+        assert!(flow.field_rule, "flow draws the rule under the field");
+        assert!(flow.icons);
+    }
+
+    #[test]
+    fn the_default_launcher_draws_the_shipped_geometry() {
+        // `with_index` is what every other test builds, so a preset layer that
+        // changed the default would change all of them -- and move the VM
+        // tier's containment box with no commit saying so.
+        let app = LauncherApp::with_index(AppIndex::builder().build());
+        assert_eq!(
+            format!("{:?}", app.geometry),
+            format!("{:?}", design::GEOMETRY)
+        );
+        assert!(!app.field_rule);
+    }
+
+    #[test]
+    fn a_preset_and_an_explicit_key_both_reach_the_app() {
+        // raycast turns icons on; the explicit key turns them back off.
+        assert!(app_with("raycast", None).icons);
+        assert!(!app_with("raycast", Some(false)).icons);
     }
 }
