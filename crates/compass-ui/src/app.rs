@@ -585,6 +585,15 @@ fn card_background(surface: design::Rgb, tint: bool) -> iced::Color {
     }
 }
 
+fn query_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    // The enclosing field owns the fill and rounded border.
+    text_input::Style {
+        background: Color::TRANSPARENT.into(),
+        border: Border::default(),
+        ..text_input::default(theme, status)
+    }
+}
+
 impl LauncherApp {
     /// Create a new launcher application, indexing the environment.
     pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
@@ -1319,6 +1328,7 @@ impl LauncherApp {
 
         let input = text_input("Search…", &self.query)
             .id(SEARCH_INPUT)
+            .style(query_input_style)
             .on_input_maybe(self.panel.is_none().then_some(Message::QueryChanged))
             .padding(Padding::new(0.0).left(14).right(14))
             .size(f32::from(geometry.query_size));
@@ -3572,6 +3582,27 @@ mod ime_tests {
 mod view_tests {
     use super::*;
     use crate::preset::{self, Preset};
+
+    #[test]
+    fn query_input_leaves_the_border_and_fill_to_its_container() {
+        for theme in [Theme::Light, Theme::Dark] {
+            for status in [
+                text_input::Status::Active,
+                text_input::Status::Hovered,
+                text_input::Status::Focused { is_hovered: false },
+                text_input::Status::Focused { is_hovered: true },
+                text_input::Status::Disabled,
+            ] {
+                let style = query_input_style(&theme, status);
+                let default = text_input::default(&theme, status);
+                assert_eq!(style.background, Color::TRANSPARENT.into());
+                assert_eq!(style.border.width, 0.0);
+                assert_eq!(style.value, default.value);
+                assert_eq!(style.placeholder, default.placeholder);
+                assert_eq!(style.selection, default.selection);
+            }
+        }
+    }
 
     fn long_results(dir: &std::path::Path) -> LauncherApp {
         for i in 0..40 {
