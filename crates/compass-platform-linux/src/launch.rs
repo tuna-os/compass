@@ -10,6 +10,9 @@
 //! The order matters and is not arbitrary. Inside the sandbox a direct spawn
 //! reaches only what the sandbox contains, so it is the last resort rather
 //! than the obvious first move.
+//!
+//! Desktop links instead use `xdg-open` with their URL, on the host when
+//! sandboxed. They have no application Exec to expand or fall back to.
 
 use std::path::Path;
 
@@ -95,8 +98,34 @@ async fn launch_app_with_uris(
     entry: &DesktopEntry,
     uris: &[&str],
 ) -> Result<LaunchMethod, LaunchError> {
+    if matches!(entry.entry_type(), compass_xdg::EntryType::Link) {
+        let exec = desktop_link_exec(entry)?;
+        // Resolve file: links on the host too: the sandbox may not contain
+        // the target file even though its desktop entry is visible here.
+        return if is_flatpak() {
+            launch_via_flatpak_spawn(&exec)
+                .await
+                .map(|()| LaunchMethod::FlatpakSpawn)
+        } else {
+            launch_direct(&exec).await.map(|()| LaunchMethod::Direct)
+        };
+    }
     let exec = entry.expand_exec_with(uris, false, None);
     launch_exec(exec).await
+}
+
+fn desktop_link_exec(entry: &DesktopEntry) -> Result<Vec<String>, LaunchError> {
+    let uri = entry.url().ok_or(LaunchError::InvalidLinkUrl)?;
+    let (scheme, _) = uri.split_once(':').ok_or(LaunchError::InvalidLinkUrl)?;
+    if !scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        || uri.chars().any(char::is_control)
+    {
+        return Err(LaunchError::InvalidLinkUrl);
+    }
+    Ok(vec!["xdg-open".to_owned(), uri.to_owned()])
 }
 
 async fn launch_exec(exec: Vec<String>) -> Result<LaunchMethod, LaunchError> {
@@ -201,6 +230,46 @@ async fn launch_direct(exec: &[String]) -> Result<(), LaunchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_links_use_native_uri_dispatch_not_exec_or_a_shell() {
+        for uri in [
+            "file:///usr/share/doc/manual%20one.html",
+            "https://example.test/a b?x=$HOME&y=;",
+            "mailto:user@example.test",
+        ] {
+            let entry = DesktopEntry::parse(&format!(
+                "[Desktop Entry]\nType=Link\nName=Link\nURL={uri}\nExec=wrong-command\n"
+            ))
+            .unwrap();
+            assert_eq!(desktop_link_exec(&entry).unwrap(), ["xdg-open", uri]);
+        }
+    }
+
+    #[test]
+    fn relative_paths_options_and_missing_link_urls_are_rejected() {
+        for url in [
+            "",
+            "--help",
+            "/etc/passwd",
+            "relative/path",
+            "1invalid:value",
+            ":value",
+        ] {
+            let entry = DesktopEntry::parse(&format!(
+                "[Desktop Entry]\nType=Link\nName=Link\nURL={url}\n"
+            ))
+            .unwrap();
+            assert!(
+                matches!(desktop_link_exec(&entry), Err(LaunchError::InvalidLinkUrl)),
+                "{url}"
+            );
+        }
+        assert!(matches!(
+            DesktopEntry::parse("[Desktop Entry]\nType=Link\nName=Missing\n"),
+            Err(compass_xdg::Error::MissingUrl)
+        ));
+    }
 
     #[test]
     fn the_linux_launcher_is_an_app_launcher() {

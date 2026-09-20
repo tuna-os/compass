@@ -109,7 +109,9 @@ Rust items, with desktop-action, TryExec, entry-type and search-field difference
 The [root integration follow-up](./benchmarks/2026-09-20-root-integration/README.md)
 now uses the ported root scorer in daemon and UI. Its sampled nonempty queries
 have equal membership, and four positive ASCII queries have identical ordering.
-Type=Link visibility and Unicode ranking still fail. Resolve those and rerun
+The [desktop-link follow-up](./benchmarks/2026-09-20-desktop-links/README.md)
+also matches all 448 empty-query results in order. Unicode ranking still fails.
+Resolve that and rerun
 ordered-ID parity before timing search; do not select only matching queries to
 conceal the failing workload.
 

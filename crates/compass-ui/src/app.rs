@@ -323,7 +323,7 @@ impl PanelState {
 #[must_use]
 pub fn actions_for_app(item: &AppItem) -> Vec<PanelSection> {
     let mut primary = vec![Action::new("Open").with_id(APP_OPEN).with_shortcut("enter")];
-    if !item.is_action() {
+    if !item.is_action() && item.entry().is_application() {
         for action in item.entry().actions() {
             if let Some(name) = action.name().filter(|name| !name.is_empty())
                 && action.exec().is_some()
@@ -1773,6 +1773,20 @@ mod tests {
     #[test]
     fn selecting_an_application_still_dispatches_the_parent() {
         assert_eq!(recorded_launch(false), [None]);
+    }
+
+    #[test]
+    fn a_desktop_link_is_searchable_without_application_actions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manual.desktop"), "[Desktop Entry]\nType=Link\nName=Manual\nURL=file:///manual.pdf\nActions=invalid;\n[Desktop Action invalid]\nName=Invalid\nExec=wrong\n").unwrap();
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        let _ = app.update(Message::QueryChanged("Manual".to_owned()));
+        assert_eq!(app.results.len(), 1);
+        let item = app.selected_item().unwrap();
+        assert_eq!(item.entry().url(), Some("file:///manual.pdf"));
+        let sections = actions_for_app(item);
+        assert_eq!(sections[0].actions.len(), 1);
+        assert_eq!(sections[0].actions[0].id.as_deref(), Some(APP_OPEN));
     }
 
     #[test]
