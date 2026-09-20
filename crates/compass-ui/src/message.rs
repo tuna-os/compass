@@ -31,6 +31,13 @@ pub enum Message {
     FrameDrawn,
     /// The search query changed.
     QueryChanged(String),
+    /// An asynchronous search completed. Only the current generation may apply.
+    SearchCompleted {
+        /// Generation captured when the request started.
+        generation: u64,
+        /// Stable application keys, in backend ranking order, or a failure.
+        result: Result<Vec<String>, String>,
+    },
     /// A result was selected (by keyboard navigation).
     ResultSelected(usize),
     /// Move the selection one row, wrapping at both ends.

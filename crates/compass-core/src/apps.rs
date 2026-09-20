@@ -729,6 +729,12 @@ impl AppIndex {
         self.by_key.get(key).map(|&index| &self.items[index])
     }
 
+    /// Catalog position of a stable key, valid until this index is replaced.
+    #[must_use]
+    pub fn position(&self, key: &str) -> Option<usize> {
+        self.by_key.get(key).copied()
+    }
+
     /// Only the items that can actually be launched. See
     /// [`AppIndexBuilder::include_unlaunchable`].
     pub fn launchable_items(&self) -> impl Iterator<Item = &AppItem> {
