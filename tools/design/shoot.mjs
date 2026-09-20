@@ -121,6 +121,30 @@ for (const appearance of states.appearances.map((a) => a.name)) {
   await page.selectOption("#appearance", appearance);
   for (const [index, state] of states.states.entries()) {
     await page.selectOption("#state", String(index));
+    if (state.panel) {
+      const filter = page.locator(".panel-filter");
+      if ((await filter.inputValue()) !== state.panel.filter) {
+        throw new Error(`action filter disagrees with Rust state: ${state.name}`);
+      }
+      if (!(await filter.evaluate((input) => document.activeElement === input))) {
+        throw new Error(`action filter is not focused: ${state.name}`);
+      }
+      const fieldIsVisible = await filter.evaluate((input) => {
+        const field = input.getBoundingClientRect();
+        const card = document.querySelector("#card").getBoundingClientRect();
+        const panel = input.closest(".panel").getBoundingClientRect();
+        return field.top >= Math.max(card.top, panel.top) &&
+          field.bottom <= Math.min(card.bottom, panel.bottom) &&
+          field.left >= card.left && field.right <= card.right;
+      });
+      if (!fieldIsVisible) throw new Error(`action filter is clipped: ${state.name}`);
+      if (await page.locator(".field .caret").count()) {
+        throw new Error(`root query incorrectly retains the caret: ${state.name}`);
+      }
+      if (state.panel.rows.length === 0 && (await page.locator(".panel .empty").textContent()) !== "No actions") {
+        throw new Error(`missing empty action state: ${state.name}`);
+      }
+    }
     await page.addStyleTag({ content: "* { animation: none !important; }" });
     const screen = page.locator("#screen");
     const file = join(out, `${appearance}-${state.name}.png`);
