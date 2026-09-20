@@ -2245,7 +2245,7 @@ Ordered by what blocks what, not by size.
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
 | `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
-| `UI/confirmAlert` | **not started**; it answers whenever the *user* does, and the host has no way to hold a reply open across a dialog |
+| `UI/confirmAlert` | the adapter and deferred reply transport are implemented (`UiShellService::defer`, `Session::answer_deferred`, `Session::fail_deferred`); the launcher still needs to draw the dialog and settle it on confirmation, cancellation, replacement and navigation |
 | `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
 | `OAuth/authorize` | **not started**; needs a browser and an overlay |
 | running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
@@ -2348,6 +2348,14 @@ It is the bulk of the port, and the honest next move is Phase 4's first slice:
 first, with the protocol pinned by tests, before anything is spawned.
 
 ## 12. Immediate next steps
+
+**Current implementation check:** `UI/confirmAlert` already has a deferred transport and
+adapter; it must not be reimplemented from the older “not started” entry. The application
+action panel now dispatches Open, Copy name and Copy path by stable action IDs, offers a focused
+fuzzy filter, and routes Enter through one keyboard handler. Copy uses Iced's native clipboard
+task while leaving the launcher alive. Headless widget and task tests cover these paths;
+clipboard delivery and focus under GNOME still require desktop integration checks. This does
+not close the extension-rendering, builtin-view, platform or release gates below.
 
 Rewritten as items land; the previous version listed the VM tier and both spikes as the work to do,
 and all three now exist.

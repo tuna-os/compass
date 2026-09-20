@@ -53,6 +53,8 @@ pub enum Message {
     PanelMove(Direction),
     /// Run the action panel's selected action.
     PanelActivate,
+    /// Activate the clicked action row; headings and dividers are ignored.
+    PanelClicked(usize),
     /// A global shortcut was activated.
     ShortcutActivated(String),
     /// Window focus changed.

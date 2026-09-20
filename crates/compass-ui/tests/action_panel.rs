@@ -492,22 +492,14 @@ mod in_launcher {
         assert!(sections[1].actions.iter().any(|a| a.title == "Copy name"));
     }
 
-    /// An app item cannot be built here without a desktop file, so this mirrors
-    /// what [`actions_for_app`] produces for one that has a path.
     fn actions_for_app_fixture() -> Vec<compass_ui::action_panel::PanelSection> {
-        let _ = actions_for_app;
-        vec![
-            compass_ui::action_panel::PanelSection {
-                name: String::new(),
-                actions: vec![compass_ui::action_panel::Action::new("Open").with_shortcut("enter")],
-            },
-            compass_ui::action_panel::PanelSection {
-                name: "Copy".to_owned(),
-                actions: vec![
-                    compass_ui::action_panel::Action::new("Copy name"),
-                    compass_ui::action_panel::Action::new("Copy path"),
-                ],
-            },
-        ]
+        let dir = tempfile::tempdir().expect("temporary applications directory");
+        std::fs::write(
+            dir.path().join("test.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Test\nExec=/bin/true\n",
+        )
+        .expect("desktop entry");
+        let index = compass_core::AppIndex::builder().dir(dir.path()).build();
+        actions_for_app(&index.items()[0])
     }
 }
