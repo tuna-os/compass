@@ -1614,10 +1614,12 @@ samples and explicit exclusions. See [HEAD-TO-HEAD.md](./HEAD-TO-HEAD.md) for it
 contract and the remaining comparable-workload requirements. The historical
 query/CLI claims below apply to our instrumented C++ fork, not pristine upstream.
 
-Tracked as #117. **Every row in §8.5 is measured against a budget somebody wrote down. None is
-measured against the thing we are replacing.** For a strangler rewrite that is the wrong
-comparison: a 2.0 ms fuzzy-search SLA says nothing about whether a user will feel the port as an
-improvement or a regression, because the C++ engine is the only baseline they have.
+Tracked as #117. This began because §8.5 measured budgets, not the engine being replaced.
+The [first three upstream runs](./benchmarks/2026-09-20-upstream-v0.29.0/README.md) now
+measure warm ping: Rust's median was lower in all three. Search speed remains unmeasured
+against upstream, and the recorded memory readings are not feature-equivalent. A 2.0 ms
+fuzzy-search SLA still says nothing about whether users will feel the port as an improvement
+or regression; the C++ engine is their baseline.
 
 Suite 0 asks *"same results?"*. Suite 4b asks *"at least as fast, in no more memory?"* — same
 corpus, same harness shape, different question. It is the evidence the Phase 7 cutover needs, and

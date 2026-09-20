@@ -6,6 +6,10 @@ The selected baseline is **Vicinae v0.29.0**, upstream commit
 Do not label this fork's C++ artifact as that release. Record any instrumentation
 patch separately from the upstream revision.
 
+The [first three recorded runs](./benchmarks/2026-09-20-upstream-v0.29.0/README.md)
+show lower Rust ping latency in that setup. They do not establish search speed
+or whole-launcher memory efficiency.
+
 `cargo run --release -p compass-testkit --bin head-to-head -- CONFIG.json REPORT.json`
 compares two already-running engines over persistent Unix sockets. It does not
 start, stop, configure or mutate their indexes. Use isolated test profiles, not
