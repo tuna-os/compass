@@ -104,11 +104,14 @@ overlapping process trees, RPC errors and timeouts fail the run.
 ## Search is a separate prerequisite
 
 The [instrumented upstream inventory audit](./benchmarks/2026-09-20-query-audit/README.md)
-now demonstrates an end-to-end failure: 448 upstream root applications versus 452
+initially demonstrated an end-to-end failure: 448 upstream root applications versus 452
 Rust items, with desktop-action, TryExec, entry-type and search-field differences.
-The daemon's existing application-index scorer is not the ported root-manager
-path. Resolve that integration and rerun ordered-ID parity before timing search;
-do not select only matching queries to conceal the failing workload.
+The [root integration follow-up](./benchmarks/2026-09-20-root-integration/README.md)
+now uses the ported root scorer in daemon and UI. Its sampled nonempty queries
+have equal membership, and four positive ASCII queries have identical ordering.
+Type=Link visibility and Unicode ranking still fail. Resolve those and rerun
+ordered-ID parity before timing search; do not select only matching queries to
+conceal the failing workload.
 
 Unmodified v0.29.0 has `Ipc/ping` but **no `Ipc/rootQuery`**. `queries: []`
 therefore excludes search visibly. The C++ instrumentation merged in #126 is

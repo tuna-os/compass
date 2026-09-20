@@ -430,7 +430,31 @@ impl AppIndexBuilder {
             }
         }
 
+        let mut root_indices: Vec<_> = items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, app)| (!app.is_action()).then_some(index))
+            .collect();
+        root_indices.sort_by_cached_key(|&index| items[index].name().to_lowercase());
+        let mut roots = Vec::with_capacity(root_indices.len());
+        for &index in &root_indices {
+            let app = &items[index];
+            let keywords: Vec<_> = app
+                .categories()
+                .iter()
+                .chain(app.keywords())
+                .cloned()
+                .collect();
+            roots.push(crate::root_items::app_root_item(
+                app.desktop_id(),
+                app.name(),
+                &keywords,
+                app.entry().unlocalized_name(),
+            ));
+        }
         AppIndex {
+            roots,
+            root_indices,
             items,
             by_key,
             skipped,
@@ -595,12 +619,68 @@ fn is_executable_file(path: &Path) -> bool {
 /// A built, searchable index of applications and their actions.
 #[derive(Debug, Clone, Default)]
 pub struct AppIndex {
+    roots: Vec<crate::root_items::RootItem>,
+    root_indices: Vec<usize>,
     items: Vec<AppItem>,
     by_key: HashMap<String, usize>,
     skipped: Vec<SkippedEntry>,
 }
 
+/// A root application match with its stable index into the application catalog.
+#[derive(Debug)]
+pub struct ApplicationRootHit<'a> {
+    /// The owning application, never a desktop action.
+    pub item: &'a AppItem,
+    /// Position in `AppIndex::items`, for UI selection and launch dispatch.
+    pub index: usize,
+    /// Match score on the IPC scale, excluding frecency (zero for empty input).
+    pub match_score: u32,
+}
+
 impl AppIndex {
+    /// Search application root rows using the root manager's fields and ordering.
+    ///
+    /// Actions belong in the owning application's panel. An unresolved TryExec
+    /// does not hide a root row: a sandbox may not see an executable on the host.
+    /// The index still reports that diagnostic through `AppItem::launchable`.
+    #[must_use]
+    pub fn search_root(
+        &self,
+        pattern: &str,
+        history: Option<&dyn crate::FrecencyStore>,
+    ) -> Vec<ApplicationRootHit<'_>> {
+        let now = history.map_or(0, crate::FrecencyStore::now);
+        let frecency = |index: usize, _: &crate::root_items::RootItem| {
+            history
+                .and_then(|store| store.record(self.items[self.root_indices[index]].key()))
+                .map_or(0.0, |record| record.score_at(now))
+        };
+        crate::root_items::search_with_frecency(
+            &self.roots,
+            pattern,
+            &crate::root_items::SearchOptions::default(),
+            frecency,
+        )
+        .into_iter()
+        .map(|hit| {
+            let index = self.root_indices[hit.index];
+            let item = &self.items[index];
+            let match_score = if pattern.trim().is_empty() {
+                0
+            } else {
+                (hit.score - compass_search::FRECENCY_WEIGHT * frecency(hit.index, hit.item))
+                    .round()
+                    .clamp(0.0, 100.0) as u32
+            };
+            ApplicationRootHit {
+                item,
+                index,
+                match_score,
+            }
+        })
+        .collect()
+    }
+
     /// Starts building an index. See [`AppIndexBuilder`].
     #[must_use]
     pub fn builder() -> AppIndexBuilder {

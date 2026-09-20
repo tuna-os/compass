@@ -915,14 +915,19 @@ the untranslated name scores at 1.0, not 0.6. A regression test checks equality
 with a display-title match and precedence over a keyword match. Restoring the old
 weight fails it (60 versus 100). The conversion preserves keywords and omits an
 untranslated name identical to the display name, as upstream does. The root-item
-suite now has 64 tests; this correction does not wire the model into the daemon
-or establish end-to-end search parity.
+suite now has 64 tests; this correction alone does not establish end-to-end search parity.
 
-**Not wired into the launcher yet, deliberately.** `compass_ui::root_list` and this conversion are
-both tested, but the launcher still searches the application index directly. Flipping that is a
-change to the one path the VM tier has actually verified — it is where #91 was found — and changing
-it blind, in a container with no compositor, would trade a working launcher for an untested one. The
-pieces are ready; the switch waits for a run that can answer for it.
+**Application root scoring is now wired into daemon and UI search.** `AppIndex`
+caches root fields and their catalog positions when scanning, and both consumers
+use the root manager's scorer. The XDG adapter combines categories then keywords
+at keyword weight, as upstream does; generic names and comments are not root
+fields. Unresolved TryExec remains a diagnostic rather than hiding a host app.
+The daemon retains the existing desktop-file IDs, result limit and frecency keys;
+its wire match score still excludes the frecency boost. This does not yet connect
+all builtin/extension providers, root configuration or the grouped `root_list`
+presentation. The UI's empty-query greeting and lack of persisted launch history
+also remain separate gaps. End-to-end upstream ordering and Type=Link parity
+must still be proved before search timing is a comparable benchmark.
 
 An integration prerequisite found during the upstream audit is corrected: the
 launcher's selected desktop-action row now dispatches its stable action ID to
@@ -931,9 +936,11 @@ that declared action's own Exec/URI arguments through the existing launch route;
 unknown IDs and missing Exec return errors, never a parent-launch fallback.
 Backends without action support report that explicitly. UI task tests distinguish
 ordinary and action dispatch, and Linux argument tests distinguish the two Execs.
-Desktop actions still need moving into the application action panel as part of
-root-provider integration; this does not mark that integration or target-session
-launch verification complete.
+Desktop actions now appear in the owning application's panel instead of root
+search results. A UI task test drives query, panel filtering and activation by
+stable action ID; a real-daemon IPC test rejects action and description matches
+while retaining an unresolved TryExec application. Target-session action launch
+verification and the rest of root-provider integration remain required.
 
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
 full: the weighted fields (title and unlocalized title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,

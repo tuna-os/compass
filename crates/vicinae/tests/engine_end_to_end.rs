@@ -193,7 +193,10 @@ fn query_json_is_machine_readable_and_carries_the_documented_fields() {
     let first = &hits[0];
 
     assert_eq!(first["title"], "Text Editor");
-    assert_eq!(first["subtitle"], "Editor");
+    assert!(
+        first["subtitle"].is_null(),
+        "application descriptions are not root subtitles"
+    );
     assert!(first["id"].is_string(), "{first}");
 
     let score = first["score"].as_u64().expect("a numeric score");
@@ -201,6 +204,26 @@ fn query_json_is_machine_readable_and_carries_the_documented_fields() {
         score <= 100,
         "score {score} is outside the documented 0..=100"
     );
+}
+
+#[test]
+fn queries_use_root_provider_fields_and_do_not_return_desktop_actions() {
+    let daemon = Daemon::start(&[(
+        "browser.desktop",
+        &entry(
+            "Browser",
+            "TryExec=compass-unresolved-sentinel\nComment=DescriptionSentinel\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=browser --private\n",
+        ),
+    )]);
+    let all: serde_json::Value =
+        serde_json::from_str(&daemon.client(&["query", "--json", ""])).unwrap();
+    assert_eq!(all.as_array().unwrap().len(), 1);
+    assert_eq!(all[0]["id"], "browser.desktop");
+    for query in ["DescriptionSentinel", "Private"] {
+        let hits: serde_json::Value =
+            serde_json::from_str(&daemon.client(&["query", "--json", query])).unwrap();
+        assert!(hits.as_array().unwrap().is_empty(), "{query}: {hits}");
+    }
 }
 
 #[test]
