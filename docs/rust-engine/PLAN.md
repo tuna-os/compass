@@ -1605,6 +1605,15 @@ rubber-stamped and stop catching anything.
 
 ### 8.5b Suite 4b — head to head against the C++ engine
 
+**Baseline clarification:** the requested baseline is the latest upstream release,
+now pinned to Vicinae v0.29.0 (`c3415a3ed56676d2960d90975ab319ae8a7aba6e`), not this
+fork's C++ artifact. That unmodified release has no root-query IPC endpoint.
+The new `compass-testkit` `head-to-head` binary measures persistent ping,
+instrumented queries when available, and process-tree RSS/PSS, retaining raw
+samples and explicit exclusions. See [HEAD-TO-HEAD.md](./HEAD-TO-HEAD.md) for its
+contract and the remaining comparable-workload requirements. The historical
+query/CLI claims below apply to our instrumented C++ fork, not pristine upstream.
+
 Tracked as #117. **Every row in §8.5 is measured against a budget somebody wrote down. None is
 measured against the thing we are replacing.** For a strangler rewrite that is the wrong
 comparison: a 2.0 ms fuzzy-search SLA says nothing about whether a user will feel the port as an
