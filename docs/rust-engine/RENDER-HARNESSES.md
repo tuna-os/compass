@@ -29,6 +29,25 @@ the Rust.
 
 It does **not** prove Iced paints the same picture. It is HTML.
 
+### Regular design audits
+
+Run a browser audit after each user-visible UI change and before merging UI
+work. During longer backend-only stretches, audit again at each integrated
+launcher milestone. Generate fresh states, inspect the rendered images (not
+just the screenshot command's exit status), and record the source commit,
+states inspected, findings and remaining coverage gaps in the PR or an audit
+note. Review light and dark appearances, the default preset's affected states,
+and all four presets whenever geometry or shared tokens change.
+
+Check hierarchy, spacing, selection contrast, truncation, action-panel layout,
+and empty/loading/error states. If the surrogate cannot show the changed
+production state, record that as missing coverage; a nearby fixture is not a
+pass. Keep fixture-only actions distinct from working application actions.
+Native widget behaviour and OS integration still need the other tiers above.
+
+The [2026-09-20 audit](./design-audits/2026-09-20.md) records the starting
+coverage and the current theme/default distinction.
+
 ## 2. The wgpu path — not built, and here is exactly what it takes
 
 This is the missing middle: the *real* widget code and the *real* renderer, in
