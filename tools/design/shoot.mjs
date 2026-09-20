@@ -145,6 +145,16 @@ for (const appearance of states.appearances.map((a) => a.name)) {
         throw new Error(`missing empty action state: ${state.name}`);
       }
     }
+    if (!state.panel && state.sections.some((section) => section.rows.some((row) => row.selected))) {
+      const visible = await page.locator(".list .row.selected").evaluate((row) => {
+        const selected = row.getBoundingClientRect();
+        const list = row.closest(".list").getBoundingClientRect();
+        const card = document.querySelector("#card").getBoundingClientRect();
+        return selected.top >= Math.max(list.top, card.top) - 1 &&
+          selected.bottom <= Math.min(list.bottom, card.bottom) + 1;
+      });
+      if (!visible) throw new Error(`selected root result is clipped: ${state.name}`);
+    }
     await page.addStyleTag({ content: "* { animation: none !important; }" });
     const screen = page.locator("#screen");
     const file = join(out, `${appearance}-${state.name}.png`);
