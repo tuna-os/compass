@@ -1548,6 +1548,7 @@ impl LauncherApp {
         )
         .width(Length::Fill)
         .height(Length::Fixed(f32::from(geometry.row_height)))
+        .align_y(Alignment::Center)
         .style(move |_: &Theme| {
             if selected {
                 container::Style {
@@ -3158,11 +3159,11 @@ mod icon_tests {
 
     #[test]
     fn icons_off_looks_nothing_up_at_all() {
-        // The default configuration must cost nothing: not a directory walk,
+        // Explicitly disabling icons must cost nothing: not a directory walk,
         // not even a cached miss.
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app_with_icons(dir.path());
-        assert!(!app.icons, "precondition: off by default");
+        app.icons = false;
 
         let (log, lookup) = recording(&["firefox"]);
         app.icon_lookup = lookup;
@@ -3268,15 +3269,13 @@ mod icon_tests {
     }
 
     #[test]
-    fn it_is_off_by_default() {
-        // #85 asks for off by default: the default look is Spotlight-simple,
-        // and icons are what make it busier.
+    fn native_app_icons_are_on_by_default() {
         assert!(
-            !compass_core::config::LauncherConfig::default()
+            compass_core::config::LauncherConfig::default()
                 .appearance()
                 .icons()
         );
-        assert!(!AppFlags::default().icons);
+        assert!(AppFlags::default().icons);
     }
 }
 
@@ -3582,6 +3581,77 @@ mod ime_tests {
 mod view_tests {
     use super::*;
     use crate::preset::{self, Preset};
+
+    #[test]
+    fn mixed_result_rows_center_their_labels_and_render_resolved_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let icon = dir.path().join("test.svg");
+        std::fs::write(
+            &icon,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="7" fill="#33a36d"/><path d="M8 9l7 7-7 7m10 0h7" stroke="white" stroke-width="3" fill="none"/></svg>"##,
+        )
+        .unwrap();
+        for (id, comment) in [("Editor", "Comment=Edit documents\n"), ("Terminal", "")] {
+            std::fs::write(
+                dir.path().join(format!("{id}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName=Test {id}\nExec=/bin/true\nIcon=test\n{comment}"),
+            )
+            .unwrap();
+        }
+        for (name, _) in preset::NAMES {
+            for appearance in Appearance::ALL {
+                let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+                let path = icon.clone();
+                app.apply(AppFlags {
+                    appearance,
+                    appearance_preset: preset::resolve(Some(name), None, None),
+                    icon_lookup: IconLookup::new(move |_| Some(path.clone())),
+                    ..AppFlags::default()
+                });
+                let _ = app.update(Message::QueryChanged("Test".into()));
+                for index in &app.results {
+                    let item = &app.app_index.items()[*index];
+                    assert!(matches!(
+                        app.row_art(item),
+                        Some(crate::icons::IconArt::Vector(_))
+                    ));
+                    let mut ui = iced_test::Simulator::with_size(
+                        iced::Settings::default(),
+                        iced::Size::new(720.0, f32::from(app.geometry.row_height)),
+                        app.result_row(item, false),
+                    );
+                    let title = ui.find(item.name()).unwrap().bounds();
+                    let bottom = if app.subtitles && item.comment().is_some() {
+                        let subtitle = ui.find(item.comment().unwrap()).unwrap().bounds();
+                        subtitle.y + subtitle.height
+                    } else {
+                        title.y + title.height
+                    };
+                    assert!(
+                        ((title.y + bottom) / 2.0 - f32::from(app.geometry.row_height) / 2.0).abs()
+                            < 0.1,
+                        "{name}: label block is not centered"
+                    );
+                }
+                if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                    let mut ui = iced_test::Simulator::with_size(
+                        iced::Settings::default(),
+                        iced::Size::new(800.0, 320.0),
+                        app.view(),
+                    );
+                    assert!(
+                        ui.snapshot(&app.theme())
+                            .unwrap()
+                            .matches_image(
+                                std::path::PathBuf::from(directory)
+                                    .join(format!("{}-{name}-mixed-rows.png", appearance.name()))
+                            )
+                            .unwrap()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn query_input_leaves_the_border_and_fill_to_its_container() {
