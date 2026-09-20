@@ -273,11 +273,10 @@ impl Default for AppFlags {
             link: None,
             exit_on_engine_disconnect: false,
             start_hidden: false,
-            // Dark, until a desktop says otherwise. Not a preference: it is
-            // what the launcher has always drawn, so a machine with no
-            // Settings portal keeps the appearance it had rather than
-            // switching the day this landed.
-            appearance: Appearance::Dark,
+            // Light, until a desktop says otherwise. This is Adwaita's
+            // documented no-preference fallback; `vicinae` replaces it with
+            // the portal's native choice before the first frame when possible.
+            appearance: Appearance::Light,
             appearance_link: None,
         }
     }
@@ -682,7 +681,7 @@ impl LauncherApp {
             closing: false,
             reopen_after_close: false,
             window_config: AppFlags::default().window_config,
-            appearance: Appearance::Dark,
+            appearance: Appearance::Light,
             appearance_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
@@ -2699,7 +2698,7 @@ mod tests {
         let mut app = app(dir.path());
         assert_eq!(
             theme_name(&app),
-            design::theme(Appearance::Dark).to_string()
+            design::theme(Appearance::Light).to_string()
         );
 
         let _ = app.update(Message::AppearanceChanged(Appearance::Light));

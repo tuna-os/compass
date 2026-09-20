@@ -11,7 +11,7 @@
 //!     "keybinding": "default",
 //!     "wrap_navigation": false,
 //!     "quick_launch": true,
-//!     "appearance": { "preset": "gnome", "icons": false }
+//!     "appearance": { "color_scheme": "system", "preset": "gnome", "icons": false }
 //!   },
 //!   "extensions": {
 //!     "auto_update": true,
@@ -70,6 +70,13 @@ pub const DEFAULT_QUICK_LAUNCH: bool = true;
 /// it ships on. It resolves to exactly the geometry that ships today, so the
 /// default appearance is unchanged by the presets existing.
 pub const DEFAULT_PRESET: &str = "gnome";
+
+/// Default for `launcher.appearance.color_scheme`.
+///
+/// System follows the desktop's native light/dark preference. The string is
+/// deliberately kept in `compass-core` rather than parsed here: the UI owns
+/// the palette, while the config crate owns only the durable schema.
+pub const DEFAULT_COLOR_SCHEME: &str = "system";
 
 /// Default for `launcher.appearance.icons`.
 ///
@@ -192,9 +199,11 @@ pub struct LauncherConfig {
     unknown: BTreeMap<String, Value>,
 }
 
-/// The `launcher.appearance` section: what a row looks like, not what it does.
+/// The `launcher.appearance` section: colour mode and row presentation, not behavior.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppearanceConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color_scheme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,6 +217,24 @@ pub struct AppearanceConfig {
 }
 
 impl AppearanceConfig {
+    /// The configured colour scheme, or [`DEFAULT_COLOR_SCHEME`].
+    #[must_use]
+    pub fn color_scheme(&self) -> &str {
+        self.color_scheme.as_deref().unwrap_or(DEFAULT_COLOR_SCHEME)
+    }
+
+    /// The explicit `launcher.appearance.color_scheme`, if one was written.
+    #[must_use]
+    pub fn color_scheme_override(&self) -> Option<&str> {
+        self.color_scheme.as_deref()
+    }
+
+    /// Sets `launcher.appearance.color_scheme`. `None` restores the System default.
+    pub fn set_color_scheme(&mut self, value: Option<String>) -> &mut Self {
+        self.color_scheme = value;
+        self
+    }
+
     /// The named preset supplying the defaults for this section (#84).
     ///
     /// Defaults to [`DEFAULT_PRESET`]. Returned as written rather than parsed
@@ -288,12 +315,17 @@ impl AppearanceConfig {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         let Self {
+            color_scheme,
             preset,
             icons,
             tint,
             unknown,
         } = self;
-        preset.is_none() && icons.is_none() && tint.is_none() && unknown.is_empty()
+        color_scheme.is_none()
+            && preset.is_none()
+            && icons.is_none()
+            && tint.is_none()
+            && unknown.is_empty()
     }
 }
 
