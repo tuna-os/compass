@@ -140,7 +140,7 @@ impl IconTheme {
                 // Find or create the directory entry for this section
                 let mut found = false;
                 for dir in &mut theme.directories {
-                    if dir.path.file_name().and_then(|s| s.to_str()) == Some(&current_section) {
+                    if dir.path.as_os_str() == current_section.as_str() {
                         match key {
                             "Size" => dir.size = value.parse().ok(),
                             "Type" => {
@@ -405,6 +405,51 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn nested_directory_metadata_belongs_to_one_entry() {
+        let theme = IconTheme::parse(
+            "[Icon Theme]\nName=Test\nDirectories=32x32/apps,scalable/apps\n\
+             [32x32/apps]\nSize=32\nType=Fixed\nContext=Applications\n\
+             [scalable/apps]\nSize=48\nType=Scalable\nContext=Applications\n",
+        )
+        .unwrap();
+        assert_eq!(theme.directories.len(), 2);
+        assert_eq!(theme.directories[0].path, PathBuf::from("32x32/apps"));
+        assert_eq!(theme.directories[0].size, Some(32));
+        assert_eq!(theme.directories[0].icon_type, IconType::Fixed);
+        assert_eq!(
+            theme.directories[0].context.as_deref(),
+            Some("Applications")
+        );
+        assert_eq!(theme.directories[1].size, Some(48));
+        assert_eq!(theme.directories[1].icon_type, IconType::Scalable);
+        assert_eq!(
+            theme.directories[1].context.as_deref(),
+            Some("Applications")
+        );
+    }
+
+    #[test]
+    fn nested_fixed_directories_choose_the_closest_sufficient_size() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("index.theme"),
+            "[Icon Theme]\nName=Test\nDirectories=256x256/apps,48x48/apps\n\
+             [256x256/apps]\nSize=256\nType=Fixed\nContext=Applications\n\
+             [48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n",
+        )
+        .unwrap();
+        for size in [256, 48] {
+            let icons = dir.path().join(format!("{size}x{size}/apps"));
+            fs::create_dir_all(&icons).unwrap();
+            fs::write(icons.join("app.png"), b"png").unwrap();
+        }
+        assert_eq!(
+            find_icon_in_theme_dir(dir.path(), "app", Some(32), 1.0),
+            Some(dir.path().join("48x48/apps/app.png"))
+        );
+    }
 
     #[test]
     fn icon_theme_parse() {
