@@ -905,10 +905,18 @@ answer, because the result is a stored key.
 
 Three things in the conversion are deliberate and each has a test saying so. The **subtitle is
 empty**, because an application's comment is its description in the settings and filling it would
-give every row a paragraph. The **unlocalized name joins the keywords**, so someone who knows an
+give every row a paragraph. The **unlocalized name has its own title-weight field**, so someone who knows an
 application by its English name still finds it on a localised desktop where the title is something
 else. And `enabled` starts true: the root item manager's merge is what turns an item off, and an
 application is not disabled by being converted.
+
+The pinned upstream v0.29.0 audit corrected the previous keyword-weight handling:
+the untranslated name scores at 1.0, not 0.6. A regression test checks equality
+with a display-title match and precedence over a keyword match. Restoring the old
+weight fails it (60 versus 100). The conversion preserves keywords and omits an
+untranslated name identical to the display name, as upstream does. The root-item
+suite now has 64 tests; this correction does not wire the model into the daemon
+or establish end-to-end search parity.
 
 **Not wired into the launcher yet, deliberately.** `compass_ui::root_list` and this conversion are
 both tested, but the launcher still searches the application index directly. Flipping that is a
@@ -917,7 +925,7 @@ it blind, in a container with no compositor, would trade a working launcher for 
 pieces are ready; the switch waits for a run that can answer for it.
 
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
-full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
+full: the weighted fields (title and unlocalized title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
 the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the
 enabled/provider/favourite filters, and the stable sort with its alias-prefix prioritisation. Twelve
 tests, twelve controls, each read off `root-item-manager.cpp`. `mergeConfigWithMetadata`,

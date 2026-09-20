@@ -17,6 +17,7 @@ fn item(id: &str, title: &str) -> RootItem {
         title: title.to_owned(),
         subtitle: String::new(),
         keywords: Vec::new(),
+        unlocalized_title: None,
         meta: RootItemMeta {
             provider_id: "apps".to_owned(),
             enabled: true,
@@ -136,6 +137,41 @@ fn keywords_match_but_weigh_less_than_a_title() {
         found,
         ["title", "keyword"],
         "the 1.0 title outranks the 0.6 keyword"
+    );
+}
+
+#[test]
+fn an_unlocalized_title_scores_like_a_display_title_not_a_keyword() {
+    let mut translated = item("translated", "Dateien");
+    translated.unlocalized_title = Some("Files".to_owned());
+    let display = item("display", "Files");
+    let mut keyword = item("keyword", "Other");
+    keyword.keywords.push("Files".to_owned());
+    let query = Query::new("files");
+    assert_eq!(
+        translated.fuzzy_score(&query, NOW),
+        display.fuzzy_score(&query, NOW)
+    );
+    assert!(translated.fuzzy_score(&query, NOW) > keyword.fuzzy_score(&query, NOW));
+    assert_eq!(
+        ids(
+            &[keyword, translated, display],
+            "files",
+            &SearchOptions::default()
+        ),
+        ["translated", "display", "keyword"]
+    );
+}
+
+#[test]
+fn absent_unlocalized_title_does_not_invent_a_match() {
+    assert!(
+        ids(
+            &[item("translated", "Dateien")],
+            "files",
+            &SearchOptions::default()
+        )
+        .is_empty()
     );
 }
 
@@ -1068,7 +1104,7 @@ mod from_applications {
     }
 
     #[test]
-    fn the_unlocalized_name_joins_them() {
+    fn the_unlocalized_name_is_a_separate_title() {
         // So someone who knows an application by its English name finds it on
         // a localised desktop where the title is something else.
         let item = app_root_item(
@@ -1077,21 +1113,28 @@ mod from_applications {
             &words(&["folder"]),
             Some("Files"),
         );
-        assert_eq!(item.keywords, ["folder", "Files"]);
+        assert_eq!(item.keywords, ["folder"]);
+        assert_eq!(item.unlocalized_title.as_deref(), Some("Files"));
     }
 
     #[test]
     fn an_application_with_no_unlocalized_name_gains_no_extra_term() {
         let item = app_root_item("konsole.desktop", "Konsole", &words(&["shell"]), None);
         assert_eq!(item.keywords, ["shell"]);
+        assert_eq!(item.unlocalized_title, None);
     }
 
     #[test]
-    fn the_unlocalized_name_goes_last_rather_than_first() {
-        // The weights are equal, but the order is the C++'s and a stable sort
-        // downstream can see it.
+    fn an_identical_unlocalized_name_is_not_duplicated() {
+        let item = app_root_item("files.desktop", "Files", &[], Some("Files"));
+        assert_eq!(item.unlocalized_title, None);
+    }
+
+    #[test]
+    fn the_unlocalized_name_does_not_change_keywords() {
         let item = app_root_item("a.desktop", "A", &words(&["one", "two"]), Some("English"));
-        assert_eq!(item.keywords.last().map(String::as_str), Some("English"));
+        assert_eq!(item.keywords, ["one", "two"]);
+        assert_eq!(item.unlocalized_title.as_deref(), Some("English"));
     }
 
     #[test]

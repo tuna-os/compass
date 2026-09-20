@@ -20,7 +20,7 @@ use compass_search::{
 /// What the user and the launcher know about a root item.
 ///
 /// The field weights that [`RootItem`] feeds the matcher are the C++ ones:
-/// title 1.0, subtitle 0.5, alias 1.0, each keyword 0.6.
+/// title and unlocalized title 1.0, subtitle 0.5, alias 1.0, each keyword 0.6.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RootItemMeta {
     /// The provider that contributed the item ("apps", an extension id, ...).
@@ -48,6 +48,8 @@ pub struct RootItem {
     pub id: String,
     /// The primary label; weight 1.0.
     pub title: String,
+    /// The untranslated title, when different; the same weight as the title.
+    pub unlocalized_title: Option<String>,
     /// The secondary label; weight 0.5.
     pub subtitle: String,
     /// Extra search terms; weight 0.6 each.
@@ -118,6 +120,7 @@ impl RootItem {
         let alias = self.meta.alias.as_deref().unwrap_or("");
         let mut fields = vec![
             WeightedField::new(&self.title, 1.0),
+            WeightedField::new(self.unlocalized_title.as_deref().unwrap_or(""), 1.0),
             WeightedField::new(&self.subtitle, 0.5),
             WeightedField::new(alias, 1.0),
         ];
@@ -584,7 +587,7 @@ pub fn app_entrypoint_id(desktop_id: &str) -> String {
 /// Three things are deliberate. The **subtitle is empty**: an application's
 /// comment is its description in the settings, not a second line in the
 /// launcher, and filling it would give every row a paragraph. The
-/// **unlocalized name joins the keywords**, so someone who knows an
+/// **unlocalized name retains title weight**, so someone who knows an
 /// application by its English name finds it on a localised desktop where the
 /// title is something else. And `enabled` starts true, because the root item
 /// manager's merge is what turns it off — an application is not disabled by
@@ -596,16 +599,14 @@ pub fn app_root_item(
     keywords: &[String],
     unlocalized_name: Option<&str>,
 ) -> RootItem {
-    let mut search_terms = keywords.to_vec();
-    if let Some(name) = unlocalized_name {
-        search_terms.push(name.to_owned());
-    }
-
     RootItem {
         id: entrypoint_id(APPS_PROVIDER_ID, &app_entrypoint_id(desktop_id)),
         title: display_name.to_owned(),
+        unlocalized_title: unlocalized_name
+            .filter(|name| *name != display_name)
+            .map(str::to_owned),
         subtitle: String::new(),
-        keywords: search_terms,
+        keywords: keywords.to_vec(),
         meta: RootItemMeta {
             provider_id: APPS_PROVIDER_ID.to_owned(),
             enabled: true,
