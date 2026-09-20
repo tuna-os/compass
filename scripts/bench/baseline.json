@@ -1,0 +1,8 @@
+{
+  "repository": "vicinaehq/vicinae",
+  "tag": "v0.29.0",
+  "commit": "c3415a3ed56676d2960d90975ab319ae8a7aba6e",
+  "url": "https://github.com/vicinaehq/vicinae/releases/download/v0.29.0/Vicinae-x86_64.AppImage",
+  "sha256": "4d32f7589f857ee6229da95269c6a3109fc3093152c2d6f29042f7d924fe86bc",
+  "rust_toolchain": "1.94.1"
+}

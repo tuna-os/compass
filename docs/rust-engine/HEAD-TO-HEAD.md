@@ -10,6 +10,47 @@ The [first three recorded runs](./benchmarks/2026-09-20-upstream-v0.29.0/README.
 show lower Rust ping latency in that setup. They do not establish search speed
 or whole-launcher memory efficiency.
 
+## One command, locally and in CI
+
+On Linux x86_64, install `just`, Python 3 and Podman, then run:
+
+```sh
+just bench-head-to-head
+# Optional output parent (each invocation creates a new run directory):
+just bench-head-to-head /tmp/compass-results
+```
+
+The same command runs in `.github/workflows/head-to-head.yaml` on relevant PRs,
+main updates, weekly, and manual dispatch. The first run downloads a container
+and compiles the Rust release; allow several minutes and several GB of disk.
+Podman's image layers and the named `compass-head-to-head-cargo-v1` volume cache
+subsequent builds. No host Rust, Qt or display server is required. Local cache
+removal is deliberately not part of the benchmark command.
+
+The runner verifies the pinned AppImage SHA256, mounts the checkout read-only,
+builds release binaries, then starts a separate network-disabled measurement
+container with fresh XDG profiles and its own Xvfb display. It marks only the
+temporary upstream profile's onboarding complete before launch and verifies both
+launcher windows are mapped. It includes the independent Rust UI process in
+memory accounting. Owned processes are stopped and reaped on success or failure.
+
+Results live under `target/head-to-head/run-*/`: human summary, three raw reports,
+configuration, source/build identity, corpus hash, image ID, package/toolchain
+versions, window IDs and logs. CI uploads these even on failure. Dirty local
+source is marked and content-hashed, not silently called the recorded commit.
+The base image, Rust toolchain and upstream artifact are pinned; Fedora package
+updates and different host hardware can still change measurements. Compare
+reported environments, not just the headline numbers.
+
+`just bench-check` runs fast orchestration tests. For an advanced attached
+workload, use `just bench-attached CONFIG.json REPORT.json`.
+
+**Current default scope: unmodified upstream release, ping and diagnostic
+RSS/PSS. Search remains excluded, and unequal feature coverage still prevents
+a whole-launcher memory-efficiency verdict.** The instrumentation patch beside
+the runner is for the next search workload; this recipe does not silently
+substitute that modified build for the user's chosen pristine baseline.
+
 `cargo run --release -p compass-testkit --bin head-to-head -- CONFIG.json REPORT.json`
 compares two already-running engines over persistent Unix sockets. It does not
 start, stop, configure or mutate their indexes. Use isolated test profiles, not
