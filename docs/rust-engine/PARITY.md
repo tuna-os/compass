@@ -924,6 +924,17 @@ change to the one path the VM tier has actually verified — it is where #91 was
 it blind, in a container with no compositor, would trade a working launcher for an untested one. The
 pieces are ready; the switch waits for a run that can answer for it.
 
+An integration prerequisite found during the upstream audit is corrected: the
+launcher's selected desktop-action row now dispatches its stable action ID to
+`AppLauncher::launch_action`, instead of launching the parent entry. Linux resolves
+that declared action's own Exec/URI arguments through the existing launch route;
+unknown IDs and missing Exec return errors, never a parent-launch fallback.
+Backends without action support report that explicitly. UI task tests distinguish
+ordinary and action dispatch, and Linux argument tests distinguish the two Execs.
+Desktop actions still need moving into the application action panel as part of
+root-provider integration; this does not mark that integration or target-session
+launch verification complete.
+
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
 full: the weighted fields (title and unlocalized title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
 the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the

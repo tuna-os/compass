@@ -27,6 +27,67 @@ impl AppLauncher for LinuxLauncher {
     fn launch<'a>(&'a self, entry: &'a DesktopEntry, uris: &'a [&'a str]) -> LaunchFuture<'a> {
         Box::pin(launch_app_with_uris(entry, uris))
     }
+
+    fn launch_action<'a>(
+        &'a self,
+        entry: &'a DesktopEntry,
+        action_id: &'a str,
+        uris: &'a [&'a str],
+    ) -> LaunchFuture<'a> {
+        Box::pin(async move {
+            let exec = action_exec(entry, action_id, uris)?;
+            launch_exec(exec).await
+        })
+    }
+}
+
+fn action_exec(
+    entry: &DesktopEntry,
+    action_id: &str,
+    uris: &[&str],
+) -> Result<Vec<String>, LaunchError> {
+    let action = entry
+        .actions()
+        .iter()
+        .find(|action| action.id() == action_id)
+        .ok_or_else(|| LaunchError::UnknownAction(action_id.to_owned()))?;
+    let exec = action.expand_exec_with(uris, false, None);
+    if exec.is_empty() {
+        return Err(LaunchError::NoExec);
+    }
+    Ok(exec)
+}
+
+#[cfg(test)]
+mod action_tests {
+    use super::*;
+
+    fn entry() -> DesktopEntry {
+        DesktopEntry::parse("[Desktop Entry]\nType=Application\nName=Browser\nExec=parent-app\nActions=private;broken;\n[Desktop Action private]\nName=Private Window\nExec=action-app --private %U\n[Desktop Action broken]\nName=Broken\n").unwrap()
+    }
+
+    #[test]
+    fn action_uses_its_own_exec_and_preserves_uri_arguments() {
+        assert_eq!(
+            action_exec(&entry(), "private", &["https://example.test/a b"]).unwrap(),
+            ["action-app", "--private", "https://example.test/a b"]
+        );
+    }
+
+    #[test]
+    fn unknown_action_never_falls_back_to_parent_exec() {
+        assert!(
+            matches!(action_exec(&entry(), "other", &[]), Err(LaunchError::UnknownAction(id)) if id == "other")
+        );
+    }
+
+    #[test]
+    fn missing_action_exec_never_falls_back_to_parent_exec() {
+        assert!(matches!(
+            action_exec(&entry(), "broken", &[]),
+            Err(LaunchError::NoExec)
+        ));
+    }
 }
 
 /// Launch an application with URIs.
@@ -35,6 +96,10 @@ async fn launch_app_with_uris(
     uris: &[&str],
 ) -> Result<LaunchMethod, LaunchError> {
     let exec = entry.expand_exec_with(uris, false, None);
+    launch_exec(exec).await
+}
+
+async fn launch_exec(exec: Vec<String>) -> Result<LaunchMethod, LaunchError> {
     if exec.is_empty() {
         return Err(LaunchError::NoExec);
     }

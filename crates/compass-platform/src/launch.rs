@@ -44,6 +44,12 @@ pub enum LaunchMethod {
 /// Errors that can occur during launch.
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchError {
+    /// The requested action is not declared by the application.
+    #[error("unknown desktop action: {0}")]
+    UnknownAction(String),
+    /// The platform backend cannot launch desktop actions.
+    #[error("desktop actions are not supported by this launcher")]
+    ActionsUnsupported,
     /// No Exec key in desktop entry.
     #[error("no Exec key in desktop entry")]
     NoExec,
@@ -86,6 +92,16 @@ pub type LaunchFuture<'a> =
 pub trait AppLauncher: std::fmt::Debug + Send + Sync {
     /// Launch `entry`, passing `uris` to its `Exec` field codes.
     fn launch<'a>(&'a self, entry: &'a DesktopEntry, uris: &'a [&'a str]) -> LaunchFuture<'a>;
+
+    /// Launch a declared desktop action, never falling back to the parent application.
+    fn launch_action<'a>(
+        &'a self,
+        _entry: &'a DesktopEntry,
+        _action_id: &'a str,
+        _uris: &'a [&'a str],
+    ) -> LaunchFuture<'a> {
+        Box::pin(async { Err(LaunchError::ActionsUnsupported) })
+    }
 }
 
 /// A launcher that launches nothing and says so.
@@ -118,5 +134,19 @@ mod tests {
         // is the property the composition in `vicinae` depends on.
         let launcher: std::sync::Arc<dyn AppLauncher> = std::sync::Arc::new(NullLauncher);
         assert_eq!(format!("{launcher:?}"), "NullLauncher");
+    }
+
+    #[test]
+    fn an_unsupported_action_is_not_a_parent_launch() {
+        let entry =
+            DesktopEntry::parse("[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\n")
+                .unwrap();
+        let launcher = NullLauncher;
+        let mut future = launcher.launch_action(&entry, "private", &[]);
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            future.as_mut().poll(&mut context),
+            std::task::Poll::Ready(Err(LaunchError::ActionsUnsupported))
+        ));
     }
 }

@@ -976,14 +976,16 @@ impl LauncherApp {
                 // this is not free — but it happens once per launch, not once
                 // per keystroke.
                 let entry = item.entry().clone();
+                let action_id = item.action_id().map(str::to_owned);
                 let launcher = Arc::clone(&self.launcher);
                 Task::perform(
                     async move {
-                        launcher
-                            .launch(&entry, &[])
-                            .await
-                            .map(|_method| ())
-                            .map_err(|err| err.to_string())
+                        match action_id {
+                            Some(id) => launcher.launch_action(&entry, &id, &[]).await,
+                            None => launcher.launch(&entry, &[]).await,
+                        }
+                        .map(|_method| ())
+                        .map_err(|err| err.to_string())
                     },
                     Message::Launched,
                 )
@@ -1676,6 +1678,63 @@ mod tests {
         )
     }
 
+    #[derive(Debug, Default)]
+    struct RecordingLaunchTarget(std::sync::Mutex<Vec<Option<String>>>);
+
+    impl AppLauncher for RecordingLaunchTarget {
+        fn launch<'a>(
+            &'a self,
+            _entry: &'a compass_xdg::DesktopEntry,
+            _uris: &'a [&'a str],
+        ) -> compass_platform::LaunchFuture<'a> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(None);
+                Ok(compass_platform::LaunchMethod::Direct)
+            })
+        }
+
+        fn launch_action<'a>(
+            &'a self,
+            _entry: &'a compass_xdg::DesktopEntry,
+            action_id: &'a str,
+            _uris: &'a [&'a str],
+        ) -> compass_platform::LaunchFuture<'a> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(Some(action_id.to_owned()));
+                Ok(compass_platform::LaunchMethod::Direct)
+            })
+        }
+    }
+
+    fn recorded_launch(action: bool) -> Vec<Option<String>> {
+        use iced::futures::{StreamExt, executor::block_on};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        let index = AppIndex::builder().dir(dir.path()).build();
+        let selected = index
+            .items()
+            .iter()
+            .position(|item| item.is_action() == action)
+            .unwrap();
+        let launcher = Arc::new(RecordingLaunchTarget::default());
+        let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
+        app.results = vec![selected];
+        let task = app.update(Message::LaunchSelected);
+        let stream = iced_winit::runtime::task::into_stream(task).expect("launch task");
+        let _outputs = block_on(stream.collect::<Vec<_>>());
+        launcher.0.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn selecting_a_desktop_action_dispatches_its_id_not_the_parent() {
+        assert_eq!(recorded_launch(true), [Some("private".to_owned())]);
+    }
+
+    #[test]
+    fn selecting_an_application_still_dispatches_the_parent() {
+        assert_eq!(recorded_launch(false), [None]);
+    }
+
     #[test]
     fn filtered_copy_actions_write_the_selected_apps_name_and_path() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1856,9 +1915,14 @@ mod tests {
         // though every test in the binary shares one log. Counting lines that
         // merely say `compass_ui::state` would race with whatever else is
         // running.
-        const QUERY: &str = "firef";
+        const QUERY: &str = "compass-log-state-sentinel";
 
         let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("log-state.desktop"),
+            format!("[Desktop Entry]\nType=Application\nName={QUERY}\nExec=true\n"),
+        )
+        .expect("log-state fixture");
         let _ = log();
         let mut app = app(dir.path());
         let _ = app.update(Message::QueryChanged(QUERY.to_owned()));
