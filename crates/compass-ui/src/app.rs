@@ -188,6 +188,8 @@ pub struct AppFlags {
     pub launcher: Arc<dyn AppLauncher>,
     /// Shared ranking/history service when attached to an engine.
     pub backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
+    /// Startup root settings for local searches; attached searches use the engine's settings.
+    pub root_config: compass_core::root_items::RootConfig,
     /// The navigation chord scheme, from `launcher.keybinding`.
     pub keybinding: compass_core::keybinding::Scheme,
     /// Whether the selection wraps, from `launcher.wrap_navigation`.
@@ -263,6 +265,7 @@ impl Default for AppFlags {
             // exists to end. `vicinae` sets this explicitly.
             launcher: Arc::new(NullLauncher),
             backend: None,
+            root_config: compass_core::root_items::RootConfig::default(),
             link: None,
             // Dark, until a desktop says otherwise. Not a preference: it is
             // what the launcher has always drawn, so a machine with no
@@ -601,6 +604,7 @@ impl LauncherApp {
         let app = self;
         app.launcher = flags.launcher;
         app.backend = flags.backend;
+        app.app_index.apply_root_config(&flags.root_config);
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
@@ -1810,6 +1814,62 @@ mod tests {
 
     fn app(dir: &std::path::Path) -> LauncherApp {
         LauncherApp::with_index(index(dir))
+    }
+
+    #[test]
+    fn standalone_search_respects_startup_root_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        for provider_enabled in [true, false] {
+            let config = compass_core::Config::parse(
+                &format!(
+                    r#"{{"providers":{{"applications":{{"enabled":{provider_enabled},"entrypoints":{{
+                        "firefox":{{"enabled":false}},
+                        "terminal":{{"enabled":true,"alias":"shellwork"}}
+                    }}}}}}}}"#
+                ),
+                &dir.path().join("config.json"),
+            )
+            .unwrap();
+            app.apply(AppFlags {
+                root_config: config.root_config(),
+                ..AppFlags::default()
+            });
+            let _ = app.update(Message::QueryChanged("Firefox".into()));
+            assert!(app.results.is_empty());
+            let _ = app.update(Message::QueryChanged("shellwork".into()));
+            assert_eq!(app.results.len(), usize::from(provider_enabled));
+            if provider_enabled {
+                assert_eq!(app.app_index.items()[app.results[0]].name(), "Terminal");
+            }
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                for appearance in Appearance::ALL {
+                    app.appearance = appearance;
+                    let mut ui = iced_test::Simulator::with_size(
+                        iced::Settings::default(),
+                        iced::Size::new(800.0, 320.0),
+                        app.view(),
+                    );
+                    assert!(
+                        ui.snapshot(&app.theme())
+                            .unwrap()
+                            .matches_image(std::path::PathBuf::from(&directory).join(format!(
+                                "{}-standalone-provider-{provider_enabled}.png",
+                                appearance.name()
+                            )))
+                            .unwrap()
+                    );
+                }
+            }
+        }
+        app.apply(AppFlags::default());
+        let _ = app.update(Message::QueryChanged("shellwork".into()));
+        assert!(
+            app.results.is_empty(),
+            "clearing settings removes the alias"
+        );
+        let _ = app.update(Message::QueryChanged("Firefox".into()));
+        assert_eq!(app.results.len(), 1);
     }
 
     fn clipboard_writes(task: Task<Message>) -> Vec<String> {

@@ -101,7 +101,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // The user's chord scheme. A configuration that cannot be read is not
         // a reason to refuse to start: the launcher runs with the defaults and
         // says so, which is what every other unreadable setting here does.
-        let (keybinding, wrap_navigation, quick_launch, appearance_preset) =
+        let (keybinding, wrap_navigation, quick_launch, appearance_preset, root_config) =
             match compass_core::Config::load() {
                 Ok(config) => {
                     let appearance = config.launcher().appearance();
@@ -114,6 +114,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                             appearance.icons_override(),
                             appearance.tint_override(),
                         ),
+                        config.root_config(),
                     )
                 }
                 Err(error) => {
@@ -123,6 +124,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                         compass_core::config::DEFAULT_WRAP_NAVIGATION,
                         compass_core::config::DEFAULT_QUICK_LAUNCH,
                         compass_ui::preset::resolve(None, None, None),
+                        compass_core::root_items::RootConfig::default(),
                     )
                 }
             };
@@ -153,6 +155,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         compass_ui::run_resident(compass_ui::AppFlags {
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             backend,
+            root_config,
             link,
             keybinding,
             wrap_navigation,
