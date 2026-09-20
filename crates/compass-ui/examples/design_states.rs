@@ -259,6 +259,11 @@ fn main() {
             "The panel with a filter typed, which hides whole sections.",
             "copy",
         ),
+        panel_state(
+            "panel-no-actions",
+            "The focused action filter has no matches. The preview field is read-only; choose a state to change its Rust-filtered rows.",
+            "zzzz",
+        ),
     ];
 
     let appearances: Vec<String> = Appearance::ALL
