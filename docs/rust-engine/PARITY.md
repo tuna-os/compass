@@ -926,8 +926,8 @@ The daemon retains the existing desktop-file IDs, result limit and frecency keys
 its wire match score still excludes the frecency boost. This does not yet connect
 all builtin/extension providers, root configuration or the grouped `root_list`
 presentation. The UI's empty-query greeting and lack of persisted launch history
-also remain separate gaps. End-to-end upstream ordering and Type=Link parity
-must still be proved before search timing is a comparable benchmark.
+also remain separate gaps. End-to-end upstream Unicode ordering must still be
+proved before search timing is a comparable benchmark.
 
 Desktop `Type=Link` entries now enter the application index without an Exec,
 including the harvested Singular manual fixture. Missing or empty URLs are
@@ -939,6 +939,8 @@ never substituted for the URL. Index, UI and real daemon tests cover visibility,
 and argument tests cover URI dispatch. Opening the target in another application
 still needs an on-target desktop check; this is not a completed search-parity or
 launch-performance gate.
+The [same-corpus audit](benchmarks/2026-09-20-desktop-links/README.md) now returns
+all 448 empty-query IDs in upstream order, but the Unicode query still differs.
 
 An integration prerequisite found during the upstream audit is corrected: the
 launcher's selected desktop-action row now dispatches its stable action ID to
