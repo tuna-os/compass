@@ -413,6 +413,10 @@ pub struct LauncherApp {
     ///
     /// `None` is the hidden state: on Wayland a hidden window is a closed one.
     window: Option<window::Id>,
+    pending_window: Option<window::Id>,
+    pending_hide: bool,
+    closing: bool,
+    reopen_after_close: bool,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -636,9 +640,9 @@ impl LauncherApp {
     /// windows at all: without this, `vicinae ui` with no engine attached would
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
-        let (app, task) = Self::new(flags);
-        let (_id, opened) = window::open(app.window_config.clone());
-        (app, Task::batch([task, opened.map(Message::Opened)]))
+        let (mut app, task) = Self::new(flags);
+        let opened = app.open_window();
+        (app, Task::batch([task, opened]))
     }
 
     /// Create one over a supplied index.
@@ -660,6 +664,10 @@ impl LauncherApp {
             search_task: None,
             link: None,
             window: None,
+            pending_window: None,
+            pending_hide: false,
+            closing: false,
+            reopen_after_close: false,
             window_config: AppFlags::default().window_config,
             appearance: Appearance::Dark,
             appearance_link: None,
@@ -742,8 +750,13 @@ impl LauncherApp {
     fn conceal(&mut self) -> Task<Message> {
         self.cancel_search();
         self.panel = None;
+        self.reopen_after_close = false;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
+        }
+        if self.pending_window.is_some() {
+            self.pending_hide = true;
+            return Task::none();
         }
         if self.link.is_none() {
             // Unreachable: `on_dismiss` returns `Hide` only when there is a
@@ -766,7 +779,10 @@ impl LauncherApp {
             // lands the window really is still visible, and `is_visible` should
             // say so -- the engine cannot send another command in the meantime
             // because it is blocked reading this one's reply.
-            Some(id) => window::close(id),
+            Some(id) => {
+                self.closing = true;
+                window::close(id)
+            }
             // Nothing to close, so nothing to wait for. Still answers, because
             // the engine is blocked until it hears something.
             None => {
@@ -946,11 +962,24 @@ impl LauncherApp {
         let show = match command {
             UiCommand::Show => true,
             UiCommand::Hide => false,
-            UiCommand::Toggle => !self.is_visible(),
+            UiCommand::Toggle => {
+                !((self.is_visible() && !self.closing)
+                    || (self.pending_window.is_some() && !self.pending_hide)
+                    || self.reopen_after_close)
+            }
         };
 
         if !show {
             return self.conceal();
+        }
+
+        if self.pending_window.is_some() {
+            self.pending_hide = false;
+            return Task::none();
+        }
+        if self.closing {
+            self.reopen_after_close = true;
+            return Task::none();
         }
 
         if let Some(id) = self.window {
@@ -961,7 +990,13 @@ impl LauncherApp {
             return Task::batch([window::gain_focus(id), focus_search()]);
         }
 
-        let (_id, opened) = window::open(self.window_config.clone());
+        self.open_window()
+    }
+
+    fn open_window(&mut self) -> Task<Message> {
+        let (id, opened) = window::open(self.window_config.clone());
+        self.pending_window = Some(id);
+        self.pending_hide = false;
         opened.map(Message::Opened)
     }
 
@@ -1099,7 +1134,16 @@ impl LauncherApp {
             Message::WindowClosed => self.conceal(),
             Message::Quit => iced::exit(),
             Message::Opened(id) => {
+                if self.window.is_some_and(|current| current != id)
+                    || self.pending_window.is_some_and(|pending| pending != id)
+                {
+                    return window::close(id);
+                }
+                self.pending_window = None;
                 self.window = Some(id);
+                if std::mem::take(&mut self.pending_hide) {
+                    return self.conceal();
+                }
                 // Answers only a `Show` that asked for it. The window opened at
                 // boot answers nothing -- see `awaiting`.
                 self.answer(UiOutcome::Shown);
@@ -1114,6 +1158,10 @@ impl LauncherApp {
                 if self.window == Some(id) {
                     self.cancel_search();
                     self.window = None;
+                    self.closing = false;
+                    if std::mem::take(&mut self.reopen_after_close) {
+                        return self.open_window();
+                    }
                     // The honest moment to say "hidden": the window is gone.
                     // Answers only a command that asked -- a window the user
                     // closed answers nothing. See `awaiting`.
@@ -1825,6 +1873,81 @@ mod tests {
 
     fn app(dir: &std::path::Path) -> LauncherApp {
         LauncherApp::with_index(index(dir))
+    }
+
+    #[test]
+    fn pending_window_is_reused_and_escape_dismisses_after_it_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.open_window();
+        let id = app.pending_window.unwrap();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert_eq!(app.pending_window, Some(id));
+        assert!(outcomes.try_recv().is_err(), "opening is not yet shown");
+        let _ = app.update(Message::Opened(id));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Shown);
+        let close = app.update(pressed(iced::keyboard::key::Named::Escape));
+        {
+            use iced::futures::{StreamExt, executor::block_on};
+            use iced_winit::runtime::{Action, task, window as runtime_window};
+            let mut stream = task::into_stream(close).expect("Escape must request a close");
+            assert!(matches!(
+                block_on(stream.next()),
+                Some(Action::Window(runtime_window::Action::Close(closed))) if closed == id
+            ));
+        }
+        let _ = app.update(Message::Closed(id));
+        assert!(!app.is_visible());
+        assert!(app.pending_window.is_none());
+    }
+
+    #[test]
+    fn hide_during_initial_open_waits_until_the_window_is_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.open_window();
+        let id = app.pending_window.unwrap();
+        let _ = app.update(Message::Command(UiCommand::Hide));
+        assert!(app.pending_hide);
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Opened(id));
+        assert!(outcomes.try_recv().is_err(), "must not acknowledge shown");
+        let _ = app.update(Message::Closed(id));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Hidden);
+        assert!(!app.is_visible());
+    }
+
+    #[test]
+    fn show_during_dismissal_waits_for_close_before_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let old = window::Id::unique();
+        let _ = app.update(Message::Opened(old));
+        let _ = app.update(Message::Dismiss);
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert!(app.pending_window.is_none());
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Closed(old));
+        let next = app.pending_window.unwrap();
+        assert_ne!(old, next);
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Opened(next));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Shown);
+        let _ = app.update(Message::Opened(old));
+        assert_eq!(
+            app.window,
+            Some(next),
+            "stale open cannot replace the current window"
+        );
     }
 
     #[test]

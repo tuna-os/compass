@@ -702,6 +702,33 @@ fn an_attached_window_turns_the_refusal_into_a_real_show() {
 }
 
 #[test]
+fn a_second_ui_invocation_shows_the_existing_window_without_starting_a_renderer() {
+    let daemon = Daemon::start(&[]);
+    let lease = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(daemon.socket.with_extension("ui.lock"))
+        .unwrap();
+    lease.try_lock().unwrap();
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+    let output = Command::new(binary())
+        .args(["--socket", daemon.socket.to_str().unwrap(), "ui"])
+        .env("DISPLAY", ":65534")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("WAYLAND_SOCKET")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(window.seen(), vec![compass_ipc::WindowCommand::Show]);
+}
+
+#[test]
 fn each_command_reaches_the_window_as_itself() {
     let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
     let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);

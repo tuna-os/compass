@@ -20,6 +20,7 @@ pub mod ipc;
 pub mod serve;
 pub mod spike;
 pub mod ui_backend;
+mod ui_instance;
 pub mod window;
 
 use std::process::ExitCode;
@@ -85,6 +86,27 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                  nothing to open a window on. Run `vicinae doctor` for the full picture"
             );
         }
+        let _ui_lease = match ui_instance::acquire(cli.socket_path().as_path())
+            .context("claiming the resident launcher instance")?
+        {
+            Some(lease) => lease,
+            None => {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        ipc::send_ack(&cli.socket_path(), Request::Show),
+                    )
+                    .await
+                    .context("the existing launcher did not respond")?
+                    .context("a launcher is already running but could not be shown")
+                })?;
+                return Ok(ExitCode::from(EXIT_OK));
+            }
+        };
+
         // Attached before Iced starts, on a thread that still belongs to us.
         // `None` means no engine is listening, which leaves the launcher
         // running undriven rather than refusing to start -- `vicinae ui` by
