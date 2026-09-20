@@ -988,6 +988,19 @@ too, with its two rules that differ from the flat search — a provider whose *d
 contributes all of its items, including ones scoring zero, and `providerId` is not applied — for
 another nine tests and nine controls.
 
+The daemon now loads the top-level `providers`, `favorites` and `fallbacks`
+settings and merges them into application root metadata at startup. Application
+aliases and enabled settings affect real IPC queries (and therefore attached UI
+search); a disabled provider overrides an enabled entrypoint. Configuration keys
+use upstream identities such as `applications:org.example.Editor`, while IPC and
+launch-history keys remain `org.example.Editor.desktop`. Unknown provider and
+entrypoint fields, including preferences, survive configuration round trips.
+Real-daemon tests cover alias lookup and both levels of enabled precedence;
+catalog tests cover clearing settings without retaining stale aliases. This is
+startup configuration, not live reload or a settings editor. Favourite sections,
+shortcut registration, fallback dispatch and standalone UI configuration remain
+unwired; parsing their metadata is not completion of those features.
+
 The manager's state changes are ported too, and this note previously understated that:
 `mergeConfigWithMetadata` and `registerVisit` were already done when it was written, and the config
 writes behind `setAlias`, `setShortcut`, `setItemEnabled` and `setProviderEnabled` are done now —

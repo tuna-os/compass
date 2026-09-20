@@ -112,20 +112,22 @@ impl EngineState {
     /// start over a corrupt ranking cache would be a worse failure than the one
     /// it is reporting.
     pub fn from_environment(socket: SocketPath) -> Self {
-        let index = AppIndex::from_environment();
+        let mut index = AppIndex::from_environment();
         tracing::info!(applications = index.len(), "indexed applications");
 
         // A bad config is reported and then ignored rather than fatal. Refusing
         // to start because `max_results` is misspelled would be a worse outcome
         // than starting with the default and saying so.
-        let max_results = match Config::load() {
-            Ok(config) => config.launcher().max_results(),
+        let config = match Config::load() {
+            Ok(config) => config,
             Err(err) => {
                 let fallback = Config::default();
                 tracing::warn!(error = %err, "using default configuration");
-                fallback.launcher().max_results()
+                fallback
             }
         };
+        let max_results = config.launcher().max_results();
+        index.apply_root_config(&config.root_config());
 
         let frecency = Self::open_frecency();
 

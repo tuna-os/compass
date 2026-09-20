@@ -10,6 +10,74 @@ fn parse(json: &str) -> Config {
     Config::parse(json, Path::new("/test/vicinae.json")).expect("valid config")
 }
 
+#[test]
+fn root_settings_use_upstream_ids_and_preserve_provider_preferences() {
+    let input = serde_json::json!({
+        "providers": {
+            "applications": {
+                "enabled": false,
+                "preferences": {"future": [1, 2]},
+                "entrypoints": {
+                    "org.example.Editor": {
+                        "enabled": true, "alias": "write", "shortcut": "ctrl+e",
+                        "preferences": {"mode": "custom"}, "future": 42
+                    }
+                }
+            },
+            "unknown.extension": {"custom": true}
+        },
+        "favorites": ["applications:org.example.Editor"],
+        "fallbacks": ["files:search"]
+    });
+    let mut config = parse(&input.to_string());
+    let root = config.root_config();
+    let provider = &root.providers["applications"];
+    assert_eq!(provider.enabled, Some(false));
+    let item = &provider.entrypoints["org.example.Editor"];
+    assert_eq!(item.enabled, Some(true));
+    assert_eq!(item.alias.as_deref(), Some("write"));
+    assert_eq!(item.shortcut.as_deref(), Some("ctrl+e"));
+    assert_eq!(root.favorites, ["applications:org.example.Editor"]);
+    assert_eq!(root.fallbacks, ["files:search"]);
+    assert_eq!(serde_json::to_value(&config).unwrap(), input);
+    config.launcher_mut().set_max_results(Some(7));
+    let output = serde_json::to_value(&config).unwrap();
+    assert_eq!(output["providers"], input["providers"]);
+}
+
+#[test]
+fn absent_root_settings_stay_absent_and_malformed_settings_are_rejected() {
+    assert_eq!(parse("{}").root_config(), Default::default());
+    assert_eq!(
+        serde_json::to_value(parse("{}")).unwrap(),
+        serde_json::json!({})
+    );
+    for value in [
+        serde_json::json!({"providers": {}}),
+        serde_json::json!({"providers": {"applications": {}}}),
+        serde_json::json!({"providers": {"applications": {"entrypoints": {}}}}),
+        serde_json::json!({"favorites": []}),
+        serde_json::json!({"fallbacks": []}),
+    ] {
+        assert_eq!(
+            serde_json::to_value(parse(&value.to_string())).unwrap(),
+            value
+        );
+    }
+    for value in [
+        r#"{"providers": []}"#,
+        r#"{"providers": {"applications": {"enabled": "false"}}}"#,
+        r#"{"providers": {"applications": {"entrypoints": {"x": {"alias": 3}}}}}"#,
+        r#"{"favorites": [42]}"#,
+        r#"{"fallbacks": false}"#,
+    ] {
+        assert!(
+            Config::parse(value, Path::new("config.json")).is_err(),
+            "{value}"
+        );
+    }
+}
+
 fn assert_all_defaults(config: &Config) {
     assert_eq!(config.launcher().hotkey(), DEFAULT_HOTKEY);
     assert_eq!(
