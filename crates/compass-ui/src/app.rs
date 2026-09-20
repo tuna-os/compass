@@ -1626,20 +1626,35 @@ impl LauncherApp {
         let filter = text_input("Search…", &panel.filter)
             .id(PANEL_INPUT)
             .on_input(Message::PanelFilterChanged)
-            .padding(8)
+            .padding(
+                Padding::new(0.0)
+                    .left(design::panel_metric("inset"))
+                    .right(design::panel_metric("inset")),
+            )
+            .style(query_input_style)
             .size(f32::from(geometry.title_size));
-        let mut col = column![].spacing(f32::from(geometry.row_spacing));
+        let filter = container(filter)
+            .height(design::panel_metric("filter-height"))
+            .align_y(Alignment::Center);
+        let mut col = column![].spacing(design::panel_metric("gap"));
 
         for (index, panel_row) in panel.rows.iter().enumerate() {
             let element: Element<Message> = match panel_row.kind {
-                RowKind::Divider => container(Space::new().height(Length::Fixed(1.0)))
-                    .width(Length::Fill)
-                    .padding(Padding::new(0.0).top(5).bottom(5).left(8).right(8))
-                    .style(move |_: &Theme| container::Style {
-                        background: Some(palette.border.to_iced().into()),
-                        ..container::Style::default()
-                    })
-                    .into(),
+                RowKind::Divider => container(
+                    container(Space::new().height(Length::Fixed(1.0)))
+                        .width(Length::Fill)
+                        .id("panel-divider-line")
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(palette.border.to_iced().into()),
+                            ..container::Style::default()
+                        }),
+                )
+                .padding(
+                    Padding::new(design::panel_metric("divider-gap"))
+                        .left(design::panel_metric("inset"))
+                        .right(design::panel_metric("inset")),
+                )
+                .into(),
                 RowKind::Header => {
                     let name = panel
                         .sections
@@ -1650,7 +1665,9 @@ impl LauncherApp {
                             .size(f32::from(geometry.heading_size))
                             .color(palette.muted.to_iced()),
                     )
-                    .padding(Padding::new(0.0).top(8).bottom(4).left(10))
+                    .height(design::panel_metric("header-height"))
+                    .align_y(Alignment::Center)
+                    .padding(Padding::new(0.0).left(design::panel_metric("inset")))
                     .into()
                 }
                 RowKind::Item => {
@@ -1685,10 +1702,10 @@ impl LauncherApp {
                     .id(crate::scroll::PANEL_RESULTS)
                     .height(Length::Shrink)
             ]
-            .spacing(f32::from(geometry.row_spacing)),
+            .spacing(design::panel_metric("gap")),
         )
-        .width(Length::Fixed(300.0))
-        .padding(6)
+        .width(Length::Fixed(design::panel_metric("width")))
+        .padding(design::panel_metric("padding"))
         .style(move |_: &Theme| container::Style {
             background: Some(palette.surface.to_iced().into()),
             border: Border {
@@ -1740,25 +1757,32 @@ impl LauncherApp {
             );
         }
 
-        container(line.padding(Padding::new(0.0).left(10).right(10)))
-            .width(Length::Fill)
-            .height(Length::Fixed(34.0))
-            .style(move |_: &Theme| {
-                if selected {
-                    container::Style {
-                        background: Some(palette.selection.to_iced().into()),
-                        border: Border {
-                            color: Color::TRANSPARENT,
-                            width: 0.0,
-                            radius: 8.0.into(),
-                        },
-                        ..container::Style::default()
-                    }
-                } else {
-                    container::Style::default()
+        container(
+            line.padding(
+                Padding::new(0.0)
+                    .left(design::panel_metric("inset"))
+                    .right(design::panel_metric("inset")),
+            ),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(design::panel_metric("row-height")))
+        .align_y(Alignment::Center)
+        .style(move |_: &Theme| {
+            if selected {
+                container::Style {
+                    background: Some(palette.selection.to_iced().into()),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: design::panel_metric("row-radius").into(),
+                    },
+                    ..container::Style::default()
                 }
-            })
-            .into()
+            } else {
+                container::Style::default()
+            }
+        })
+        .into()
     }
 
     /// Re-rank against the current query.
@@ -3704,6 +3728,74 @@ mod ime_tests {
 mod view_tests {
     use super::*;
     use crate::preset::{self, Preset};
+
+    #[test]
+    fn action_menu_geometry_matches_the_spacing_contract() {
+        for (name, _) in preset::NAMES {
+            for appearance in Appearance::ALL {
+                let mut app = LauncherApp::with_index(AppIndex::builder().build());
+                app.apply(AppFlags {
+                    appearance,
+                    appearance_preset: preset::resolve(Some(name), None, None),
+                    ..AppFlags::default()
+                });
+                let panel = PanelState::new(vec![
+                    PanelSection {
+                        name: String::new(),
+                        actions: vec![Action::new("Open").with_shortcut("enter")],
+                    },
+                    PanelSection {
+                        name: "Copy".into(),
+                        actions: vec![Action::new("Copy name"), Action::new("Copy path")],
+                    },
+                ]);
+                let mut row = iced_test::Simulator::with_size(
+                    iced::Settings::default(),
+                    iced::Size::new(288.0, 34.0),
+                    app.panel_item("Open", Some("enter"), true),
+                );
+                for label in ["Open", "enter"] {
+                    let bounds = row.find(label).unwrap().bounds();
+                    assert!(
+                        (bounds.y + bounds.height / 2.0 - 17.0).abs() < 0.1,
+                        "{name}: {label} not centered"
+                    );
+                }
+                let mut ui = iced_test::Simulator::with_size(
+                    iced::Settings::default(),
+                    iced::Size::new(300.0, 240.0),
+                    app.view_panel(&panel),
+                );
+                let divider = ui
+                    .find(iced_test::selector::id("panel-divider-line"))
+                    .unwrap()
+                    .bounds();
+                assert_eq!(
+                    divider.height, 1.0,
+                    "padding must not be painted as a divider"
+                );
+                let open = ui.find("Open").unwrap().bounds();
+                let heading = ui.find("COPY").unwrap().bounds();
+                let copy = ui.find("Copy name").unwrap().bounds();
+                assert_eq!(open.x, heading.x);
+                assert_eq!(open.x, copy.x);
+                assert!(divider.y > open.y + open.height);
+                assert!(heading.y > divider.y + divider.height);
+                if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                    ui.click(iced_test::selector::id(PANEL_INPUT)).unwrap();
+                    assert!(
+                        ui.snapshot(&app.theme())
+                            .unwrap()
+                            .matches_image(
+                                std::path::PathBuf::from(directory)
+                                    .join(format!("{}-{name}-action-menu.png", appearance.name()))
+                            )
+                            .unwrap()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn mixed_result_rows_center_their_labels_and_render_resolved_icons() {
