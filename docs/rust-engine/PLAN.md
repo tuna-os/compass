@@ -2376,6 +2376,13 @@ task while leaving the launcher alive. Headless widget and task tests cover thes
 clipboard delivery and focus under GNOME still require desktop integration checks. This does
 not close the extension-rendering, builtin-view, platform or release gates below.
 
+Long native action panels now keep the filter outside a bounded scroller.
+Keyboard navigation reveals the selected widget using its measured layout
+bounds rather than estimated row heights. Headless Iced tests exercise wheel
+scrolling, full keyboard traversal, wraparound and filtering after scrolling.
+PR evidence includes real headless wgpu renders; those do not replace the
+GNOME/Flatpak integration checks.
+
 Rewritten as items land; the previous version listed the VM tier and both spikes as the work to do,
 and all three now exist.
 

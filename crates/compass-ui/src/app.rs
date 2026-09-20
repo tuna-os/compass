@@ -9,7 +9,9 @@
 
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
-    widget::{Space, column, container, image, mouse_area, row, stack, svg, text, text_input},
+    widget::{
+        Space, column, container, image, mouse_area, row, scrollable, stack, svg, text, text_input,
+    },
     window,
 };
 
@@ -1122,7 +1124,7 @@ impl LauncherApp {
                 if let Some(panel) = self.panel.as_mut() {
                     panel.set_filter(filter);
                 }
-                Task::none()
+                crate::scroll::reveal_panel_selection()
             }
             Message::PanelMove(direction) => {
                 if let Some(panel) = self.panel.as_mut() {
@@ -1137,7 +1139,7 @@ impl LauncherApp {
                         self.wrap_navigation,
                     );
                 }
-                Task::none()
+                crate::scroll::reveal_panel_selection()
             }
             Message::PanelClicked(index) => {
                 let Some(panel) = self.panel.as_mut() else {
@@ -1548,14 +1550,12 @@ impl LauncherApp {
     fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
         let geometry = self.geometry;
         let palette = design::palette(self.appearance);
-        let mut col = column![
-            text_input("Search…", &panel.filter)
-                .id(PANEL_INPUT)
-                .on_input(Message::PanelFilterChanged)
-                .padding(8)
-                .size(f32::from(geometry.title_size))
-        ]
-        .spacing(f32::from(geometry.row_spacing));
+        let filter = text_input("Search…", &panel.filter)
+            .id(PANEL_INPUT)
+            .on_input(Message::PanelFilterChanged)
+            .padding(8)
+            .size(f32::from(geometry.title_size));
+        let mut col = column![].spacing(f32::from(geometry.row_spacing));
 
         for (index, panel_row) in panel.rows.iter().enumerate() {
             let element: Element<Message> = match panel_row.kind {
@@ -1587,7 +1587,13 @@ impl LauncherApp {
                     let title = action.map_or("", |action| action.title.as_str());
                     let shortcut = action.and_then(|action| action.shortcut.clone());
                     let selected = isize::try_from(index).unwrap_or(isize::MAX) == panel.selected;
-                    mouse_area(self.panel_item(title, shortcut.as_deref(), selected))
+                    let item = self.panel_item(title, shortcut.as_deref(), selected);
+                    let item: Element<Message> = if selected {
+                        container(item).id(crate::scroll::PANEL_SELECTION).into()
+                    } else {
+                        item
+                    };
+                    mouse_area(item)
                         .on_press(Message::PanelClicked(index))
                         .into()
                 }
@@ -1599,19 +1605,27 @@ impl LauncherApp {
             col = col.push(self.notice("No actions"));
         }
 
-        container(col)
-            .width(Length::Fixed(300.0))
-            .padding(6)
-            .style(move |_: &Theme| container::Style {
-                background: Some(palette.surface.to_iced().into()),
-                border: Border {
-                    color: palette.border.to_iced(),
-                    width: 1.0,
-                    radius: 12.0.into(),
-                },
-                ..container::Style::default()
-            })
-            .into()
+        container(
+            column![
+                filter,
+                scrollable(col)
+                    .id(crate::scroll::PANEL_RESULTS)
+                    .height(Length::Shrink)
+            ]
+            .spacing(f32::from(geometry.row_spacing)),
+        )
+        .width(Length::Fixed(300.0))
+        .padding(6)
+        .style(move |_: &Theme| container::Style {
+            background: Some(palette.surface.to_iced().into()),
+            border: Border {
+                color: palette.border.to_iced(),
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
     }
 
     /// One action row, with its shortcut right-aligned.
@@ -3488,6 +3502,151 @@ mod ime_tests {
 mod view_tests {
     use super::*;
     use crate::preset::{self, Preset};
+
+    #[test]
+    fn long_action_panels_keep_a_bounded_scroll_region_below_the_filter() {
+        let mut app = LauncherApp::with_index(AppIndex::builder().build());
+        for appearance in Appearance::ALL {
+            app.appearance = appearance;
+            let panel = PanelState::new(vec![PanelSection {
+                name: String::new(),
+                actions: (0..40)
+                    .map(|i| Action::new(format!("Action {i}")))
+                    .collect(),
+            }]);
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(320.0, 180.0),
+                app.view_panel(&panel),
+            );
+            let filter = ui
+                .find(iced_test::selector::id(PANEL_INPUT))
+                .unwrap()
+                .bounds();
+            let scroller = ui
+                .find(iced_test::selector::id("panel-results"))
+                .unwrap()
+                .bounds();
+            assert!(filter.y >= 0.0 && filter.y + filter.height <= 180.0);
+            assert!(scroller.y >= filter.y + filter.height);
+            assert!(scroller.y + scroller.height <= 180.0);
+            assert!(scroller.height > 34.0);
+            assert!(ui.find("Action 39").unwrap().visible_bounds().is_none());
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                assert!(
+                    ui.snapshot(&app.theme())
+                        .unwrap()
+                        .matches_image(
+                            std::path::PathBuf::from(directory)
+                                .join(format!("{}-panel-start.png", appearance.name()))
+                        )
+                        .unwrap()
+                );
+            }
+            ui.point_at(iced::Point::new(150.0, 100.0));
+            ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y: -2000.0 },
+            })]);
+            assert!(ui.find("Action 39").unwrap().visible_bounds().is_some());
+            assert_eq!(
+                ui.find(iced_test::selector::id(PANEL_INPUT))
+                    .unwrap()
+                    .bounds(),
+                filter
+            );
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                assert!(
+                    ui.snapshot(&app.theme())
+                        .unwrap()
+                        .matches_image(
+                            std::path::PathBuf::from(directory)
+                                .join(format!("{}-panel-scrolled.png", appearance.name()))
+                        )
+                        .unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_selection_stays_visible_in_the_real_panel_widget_tree() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_test::Selector;
+        use iced_winit::{
+            core::{
+                renderer::Headless,
+                widget::{
+                    Operation,
+                    operation::{self, Outcome},
+                },
+            },
+            runtime::{Action as RuntimeAction, UserInterface, user_interface},
+        };
+
+        let mut app = LauncherApp::with_index(AppIndex::builder().build());
+        app.panel = Some(PanelState::new(vec![PanelSection {
+            name: "Actions".to_owned(),
+            actions: (0..40)
+                .map(|i| Action::new(format!("Action {i:02}")))
+                .collect(),
+        }]));
+        let mut renderer = block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            None,
+        ))
+        .unwrap();
+        let mut cache = user_interface::Cache::default();
+        let size = iced::Size::new(320.0, 180.0);
+        app.wrap_navigation = true;
+        let moves = std::iter::repeat_n(Message::PanelMove(Direction::Down), 39)
+            .chain([
+                Message::PanelMove(Direction::Down),
+                Message::PanelMove(Direction::Up),
+                Message::PanelFilterChanged("Action 00".to_owned()),
+                Message::PanelFilterChanged(String::new()),
+            ])
+            .chain(std::iter::repeat_n(Message::PanelMove(Direction::Down), 39))
+            .chain(std::iter::repeat_n(Message::PanelMove(Direction::Up), 39));
+        for message in moves {
+            let task = app.update(message);
+            let mut ui = UserInterface::build(
+                app.view_panel(app.panel.as_ref().unwrap()),
+                size,
+                cache,
+                &mut renderer,
+            );
+            let actions = iced_winit::runtime::task::into_stream(task)
+                .map(|stream| block_on(stream.collect::<Vec<_>>()))
+                .unwrap_or_default();
+            for action in actions {
+                let RuntimeAction::Widget(mut operation) = action else {
+                    panic!("expected scroll operation")
+                };
+                loop {
+                    ui.operate(&renderer, operation.as_mut());
+                    match operation.finish() {
+                        Outcome::Chain(next) => operation = next,
+                        Outcome::None => break,
+                        Outcome::Some(()) => panic!("unexpected output"),
+                    }
+                }
+            }
+            let mut selected = iced_test::selector::id(crate::scroll::PANEL_SELECTION).find();
+            ui.operate(&renderer, &mut operation::black_box(&mut selected));
+            let Outcome::Some(Some(selected)) = selected.finish() else {
+                panic!("missing selected widget")
+            };
+            let visible = selected
+                .visible_bounds()
+                .expect("selection must be onscreen");
+            assert!(
+                (visible.height - selected.bounds().height).abs() < 0.1,
+                "selection clipped: {selected:?}"
+            );
+            cache = ui.into_cache();
+        }
+    }
 
     /// A launcher showing results, built through the code `vicinae` uses.
     fn app_showing_results(dir: &std::path::Path, preset_name: &str) -> LauncherApp {
