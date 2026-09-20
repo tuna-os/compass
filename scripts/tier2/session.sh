@@ -42,7 +42,11 @@ if grep -q '^NoDisplay=true' "$desktop"; then
 fi
 
 for shutdown_mode in engine instance; do
-  flatpak --user run --instance-id-fd=3 "$APP_ID" --socket "$socket" start \
+  startup=(start)
+  if [ "$shutdown_mode" = instance ]; then
+    startup+=(--hidden)
+  fi
+  flatpak --user run --instance-id-fd=3 "$APP_ID" --socket "$socket" "${startup[@]}" \
     3>"$instance_file" >/tmp/tier2-session.log 2>&1 &
   session_pid=$!
   deadline=$((SECONDS + timeout_s))

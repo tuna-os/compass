@@ -27,6 +27,11 @@ An app-grid session exits if its engine disconnects, so a subsequent app-grid
 activation can start a fresh session instead of finding an undriven window.
 The explicit `ui` command retains its previous keep-running behavior.
 
+`vicinae start --hidden` prepares a resident session without opening a window.
+This is the entrypoint for a future user-approved start-at-login flow; running
+it does not itself configure login startup. A duplicate hidden start leaves
+the existing launcher's visibility unchanged. Ordinary `start` still opens it.
+
 ```sh
 # One-off: the offline dependency manifest Flathub builds require.
 python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json

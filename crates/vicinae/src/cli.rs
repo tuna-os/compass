@@ -80,7 +80,11 @@ impl Cli {
 pub enum Command {
     /// Start a resident launcher, starting its engine if needed.
     /// Reopening activates the existing window. Escape hides it.
-    Start,
+    Start {
+        /// Wait for activation without opening a window. Does not enable autostart.
+        #[arg(long)]
+        hidden: bool,
+    },
 
     /// Toggle the launcher window between shown and hidden.
     Toggle,
@@ -350,6 +354,19 @@ mod tests {
     #[test]
     fn the_ui_command_parses() {
         assert_eq!(parse(&["vicinae", "ui"]).command, Command::Ui);
+    }
+
+    #[test]
+    fn hidden_start_is_explicit() {
+        assert_eq!(
+            parse(&["vicinae", "start"]).command,
+            Command::Start { hidden: false }
+        );
+        assert_eq!(
+            parse(&["vicinae", "start", "--hidden"]).command,
+            Command::Start { hidden: true }
+        );
+        assert!(Cli::try_parse_from(["vicinae", "ui", "--hidden"]).is_err());
     }
 
     #[test]

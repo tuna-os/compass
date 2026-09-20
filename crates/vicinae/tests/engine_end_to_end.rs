@@ -815,6 +815,28 @@ fn a_second_ui_invocation_shows_the_existing_window_without_starting_a_renderer(
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(window.seen(), vec![compass_ipc::WindowCommand::Show]);
+    let hidden = Command::new(binary())
+        .args([
+            "--socket",
+            daemon.socket.to_str().unwrap(),
+            "start",
+            "--hidden",
+        ])
+        .env("DISPLAY", ":65534")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("WAYLAND_SOCKET")
+        .output()
+        .unwrap();
+    assert!(
+        hidden.status.success(),
+        "{}",
+        String::from_utf8_lossy(&hidden.stderr)
+    );
+    assert_eq!(
+        window.seen(),
+        vec![compass_ipc::WindowCommand::Show],
+        "a duplicate hidden start must not change visibility"
+    );
 }
 
 #[test]
