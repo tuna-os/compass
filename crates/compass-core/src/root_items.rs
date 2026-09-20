@@ -112,7 +112,10 @@ impl RootItem {
     /// boost on top.
     #[must_use]
     pub fn fuzzy_score(&self, query: &Query, now: i64) -> f64 {
-        let boost = FRECENCY_WEIGHT * self.frecency(now);
+        self.fuzzy_score_with_boost(query, FRECENCY_WEIGHT * self.frecency(now))
+    }
+
+    fn fuzzy_score_with_boost(&self, query: &Query, boost: f64) -> f64 {
         if query.is_empty() {
             return 100.0 - FRECENCY_WEIGHT + boost;
         }
@@ -147,6 +150,15 @@ pub fn search<'a>(
     opts: &SearchOptions,
     now: i64,
 ) -> Vec<ScoredRootItem<'a>> {
+    search_with_frecency(items, pattern, opts, |_, item| item.frecency(now))
+}
+
+pub(crate) fn search_with_frecency<'a>(
+    items: &'a [RootItem],
+    pattern: &str,
+    opts: &SearchOptions,
+    frecency: impl Fn(usize, &RootItem) -> f64,
+) -> Vec<ScoredRootItem<'a>> {
     let query = Query::new(pattern);
 
     let mut results: Vec<ScoredRootItem<'a>> = items
@@ -159,7 +171,8 @@ pub fn search<'a>(
         })
         .filter(|(_, item)| item.meta.favorite_idx.is_none() || opts.include_favorites)
         .filter_map(|(index, item)| {
-            let score = item.fuzzy_score(&query, now);
+            let score =
+                item.fuzzy_score_with_boost(&query, FRECENCY_WEIGHT * frecency(index, item));
             (score != 0.0).then_some(ScoredRootItem { item, score, index })
         })
         .collect();

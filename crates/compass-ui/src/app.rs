@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use compass_core::{AppIndex, AppItem};
 use compass_platform::{AppLauncher, NullLauncher};
-use compass_search::rank_indices;
 
 use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
 use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
@@ -46,6 +45,7 @@ const PANEL_INPUT: &str = "compass-action-filter";
 const APP_OPEN: &str = "app.open";
 const APP_COPY_NAME: &str = "app.copy-name";
 const APP_COPY_PATH: &str = "app.copy-path";
+const APP_DESKTOP_ACTION: &str = "app.desktop:";
 
 /// The nominal pixel size asked of the icon theme.
 ///
@@ -322,6 +322,18 @@ impl PanelState {
 /// change what enter means.
 #[must_use]
 pub fn actions_for_app(item: &AppItem) -> Vec<PanelSection> {
+    let mut primary = vec![Action::new("Open").with_id(APP_OPEN).with_shortcut("enter")];
+    if !item.is_action() {
+        for action in item.entry().actions() {
+            if let Some(name) = action.name().filter(|name| !name.is_empty())
+                && action.exec().is_some()
+            {
+                primary.push(
+                    Action::new(name).with_id(format!("{APP_DESKTOP_ACTION}{}", action.id())),
+                );
+            }
+        }
+    }
     let mut copy = vec![Action::new("Copy name").with_id(APP_COPY_NAME)];
     if item.path().is_some() {
         copy.push(Action::new("Copy path").with_id(APP_COPY_PATH));
@@ -329,13 +341,31 @@ pub fn actions_for_app(item: &AppItem) -> Vec<PanelSection> {
     vec![
         PanelSection {
             name: String::new(),
-            actions: vec![Action::new("Open").with_id(APP_OPEN).with_shortcut("enter")],
+            actions: primary,
         },
         PanelSection {
             name: "Copy".to_owned(),
             actions: copy,
         },
     ]
+}
+
+fn launch_task(
+    launcher: Arc<dyn AppLauncher>,
+    entry: compass_xdg::DesktopEntry,
+    action_id: Option<String>,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            match action_id {
+                Some(id) => launcher.launch_action(&entry, &id, &[]).await,
+                None => launcher.launch(&entry, &[]).await,
+            }
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        },
+        Message::Launched,
+    )
 }
 
 /// The launcher application state.
@@ -978,17 +1008,7 @@ impl LauncherApp {
                 let entry = item.entry().clone();
                 let action_id = item.action_id().map(str::to_owned);
                 let launcher = Arc::clone(&self.launcher);
-                Task::perform(
-                    async move {
-                        match action_id {
-                            Some(id) => launcher.launch_action(&entry, &id, &[]).await,
-                            None => launcher.launch(&entry, &[]).await,
-                        }
-                        .map(|_method| ())
-                        .map_err(|err| err.to_string())
-                    },
-                    Message::Launched,
-                )
+                launch_task(launcher, entry, action_id)
             }
             // A launcher that stays open after launching is a bug report
             // waiting to happen. Hidden, not gone -- see `conceal`.
@@ -1091,6 +1111,24 @@ impl LauncherApp {
                             return Task::none();
                         };
                         iced::clipboard::write(path.to_string_lossy().into_owned())
+                    }
+                    Some(id) if id.starts_with(APP_DESKTOP_ACTION) => {
+                        let action_id = &id[APP_DESKTOP_ACTION.len()..];
+                        if !item
+                            .entry()
+                            .actions()
+                            .iter()
+                            .any(|action| action.id() == action_id && action.exec().is_some())
+                        {
+                            return Task::none();
+                        }
+                        let task = launch_task(
+                            Arc::clone(&self.launcher),
+                            item.entry().clone(),
+                            Some(action_id.to_owned()),
+                        );
+                        self.panel = None;
+                        return task;
                     }
                     _ => return Task::none(),
                 };
@@ -1580,9 +1618,11 @@ impl LauncherApp {
             return;
         }
 
-        self.results = rank_indices(&self.query, self.app_index.items())
+        self.results = self
+            .app_index
+            .search_root(&self.query, None)
             .into_iter()
-            .map(|scored| scored.item)
+            .map(|scored| scored.index)
             .collect();
         // Back to the top on every new query: the old selection pointed into a
         // different list, and keeping its position would silently select an
@@ -1733,6 +1773,35 @@ mod tests {
     #[test]
     fn selecting_an_application_still_dispatches_the_parent() {
         assert_eq!(recorded_launch(false), [None]);
+    }
+
+    #[test]
+    fn a_root_application_exposes_and_dispatches_its_desktop_action_in_the_panel() {
+        use iced::futures::{StreamExt, executor::block_on};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        let index = AppIndex::builder().dir(dir.path()).build();
+        let launcher = Arc::new(RecordingLaunchTarget::default());
+        let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
+        let _ = app.update(Message::QueryChanged("Browser".to_owned()));
+        assert_eq!(app.results.len(), 1, "actions are not duplicate root rows");
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("Private".to_owned()));
+        assert_eq!(
+            app.panel
+                .as_ref()
+                .unwrap()
+                .selected_action()
+                .unwrap()
+                .id
+                .as_deref(),
+            Some("app.desktop:private")
+        );
+        let task = app.update(Message::PanelActivate);
+        assert!(app.panel.is_none());
+        let stream = iced_winit::runtime::task::into_stream(task).unwrap();
+        let _ = block_on(stream.collect::<Vec<_>>());
+        assert_eq!(*launcher.0.lock().unwrap(), [Some("private".to_owned())]);
     }
 
     #[test]
