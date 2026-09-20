@@ -135,6 +135,9 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // hand is a supported way to use it.
         let link = window::attach(cli.socket_path().as_path())
             .context("attaching the launcher window to the engine")?;
+        if link.is_none() && matches!(cli.command, Command::Start) {
+            bail!("the Compass engine stopped before the launcher could attach");
+        }
         if link.is_none() {
             tracing::info!("no engine attached; Escape will exit rather than hide");
         }
