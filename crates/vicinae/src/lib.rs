@@ -19,6 +19,7 @@ pub mod hotkey;
 pub mod ipc;
 pub mod serve;
 pub mod spike;
+pub mod ui_backend;
 pub mod window;
 
 use std::process::ExitCode;
@@ -144,8 +145,14 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // colour; see `appearance` for what happens when the portal is slow.
         let (appearance, appearance_link) = appearance::follow();
 
+        let backend = link.as_ref().map(|_| {
+            std::sync::Arc::new(ui_backend::DaemonBackend::new(cli.socket_path()))
+                as std::sync::Arc<dyn compass_ui::backend::ApplicationBackend>
+        });
+
         compass_ui::run_resident(compass_ui::AppFlags {
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
+            backend,
             link,
             keybinding,
             wrap_navigation,

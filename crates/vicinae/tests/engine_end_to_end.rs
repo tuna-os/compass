@@ -276,6 +276,77 @@ fn concurrent_launch_reports_do_not_lose_visits() {
 }
 
 #[test]
+fn ui_search_and_successful_launch_share_the_real_daemons_history() {
+    use compass_core::FrecencyStore;
+    use compass_platform::{AppLauncher, LaunchFuture, LaunchMethod};
+    use compass_ui::{LauncherApp, Message};
+    use futures_util::StreamExt;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Default)]
+    struct Launcher(Mutex<Vec<String>>);
+    impl AppLauncher for Launcher {
+        fn launch<'a>(
+            &'a self,
+            entry: &'a compass_xdg::DesktopEntry,
+            _uris: &'a [&'a str],
+        ) -> LaunchFuture<'a> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(entry.name().to_owned());
+                Ok(LaunchMethod::Direct)
+            })
+        }
+    }
+
+    let daemon = Daemon::start(&[
+        ("alpha.desktop", &entry("Alpha Editor", "")),
+        ("beta.desktop", &entry("Beta Editor", "")),
+    ]);
+    let launcher = Arc::new(Launcher::default());
+    let build_ui = || {
+        LauncherApp::with_index(
+            compass_core::AppIndex::builder()
+                .dir(daemon._dirs.path().join("data/applications"))
+                .build(),
+        )
+        .with_launcher(launcher.clone())
+        .with_backend(Arc::new(vicinae::ui_backend::DaemonBackend::new(
+            compass_ipc::SocketPath::exact(&daemon.socket),
+        )))
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let drive = |app: &mut LauncherApp, message| {
+        let task = app.update(message);
+        runtime.block_on(async {
+            if let Some(mut stream) = iced_winit::runtime::task::into_stream(task) {
+                while let Some(action) = stream.next().await {
+                    if let iced_winit::runtime::Action::Output(message) = action {
+                        let _ = app.update(message);
+                    }
+                }
+            }
+        });
+    };
+    let mut app = build_ui();
+    drive(&mut app, Message::QueryChanged("Editor".to_owned()));
+    assert_eq!(app.selected_item().unwrap().key(), "alpha.desktop");
+    drive(&mut app, Message::ResultSelected(1));
+    drive(&mut app, Message::LaunchSelected);
+    assert_eq!(*launcher.0.lock().unwrap(), ["Beta Editor"]);
+    let mut reopened_ui = build_ui();
+    drive(&mut reopened_ui, Message::QueryChanged("Editor".to_owned()));
+    assert_eq!(reopened_ui.selected_item().unwrap().key(), "beta.desktop");
+    let history = compass_core::JsonFrecencyStore::open(
+        daemon._dirs.path().join("data-home/vicinae/frecency.json"),
+    )
+    .unwrap();
+    assert_eq!(history.record("beta.desktop").unwrap().launch_count, 1);
+}
+
+#[test]
 fn a_desktop_link_without_exec_is_returned_by_root_search() {
     let daemon = Daemon::start(&[(
         "manual.desktop",

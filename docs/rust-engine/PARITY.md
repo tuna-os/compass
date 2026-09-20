@@ -925,8 +925,8 @@ fields. Unresolved TryExec remains a diagnostic rather than hiding a host app.
 The daemon retains the existing desktop-file IDs, result limit and frecency keys;
 its wire match score still excludes the frecency boost. This does not yet connect
 all builtin/extension providers, root configuration or the grouped `root_list`
-presentation. The UI's empty-query greeting and lack of persisted launch history
-also remain separate gaps. End-to-end upstream Unicode ordering must still be
+presentation. The UI's empty-query greeting remains a separate gap.
+End-to-end upstream Unicode ordering must still be
 proved before search timing is a comparable benchmark.
 
 The daemon now accepts `RecordLaunch` over IPC for indexed application/action
@@ -935,8 +935,20 @@ blocking persistence off the async executor; unknown keys return BadRequest and
 store failures return Internal rather than Ack. Protocol v3 distinguishes the
 new request from older peers, with the variant appended to preserve existing
 discriminants. The existing unreadable-store fallback remains in-memory for that
-session. This is the single-writer prerequisite for UI history reporting, not
-evidence that the UI already reports launches or uses persisted history.
+session.
+
+Attached UI windows now use a socket-free backend interface supplied by `vicinae`
+to query the same daemon ranking and report successful launches. The adapter
+bounds each IPC operation, and Iced explicitly uses its Tokio executor. The UI
+cancels superseded queries, rejects late generations, and clears stale rows while
+waiting; backend errors or catalog mismatches do not silently substitute local
+ranking. Launch reports capture the original item key, including desktop-action
+panel launches recorded against their root application, and history failures do
+not turn an already successful launch into a launch error. A real-daemon test
+drives UI tasks through selection, launch and reopening, verifying the persisted
+visit changes the new UI's order. Headless tests do not prove an external app
+opened. Standalone UI without a daemon still uses local search without persisted
+history; empty-query results and non-application providers remain unfinished.
 
 Desktop `Type=Link` entries now enter the application index without an Exec,
 including the harvested Singular manual fixture. Missing or empty URLs are

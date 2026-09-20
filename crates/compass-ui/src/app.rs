@@ -184,6 +184,8 @@ pub struct AppFlags {
     /// is on Linux. `vicinae` supplies `compass-platform-linux`'s launcher;
     /// tests supply their own. See ADR-0013.
     pub launcher: Arc<dyn AppLauncher>,
+    /// Shared ranking/history service when attached to an engine.
+    pub backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
     /// The navigation chord scheme, from `launcher.keybinding`.
     pub keybinding: compass_core::keybinding::Scheme,
     /// Whether the selection wraps, from `launcher.wrap_navigation`.
@@ -258,6 +260,7 @@ impl Default for AppFlags {
             // invisible at the call site, which is the arrangement ADR-0013
             // exists to end. `vicinae` sets this explicitly.
             launcher: Arc::new(NullLauncher),
+            backend: None,
             link: None,
             // Dark, until a desktop says otherwise. Not a preference: it is
             // what the launcher has always drawn, so a machine with no
@@ -354,6 +357,8 @@ fn launch_task(
     launcher: Arc<dyn AppLauncher>,
     entry: compass_xdg::DesktopEntry,
     action_id: Option<String>,
+    backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
+    key: String,
 ) -> Task<Message> {
     Task::perform(
         async move {
@@ -362,7 +367,15 @@ fn launch_task(
                 None => launcher.launch(&entry, &[]).await,
             }
             .map(|_| ())
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+            if let Some(backend) = backend
+                && let Err(error) = backend.record_launch(key).await
+            {
+                // The application already opened. A history failure must not
+                // invite the user to retry that successful launch.
+                tracing::warn!(%error, "could not record successful launch");
+            }
+            Ok(())
         },
         Message::Launched,
     )
@@ -386,6 +399,9 @@ pub struct LauncherApp {
     error: Option<String>,
     /// How to launch. See [`AppFlags::launcher`].
     launcher: Arc<dyn AppLauncher>,
+    backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
+    search_generation: u64,
+    search_task: Option<iced::task::Handle>,
     /// The engine driving this window. See [`AppFlags::link`].
     link: Option<EngineLink>,
     /// The open window, if one is.
@@ -582,6 +598,7 @@ impl LauncherApp {
     fn apply(&mut self, flags: AppFlags) {
         let app = self;
         app.launcher = flags.launcher;
+        app.backend = flags.backend;
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
@@ -623,6 +640,9 @@ impl LauncherApp {
             panel: None,
             error: None,
             launcher: Arc::new(NullLauncher),
+            backend: None,
+            search_generation: 0,
+            search_task: None,
             link: None,
             window: None,
             window_config: AppFlags::default().window_config,
@@ -654,6 +674,13 @@ impl LauncherApp {
     #[must_use]
     pub fn with_link(mut self, link: EngineLink) -> Self {
         self.link = Some(link);
+        self
+    }
+
+    /// Use a shared application ranking and history service.
+    #[must_use]
+    pub fn with_backend(mut self, backend: Arc<dyn crate::backend::ApplicationBackend>) -> Self {
+        self.backend = Some(backend);
         self
     }
 
@@ -698,6 +725,7 @@ impl LauncherApp {
     /// stayed on screen after launching is a bug report waiting to happen; a
     /// launcher that vanished with no way back is a worse one.
     fn conceal(&mut self) -> Task<Message> {
+        self.cancel_search();
         self.panel = None;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
@@ -979,7 +1007,34 @@ impl LauncherApp {
                 self.panel = None;
                 self.query = query;
                 self.error = None;
-                self.search();
+                self.search_task()
+            }
+            Message::SearchCompleted { generation, result } => {
+                if generation != self.search_generation {
+                    return Task::none();
+                }
+                self.search_task = None;
+                match result {
+                    Ok(keys) => {
+                        let positions: Option<Vec<_>> = keys
+                            .iter()
+                            .map(|key| {
+                                let position = self.app_index.position(key)?;
+                                (!self.app_index.items()[position].is_action()).then_some(position)
+                            })
+                            .collect();
+                        if let Some(positions) = positions {
+                            self.results = positions;
+                            self.selected = 0;
+                            self.warm_icons();
+                        } else {
+                            self.error = Some(
+                                "The application catalog changed. Restart the launcher.".to_owned(),
+                            );
+                        }
+                    }
+                    Err(error) => self.error = Some(error),
+                }
                 Task::none()
             }
             Message::ResultSelected(index) => {
@@ -1008,7 +1063,13 @@ impl LauncherApp {
                 let entry = item.entry().clone();
                 let action_id = item.action_id().map(str::to_owned);
                 let launcher = Arc::clone(&self.launcher);
-                launch_task(launcher, entry, action_id)
+                launch_task(
+                    launcher,
+                    entry,
+                    action_id,
+                    self.backend.clone(),
+                    item.key().to_owned(),
+                )
             }
             // A launcher that stays open after launching is a bug report
             // waiting to happen. Hidden, not gone -- see `conceal`.
@@ -1029,13 +1090,14 @@ impl LauncherApp {
                 self.answer(UiOutcome::Shown);
                 // Covers boot and every summon: `conceal` closes the window, so
                 // a summon opens a new one whose field starts unfocused.
-                focus_search()
+                Task::batch([focus_search(), self.search_task()])
             }
             Message::Closed(id) => {
                 // Only clear the state if *this* window is the one that went;
                 // a stale close for a window already replaced would otherwise
                 // leave the launcher believing it is hidden while it is not.
                 if self.window == Some(id) {
+                    self.cancel_search();
                     self.window = None;
                     // The honest moment to say "hidden": the window is gone.
                     // Answers only a command that asked -- a window the user
@@ -1126,6 +1188,8 @@ impl LauncherApp {
                             Arc::clone(&self.launcher),
                             item.entry().clone(),
                             Some(action_id.to_owned()),
+                            self.backend.clone(),
+                            item.key().to_owned(),
                         );
                         self.panel = None;
                         return task;
@@ -1611,6 +1675,36 @@ impl LauncherApp {
     }
 
     /// Re-rank against the current query.
+    fn search_task(&mut self) -> Task<Message> {
+        self.cancel_search();
+        self.error = None;
+        if let Some(backend) = self.backend.clone()
+            && !self.query.trim().is_empty()
+        {
+            self.results.clear();
+            self.selected = 0;
+            let query = self.query.clone();
+            let generation = self.search_generation;
+            let (task, handle) =
+                Task::perform(async move { backend.search(query).await }, move |result| {
+                    Message::SearchCompleted { generation, result }
+                })
+                .abortable();
+            self.search_task = Some(handle.abort_on_drop());
+            return task;
+        }
+        self.search();
+        Task::none()
+    }
+
+    fn cancel_search(&mut self) {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        if let Some(handle) = self.search_task.take() {
+            handle.abort();
+        }
+    }
+
+    /// Re-rank locally when no daemon backend is attached.
     fn search(&mut self) {
         if self.query.trim().is_empty() {
             self.results.clear();
@@ -1775,6 +1869,160 @@ mod tests {
         assert_eq!(recorded_launch(false), [None]);
     }
 
+    #[derive(Debug, Default)]
+    struct TestBackend {
+        keys: Vec<String>,
+        recorded: std::sync::Mutex<Vec<String>>,
+        fail_history: bool,
+    }
+
+    impl crate::backend::ApplicationBackend for TestBackend {
+        fn search(&self, _query: String) -> crate::backend::BackendFuture<'_, Vec<String>> {
+            Box::pin(async { Ok(self.keys.clone()) })
+        }
+
+        fn record_launch(&self, key: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.recorded.lock().unwrap().push(key);
+                if self.fail_history {
+                    Err("disk full".to_owned())
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    fn task_messages(task: Task<Message>) -> Vec<Message> {
+        use iced::futures::{StreamExt, executor::block_on};
+        let Some(stream) = iced_winit::runtime::task::into_stream(task) else {
+            return Vec::new();
+        };
+        block_on(
+            stream
+                .filter_map(|action| async move {
+                    match action {
+                        iced_winit::runtime::Action::Output(message) => Some(message),
+                        _ => None,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn backend_app(dir: &std::path::Path, backend: Arc<TestBackend>) -> LauncherApp {
+        for (id, name) in [("alpha", "Alpha Editor"), ("beta", "Beta Editor")] {
+            std::fs::write(
+                dir.join(format!("{id}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName={name}\nExec=unused\n"),
+            )
+            .unwrap();
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        app.apply(AppFlags {
+            backend: Some(backend),
+            ..AppFlags::default()
+        });
+        app
+    }
+
+    #[test]
+    fn backend_order_is_used_and_old_queries_cannot_replace_new_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["beta.desktop".to_owned(), "alpha.desktop".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let old = app.update(Message::QueryChanged("Ed".to_owned()));
+        let old_generation = app.search_generation;
+        let current = app.update(Message::QueryChanged("Editor".to_owned()));
+        assert!(
+            task_messages(old).is_empty(),
+            "superseded request is aborted"
+        );
+        assert!(
+            app.selected_item().is_none(),
+            "old results cannot be launched while pending"
+        );
+        for message in task_messages(current) {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let _ = app.update(Message::SearchCompleted {
+            generation: old_generation,
+            result: Ok(vec!["alpha.desktop".to_owned()]),
+        });
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let generation = app.search_generation;
+        let _ = app.update(Message::QueryChanged(String::new()));
+        let _ = app.update(Message::SearchCompleted {
+            generation,
+            result: Ok(vec!["alpha.desktop".to_owned()]),
+        });
+        assert!(app.results.is_empty());
+    }
+
+    #[test]
+    fn backend_errors_or_unknown_keys_do_not_restore_stale_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = backend_app(dir.path(), Arc::new(TestBackend::default()));
+        for result in [
+            Err("offline".to_owned()),
+            Ok(vec!["missing.desktop".to_owned()]),
+        ] {
+            let _pending = app.update(Message::QueryChanged("Editor".to_owned()));
+            let _ = app.update(Message::SearchCompleted {
+                generation: app.search_generation,
+                result,
+            });
+            assert!(app.results.is_empty());
+            assert!(app.error.is_some());
+        }
+    }
+
+    #[test]
+    fn only_successful_launches_report_the_captured_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["beta.desktop".to_owned()],
+            fail_history: true,
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend.clone());
+        let query = app.update(Message::QueryChanged("Editor".to_owned()));
+        for message in task_messages(query) {
+            let _ = app.update(message);
+        }
+        let failed = app.update(Message::LaunchSelected);
+        assert!(matches!(
+            &task_messages(failed)[0],
+            Message::Launched(Err(_))
+        ));
+        assert!(backend.recorded.lock().unwrap().is_empty());
+        app.launcher = Arc::new(RecordingLaunchTarget::default());
+        let launched = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::QueryChanged(String::new()));
+        assert!(
+            matches!(&task_messages(launched)[0], Message::Launched(Ok(()))),
+            "history failure is not a launch failure"
+        );
+        assert_eq!(*backend.recorded.lock().unwrap(), ["beta.desktop"]);
+    }
+
+    #[test]
+    fn iced_executor_drives_tokio_tasks() {
+        let executor = <iced::executor::Default as iced::Executor>::new().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        iced::Executor::spawn(&executor, async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            sender.send(()).unwrap();
+        });
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+    }
+
     #[test]
     fn a_desktop_link_is_searchable_without_application_actions() {
         let dir = tempfile::tempdir().unwrap();
@@ -1799,6 +2047,8 @@ mod tests {
         let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
         let _ = app.update(Message::QueryChanged("Browser".to_owned()));
         assert_eq!(app.results.len(), 1, "actions are not duplicate root rows");
+        let backend = Arc::new(TestBackend::default());
+        app.backend = Some(backend.clone());
         let _ = app.update(Message::TogglePanel);
         let _ = app.update(Message::PanelFilterChanged("Private".to_owned()));
         assert_eq!(
@@ -1816,6 +2066,7 @@ mod tests {
         let stream = iced_winit::runtime::task::into_stream(task).unwrap();
         let _ = block_on(stream.collect::<Vec<_>>());
         assert_eq!(*launcher.0.lock().unwrap(), [Some("private".to_owned())]);
+        assert_eq!(*backend.recorded.lock().unwrap(), ["browser.desktop"]);
     }
 
     #[test]
