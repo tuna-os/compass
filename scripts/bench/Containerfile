@@ -5,3 +5,4 @@ ENV PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbi
 ENV CARGO_HOME=/cache/cargo
 ENV CARGO_TARGET_DIR=/cache/target
 WORKDIR /src
+RUN dnf install -y --setopt=install_weak_deps=False libglvnd-opengl libglvnd-egl
