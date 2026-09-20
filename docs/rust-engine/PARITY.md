@@ -929,6 +929,15 @@ presentation. The UI's empty-query greeting and lack of persisted launch history
 also remain separate gaps. End-to-end upstream Unicode ordering must still be
 proved before search timing is a comparable benchmark.
 
+The daemon now accepts `RecordLaunch` over IPC for indexed application/action
+keys. It serializes history updates through its existing store and performs
+blocking persistence off the async executor; unknown keys return BadRequest and
+store failures return Internal rather than Ack. Protocol v3 distinguishes the
+new request from older peers, with the variant appended to preserve existing
+discriminants. The existing unreadable-store fallback remains in-memory for that
+session. This is the single-writer prerequisite for UI history reporting, not
+evidence that the UI already reports launches or uses persisted history.
+
 Desktop `Type=Link` entries now enter the application index without an Exec,
 including the harvested Singular manual fixture. Missing or empty URLs are
 reported, and link entries do not expose application-only desktop actions.

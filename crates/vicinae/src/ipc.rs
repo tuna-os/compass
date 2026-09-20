@@ -105,6 +105,7 @@ fn describe(request: &Request) -> &'static str {
         Request::Shutdown => "Shutdown",
         Request::AttachWindow => "AttachWindow",
         Request::WindowOutcome(_) => "WindowOutcome",
+        Request::RecordLaunch { .. } => "RecordLaunch",
     }
 }
 

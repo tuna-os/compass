@@ -118,6 +118,21 @@ impl Daemon {
         );
         String::from_utf8(out.stdout).expect("utf-8 stdout")
     }
+
+    fn request(&self, request: compass_ipc::Request) -> compass_ipc::Response {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                compass_ipc::Client::connect(&self.socket)
+                    .await
+                    .unwrap()
+                    .request(request)
+                    .await
+                    .unwrap()
+            })
+    }
 }
 
 impl Drop for Daemon {
@@ -160,6 +175,104 @@ fn a_multi_word_query_is_joined_before_it_reaches_the_engine() {
     let quoted = daemon.client(&["query", "text editor"]);
     assert_eq!(joined, quoted);
     assert!(joined.contains("Text Editor"), "{joined}");
+}
+
+#[test]
+fn reporting_a_launch_persists_history_and_changes_root_order() {
+    use compass_core::FrecencyStore;
+    use compass_ipc::{Request, Response};
+    let daemon = Daemon::start(&[
+        ("alpha.desktop", &entry("Alpha Editor", "")),
+        ("beta.desktop", &entry("Beta Editor", "")),
+    ]);
+    let query = || {
+        let Response::QueryResults { hits } = daemon.request(Request::Query {
+            text: "Editor".to_owned(),
+        }) else {
+            panic!("query failed")
+        };
+        hits
+    };
+    let before = query();
+    assert_eq!(before[0].id, "alpha.desktop");
+    assert_eq!(
+        daemon.request(Request::RecordLaunch {
+            key: "beta.desktop".to_owned()
+        }),
+        Response::Ack
+    );
+    let after = query();
+    assert_eq!(after[0].id, "beta.desktop");
+    assert_eq!(
+        after[0].score, before[1].score,
+        "wire score excludes history"
+    );
+    let reopened = compass_core::JsonFrecencyStore::open(
+        daemon._dirs.path().join("data-home/vicinae/frecency.json"),
+    )
+    .unwrap();
+    let record = reopened.record("beta.desktop").unwrap();
+    assert_eq!(record.launch_count, 1);
+    assert!(record.last_launched_at.is_some());
+    assert!(reopened.record("alpha.desktop").is_none());
+}
+
+#[test]
+fn unknown_launch_keys_do_not_create_history_and_persistence_errors_are_reported() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    let path = daemon._dirs.path().join("data-home/vicinae/frecency.json");
+    for key in ["", "unknown.desktop", "../alpha.desktop"] {
+        assert!(matches!(
+            daemon.request(Request::RecordLaunch { key: key.to_owned() }),
+            Response::Error(error) if error.kind == ErrorKind::BadRequest
+        ));
+    }
+    assert!(!path.exists());
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(matches!(
+        daemon.request(Request::RecordLaunch { key: "alpha.desktop".to_owned() }),
+        Response::Error(error) if error.kind == ErrorKind::Internal
+    ));
+    assert!(matches!(
+        daemon.request(Request::Ping),
+        Response::Pong { .. }
+    ));
+}
+
+#[test]
+fn concurrent_launch_reports_do_not_lose_visits() {
+    use compass_core::FrecencyStore;
+    use compass_ipc::{Client, Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut requests = tokio::task::JoinSet::new();
+            for _ in 0..16 {
+                let socket = daemon.socket.clone();
+                requests.spawn(async move {
+                    Client::connect(socket)
+                        .await
+                        .unwrap()
+                        .request(Request::RecordLaunch {
+                            key: "alpha.desktop".to_owned(),
+                        })
+                        .await
+                        .unwrap()
+                });
+            }
+            while let Some(result) = requests.join_next().await {
+                assert_eq!(result.unwrap(), Response::Ack);
+            }
+        });
+    let reopened = compass_core::JsonFrecencyStore::open(
+        daemon._dirs.path().join("data-home/vicinae/frecency.json"),
+    )
+    .unwrap();
+    assert_eq!(reopened.record("alpha.desktop").unwrap().launch_count, 16);
 }
 
 #[test]
