@@ -8,9 +8,12 @@ use iced_winit::core::{
 
 pub(crate) const PANEL_RESULTS: &str = "panel-results";
 pub(crate) const PANEL_SELECTION: &str = "panel-selection";
+pub(crate) const ROOT_RESULTS: &str = "root-results";
+pub(crate) const ROOT_SELECTION: &str = "root-selection";
 
-#[derive(Default)]
 struct RevealSelection {
+    scroll_id: &'static str,
+    selection_id: &'static str,
     viewport: Option<(Rectangle, f32)>,
     selected: Option<Rectangle>,
 }
@@ -28,13 +31,13 @@ impl Operation for RevealSelection {
         translation: Vector,
         _: &mut dyn Scrollable,
     ) {
-        if id == Some(&Id::new(PANEL_RESULTS)) {
+        if id == Some(&Id::new(self.scroll_id)) {
             self.viewport = Some((bounds, translation.y));
         }
     }
 
     fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
-        if id == Some(&Id::new(PANEL_SELECTION)) {
+        if id == Some(&Id::new(self.selection_id)) {
             self.selected = Some(bounds);
         }
     }
@@ -53,7 +56,7 @@ impl Operation for RevealSelection {
             return Outcome::None;
         };
         Outcome::Chain(Box::new(scrollable::scroll_to(
-            Id::new(PANEL_RESULTS),
+            Id::new(self.scroll_id),
             scrollable::AbsoluteOffset {
                 x: None,
                 y: Some(next.max(0.0)),
@@ -63,7 +66,18 @@ impl Operation for RevealSelection {
 }
 
 pub(crate) fn reveal_panel_selection<T>() -> iced::Task<T> {
-    iced_winit::runtime::task::effect(iced_winit::runtime::Action::widget(
-        RevealSelection::default(),
-    ))
+    reveal_selection(PANEL_RESULTS, PANEL_SELECTION)
+}
+
+pub(crate) fn reveal_root_selection<T>() -> iced::Task<T> {
+    reveal_selection(ROOT_RESULTS, ROOT_SELECTION)
+}
+
+fn reveal_selection<T>(scroll_id: &'static str, selection_id: &'static str) -> iced::Task<T> {
+    iced_winit::runtime::task::effect(iced_winit::runtime::Action::widget(RevealSelection {
+        scroll_id,
+        selection_id,
+        viewport: None,
+        selected: None,
+    }))
 }

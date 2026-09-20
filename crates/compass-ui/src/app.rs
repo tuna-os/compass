@@ -1037,13 +1037,13 @@ impl LauncherApp {
                     }
                     Err(error) => self.error = Some(format!("could not search: {error}")),
                 }
-                Task::none()
+                crate::scroll::reveal_root_selection()
             }
             Message::ResultSelected(index) => {
                 if index < self.results.len() {
                     self.selected = index;
                 }
-                Task::none()
+                crate::scroll::reveal_root_selection()
             }
             Message::MoveSelection(direction) => {
                 self.selected = next_selection(
@@ -1052,7 +1052,7 @@ impl LauncherApp {
                     direction,
                     self.wrap_navigation,
                 );
-                Task::none()
+                crate::scroll::reveal_root_selection()
             }
             Message::LaunchSelected => {
                 let Some(item) = self.selected_item() else {
@@ -1345,9 +1345,19 @@ impl LauncherApp {
                 let Some(item) = self.app_index.items().get(*index) else {
                     continue;
                 };
-                list = list.push(self.result_row(item, position == self.selected));
+                let selected = position == self.selected;
+                let row = self.result_row(item, selected);
+                let row: Element<Message> = if selected {
+                    container(row).id(crate::scroll::ROOT_SELECTION).into()
+                } else {
+                    row
+                };
+                list = list.push(row);
             }
-            container(list).padding(Padding::new(6.0).top(8)).into()
+            scrollable(container(list).padding(Padding::new(6.0).top(8)))
+                .id(crate::scroll::ROOT_RESULTS)
+                .height(Length::Shrink)
+                .into()
         };
 
         // Flow's hairline rule under the query field (#84). A one-pixel
@@ -1706,7 +1716,7 @@ impl LauncherApp {
             return task;
         }
         self.search();
-        Task::none()
+        crate::scroll::reveal_root_selection()
     }
 
     fn cancel_search(&mut self) {
@@ -3502,6 +3512,172 @@ mod ime_tests {
 mod view_tests {
     use super::*;
     use crate::preset::{self, Preset};
+
+    fn long_results(dir: &std::path::Path) -> LauncherApp {
+        for i in 0..40 {
+            std::fs::write(
+                dir.join(format!("app-{i:02}.desktop")),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName=Application {i:02}\nExec=/bin/true\n"
+                ),
+            )
+            .unwrap();
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        let _ = app.update(Message::QueryChanged("Application".to_owned()));
+        app
+    }
+
+    #[test]
+    fn long_root_results_scroll_without_moving_the_query_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = long_results(dir.path());
+        for appearance in Appearance::ALL {
+            app.appearance = appearance;
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 320.0),
+                app.view(),
+            );
+            let field = ui
+                .find(iced_test::selector::id(SEARCH_INPUT))
+                .unwrap()
+                .bounds();
+            assert!(
+                ui.find("Application 39")
+                    .unwrap()
+                    .visible_bounds()
+                    .is_none()
+            );
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                assert!(
+                    ui.snapshot(&app.theme())
+                        .unwrap()
+                        .matches_image(
+                            std::path::PathBuf::from(directory)
+                                .join(format!("{}-root-start.png", appearance.name()))
+                        )
+                        .unwrap()
+                );
+            }
+            ui.point_at(iced::Point::new(400.0, 200.0));
+            ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Pixels {
+                    x: 0.0,
+                    y: -10000.0,
+                },
+            })]);
+            assert!(
+                ui.find("Application 39")
+                    .unwrap()
+                    .visible_bounds()
+                    .is_some()
+            );
+            assert_eq!(
+                ui.find(iced_test::selector::id(SEARCH_INPUT))
+                    .unwrap()
+                    .bounds(),
+                field
+            );
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                assert!(
+                    ui.snapshot(&app.theme())
+                        .unwrap()
+                        .matches_image(
+                            std::path::PathBuf::from(directory)
+                                .join(format!("{}-root-scrolled.png", appearance.name()))
+                        )
+                        .unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn root_keyboard_selection_stays_visible_across_presets_and_query_changes() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_test::Selector;
+        use iced_winit::{
+            core::{
+                renderer::Headless,
+                widget::{
+                    Operation,
+                    operation::{self, Outcome},
+                },
+            },
+            runtime::{Action as RuntimeAction, UserInterface, user_interface},
+        };
+
+        let mut renderer = block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            None,
+        ))
+        .unwrap();
+        for (name, _) in preset::NAMES {
+            let dir = tempfile::tempdir().unwrap();
+            let mut app = long_results(dir.path());
+            app.apply(AppFlags {
+                appearance_preset: preset::resolve(Some(name), None, None),
+                ..AppFlags::default()
+            });
+            app.wrap_navigation = true;
+            let mut cache = user_interface::Cache::default();
+            let moves = std::iter::repeat_n(Message::MoveSelection(Direction::Down), 39)
+                .chain([
+                    Message::MoveSelection(Direction::Down),
+                    Message::MoveSelection(Direction::Up),
+                    Message::QueryChanged("Application 00".to_owned()),
+                    Message::QueryChanged("Application".to_owned()),
+                ])
+                .chain(std::iter::repeat_n(
+                    Message::MoveSelection(Direction::Down),
+                    39,
+                ))
+                .chain(std::iter::repeat_n(
+                    Message::MoveSelection(Direction::Up),
+                    39,
+                ));
+            for message in moves {
+                let task = app.update(message);
+                let mut ui = UserInterface::build(
+                    app.view(),
+                    iced::Size::new(800.0, 320.0),
+                    cache,
+                    &mut renderer,
+                );
+                let actions = iced_winit::runtime::task::into_stream(task)
+                    .map(|stream| block_on(stream.collect::<Vec<_>>()))
+                    .unwrap_or_default();
+                for action in actions {
+                    let RuntimeAction::Widget(mut operation) = action else {
+                        panic!("expected widget operation")
+                    };
+                    loop {
+                        ui.operate(&renderer, operation.as_mut());
+                        match operation.finish() {
+                            Outcome::Chain(next) => operation = next,
+                            Outcome::None => break,
+                            Outcome::Some(()) => panic!("unexpected output"),
+                        }
+                    }
+                }
+                let mut selected = iced_test::selector::id(crate::scroll::ROOT_SELECTION).find();
+                ui.operate(&renderer, &mut operation::black_box(&mut selected));
+                let Outcome::Some(Some(selected)) = selected.finish() else {
+                    panic!("missing selection")
+                };
+                let visible = selected
+                    .visible_bounds()
+                    .expect("selected application is offscreen");
+                assert!(
+                    (visible.height - selected.bounds().height).abs() < 0.1,
+                    "{name}: clipped selection {selected:?}"
+                );
+                cache = ui.into_cache();
+            }
+        }
+    }
 
     #[test]
     fn long_action_panels_keep_a_bounded_scroll_region_below_the_filter() {

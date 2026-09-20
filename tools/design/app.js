@@ -235,6 +235,7 @@ function render() {
     }
   }
   card.append(list);
+  list.querySelector(".row.selected")?.scrollIntoView({ block: "nearest" });
 
   if (current.panel) {
     card.append(panelElement(current.panel));

@@ -128,7 +128,16 @@ fn quote(value: &str) -> String {
 }
 
 fn list_state(name: &str, description: &str, query: &str, selected: usize) -> String {
-    let corpus = corpus();
+    list_state_with_corpus(name, description, query, selected, &corpus())
+}
+
+fn list_state_with_corpus(
+    name: &str,
+    description: &str,
+    query: &str,
+    selected: usize,
+    corpus: &[(RootItem, String)],
+) -> String {
     let items: Vec<RootItem> = corpus.iter().map(|(item, _)| item.clone()).collect();
     let list = root_list::build(&items, query, &[], NOW);
 
@@ -229,7 +238,31 @@ fn panel_state(name: &str, description: &str, filter: &str) -> String {
 }
 
 fn main() {
+    let long_corpus: Vec<_> = (0..40)
+        .map(|i| {
+            app(
+                &format!("application-{i:02}"),
+                &format!("Application {i:02}"),
+                "",
+                "application",
+            )
+        })
+        .collect();
     let states = [
+        list_state_with_corpus(
+            "long-results",
+            "Forty results; the query stays above the scrollable list.",
+            "Application",
+            0,
+            &long_corpus,
+        ),
+        list_state_with_corpus(
+            "long-results-last",
+            "The last application selected; scrolling reveals it without moving the query.",
+            "Application",
+            39,
+            &long_corpus,
+        ),
         list_state(
             "empty",
             "Nothing typed yet: the resting state, and the one most people see most often.",

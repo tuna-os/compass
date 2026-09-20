@@ -2383,6 +2383,13 @@ scrolling, full keyboard traversal, wraparound and filtering after scrolling.
 PR evidence includes real headless wgpu renders; those do not replace the
 GNOME/Flatpak integration checks.
 
+The application results list now uses the same measured-selection reveal
+operation and a bounded scroller, keeping the query fixed. Native regressions
+cover reaching the last result with the wheel and keyboard navigation/query
+resets across all appearance presets. Browser long-list states and actual
+headless wgpu captures accompany the change; target-session checks remain
+required before merging.
+
 Rewritten as items land; the previous version listed the VM tier and both spikes as the work to do,
 and all three now exist.
 
