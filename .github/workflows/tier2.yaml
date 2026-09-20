@@ -279,6 +279,11 @@ jobs:
           scripts/tier2/headless-gnome-spike.sh \
             scripts/tier2/prove-smoke.sh
 
+      - name: Can the packaged session open and reuse a resident window?
+        run: |
+          scripts/tier2/headless-gnome-spike.sh \
+            scripts/tier2/session.sh
+
       - name: Keep the logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -287,5 +292,6 @@ jobs:
           path: |
             /tmp/gnome-shell.log
             /tmp/wayland-info.txt
+            /tmp/tier2-session.log
           if-no-files-found: warn
           retention-days: 7

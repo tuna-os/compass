@@ -18,6 +18,7 @@ pub mod engine;
 pub mod hotkey;
 pub mod ipc;
 pub mod serve;
+pub mod session;
 pub mod spike;
 pub mod ui_backend;
 mod ui_instance;
@@ -71,7 +72,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
     // started on, and on Wayland that has to be the process's main thread —
     // so the launcher cannot be dispatched from inside `block_on` like every
     // other command. ADR-0011 records what this costs and what it defers.
-    if matches!(cli.command, Command::Ui) {
+    if matches!(cli.command, Command::Ui | Command::Start) {
+        require_servable_engine(cli.engine)?;
         // Checked here rather than left to Iced. With no display, `iced::run`
         // does not return an error — winit panics inside it, and the user gets
         // a backtrace naming winit's source file for the entirely ordinary
@@ -107,12 +109,35 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             }
         };
 
+        let _engine_session = if matches!(cli.command, Command::Start) {
+            let mut command = std::process::Command::new(std::env::current_exe()?);
+            command
+                .arg("--engine=rust")
+                .arg("--socket")
+                .arg(cli.socket_path().as_path())
+                .arg("serve")
+                .stdin(std::process::Stdio::null());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            Some(runtime.block_on(session::ensure(
+                &cli.socket_path(),
+                &mut command,
+                std::time::Duration::from_secs(15),
+            ))?)
+        } else {
+            None
+        };
+
         // Attached before Iced starts, on a thread that still belongs to us.
         // `None` means no engine is listening, which leaves the launcher
         // running undriven rather than refusing to start -- `vicinae ui` by
         // hand is a supported way to use it.
         let link = window::attach(cli.socket_path().as_path())
             .context("attaching the launcher window to the engine")?;
+        if link.is_none() && matches!(cli.command, Command::Start) {
+            bail!("the Compass engine stopped before the launcher could attach");
+        }
         if link.is_none() {
             tracing::info!("no engine attached; Escape will exit rather than hide");
         }
@@ -179,6 +204,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             backend,
             root_config,
             link,
+            exit_on_engine_disconnect: matches!(cli.command, Command::Start),
             keybinding,
             wrap_navigation,
             quick_launch,
@@ -322,7 +348,9 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         }
 
         // Handled in `run`, before the runtime exists.
-        Command::Ui => unreachable!("the launcher is dispatched before the runtime"),
+        Command::Ui | Command::Start => {
+            unreachable!("the launcher is dispatched before the runtime")
+        }
 
         Command::Toggle => window_command(&socket, cli.engine, Request::Toggle).await,
         Command::Show => window_command(&socket, cli.engine, Request::Show).await,

@@ -32,6 +32,95 @@ fn binary() -> PathBuf {
     path.join("vicinae")
 }
 
+#[test]
+fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
+    let dir = TempDir::new().unwrap();
+    let socket = compass_ipc::SocketPath::exact(dir.path().join("ipc.sock"));
+    let mut command = Command::new(binary());
+    command
+        .arg("--socket")
+        .arg(socket.as_path())
+        .args(["serve", "--no-hotkey"])
+        .env("XDG_DATA_HOME", dir.path().join("data"))
+        .env("XDG_DATA_DIRS", dir.path().join("empty"))
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .env("HOME", dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let owner = vicinae::session::ensure(&socket, &mut command, STARTUP_TIMEOUT)
+            .await
+            .unwrap();
+        assert!(vicinae::ipc::ping(&socket).await.is_ok());
+        let mut must_not_spawn = Command::new("/does/not/exist");
+        let guest = vicinae::session::ensure(&socket, &mut must_not_spawn, STARTUP_TIMEOUT)
+            .await
+            .unwrap();
+        drop(guest);
+        assert!(
+            vicinae::ipc::ping(&socket).await.is_ok(),
+            "reusing must not stop the engine"
+        );
+        drop(owner);
+        assert!(
+            vicinae::ipc::ping(&socket).await.is_err(),
+            "owned engine must be reaped"
+        );
+    });
+}
+
+#[test]
+fn graphical_session_reports_engine_startup_failure() {
+    let dir = TempDir::new().unwrap();
+    let socket = compass_ipc::SocketPath::exact(dir.path().join("ipc.sock"));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let error = runtime
+        .block_on(vicinae::session::ensure(
+            &socket,
+            &mut Command::new("/bin/false"),
+            STARTUP_TIMEOUT,
+        ))
+        .expect_err("failed child must not count as ready");
+    assert!(error.to_string().contains("exited before becoming ready"));
+}
+
+#[test]
+fn graphical_session_does_not_replace_an_unresponsive_socket_owner() {
+    let dir = TempDir::new().unwrap();
+    let socket = compass_ipc::SocketPath::exact(dir.path().join("ipc.sock"));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let listener = tokio::net::UnixListener::bind(socket.as_path()).unwrap();
+        let server = tokio::spawn(async move {
+            let (_connection, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let error = vicinae::session::ensure(
+            &socket,
+            &mut Command::new("/does/not/exist"),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(
+            !server.is_finished(),
+            "existing socket owner must be left alone"
+        );
+        server.abort();
+    });
+}
+
 /// A `.desktop` fixture tree, laid out the way XDG expects.
 fn write_apps(root: &Path, entries: &[(&str, &str)]) {
     let dir = root.join("applications");

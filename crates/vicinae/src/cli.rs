@@ -78,6 +78,10 @@ impl Cli {
 /// Subcommands of `vicinae`.
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub enum Command {
+    /// Start a resident launcher, starting its engine if needed.
+    /// Reopening activates the existing window. Escape hides it.
+    Start,
+
     /// Toggle the launcher window between shown and hidden.
     Toggle,
 
@@ -140,10 +144,8 @@ pub enum Command {
 
     /// Open the launcher window.
     ///
-    /// Runs the launcher in the foreground until it is dismissed or something
-    /// is launched. It does not talk to `serve` and does not need one running:
-    /// it indexes and ranks in-process. See ADR-0011 for why the window is its
-    /// own command rather than something the engine hosts.
+    /// Attaches to an existing engine when available. Without one, indexes
+    /// in-process and exits on dismissal. Use `start` for a resident session.
     Ui,
 
     /// Report what works on this machine and what does not.

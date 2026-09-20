@@ -122,19 +122,37 @@ impl Hash for EngineLink {
 }
 
 impl EngineLink {
-    /// A subscription yielding every command the engine pushes.
-    ///
-    /// Ends when the engine closes its side, which leaves the window running
-    /// but undriven — deliberately, because a window that exited when its
-    /// daemon restarted would need something to start it again.
-    pub fn subscription(&self) -> iced::Subscription<UiCommand> {
-        iced::Subscription::run_with(self.clone(), |link| {
-            let commands = link.take_commands();
-            iced::futures::stream::unfold(commands, |commands| async move {
-                let mut commands = commands?;
-                let command = commands.recv().await?;
-                Some((command, Some(commands)))
-            })
-        })
+    /// Commands followed by one `None` when the engine disconnects.
+    /// The application chooses whether disconnection should end its session.
+    pub fn subscription(&self) -> iced::Subscription<Option<UiCommand>> {
+        iced::Subscription::run_with(self.clone(), |link| command_events(link.take_commands()))
+    }
+}
+
+fn command_events(
+    commands: Option<mpsc::UnboundedReceiver<UiCommand>>,
+) -> impl iced::futures::Stream<Item = Option<UiCommand>> {
+    iced::futures::stream::unfold(commands, |commands| async move {
+        let mut commands = commands?;
+        match commands.recv().await {
+            Some(command) => Some((Some(command), Some(commands))),
+            None => Some((None, None)),
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::futures::{StreamExt, executor::block_on};
+
+    #[test]
+    fn disconnect_is_delivered_once_after_queued_commands() {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        sender.send(UiCommand::Show).unwrap();
+        drop(sender);
+        let events = block_on(command_events(Some(receiver)).collect::<Vec<_>>());
+        assert_eq!(events, vec![Some(UiCommand::Show), None]);
+        assert!(block_on(command_events(None).collect::<Vec<_>>()).is_empty());
     }
 }

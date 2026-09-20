@@ -236,6 +236,8 @@ pub struct AppFlags {
     /// -- and it changes what dismissing means: with nothing able to summon the
     /// window back, hiding it would strand the process invisible, so it exits.
     pub link: Option<EngineLink>,
+    /// End an app-grid session when its engine goes away. Explicit UI mode opts out.
+    pub exit_on_engine_disconnect: bool,
 }
 
 impl Default for AppFlags {
@@ -267,6 +269,7 @@ impl Default for AppFlags {
             backend: None,
             root_config: compass_core::root_items::RootConfig::default(),
             link: None,
+            exit_on_engine_disconnect: false,
             // Dark, until a desktop says otherwise. Not a preference: it is
             // what the launcher has always drawn, so a machine with no
             // Settings portal keeps the appearance it had rather than
@@ -409,6 +412,7 @@ pub struct LauncherApp {
     search_task: Option<iced::task::Handle>,
     /// The engine driving this window. See [`AppFlags::link`].
     link: Option<EngineLink>,
+    exit_on_engine_disconnect: bool,
     /// The open window, if one is.
     ///
     /// `None` is the hidden state: on Wayland a hidden window is a closed one.
@@ -630,6 +634,7 @@ impl LauncherApp {
         app.started_at = flags.started_at;
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
+        app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
     }
@@ -663,6 +668,7 @@ impl LauncherApp {
             search_generation: 0,
             search_task: None,
             link: None,
+            exit_on_engine_disconnect: false,
             window: None,
             pending_window: None,
             pending_hide: false,
@@ -941,7 +947,10 @@ impl LauncherApp {
             streams.push(window::frames().map(|_| Message::FrameDrawn));
         }
         if let Some(link) = &self.link {
-            streams.push(link.subscription().map(Message::Command));
+            streams.push(
+                link.subscription()
+                    .map(|command| command.map_or(Message::EngineDisconnected, Message::Command)),
+            );
         }
         if let Some(link) = &self.appearance_link {
             streams.push(link.subscription().map(Message::AppearanceChanged));
@@ -1133,6 +1142,13 @@ impl LauncherApp {
             Message::FocusChanged(_) => Task::none(),
             Message::WindowClosed => self.conceal(),
             Message::Quit => iced::exit(),
+            Message::EngineDisconnected => {
+                if self.exit_on_engine_disconnect {
+                    iced::exit()
+                } else {
+                    Task::none()
+                }
+            }
             Message::Opened(id) => {
                 if self.window.is_some_and(|current| current != id)
                     || self.pending_window.is_some_and(|pending| pending != id)
@@ -1926,6 +1942,21 @@ mod tests {
         let _ = app.update(Message::Closed(id));
         assert!(!app.is_visible());
         assert!(app.pending_window.is_none());
+    }
+
+    #[test]
+    fn only_app_grid_sessions_exit_when_the_engine_disconnects() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, task};
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        assert!(task::into_stream(app.update(Message::EngineDisconnected)).is_none());
+        app.apply(AppFlags {
+            exit_on_engine_disconnect: true,
+            ..AppFlags::default()
+        });
+        let mut exit = task::into_stream(app.update(Message::EngineDisconnected)).unwrap();
+        assert!(matches!(block_on(exit.next()), Some(Action::Exit)));
     }
 
     #[test]
