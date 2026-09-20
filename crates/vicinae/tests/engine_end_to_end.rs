@@ -54,9 +54,16 @@ struct Daemon {
 
 impl Daemon {
     fn start(entries: &[(&str, &str)]) -> Daemon {
+        Self::start_with_config(entries, "{}")
+    }
+
+    fn start_with_config(entries: &[(&str, &str)], config: &str) -> Daemon {
         let dirs = TempDir::new().expect("tempdir");
         let data = dirs.path().join("data");
         write_apps(&data, entries);
+        let config_dir = dirs.path().join("config/vicinae");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("vicinae.json"), config).unwrap();
 
         let socket = dirs.path().join("ipc.sock");
         let child = Command::new(binary())
@@ -143,6 +150,41 @@ impl Drop for Daemon {
 }
 
 // ---------------------------------------------------------------------------
+
+#[test]
+fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() {
+    use compass_ipc::{Request, Response};
+    let entries = [
+        ("alpha.desktop", entry("Alpha Editor", "")),
+        ("beta.desktop", entry("Beta Editor", "")),
+    ];
+    let entries = entries
+        .iter()
+        .map(|(id, body)| (*id, body.as_str()))
+        .collect::<Vec<_>>();
+    for (enabled, expected) in [(true, vec!["beta.desktop"]), (false, vec![])] {
+        let config = serde_json::json!({"providers": {"applications": {
+            "enabled": enabled,
+            "entrypoints": {
+                "alpha": {"enabled": false},
+                "beta": {"enabled": true, "alias": "uniquealias"}
+            }
+        }}});
+        let daemon = Daemon::start_with_config(&entries, &config.to_string());
+        for query in ["", "Editor", "uniquealias"] {
+            let Response::QueryResults { hits } =
+                daemon.request(Request::Query { text: query.into() })
+            else {
+                panic!("expected query result");
+            };
+            assert_eq!(
+                hits.iter().map(|hit| hit.id.as_str()).collect::<Vec<_>>(),
+                expected,
+                "{query}"
+            );
+        }
+    }
+}
 
 #[test]
 fn the_engine_starts_and_answers_a_ping() {

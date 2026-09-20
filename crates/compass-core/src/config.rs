@@ -99,6 +99,28 @@ pub const DEFAULT_AUTO_UPDATE: bool = true;
 /// Path of the config file relative to `$XDG_CONFIG_HOME`.
 pub const CONFIG_RELATIVE_PATH: &str = "vicinae/vicinae.json";
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct RootEntrypointSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shortcut: Option<String>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct RootProviderSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entrypoints: Option<BTreeMap<String, RootEntrypointSettings>>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
 /// Everything that can go wrong loading or saving a [`Config`].
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -465,6 +487,12 @@ pub struct Config {
     launcher: LauncherConfig,
     #[serde(default, skip_serializing_if = "ExtensionsConfig::is_empty")]
     extensions: ExtensionsConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    providers: Option<BTreeMap<String, RootProviderSettings>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    favorites: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fallbacks: Option<Vec<String>>,
 
     /// Top level keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -472,6 +500,46 @@ pub struct Config {
 }
 
 impl Config {
+    /// Root-manager settings using upstream's `provider:entrypoint` identities.
+    /// Unknown provider and entrypoint fields remain in the serialized config.
+    #[must_use]
+    pub fn root_config(&self) -> crate::root_items::RootConfig {
+        use crate::root_items::{ItemConfig, ProviderConfig, RootConfig};
+
+        RootConfig {
+            providers: self
+                .providers
+                .iter()
+                .flatten()
+                .map(|(id, provider)| {
+                    (
+                        id.clone(),
+                        ProviderConfig {
+                            enabled: provider.enabled,
+                            entrypoints: provider
+                                .entrypoints
+                                .iter()
+                                .flatten()
+                                .map(|(id, item)| {
+                                    (
+                                        id.clone(),
+                                        ItemConfig {
+                                            enabled: item.enabled,
+                                            alias: item.alias.clone(),
+                                            shortcut: item.shortcut.clone(),
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+            favorites: self.favorites.clone().unwrap_or_default(),
+            fallbacks: self.fallbacks.clone().unwrap_or_default(),
+        }
+    }
+
     /// The `launcher` section.
     #[must_use]
     pub fn launcher(&self) -> &LauncherConfig {

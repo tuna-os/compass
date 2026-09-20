@@ -650,6 +650,17 @@ pub struct ApplicationRootHit<'a> {
 }
 
 impl AppIndex {
+    /// Applies user settings without changing catalog positions or launch keys.
+    pub fn apply_root_config(&mut self, config: &crate::root_items::RootConfig) {
+        for root in &mut self.roots {
+            // Application defaults have no alias or shortcut. Reset them so a
+            // removed setting cannot survive a subsequent configuration merge.
+            root.meta.alias = None;
+            root.meta.shortcut = None;
+            root.merge_config(config, false);
+        }
+    }
+
     /// Search application root rows using the root manager's fields and ordering.
     ///
     /// Actions belong in the owning application's panel. An unresolved TryExec

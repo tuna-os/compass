@@ -34,6 +34,29 @@ fn root_rows_are_applications_even_when_host_try_exec_is_not_visible() {
 }
 
 #[test]
+fn application_root_settings_filter_alias_and_reset_without_changing_launch_keys() {
+    let (_dir, mut index) = index();
+    let config = compass_core::Config::parse(
+        r#"{"providers":{"applications":{"entrypoints":{
+            "browser":{"alias":"uniquealias"},"files":{"enabled":false}
+        }}}}"#,
+        std::path::Path::new("config.json"),
+    )
+    .unwrap();
+    index.apply_root_config(&config.root_config());
+    let hits = index.search_root("uniquealias", None);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].item.key(), "browser.desktop");
+    assert_eq!(index.items()[hits[0].index].key(), "browser.desktop");
+    assert!(index.search_root("Files", None).is_empty());
+    assert_eq!(index.search_root("", None).len(), 1);
+    index.apply_root_config(&Default::default());
+    assert!(index.search_root("uniquealias", None).is_empty());
+    assert_eq!(index.search_root("Files", None).len(), 1);
+    assert_eq!(index.search_root("", None).len(), 2);
+}
+
+#[test]
 fn root_fields_exclude_descriptions_but_include_categories_as_keywords() {
     let (_dir, index) = index();
     for query in ["GenericSentinel", "CommentSentinel"] {
