@@ -72,7 +72,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
     // started on, and on Wayland that has to be the process's main thread —
     // so the launcher cannot be dispatched from inside `block_on` like every
     // other command. ADR-0011 records what this costs and what it defers.
-    if matches!(cli.command, Command::Ui | Command::Start) {
+    if matches!(cli.command, Command::Ui | Command::Start { .. }) {
         require_servable_engine(cli.engine)?;
         // Checked here rather than left to Iced. With no display, `iced::run`
         // does not return an error — winit panics inside it, and the user gets
@@ -93,6 +93,9 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         {
             Some(lease) => lease,
             None => {
+                if matches!(cli.command, Command::Start { hidden: true }) {
+                    return Ok(ExitCode::from(EXIT_OK));
+                }
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()?;
@@ -109,7 +112,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             }
         };
 
-        let _engine_session = if matches!(cli.command, Command::Start) {
+        let _engine_session = if matches!(cli.command, Command::Start { .. }) {
             let mut command = std::process::Command::new(std::env::current_exe()?);
             command
                 .arg("--engine=rust")
@@ -135,7 +138,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // hand is a supported way to use it.
         let link = window::attach(cli.socket_path().as_path())
             .context("attaching the launcher window to the engine")?;
-        if link.is_none() && matches!(cli.command, Command::Start) {
+        if link.is_none() && matches!(cli.command, Command::Start { .. }) {
             bail!("the Compass engine stopped before the launcher could attach");
         }
         if link.is_none() {
@@ -204,7 +207,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             backend,
             root_config,
             link,
-            exit_on_engine_disconnect: matches!(cli.command, Command::Start),
+            exit_on_engine_disconnect: matches!(cli.command, Command::Start { .. }),
+            start_hidden: matches!(cli.command, Command::Start { hidden: true }),
             keybinding,
             wrap_navigation,
             quick_launch,
@@ -348,7 +352,7 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         }
 
         // Handled in `run`, before the runtime exists.
-        Command::Ui | Command::Start => {
+        Command::Ui | Command::Start { .. } => {
             unreachable!("the launcher is dispatched before the runtime")
         }
 

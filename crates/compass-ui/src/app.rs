@@ -238,6 +238,8 @@ pub struct AppFlags {
     pub link: Option<EngineLink>,
     /// End an app-grid session when its engine goes away. Explicit UI mode opts out.
     pub exit_on_engine_disconnect: bool,
+    /// Start without a window when an engine link can summon it later.
+    pub start_hidden: bool,
 }
 
 impl Default for AppFlags {
@@ -270,6 +272,7 @@ impl Default for AppFlags {
             root_config: compass_core::root_items::RootConfig::default(),
             link: None,
             exit_on_engine_disconnect: false,
+            start_hidden: false,
             // Dark, until a desktop says otherwise. Not a preference: it is
             // what the launcher has always drawn, so a machine with no
             // Settings portal keeps the appearance it had rather than
@@ -645,7 +648,11 @@ impl LauncherApp {
     /// windows at all: without this, `vicinae ui` with no engine attached would
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
+        let hidden = flags.start_hidden && flags.link.is_some();
         let (mut app, task) = Self::new(flags);
+        if hidden {
+            return (app, task);
+        }
         let opened = app.open_window();
         (app, Task::batch([task, opened]))
     }
@@ -1957,6 +1964,36 @@ mod tests {
         });
         let mut exit = task::into_stream(app.update(Message::EngineDisconnected)).unwrap();
         assert!(matches!(block_on(exit.next()), Some(Action::Exit)));
+    }
+
+    #[test]
+    fn hidden_boot_requires_an_engine_and_waits_for_activation() {
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (mut hidden, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            ..AppFlags::default()
+        });
+        assert!(hidden.window.is_none());
+        assert!(
+            hidden.pending_window.is_none(),
+            "hidden boot must never allocate a surface"
+        );
+        let _ = hidden.update(Message::Command(UiCommand::Show));
+        assert!(
+            hidden.pending_window.is_some(),
+            "the engine can summon the hidden session"
+        );
+
+        let (standalone, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            ..AppFlags::default()
+        });
+        assert!(
+            standalone.pending_window.is_some(),
+            "never strand an undriven UI invisibly"
+        );
     }
 
     #[test]
