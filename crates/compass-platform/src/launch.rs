@@ -44,6 +44,9 @@ pub enum LaunchMethod {
 /// Errors that can occur during launch.
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchError {
+    /// A desktop link has no usable absolute URI.
+    #[error("desktop link has no valid absolute URL")]
+    InvalidLinkUrl,
     /// The requested action is not declared by the application.
     #[error("unknown desktop action: {0}")]
     UnknownAction(String),

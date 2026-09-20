@@ -929,6 +929,17 @@ presentation. The UI's empty-query greeting and lack of persisted launch history
 also remain separate gaps. End-to-end upstream ordering and Type=Link parity
 must still be proved before search timing is a comparable benchmark.
 
+Desktop `Type=Link` entries now enter the application index without an Exec,
+including the harvested Singular manual fixture. Missing or empty URLs are
+reported, and link entries do not expose application-only desktop actions.
+Linux dispatches the URL as a single `xdg-open` argument, using
+`flatpak-spawn --host` inside Flatpak so host file links are resolved on the host.
+Invalid schemes, option-like paths and control characters are rejected; Exec is
+never substituted for the URL. Index, UI and real daemon tests cover visibility,
+and argument tests cover URI dispatch. Opening the target in another application
+still needs an on-target desktop check; this is not a completed search-parity or
+launch-performance gate.
+
 An integration prerequisite found during the upstream audit is corrected: the
 launcher's selected desktop-action row now dispatches its stable action ID to
 `AppLauncher::launch_action`, instead of launching the parent entry. Linux resolves

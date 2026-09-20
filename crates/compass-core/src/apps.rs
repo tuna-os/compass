@@ -17,8 +17,8 @@
 //!
 //! # What is indexed
 //!
-//! * `Type=Application` entries only. `Link` and `Directory` entries are not launchable
-//!   applications and belong to other providers.
+//! * `Type=Application` and `Type=Link` entries. Links launch their URL through
+//!   the desktop's URI handler; Directory and unknown types are not launcher rows.
 //! * Entries passing [`DesktopEntry::should_show`] against the configured desktops, i.e. not
 //!   `Hidden`, not `NoDisplay`, and allowed by `OnlyShowIn`/`NotShowIn`.
 //! * Every `[Desktop Action …]` group of an included entry becomes its own [`AppItem`], because
@@ -69,7 +69,7 @@ pub enum SkipReason {
     Unreadable(String),
     /// The file is not a well-formed desktop entry.
     Malformed(String),
-    /// The entry is not `Type=Application`.
+    /// The entry is neither `Type=Application` nor `Type=Link`.
     NotAnApplication,
     /// `Hidden`, `NoDisplay`, or excluded by `OnlyShowIn`/`NotShowIn`.
     NotShown,
@@ -77,6 +77,8 @@ pub enum SkipReason {
     TryExecMissing(String),
     /// A `Type=Application` entry with no `Exec` key: there is nothing to launch.
     NoExec,
+    /// A `Type=Link` entry without a nonempty URL.
+    NoUrl,
 }
 
 impl std::fmt::Display for SkipReason {
@@ -87,10 +89,11 @@ impl std::fmt::Display for SkipReason {
             }
             SkipReason::Unreadable(err) => write!(f, "unreadable: {err}"),
             SkipReason::Malformed(err) => write!(f, "malformed: {err}"),
-            SkipReason::NotAnApplication => f.write_str("not Type=Application"),
+            SkipReason::NotAnApplication => f.write_str("not Type=Application or Type=Link"),
             SkipReason::NotShown => f.write_str("hidden in this environment"),
             SkipReason::TryExecMissing(exec) => write!(f, "TryExec {exec} did not resolve"),
             SkipReason::NoExec => f.write_str("no Exec key"),
+            SkipReason::NoUrl => f.write_str("no URL key"),
         }
     }
 }
@@ -496,7 +499,8 @@ impl AppIndexBuilder {
             }
         };
 
-        if !entry.is_application() {
+        let is_link = matches!(entry.entry_type(), compass_xdg::EntryType::Link);
+        if !entry.is_application() && !is_link {
             skipped.push(SkippedEntry {
                 path: path.to_path_buf(),
                 reason: SkipReason::NotAnApplication,
@@ -512,7 +516,15 @@ impl AppIndexBuilder {
             return;
         }
 
-        if entry.exec().is_none() {
+        if is_link && entry.url().is_none_or(|url| url.trim().is_empty()) {
+            skipped.push(SkippedEntry {
+                path: path.to_path_buf(),
+                reason: SkipReason::NoUrl,
+            });
+            return;
+        }
+
+        if !is_link && entry.exec().is_none() {
             skipped.push(SkippedEntry {
                 path: path.to_path_buf(),
                 reason: SkipReason::NoExec,
@@ -551,7 +563,7 @@ impl AppIndexBuilder {
             },
         );
 
-        if !self.include_actions {
+        if !self.include_actions || is_link {
             return;
         }
 

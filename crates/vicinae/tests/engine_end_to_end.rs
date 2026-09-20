@@ -163,6 +163,21 @@ fn a_multi_word_query_is_joined_before_it_reaches_the_engine() {
 }
 
 #[test]
+fn a_desktop_link_without_exec_is_returned_by_root_search() {
+    let daemon = Daemon::start(&[(
+        "manual.desktop",
+        "[Desktop Entry]\nType=Link\nName=Reference Manual\nURL=file:///usr/share/doc/manual.html\n",
+    )]);
+    for query in ["", "Reference"] {
+        let out = daemon.client(&["query", query, "--json"]);
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["id"], "manual.desktop");
+        assert_eq!(rows[0]["title"], "Reference Manual");
+    }
+}
+
+#[test]
 fn an_empty_query_lists_everything_rather_than_nothing() {
     // The pre-typing state of a launcher. Returning nothing here would make the
     // window open blank, which reads as broken.
