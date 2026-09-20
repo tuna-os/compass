@@ -73,12 +73,12 @@ pub const DEFAULT_PRESET: &str = "gnome";
 
 /// Default for `launcher.appearance.icons`.
 ///
-/// Off, per #85. The default look is Spotlight-simple, and icons are what make
-/// it busier. The row already reserves the space -- an unresolved or disabled
+/// On for recognizable application results. The row already reserves the space
+/// -- an unresolved or disabled
 /// icon draws the application's initial in a tinted square of the same size --
 /// so turning this on changes what is in the slot, not the launcher's
 /// footprint.
-pub const DEFAULT_ICONS: bool = false;
+pub const DEFAULT_ICONS: bool = true;
 
 /// Whether the launcher background is translucent when nothing says otherwise.
 ///

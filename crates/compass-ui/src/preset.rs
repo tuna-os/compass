@@ -134,9 +134,8 @@ impl Preset {
     #[must_use]
     pub const fn icons(self) -> bool {
         match self {
-            // "Spotlight-simple: no icons" — #83's stated default.
-            Preset::Gnome | Preset::Rofi => false,
-            Preset::Raycast | Preset::Flow => true,
+            Preset::Rofi => false,
+            Preset::Gnome | Preset::Raycast | Preset::Flow => true,
         }
     }
 
@@ -251,7 +250,7 @@ mod tests {
             format!("{:?}", resolved.geometry),
             format!("{:?}", design::GEOMETRY)
         );
-        assert!(!resolved.icons, "#83 specifies gnome as no icons");
+        assert!(resolved.icons, "the native default shows application icons");
         assert!(!resolved.field_rule);
         assert!(resolved.subtitles);
     }
@@ -266,7 +265,7 @@ mod tests {
         let rofi = resolve(Some("rofi"), None, None);
 
         assert_eq!(gnome.geometry.row_height, design::GEOMETRY.row_height);
-        assert!(!gnome.icons);
+        assert!(gnome.icons);
 
         assert_eq!(raycast.geometry.row_height, 56);
         assert_eq!(raycast.geometry.card_radius, 20);
@@ -323,8 +322,8 @@ mod tests {
             "raycast turns icons on, but the user said off"
         );
         assert!(
-            resolve(Some("gnome"), Some(true), None).icons,
-            "gnome turns icons off, but the user said on"
+            !resolve(Some("gnome"), Some(false), None).icons,
+            "gnome turns icons on, but the user said off"
         );
     }
 
