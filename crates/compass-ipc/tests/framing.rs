@@ -33,6 +33,10 @@ fn all_requests() -> Vec<Request> {
         Request::WindowOutcome(WindowOutcome::Hidden),
         Request::WindowOutcome(WindowOutcome::Failed(String::new())),
         Request::WindowOutcome(WindowOutcome::Failed("no compositor: é 🚀".into())),
+        Request::RecordLaunch {
+            key: "app.desktop".into(),
+        },
+        Request::RecordLaunch { key: String::new() },
     ]
 }
 
@@ -111,6 +115,7 @@ fn request_variants_are_exhaustive() {
             | Request::Doctor
             | Request::Shutdown
             | Request::AttachWindow
+            | Request::RecordLaunch { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

@@ -28,7 +28,9 @@ use serde::{Deserialize, Serialize};
 /// it gets a postcard decode error and drops the connection with no
 /// explanation. The version field exists precisely to turn that into a sentence
 /// a human can act on, and it only does so if the number moves.
-pub const PROTOCOL_VERSION: u16 = 2;
+///
+/// Version 3 adds successful-launch reporting to the daemon-owned history.
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +119,14 @@ pub enum Request {
     /// Only legal on an attached connection, where it is a *reply* rather than
     /// a request; the engine never sends a [`Response`] back to it.
     WindowOutcome(WindowOutcome),
+    /// Record a successfully completed launch of an indexed item.
+    ///
+    /// Reports an outcome; it does not launch an application. The daemon
+    /// validates the key and updates its history before acknowledging it.
+    RecordLaunch {
+        /// Stable application/action key, as returned by the index.
+        key: String,
+    },
 }
 
 /// What the engine answers.

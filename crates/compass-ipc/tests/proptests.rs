@@ -45,6 +45,7 @@ fn request_strategy() -> impl Strategy<Value = Request> {
         Just(Request::Show),
         Just(Request::Hide),
         any::<String>().prop_map(|text| Request::Query { text }),
+        any::<String>().prop_map(|key| Request::RecordLaunch { key }),
         Just(Request::Doctor),
         Just(Request::Shutdown),
     ]

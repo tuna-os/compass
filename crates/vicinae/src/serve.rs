@@ -317,6 +317,39 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
+        Request::RecordLaunch { key } => {
+            let state = Arc::clone(state);
+            // JSON persistence is blocking disk work. Keep it off the async
+            // executor, and serialize updates through the daemon's store.
+            tokio::task::spawn_blocking(move || {
+                let mut state = state.blocking_write();
+                if state.index.get(&key).is_none() {
+                    return Response::Error(ProtocolError::new(
+                        ErrorKind::BadRequest,
+                        "launch key is not present in the application index",
+                    ));
+                }
+                match state.frecency.record_launch(&key) {
+                    Ok(()) => Response::Ack,
+                    Err(error) => {
+                        tracing::warn!(%error, "could not persist launch history");
+                        Response::Error(ProtocolError::new(
+                            ErrorKind::Internal,
+                            "could not persist launch history",
+                        ))
+                    }
+                }
+            })
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "launch history task failed");
+                Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    "launch history task failed",
+                ))
+            })
+        }
+
         // Handled by the serve loop, which owns the shutdown signal; reaching
         // here means the loop did not intercept it.
         Request::Shutdown => Response::ShuttingDown,
