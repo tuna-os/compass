@@ -39,6 +39,13 @@ states inspected, findings and remaining coverage gaps in the PR or an audit
 note. Review light and dark appearances, the default preset's affected states,
 and all four presets whenever geometry or shared tokens change.
 
+Include screenshots of the affected feature directly in every UI PR body.
+Use durable image URLs (for example committed PR evidence assets), not local
+paths or expiring artifact links. Caption each image with its renderer and
+scope: browser surrogate, headless Iced/wgpu, or native desktop session. Include
+before/after or relevant interaction states when they explain the change. A
+nonvisual PR should explicitly say that screenshots are not applicable.
+
 Check hierarchy, spacing, selection contrast, truncation, action-panel layout,
 and empty/loading/error states. If the surrogate cannot show the changed
 production state, record that as missing coverage; a nearby fixture is not a
