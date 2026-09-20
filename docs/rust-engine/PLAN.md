@@ -919,6 +919,14 @@ as it is, and any change — a nucleo bump, a scoring tweak, a corpus edit — h
 
 #### The score gap is almost invisible in ranking terms
 
+**2026-09-20 follow-up:** the single-character Unicode boundary correction
+documented in `PARITY.md` removes six Bear Factory score discrepancies. The
+current ratchet is 351 divergent queries / 1411 pairs (previously 352 / 1417).
+Top-1 remains 1684/1684, including all 920 contested queries; top-3 improves to
+1638 and full-order agreement to 1425. The historical measurements below describe
+the earlier capture. This small correction does not close end-to-end root ranking
+or authorize treating the lower-level scorer gate as a full-engine benchmark.
+
 Everything above measures **score equality**. Phase 1's gate does not: it names *ranking* parity,
 and a user sees an ordered list, not a number. Those turn out to be very different questions.
 

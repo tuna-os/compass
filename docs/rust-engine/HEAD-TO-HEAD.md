@@ -111,7 +111,9 @@ now uses the ported root scorer in daemon and UI. Its sampled nonempty queries
 have equal membership, and four positive ASCII queries have identical ordering.
 The [desktop-link follow-up](./benchmarks/2026-09-20-desktop-links/README.md)
 also matches all 448 empty-query results in order. Unicode ranking still fails.
-Resolve that and rerun
+The [Unicode boundary fix](./benchmarks/2026-09-20-unicode-boundaries/README.md)
+corrects the Bear Factory editor matches; 14 later positions still differ.
+Resolve the remaining ranking difference and rerun
 ordered-ID parity before timing search; do not select only matching queries to
 conceal the failing workload.
 

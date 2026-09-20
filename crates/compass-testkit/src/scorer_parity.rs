@@ -76,8 +76,11 @@ type Ranking = Vec<(String, u32, u32)>;
 /// declared, so removing the list added those back and the first run failed at
 /// 352/1417 against 351/1407. A baseline you cannot get wrong is a baseline
 /// that is not checking anything.
-const BASELINE_DIVERGENT_QUERIES: usize = 352;
-const BASELINE_DIVERGENT_PAIRS: usize = 1417;
+// The Unicode single-character boundary correction removes six Bear Factory
+// pairs (A/a, E and I), including one previously rejected match. See the
+// harvested_editor_titles_match_their_later_word_starts regression test.
+const BASELINE_DIVERGENT_QUERIES: usize = 351;
+const BASELINE_DIVERGENT_PAIRS: usize = 1411;
 
 /// How the two engines differ on one entry, for the directional breakdown.
 ///

@@ -198,6 +198,11 @@ impl Matcher {
         Self::prepare_needle(needle_str, needle);
         let needle = Utf32Str::new(needle_str, needle_buf);
         let haystack = Utf32Str::new(haystack, haystack_buf);
+        if let Utf32Str::Unicode(text) = haystack
+            && needle.len() == 1
+        {
+            return single_unicode_match(inner, text, needle).map(|(score, _)| u32::from(score));
+        }
         inner.fuzzy_match(haystack, needle).map(u32::from)
     }
 
@@ -222,7 +227,7 @@ impl Matcher {
         let needle_utf = Utf32Str::new(needle_str, needle_buf);
         let haystack_utf = Utf32Str::new(haystack, haystack_buf);
         let mut indices = Vec::new();
-        let score = inner.fuzzy_indices(haystack_utf, needle_utf, &mut indices)?;
+        let score = fuzzy_indices(inner, haystack_utf, needle_utf, &mut indices)?;
         indices.sort_unstable();
         let coherent = is_coherent_with(haystack, &indices, boundary_buf);
         Some(MatchResult {
@@ -261,9 +266,52 @@ impl Matcher {
         let needle_utf = Utf32Str::new(needle_str, needle_buf);
         let haystack_utf = Utf32Str::new(haystack, haystack_buf);
         indices_buf.clear();
-        let score = inner.fuzzy_indices(haystack_utf, needle_utf, indices_buf)?;
+        let score = fuzzy_indices(inner, haystack_utf, needle_utf, indices_buf)?;
         indices_buf.sort_unstable();
         let coherent = is_coherent_with(haystack, indices_buf, boundary_buf);
         Some((u32::from(score), coherent))
     }
+}
+
+fn fuzzy_indices(
+    matcher: &mut nucleo_matcher::Matcher,
+    haystack: Utf32Str<'_>,
+    needle: Utf32Str<'_>,
+    indices: &mut Vec<u32>,
+) -> Option<u16> {
+    if let Utf32Str::Unicode(text) = haystack
+        && needle.len() == 1
+    {
+        let (score, index) = single_unicode_match(matcher, text, needle)?;
+        indices.push(index);
+        return Some(score);
+    }
+    matcher.fuzzy_indices(haystack, needle, indices)
+}
+
+// nucleo 0.3.1's single-character Unicode scan updates its previous character
+// only at matches, losing intervening word boundaries. Score each occurrence
+// through its postfix API, which uses the actual preceding character. This is
+// still nucleo scoring, linear in haystack length, with no scratch allocation.
+fn single_unicode_match(
+    matcher: &mut nucleo_matcher::Matcher,
+    haystack: &[char],
+    needle: Utf32Str<'_>,
+) -> Option<(u16, u32)> {
+    let target = match needle {
+        Utf32Str::Ascii(text) => char::from(text[0]),
+        Utf32Str::Unicode(text) => text[0],
+    };
+    let mut best = None;
+    for (index, &character) in haystack.iter().enumerate() {
+        if chars::to_lower_case(chars::normalize(character)) != target {
+            continue;
+        }
+        if let Some(score) = matcher.postfix_match(Utf32Str::Unicode(&haystack[..=index]), needle)
+            && best.is_none_or(|(previous, _)| score > previous)
+        {
+            best = Some((score, index as u32));
+        }
+    }
+    best
 }
