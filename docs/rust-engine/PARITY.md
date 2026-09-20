@@ -1002,8 +1002,12 @@ entrypoint fields, including preferences, survive configuration round trips.
 Real-daemon tests cover alias lookup and both levels of enabled precedence;
 catalog tests cover clearing settings without retaining stale aliases. This is
 startup configuration, not live reload or a settings editor. Favourite sections,
-shortcut registration, fallback dispatch and standalone UI configuration remain
-unwired; parsing their metadata is not completion of those features.
+shortcut registration and fallback dispatch remain unwired; parsing their
+metadata is not completion of those features. Standalone UI startup now applies
+the same root configuration to its local catalog. UI state-machine tests cover
+alias queries, disabled applications, provider precedence and clearing settings;
+attached searches remain authoritative in the daemon. This does not add standalone
+history persistence or change its empty-query greeting.
 
 The manager's state changes are ported too, and this note previously understated that:
 `mergeConfigWithMetadata` and `registerVisit` were already done when it was written, and the config
