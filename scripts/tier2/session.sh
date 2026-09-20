@@ -10,7 +10,10 @@ instance_file=$(mktemp /tmp/tier2-session-instance.XXXXXX)
 readonly instance_file
 session_pid=
 
-fail() { printf 'SESSION FAILED: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'SESSION FAILED: %s\n' "$*" >&2
+  exit 1
+}
 run() { timeout "$timeout_s" flatpak --user run "$APP_ID" --socket "$socket" "$@"; }
 cleanup() {
   if [ -s "$instance_file" ]; then
@@ -32,42 +35,55 @@ fi
 
 location=$(flatpak --user info --show-location "$APP_ID")
 desktop="$location/export/share/applications/$APP_ID.desktop"
-grep -q '^Exec=.*--command=vicinae .*com.vicinae.Vicinae start$' "$desktop" \
-  || fail 'exported entry does not start a session'
+grep -q '^Exec=.*--command=vicinae .*com.vicinae.Vicinae start$' "$desktop" ||
+  fail 'exported entry does not start a session'
 if grep -q '^NoDisplay=true' "$desktop"; then
   fail 'exported application is hidden'
 fi
 
-flatpak --user run --instance-id-fd=3 "$APP_ID" --socket "$socket" start \
-  3>"$instance_file" >/tmp/tier2-session.log 2>&1 &
-session_pid=$!
-deadline=$((SECONDS + timeout_s))
-ready=no
-while [ "$SECONDS" -lt "$deadline" ]; do
-  kill -0 "$session_pid" 2>/dev/null || {
-    cat /tmp/tier2-session.log >&2
-    fail 'session exited during startup'
-  }
-  if run show >/dev/null 2>&1; then
-    ready=yes
-    break
+for shutdown_mode in engine instance; do
+  flatpak --user run --instance-id-fd=3 "$APP_ID" --socket "$socket" start \
+    3>"$instance_file" >/tmp/tier2-session.log 2>&1 &
+  session_pid=$!
+  deadline=$((SECONDS + timeout_s))
+  ready=no
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    kill -0 "$session_pid" 2>/dev/null || {
+      cat /tmp/tier2-session.log >&2
+      fail 'session exited during startup'
+    }
+    if run show >/dev/null 2>&1; then
+      ready=yes
+      break
+    fi
+    sleep 1
+  done
+  [ "$ready" = yes ] || fail 'resident window never acknowledged Show'
+
+  # A duplicate renderer would remain running and trip timeout, not pass here.
+  run start || fail 'repeat activation did not return to the existing session'
+  run hide || fail 'resident window did not acknowledge Hide'
+  run show || fail 'resident window did not reopen'
+  run hide || fail 'resident window did not hide again'
+
+  instance=$(<"$instance_file")
+  [[ "$instance" =~ ^[0-9]+$ ]] || fail 'Flatpak did not report its instance ID'
+  if [ "$shutdown_mode" = engine ]; then
+    run shutdown || fail 'engine-only shutdown failed'
+    deadline=$((SECONDS + timeout_s))
+    while kill -0 "$session_pid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do
+      sleep 1
+    done
+    if kill -0 "$session_pid" 2>/dev/null; then
+      fail 'window process survived engine-only shutdown'
+    fi
+  else
+    flatpak kill "$instance"
   fi
-  sleep 1
+  wait "$session_pid" 2>/dev/null || true
+  session_pid=
+  if run ping >/dev/null 2>&1; then
+    fail "engine survived $shutdown_mode shutdown"
+  fi
 done
-[ "$ready" = yes ] || fail 'resident window never acknowledged Show'
-
-# A duplicate renderer would remain running and trip timeout, not pass here.
-run start || fail 'repeat activation did not return to the existing session'
-run hide || fail 'resident window did not acknowledge Hide'
-run show || fail 'resident window did not reopen'
-run hide || fail 'resident window did not hide again'
-
-instance=$(<"$instance_file")
-[[ "$instance" =~ ^[0-9]+$ ]] || fail 'Flatpak did not report its instance ID'
-flatpak kill "$instance"
-wait "$session_pid" 2>/dev/null || true
-session_pid=
-if run ping >/dev/null 2>&1; then
-  fail 'engine survived termination of its Flatpak session'
-fi
-printf 'SESSION PASSED: resident startup, repeat activation, hide/show and instance shutdown\n'
+printf 'SESSION PASSED: startup, repeat activation, hide/show, engine shutdown, restart and instance shutdown\n'

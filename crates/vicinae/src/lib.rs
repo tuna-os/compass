@@ -204,6 +204,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             backend,
             root_config,
             link,
+            exit_on_engine_disconnect: matches!(cli.command, Command::Start),
             keybinding,
             wrap_navigation,
             quick_launch,

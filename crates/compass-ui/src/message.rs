@@ -74,6 +74,8 @@ pub enum Message {
     EventOccurred(Event),
     /// The engine asked the window to show, hide or toggle.
     Command(UiCommand),
+    /// The engine closed its command channel.
+    EngineDisconnected,
     /// The desktop's light/dark preference changed.
     AppearanceChanged(crate::design::Appearance),
     /// A window finished opening, and this is its id.
