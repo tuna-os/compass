@@ -65,6 +65,9 @@ function applyTokens() {
   const palette = appearances.find((a) => a.name === state.appearance);
   const screen = document.getElementById("screen");
   const root = document.documentElement.style;
+  for (const [name, value] of Object.entries(state.data.panelMetrics)) {
+    root.setProperty(`--panel-${name}`, `${value}px`);
+  }
 
   root.setProperty("--surface", palette.surface);
   root.setProperty("--field", palette.field);

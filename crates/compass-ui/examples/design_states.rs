@@ -344,7 +344,12 @@ fn main() {
         .collect();
 
     println!(
-        r#"{{"generatedBy":"cargo run -p compass-ui --example design_states","geometry":{},"presets":[{}],"fontStack":[{}],"appearances":[{}],"states":[{}]}}"#,
+        r#"{{"generatedBy":"cargo run -p compass-ui --example design_states","panelMetrics":{{{}}},"geometry":{},"presets":[{}],"fontStack":[{}],"appearances":[{}],"states":[{}]}}"#,
+        design::PANEL_METRICS
+            .iter()
+            .map(|(name, value)| format!("{}:{value}", quote(name)))
+            .collect::<Vec<_>>()
+            .join(","),
         geometry_json(&g),
         presets.join(","),
         fonts.join(","),
