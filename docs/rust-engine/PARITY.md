@@ -1955,6 +1955,18 @@ verbatim and passes. What does not:
 
 ### How closely is "closely"? 79.2%
 
+The 2026-09-20 end-to-end audit exposed a separate nucleo 0.3.1 defect, not an
+intended fzf divergence: its single-character Unicode path updates the previous
+character class only when a character matches, losing intervening boundaries.
+The adapter now evaluates matching positions through nucleo's public postfix
+scorer, retaining the actual preceding character, earliest ties and char indices.
+It remains linear and does not duplicate scoring constants or replace nucleo.
+The reproducer failed at 26 versus 36 before the fix; ASCII/Unicode metamorphic
+tests, Cyrillic/CJK cases and six harvested-title regressions cover the correction.
+The six changed corpus pairs are A/a against Animation Editor, E against all
+three Bear Factory editors, and I against Spritedesc interpreter. Their normalized
+quality now agrees with C++; the last pair was previously rejected.
+
 The table above was written from a ported ordering suite over hand-written cases, which could say
 *that* nucleo and fzf differ but not *how much*. `compass-testkit`'s `scorer-parity` bin now
 measures it directly, against the real C++ scorer compiled from `src/lib/fuzzy` — that library is
@@ -1964,16 +1976,16 @@ Over 738 harvested entries and 1685 queries derived from them:
 
 | | |
 |---|---|
-| identical | 1333 (79.2%) |
-| divergent queries | 352 |
-| divergent (query, entry) pairs | 1417 |
+| identical | 1334 (79.2%) |
+| divergent queries | 351 |
+| divergent (query, entry) pairs | 1411 |
 
 | shape | count |
 |---|---|
 | C++ rejected, Rust accepted | 771 |
-| both accepted, C++ higher | 440 |
+| both accepted, C++ higher | 435 |
 | both accepted, **Rust** higher | 145 |
-| **Rust** rejected, C++ accepted | 61 |
+| **Rust** rejected, C++ accepted | 60 |
 
 Both directions occur, which is what two different algorithms produce and what a smaller corpus
 hid: over the previous 115-entry set only six queries diverged and every one had C++ stricter.
