@@ -1,0 +1,7 @@
+FROM quay.io/fedora/fedora:44@sha256:8925a3420a5f6bd13b9230c6056d43695fa8fe5948b7013db89336a762f03893
+RUN dnf install -y --setopt=install_weak_deps=False rustup gcc gcc-c++ make pkgconf-pkg-config openssl-devel libxkbcommon-devel libX11-devel libxcb-devel fontconfig-devel freetype-devel python3 xorg-x11-server-Xvfb xdotool mesa-dri-drivers mesa-vulkan-drivers vulkan-loader libXcursor libXi libXrandr libXinerama libXrender libxkbcommon-x11 xcb-util-cursor xcb-util-keysyms dbus-libs alsa-lib tar gzip findutils git ca-certificates
+RUN rustup toolchain install 1.94.1 --profile minimal
+ENV PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV CARGO_HOME=/cache/cargo
+ENV CARGO_TARGET_DIR=/cache/target
+WORKDIR /src
