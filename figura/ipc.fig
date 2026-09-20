@@ -107,6 +107,19 @@ struct FileResult {
   mimeType?: string;
 };
 
+struct RootHit {
+  id: string;
+  title: string;
+  subtitle?: string;
+  score: double;
+};
+
+struct RootQueryParams {
+  limit: int;
+  providerId?: string;
+  includeDisabled: bool;
+};
+
 struct FsQueryParams {
   limit: int;
   category?: string;
@@ -122,6 +135,19 @@ service Ipc {
   fn dmenu(req: DMenuRequest) => DMenuResponse;
   fn browserInit(req: BrowserInitRequest) => void;
   fn browserTabsChanged(tabs: BrowserTabInfo[]) => void;
+
+  // Root-item ranking, for the Suite 0 differential (PLAN.md 8.1a rung 2).
+  //
+  // Not a UI surface: nothing in the launcher calls it. It exists so the two
+  // engines' RANKING can be diffed, which every other parity test we have
+  // cannot do -- they compare the port against our reading of the C++ source
+  // rather than against its behaviour.
+  //
+  // `score` is the value the engine ORDERS BY, which on this side includes the
+  // frecency boost and is therefore not the 0..=100 match score the Rust
+  // engine reports. The two scales are a declared divergence; the comparison
+  // is over ids in order. See PARITY.md.
+  fn rootQuery(q: string, params: RootQueryParams) => RootHit[];
 
   // filesystem
   fn fsQuery(q: string, params: FsQueryParams) => FileResult[];

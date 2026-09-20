@@ -29,19 +29,37 @@ name: C++ on the target
 # on every pull request is work nobody reads. The Flatpak is what ships on
 # Bluefin, so it is the one that stays.
 #
-# This is a trigger change, not a deletion. The jobs below are unchanged and
-# still run from the Actions tab (`workflow_dispatch`); deleting the leading
-# `# ` from the commented lines below restores them exactly, indentation
-# included. Re-enable before Phase 9 starts, or earlier if a change here needs
-# proving on a platform this no longer covers.
+# THE ABOVE STOPPED DESCRIBING THIS FILE, AND TOOK C++ PR COVERAGE WITH IT.
+#
+# That reasoning disabled the whole `pull_request` trigger, and the two jobs
+# left here are `configure` and `build` — both `ubuntu-24.04`, both against
+# Bluefin's Qt. There is no non-Linux build in this file to save. So the effect
+# was not "stop building macOS on PRs", it was **nothing compiles C++ on a pull
+# request at all**: of the seven workflows with a `pull_request` trigger, the
+# Flatpak packages the Rust engine and `format.yaml` only runs `clang-format`
+# over `src/`. A change to 144k lines of C++23 was found out about at 02:00 UTC,
+# or not at all.
+#
+# That matters now rather than in the abstract: §8.1a rung 2 — the ranked-output
+# path the Suite 0 differential needs (#12) — is an IPC method, a server handler
+# and a CLI command, all in this tree. Writing it against a build nothing runs
+# on the PR is a speculative push by construction.
+#
+# So `configure` comes back for pull requests, and `build` does not. Configure
+# is about a minute and exercises every `find_package(Qt6 COMPONENTS …)` and the
+# whole CMake graph, which is what catches a new source file missing from a
+# target or a regenerated protocol that breaks the wiring. `build` is twenty
+# minutes plus and stays on the nightly schedule and the Actions tab, where it
+# has always been.
 on:
-#   pull_request:
-#     paths:
-#       - 'CMakeLists.txt'
-#       - 'cmake/**'
-#       - 'src/**'
-#       - 'scripts/runners/**'
-#       - '.github/workflows/cpp-on-target.yaml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'src/**'
+      - 'figura/**'
+      - 'scripts/runners/**'
+      - '.github/workflows/cpp-on-target.yaml'
   workflow_dispatch:
 
   # Nightly, so the artifact this job publishes actually exists when something
@@ -73,8 +91,16 @@ on:
     tags:
       - "v*"
 
+# The event is part of the key, and that is not cosmetic.
+#
+# Without it, a `workflow_dispatch` run and a `pull_request` run on the same
+# branch share a group and cancel each other. They are not interchangeable:
+# the pull_request run skips `build` (see its `if:` below), so a push silently
+# killed the only run that compiles anything. That happened TWICE while
+# validating the rung-2 handler — a dispatched build, a push, and a result
+# that never existed to read.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
@@ -147,6 +173,12 @@ jobs:
   build:
     name: The C++ engine builds on Bluefin
     needs: configure
+    # Not on pull requests. `configure` is the PR-affordable half — a minute
+    # against this job's twenty-plus — and running both on every C++ change
+    # would spend the budget that made restoring the trigger defensible.
+    # Nightly and `workflow_dispatch` still build, which is where the
+    # `vicinae-cpp-bluefin.tar.gz` Suite 0 needs comes from.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -281,3 +313,367 @@ jobs:
           echo
           echo 'Layering it into the VM image and running parity there is the'
           echo 'next step, and it is a separate change.'
+
+  # CAN THE C++ ENGINE ANSWER A QUERY WITHOUT A USER SITTING IN FRONT OF IT?
+  #
+  # This is a spike, and it is a separate job from the parity run it is meant
+  # to unblock, because the parity run cannot be designed until this is
+  # answered.
+  #
+  # Rung 2 gave the C++ engine `vicinae query --json` and the Bluefin build
+  # compiles it. What nothing has established is whether the engine it talks to
+  # will START here. `vicinae server` execs a Qt application, and Tier 2 spent
+  # four spikes learning what a container does and does not give a desktop
+  # stack — GNOME Shell needs systemd-logind and dies in its JS UI layer;
+  # Flatpak needs --privileged for `mount --make-rslave`. A Qt engine may need
+  # a compositor, may need a session bus, or may need neither.
+  #
+  # So this asks exactly that, smallest question first, and records the answer
+  # either way.
+  #
+  # THE EXIT CONTRACT, which the first run got wrong.
+  #
+  # It was `continue-on-error: true` and exited 1 on "no rung answered". That
+  # conflates two different things and GitHub reports both as a red X anyway --
+  # continue-on-error does not change a check run's conclusion, so the first
+  # NO paged as a CI failure on a PR whose code was fine.
+  #
+  # A spike that ANSWERS has succeeded, whatever the answer. So:
+  #
+  #   exit 0  the question was asked and answered, yes or no
+  #   exit 1  the question could not be asked -- the tarball is wrong, or the
+  #           engine cannot even load, which the ldd check below catches
+  #
+  # The verdict is written to the step summary either way, so a NO is loud
+  # without being red.
+  #
+  # Three rungs, in order, so a failure says WHICH thing is missing:
+  #
+  #   1. bare              — no bus, no display
+  #   2. + dbus-run-session — a session bus
+  #   3. + mutter           — a wayland compositor, via the Tier 2 harness
+  #
+  # Whichever is the first to answer `ping` is what the parity run will need,
+  # and that is the design decision this job exists to make.
+  parity-spike:
+    name: "Suite 0 spike: does the C++ engine serve headless?"
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the engine this workflow just built
+        uses: actions/download-artifact@v4
+        with:
+          name: vicinae-cpp-bluefin
+
+      - name: Ask, one rung at a time
+        run: |
+          set -o pipefail
+          # BOUNDED AT THE CONTAINER, not just inside it.
+          #
+          # The query has its own 30s budget, but that only covers the one
+          # place I predicted could block. A run that hangs anywhere else --
+          # and the likeliest candidate is a backgrounded engine surviving
+          # `kill` and holding the stdout pipe open, so `podman run` never
+          # returns -- would otherwise sit until the 30-minute job timeout and
+          # report as "the job timed out".
+          #
+          # That is the same shape as the Flatpak wrapper-PID problem
+          # prove-smoke.sh was written to catch: killing the thing you spawned
+          # is not the same as killing the thing that is running.
+          #
+          # 8 minutes is generous against the ~2 this takes when it works, and
+          # turns any hang into a named one within a readable budget.
+          timeout --signal=KILL 480 podman run --rm \
+            -v "$PWD:/src:z" \
+            -e HOME=/tmp/home \
+            -e XDG_DATA_DIRS=/corpus \
+            -v "$PWD/crates/compass-testkit/corpus/desktop-entries/real:/corpus/applications:ro,z" \
+            -w /src \
+            --shm-size=2g \
+            ghcr.io/ublue-os/bluefin:stable bash -euo pipefail -c '
+              mkdir -p "$HOME"
+
+              # THE FIRST RUN OF THIS SPIKE DIED HERE, AND THAT WAS THE POINT.
+              #
+              #   vicinae-server: error while loading shared libraries:
+              #   libKF6SyntaxHighlighting.so.6: cannot open shared object file
+              #
+              # Not a display, not a bus -- the engine never loaded. The build
+              # job installs its dependencies into ITS container; this is a
+              # fresh image with a tarball unpacked over it, and a staged tree
+              # is not a package with requires. So the runtime deps go in here
+              # too, from the same script the build uses, which is also what a
+              # user gets when they install the real package.
+              ./scripts/runners/bluefin/install-deps.sh
+
+              tar -C / -xzf /src/vicinae-bluefin.tar.gz
+
+              # Existing is not running, and the first run proved the
+              # difference: both these asserts passed and `vicinae version`
+              # printed, while vicinae-server could not resolve a library. The
+              # CLI links against far less than the engine does.
+              test -x /usr/bin/vicinae
+              test -x /usr/libexec/vicinae/vicinae-server
+              echo "--- version ---"
+              vicinae version || echo "(version failed)"
+
+              # So check the engine can LOAD before asking it to serve. ldd
+              # names every unresolved library at once; a start-and-poll finds
+              # them one restart at a time.
+              echo "--- unresolved libraries, if any ---"
+              if ldd /usr/libexec/vicinae/vicinae-server | grep -F "not found"; then
+                echo "the engine cannot load; the rungs below would all report the same thing"
+                exit 1
+              fi
+              echo "(none)"
+
+              # Its own runtime dir, because that is how Suite 0 isolates this
+              # engine: vicinae::serverSocketName() is runtimeDir()/vicinae.sock
+              # and runtimeDir() reads XDG_RUNTIME_DIR. No --socket flag exists
+              # on this side and none is needed.
+              export XDG_RUNTIME_DIR=/tmp/rt
+              mkdir -p "$XDG_RUNTIME_DIR"
+              chmod 700 "$XDG_RUNTIME_DIR"
+
+              # Readiness is a state, not a moment (ADR-0010): poll ping rather
+              # than sleeping a plausible number of seconds.
+              try_rung() {
+                local label="$1"; shift
+                echo "=== rung: $label ==="
+                rm -rf "$XDG_RUNTIME_DIR"/*
+                "$@" vicinae server >"/src/spike-$label.log" 2>&1 &
+                local pid=$!
+                local i
+                for i in $(seq 1 60); do
+                  if vicinae ping >/dev/null 2>&1; then
+                    echo "ANSWERED after ${i}00ms: $label"
+
+                    # A QUERY IS NOT ANSWERED UNTIL IT RANKS SOMETHING,
+                    # AND WITH THE CORPUS MOUNTED IT STILL RANKS NOTHING.
+                    #
+                    # Measured: 738 entries visible, engine answering `ping`
+                    # in 600ms, `query --json firefox` returning `[]`
+                    # immediately -- not a timeout, the 30s budget below was
+                    # not spent. So the empty ranking is NOT about an empty
+                    # container, which was the obvious explanation and is now
+                    # ruled out.
+                    #
+                    # What it could still be, in rough order of likelihood:
+                    #
+                    #   * the app provider indexes asynchronously and has not
+                    #     finished 600ms after the socket answers -- `ping` is
+                    #     a liveness check, not a readiness-to-rank one;
+                    #   * XDG_DATA_DIRS is not how this engine finds apps, in
+                    #     which case the corpus needs mounting where its own
+                    #     scan roots look;
+                    #   * rootQuery without `--provider` ranks root items and
+                    #     the apps provider is not among them here.
+                    #
+                    # The parity run cannot be written until this is settled:
+                    # a differential over two empty rankings agrees perfectly
+                    # and proves nothing, which is the exact shape of green
+                    # this repository keeps catching.
+                    #
+                    # The first YES returned `[]`, and an empty array is what a
+                    # BROKEN query path returns too. The container ships no
+                    # applications, so there was nothing to rank and nothing to
+                    # tell the two apart. XDG_DATA_DIRS now points at the
+                    # 757-entry corpus this repo already harvested, which is
+                    # the same corpus Suite 0 diffs against.
+                    echo "--- indexable entries visible to the engine ---"
+                    ls /corpus/applications | wc -l
+                    # BOUNDED, because the first corpus run hung here.
+                    #
+                    # The rung answered `ping`, then the query did not return.
+                    # Unbounded, that burns the 30-minute job timeout and
+                    # reports as "the job timed out" -- which is a different
+                    # and much less useful finding than "the query hangs".
+                    # A spike must bound its own wait.
+                    # READINESS IS A STATE, AND `ping` IS THE WRONG STATE.
+                    #
+                    # ADR-0010 says poll the condition, not the clock, and the
+                    # loop above does -- for LIVENESS. Ranking needs a
+                    # different condition. `AppService` debounces its rescan
+                    # by 500ms (app-service.cpp:178) and the engine answered
+                    # `ping` at 600ms, so a query issued the instant the
+                    # socket opens can race an index that is not built yet.
+                    #
+                    # So poll the query itself. A non-empty ranking is the
+                    # readiness signal a parity run actually needs, and the
+                    # time it took is the number worth knowing.
+                    echo "--- polling the query until it ranks something (30s) ---"
+                    ranked=""
+                    for attempt in $(seq 1 60); do
+                      if timeout 5 vicinae query --json firefox > /src/spike-query.json 2>&1 \
+                         && [ -s /src/spike-query.json ] \
+                         && ! grep -qx "\[\]" /src/spike-query.json; then
+                        echo "RANKED after $((attempt * 500))ms"
+                        ranked="yes"
+                        break
+                      fi
+                      sleep 0.5
+                    done
+
+                    if [ -z "$ranked" ]; then
+                      echo "STILL EMPTY after 30s with $(ls /corpus/applications | wc -l) entries visible."
+                      echo "Not a timing race, then -- the engine answers and ranks nothing."
+                      echo "Next suspect: rootQuery without --provider does not reach"
+                      echo "the apps provider in this container."
+                    fi
+                    cat /src/spike-query.json
+
+                    # DOES THE ENGINE HAVE ANY ROOT ITEMS AT ALL?
+                    #
+                    # `app ls --json` goes through listCommands, which calls
+                    # RootItemManager::allItems() -- the same collection
+                    # rootQuery ranks over, without the search. If this is
+                    # empty too, the providers never loaded and the question
+                    # is registration, not ranking. If it has entries and the
+                    # query does not, the filter is the culprit.
+                    echo "--- root items the engine knows about ---"
+                    timeout 15 vicinae app ls --json > /src/spike-items.json 2>&1 || true
+                    head -c 600 /src/spike-items.json
+                    echo
+
+                    echo "--- and once more, bounded, for the record ---"
+                    if timeout 30 vicinae query --json firefox > /src/spike-query.json 2>&1; then
+                      cat /src/spike-query.json
+                    else
+                      status=$?
+                      if [ "$status" -eq 124 ]; then
+                        echo "QUERY HUNG: no answer within 30s with $(ls /corpus/applications | wc -l) entries visible"
+                      else
+                        echo "(query failed, exit $status)"
+                      fi
+                      cat /src/spike-query.json || true
+                    fi
+                    # THE VERDICT KEYED OFF `ping`, AND PRINTED YES OVER AN
+                    # EMPTY RANKING. That is the exact failure this job exists
+                    # to catch, written by me into the job that catches it.
+                    #
+                    # Serving and ranking are different answers and the
+                    # verdict now says which it got.
+                    {
+                      if [ -n "$ranked" ]; then
+                        echo "### Suite 0 spike: YES, on the \`$label\` rung"
+                        echo
+                        echo "Serves AND ranks. The parity run needs this much and no compositor."
+                      else
+                        echo "### Suite 0 spike: PARTIAL, on the \`$label\` rung"
+                        echo
+                        echo "The engine SERVES here -- \`ping\` answered -- but ranks"
+                        echo "nothing, for 30s, with $(ls /corpus/applications | wc -l) entries visible."
+                        echo "Not a timing race. A parity run built on this would diff two"
+                        echo "empty rankings, agree perfectly, and prove nothing."
+                      fi
+                      echo
+                      echo "Hits for \`firefox\` over the checked-in corpus:"
+                      echo '```json'
+                      head -c 400 /src/spike-query.json
+                      echo
+                      echo '```'
+                      echo
+                      echo "Root items the engine knows about at all:"
+                      echo '```'
+                      head -c 400 /src/spike-items.json
+                      echo
+                      echo '```'
+                    } > /src/spike-verdict.md
+                    kill "$pid" 2>/dev/null || true
+                    return 0
+                  fi
+                  kill -0 "$pid" 2>/dev/null || { echo "engine exited"; break; }
+                  sleep 0.1
+                done
+                echo "NO ANSWER: $label"
+                echo "--- its log ---"
+                tail -40 "/src/spike-$label.log" || true
+                kill "$pid" 2>/dev/null || true
+                return 1
+              }
+
+              # Nothing backgrounded may outlive this script. A rung that
+              # answered leaves an engine running, and an engine holding the
+              # stdout pipe keeps `podman run` alive after bash has exited.
+              # `kill "$pid"` alone did not prove sufficient, so the trap
+              # sweeps by name as well.
+              cleanup() {
+                pkill -KILL -f vicinae-server 2>/dev/null || true
+                pkill -KILL -f "vicinae server" 2>/dev/null || true
+              }
+              trap cleanup EXIT
+
+              if try_rung bare env; then exit 0; fi
+
+              # The bare rung named its own next step, which is why the rungs
+              # are ordered cheapest-first rather than guessed:
+              #
+              #   FATAL - no Qt platform plugin could be initialized
+              #   Available platform plugins are: ... offscreen, minimal, ...
+              #
+              # It wanted a DISPLAY, not a bus -- and it lists `offscreen`
+              # itself. A compositor was the expected answer and would have
+              # been the expensive one; this is an environment variable.
+              if try_rung offscreen env QT_QPA_PLATFORM=offscreen; then exit 0; fi
+
+              if command -v dbus-run-session >/dev/null 2>&1; then
+                if try_rung dbus dbus-run-session --; then exit 0; fi
+                if try_rung dbus-offscreen \
+                     dbus-run-session -- env QT_QPA_PLATFORM=offscreen; then
+                  exit 0
+                fi
+              else
+                echo "dbus-run-session not in this image"
+              fi
+
+              # Only if all of the above failed is a compositor worth the
+              # trouble, and mutter is confirmed present for that rung.
+              if command -v mutter >/dev/null 2>&1; then
+                echo "mutter is present; a compositor rung is possible if offscreen is not enough"
+              else
+                echo "mutter is NOT in this image; a compositor rung needs it installed"
+              fi
+
+              echo
+              echo "FINDING: the engine did not answer on any rung tried here."
+              echo "It loads (ldd is clean above) but does not serve, not even"
+              echo "with QT_QPA_PLATFORM=offscreen. The next rung is a real"
+              echo "compositor -- mutter, via the Tier 2 harness."
+              {
+                echo "### Suite 0 spike: NO"
+                echo
+                echo "The engine loads but answered \`ping\` on no rung, offscreen"
+                echo "included. Next rung: a real compositor."
+              } > /src/spike-verdict.md
+            '
+
+      # The verdict, where a reader will see it. The container cannot write to
+      # $GITHUB_STEP_SUMMARY, so it leaves the file on the bind mount and this
+      # step publishes it. Asserted rather than best-effort: a spike that
+      # produced no verdict did not answer its question, and that IS a failure
+      # of the job even though a NO is not.
+      - name: The verdict
+        if: always()
+        run: |
+          test -f spike-verdict.md || {
+            echo "::error::the spike left no verdict — it did not reach an answer"
+            exit 1
+          }
+          cat spike-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the engine logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-spike-logs
+          # On the bind mount, not the container's /tmp. The first run
+          # uploaded nothing -- "No files were found with the provided path"
+          # -- because the logs never left the container.
+          path: spike-*.log
+          if-no-files-found: ignore
+          retention-days: 7

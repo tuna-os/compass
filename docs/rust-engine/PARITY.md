@@ -1082,6 +1082,24 @@ the channel that matters.
 Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
 the behaviour changes, so a future fix is loud rather than silent.
 
+### Suite 0's ranked-output path — two divergences that are **scope**, not behaviour
+
+Not bugs on either side. These are the two places where `vicinae query --json` (C++, added for
+§8.1a rung 2) and the Rust engine's `query` are answering *different questions*, and Suite 0 would
+otherwise report both as regressions on every query with a match. §8.1 requires a divergence to
+cite a rationale and be declared rather than discovered; this is that citation.
+
+| # | The two engines | Why it is not reconcilable | Pinned by |
+|---|---|---|---|
+| 1 | **The score is on two scales.** Rust puts `QueryHit.score` on the wire — the 0..=100 match score, with the frecency boost *deliberately* excluded, so hits are legitimately not in descending score order. C++ `rootQuery` emits what `RootItemManager::search` **orders by**, which `SearchableRootItem::fuzzyScore` returns as `score.score + FRECENCY_WEIGHT * frecency()`. | Reporting the other engine's number means recomputing it at a second site: on the C++ side that is `fzf::threadLocalMatcher().score_query` over the field weights (title 1.0, subtitle 0.5, alias 1.0, keywords 0.6), duplicated away from the one place that owns them. A second copy of a weighting is a divergence generator, not a fix. **The gate Phase 1 names is ranking, not scoring** — §8.1a already measures scores differing on 20.8% of queries while the ranking absorbs it. | `same_ranking_different_scores_is_a_known_divergence` — and, so the tolerance cannot quietly swallow a real regression, the same test asserts that a reordering sharing those scores is still a `Regression` |
+| 2 | **The two rank different sets.** Rust's `Session::query` ranks `index.launchable_items()` — applications. C++ `RootItemManager` ranks *root items*: applications plus commands, extension entrypoints and fallbacks. | Both are correct for their engine at this phase; the Rust engine has no command or extension providers yet, so there is nothing to include. `rootQuery` takes `providerId` (`--provider` on the CLI) so a caller narrows the C++ side to compare like with like. Deliberately **not** defaulted — a default would silently decide a parity question that belongs to whoever runs the comparison. | `each_engine_is_invoked_the_way_its_own_cli_parses` pins the argv that carries it |
+
+A third difference is mechanical rather than semantic and is recorded here because it looks like the
+others: the C++ engine takes **no `--socket` flag**. `vicinae::serverSocketName()` is
+`runtimeDir() / "vicinae.sock"` and `runtimeDir()` reads `XDG_RUNTIME_DIR`, so Suite 0 isolates the
+C++ engine with a private runtime directory instead. Adding a flag to a tree being deleted was the
+obvious move and turned out to be unnecessary.
+
 ### `compass-clipboard` — two C++ behaviours deliberately **not** reproduced
 
 | # | C++ behaviour | What we do | Pinned by |

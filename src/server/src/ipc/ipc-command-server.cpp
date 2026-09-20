@@ -97,7 +97,8 @@ std::expected<ArgumentValues, std::string> buildLaunchArguments(const Entrypoint
   const auto fail = [&](auto &&message) {
     std::ostringstream oss;
 
-    oss << message << "\n" << "Usage: vicinae cmd launch " << std::string{id};
+    oss << message << "\n"
+        << "Usage: vicinae cmd launch " << std::string{id};
 
     for (const auto &[idx, arg] : manifestArgs | vicinae::enumerate) {
       auto openChar = arg.required ? '<' : '[';
@@ -163,6 +164,74 @@ ipc_gen::Result<ipc_gen::DescribeResponse>::Future IpcService::describe() {
   return ipc_gen::Result<ipc_gen::DescribeResponse>::ok(
       {.open = m_ctx.navigation->isWindowOpened(),
        .entrypoint = m_ctx.navigation->activeCommand()->uniqueId()});
+}
+
+// Root-item ranking, for the Suite 0 differential (PLAN.md 8.1a rung 2).
+//
+// Nothing in the launcher calls this. It exists because Suite 0 is a
+// DIFFERENTIAL harness -- "run the operation against both engines and diff
+// structured output" -- and until now there was no surface on this side that
+// emitted a ranking. Every other parity test compares the port against our
+// READING of this tree rather than against what it does.
+//
+// It reports `RootItemManager::search`, not `searchGroupedByProvider`: the
+// Rust side ranks a flat list, and grouping would compare two different
+// operations.
+//
+// TWO DIVERGENCES, DECLARED RATHER THAN DISCOVERED (PARITY.md):
+//
+//  1. `score` is the value this engine ORDERS BY. `SearchableRootItem::
+//     fuzzyScore` returns `score.score + FRECENCY_WEIGHT * frecency()`, so the
+//     frecency boost is baked in and the number is not the 0..=100 match score
+//     the Rust engine puts on the wire. Reproducing the match score here would
+//     mean duplicating the field weights (title 1.0, subtitle 0.5, alias 1.0,
+//     keywords 0.6) at a second site, which is a divergence generator rather
+//     than a fix. So the comparison is over ids IN ORDER, and the score rides
+//     along for diagnosis.
+//
+//  2. This ranks ROOT ITEMS -- apps plus commands, extension entrypoints and
+//     fallbacks -- while the Rust engine ranks apps alone. `providerId` is how
+//     a caller narrows this to one provider so the two sets can be made
+//     comparable; it is the caller's choice and not defaulted here, because a
+//     default would silently decide a parity question.
+ipc_gen::Result<std::vector<ipc_gen::RootHit>>::Future
+IpcService::rootQuery(std::string q, ipc_gen::RootQueryParams params) {
+  if (params.limit < 0) {
+    return ipc_gen::Result<std::vector<ipc_gen::RootHit>>::fail(
+        std::format("limit must not be negative, got {}", params.limit));
+  }
+
+  auto root = m_ctx.services->rootItemManager();
+  RootItemPrefixSearchOptions const opts{
+      .includeDisabled = params.includeDisabled,
+      .providerId = params.providerId,
+  };
+
+  auto scored = root->search(QString::fromStdString(q), opts);
+  // limit 0 means "all", which is what a parity run wants: a truncated
+  // ranking hides exactly the disagreements further down the list.
+  std::size_t const limit =
+      params.limit == 0 ? scored.size() : std::min(static_cast<std::size_t>(params.limit), scored.size());
+
+  std::vector<ipc_gen::RootHit> hits;
+  hits.reserve(limit);
+
+  for (const auto &entry : scored | std::views::take(static_cast<std::ptrdiff_t>(limit))) {
+    const auto &item = entry.item.get();
+    auto const subtitle = item->subtitle();
+    std::optional<std::string> maybeSubtitle;
+
+    if (!subtitle.isEmpty()) { maybeSubtitle = subtitle.toStdString(); }
+
+    hits.emplace_back(ipc_gen::RootHit{
+        .id = item->uniqueId(),
+        .title = item->title().toStdString(),
+        .subtitle = std::move(maybeSubtitle),
+        .score = entry.score,
+    });
+  }
+
+  return ipc_gen::Result<std::vector<ipc_gen::RootHit>>::ok(std::move(hits));
 }
 
 ipc_gen::Result<std::vector<ipc_gen::FileResult>>::Future IpcService::fsQuery(std::string q,

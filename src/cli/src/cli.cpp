@@ -271,6 +271,67 @@ public:
   }
 };
 
+// The ranked-output path Suite 0 needs (PLAN.md 8.1a rung 2).
+//
+// Suite 0 is a DIFFERENTIAL harness, and until this existed there was no
+// command in this tree that printed a ranking -- `-q/--query` on `toggle` and
+// `open` sends a deeplink that opens the window with fallback text, and
+// `app ls --json` lists loaded commands rather than ranking them. So the
+// harness could only ever compare the Rust engine against itself.
+//
+// `--json` is the shape the harness reads. The plain output is one id per
+// line, for a human checking by eye.
+class QueryCommand : public AbstractCommandLineCommand {
+  std::string id() const override { return "query"; }
+  std::string description() const override { return "Rank root items against a query"; }
+
+  void setup(CLI::App *app) override {
+    app->add_option("query", m_query, "The search text")->required();
+    app->add_flag("--json,-j", m_json, "Output the ranking as json");
+    app->add_option("-n,--limit", m_limit, "How many hits to print (0 means all)");
+    app->add_option("--provider", m_providerId,
+                    "Rank only this provider's items. Suite 0 uses it to compare like with like: "
+                    "this engine ranks root items, the Rust engine ranks applications");
+    app->add_flag("--include-disabled", m_includeDisabled, "Also rank items the user has disabled");
+  }
+
+  bool run(CLI::App *) override {
+    auto res = cli::IpcClient::connect().and_then([&](cli::IpcClient client) {
+      return client.rootQuery(m_query, m_limit, m_providerId, m_includeDisabled);
+    });
+
+    if (!res) {
+      std::println(std::cerr, "Failed to query: {}", res.error());
+      return false;
+    }
+
+    if (m_json) {
+      std::string buf;
+
+      if (auto error = glz::write<glz::opts{.format = glz::JSON, .prettify = true}>(res.value(), buf)) {
+        std::println(std::cerr, "Failed to serialize json: {}", glz::format_error(error));
+        return false;
+      }
+
+      std::cout << buf << std::endl;
+      return true;
+    }
+
+    for (const auto &hit : res.value()) {
+      std::cout << hit.id << "\n";
+    }
+
+    return true;
+  }
+
+private:
+  std::string m_query;
+  std::optional<std::string> m_providerId;
+  bool m_json = false;
+  bool m_includeDisabled = false;
+  int m_limit = 0;
+};
+
 class CliPing : public AbstractCommandLineCommand {
   std::string id() const override { return "ping"; }
   std::string description() const override { return "Ping the vicinae server"; }
@@ -522,6 +583,7 @@ int CommandLineInterface::execute(int ac, char **av) {
   app.registerCommand<CliServerCommand>();
 #endif
   app.registerCommand<CliPing>();
+  app.registerCommand<QueryCommand>();
   app.registerCommand<ToggleCommand>();
   app.registerCommand<OpenCommand>();
   app.registerCommand<CloseCommand>();
