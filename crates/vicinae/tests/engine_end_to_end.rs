@@ -337,7 +337,10 @@ fn ui_search_and_successful_launch_share_the_real_daemons_history() {
     drive(&mut app, Message::LaunchSelected);
     assert_eq!(*launcher.0.lock().unwrap(), ["Beta Editor"]);
     let mut reopened_ui = build_ui();
-    drive(&mut reopened_ui, Message::QueryChanged("Editor".to_owned()));
+    drive(
+        &mut reopened_ui,
+        Message::Opened(iced::window::Id::unique()),
+    );
     assert_eq!(reopened_ui.selected_item().unwrap().key(), "beta.desktop");
     let history = compass_core::JsonFrecencyStore::open(
         daemon._dirs.path().join("data-home/vicinae/frecency.json"),

@@ -925,7 +925,8 @@ fields. Unresolved TryExec remains a diagnostic rather than hiding a host app.
 The daemon retains the existing desktop-file IDs, result limit and frecency keys;
 its wire match score still excludes the frecency boost. This does not yet connect
 all builtin/extension providers, root configuration or the grouped `root_list`
-presentation. The UI's empty-query greeting remains a separate gap.
+presentation. Attached UI windows request history-ranked application suggestions
+on opening and when clearing the query; returned rows replace the idle greeting.
 End-to-end upstream Unicode ordering must still be
 proved before search timing is a comparable benchmark.
 
@@ -948,7 +949,10 @@ not turn an already successful launch into a launch error. A real-daemon test
 drives UI tasks through selection, launch and reopening, verifying the persisted
 visit changes the new UI's order. Headless tests do not prove an external app
 opened. Standalone UI without a daemon still uses local search without persisted
-history; empty-query results and non-application providers remain unfinished.
+history and retains its idle greeting. Non-application providers, favourites and
+grouped root presentation remain unfinished. Widget tests distinguish initial
+suggestions from the greeting and search failures from launch failures; the
+real-daemon UI test also verifies history ordering when reopening with no query.
 
 Desktop `Type=Link` entries now enter the application index without an Exec,
 including the harvested Singular manual fixture. Missing or empty URLs are

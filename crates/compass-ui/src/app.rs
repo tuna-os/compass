@@ -1033,7 +1033,7 @@ impl LauncherApp {
                             );
                         }
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.error = Some(format!("could not search: {error}")),
                 }
                 Task::none()
             }
@@ -1075,7 +1075,7 @@ impl LauncherApp {
             // waiting to happen. Hidden, not gone -- see `conceal`.
             Message::Launched(Ok(())) => self.conceal(),
             Message::Launched(Err(err)) => {
-                self.error = Some(err);
+                self.error = Some(format!("could not launch: {err}"));
                 Task::none()
             }
             Message::Dismiss => self.conceal(),
@@ -1332,8 +1332,8 @@ impl LauncherApp {
             });
 
         let body: Element<Message> = if let Some(err) = &self.error {
-            self.notice(&format!("could not launch: {err}"))
-        } else if self.query.is_empty() {
+            self.notice(err)
+        } else if self.query.is_empty() && self.results.is_empty() {
             self.notice("Type to search")
         } else if self.results.is_empty() {
             self.notice("No results")
@@ -1678,9 +1678,7 @@ impl LauncherApp {
     fn search_task(&mut self) -> Task<Message> {
         self.cancel_search();
         self.error = None;
-        if let Some(backend) = self.backend.clone()
-            && !self.query.trim().is_empty()
-        {
+        if let Some(backend) = self.backend.clone() {
             self.results.clear();
             self.selected = 0;
             let query = self.query.clone();
@@ -1979,6 +1977,30 @@ mod tests {
             assert!(app.results.is_empty());
             assert!(app.error.is_some());
         }
+    }
+
+    #[test]
+    fn opening_or_clearing_an_attached_window_requests_initial_suggestions() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["beta.desktop".to_owned(), "alpha.desktop".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let opened = app.update(Message::Opened(window::Id::unique()));
+        for message in task_messages(opened) {
+            let _ = app.update(message);
+        }
+        assert!(app.query.is_empty());
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let pending = app.update(Message::QueryChanged("Ed".to_owned()));
+        let cleared = app.update(Message::QueryChanged(String::new()));
+        assert!(task_messages(pending).is_empty());
+        for message in task_messages(cleared) {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.results.len(), 2);
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
     }
 
     #[test]
@@ -2482,7 +2504,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app(dir.path());
         let _ = app.update(Message::Launched(Err("no Exec key".to_owned())));
-        assert_eq!(app.error.as_deref(), Some("no Exec key"));
+        assert_eq!(app.error.as_deref(), Some("could not launch: no Exec key"));
         let _ = app.update(Message::QueryChanged("f".to_owned()));
         assert!(app.error.is_none(), "a new query should clear the error");
     }
@@ -3559,6 +3581,29 @@ mod view_tests {
             ui.find("Files").is_err(),
             "the error replaces the list while it is shown"
         );
+    }
+
+    #[test]
+    fn empty_query_suggestions_are_visible_instead_of_the_greeting() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_showing_results(dir.path(), "gnome");
+        app.query.clear();
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Firefox").is_ok());
+        assert!(ui.find("Type to search").is_err());
+    }
+
+    #[test]
+    fn a_search_failure_is_not_presented_as_a_failed_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::SearchCompleted {
+            generation: app.search_generation,
+            result: Err("engine unavailable".to_owned()),
+        });
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("could not search: engine unavailable").is_ok());
+        assert!(ui.find("could not launch: engine unavailable").is_err());
     }
 
     #[test]
