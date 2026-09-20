@@ -219,10 +219,13 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 | `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
 | `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
-The single 🟡 is `windows`, and it is generous: `compass-ui` opens one window, shows a text input
-and a result list, moves a selection with the arrow keys, launches on Enter and dismisses on
-Escape. That is the launcher's core loop and nothing else — no navigation stack, no action panel,
-no views, no settings, no theming, no icons.
+`compass-ui` opens a window, searches applications, moves the selection, launches on Enter and
+dismisses on Escape. It also draws themed application icons and an action panel. The panel now
+has its own focused fuzzy filter, dispatches Open and both copy actions by stable IDs, accepts
+clicks, and restores search focus when closed. Copy actions emit native clipboard writes;
+headless tests inspect those writes and exercise the widgets, but delivery to another application
+still needs a desktop check. The general command/view stack, settings and extension views remain
+unfinished, so these UI rows are not fully green.
 
 Three things about this section are worth stating plainly, because a table of ❌s invites the wrong
 reading:

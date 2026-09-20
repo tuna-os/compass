@@ -12,6 +12,8 @@
 /// One action a panel offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Action {
+    /// Stable dispatch identity, independent of the displayed title.
+    pub id: Option<String>,
     /// What it is called, and what the filter matches against.
     pub title: String,
     /// The key that runs it without opening the panel, if it has one.
@@ -23,9 +25,17 @@ impl Action {
     #[must_use]
     pub fn new(title: impl Into<String>) -> Self {
         Self {
+            id: None,
             title: title.into(),
             shortcut: None,
         }
+    }
+
+    /// Assign the identity used by the host to execute this action.
+    #[must_use]
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     /// The same action with a shortcut bound.

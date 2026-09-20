@@ -9,7 +9,7 @@
 
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
-    widget::{Space, column, container, image, row, stack, svg, text, text_input},
+    widget::{Space, column, container, image, mouse_area, row, stack, svg, text, text_input},
     window,
 };
 
@@ -42,6 +42,10 @@ use crate::resident::{EngineLink, UiCommand, UiOutcome};
 /// `iced::advanced::widget::Id` so this crate does not have to turn on Iced's
 /// `advanced` feature for one constant; both call sites take `impl Into<Id>`.
 const SEARCH_INPUT: &str = "compass-search-input";
+const PANEL_INPUT: &str = "compass-action-filter";
+const APP_OPEN: &str = "app.open";
+const APP_COPY_NAME: &str = "app.copy-name";
+const APP_COPY_PATH: &str = "app.copy-path";
 
 /// The nominal pixel size asked of the icon theme.
 ///
@@ -318,14 +322,14 @@ impl PanelState {
 /// change what enter means.
 #[must_use]
 pub fn actions_for_app(item: &AppItem) -> Vec<PanelSection> {
-    let mut copy = vec![Action::new("Copy name")];
+    let mut copy = vec![Action::new("Copy name").with_id(APP_COPY_NAME)];
     if item.path().is_some() {
-        copy.push(Action::new("Copy path"));
+        copy.push(Action::new("Copy path").with_id(APP_COPY_PATH));
     }
     vec![
         PanelSection {
             name: String::new(),
-            actions: vec![Action::new("Open").with_shortcut("enter")],
+            actions: vec![Action::new("Open").with_id(APP_OPEN).with_shortcut("enter")],
         },
         PanelSection {
             name: "Copy".to_owned(),
@@ -664,6 +668,7 @@ impl LauncherApp {
     /// stayed on screen after launching is a bug report waiting to happen; a
     /// launcher that vanished with no way back is a worse one.
     fn conceal(&mut self) -> Task<Message> {
+        self.panel = None;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
         }
@@ -941,6 +946,7 @@ impl LauncherApp {
                 Task::none()
             }
             Message::QueryChanged(query) => {
+                self.panel = None;
                 self.query = query;
                 self.error = None;
                 self.search();
@@ -1019,10 +1025,12 @@ impl LauncherApp {
             Message::TogglePanel => {
                 if self.panel.is_some() {
                     self.panel = None;
+                    return focus_search();
                 } else if let Some(item) = self.selected_item() {
                     // Only over a selected row. A panel of actions for nothing
                     // would be a panel whose every action fails.
                     self.panel = Some(PanelState::new(actions_for_app(item)));
+                    return iced::widget::operation::focus(PANEL_INPUT);
                 }
                 Task::none()
             }
@@ -1047,6 +1055,19 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::PanelClicked(index) => {
+                let Some(panel) = self.panel.as_mut() else {
+                    return Task::none();
+                };
+                if !panel.rows.get(index).is_some_and(Row::selectable) {
+                    return Task::none();
+                }
+                let Ok(selected) = isize::try_from(index) else {
+                    return Task::none();
+                };
+                panel.selected = selected;
+                self.update(Message::PanelActivate)
+            }
             Message::PanelActivate => {
                 let Some(panel) = self.panel.as_ref() else {
                     return Task::none();
@@ -1054,17 +1075,25 @@ impl LauncherApp {
                 let Some(action) = panel.selected_action() else {
                     return Task::none();
                 };
-                // Only `Open` does anything yet; the copies need a clipboard
-                // this crate does not have. Closing the panel either way is
-                // deliberate -- an action that ran and one that is not wired up
-                // both leave the panel with nothing more to say, and leaving it
-                // open would look like the key had not registered.
-                let launches = action.title == "Open";
+                let Some(item) = self.selected_item() else {
+                    return Task::none();
+                };
+                let task = match action.id.as_deref() {
+                    Some(APP_OPEN) => {
+                        self.panel = None;
+                        return self.update(Message::LaunchSelected);
+                    }
+                    Some(APP_COPY_NAME) => iced::clipboard::write(item.name().to_owned()),
+                    Some(APP_COPY_PATH) => {
+                        let Some(path) = item.path() else {
+                            return Task::none();
+                        };
+                        iced::clipboard::write(path.to_string_lossy().into_owned())
+                    }
+                    _ => return Task::none(),
+                };
                 self.panel = None;
-                if launches {
-                    return self.update(Message::LaunchSelected);
-                }
-                Task::none()
+                Task::batch([task, focus_search()])
             }
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
@@ -1100,7 +1129,7 @@ impl LauncherApp {
                         Key::Named(Named::Enter) => return self.update(Message::PanelActivate),
                         Key::Named(Named::Escape) => {
                             self.panel = None;
-                            return Task::none();
+                            return focus_search();
                         }
                         _ => {}
                     }
@@ -1145,6 +1174,7 @@ impl LauncherApp {
                         return self.update(Message::MoveSelection(Direction::Up));
                     }
                     Key::Named(Named::Escape) => return self.update(Message::Dismiss),
+                    Key::Named(Named::Enter) => return self.update(Message::LaunchSelected),
                     _ => {}
                 }
 
@@ -1179,10 +1209,9 @@ impl LauncherApp {
 
         let input = text_input("Search…", &self.query)
             .id(SEARCH_INPUT)
-            .on_input(Message::QueryChanged)
+            .on_input_maybe(self.panel.is_none().then_some(Message::QueryChanged))
             .padding(Padding::new(0.0).left(14).right(14))
-            .size(f32::from(geometry.query_size))
-            .on_submit(Message::LaunchSelected);
+            .size(f32::from(geometry.query_size));
 
         let field = container(input)
             .height(Length::Fixed(f32::from(geometry.field_height)))
@@ -1415,7 +1444,14 @@ impl LauncherApp {
     fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
         let geometry = self.geometry;
         let palette = design::palette(self.appearance);
-        let mut col = column![].spacing(f32::from(geometry.row_spacing));
+        let mut col = column![
+            text_input("Search…", &panel.filter)
+                .id(PANEL_INPUT)
+                .on_input(Message::PanelFilterChanged)
+                .padding(8)
+                .size(f32::from(geometry.title_size))
+        ]
+        .spacing(f32::from(geometry.row_spacing));
 
         for (index, panel_row) in panel.rows.iter().enumerate() {
             let element: Element<Message> = match panel_row.kind {
@@ -1447,7 +1483,9 @@ impl LauncherApp {
                     let title = action.map_or("", |action| action.title.as_str());
                     let shortcut = action.and_then(|action| action.shortcut.clone());
                     let selected = isize::try_from(index).unwrap_or(isize::MAX) == panel.selected;
-                    self.panel_item(title, shortcut.as_deref(), selected)
+                    mouse_area(self.panel_item(title, shortcut.as_deref(), selected))
+                        .on_press(Message::PanelClicked(index))
+                        .into()
                 }
             };
             col = col.push(element);
@@ -1614,6 +1652,122 @@ mod tests {
 
     fn app(dir: &std::path::Path) -> LauncherApp {
         LauncherApp::with_index(index(dir))
+    }
+
+    fn clipboard_writes(task: Task<Message>) -> Vec<String> {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, clipboard, task};
+
+        let Some(stream) = task::into_stream(task) else {
+            return Vec::new();
+        };
+        block_on(
+            stream
+                .filter_map(|action| async move {
+                    match action {
+                        Action::Clipboard(clipboard::Action::Write { contents, .. }) => {
+                            Some(contents)
+                        }
+                        Action::Widget(_) => None,
+                        other => panic!("copy issued an unexpected action: {other:?}"),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn filtered_copy_actions_write_the_selected_apps_name_and_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected_name = app.selected_item().expect("selected").name().to_owned();
+        let expected_path = app
+            .selected_item()
+            .expect("selected")
+            .path()
+            .expect("desktop path")
+            .to_string_lossy()
+            .into_owned();
+        for (filter, expected) in [("name", expected_name), ("path", expected_path)] {
+            let _ = app.update(Message::TogglePanel);
+            let _ = app.update(Message::PanelFilterChanged(filter.to_owned()));
+            let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+            assert_eq!(clipboard_writes(task), vec![expected]);
+            assert!(app.panel.is_none());
+            assert_eq!(app.query, "fi");
+        }
+    }
+
+    #[test]
+    fn dispatch_uses_identity_even_when_the_label_changes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected = app.selected_item().expect("selected").name().to_owned();
+        let _ = app.update(Message::TogglePanel);
+        let panel = app.panel.as_mut().expect("panel");
+        panel.sections[1].actions[0].title = "Copier le nom".to_owned();
+        panel.set_filter("Copier le nom".to_owned());
+        let task = app.update(Message::PanelActivate);
+        assert_eq!(clipboard_writes(task), vec![expected]);
+    }
+
+    #[test]
+    fn an_empty_filter_result_cannot_launch_or_copy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("zzzznotanaction".to_owned()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(iced_winit::runtime::task::into_stream(task).is_none());
+        assert!(app.panel.is_some());
+    }
+
+    #[test]
+    fn changing_the_root_query_invalidates_its_panel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::QueryChanged("terminal".to_owned()));
+        assert!(app.panel.is_none());
+        assert_eq!(app.selected_item().expect("selected").name(), "Terminal");
+        assert!(clipboard_writes(app.update(Message::PanelActivate)).is_empty());
+    }
+
+    #[test]
+    fn clicking_an_action_copies_but_clicking_a_heading_does_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected = app.selected_item().expect("selected").name().to_owned();
+        let _ = app.update(Message::TogglePanel);
+        assert!(clipboard_writes(app.update(Message::PanelClicked(2))).is_empty());
+        assert!(app.panel.is_some());
+        let messages = {
+            let mut ui = iced_test::simulator(app.view());
+            ui.click("Copy name").expect("click the action");
+            ui.into_messages().collect::<Vec<_>>()
+        };
+        assert_eq!(messages.len(), 1);
+        let writes: Vec<_> = messages
+            .into_iter()
+            .flat_map(|message| clipboard_writes(app.update(message)))
+            .collect();
+        assert_eq!(writes, vec![expected]);
+    }
+
+    #[test]
+    fn typing_in_the_panel_emits_only_panel_edits_and_no_submit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let mut ui = iced_test::simulator(app.view());
+        ui.click(iced_test::selector::id(PANEL_INPUT))
+            .expect("panel input");
+        ui.typewrite("n");
+        ui.tap_key(iced::keyboard::key::Named::Enter);
+        let messages: Vec<_> = ui.into_messages().collect();
+        assert!(
+            matches!(messages.as_slice(), [Message::PanelFilterChanged(filter)] if filter == "n")
+        );
     }
 
     #[test]
