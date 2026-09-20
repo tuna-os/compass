@@ -246,6 +246,31 @@ pub const GEOMETRY: Geometry = Geometry {
     query_size: 20,
 };
 
+/// Action-menu dimensions in logical pixels, shared with the design preview.
+pub const PANEL_METRICS: [(&str, u16); 9] = [
+    ("width", 300),
+    ("padding", 6),
+    ("inset", 10),
+    ("row-height", 34),
+    ("row-radius", 8),
+    ("gap", 2),
+    ("header-height", 24),
+    ("divider-gap", 5),
+    ("filter-height", 36),
+];
+
+/// Look up a shared action-menu dimension.
+#[must_use]
+pub fn panel_metric(name: &str) -> f32 {
+    f32::from(
+        PANEL_METRICS
+            .iter()
+            .find(|(key, _)| *key == name)
+            .expect("known panel metric")
+            .1,
+    )
+}
+
 /// The font stack, most preferred first.
 ///
 /// Cantarell is GNOME's interface font; the rest are what a non-GNOME desktop
