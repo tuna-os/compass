@@ -32,6 +32,13 @@ This is the entrypoint for a future user-approved start-at-login flow; running
 it does not itself configure login startup. A duplicate hidden start leaves
 the existing launcher's visibility unchanged. Ordinary `start` still opens it.
 
+The native color mode is also the default. Leave
+`launcher.appearance.color_scheme` absent (or set it to `"system"`) to follow
+the desktop's light/dark preference, including changes while Compass is
+running. Set it to `"light"` or `"dark"` for an explicit override; clearing the
+key restores System. If the Settings portal is unavailable, System falls back
+to the readable Adwaita light palette.
+
 ```sh
 # One-off: the offline dependency manifest Flathub builds require.
 python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json

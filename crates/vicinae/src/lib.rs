@@ -151,33 +151,41 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // The user's chord scheme. A configuration that cannot be read is not
         // a reason to refuse to start: the launcher runs with the defaults and
         // says so, which is what every other unreadable setting here does.
-        let (keybinding, wrap_navigation, quick_launch, appearance_preset, root_config) =
-            match compass_core::Config::load() {
-                Ok(config) => {
-                    let appearance = config.launcher().appearance();
-                    (
-                        config.launcher().keybinding_scheme(),
-                        config.launcher().wrap_navigation(),
-                        config.launcher().quick_launch(),
-                        compass_ui::preset::resolve(
-                            Some(appearance.preset()),
-                            appearance.icons_override(),
-                            appearance.tint_override(),
-                        ),
-                        config.root_config(),
-                    )
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "could not read the configuration; using the defaults");
-                    (
-                        compass_core::keybinding::Scheme::default(),
-                        compass_core::config::DEFAULT_WRAP_NAVIGATION,
-                        compass_core::config::DEFAULT_QUICK_LAUNCH,
-                        compass_ui::preset::resolve(None, None, None),
-                        compass_core::root_items::RootConfig::default(),
-                    )
-                }
-            };
+        let (
+            keybinding,
+            wrap_navigation,
+            quick_launch,
+            appearance_preset,
+            color_scheme,
+            root_config,
+        ) = match compass_core::Config::load() {
+            Ok(config) => {
+                let appearance = config.launcher().appearance();
+                (
+                    config.launcher().keybinding_scheme(),
+                    config.launcher().wrap_navigation(),
+                    config.launcher().quick_launch(),
+                    compass_ui::preset::resolve(
+                        Some(appearance.preset()),
+                        appearance.icons_override(),
+                        appearance.tint_override(),
+                    ),
+                    appearance.color_scheme().to_owned(),
+                    config.root_config(),
+                )
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not read the configuration; using the defaults");
+                (
+                    compass_core::keybinding::Scheme::default(),
+                    compass_core::config::DEFAULT_WRAP_NAVIGATION,
+                    compass_core::config::DEFAULT_QUICK_LAUNCH,
+                    compass_ui::preset::resolve(None, None, None),
+                    compass_core::config::DEFAULT_COLOR_SCHEME.to_owned(),
+                    compass_core::root_items::RootConfig::default(),
+                )
+            }
+        };
 
         // Said rather than swallowed: drawing the default for a name the user
         // typed leaves them adjusting a setting nothing is reading.
@@ -193,9 +201,17 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             );
         }
 
+        let color_mode = appearance::ColorMode::from_config(&color_scheme);
+        if !appearance::ColorMode::is_known(&color_scheme) {
+            tracing::warn!(
+                color_scheme = %color_scheme,
+                "unknown launcher.appearance.color_scheme; following the system"
+            );
+        }
+
         // Read before the window opens so the first frame is the right
         // colour; see `appearance` for what happens when the portal is slow.
-        let (appearance, appearance_link) = appearance::follow();
+        let (appearance, appearance_link) = appearance::follow(color_mode);
 
         let backend = link.as_ref().map(|_| {
             std::sync::Arc::new(ui_backend::DaemonBackend::new(cli.socket_path()))
