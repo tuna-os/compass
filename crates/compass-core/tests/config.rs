@@ -519,3 +519,31 @@ fn color_scheme_is_understood_and_system_is_the_default() {
         DEFAULT_COLOR_SCHEME
     );
 }
+
+#[test]
+fn theme_is_understood_and_system_is_the_default() {
+    let config = parse(r#"{"launcher":{"appearance":{"theme":"dracula"}}}"#);
+    let appearance = config.launcher().appearance();
+
+    assert_eq!(appearance.theme_override(), Some("dracula"));
+    assert_eq!(appearance.theme(), "dracula");
+    assert!(!appearance.unknown_fields().contains_key("theme"));
+
+    // Unknown theme is treated as curated variant still persisted — parsing happens in compass-ui.
+    // Config layer only ensures round-trip and default.
+    let mut restored = config.clone();
+    restored.launcher_mut().appearance_mut().set_theme(None);
+    assert_eq!(
+        restored.launcher().appearance().theme(),
+        compass_core::config::DEFAULT_THEME
+    );
+    assert_eq!(restored.launcher().appearance().theme_override(), None);
+
+    // Theme and preset are independently selectable (#153).
+    let both = parse(
+        r#"{"launcher":{"appearance":{"theme":"nord","preset":"raycast","color_scheme":"system"}}}"#,
+    );
+    assert_eq!(both.launcher().appearance().theme(), "nord");
+    assert_eq!(both.launcher().appearance().preset(), "raycast");
+    assert_eq!(both.launcher().appearance().color_scheme(), "system");
+}

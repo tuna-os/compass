@@ -14,9 +14,11 @@ compass-core = { path = "../compass-core" }
 compass-sandbox = { path = "../compass-sandbox" }
 compass-oauth-store = { path = "../compass-oauth-store" }
 compass-local-storage = { path = "../compass-local-storage" }
+compass-extension-api = { path = "../compass-extension-api" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
+zbus = { workspace = true }
 
 [dev-dependencies]
 compass-local-storage = { path = "../compass-local-storage" }
@@ -24,3 +26,4 @@ serde_json.workspace = true
 compass-db = { path = "../compass-db" }
 compass-sqlcipher-sys = { path = "../compass-sqlcipher-sys" }
 tempfile.workspace = true
+tokio = { workspace = true }

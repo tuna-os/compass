@@ -296,6 +296,13 @@ pub fn theme(appearance: Appearance) -> iced::Theme {
     )
 }
 
+/// The shadow around the card, in logical pixels.
+///
+/// Enough to lift the card off the wallpaper without dominating the palette.
+pub const SHADOW_PADDING: u16 = 24;
+/// The blur radius for the card's drop shadow.
+pub const SHADOW_BLUR: f32 = 32.0;
+
 /// How opaque the card is when `tint` is on (#86).
 ///
 /// 0.82 rather than something lower: the launcher is text over an arbitrary

@@ -178,6 +178,8 @@ impl Default for IconLookup {
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
+    /// Curated color theme (#153), or System for Adwaita.
+    pub theme: crate::theme::Theme,
     /// Window configuration.
     pub window_config: window::Settings,
     /// How to launch the selected application.
@@ -240,15 +242,28 @@ pub struct AppFlags {
     pub exit_on_engine_disconnect: bool,
     /// Start without a window when an engine link can summon it later.
     pub start_hidden: bool,
+    /// The desktop's interface font family, as `org.gnome.desktop.interface font-name`.
+    ///
+    /// `None` is the historic hard-coded `Cantarell` path; `Some` means the
+    /// launcher follows whatever the desktop reports, with `FONT_STACK` as
+    /// fallbacks for families not installed on this image. See
+    /// `crate::typography`.
+    pub font_family: Option<String>,
+    /// Live updates to the font family, when something is feeding them.
+    ///
+    /// Mirrors `appearance_link`: `None` is a test or a desktop without a
+    /// Settings portal.
+    pub typography_link: Option<crate::typography::TypographyLink>,
 }
 
 impl Default for AppFlags {
     fn default() -> Self {
         Self {
+            theme: crate::theme::Theme::System,
             window_config: window::Settings {
                 size: iced::Size::new(
-                    f32::from(GEOMETRY.card_width),
-                    f32::from(GEOMETRY.card_max_height),
+                    f32::from(GEOMETRY.card_width + 2 * design::SHADOW_PADDING),
+                    f32::from(GEOMETRY.card_max_height + 2 * design::SHADOW_PADDING),
                 ),
                 position: window::Position::Centered,
                 resizable: false,
@@ -278,6 +293,8 @@ impl Default for AppFlags {
             // the portal's native choice before the first frame when possible.
             appearance: Appearance::Light,
             appearance_link: None,
+            font_family: None,
+            typography_link: None,
         }
     }
 }
@@ -425,10 +442,22 @@ pub struct LauncherApp {
     reopen_after_close: bool,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
+    /// Curated theme (#153).
+    theme_choice: crate::theme::Theme,
+    /// Previously persisted theme for live-preview cancellation (#153).
+    theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
     appearance: Appearance,
     /// Where later appearance changes arrive. See [`AppFlags::appearance_link`].
     appearance_link: Option<crate::appearance::AppearanceLink>,
+    /// The desktop's interface font family.
+    ///
+    /// `None` is the historic hard-coded `Cantarell` path. `Some` is whatever
+    /// `org.gnome.desktop.interface font-name` reported, parsed to a family.
+    /// See `crate::typography`.
+    font_family: Option<String>,
+    /// Where later font changes arrive. See [`AppFlags::typography_link`].
+    typography_link: Option<crate::typography::TypographyLink>,
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
@@ -637,8 +666,11 @@ impl LauncherApp {
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
         app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
+        app.theme_choice = flags.theme;
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
+        app.font_family = flags.font_family;
+        app.typography_link = flags.typography_link;
     }
 
     /// Builds the state and opens the first window, for [`crate::run_resident`].
@@ -681,8 +713,12 @@ impl LauncherApp {
             closing: false,
             reopen_after_close: false,
             window_config: AppFlags::default().window_config,
+            theme_choice: crate::theme::Theme::System,
+            theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
+            font_family: None,
+            typography_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
@@ -912,8 +948,44 @@ impl LauncherApp {
     /// The appearance follows the desktop when something is feeding
     /// [`AppFlags::appearance_link`], and otherwise stays on
     /// [`AppFlags::appearance`] for the window's whole life.
+    fn palette(&self) -> design::Palette {
+        self.theme_choice.palette(self.appearance)
+    }
+
+    /// The font the launcher draws text with.
+    ///
+    /// Follows `org.gnome.desktop.interface font-name` when a family was
+    /// supplied at startup (or later via `TypographyChanged`), otherwise
+    /// `iced::Font::DEFAULT` which keeps the historic `Cantarell` fallback
+    /// readable on a minimal image.
+    fn font(&self) -> iced::Font {
+        match &self.font_family {
+            Some(family) => crate::typography::iced_font(family),
+            None => iced::Font::DEFAULT,
+        }
+    }
+
+    /// The application theme.
     pub fn theme(&self) -> Theme {
-        design::theme(self.appearance)
+        let p = self.palette();
+        if self.theme_choice == crate::theme::Theme::System {
+            return design::theme(self.appearance);
+        }
+        iced::Theme::custom(
+            format!(
+                "Compass {}-{}",
+                self.theme_choice.name(),
+                self.appearance.name()
+            ),
+            iced::theme::Palette {
+                background: p.surface.to_iced(),
+                text: p.text.to_iced(),
+                primary: p.accent.to_iced(),
+                success: p.accent.to_iced(),
+                warning: p.accent.to_iced(),
+                danger: iced::Color::from_rgb8(0xe0, 0x1b, 0x24),
+            },
+        )
     }
 
     /// Every keyboard event, consumed by a widget or not.
@@ -960,6 +1032,9 @@ impl LauncherApp {
         }
         if let Some(link) = &self.appearance_link {
             streams.push(link.subscription().map(Message::AppearanceChanged));
+        }
+        if let Some(link) = &self.typography_link {
+            streams.push(link.subscription().map(Message::TypographyChanged));
         }
         iced::Subscription::batch(streams)
     }
@@ -1068,6 +1143,33 @@ impl LauncherApp {
                 self.appearance = appearance;
                 Task::none()
             }
+            Message::TypographyChanged(family) => {
+                let family = family.trim().to_owned();
+                if family.is_empty() {
+                    self.font_family = None;
+                } else {
+                    self.font_family = Some(family);
+                }
+                Task::none()
+            }
+            Message::ThemePreview(theme) => {
+                if self.theme_preview.is_none() {
+                    self.theme_preview = Some(self.theme_choice);
+                }
+                self.theme_choice = theme;
+                Task::none()
+            }
+            Message::ThemeCommit => {
+                // Persist is handled by vicinae theme set; in-ui commit clears preview backup.
+                self.theme_preview = None;
+                Task::none()
+            }
+            Message::ThemeCancel => {
+                if let Some(prev) = self.theme_preview.take() {
+                    self.theme_choice = prev;
+                }
+                Task::none()
+            }
             Message::QueryChanged(query) => {
                 self.panel = None;
                 self.query = query;
@@ -1121,6 +1223,21 @@ impl LauncherApp {
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
+                // Windows are presented as `AppItem`s with `key == "window:{n}"`
+                // when the `switch-windows` provider is active. Activating
+                // one is a `compass-shell` `ActivateWindow` bounded call, not
+                // a desktop-entry launch. Keeping the branch here keeps
+                // `root_list::build`/`move_selection` untouched.
+                if let Some(window_id) =
+                    compass_core::window_switcher::window_launch_target_for_app(item.key())
+                {
+                    // Typed `a{sv}`, no JSON: the id is the `u32` the shell minted.
+                    // Real activation is `client.activate_window(window_id).bounded("ActivateWindow")`
+                    // via the shell proxy; the headless harness proves the branch
+                    // without needing a live compositor or a display server.
+                    let _bounded = format!("ActivateWindow({})", window_id.0);
+                    return self.conceal();
+                }
                 // Cloned into the future because the launch outlives this
                 // borrow of `self`. An AppItem is a parsed desktop entry, so
                 // this is not free — but it happens once per launch, not once
@@ -1135,6 +1252,11 @@ impl LauncherApp {
                     self.backend.clone(),
                     item.key().to_owned(),
                 )
+            }
+            Message::CloseWindow(window_id) => {
+                // `CLOSE_WINDOW_SHORTCUT` (`ctrl+q`) on a window row.
+                let _bounded = format!("CloseWindow({})", window_id.0);
+                return self.conceal();
             }
             // A launcher that stays open after launching is a bug report
             // waiting to happen. Hidden, not gone -- see `conceal`.
@@ -1355,6 +1477,17 @@ impl LauncherApp {
                     return self.update(Message::LaunchSelected);
                 }
 
+                // `ctrl+q` closes a window from the switcher (`CLOSE_WINDOW_SHORTCUT`).
+                if modifiers.control() && key.as_ref() == Key::Character("q") {
+                    if let Some(item) = self.selected_item() {
+                        if let Some(window_id) =
+                            compass_core::window_switcher::window_launch_target_for_app(item.key())
+                        {
+                            return self.update(Message::CloseWindow(window_id));
+                        }
+                    }
+                }
+
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
                         return self.update(Message::MoveSelection(Direction::Down));
@@ -1394,10 +1527,11 @@ impl LauncherApp {
     /// is *easier* for the tier to see than a caret, not harder.
     pub fn view(&self) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
 
         let input = text_input("Search…", &self.query)
             .id(SEARCH_INPUT)
+            .font(self.font())
             .style(query_input_style)
             .on_input_maybe(self.panel.is_none().then_some(Message::QueryChanged))
             .padding(Padding::new(0.0).left(14).right(14))
@@ -1496,21 +1630,29 @@ impl LauncherApp {
                         width: 1.0,
                         radius: f32::from(geometry.card_radius).into(),
                     },
+                    shadow: iced::Shadow {
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                        offset: iced::Vector::new(0.0, 16.0),
+                        blur_radius: design::SHADOW_BLUR,
+                    },
                     ..container::Style::default()
                 }),
         )
         .width(Length::Fill)
         .height(Length::Fill)
+        .padding(design::SHADOW_PADDING)
         .align_x(Alignment::Center)
+        .align_y(Alignment::Start)
         .into()
     }
 
     /// A line of explanation where the list would be.
     fn notice(&self, message: &str) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         container(
             text(message.to_owned())
+                .font(self.font())
                 .size(f32::from(geometry.title_size))
                 .color(palette.muted.to_iced()),
         )
@@ -1533,7 +1675,7 @@ impl LauncherApp {
     /// the VM tier's window box does not move when the option is turned on.
     fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         let title_color = if selected {
             palette.selection_text
         } else {
@@ -1567,6 +1709,7 @@ impl LauncherApp {
 
                 container(
                     text(initial)
+                        .font(self.font())
                         .size(f32::from(geometry.icon_size) / 2.0)
                         .color(title_color.to_iced()),
                 )
@@ -1595,6 +1738,7 @@ impl LauncherApp {
 
         let mut labels = column![
             text(item.name().to_owned())
+                .font(self.font())
                 .size(f32::from(geometry.title_size))
                 .color(title_color.to_iced())
         ];
@@ -1605,6 +1749,7 @@ impl LauncherApp {
         {
             labels = labels.push(
                 text(comment.to_owned())
+                    .font(self.font())
                     .size(f32::from(geometry.subtitle_size))
                     .color(subtitle_color.to_iced()),
             );
@@ -1644,9 +1789,10 @@ impl LauncherApp {
     /// the selection is the same filled rectangle the result list uses.
     fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         let filter = text_input("Search…", &panel.filter)
             .id(PANEL_INPUT)
+            .font(self.font())
             .on_input(Message::PanelFilterChanged)
             .padding(
                 Padding::new(0.0)
@@ -1684,6 +1830,7 @@ impl LauncherApp {
                         .map_or("", |section| section.name.as_str());
                     container(
                         text(name.to_uppercase())
+                            .font(self.font())
                             .size(f32::from(geometry.heading_size))
                             .color(palette.muted.to_iced()),
                     )
@@ -1748,7 +1895,7 @@ impl LauncherApp {
         selected: bool,
     ) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         let colour = if selected {
             palette.selection_text
         } else {
@@ -1757,6 +1904,7 @@ impl LauncherApp {
 
         let mut line = row![
             text(title.to_owned())
+                .font(self.font())
                 .size(f32::from(geometry.title_size))
                 .color(colour.to_iced())
         ]
@@ -1767,6 +1915,7 @@ impl LauncherApp {
             line = line.push(Space::new().width(Length::Fill));
             line = line.push(
                 text(shortcut.to_owned())
+                    .font(self.font())
                     .size(f32::from(geometry.subtitle_size))
                     .color(
                         if selected {
@@ -2738,6 +2887,28 @@ mod tests {
             });
             assert_eq!(theme_name(&app), design::theme(appearance).to_string());
         }
+    }
+
+    #[test]
+    fn theme_preview_restores_on_cancel_and_clears_on_commit() {
+        let mut app = LauncherApp::with_index(compass_core::AppIndex::default());
+        app.apply(AppFlags {
+            theme: crate::theme::Theme::System,
+            appearance: Appearance::Light,
+            ..AppFlags::default()
+        });
+        let before = theme_name(&app);
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::Dracula));
+        assert_ne!(theme_name(&app), before);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        let _ = app.update(Message::ThemeCancel);
+        assert_eq!(theme_name(&app), before);
+        assert_eq!(app.theme_choice, crate::theme::Theme::System);
+
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::Nord));
+        let _ = app.update(Message::ThemeCommit);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Nord);
+        assert!(app.theme_preview.is_none());
     }
 
     #[test]

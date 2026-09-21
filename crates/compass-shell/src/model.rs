@@ -160,7 +160,7 @@ impl Window {
     /// Unknown keys are ignored on purpose, so the extension can add fields
     /// within a contract version. Missing or mistyped *required* keys are a
     /// [`ShellError::Protocol`] rather than a panic or a silent default.
-    pub(crate) fn from_dict(dict: &WindowDict) -> Result<Self> {
+    pub fn from_dict(dict: &WindowDict) -> Result<Self> {
         Ok(Self {
             id: WindowId(as_u32(dict, window_key::ID)?.ok_or_else(|| missing(window_key::ID))?),
             title: as_string(dict, window_key::TITLE)?.ok_or_else(|| missing(window_key::TITLE))?,

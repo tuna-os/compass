@@ -20,6 +20,7 @@ pub mod ipc;
 pub mod serve;
 pub mod session;
 pub mod spike;
+pub mod typography;
 pub mod ui_backend;
 mod ui_instance;
 pub mod window;
@@ -157,6 +158,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             quick_launch,
             appearance_preset,
             color_scheme,
+            theme_choice,
             root_config,
         ) = match compass_core::Config::load() {
             Ok(config) => {
@@ -171,6 +173,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                         appearance.tint_override(),
                     ),
                     appearance.color_scheme().to_owned(),
+                    compass_ui::theme::Theme::from_name(appearance.theme()).unwrap_or_default(),
                     config.root_config(),
                 )
             }
@@ -182,6 +185,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_core::config::DEFAULT_QUICK_LAUNCH,
                     compass_ui::preset::resolve(None, None, None),
                     compass_core::config::DEFAULT_COLOR_SCHEME.to_owned(),
+                    compass_ui::theme::Theme::System,
                     compass_core::root_items::RootConfig::default(),
                 )
             }
@@ -213,12 +217,17 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // colour; see `appearance` for what happens when the portal is slow.
         let (appearance, appearance_link) = appearance::follow(color_mode);
 
+        // The interface typeface: portal first, gsettings fallback, same
+        // 250 ms budget as above so a wedged portal never blocks startup.
+        let (font_family, typography_link) = typography::follow();
+
         let backend = link.as_ref().map(|_| {
             std::sync::Arc::new(ui_backend::DaemonBackend::new(cli.socket_path()))
                 as std::sync::Arc<dyn compass_ui::backend::ApplicationBackend>
         });
 
         compass_ui::run_resident(compass_ui::AppFlags {
+            theme: theme_choice,
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             backend,
             root_config,
@@ -233,6 +242,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             started_at: Some(started_at),
             appearance,
             appearance_link,
+            font_family,
+            typography_link,
             ..compass_ui::AppFlags::default()
         })
         .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
@@ -367,6 +378,8 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::from(EXIT_OK))
         }
 
+        Command::Theme(theme_cmd) => handle_theme(theme_cmd).await,
+
         // Handled in `run`, before the runtime exists.
         Command::Ui | Command::Start { .. } => {
             unreachable!("the launcher is dispatched before the runtime")
@@ -375,6 +388,63 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         Command::Toggle => window_command(&socket, cli.engine, Request::Toggle).await,
         Command::Show => window_command(&socket, cli.engine, Request::Show).await,
         Command::Hide => window_command(&socket, cli.engine, Request::Hide).await,
+    }
+}
+
+async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
+    use crate::cli::ThemeCommand;
+    match cmd {
+        ThemeCommand::List { json } => {
+            let themes: Vec<_> = compass_ui::theme::Theme::ALL
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name(),
+                        "description": match t {
+                            compass_ui::theme::Theme::System => "Follow OS (Adwaita)",
+                            compass_ui::theme::Theme::Catppuccin => "Catppuccin (Mocha/Latte)",
+                            compass_ui::theme::Theme::Dracula => "Dracula",
+                            compass_ui::theme::Theme::Nord => "Nord",
+                            compass_ui::theme::Theme::Gruvbox => "Gruvbox",
+                            compass_ui::theme::Theme::TokyoNight => "Tokyo Night",
+                            compass_ui::theme::Theme::Solarized => "Solarized",
+                        }
+                    })
+                })
+                .collect();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&themes)?);
+            } else {
+                for t in &themes {
+                    println!(
+                        "{} - {}",
+                        t["name"].as_str().unwrap(),
+                        t["description"].as_str().unwrap()
+                    );
+                }
+            }
+            Ok(ExitCode::from(EXIT_OK))
+        }
+        ThemeCommand::Set { theme } => {
+            let parsed = compass_ui::theme::Theme::from_name(&theme).ok_or_else(|| {
+                anyhow::anyhow!("unknown theme {theme:?}; try `vicinae theme list`")
+            })?;
+            let mut config = compass_core::Config::load().unwrap_or_default();
+            config
+                .launcher_mut()
+                .appearance_mut()
+                .set_theme(Some(parsed.name().to_owned()));
+            config.save_to(compass_core::config::default_config_path()?)?;
+            println!("theme set to {}", parsed.name());
+            Ok(ExitCode::from(EXIT_OK))
+        }
+        ThemeCommand::Reset => {
+            let mut config = compass_core::Config::load().unwrap_or_default();
+            config.launcher_mut().appearance_mut().set_theme(None);
+            config.save_to(compass_core::config::default_config_path()?)?;
+            println!("theme reset to system");
+            Ok(ExitCode::from(EXIT_OK))
+        }
     }
 }
 

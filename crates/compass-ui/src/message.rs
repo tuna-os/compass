@@ -78,6 +78,16 @@ pub enum Message {
     EngineDisconnected,
     /// The desktop's light/dark preference changed.
     AppearanceChanged(crate::design::Appearance),
+    /// The desktop's interface font family changed.
+    TypographyChanged(String),
+    /// Preview a theme without persisting it (#153 live preview).
+    ThemePreview(crate::theme::Theme),
+    /// Commit the previewed theme to config.
+    ThemeCommit,
+    /// Cancel preview and restore the theme from config.
+    ThemeCancel,
+    /// Close a window from the switcher (`ctrl+q`).
+    CloseWindow(compass_shell::model::WindowId),
     /// A window finished opening, and this is its id.
     ///
     /// Carried separately from `Command(Show)` because the honest moment to

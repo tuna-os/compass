@@ -78,6 +78,13 @@ pub const DEFAULT_PRESET: &str = "gnome";
 /// the palette, while the config crate owns only the durable schema.
 pub const DEFAULT_COLOR_SCHEME: &str = "system";
 
+/// Default for `launcher.appearance.theme`.
+///
+/// `system` follows the OS native appearance; other values name a curated
+/// palette from the #153 assortment (catppuccin, dracula, nord, gruvbox,
+/// tokyo-night, solarized).
+pub const DEFAULT_THEME: &str = "system";
+
 /// Default for `launcher.appearance.icons`.
 ///
 /// On for recognizable application results. The row already reserves the space
@@ -205,6 +212,8 @@ pub struct AppearanceConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     color_scheme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    theme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     icons: Option<bool>,
@@ -232,6 +241,28 @@ impl AppearanceConfig {
     /// Sets `launcher.appearance.color_scheme`. `None` restores the System default.
     pub fn set_color_scheme(&mut self, value: Option<String>) -> &mut Self {
         self.color_scheme = value;
+        self
+    }
+
+    /// The configured theme, or [`DEFAULT_THEME`].
+    ///
+    /// `system` follows the desktop; any other value names a curated palette
+    /// from the #153 assortment. Kept as a string here so `compass-ui` owns
+    /// the palette table.
+    #[must_use]
+    pub fn theme(&self) -> &str {
+        self.theme.as_deref().unwrap_or(DEFAULT_THEME)
+    }
+
+    /// The explicit `launcher.appearance.theme`, if one was written.
+    #[must_use]
+    pub fn theme_override(&self) -> Option<&str> {
+        self.theme.as_deref()
+    }
+
+    /// Sets `launcher.appearance.theme`. `None` restores System.
+    pub fn set_theme(&mut self, value: Option<String>) -> &mut Self {
+        self.theme = value;
         self
     }
 
@@ -316,12 +347,14 @@ impl AppearanceConfig {
     pub fn is_empty(&self) -> bool {
         let Self {
             color_scheme,
+            theme,
             preset,
             icons,
             tint,
             unknown,
         } = self;
         color_scheme.is_none()
+            && theme.is_none()
             && preset.is_none()
             && icons.is_none()
             && tint.is_none()
