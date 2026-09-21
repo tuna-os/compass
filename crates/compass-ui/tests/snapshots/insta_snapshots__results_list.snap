@@ -1,0 +1,5 @@
+---
+source: crates/compass-ui/tests/insta_snapshots.rs
+expression: snap
+---
+list: [Firefox, Files, Firewall, Text Editor] selected=Firefox @ Palette { surface: Rgb { r: 36, g: 36, b: 36 }, field: Rgb { r: 30, g: 30, b: 30 }, text: Rgb { r: 255, g: 255, b: 255 }, muted: Rgb { r: 154, g: 153, b: 150 }, selection: Rgb { r: 53, g: 132, b: 228 }, selection_text: Rgb { r: 255, g: 255, b: 255 }, border: Rgb { r: 61, g: 61, b: 61 }, accent: Rgb { r: 98, g: 160, b: 234 }, backdrop: Rgb { r: 0, g: 0, b: 0 }, backdrop_alpha: 0.35 }
