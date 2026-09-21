@@ -207,7 +207,10 @@ impl ScriptEngine {
                     }
                     Err(e) => {
                         let msg: String = format!("{e}");
-                        if msg.contains("budget") {
+                        if msg.contains("budget")
+                            || msg.contains("Too many operations")
+                            || msg.contains("operations")
+                        {
                             Err(ScriptError::BudgetExceeded(max_ops))
                         } else {
                             Err(ScriptError::Compile(msg))
@@ -338,5 +341,97 @@ mod tests {
         let engine = ScriptEngine::new(&[]);
         assert!(engine.max_operations() > 0);
         assert_eq!(engine.timeout, DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn infinite_loop_is_terminated_by_budget() {
+        let mut engine = ScriptEngine::new(&[]);
+        engine
+            .compile(r#"fn search(q) { let x = 0; while true { x += 1; } x }"#)
+            .expect("compile");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(engine.search("hello"));
+        assert!(
+            matches!(result, Err(ScriptError::BudgetExceeded(_))),
+            "infinite loop should hit budget, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn timeout_kills_hung_script_without_stalling_render_thread() {
+        let mut engine = ScriptEngine::new(&[]);
+        engine.timeout = std::time::Duration::from_millis(100);
+        // Busy loop that would run forever if not timed out — budget is 200k ops,
+        // but the timeout is 100ms, so this should hit timeout before budget alone
+        // would be the only signal. The key is it returns Timeout and does not
+        // block the caller beyond the timeout.
+        engine
+            .compile(r#"fn search(q) { let x = 0; while true { x += 1; } x }"#)
+            .expect("compile");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let start = std::time::Instant::now();
+        let result = rt.block_on(engine.search("hello"));
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "hung script stalled render thread for {elapsed:?}"
+        );
+        assert!(
+            matches!(
+                result,
+                Err(ScriptError::Timeout(_)) | Err(ScriptError::BudgetExceeded(_))
+            ),
+            "hung script should timeout or budget-exceed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn max_string_size_rejects_oversized_allocation() {
+        let mut engine = ScriptEngine::new(&[]);
+        // Rhai set_max_string_size is 1MiB; building a string larger should be rejected
+        // at eval time as a string-size violation. We craft via repeated concatenation.
+        engine
+            .compile(r#"fn search(q) { let s = ""; while s.len() < 2000000 { s += "a"; } s }"#)
+            .expect("compile");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(engine.search("hello"));
+        assert!(
+            result.is_err(),
+            "oversized string should be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn undeclared_net_capability_is_absent_even_when_script_declares_it_in_metadata() {
+        // The engine is created with no capabilities, but the script's metadata
+        // claims net. The host's capability gate (engine creation) must win — the
+        // script cannot grant itself net by writing it in metadata.
+        let mut engine = ScriptEngine::new(&[]);
+        engine
+            .compile(
+                r#"fn metadata() { #{ title: "evil", icon: "x", mode: "list", capabilities: ["net"] } }
+                   fn search(q) { http_get("https://example.invalid") }"#,
+            )
+            .expect("compile");
+        // metadata parsing should reflect what the script wrote, but engine still lacks net
+        assert_eq!(engine.meta().unwrap().capabilities, vec!["net"]);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(engine.search("hello"));
+        assert!(
+            result.is_err(),
+            "http_get must remain absent despite script's metadata claiming net"
+        );
     }
 }
