@@ -13,6 +13,8 @@
 pub mod activation;
 pub mod data_control;
 pub mod keyboard_inhibit;
+pub mod layer_shell;
 
 pub use activation::{ActivationError, ActivationManager, ActivationToken};
 pub use keyboard_inhibit::{InhibitError, KeyboardInhibitManager};
+pub use layer_shell::{SurfaceKind, decide_surface, should_use_layer_shell};
