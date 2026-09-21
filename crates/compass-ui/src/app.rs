@@ -178,6 +178,8 @@ impl Default for IconLookup {
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
+    /// Curated color theme (#153), or System for Adwaita.
+    pub theme: crate::theme::Theme,
     /// Window configuration.
     pub window_config: window::Settings,
     /// How to launch the selected application.
@@ -245,10 +247,15 @@ pub struct AppFlags {
 impl Default for AppFlags {
     fn default() -> Self {
         Self {
+            theme: crate::theme::Theme::System,
             window_config: window::Settings {
                 size: iced::Size::new(
-                    f32::from(GEOMETRY.card_width),
-                    f32::from(GEOMETRY.card_max_height),
+                    f32::from(
+                        GEOMETRY.card_width + 2 * design::SHADOW_PADDING,
+                    ),
+                    f32::from(
+                        GEOMETRY.card_max_height + 2 * design::SHADOW_PADDING,
+                    ),
                 ),
                 position: window::Position::Centered,
                 resizable: false,
@@ -425,6 +432,10 @@ pub struct LauncherApp {
     reopen_after_close: bool,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
+    /// Curated theme (#153).
+    theme_choice: crate::theme::Theme,
+    /// Previously persisted theme for live-preview cancellation (#153).
+    theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
     appearance: Appearance,
     /// Where later appearance changes arrive. See [`AppFlags::appearance_link`].
@@ -637,6 +648,7 @@ impl LauncherApp {
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
         app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
+        app.theme_choice = flags.theme;
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
     }
@@ -681,6 +693,8 @@ impl LauncherApp {
             closing: false,
             reopen_after_close: false,
             window_config: AppFlags::default().window_config,
+            theme_choice: crate::theme::Theme::System,
+            theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
@@ -912,8 +926,27 @@ impl LauncherApp {
     /// The appearance follows the desktop when something is feeding
     /// [`AppFlags::appearance_link`], and otherwise stays on
     /// [`AppFlags::appearance`] for the window's whole life.
+    fn palette(&self) -> design::Palette {
+        self.theme_choice.palette(self.appearance)
+    }
+
+    /// The application theme.
     pub fn theme(&self) -> Theme {
-        design::theme(self.appearance)
+        let p = self.palette();
+        if self.theme_choice == crate::theme::Theme::System {
+            return design::theme(self.appearance);
+        }
+        iced::Theme::custom(
+            format!("Compass {}-{}", self.theme_choice.name(), self.appearance.name()),
+            iced::theme::Palette {
+                background: p.surface.to_iced(),
+                text: p.text.to_iced(),
+                primary: p.accent.to_iced(),
+                success: p.accent.to_iced(),
+                warning: p.accent.to_iced(),
+                danger: iced::Color::from_rgb8(0xe0, 0x1b, 0x24),
+            },
+        )
     }
 
     /// Every keyboard event, consumed by a widget or not.
@@ -1066,6 +1099,24 @@ impl LauncherApp {
             }
             Message::AppearanceChanged(appearance) => {
                 self.appearance = appearance;
+                Task::none()
+            }
+            Message::ThemePreview(theme) => {
+                if self.theme_preview.is_none() {
+                    self.theme_preview = Some(self.theme_choice);
+                }
+                self.theme_choice = theme;
+                Task::none()
+            }
+            Message::ThemeCommit => {
+                // Persist is handled by vicinae theme set; in-ui commit clears preview backup.
+                self.theme_preview = None;
+                Task::none()
+            }
+            Message::ThemeCancel => {
+                if let Some(prev) = self.theme_preview.take() {
+                    self.theme_choice = prev;
+                }
                 Task::none()
             }
             Message::QueryChanged(query) => {
@@ -1394,7 +1445,7 @@ impl LauncherApp {
     /// is *easier* for the tier to see than a caret, not harder.
     pub fn view(&self) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
 
         let input = text_input("Search…", &self.query)
             .id(SEARCH_INPUT)
@@ -1496,19 +1547,26 @@ impl LauncherApp {
                         width: 1.0,
                         radius: f32::from(geometry.card_radius).into(),
                     },
+                    shadow: iced::Shadow {
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                        offset: iced::Vector::new(0.0, 16.0),
+                        blur_radius: design::SHADOW_BLUR,
+                    },
                     ..container::Style::default()
                 }),
         )
         .width(Length::Fill)
         .height(Length::Fill)
+        .padding(design::SHADOW_PADDING)
         .align_x(Alignment::Center)
+        .align_y(Alignment::Start)
         .into()
     }
 
     /// A line of explanation where the list would be.
     fn notice(&self, message: &str) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         container(
             text(message.to_owned())
                 .size(f32::from(geometry.title_size))
@@ -1533,7 +1591,7 @@ impl LauncherApp {
     /// the VM tier's window box does not move when the option is turned on.
     fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         let title_color = if selected {
             palette.selection_text
         } else {
@@ -1644,7 +1702,7 @@ impl LauncherApp {
     /// the selection is the same filled rectangle the result list uses.
     fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         let filter = text_input("Search…", &panel.filter)
             .id(PANEL_INPUT)
             .on_input(Message::PanelFilterChanged)
@@ -1748,7 +1806,7 @@ impl LauncherApp {
         selected: bool,
     ) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         let colour = if selected {
             palette.selection_text
         } else {
@@ -2738,6 +2796,28 @@ mod tests {
             });
             assert_eq!(theme_name(&app), design::theme(appearance).to_string());
         }
+    }
+
+    #[test]
+    fn theme_preview_restores_on_cancel_and_clears_on_commit() {
+        let mut app = LauncherApp::with_index(compass_core::AppIndex::default());
+        app.apply(AppFlags {
+            theme: crate::theme::Theme::System,
+            appearance: Appearance::Light,
+            ..AppFlags::default()
+        });
+        let before = theme_name(&app);
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::Dracula));
+        assert_ne!(theme_name(&app), before);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        let _ = app.update(Message::ThemeCancel);
+        assert_eq!(theme_name(&app), before);
+        assert_eq!(app.theme_choice, crate::theme::Theme::System);
+
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::Nord));
+        let _ = app.update(Message::ThemeCommit);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Nord);
+        assert!(app.theme_preview.is_none());
     }
 
     #[test]

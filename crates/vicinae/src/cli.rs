@@ -134,6 +134,10 @@ pub enum Command {
         json: bool,
     },
 
+    /// Theme management (#153).
+    #[command(subcommand)]
+    Theme(ThemeCommand),
+
     /// Extension management.
     #[command(subcommand)]
     Ext(ExtCommand),
@@ -163,6 +167,24 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+/// Theme management subcommands (#153: Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized + System).
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum ThemeCommand {
+    /// List available themes.
+    List {
+        /// Emit the list as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set the theme. Use `system` to return to OS natives.
+    Set {
+        /// Theme name (system, catppuccin, dracula, nord, gruvbox, tokyo-night, solarized).
+        theme: String,
+    },
+    /// Reset to System (OS native) theme.
+    Reset,
 }
 
 /// Extension management subcommands.
@@ -488,5 +510,23 @@ mod tests {
 
         let cli = parse(&["vicinae", "ext", "list", "--json"]);
         assert_eq!(cli.command, Command::Ext(ExtCommand::List { json: true }));
+    }
+
+    #[test]
+    fn theme_commands_parse() {
+        assert_eq!(
+            parse(&["vicinae", "theme", "list"]).command,
+            Command::Theme(ThemeCommand::List { json: false })
+        );
+        assert_eq!(
+            parse(&["vicinae", "theme", "set", "dracula"]).command,
+            Command::Theme(ThemeCommand::Set {
+                theme: "dracula".to_owned()
+            })
+        );
+        assert_eq!(
+            parse(&["vicinae", "theme", "reset"]).command,
+            Command::Theme(ThemeCommand::Reset)
+        );
     }
 }

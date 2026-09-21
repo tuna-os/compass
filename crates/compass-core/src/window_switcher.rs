@@ -7,6 +7,53 @@
 //! None of the window manager itself is here. This is the part that turns a
 //! list of windows into rows, which is the part with the decisions in it.
 
+/// Convert a shell `Window` (typed `a{sv}`) into a switcher `WindowEntry`.
+///
+/// The shell gives `title`/`wm_class`/`workspace`; the app registry (when
+/// wired) enriches with `app_name`/`app_icon`. Keeping the conversion here
+/// keeps the `a{sv}` decoding in `compass-shell::model` and the display logic
+/// in this module distinct.
+#[must_use]
+pub fn entry_from_shell(window: &compass_shell::model::Window) -> WindowEntry {
+    WindowEntry {
+        title: window.title.clone(),
+        wm_class: window.wm_class.clone(),
+        app_name: None,
+        app_icon: None,
+        workspace_name: String::new(),
+        workspace_id: window.workspace.map(|id| id.to_string()),
+    }
+}
+
+/// Convert a shell `Window` into a searchable `RootItem` for the “switch-windows” provider.
+///
+/// This is the thin wiring that makes `compass-shell::ListWindows` appear in
+/// the root list ranking — title weight 1.0, subtitle weight 0.5, `wm_class`
+/// at 0.3, so typing either the window title or its `WM_CLASS` finds it.
+#[must_use]
+pub fn window_to_root_item(window: &compass_shell::model::Window) -> crate::root_items::RootItem {
+    let entry = entry_from_shell(window);
+    let title = window_title(&entry).to_owned();
+    let subtitle = window_subtitle(&entry).to_owned();
+    let keywords = window_search_fields(&entry)
+        .into_iter()
+        .skip(1)
+        .map(|(t, _)| t.to_owned())
+        .collect::<Vec<_>>();
+    crate::root_items::RootItem {
+        id: format!("window:{}", window.id),
+        title,
+        unlocalized_title: None,
+        subtitle,
+        keywords,
+        meta: crate::root_items::RootItemMeta {
+            provider_id: "switch-windows".to_owned(),
+            enabled: true,
+            ..Default::default()
+        },
+    }
+}
+
 /// A capability the compositor may or may not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Capabilities {
@@ -284,5 +331,82 @@ pub fn workspace_search_placeholder(is_windows: bool) -> &'static str {
         "Search desktops..."
     } else {
         "Search workspaces..."
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compass_shell::contract::window_key;
+    use std::collections::HashMap;
+    use zbus::zvariant::{OwnedValue, Value};
+
+    fn window_from(title: &str, wm_class: &str, workspace: Option<i32>) -> compass_shell::model::Window {
+        let mut dict = HashMap::from([
+            (window_key::ID.to_owned(), OwnedValue::from(42u32)),
+            (
+                window_key::TITLE.to_owned(),
+                OwnedValue::try_from(Value::from(title.to_owned())).unwrap(),
+            ),
+            (
+                window_key::WM_CLASS.to_owned(),
+                OwnedValue::try_from(Value::from(wm_class.to_owned())).unwrap(),
+            ),
+        ]);
+        if let Some(ws) = workspace {
+            dict.insert(window_key::WORKSPACE.to_owned(), OwnedValue::from(ws));
+        }
+        compass_shell::model::Window::from_dict(&dict).unwrap()
+    }
+
+    #[test]
+    fn entry_from_shell_preserves_title_and_workspace() {
+        let window = window_from("Inbox", "org.gnome.Geary", Some(2));
+        let entry = entry_from_shell(&window);
+        assert_eq!(entry.title, "Inbox");
+        assert_eq!(entry.wm_class, "org.gnome.Geary");
+        assert_eq!(entry.workspace_id.as_deref(), Some("2"));
+        assert_eq!(window_subtitle(&entry), "org.gnome.Geary");
+        assert_eq!(window_accessory(&entry).as_deref(), Some("WS 2"));
+    }
+
+    #[test]
+    fn entry_from_shell_with_no_workspace_shows_no_accessory() {
+        let window = window_from("Terminal", "org.gnome.Terminal", None);
+        let entry = entry_from_shell(&window);
+        assert_eq!(entry.workspace_id, None);
+        assert_eq!(window_accessory(&entry), None);
+    }
+
+    #[test]
+    fn window_to_root_item_is_searchable_by_title_and_wm_class() {
+        let window = window_from("Inbox", "org.gnome.Geary", Some(1));
+        let item = window_to_root_item(&window);
+        assert_eq!(item.id, "window:42");
+        assert_eq!(item.title, "Inbox");
+        assert_eq!(item.subtitle, "org.gnome.Geary");
+        assert_eq!(item.meta.provider_id, "switch-windows");
+        // keywords keep wm_class at low weight, searchable via root search
+        assert!(item.keywords.contains(&"org.gnome.Geary".to_owned()));
+    }
+
+    #[test]
+    fn window_root_item_action_panel_exposes_focus_and_close() {
+        let window = window_from("Terminal", "org.gnome.Terminal", None);
+        let entry = entry_from_shell(&window);
+        let panel = window_action_panel(&entry, Capabilities::default());
+        assert_eq!(panel[0], ["focus", "close"]);
+        assert_eq!(panel.len(), 1); // no app_name → no quit-app section
+        // With app_name and full caps, panel gains pin/bring and quit
+        let mut entry_with_app = entry;
+        entry_with_app.app_name = Some("Terminal".to_owned());
+        let caps = Capabilities {
+            set_sticky: true,
+            move_to_workspace: true,
+            ..Capabilities::default()
+        };
+        let panel2 = window_action_panel(&entry_with_app, caps);
+        assert_eq!(panel2[0], ["focus", "pin", "bring-to-workspace", "close"]);
+        assert_eq!(panel2[1], ["quit-app", "force-quit-app"]);
     }
 }

@@ -16,6 +16,8 @@ pub mod message;
 pub mod preset;
 pub mod resident;
 pub mod root_list;
+pub mod settings;
+pub mod theme;
 mod scroll;
 
 pub use app::{AppFlags, Dismissal, LauncherApp, next_selection};
