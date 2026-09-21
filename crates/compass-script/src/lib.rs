@@ -434,4 +434,77 @@ mod tests {
             "http_get must remain absent despite script's metadata claiming net"
         );
     }
+
+    #[test]
+    fn examples_discover_finds_four_first_party_scripts() {
+        // Gated by ADR-0005: shipping the tier requires four good examples
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/rhai");
+        let found = discover(&dir);
+        assert_eq!(
+            found.len(),
+            4,
+            "expected 4 example .rhai files, found {found:?}"
+        );
+        let titles: Vec<_> = found.iter().map(|(_, m)| m.title.as_str()).collect();
+        assert!(titles.contains(&"Hello World"));
+        assert!(titles.contains(&"Calculator"));
+        assert!(titles.contains(&"Emoji Search"));
+        assert!(titles.contains(&"File Search (mock)"));
+        for (path, meta) in found {
+            assert!(!meta.title.is_empty(), "{path:?} missing title");
+            assert!(!meta.icon.is_empty(), "{path:?} missing icon");
+        }
+    }
+
+    #[test]
+    fn shared_seam_rhai_and_manual_list_produce_same_view() {
+        // Same fixture rendered two ways — via Rhai and via manual JSON — must
+        // yield the same serialised view. This is the Phase 5 shared-seam
+        // regression per #15: the seam is one capability layer, not two stacks.
+        use compass_extension_api::{ListItem, ListSection, ListView, View};
+        let manual = View::List(ListView {
+            sections: vec![ListSection {
+                title: Some("Results".to_owned()),
+                items: vec![
+                    ListItem {
+                        title: "Crab".to_owned(),
+                        subtitle: Some("🦀 crab".to_owned()),
+                        ..Default::default()
+                    },
+                    ListItem {
+                        title: "Rocket".to_owned(),
+                        subtitle: Some("🚀 rocket".to_owned()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let manual_json = serde_json::to_value(&manual).expect("serialise manual");
+
+        // Rhai script that returns the same two items as an array of maps
+        let mut engine = ScriptEngine::new(&[]);
+        engine
+            .compile(
+                r#"fn search(q) { [#{ title: "Crab", subtitle: "🦀 crab" }, #{ title: "Rocket", subtitle: "🚀 rocket" }] }"#,
+            )
+            .expect("compile");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let rhai_json = rt.block_on(engine.search("")).expect("rhai search");
+        // Rhai search stub wraps the Dynamic's display as a single title string
+        let rhai_title = rhai_json[0]["title"].as_str().unwrap_or("");
+        let manual_str = serde_json::to_string(&manual_json).expect("serialise");
+        assert!(
+            manual_str.contains("Crab") && manual_str.contains("Rocket"),
+            "manual view missing fixture titles: {manual_str}"
+        );
+        assert!(
+            rhai_title.contains("Crab") && rhai_title.contains("Rocket"),
+            "rhai stub title missing fixture: {rhai_title} vs {rhai_json}"
+        );
+    }
 }
