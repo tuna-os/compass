@@ -20,6 +20,7 @@ pub mod ipc;
 pub mod serve;
 pub mod session;
 pub mod spike;
+pub mod typography;
 pub mod ui_backend;
 mod ui_instance;
 pub mod window;
@@ -216,6 +217,10 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // colour; see `appearance` for what happens when the portal is slow.
         let (appearance, appearance_link) = appearance::follow(color_mode);
 
+        // The interface typeface: portal first, gsettings fallback, same
+        // 250 ms budget as above so a wedged portal never blocks startup.
+        let (font_family, typography_link) = typography::follow();
+
         let backend = link.as_ref().map(|_| {
             std::sync::Arc::new(ui_backend::DaemonBackend::new(cli.socket_path()))
                 as std::sync::Arc<dyn compass_ui::backend::ApplicationBackend>
@@ -237,6 +242,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             started_at: Some(started_at),
             appearance,
             appearance_link,
+            font_family,
+            typography_link,
             ..compass_ui::AppFlags::default()
         })
         .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
@@ -409,16 +416,24 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
                 println!("{}", serde_json::to_string_pretty(&themes)?);
             } else {
                 for t in &themes {
-                    println!("{} - {}", t["name"].as_str().unwrap(), t["description"].as_str().unwrap());
+                    println!(
+                        "{} - {}",
+                        t["name"].as_str().unwrap(),
+                        t["description"].as_str().unwrap()
+                    );
                 }
             }
             Ok(ExitCode::from(EXIT_OK))
         }
         ThemeCommand::Set { theme } => {
-            let parsed = compass_ui::theme::Theme::from_name(&theme)
-                .ok_or_else(|| anyhow::anyhow!("unknown theme {theme:?}; try `vicinae theme list`"))?;
+            let parsed = compass_ui::theme::Theme::from_name(&theme).ok_or_else(|| {
+                anyhow::anyhow!("unknown theme {theme:?}; try `vicinae theme list`")
+            })?;
             let mut config = compass_core::Config::load().unwrap_or_default();
-            config.launcher_mut().appearance_mut().set_theme(Some(parsed.name().to_owned()));
+            config
+                .launcher_mut()
+                .appearance_mut()
+                .set_theme(Some(parsed.name().to_owned()));
             config.save_to(compass_core::config::default_config_path()?)?;
             println!("theme set to {}", parsed.name());
             Ok(ExitCode::from(EXIT_OK))

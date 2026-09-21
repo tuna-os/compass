@@ -236,8 +236,10 @@ impl SidebarModel {
     fn rebuild(&mut self, providers: &[ProviderInfo]) {
         self.rows.clear();
 
-        let visible_providers: Vec<&ProviderInfo> =
-            providers.iter().filter(|provider| !provider.is_transient).collect();
+        let visible_providers: Vec<&ProviderInfo> = providers
+            .iter()
+            .filter(|provider| !provider.is_transient)
+            .collect();
 
         if self.query.is_empty() {
             for page in SettingsPage::ALL {
@@ -296,10 +298,7 @@ impl SidebarModel {
         let mut scored: Vec<(u32, SidebarRow)> = Vec::new();
 
         for page in SettingsPage::ALL {
-            let matched = score_weighted(
-                &[WeightedField::new(page.label(), 1.0)],
-                &query,
-            );
+            let matched = score_weighted(&[WeightedField::new(page.label(), 1.0)], &query);
             if matched.accepted() {
                 scored.push((
                     matched.score,
@@ -314,10 +313,8 @@ impl SidebarModel {
         }
 
         for provider in &visible_providers {
-            let matched = score_weighted(
-                &[WeightedField::new(&provider.display_name, 1.0)],
-                &query,
-            );
+            let matched =
+                score_weighted(&[WeightedField::new(&provider.display_name, 1.0)], &query);
             if matched.accepted() {
                 scored.push((
                     matched.score,

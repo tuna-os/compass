@@ -25,6 +25,39 @@ pub fn entry_from_shell(window: &compass_shell::model::Window) -> WindowEntry {
     }
 }
 
+/// Whether a `RootItem` is a window, and which one.
+///
+/// `id == "window:{n}"` with `provider_id == "switch-windows"` is the only
+/// shape this module mints in `window_to_root_item`. Parsing is deliberately
+/// strict: a `window:foo` that is not a `u32` is not a window launch target.
+#[must_use]
+pub fn window_launch_target(
+    item: &crate::root_items::RootItem,
+) -> Option<compass_shell::model::WindowId> {
+    if item.meta.provider_id != "switch-windows" {
+        return None;
+    }
+    let suffix = item.id.strip_prefix("window:")?;
+    suffix
+        .parse::<u32>()
+        .ok()
+        .map(compass_shell::model::WindowId)
+}
+
+/// Whether an `AppItem` key is a window, and which one.
+///
+/// `key == "window:{n}"` is the `AppItem` shape when windows are
+/// presented as launchable items. Strict parsing keeps a non-window
+/// `AppItem` from being mistaken for one.
+#[must_use]
+pub fn window_launch_target_for_app(key: &str) -> Option<compass_shell::model::WindowId> {
+    let suffix = key.strip_prefix("window:")?;
+    suffix
+        .parse::<u32>()
+        .ok()
+        .map(compass_shell::model::WindowId)
+}
+
 /// Convert a shell `Window` into a searchable `RootItem` for the “switch-windows” provider.
 ///
 /// This is the thin wiring that makes `compass-shell::ListWindows` appear in
@@ -341,7 +374,11 @@ mod tests {
     use std::collections::HashMap;
     use zbus::zvariant::{OwnedValue, Value};
 
-    fn window_from(title: &str, wm_class: &str, workspace: Option<i32>) -> compass_shell::model::Window {
+    fn window_from(
+        title: &str,
+        wm_class: &str,
+        workspace: Option<i32>,
+    ) -> compass_shell::model::Window {
         let mut dict = HashMap::from([
             (window_key::ID.to_owned(), OwnedValue::from(42u32)),
             (
@@ -388,6 +425,26 @@ mod tests {
         assert_eq!(item.meta.provider_id, "switch-windows");
         // keywords keep wm_class at low weight, searchable via root search
         assert!(item.keywords.contains(&"org.gnome.Geary".to_owned()));
+        assert_eq!(window_launch_target(&item), Some(window.id));
+        assert_eq!(window_launch_target(&item).unwrap().0, 42);
+    }
+
+    #[test]
+    fn window_launch_target_rejects_non_window_items() {
+        let window = window_from("Inbox", "org.gnome.Geary", None);
+        let mut root = window_to_root_item(&window);
+        // Wrong provider
+        root.meta.provider_id = "apps".to_owned();
+        assert_eq!(window_launch_target(&root), None);
+        // Wrong id shape
+        root.meta.provider_id = "switch-windows".to_owned();
+        root.id = "window:foo".to_owned();
+        assert_eq!(window_launch_target(&root), None);
+        root.id = "not-a-window".to_owned();
+        assert_eq!(window_launch_target(&root), None);
+        // Correct again
+        root.id = "window:42".to_owned();
+        assert!(window_launch_target(&root).is_some());
     }
 
     #[test]

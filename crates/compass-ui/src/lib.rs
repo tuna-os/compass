@@ -16,12 +16,14 @@ pub mod message;
 pub mod preset;
 pub mod resident;
 pub mod root_list;
+mod scroll;
 pub mod settings;
 pub mod theme;
-mod scroll;
+pub mod typography;
 
 pub use app::{AppFlags, Dismissal, LauncherApp, next_selection};
 pub use appearance::{AppearanceLink, AppearanceSender};
+pub use typography::{TypographyLink, TypographySender};
 
 /// Opens the launcher window and runs until it closes.
 ///

@@ -134,7 +134,7 @@ impl Theme {
                 Appearance::Dark => Palette {
                     surface: Rgb::new(0x2e, 0x34, 0x40), // polar night 0
                     field: Rgb::new(0x3b, 0x42, 0x52),   // polar night 1
-                    text: Rgb::new(0xec, 0xef, 0xf4),   // snow storm 2
+                    text: Rgb::new(0xec, 0xef, 0xf4),    // snow storm 2
                     muted: Rgb::new(0x81, 0xa1, 0xc1),   // frost
                     selection: Rgb::new(0x88, 0xc0, 0xd0),
                     selection_text: Rgb::new(0x2e, 0x34, 0x40),
@@ -158,10 +158,10 @@ impl Theme {
             },
             Self::Gruvbox => match appearance {
                 Appearance::Dark => Palette {
-                    surface: Rgb::new(0x28, 0x28, 0x28), // bg0
-                    field: Rgb::new(0x3c, 0x38, 0x36),   // bg1
-                    text: Rgb::new(0xeb, 0xdb, 0xb2),   // fg
-                    muted: Rgb::new(0xa8, 0x99, 0x84),   // gray
+                    surface: Rgb::new(0x28, 0x28, 0x28),   // bg0
+                    field: Rgb::new(0x3c, 0x38, 0x36),     // bg1
+                    text: Rgb::new(0xeb, 0xdb, 0xb2),      // fg
+                    muted: Rgb::new(0xa8, 0x99, 0x84),     // gray
                     selection: Rgb::new(0xfb, 0x49, 0x34), // red
                     selection_text: Rgb::new(0xff, 0xff, 0xff),
                     border: Rgb::new(0x50, 0x49, 0x45), // bg2
@@ -210,10 +210,10 @@ impl Theme {
             },
             Self::Solarized => match appearance {
                 Appearance::Dark => Palette {
-                    surface: Rgb::new(0x00, 0x2b, 0x36), // base03
-                    field: Rgb::new(0x07, 0x36, 0x42),   // base02
-                    text: Rgb::new(0x83, 0x94, 0x96),   // base0
-                    muted: Rgb::new(0x58, 0x6e, 0x75),   // base01
+                    surface: Rgb::new(0x00, 0x2b, 0x36),   // base03
+                    field: Rgb::new(0x07, 0x36, 0x42),     // base02
+                    text: Rgb::new(0x83, 0x94, 0x96),      // base0
+                    muted: Rgb::new(0x58, 0x6e, 0x75),     // base01
                     selection: Rgb::new(0x26, 0x8b, 0xd2), // blue
                     selection_text: Rgb::new(0xfd, 0xf6, 0xe3),
                     border: Rgb::new(0x07, 0x36, 0x42),
@@ -224,7 +224,7 @@ impl Theme {
                 Appearance::Light => Palette {
                     surface: Rgb::new(0xfd, 0xf6, 0xe3), // base3
                     field: Rgb::new(0xff, 0xff, 0xff),
-                    text: Rgb::new(0x65, 0x7b, 0x83), // base00
+                    text: Rgb::new(0x65, 0x7b, 0x83),  // base00
                     muted: Rgb::new(0x93, 0xa1, 0xa1), // base1
                     selection: Rgb::new(0x26, 0x8b, 0xd2),
                     selection_text: Rgb::new(0xff, 0xff, 0xff),
@@ -237,5 +237,3 @@ impl Theme {
         }
     }
 }
-
-

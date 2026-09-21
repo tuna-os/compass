@@ -1013,6 +1013,7 @@ dependencies = [
  "compass-core",
  "compass-platform",
  "compass-search",
+ "compass-shell",
  "compass-xdg",
  "iced",
  "iced_test",
