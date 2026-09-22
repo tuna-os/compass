@@ -236,3 +236,117 @@ pub fn mute_message(muted: bool, level: f32) -> String {
         volume_hud_text(level)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn volume_presets_cover_five_steps_and_registered_commands() {
+        assert_eq!(VOLUME_PRESETS.len(), 5);
+        let cmds = registered_commands(false);
+        assert!(!cmds.contains(&"now-playing".to_owned()));
+        assert!(cmds.contains(&"volume-up".to_owned()));
+        assert!(cmds.contains(&"volume-100".to_owned()));
+        assert!(cmds.contains(&"toggle-mute".to_owned()));
+        let with_media = registered_commands(true);
+        assert!(with_media.contains(&"now-playing".to_owned()));
+        assert!(with_media.contains(&"play-pause".to_owned()));
+    }
+
+    #[test]
+    fn track_label_falls_back_correctly() {
+        let empty = MediaPlayer {
+            identity: "Spotify".to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(track_label(&empty), "Spotify");
+        let titled = MediaPlayer {
+            title: "Song".to_owned(),
+            identity: "Spotify".to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(track_label(&titled), "Song");
+        let full = MediaPlayer {
+            title: "Song".to_owned(),
+            artist: "Artist".to_owned(),
+            identity: "Spotify".to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(track_label(&full), "Song — Artist");
+    }
+
+    #[test]
+    fn no_player_message_quotes_query() {
+        assert_eq!(
+            no_player_message(&NoPlayer::NothingRunning),
+            "No media player is running"
+        );
+        assert_eq!(
+            no_player_message(&NoPlayer::NoMatch("foo".to_owned())),
+            "No media player matches \"foo\""
+        );
+    }
+
+    #[test]
+    fn resolve_player_default_vs_search() {
+        assert_eq!(resolve_player("", Some(0), &[]), Ok(0));
+        assert_eq!(resolve_player("", None, &[]), Err(NoPlayer::NothingRunning));
+        assert_eq!(resolve_player("spot", None, &[2]), Ok(2));
+        assert_eq!(
+            resolve_player("spot", None, &[]),
+            Err(NoPlayer::NoMatch("spot".to_owned()))
+        );
+    }
+
+    #[test]
+    fn play_pause_and_skip_messages() {
+        let playing = MediaPlayer {
+            playing: true,
+            title: "T".to_owned(),
+            artist: "A".to_owned(),
+            identity: "Spotify".to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(play_pause_message(&playing), "Paused");
+        let paused = MediaPlayer {
+            playing: false,
+            ..playing.clone()
+        };
+        assert!(play_pause_message(&paused).starts_with("Playing"));
+        let cannot = MediaPlayer {
+            can_go_next: false,
+            can_go_previous: true,
+            identity: "Spotify".to_owned(),
+            ..Default::default()
+        };
+        assert!(skip_refusal(&cannot, true).is_some());
+        assert!(skip_refusal(&cannot, false).is_none());
+    }
+
+    #[test]
+    fn volume_icon_bands_and_hud_rounding() {
+        assert_eq!(volume_icon(0.0), "speaker-off");
+        assert_eq!(volume_icon(0.33), "speaker-low");
+        assert_eq!(volume_icon(0.34), "speaker-down");
+        assert_eq!(volume_icon(0.67), "speaker-high");
+        assert_eq!(volume_hud_text(0.005), "Volume 1%");
+        assert_eq!(volume_hud_text(0.5), "Volume 50%");
+        assert_eq!(round_half_away_from_zero(0.5), 1);
+        assert_eq!(round_half_away_from_zero(-0.5), -1);
+        assert_eq!(round_half_away_from_zero(1.5), 2);
+    }
+
+    #[test]
+    fn volume_step_parses_or_defaults() {
+        assert_eq!(volume_step(None, 5), Ok(5));
+        assert_eq!(volume_step(Some(""), 5), Ok(5));
+        assert_eq!(volume_step(Some("10"), 5), Ok(10));
+        assert!(volume_step(Some("five"), 5).is_err());
+        // sign not forced
+        assert_eq!(volume_step(Some("5"), -5), Ok(5));
+        assert_eq!(step_fraction(5), 0.05);
+        assert_eq!(mute_message(true, 0.5), "Muted");
+        assert_eq!(mute_message(false, 0.5), "Volume 50%");
+    }
+}

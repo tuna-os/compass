@@ -252,3 +252,77 @@ pub fn plan(command: &PowerCommand, confirm: bool, custom_program: Option<&str>)
 pub fn custom_program_failure(program: &str) -> String {
     format!("Failed to execute custom program {program}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eight_linux_commands_and_lock_is_only_unconfirmed() {
+        assert_eq!(COMMANDS.len(), 8);
+        assert!(
+            COMMANDS
+                .iter()
+                .any(|c| c.id == "lock" && !c.confirm_by_default)
+        );
+        assert!(COMMANDS.iter().filter(|c| !c.confirm_by_default).count() == 1);
+        assert_eq!(command("lock").unwrap().confirm_by_default, false);
+        assert_eq!(command("reboot").unwrap().confirm_by_default, true);
+    }
+
+    #[test]
+    fn cannot_vs_failed_messages_are_distinct_and_worded_as_ported() {
+        // Check the two "cannot" wordings are reproduced, not normalized
+        assert!(
+            command("power-off")
+                .unwrap()
+                .cannot_message
+                .contains("cannot")
+        );
+        assert!(command("reboot").unwrap().cannot_message.contains("can't"));
+        assert!(custom_program_failure("myprog").contains("myprog"));
+    }
+
+    #[test]
+    fn preferences_checkbox_and_custom_program() {
+        let lock = command("lock").unwrap();
+        let prefs_no_custom = preferences(lock, false);
+        assert_eq!(prefs_no_custom.len(), 1);
+        assert!(matches!(prefs_no_custom[0], Preference::Checkbox { .. }));
+        let prefs_with = preferences(lock, true);
+        assert_eq!(prefs_with.len(), 2);
+        assert!(matches!(prefs_with[1], Preference::Text { .. }));
+    }
+
+    #[test]
+    fn plan_confirm_and_custom_program_and_double_close() {
+        let cmd = command("reboot").unwrap();
+        let steps_confirm = plan(cmd, true, None);
+        assert_eq!(
+            steps_confirm[0],
+            Step::Confirm {
+                title: CONFIRM_TITLE,
+                body: CONFIRM_BODY
+            }
+        );
+        assert_eq!(steps_confirm[1], Step::CloseWindow);
+        assert_eq!(steps_confirm[2], Step::Perform { id: "reboot" });
+        assert_eq!(steps_confirm[3], Step::CloseWindow);
+        // without confirm, no first Confirm
+        let steps_no_confirm = plan(cmd, false, None);
+        assert!(!matches!(steps_no_confirm[0], Step::Confirm { .. }));
+        // custom program replaces Perform, empty string is ignored
+        let steps_custom = plan(cmd, false, Some("myprog --arg"));
+        assert!(matches!(steps_custom[1], Step::RunCustomProgram { .. }));
+        let steps_empty = plan(cmd, false, Some(""));
+        assert!(matches!(steps_empty[1], Step::Perform { .. }));
+    }
+
+    #[test]
+    fn command_lookup_and_extension_meta() {
+        assert!(command("power-off").is_some());
+        assert!(command("missing").is_none());
+        assert_eq!(EXTENSION_ID, "power");
+        assert_eq!(CONFIRM_TITLE, "Are you sure");
+    }
+}
