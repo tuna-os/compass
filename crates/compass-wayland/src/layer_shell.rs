@@ -33,7 +33,7 @@ pub enum SurfaceKind {
 /// Mutter 51 `src/meson.build`).
 #[must_use]
 pub fn decide_surface(advertised: &[&str]) -> SurfaceKind {
-    if advertised.iter().any(|name| *name == "zwlr_layer_shell_v1") {
+    if advertised.contains(&"zwlr_layer_shell_v1") {
         SurfaceKind::LayerShell
     } else {
         SurfaceKind::XdgToplevel
@@ -47,10 +47,7 @@ pub fn decide_surface(advertised: &[&str]) -> SurfaceKind {
 /// even when the compositor advertises the layer shell.
 #[must_use]
 pub fn should_use_layer_shell(surface: SurfaceKind, feature_enabled: bool) -> bool {
-    match (surface, feature_enabled) {
-        (SurfaceKind::LayerShell, true) => true,
-        _ => false,
-    }
+    matches!((surface, feature_enabled), (SurfaceKind::LayerShell, true))
 }
 
 #[cfg(test)]

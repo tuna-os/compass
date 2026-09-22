@@ -108,11 +108,7 @@ pub(crate) fn follow() -> (Option<String>, Option<TypographyLink>) {
     // If nothing was discovered but a link was created, keep it: later portal
     // changes will still arrive. If the portal is definitively unavailable the
     // pump will have already returned.
-    let link = if first.is_some() {
-        Some(link)
-    } else {
-        Some(link)
-    };
+    let link = Some(link);
     // Deduplicate: when first is None we still return the link so a late
     // portal read can fix the font. The caller treats None + Some(link) as
     // "draw default for now, update later".
@@ -178,18 +174,17 @@ async fn pump(first: &mpsc::SyncSender<String>, sender: &compass_ui::TypographyS
     }
 
     // If portal returned nothing, fallback to gsettings for the first frame.
-    if portal_family.is_none() {
-        if let Some(desc) = gsettings_font()
-            && let Some(family) = family_from_description(&desc)
-        {
-            // Only use gsettings when portal gave no answer; portal remains
-            // authoritative for live updates.
-            if first.try_send(family.clone()).is_ok() {
-                let _ = sender.send(family.clone());
-            } else {
-                // First already had a value (unlikely with None portal); still forward.
-                let _ = sender.send(family.clone());
-            }
+    if portal_family.is_none()
+        && let Some(desc) = gsettings_font()
+        && let Some(family) = family_from_description(&desc)
+    {
+        // Only use gsettings when portal gave no answer; portal remains
+        // authoritative for live updates.
+        if first.try_send(family.clone()).is_ok() {
+            let _ = sender.send(family.clone());
+        } else {
+            // First already had a value (unlikely with None portal); still forward.
+            let _ = sender.send(family.clone());
         }
     }
 
@@ -197,10 +192,10 @@ async fn pump(first: &mpsc::SyncSender<String>, sender: &compass_ui::TypographyS
     let mut watch = Box::pin(watch);
     use futures_util::StreamExt;
     while let Some(desc) = watch.next().await {
-        if let Some(family) = family_from_description(&desc) {
-            if sender.send(family).is_err() {
-                return;
-            }
+        if let Some(family) = family_from_description(&desc)
+            && sender.send(family).is_err()
+        {
+            return;
         }
     }
 }
