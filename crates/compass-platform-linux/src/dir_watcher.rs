@@ -30,9 +30,7 @@ use std::sync::mpsc;
 
 use compass_core::file_walk::IndexWalk;
 use compass_core::watch_events::WatchEvent;
-use compass_core::watch_policy::{
-    MAX_WATCH_DEPTH, WATCH_BUDGET, build_watch_set, important_roots,
-};
+use compass_core::watch_policy::{MAX_WATCH_DEPTH, WATCH_BUDGET, build_watch_set, important_roots};
 use notify::{
     Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
     event::{CreateKind, Flag, ModifyKind},
@@ -81,13 +79,7 @@ impl DirWatcher {
             notify::Config::default(),
         )?;
 
-        let roots = important_roots(
-            home,
-            home_entries,
-            &is_directory,
-            &is_symlink,
-            xdg_dirs,
-        );
+        let roots = important_roots(home, home_entries, &is_directory, &is_symlink, xdg_dirs);
         let mut watcher = Self {
             watcher,
             events,
@@ -187,7 +179,9 @@ impl DirWatcher {
     /// cadence, exactly as the C++ treats `ENOSPC` and a full budget.
     fn add_watch(&mut self, dir: &Path, depth: usize) -> bool {
         if self.depths.len() >= WATCH_BUDGET {
-            self.note_exhausted("watch budget exhausted, remaining directories fall back to periodic scans");
+            self.note_exhausted(
+                "watch budget exhausted, remaining directories fall back to periodic scans",
+            );
             return false;
         }
         match self.watcher.watch(dir, RecursiveMode::NonRecursive) {
@@ -223,9 +217,7 @@ impl DirWatcher {
         }
         if !matches!(
             event.kind,
-            EventKind::Create(_)
-                | EventKind::Remove(_)
-                | EventKind::Modify(ModifyKind::Name(_))
+            EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
         ) {
             return;
         }
@@ -254,7 +246,7 @@ impl DirWatcher {
                 continue;
             };
             if matches!(event.kind, EventKind::Create(CreateKind::Folder)) {
-                self.maybe_watch_new_directory(parent, depth, path);
+                self.maybe_watch_new_directory(depth, path);
             }
             changed.push(parent.to_path_buf());
         }
@@ -268,7 +260,7 @@ impl DirWatcher {
     ///
     /// Best effort: whatever it decides, the parent still changed, so the
     /// caller reports that regardless.
-    fn maybe_watch_new_directory(&mut self, parent: &Path, parent_depth: usize, path: &Path) {
+    fn maybe_watch_new_directory(&mut self, parent_depth: usize, path: &Path) {
         if parent_depth >= MAX_WATCH_DEPTH {
             return;
         }
