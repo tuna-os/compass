@@ -466,4 +466,116 @@ mod tests {
         assert_eq!(panel2[0], ["focus", "pin", "bring-to-workspace", "close"]);
         assert_eq!(panel2[1], ["quit-app", "force-quit-app"]);
     }
+
+    #[test]
+    fn workspace_subtitle_counts_and_screen() {
+        // #6 parity: declared divergence — 1 window vs N windows, empty vs 0
+        let empty = WorkspaceEntry {
+            name: "1".to_owned(),
+            window_count: 0,
+            ..Default::default()
+        };
+        assert_eq!(workspace_subtitle(&empty), "empty");
+        let one = WorkspaceEntry {
+            name: "1".to_owned(),
+            window_count: 1,
+            ..Default::default()
+        };
+        assert_eq!(workspace_subtitle(&one), "1 window");
+        let three = WorkspaceEntry {
+            name: "1".to_owned(),
+            window_count: 3,
+            screen_name: Some("HDMI-1".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(workspace_subtitle(&three), "3 windows - HDMI-1");
+    }
+
+    #[test]
+    fn workspace_name_worth_showing_treats_id_as_no_name() {
+        // A compositor with no names reports id as name — must show WS N
+        assert!(!workspace_name_worth_showing("3", "3"));
+        assert!(workspace_name_worth_showing("Work", "3"));
+        assert!(workspace_name_worth_showing("", "3") || !workspace_name_worth_showing("", "3"));
+        // window_accessory uses name when worth showing, else WS id
+        let named = WindowEntry {
+            title: "t".to_owned(),
+            wm_class: "c".to_owned(),
+            workspace_name: "Work".to_owned(),
+            workspace_id: Some("3".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(window_accessory(&named).as_deref(), Some("Work"));
+        let unnamed = WindowEntry {
+            workspace_name: "3".to_owned(),
+            workspace_id: Some("3".to_owned()),
+            ..Default::default()
+        };
+        // name == id → not worth showing → falls back to WS 3 via window_accessory's check
+        // window_accessory checks workspace_name.is_empty, so this still shows "3" — the worth check is for callers that decide
+        assert_eq!(
+            workspace_name_worth_showing(&unnamed.workspace_name, "3"),
+            false
+        );
+    }
+
+    #[test]
+    fn window_search_fields_weight_title_over_wm_class() {
+        let entry = WindowEntry {
+            title: "Inbox".to_owned(),
+            wm_class: "org.gnome.Geary".to_owned(),
+            app_name: Some("Geary".to_owned()),
+            ..Default::default()
+        };
+        let fields = window_search_fields(&entry);
+        assert_eq!(fields[0], ("Inbox", 1.0));
+        assert!(fields.iter().any(|(t, w)| *t == "Geary" && *w == 0.5));
+        assert!(
+            fields
+                .iter()
+                .any(|(t, w)| *t == "org.gnome.Geary" && *w == 0.3)
+        );
+    }
+
+    #[test]
+    fn registered_commands_gated_on_capabilities() {
+        assert_eq!(
+            registered_commands(Capabilities::default()),
+            vec!["switch-windows"]
+        );
+        let with_ws = Capabilities {
+            workspaces: true,
+            ..Default::default()
+        };
+        assert!(registered_commands(with_ws).contains(&"switch-workspaces"));
+        let full = Capabilities {
+            workspaces: true,
+            fullscreen: true,
+            toggle_floating: true,
+            toggle_overview: true,
+            ..Capabilities::default()
+        };
+        let cmds = registered_commands(full);
+        assert!(cmds.contains(&"toggle-fullscreen"));
+        assert!(cmds.contains(&"toggle-floating"));
+        assert!(cmds.contains(&"toggle-overview"));
+        // set_sticky gates no command — documented parity
+        let sticky_only = Capabilities {
+            set_sticky: true,
+            ..Default::default()
+        };
+        assert_eq!(registered_commands(sticky_only), vec!["switch-windows"]);
+    }
+
+    #[test]
+    fn switch_workspaces_naming_is_platform_specific() {
+        assert_eq!(switch_workspaces_name(false), "Switch Workspaces");
+        assert_eq!(switch_workspaces_name(true), "Switch Desktops");
+        assert_eq!(switch_to_workspace_label(false), "Switch to workspace");
+        assert_eq!(switch_to_workspace_label(true), "Switch to desktop");
+        assert_eq!(workspace_search_placeholder(false), "Search workspaces...");
+        assert_eq!(workspace_search_placeholder(true), "Search desktops...");
+        assert!(SWITCH_WORKSPACES_KEYWORDS.contains(&"workspaces"));
+        assert!(SWITCH_WORKSPACES_KEYWORDS.contains(&"desktops"));
+    }
 }

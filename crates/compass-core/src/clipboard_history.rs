@@ -204,4 +204,40 @@ mod tests {
         let h2 = ClipboardHistory::new(dir.path().join("db"));
         assert!(h2.list().is_empty());
     }
+
+    #[test]
+    fn bounded_to_100_and_empty_text_ignored() {
+        let dir = tempdir().expect("tempdir");
+        let mut h = ClipboardHistory::new(dir.path().join("db"));
+        h.insert(ClipboardContent::text(""), None);
+        assert!(h.list().is_empty(), "empty text must be ignored");
+        for i in 0..150 {
+            h.insert(ClipboardContent::text(format!("item-{i}")), None);
+        }
+        assert_eq!(h.list().len(), 100);
+        assert_eq!(h.list()[0].content.text, "item-149");
+        assert_eq!(h.list()[99].content.text, "item-50");
+    }
+
+    #[test]
+    fn search_filters_by_text_and_source_app() {
+        let dir = tempdir().expect("tempdir");
+        let mut h = ClipboardHistory::new(dir.path().join("db"));
+        h.insert(
+            ClipboardContent::text("hello world"),
+            Some("Geary".to_owned()),
+        );
+        h.insert(
+            ClipboardContent::text("goodbye"),
+            Some("Terminal".to_owned()),
+        );
+        let all = h.search("");
+        assert_eq!(all.len(), 2);
+        let filtered = h.search("hello");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "clipboard:1");
+        assert_eq!(filtered[0].meta.provider_id, "clipboard");
+        // source_app appears as subtitle/keyword
+        assert_eq!(filtered[0].subtitle, "Geary");
+    }
 }
