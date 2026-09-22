@@ -10,8 +10,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+compass-core.workspace = true
 compass-platform.workspace = true
 compass-portals.workspace = true
 compass-xdg.workspace = true
+notify.workspace = true
 tokio = { workspace = true }
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

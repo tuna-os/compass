@@ -12,6 +12,7 @@
 
 #![deny(missing_docs)]
 
+pub mod dir_watcher;
 pub mod keyboard;
 mod launch;
 
