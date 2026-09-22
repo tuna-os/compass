@@ -266,8 +266,8 @@ mod tests {
                 .any(|c| c.id == "lock" && !c.confirm_by_default)
         );
         assert!(COMMANDS.iter().filter(|c| !c.confirm_by_default).count() == 1);
-        assert_eq!(command("lock").unwrap().confirm_by_default, false);
-        assert_eq!(command("reboot").unwrap().confirm_by_default, true);
+        assert!(!command("lock").unwrap().confirm_by_default);
+        assert!(command("reboot").unwrap().confirm_by_default);
     }
 
     #[test]

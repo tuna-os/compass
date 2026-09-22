@@ -250,10 +250,10 @@ pub fn discover(dir: &Path) -> Vec<(PathBuf, ScriptMeta)> {
             continue;
         };
         let mut engine = ScriptEngine::new(&[]);
-        if engine.compile(&source).is_ok() {
-            if let Some(meta) = engine.meta().cloned() {
-                out.push((path, meta));
-            }
+        if engine.compile(&source).is_ok()
+            && let Some(meta) = engine.meta().cloned()
+        {
+            out.push((path, meta));
         }
     }
     out
@@ -267,7 +267,7 @@ mod tests {
     fn a_script_without_net_has_no_http_get() {
         let mut engine = ScriptEngine::new(&[]);
         let source = r#"fn search(q) { http_get("https://example.invalid") }"#;
-        let _result = engine.compile(source).unwrap();
+        engine.compile(source).unwrap();
         // compile succeeds, but calling search should fail because http_get not registered
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()

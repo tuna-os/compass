@@ -122,7 +122,7 @@ fn resetting_the_ranking_keeps_the_pin_and_the_tone() {
     let mut service = GlyphService::new();
     service.register_visit("😀", 1000);
     service.pin("😀", 1000);
-    service.set_skin_tone("😀", "medium");
+    assert!(service.set_skin_tone("😀", "medium"));
 
     assert!(service.reset_ranking("😀"));
     let entry = service.find("😀").expect("still there");
@@ -142,7 +142,7 @@ fn resetting_the_ranking_of_an_unknown_glyph_creates_nothing() {
 #[test]
 fn a_skin_tone_is_stored_by_id_and_can_be_cleared() {
     let mut service = GlyphService::new();
-    service.set_skin_tone("👋", "dark");
+    assert!(service.set_skin_tone("👋", "dark"));
     assert_eq!(
         service.find("👋").expect("set").skin_tone.as_deref(),
         Some("dark")
@@ -150,6 +150,36 @@ fn a_skin_tone_is_stored_by_id_and_can_be_cleared() {
 
     assert!(service.reset_skin_tone("👋"));
     assert_eq!(service.find("👋").expect("still there").skin_tone, None);
+}
+
+#[test]
+fn an_unknown_skin_tone_id_is_rejected_and_stores_nothing() {
+    // The C++ takes the SkinTone enum, so an unknown id cannot be produced
+    // there. Storing one here would persist a tone `skin_tone_by_id` resolves
+    // to None, silently dropping the person's choice on the next load.
+    let mut service = GlyphService::new();
+    assert!(!service.set_skin_tone("😀", "bogus"));
+    assert!(!service.set_skin_tone("👋", "Medium"));
+    assert!(service.entries().is_empty());
+}
+
+#[test]
+fn every_canonical_skin_tone_id_is_accepted() {
+    let mut service = GlyphService::new();
+    for id in [
+        "default",
+        "light",
+        "medium-light",
+        "medium",
+        "medium-dark",
+        "dark",
+    ] {
+        assert!(service.set_skin_tone("😀", id));
+        assert_eq!(
+            service.find("😀").expect("stored").skin_tone.as_deref(),
+            Some(id)
+        );
+    }
 }
 
 #[test]
@@ -179,7 +209,7 @@ fn the_visited_list_holds_only_pinned_or_picked_glyphs() {
     // A glyph that only has a skin tone set has not been used, and would pad
     // the recent list with something nobody chose.
     let mut service = GlyphService::new();
-    service.set_skin_tone("👋", "dark");
+    assert!(service.set_skin_tone("👋", "dark"));
     service.register_visit("😀", 1000);
 
     let visited = service.visited(anything_known);

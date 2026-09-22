@@ -305,10 +305,12 @@ mod tests {
     fn filter_is_enforce_not_log_only() {
         // Phase 4 gate: shipped log-only first, flipped to enforce. A filter
         // that logs but does not deny is how a sandbox becomes decorative.
-        assert!(
-            ENFORCE,
-            "seccomp filter must be enforce (EPERM), not log-only"
-        );
+        const {
+            assert!(
+                ENFORCE,
+                "seccomp filter must be enforce (EPERM), not log-only"
+            );
+        }
         // Also verified where it matters: deny() builds SeccompAction::Errno,
         // not SeccompAction::Log, so a real violation is refused, not recorded.
         // The shape is compile-time (ENFORCE const) rather than runtime probe;
