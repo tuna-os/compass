@@ -62,6 +62,10 @@ getrandom = "0.3"
 # Qt stores binary keyring entries base64-encoded; see crates/compass-crypto/src/keyring.rs.
 base64 = "0.22"
 
+# File-watcher backend: inotify on Linux, kqueue/FSEvents/ReFS equivalents
+# elsewhere. See crates/compass-platform-linux/src/dir_watcher.rs.
+notify = "8"
+
 # Spike B (docs/rust-engine issue #3): the sandbox primitives Phase 4 plans to
 # use. Both expose safe APIs, so `unsafe_code = "forbid"` still holds here.
 landlock = "0.4"
