@@ -172,3 +172,78 @@ pub fn visible_groups<T>(groups: Vec<(String, Vec<T>)>) -> Vec<(String, Vec<T>)>
         .filter(|(_, records)| !records.is_empty())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_calc_respects_threshold_and_explicit_prefix() {
+        // Below threshold → None
+        assert_eq!(live_calc("1"), LiveCalc::None);
+        assert_eq!(live_calc("1+"), LiveCalc::None);
+        // At threshold → Compute
+        assert_eq!(live_calc("1+2"), LiveCalc::Compute("1+2".to_owned()));
+        // Explicit prefix bypasses threshold and is stripped
+        assert_eq!(live_calc("=1"), LiveCalc::Compute("1".to_owned()));
+        assert_eq!(live_calc("="), LiveCalc::Compute(String::new()));
+        assert_eq!(live_calc("=1+2"), LiveCalc::Compute("1+2".to_owned()));
+        // Length counted in chars, not bytes — emoji counts as 1
+        assert_eq!(live_calc("🔢🔢"), LiveCalc::None); // 2 chars
+        assert_eq!(live_calc("🔢🔢🔢"), LiveCalc::Compute("🔢🔢🔢".to_owned())); // 3 chars
+    }
+
+    #[test]
+    fn live_result_title_joins_with_spaces() {
+        assert_eq!(live_result_title("1+2", "3"), "1+2 = 3");
+        assert_eq!(live_result_title("", ""), " = ");
+    }
+
+    #[test]
+    fn history_icon_distinguishes_conversion() {
+        assert_eq!(history_icon(true), "switch");
+        assert_eq!(history_icon(false), "calculator");
+    }
+
+    #[test]
+    fn history_action_panel_pins_and_copies() {
+        let unpinned = history_action_panel(false);
+        assert_eq!(unpinned.len(), 3);
+        assert_eq!(unpinned[0][0].id, "pin");
+        assert!(
+            unpinned[1]
+                .iter()
+                .any(|a| a.id == "copy-answer" && a.primary)
+        );
+        assert!(unpinned[1].iter().any(|a| a.id == "copy-question"));
+        assert!(unpinned[1].iter().any(|a| a.id == "copy-expression"));
+
+        let pinned = history_action_panel(true);
+        assert_eq!(pinned[0][0].id, "unpin");
+    }
+
+    #[test]
+    fn live_action_panel_includes_unformatted_when_present() {
+        let without = live_action_panel(false);
+        assert_eq!(without[0].len(), 2);
+        assert!(!without[0].iter().any(|a| a.id == "copy-unformatted-answer"));
+        let with = live_action_panel(true);
+        assert_eq!(with[0].len(), 3);
+        assert!(with[0].iter().any(|a| a.id == "copy-unformatted-answer"));
+    }
+
+    #[test]
+    fn visible_groups_drops_empty() {
+        let groups = vec![
+            ("a".to_owned(), vec![1, 2]),
+            ("b".to_owned(), vec![]),
+            ("c".to_owned(), vec![3]),
+        ];
+        let visible = visible_groups(groups);
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].0, "a");
+        assert_eq!(visible[1].0, "c");
+        let all_empty: Vec<(String, Vec<i32>)> = vec![("x".to_owned(), vec![])];
+        assert!(visible_groups(all_empty).is_empty());
+    }
+}
