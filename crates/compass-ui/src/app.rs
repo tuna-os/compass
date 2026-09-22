@@ -1256,7 +1256,7 @@ impl LauncherApp {
             Message::CloseWindow(window_id) => {
                 // `CLOSE_WINDOW_SHORTCUT` (`ctrl+q`) on a window row.
                 let _bounded = format!("CloseWindow({})", window_id.0);
-                return self.conceal();
+                self.conceal()
             }
             // A launcher that stays open after launching is a bug report
             // waiting to happen. Hidden, not gone -- see `conceal`.
@@ -1478,14 +1478,13 @@ impl LauncherApp {
                 }
 
                 // `ctrl+q` closes a window from the switcher (`CLOSE_WINDOW_SHORTCUT`).
-                if modifiers.control() && key.as_ref() == Key::Character("q") {
-                    if let Some(item) = self.selected_item() {
-                        if let Some(window_id) =
-                            compass_core::window_switcher::window_launch_target_for_app(item.key())
-                        {
-                            return self.update(Message::CloseWindow(window_id));
-                        }
-                    }
+                if modifiers.control()
+                    && key.as_ref() == Key::Character("q")
+                    && let Some(item) = self.selected_item()
+                    && let Some(window_id) =
+                        compass_core::window_switcher::window_launch_target_for_app(item.key())
+                {
+                    return self.update(Message::CloseWindow(window_id));
                 }
 
                 match key.as_ref() {
