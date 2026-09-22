@@ -289,9 +289,9 @@ mod tests {
         assert!(is_explicit_path_query("~/doc"));
         assert!(is_explicit_path_query("./a"));
         assert!(is_explicit_path_query("../a"));
-        assert_eq!(is_explicit_path_query("~"), true);
-        assert_eq!(is_explicit_path_query("."), true);
-        assert_eq!(is_explicit_path_query(".."), true);
+        assert!(is_explicit_path_query("~"));
+        assert!(is_explicit_path_query("."));
+        assert!(is_explicit_path_query(".."));
         assert!(!is_explicit_path_query("~notes"));
         assert!(!is_explicit_path_query("notes..txt"));
         assert!(!is_explicit_path_query("doc"));
@@ -415,6 +415,6 @@ mod tests {
         assert!(should_debounce(100));
         assert!(!should_debounce(0));
         assert_eq!(registered_commands(), vec!["search"]);
-        assert!(SEARCH_IS_FALLBACK);
+        const { assert!(SEARCH_IS_FALLBACK) };
     }
 }

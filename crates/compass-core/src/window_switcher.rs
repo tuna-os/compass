@@ -513,10 +513,7 @@ mod tests {
         };
         // name == id → not worth showing → falls back to WS 3 via window_accessory's check
         // window_accessory checks workspace_name.is_empty, so this still shows "3" — the worth check is for callers that decide
-        assert_eq!(
-            workspace_name_worth_showing(&unnamed.workspace_name, "3"),
-            false
-        );
+        assert!(!workspace_name_worth_showing(&unnamed.workspace_name, "3"));
     }
 
     #[test]
