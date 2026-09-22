@@ -107,6 +107,7 @@ pub mod tray_host;
 pub mod update;
 pub mod vocabulary;
 pub mod wallpaper;
+pub mod watch_events;
 pub mod watch_policy;
 pub mod window_effects;
 pub mod window_manager;
