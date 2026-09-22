@@ -13,8 +13,7 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
-use crate::entry_filter::{Entry, EntryFilter};
-use crate::file_walk::Tree;
+use crate::file_walk::IndexWalk;
 
 /// How deep below an important root a watch is placed.
 ///
@@ -91,13 +90,12 @@ pub struct WatchSet {
 /// decides what is covered when it does. Depth-first would spend the whole
 /// budget inside the first root and leave the others entirely unwatched, while
 /// breadth-first covers every root's top level before any root's second.
+///
+/// The queue walks the live filesystem one level at a time, asking the walker's
+/// policy about each directory — the same policy the deep scan enforces, so a
+/// directory the scan would skip never costs a watch.
 #[must_use]
-pub fn build_watch_set(
-    tree: &impl Tree,
-    roots: &[PathBuf],
-    filter: &EntryFilter,
-    budget: usize,
-) -> WatchSet {
+pub fn build_watch_set(roots: &[PathBuf], walk: &IndexWalk, budget: usize) -> WatchSet {
     let mut set = WatchSet::default();
     let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::new();
     let mut visited: Vec<PathBuf> = Vec::new();
@@ -122,23 +120,30 @@ pub fn build_watch_set(
             continue;
         }
 
-        for entry in tree.entries(&dir) {
-            if !entry.is_directory {
+        // An unreadable directory answers with nothing, as `directory_iterator`
+        // with an error code does.
+        let Ok(listing) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for child in listing {
+            let Ok(child) = child else {
+                continue;
+            };
+            let Ok(kind) = child.file_type() else {
+                continue;
+            };
+            if !kind.is_dir() {
                 continue;
             }
-            let visible = filter.should_visit(
-                Entry {
-                    path: &entry.path,
-                    is_symlink: entry.is_symlink,
-                    is_directory: true,
-                },
-                |path| tree.read_ignore_file(path),
-            );
-            if !visible || visited.contains(&entry.path) {
+            let path = child.path();
+            if !walk.should_visit(&path, kind.is_symlink(), true) {
                 continue;
             }
-            visited.push(entry.path.clone());
-            queue.push_back((entry.path, depth + 1));
+            if visited.contains(&path) {
+                continue;
+            }
+            visited.push(path.clone());
+            queue.push_back((path, depth + 1));
         }
     }
 
