@@ -46,6 +46,11 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // MPRIS is a session-bus protocol; the C++ has a Windows media backend
     // beside this one for the same reason.
     "compass-media",
+    // The worker host sets cgroup memory limits through the system bus
+    // (logind/systemd); PLAN.md assigns cgroups v2 to this crate, and
+    // cgroups are the Linux mechanism the way MPRIS is the Linux protocol —
+    // the C++ has a separate supervisor per platform.
+    "compass-worker-host",
 ];
 
 /// Crates whose presence in a manifest makes that crate Linux-bound.

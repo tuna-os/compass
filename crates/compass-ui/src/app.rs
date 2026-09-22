@@ -1235,7 +1235,7 @@ impl LauncherApp {
                     // Real activation is `client.activate_window(window_id).bounded("ActivateWindow")`
                     // via the shell proxy; the headless harness proves the branch
                     // without needing a live compositor or a display server.
-                    let _bounded = format!("ActivateWindow({})", window_id.0);
+                    let _bounded = format!("ActivateWindow({window_id})");
                     return self.conceal();
                 }
                 // Cloned into the future because the launch outlives this
@@ -1255,7 +1255,7 @@ impl LauncherApp {
             }
             Message::CloseWindow(window_id) => {
                 // `CLOSE_WINDOW_SHORTCUT` (`ctrl+q`) on a window row.
-                let _bounded = format!("CloseWindow({})", window_id.0);
+                let _bounded = format!("CloseWindow({window_id})");
                 self.conceal()
             }
             // A launcher that stays open after launching is a bug report

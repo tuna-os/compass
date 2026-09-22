@@ -791,7 +791,6 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "compass-search",
- "compass-shell",
  "compass-testkit",
  "compass-xdg",
  "dirs",
@@ -803,7 +802,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "unicode-normalization",
- "zbus",
 ]
 
 [[package]]
@@ -985,6 +983,7 @@ dependencies = [
 name = "compass-shell"
 version = "0.1.0"
 dependencies = [
+ "compass-core",
  "roxmltree",
  "serde",
  "thiserror 2.0.20",
@@ -1029,7 +1028,6 @@ dependencies = [
  "compass-core",
  "compass-platform",
  "compass-search",
- "compass-shell",
  "compass-xdg",
  "iced",
  "iced_test",

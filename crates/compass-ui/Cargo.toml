@@ -25,7 +25,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 iced_winit = { version = "0.14", features = ["wayland"] }
 winit = { version = "0.30", features = ["wayland"] }
 compass-core.workspace = true
-compass-shell.workspace = true
 compass-search.workspace = true
 compass-xdg.workspace = true
 compass-platform.workspace = true
