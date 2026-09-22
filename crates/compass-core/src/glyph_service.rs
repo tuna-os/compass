@@ -185,8 +185,19 @@ impl GlyphService {
     }
 
     /// Remember that `character` should be shown in `tone`.
-    pub fn set_skin_tone(&mut self, character: &str, tone_id: &str) {
+    ///
+    /// The id must be one of [`crate::emoji_grid::SKIN_TONES`]' — the C++
+    /// takes the `SkinTone` enum, so an unknown id cannot be produced there.
+    /// An unknown id is rejected and stores nothing: keeping it would persist
+    /// a tone [`crate::emoji_grid::skin_tone_by_id`] resolves to `None`,
+    /// silently dropping the person's choice on the next load. Returns whether
+    /// anything was stored.
+    pub fn set_skin_tone(&mut self, character: &str, tone_id: &str) -> bool {
+        if crate::emoji_grid::skin_tone_by_id(tone_id).is_none() {
+            return false;
+        }
         self.entry_for(character).skin_tone = Some(tone_id.to_owned());
+        true
     }
 
     /// Go back to the default tone.
