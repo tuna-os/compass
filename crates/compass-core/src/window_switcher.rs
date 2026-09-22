@@ -7,84 +7,31 @@
 //! None of the window manager itself is here. This is the part that turns a
 //! list of windows into rows, which is the part with the decisions in it.
 
-/// Convert a shell `Window` (typed `a{sv}`) into a switcher `WindowEntry`.
-///
-/// The shell gives `title`/`wm_class`/`workspace`; the app registry (when
-/// wired) enriches with `app_name`/`app_icon`. Keeping the conversion here
-/// keeps the `a{sv}` decoding in `compass-shell::model` and the display logic
-/// in this module distinct.
-#[must_use]
-pub fn entry_from_shell(window: &compass_shell::model::Window) -> WindowEntry {
-    WindowEntry {
-        title: window.title.clone(),
-        wm_class: window.wm_class.clone(),
-        app_name: None,
-        app_icon: None,
-        workspace_name: String::new(),
-        workspace_id: window.workspace.map(|id| id.to_string()),
-    }
-}
-
 /// Whether a `RootItem` is a window, and which one.
 ///
 /// `id == "window:{n}"` with `provider_id == "switch-windows"` is the only
-/// shape this module mints in `window_to_root_item`. Parsing is deliberately
-/// strict: a `window:foo` that is not a `u32` is not a window launch target.
+/// shape the switcher mints (see `compass-shell::switcher::window_to_root_item`).
+/// Parsing is deliberately strict: a `window:foo` that is not a `u32` is not a
+/// window launch target. The id is a plain `u32` so this shared crate never
+/// names the shell's `WindowId` type.
 #[must_use]
-pub fn window_launch_target(
-    item: &crate::root_items::RootItem,
-) -> Option<compass_shell::model::WindowId> {
+pub fn window_launch_target(item: &crate::root_items::RootItem) -> Option<u32> {
     if item.meta.provider_id != "switch-windows" {
         return None;
     }
     let suffix = item.id.strip_prefix("window:")?;
-    suffix
-        .parse::<u32>()
-        .ok()
-        .map(compass_shell::model::WindowId)
+    suffix.parse::<u32>().ok()
 }
 
 /// Whether an `AppItem` key is a window, and which one.
 ///
 /// `key == "window:{n}"` is the `AppItem` shape when windows are
 /// presented as launchable items. Strict parsing keeps a non-window
-/// `AppItem` from being mistaken for one.
+/// `AppItem` from being mistaken for one. Plain `u32`, as above.
 #[must_use]
-pub fn window_launch_target_for_app(key: &str) -> Option<compass_shell::model::WindowId> {
+pub fn window_launch_target_for_app(key: &str) -> Option<u32> {
     let suffix = key.strip_prefix("window:")?;
-    suffix
-        .parse::<u32>()
-        .ok()
-        .map(compass_shell::model::WindowId)
-}
-
-/// Convert a shell `Window` into a searchable `RootItem` for the “switch-windows” provider.
-///
-/// This is the thin wiring that makes `compass-shell::ListWindows` appear in
-/// the root list ranking — title weight 1.0, subtitle weight 0.5, `wm_class`
-/// at 0.3, so typing either the window title or its `WM_CLASS` finds it.
-#[must_use]
-pub fn window_to_root_item(window: &compass_shell::model::Window) -> crate::root_items::RootItem {
-    let entry = entry_from_shell(window);
-    let title = window_title(&entry).to_owned();
-    let subtitle = window_subtitle(&entry).to_owned();
-    let keywords = window_search_fields(&entry)
-        .into_iter()
-        .skip(1)
-        .map(|(t, _)| t.to_owned())
-        .collect::<Vec<_>>();
-    crate::root_items::RootItem {
-        id: format!("window:{}", window.id),
-        title,
-        unlocalized_title: None,
-        subtitle,
-        keywords,
-        meta: crate::root_items::RootItemMeta {
-            provider_id: "switch-windows".to_owned(),
-            enabled: true,
-            ..Default::default()
-        },
-    }
+    suffix.parse::<u32>().ok()
 }
 
 /// A capability the compositor may or may not have.
@@ -370,87 +317,53 @@ pub fn workspace_search_placeholder(is_windows: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compass_shell::contract::window_key;
-    use std::collections::HashMap;
-    use zbus::zvariant::{OwnedValue, Value};
+    use crate::root_items::{RootItem, RootItemMeta};
 
-    fn window_from(
-        title: &str,
-        wm_class: &str,
-        workspace: Option<i32>,
-    ) -> compass_shell::model::Window {
-        let mut dict = HashMap::from([
-            (window_key::ID.to_owned(), OwnedValue::from(42u32)),
-            (
-                window_key::TITLE.to_owned(),
-                OwnedValue::try_from(Value::from(title.to_owned())).unwrap(),
-            ),
-            (
-                window_key::WM_CLASS.to_owned(),
-                OwnedValue::try_from(Value::from(wm_class.to_owned())).unwrap(),
-            ),
-        ]);
-        if let Some(ws) = workspace {
-            dict.insert(window_key::WORKSPACE.to_owned(), OwnedValue::from(ws));
+    fn root_item(id: &str, provider_id: &str) -> RootItem {
+        RootItem {
+            id: id.to_owned(),
+            meta: RootItemMeta {
+                provider_id: provider_id.to_owned(),
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
         }
-        compass_shell::model::Window::from_dict(&dict).unwrap()
     }
 
     #[test]
-    fn entry_from_shell_preserves_title_and_workspace() {
-        let window = window_from("Inbox", "org.gnome.Geary", Some(2));
-        let entry = entry_from_shell(&window);
-        assert_eq!(entry.title, "Inbox");
-        assert_eq!(entry.wm_class, "org.gnome.Geary");
-        assert_eq!(entry.workspace_id.as_deref(), Some("2"));
-        assert_eq!(window_subtitle(&entry), "org.gnome.Geary");
-        assert_eq!(window_accessory(&entry).as_deref(), Some("WS 2"));
-    }
-
-    #[test]
-    fn entry_from_shell_with_no_workspace_shows_no_accessory() {
-        let window = window_from("Terminal", "org.gnome.Terminal", None);
-        let entry = entry_from_shell(&window);
-        assert_eq!(entry.workspace_id, None);
-        assert_eq!(window_accessory(&entry), None);
-    }
-
-    #[test]
-    fn window_to_root_item_is_searchable_by_title_and_wm_class() {
-        let window = window_from("Inbox", "org.gnome.Geary", Some(1));
-        let item = window_to_root_item(&window);
-        assert_eq!(item.id, "window:42");
-        assert_eq!(item.title, "Inbox");
-        assert_eq!(item.subtitle, "org.gnome.Geary");
-        assert_eq!(item.meta.provider_id, "switch-windows");
-        // keywords keep wm_class at low weight, searchable via root search
-        assert!(item.keywords.contains(&"org.gnome.Geary".to_owned()));
-        assert_eq!(window_launch_target(&item), Some(window.id));
-        assert_eq!(window_launch_target(&item).unwrap().0, 42);
-    }
-
-    #[test]
-    fn window_launch_target_rejects_non_window_items() {
-        let window = window_from("Inbox", "org.gnome.Geary", None);
-        let mut root = window_to_root_item(&window);
+    fn window_launch_target_accepts_only_window_ids() {
+        assert_eq!(
+            window_launch_target(&root_item("window:42", "switch-windows")),
+            Some(42)
+        );
         // Wrong provider
-        root.meta.provider_id = "apps".to_owned();
-        assert_eq!(window_launch_target(&root), None);
+        assert_eq!(window_launch_target(&root_item("window:42", "apps")), None);
         // Wrong id shape
-        root.meta.provider_id = "switch-windows".to_owned();
-        root.id = "window:foo".to_owned();
-        assert_eq!(window_launch_target(&root), None);
-        root.id = "not-a-window".to_owned();
-        assert_eq!(window_launch_target(&root), None);
-        // Correct again
-        root.id = "window:42".to_owned();
-        assert!(window_launch_target(&root).is_some());
+        assert_eq!(
+            window_launch_target(&root_item("window:foo", "switch-windows")),
+            None
+        );
+        assert_eq!(
+            window_launch_target(&root_item("not-a-window", "switch-windows")),
+            None
+        );
     }
 
     #[test]
-    fn window_root_item_action_panel_exposes_focus_and_close() {
-        let window = window_from("Terminal", "org.gnome.Terminal", None);
-        let entry = entry_from_shell(&window);
+    fn window_launch_target_for_app_accepts_only_window_keys() {
+        assert_eq!(window_launch_target_for_app("window:42"), Some(42));
+        assert_eq!(window_launch_target_for_app("window:foo"), None);
+        assert_eq!(window_launch_target_for_app("not-a-window"), None);
+    }
+
+    #[test]
+    fn window_action_panel_exposes_focus_and_close() {
+        let entry = WindowEntry {
+            title: "Terminal".to_owned(),
+            wm_class: "org.gnome.Terminal".to_owned(),
+            ..Default::default()
+        };
         let panel = window_action_panel(&entry, Capabilities::default());
         assert_eq!(panel[0], ["focus", "close"]);
         assert_eq!(panel.len(), 1); // no app_name → no quit-app section

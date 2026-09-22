@@ -10,7 +10,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-compass-shell = { path = "../compass-shell" }
 compass-xdg.workspace = true
 compass-search.workspace = true
 serde.workspace = true
@@ -24,6 +23,5 @@ base64.workspace = true
 
 [dev-dependencies]
 compass-testkit.workspace = true
-zbus.workspace = true
 tempfile = "3"
 proptest.workspace = true

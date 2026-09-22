@@ -87,7 +87,11 @@ pub enum Message {
     /// Cancel preview and restore the theme from config.
     ThemeCancel,
     /// Close a window from the switcher (`ctrl+q`).
-    CloseWindow(compass_shell::model::WindowId),
+    ///
+    /// The id is the plain `u32` the shell minted (see
+    /// `compass_core::window_switcher::window_launch_target_for_app`), not the
+    /// shell's `WindowId` type: this shared crate must never name it.
+    CloseWindow(u32),
     /// A window finished opening, and this is its id.
     ///
     /// Carried separately from `Command(Show)` because the honest moment to
