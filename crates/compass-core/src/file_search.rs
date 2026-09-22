@@ -277,3 +277,144 @@ pub fn registered_commands() -> Vec<&'static str> {
 /// It is a fallback command, so a search that matches no command name still
 /// searches the filesystem instead of coming back empty.
 pub const SEARCH_IS_FALLBACK: bool = true;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file_category::FileCategory;
+
+    #[test]
+    fn explicit_path_query_unix_anchored() {
+        assert!(is_explicit_path_query("/tmp"));
+        assert!(is_explicit_path_query("~/doc"));
+        assert!(is_explicit_path_query("./a"));
+        assert!(is_explicit_path_query("../a"));
+        assert_eq!(is_explicit_path_query("~"), true);
+        assert_eq!(is_explicit_path_query("."), true);
+        assert_eq!(is_explicit_path_query(".."), true);
+        assert!(!is_explicit_path_query("~notes"));
+        assert!(!is_explicit_path_query("notes..txt"));
+        assert!(!is_explicit_path_query("doc"));
+        assert!(!is_explicit_path_query(""));
+    }
+
+    #[test]
+    fn explicit_path_query_windows_includes_backslash_and_drive() {
+        assert!(is_explicit_path_query_windows("C:/foo"));
+        assert!(is_explicit_path_query_windows("C:\\foo"));
+        assert!(is_explicit_path_query_windows("a\\b"));
+        assert!(!is_explicit_path_query_windows("doc"));
+        // delegates to unix
+        assert!(is_explicit_path_query_windows("/tmp"));
+    }
+
+    #[test]
+    fn plan_query_empty_and_direct_and_filtered() {
+        assert_eq!(
+            plan_query("", "", false, false, None, None),
+            QueryPlan::EmptyQuery
+        );
+        assert_eq!(
+            plan_query("   ", "", false, false, None, None),
+            QueryPlan::EmptyQuery
+        );
+        // direct path: looks like path, exists, not root
+        assert_eq!(
+            plan_query("/tmp/file", "/tmp/file", true, true, None, None),
+            QueryPlan::DirectPath("/tmp/file".to_owned())
+        );
+        // root "/" not direct
+        assert_eq!(
+            plan_query("/", "/", true, true, None, None),
+            QueryPlan::Search
+        );
+        // filtered direct path
+        assert_eq!(
+            plan_query(
+                "/tmp/a.jpg",
+                "/tmp/a.jpg",
+                true,
+                true,
+                Some(FileCategory::Image),
+                Some(FileCategory::Document)
+            ),
+            QueryPlan::DirectPathFiltered
+        );
+        // not path query -> search
+        assert_eq!(
+            plan_query("hello", "hello", false, false, None, None),
+            QueryPlan::Search
+        );
+    }
+
+    #[test]
+    fn empty_query_mode_and_recent_usable() {
+        assert_eq!(empty_query_mode(true), ResultMode::Recent);
+        assert_eq!(empty_query_mode(false), ResultMode::IndexedSearch);
+        assert!(!recent_files_usable(0));
+        assert!(recent_files_usable(1));
+    }
+
+    #[test]
+    fn result_is_current_checks_all_three() {
+        assert!(result_is_current(
+            false,
+            ResultMode::IndexedSearch,
+            ResultMode::IndexedSearch,
+            "hello",
+            "hello"
+        ));
+        assert!(!result_is_current(
+            true,
+            ResultMode::IndexedSearch,
+            ResultMode::IndexedSearch,
+            "hello",
+            "hello"
+        ));
+        assert!(!result_is_current(
+            false,
+            ResultMode::Recent,
+            ResultMode::IndexedSearch,
+            "hello",
+            "hello"
+        ));
+        assert!(!result_is_current(
+            false,
+            ResultMode::IndexedSearch,
+            ResultMode::IndexedSearch,
+            "hello",
+            "world"
+        ));
+        assert!(recent_result_is_current(false, ResultMode::Recent, ""));
+        assert!(!recent_result_is_current(false, ResultMode::Recent, "x"));
+        assert!(!recent_result_is_current(
+            false,
+            ResultMode::IndexedSearch,
+            ""
+        ));
+    }
+
+    #[test]
+    fn headings_and_category_filter() {
+        assert_eq!(results_heading(""), "Recently Modified");
+        assert_eq!(results_heading("x"), "Results");
+        assert_eq!(RECENT_HEADING, "Recently Accessed");
+        assert_eq!(DIRECT_PATH_HEADING, "Direct file path");
+        assert_eq!(category_for_index(0), None);
+        assert_eq!(category_for_index(1), Some(FileCategory::Other));
+        assert_eq!(category_for_index(99), None);
+        assert!(accepts_filter_change(1, 0));
+        assert!(!accepts_filter_change(0, 0));
+        assert!(!accepts_filter_change(99, 0));
+        assert_eq!(stored_key_for_index(1), "Other");
+        assert_eq!(stored_key_for_index(99), "");
+        assert_eq!(restored_filter_index(Some("Other")), Some(1));
+        assert_eq!(restored_filter_index(Some("All")), None);
+        assert_eq!(restored_filter_index(Some("missing")), None);
+        assert_eq!(restored_filter_index(None), None);
+        assert!(should_debounce(100));
+        assert!(!should_debounce(0));
+        assert_eq!(registered_commands(), vec!["search"]);
+        assert!(SEARCH_IS_FALLBACK);
+    }
+}
