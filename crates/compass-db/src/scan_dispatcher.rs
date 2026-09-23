@@ -4,7 +4,7 @@
 //! for immediate work or [`ScanDispatcher::enqueue_debounced`] for
 //! coalescing: rapid repeats of one path collapse into a single scan that
 //! fires after a quiet period, or a longer cap, whichever comes first.
-//! [`WORKER_COUNT`] workers run whatever is ready; each scan opens its own
+//! Two workers run whatever is ready; each scan opens its own
 //! read database through the reader factory rather than sharing one per
 //! worker, because the reader owns a connection that is `Send` but not
 //! `Sync`.
@@ -28,15 +28,13 @@ use crate::query_reader::IndexReader;
 use crate::scan::{Scan, ScanData, ScanEvent, ScanMode};
 use crate::scanner::StatusCallback;
 
-/// Scanner threads: `ScanDispatcher::WORKER_COUNT`.
+/// Scanner threads.
 const WORKER_COUNT: usize = 2;
 
-/// A coalesced scan fires this long after the last repeat:
-/// `ScanDispatcher::DEBOUNCE_QUIET`.
+/// A coalesced scan fires this long after the last repeat.
 const DEBOUNCE_QUIET: Duration = Duration::from_secs(5);
 
-/// ...or this long after the first, however chatty the repeats:
-/// `ScanDispatcher::DEBOUNCE_MAX_DELAY`.
+/// ...or this long after the first, however chatty the repeats.
 const DEBOUNCE_MAX_DELAY: Duration = Duration::from_secs(30);
 
 /// What a finished status report becomes when the scan asked for events.
