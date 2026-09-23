@@ -794,6 +794,10 @@ mod tests {
         fn has_spellfix_vocabulary(&self) -> bool {
             self.has_spellfix
         }
+
+        fn recent_directories(&self, _limit: usize) -> Vec<PathBuf> {
+            Vec::new()
+        }
     }
 
     /// One recorded watch start: the configuration snapshot it was built

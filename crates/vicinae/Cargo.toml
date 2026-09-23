@@ -19,7 +19,9 @@ workspace = true
 
 [dependencies]
 compass-core.workspace = true
+compass-db = { path = "../compass-db" }
 compass-ipc.workspace = true
+notify.workspace = true
 compass-portals.workspace = true
 futures-util.workspace = true
 compass-ui.workspace = true

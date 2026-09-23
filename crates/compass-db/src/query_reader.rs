@@ -78,6 +78,11 @@ pub trait IndexReader: Send + 'static {
     /// Whether the typo-correction vocabulary has any words. False doubles
     /// as "the table is not there yet", so failures read as absent, silently.
     fn has_spellfix_vocabulary(&self) -> bool;
+    /// The most recently changed directories, newest first, up to `limit`.
+    ///
+    /// Feeds the watcher's dynamic directories; failures read as empty,
+    /// silently.
+    fn recent_directories(&self, limit: usize) -> Vec<PathBuf>;
 }
 
 /// One engine, one database reader.
@@ -414,6 +419,10 @@ mod tests {
 
         fn has_spellfix_vocabulary(&self) -> bool {
             false
+        }
+
+        fn recent_directories(&self, _limit: usize) -> Vec<PathBuf> {
+            Vec::new()
         }
     }
 
