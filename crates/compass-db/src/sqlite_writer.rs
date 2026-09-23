@@ -611,10 +611,13 @@ fn bind_optional_int(
     }
 }
 
-/// Runs a statement that returns no rows. `Ok` unless SQLite reports a
-/// failure — the caller's warn carries the context.
+/// Runs a statement that returns no rows, leaving it rewound for the next
+/// binds. `Ok` unless SQLite reports a failure — the caller's warn carries
+/// the context.
 fn exec_once(stmt: &mut Statement<'_>) -> Result<(), compass_sqlcipher_sys::Error> {
-    stmt.step().map(|_| ())
+    let result = stmt.step().map(|_| ());
+    stmt.reset();
+    result
 }
 
 /// The skeleton document for a path: every token of the whole path reduced

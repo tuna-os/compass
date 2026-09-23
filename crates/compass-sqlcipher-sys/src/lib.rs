@@ -522,6 +522,18 @@ impl Statement<'_> {
         unsafe { ffi::sqlite3_column_type(self.stmt, col) == ffi::TYPE_NULL }
     }
 
+    /// Rewind for reuse: reset the cursor and clear every binding, the way the
+    /// C++ engine's `db::Statement::exec` leaves a statement after running it.
+    ///
+    /// Stepping a finished statement without this silently replays its
+    /// completion instead of running the new bindings — which is how a reused
+    /// upsert quietly indexed one file and skipped the rest. Bind everything
+    /// again before stepping: cleared means cleared.
+    pub fn reset(&mut self) {
+        unsafe { ffi::sqlite3_reset(self.stmt) };
+        unsafe { ffi::sqlite3_clear_bindings(self.stmt) };
+    }
+
     /// How many columns this statement returns.
     #[must_use]
     pub fn column_count(&self) -> i32 {
