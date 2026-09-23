@@ -342,6 +342,13 @@ impl IndexWalk {
         self.stopped.store(true, Ordering::SeqCst);
     }
 
+    /// A shareable [`IndexWalk::stop`] over the same flag, for stopping a
+    /// walk the caller does not own.
+    pub fn stop_handle(&self) -> Arc<dyn Fn() + Send + Sync> {
+        let stopped = Arc::clone(&self.stopped);
+        Arc::new(move || stopped.store(true, Ordering::SeqCst))
+    }
+
     /// Walks `root`, calling `visit` for every entry that passes the filter.
     ///
     /// The root itself is never visited: the walk reports what is *in* a tree,

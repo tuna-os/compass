@@ -33,7 +33,7 @@ pub struct Scanner<D: IndexDatabase> {
     record_id: Option<i32>,
     processed: usize,
     last_notify: Option<Instant>,
-    interrupted: AtomicBool,
+    interrupted: Arc<AtomicBool>,
 }
 
 impl<D: IndexDatabase> Scanner<D> {
@@ -46,7 +46,7 @@ impl<D: IndexDatabase> Scanner<D> {
             record_id: None,
             processed: 0,
             last_notify: None,
-            interrupted: AtomicBool::new(false),
+            interrupted: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -154,6 +154,15 @@ impl<D: IndexDatabase> Scanner<D> {
     #[must_use]
     pub fn is_interrupted(&self) -> bool {
         self.interrupted.load(Ordering::SeqCst)
+    }
+
+    /// A shareable [`Scanner::interrupt`]: setting the same flag from any
+    /// thread, so a dispatcher can stop a scan it does not own. The flag is
+    /// shared rather than cloned because scanners are single-shot — one
+    /// flag, one scan.
+    pub fn interrupt_handle(&self) -> Arc<dyn Fn() + Send + Sync> {
+        let interrupted = Arc::clone(&self.interrupted);
+        Arc::new(move || interrupted.store(true, Ordering::SeqCst))
     }
 }
 
