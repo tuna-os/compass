@@ -75,12 +75,18 @@ fn message(code: i32) -> String {
 
 /// An open, keyed database with the tokenizer registered.
 ///
-/// Closes on drop. Not `Sync`: SQLite connections are not safe to use from two
-/// threads at once without serialisation this crate does not do.
+/// Closes on drop. `Send` but not `Sync`, like `rusqlite::Connection`: the
+/// handle moves to another thread, but two threads must never touch it at
+/// once without serialisation this crate does not do.
 #[derive(Debug)]
 pub struct Database {
     handle: *mut ffi::Sqlite3,
 }
+
+// The handle is a resource, not shared state: handing it to another thread is
+// safe as long as only one thread uses it at a time. `Sync` stays
+// unimplemented, which is what keeps the C `sqlite3*` calls serialised.
+unsafe impl Send for Database {}
 
 impl Database {
     /// Open `path`, key it with `key`, register `fuzzy_trigram`, and apply the
