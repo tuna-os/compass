@@ -14,10 +14,12 @@
 //! never writes, and never encrypts: the C++ engine keeps the file index
 //! unencrypted.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use compass_sqlcipher_sys::{Database, Statement};
 
+use crate::db_writer::{ScanRecord, ScanStatus, ScanType};
 use crate::query_engine::{IndexedFileCategory, SearchCandidate, SearchOptions};
 use crate::query_policy::SpellfixSuggestion;
 use crate::query_reader::IndexReader;
@@ -144,6 +146,107 @@ impl IndexReader for SqliteReader {
         }
         results
     }
+
+    fn list_indexed_directory_files(&self, path: &Path) -> HashSet<PathBuf> {
+        let Some(dir_id) = file_id(&self.db, path) else {
+            return HashSet::new();
+        };
+        let mut stmt = match self
+            .db
+            .prepare("SELECT path FROM indexed_file WHERE parent_id = :parent_id")
+        {
+            Ok(stmt) => stmt,
+            Err(error) => {
+                tracing::warn!(error = ?error, "listing the indexed directory");
+                return HashSet::new();
+            }
+        };
+        if stmt.bind_int64(":parent_id", dir_id).is_err() {
+            tracing::warn!("binding the indexed directory");
+            return HashSet::new();
+        }
+        let mut paths = HashSet::new();
+        loop {
+            match stmt.step() {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(error) => {
+                    tracing::warn!(error = ?error, "reading indexed directory rows");
+                    break;
+                }
+            }
+            if let Some(found) = stmt.column_text(0) {
+                paths.insert(PathBuf::from(found));
+            }
+        }
+        paths
+    }
+
+    fn tracks_file(&self, path: &Path) -> bool {
+        let mut stmt = match self
+            .db
+            .prepare("SELECT COUNT(*) FROM indexed_file WHERE path = :path")
+        {
+            Ok(stmt) => stmt,
+            Err(error) => {
+                tracing::warn!(error = ?error, "checking the tracked file");
+                return false;
+            }
+        };
+        if stmt.bind_text(":path", &path.to_string_lossy()).is_err() {
+            return false;
+        }
+        match stmt.step() {
+            Ok(true) => stmt.column_int64(0) != 0,
+            _ => false,
+        }
+    }
+
+    fn last_successful_scan(&self, path: &Path) -> Option<ScanRecord> {
+        let mut stmt = match self.db.prepare(
+            "SELECT id, status, created_at, entrypoint, type, finished_at, indexed_file_count \
+             FROM scan_history \
+             WHERE type in (:type1, :type2) \
+             AND status = :status \
+             AND entrypoint = :entrypoint \
+             ORDER BY created_at DESC LIMIT 1",
+        ) {
+            Ok(stmt) => stmt,
+            Err(error) => {
+                tracing::warn!(error = ?error, "looking up the last successful scan");
+                return None;
+            }
+        };
+        if stmt.bind_int64(":type1", ScanType::Full as i64).is_err()
+            || stmt
+                .bind_int64(":type2", ScanType::Incremental as i64)
+                .is_err()
+            || stmt
+                .bind_int64(":status", ScanStatus::Succeeded as i64)
+                .is_err()
+            || stmt
+                .bind_text(":entrypoint", &path.to_string_lossy())
+                .is_err()
+        {
+            return None;
+        }
+        match stmt.step() {
+            Ok(true) => map_scan_record(&stmt),
+            _ => None,
+        }
+    }
+}
+
+/// The row id for `path`, when indexed.
+pub(crate) fn file_id(db: &Database, path: &Path) -> Option<i64> {
+    let mut stmt = db
+        .prepare("SELECT id FROM indexed_file WHERE path = :path")
+        .ok()?;
+    stmt.bind_text(":path", &path.to_string_lossy()).ok()?;
+    match stmt.step() {
+        Ok(true) => Some(stmt.column_int64(0)),
+        _ => None,
+    }
 }
 
 /// The spellfix lookup: suggestions near `:pattern`, at most `:top`.
@@ -210,6 +313,42 @@ fn spellfix_pattern(word: &str, prefix: bool) -> String {
     pattern
 }
 
+/// Reads a stored scan status. Unreachable values fall back to `Pending`:
+/// writers only ever store the pinned discriminants.
+pub(crate) fn status_from_db(value: i64) -> ScanStatus {
+    match value {
+        1 => ScanStatus::Started,
+        2 => ScanStatus::Interrupted,
+        3 => ScanStatus::Failed,
+        4 => ScanStatus::Succeeded,
+        _ => ScanStatus::Pending,
+    }
+}
+
+/// Reads a stored scan type. Unreachable values fall back to `Full`: writers
+/// only ever store the pinned discriminants, and `Full` is the schema's
+/// standing assumption.
+pub(crate) fn scan_type_from_db(value: i64) -> ScanType {
+    match value {
+        1 => ScanType::Incremental,
+        _ => ScanType::Full,
+    }
+}
+
+/// Reads a scan-history row in `mapScan` column order: id, status,
+/// created_at, entrypoint, type, finished_at, indexed_file_count.
+pub(crate) fn map_scan_record(stmt: &Statement<'_>) -> Option<ScanRecord> {
+    Some(ScanRecord {
+        id: i32::try_from(stmt.column_int64(0)).unwrap_or(i32::MAX),
+        status: status_from_db(stmt.column_int64(1)),
+        created_at: u64::try_from(stmt.column_int64(2)).unwrap_or(0),
+        finished_at: u64::try_from(stmt.column_int64(5)).unwrap_or(0),
+        indexed_file_count: stmt.column_int64(6),
+        path: PathBuf::from(stmt.column_text(3)?),
+        scan_type: scan_type_from_db(stmt.column_int64(4)),
+    })
+}
+
 /// Reads the stored category number. Unknown values are `Other` on purpose:
 /// the C++ reads the column straight into the enum, where anything outside
 /// the schema default is an accident, not a category.
@@ -261,6 +400,14 @@ mod tests {
     }
 
     #[test]
+    fn scan_types_round_trip_with_full_as_the_fallback() {
+        assert_eq!(scan_type_from_db(0), ScanType::Full);
+        assert_eq!(scan_type_from_db(1), ScanType::Incremental);
+        assert_eq!(scan_type_from_db(-1), ScanType::Full);
+        assert_eq!(scan_type_from_db(99), ScanType::Full);
+    }
+
+    #[test]
     fn spellfix_patterns_lowercase_and_star_on_request() {
         assert_eq!(spellfix_pattern("Report", true), "report*");
         assert_eq!(spellfix_pattern("Report", false), "report");
@@ -293,6 +440,10 @@ mod tests {
              category INT NOT NULL DEFAULT 0, mime_type_id INT)",
             "CREATE TABLE mime_type (id INTEGER PRIMARY KEY AUTOINCREMENT, \
              name TEXT UNIQUE NOT NULL)",
+            "CREATE TABLE scan_history (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+             status INTEGER NOT NULL, created_at INT DEFAULT (unixepoch()), \
+             finished_at INT, entrypoint TEXT NOT NULL, error TEXT, \
+             type INT NOT NULL, indexed_file_count INT DEFAULT 0)",
             "CREATE VIRTUAL TABLE path_idx USING fts5(path, content=indexed_file, \
              tokenize='fuzzy_trigram remove_diacritics 2')",
             "CREATE TRIGGER path_idx_ai AFTER INSERT ON indexed_file BEGIN \
@@ -367,5 +518,95 @@ mod tests {
     fn live_reader_reports_open() {
         let (_dir, reader) = live_seed();
         assert!(reader.is_open());
+    }
+
+    #[test]
+    fn live_last_successful_scan_returns_the_latest() {
+        let (_dir, reader) = live_seed();
+        for statement in [
+            "INSERT INTO scan_history(entrypoint, type, status, created_at) \
+             VALUES ('/home/ada', 0, 4, 1000)",
+            "INSERT INTO scan_history(entrypoint, type, status, created_at) \
+             VALUES ('/home/ada', 1, 4, 2000)",
+            "INSERT INTO scan_history(entrypoint, type, status, created_at) \
+             VALUES ('/home/ada', 0, 3, 3000)",
+            "INSERT INTO scan_history(entrypoint, type, status, created_at) \
+             VALUES ('/home/ada/docs', 0, 4, 4000)",
+        ] {
+            reader.db.execute(statement).expect("scan seed");
+        }
+
+        let scan = reader
+            .last_successful_scan(Path::new("/home/ada"))
+            .expect("a succeeded scan");
+        assert_eq!(scan.scan_type, ScanType::Incremental);
+        assert_eq!(scan.status, ScanStatus::Succeeded);
+        assert_eq!(scan.created_at, 2000);
+        assert_eq!(scan.path, PathBuf::from("/home/ada"));
+
+        let docs = reader
+            .last_successful_scan(Path::new("/home/ada/docs"))
+            .expect("the docs scan");
+        assert_eq!(docs.created_at, 4000);
+    }
+
+    #[test]
+    fn live_last_successful_scan_ignores_failures() {
+        let (_dir, reader) = live_seed();
+        reader
+            .db
+            .execute(
+                "INSERT INTO scan_history(entrypoint, type, status, created_at) \
+                 VALUES ('/home/ada', 0, 3, 1000)",
+            )
+            .expect("scan seed");
+        assert_eq!(reader.last_successful_scan(Path::new("/home/ada")), None);
+        assert_eq!(
+            reader.last_successful_scan(Path::new("/home/ada/nowhere")),
+            None
+        );
+    }
+
+    #[test]
+    fn live_directory_listing_returns_direct_children() {
+        let (_dir, reader) = live_seed();
+        for statement in [
+            "INSERT INTO indexed_file(path, skeleton_path) \
+             VALUES ('/home/ada/docs', 'dcs')",
+            "INSERT INTO indexed_file(path, skeleton_path, parent_id) \
+             VALUES ('/home/ada/docs/a.txt', 'a txt', \
+             (SELECT id FROM indexed_file WHERE path = '/home/ada/docs'))",
+            "INSERT INTO indexed_file(path, skeleton_path, parent_id) \
+             VALUES ('/home/ada/docs/b.txt', 'b txt', \
+             (SELECT id FROM indexed_file WHERE path = '/home/ada/docs'))",
+        ] {
+            reader.db.execute(statement).expect("file seed");
+        }
+
+        let children = reader.list_indexed_directory_files(Path::new("/home/ada/docs"));
+        assert_eq!(
+            children,
+            HashSet::from([
+                PathBuf::from("/home/ada/docs/a.txt"),
+                PathBuf::from("/home/ada/docs/b.txt"),
+            ])
+        );
+        assert!(
+            reader
+                .list_indexed_directory_files(Path::new("/home/ada/photo.jpg"))
+                .is_empty()
+        );
+        assert!(
+            reader
+                .list_indexed_directory_files(Path::new("/home/ada/nowhere"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn live_tracks_file_reports_indexed_paths() {
+        let (_dir, reader) = live_seed();
+        assert!(reader.tracks_file(Path::new("/home/ada/report.txt")));
+        assert!(!reader.tracks_file(Path::new("/home/ada/missing.txt")));
     }
 }

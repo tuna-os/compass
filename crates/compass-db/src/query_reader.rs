@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 
 use compass_search::{MIN_QUALITY, Query};
 
+use crate::db_writer::ScanRecord;
+
 use crate::query_engine::{
     CANDIDATE_LIMIT, CORRECTION_FULL_PAGE_CONFIDENCE_THRESHOLD, IndexerFileResult,
     MAX_CORRECTION_PLANS, MAX_CORRECTIONS_PER_WORD, MIN_CORRECTABLE_WORD_LENGTH,
@@ -63,6 +65,13 @@ pub trait IndexReader: Send + 'static {
     ) -> Vec<SearchCandidate>;
     /// Up to `top` vocabulary words near `word`, prefix-extended when asked.
     fn spellfix_suggestions(&self, word: &str, top: i32, prefix: bool) -> Vec<SpellfixSuggestion>;
+    /// The indexed paths directly inside `path`: empty when the directory
+    /// itself is not indexed.
+    fn list_indexed_directory_files(&self, path: &Path) -> HashSet<PathBuf>;
+    /// Whether `path` has an indexed row at all.
+    fn tracks_file(&self, path: &Path) -> bool;
+    /// The latest succeeded scan — full or incremental — for `path`, if any.
+    fn last_successful_scan(&self, path: &Path) -> Option<ScanRecord>;
 }
 
 /// One engine, one database reader.
@@ -379,6 +388,18 @@ mod tests {
                 .get(&(word.to_owned(), prefix))
                 .cloned()
                 .unwrap_or_default()
+        }
+
+        fn list_indexed_directory_files(&self, _path: &Path) -> HashSet<PathBuf> {
+            HashSet::new()
+        }
+
+        fn tracks_file(&self, _path: &Path) -> bool {
+            false
+        }
+
+        fn last_successful_scan(&self, _path: &Path) -> Option<ScanRecord> {
+            None
         }
     }
 

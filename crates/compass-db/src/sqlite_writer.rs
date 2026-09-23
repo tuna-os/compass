@@ -26,6 +26,7 @@ use compass_sqlcipher_sys::{Database, Statement};
 
 use crate::db_writer::{FileEvent, FileEventType, IndexDatabase, ScanRecord, ScanStatus, ScanType};
 use crate::query_engine::IndexedFileCategory;
+use crate::sqlite_reader::{file_id, status_from_db};
 
 /// Below this size compaction never pays.
 const COMPACT_MIN_DB_BYTES: i64 = 32 * 1024 * 1024;
@@ -53,18 +54,6 @@ impl SqliteWriter {
             db: Database::open(path, &[])?,
             mime_ids: HashMap::new(),
         })
-    }
-
-    /// The row id for `path`, when indexed.
-    fn retrieve_file_id(db: &Database, path: &Path) -> Option<i64> {
-        let mut stmt = db
-            .prepare("SELECT id FROM indexed_file WHERE path = :path")
-            .ok()?;
-        stmt.bind_text(":path", &path.to_string_lossy()).ok()?;
-        match stmt.step() {
-            Ok(true) => Some(stmt.column_int64(0)),
-            _ => None,
-        }
     }
 
     /// The cached row id for a MIME name, inserting the name on first use.
@@ -113,7 +102,7 @@ impl SqliteWriter {
         if let Some(id) = parents.get(&key) {
             return *id;
         }
-        let id = Self::retrieve_file_id(db, parent);
+        let id = file_id(db, parent);
         parents.insert(key, id);
         id
     }
@@ -685,18 +674,6 @@ fn unix_seconds(time: SystemTime) -> i64 {
     match time.duration_since(UNIX_EPOCH) {
         Ok(elapsed) => i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX),
         Err(before) => i64::try_from(before.duration().as_secs()).map_or(i64::MIN, |secs| -secs),
-    }
-}
-
-/// Reads a stored scan status. Unreachable values fall back to `Pending`:
-/// writers only ever store the pinned discriminants.
-fn status_from_db(value: i64) -> ScanStatus {
-    match value {
-        1 => ScanStatus::Started,
-        2 => ScanStatus::Interrupted,
-        3 => ScanStatus::Failed,
-        4 => ScanStatus::Succeeded,
-        _ => ScanStatus::Pending,
     }
 }
 

@@ -129,11 +129,12 @@ impl Drop for QueryPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::collections::{HashMap, HashSet};
+    use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::time::Duration;
 
+    use crate::db_writer::ScanRecord;
     use crate::query_engine::{IndexedFileCategory, SearchCandidate};
     use crate::query_policy::SpellfixSuggestion;
 
@@ -180,6 +181,18 @@ mod tests {
             _prefix: bool,
         ) -> Vec<SpellfixSuggestion> {
             Vec::new()
+        }
+
+        fn list_indexed_directory_files(&self, _path: &Path) -> HashSet<PathBuf> {
+            HashSet::new()
+        }
+
+        fn tracks_file(&self, _path: &Path) -> bool {
+            false
+        }
+
+        fn last_successful_scan(&self, _path: &Path) -> Option<ScanRecord> {
+            None
         }
     }
 
