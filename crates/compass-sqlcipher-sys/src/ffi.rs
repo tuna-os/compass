@@ -114,6 +114,14 @@ unsafe extern "C" {
         errmsg: *mut *mut c_char,
         api: *const c_void,
     ) -> c_int;
+
+    /// `vendor/spellfix/register.c`: the `spellfix1` virtual table in the
+    /// same static-linkage form, registered right after the tokenizer.
+    pub fn vicinaeSpellfixInit(
+        db: *mut Sqlite3,
+        errmsg: *mut *mut c_char,
+        api: *const c_void,
+    ) -> c_int;
 }
 
 /// `SQLITE_NULL`.

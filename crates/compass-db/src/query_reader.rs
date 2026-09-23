@@ -11,8 +11,10 @@
 //!
 //! The database arrives as [`IndexReader`], mirroring how [`crate::db_writer`]
 //! takes an `IndexDatabase`: the SQLite read surface implements the trait
-//! without the orchestration changing. Reads borrow across scoped scoring
-//! threads, so the trait is `Send + Sync` where the writer's is `Send`.
+//! without the orchestration changing. The trait is `Send` and deliberately
+//! not `Sync`: one engine lives on one worker thread, the way the C++ query
+//! pool gives each worker its own engine, and the scoring threads never touch
+//! the reader — they only borrow the scorer and the candidates.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -36,7 +38,10 @@ use crate::query_policy::{
 ///
 /// Mirrors the `FileIndexerDatabase` read methods the C++ engine calls, so
 /// the SQLite port implements this trait without the orchestration changing.
-pub trait IndexReader: Send + Sync {
+///
+/// `Send` so an engine moves into its worker thread; never `Sync`, because a
+/// SQLite connection must not be touched from two threads at once.
+pub trait IndexReader: Send {
     /// Whether the database opened. A closed database answers nothing, as in
     /// C++.
     fn is_open(&self) -> bool;
@@ -61,8 +66,8 @@ pub trait IndexReader: Send + Sync {
 
 /// One engine, one database reader.
 ///
-/// Owns nothing but the reader: `query` borrows it through the whole search,
-/// including across the scoped scoring threads.
+/// Owns nothing but the reader: one engine per worker thread, the way the
+/// C++ query pool gives each worker its own engine.
 pub struct FileIndexerQueryEngine<R: IndexReader> {
     reader: R,
 }

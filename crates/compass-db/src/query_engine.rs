@@ -49,24 +49,27 @@ pub const CORRECTION_CONFIDENCE_THRESHOLD: f64 = 0.7;
 pub const CORRECTION_FULL_PAGE_CONFIDENCE_THRESHOLD: f64 = 0.5;
 
 /// What kind of file a candidate is.
+///
+/// Stored in SQLite by number: the discriminants are the C++ enum order, so
+/// do not reorder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexedFileCategory {
     /// Anything else.
-    Other,
+    Other = 0,
     /// A directory.
-    Directory,
+    Directory = 1,
     /// An image.
-    Image,
+    Image = 2,
     /// A video.
-    Video,
+    Video = 3,
     /// Audio.
-    Audio,
+    Audio = 4,
     /// A document.
-    Document,
+    Document = 5,
     /// An archive.
-    Archive,
+    Archive = 6,
     /// An application.
-    Application,
+    Application = 7,
 }
 
 /// One path the database query returned, before scoring.

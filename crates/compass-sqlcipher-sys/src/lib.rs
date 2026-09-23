@@ -1,5 +1,6 @@
-//! SQLCipher and the `fuzzy_trigram` tokenizer, built from `vendor/` and
-//! wrapped in the small amount of API the clipboard store needs.
+//! SQLCipher, the `fuzzy_trigram` tokenizer, and the `spellfix1` virtual
+//! table, built from `vendor/` and wrapped in the small amount of API the
+//! database owners need.
 //!
 //! # Why this crate exists at all
 //!
@@ -75,16 +76,23 @@ fn message(code: i32) -> String {
 
 /// An open, keyed database with the tokenizer registered.
 ///
-/// Closes on drop. Not `Sync`: SQLite connections are not safe to use from two
-/// threads at once without serialisation this crate does not do.
+/// Closes on drop. `Send` but not `Sync`, like `rusqlite::Connection`: the
+/// handle moves to another thread, but two threads must never touch it at
+/// once without serialisation this crate does not do.
 #[derive(Debug)]
 pub struct Database {
     handle: *mut ffi::Sqlite3,
 }
 
+// The handle is a resource, not shared state: handing it to another thread is
+// safe as long as only one thread uses it at a time. `Sync` stays
+// unimplemented, which is what keeps the C `sqlite3*` calls serialised.
+unsafe impl Send for Database {}
+
 impl Database {
-    /// Open `path`, key it with `key`, register `fuzzy_trigram`, and apply the
-    /// clipboard pragmas — in that order, because that order is load-bearing.
+    /// Open `path`, key it with `key`, register `fuzzy_trigram` and `spellfix1`,
+    /// and apply the clipboard pragmas — in that order, because that order is
+    /// load-bearing.
     ///
     /// `key` is **raw key material**, not a passphrase: the 32 bytes
     /// `compass_crypto` derives. It is passed to SQLCipher in the `x'...'` form,
@@ -137,6 +145,7 @@ impl Database {
             db.key(key)?;
         }
         db.register_tokenizer()?;
+        db.register_spellfix()?;
 
         for pragma in PRAGMAS {
             db.execute(pragma)?;
@@ -186,6 +195,24 @@ impl Database {
         }
         Err(Error::Sqlite {
             context: "registering the fuzzy_trigram tokenizer",
+            message: unsafe { last_error(self.handle) },
+            code: rc,
+        })
+    }
+
+    /// Register the `spellfix1` virtual table on this connection.
+    ///
+    /// After the tokenizer, matching the C++ engine's registration order.
+    /// Without it every access to `spellfix_vocab` fails, including a plain
+    /// `SELECT` — which is how the file indexer's typo correction went dark
+    /// in Rust until this call existed.
+    fn register_spellfix(&self) -> Result<()> {
+        let rc = unsafe { ffi::vicinaeSpellfixInit(self.handle, ptr::null_mut(), ptr::null()) };
+        if rc == ffi::OK {
+            return Ok(());
+        }
+        Err(Error::Sqlite {
+            context: "registering the spellfix1 module",
             message: unsafe { last_error(self.handle) },
             code: rc,
         })
