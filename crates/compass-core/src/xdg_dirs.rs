@@ -41,6 +41,24 @@ pub fn data_home() -> Option<PathBuf> {
     }
 }
 
+/// The home directory, or nothing when even the fallback cannot say.
+#[must_use]
+pub fn home_dir() -> Option<PathBuf> {
+    compass_xdg::home_dir()
+}
+
+/// `$XDG_CONFIG_HOME`, falling back to `~/.config`.
+#[must_use]
+pub fn config_home() -> Option<PathBuf> {
+    compass_xdg::config_home()
+}
+
+/// `$XDG_CACHE_HOME`, falling back to `~/.cache`.
+#[must_use]
+pub fn cache_home() -> Option<PathBuf> {
+    compass_xdg::cache_home()
+}
+
 /// `$XDG_DATA_DIRS`, falling back to [`DEFAULT_DATA_DIRS`].
 #[must_use]
 pub fn data_dirs() -> Vec<PathBuf> {

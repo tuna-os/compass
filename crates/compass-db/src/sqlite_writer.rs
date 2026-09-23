@@ -677,40 +677,125 @@ fn unix_seconds(time: SystemTime) -> i64 {
     }
 }
 
-/// The file-index schema the `live_*` fixtures seed, shared by the writer
-/// and reader tests so the two cannot drift apart. These tests need the sys
-/// crate, so they run in CI — not in the header-less scratch crate, which
-/// runs everything else with `-- --skip live_`.
-#[cfg(test)]
-pub(crate) static WRITER_SCHEMA: &[&str] = &[
-    "CREATE TABLE scan_history (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+/// The file-index schema, applied to every fresh database by
+/// [`ensure_file_index_schema`] and seeded by the `live_*` fixtures so the
+/// two cannot drift apart. Mirrors `INIT_SQL`: `IF NOT EXISTS` throughout,
+/// the serving indexes, and the update trigger that keeps the skeleton index
+/// honest when a row changes.
+pub static WRITER_SCHEMA: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS scan_history (id INTEGER PRIMARY KEY AUTOINCREMENT, \
      status INTEGER NOT NULL, created_at INT DEFAULT (unixepoch()), \
      finished_at INT, entrypoint TEXT NOT NULL, error TEXT, \
      type INT NOT NULL, indexed_file_count INT DEFAULT 0)",
-    "CREATE TABLE indexed_file (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+    "CREATE INDEX IF NOT EXISTS scan_history_entrypoint_idx \
+     ON scan_history(entrypoint, status, created_at)",
+    "CREATE TABLE IF NOT EXISTS indexed_file (id INTEGER PRIMARY KEY AUTOINCREMENT, \
      path TEXT UNIQUE NOT NULL, skeleton_path TEXT NOT NULL, \
      parent_id INT, last_modified_at INT, indexed_at INT NOT NULL DEFAULT (unixepoch()), \
      type INT NOT NULL DEFAULT 0, category INT NOT NULL DEFAULT 0, \
      size_bytes INT, mime_type_id INT)",
-    "CREATE TABLE mime_type (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+    "CREATE TABLE IF NOT EXISTS mime_type (id INTEGER PRIMARY KEY AUTOINCREMENT, \
      name TEXT UNIQUE NOT NULL)",
-    "CREATE VIRTUAL TABLE path_idx USING fts5(path, content=indexed_file, \
+    "CREATE INDEX IF NOT EXISTS indexed_file_parent_id_idx ON indexed_file(parent_id)",
+    "CREATE INDEX IF NOT EXISTS indexed_file_dir_mtime_idx \
+     ON indexed_file(last_modified_at DESC) WHERE type = 1",
+    "CREATE INDEX IF NOT EXISTS indexed_file_category_idx ON indexed_file(category)",
+    "CREATE INDEX IF NOT EXISTS indexed_file_mime_type_idx ON indexed_file(mime_type_id)",
+    "CREATE VIRTUAL TABLE IF NOT EXISTS path_idx USING fts5(path, content=indexed_file, \
      tokenize='fuzzy_trigram remove_diacritics 2')",
-    "CREATE TRIGGER path_idx_ai AFTER INSERT ON indexed_file BEGIN \
+    "CREATE TRIGGER IF NOT EXISTS path_idx_ai AFTER INSERT ON indexed_file BEGIN \
      INSERT INTO path_idx(rowid, path) VALUES (new.id, new.path); END",
-    "CREATE TRIGGER path_idx_ad AFTER DELETE ON indexed_file BEGIN \
+    "CREATE TRIGGER IF NOT EXISTS path_idx_ad AFTER DELETE ON indexed_file BEGIN \
      INSERT INTO path_idx(path_idx, rowid, path) VALUES('delete', old.id, old.path); END",
-    "CREATE VIRTUAL TABLE skeleton_idx USING fts5(skeleton_path, \
+    "CREATE VIRTUAL TABLE IF NOT EXISTS skeleton_idx USING fts5(skeleton_path, \
      content=indexed_file, \
      tokenize='fuzzy_trigram remove_diacritics 2 skeleton 1 skipgrams 1')",
-    "CREATE TRIGGER skeleton_idx_ai AFTER INSERT ON indexed_file BEGIN \
+    "CREATE TRIGGER IF NOT EXISTS skeleton_idx_ai AFTER INSERT ON indexed_file BEGIN \
      INSERT INTO skeleton_idx(rowid, skeleton_path) \
      VALUES (new.id, new.skeleton_path); END",
-    "CREATE TRIGGER skeleton_idx_ad AFTER DELETE ON indexed_file BEGIN \
+    "CREATE TRIGGER IF NOT EXISTS skeleton_idx_au AFTER UPDATE ON indexed_file BEGIN \
+     INSERT INTO skeleton_idx(skeleton_idx, rowid, skeleton_path) \
+     VALUES('delete', old.id, old.skeleton_path); \
+     INSERT INTO skeleton_idx(rowid, skeleton_path) \
+     VALUES (new.id, new.skeleton_path); END",
+    "CREATE TRIGGER IF NOT EXISTS skeleton_idx_ad AFTER DELETE ON indexed_file BEGIN \
      INSERT INTO skeleton_idx(skeleton_idx, rowid, skeleton_path) \
      VALUES('delete', old.id, old.skeleton_path); END",
-    "CREATE VIRTUAL TABLE spellfix_vocab USING spellfix1",
+    "CREATE VIRTUAL TABLE IF NOT EXISTS spellfix_vocab USING spellfix1",
 ];
+
+/// The file-index schema version, stamped as `user_version`.
+///
+/// Matches `SCHEMA_VERSION`: a database stamped otherwise is from a breaking
+/// change and gets purged, never migrated.
+pub const FILE_INDEX_SCHEMA_VERSION: i64 = 1;
+
+/// Applies [`WRITER_SCHEMA`] and stamps [`FILE_INDEX_SCHEMA_VERSION`].
+///
+/// Idempotent — rerunning over an existing database changes nothing but the
+/// stamp — so startup calls this after purging, never to migrate.
+///
+/// # Errors
+///
+/// Returns the first SQLite failure.
+pub fn ensure_file_index_schema(db: &Database) -> Result<(), compass_sqlcipher_sys::Error> {
+    for statement in WRITER_SCHEMA {
+        db.execute(statement)?;
+    }
+    db.execute("PRAGMA user_version = 1")
+}
+
+/// The stamped schema version of `db`, or 0 when it will not say.
+///
+/// Drives the purge decision: anything but [`FILE_INDEX_SCHEMA_VERSION`]
+/// means a breaking change.
+#[must_use]
+pub fn file_index_user_version(db: &Database) -> i64 {
+    db.query_one_text("PRAGMA user_version")
+        .ok()
+        .flatten()
+        .and_then(|version| version.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Opens the file index at `path`, purging and recreating it when its stamp
+/// is stale.
+///
+/// Ports the `main.cpp` startup: an unopenable database starts over, a stamp
+/// mismatch means a breaking change and gets purged, and a fresh database
+/// gets the schema. Never migrates.
+///
+/// # Errors
+///
+/// Returns the SQLite failure when the database cannot be opened or the
+/// schema cannot be applied.
+pub fn prepare_file_index_database(path: &Path) -> Result<(), compass_sqlcipher_sys::Error> {
+    let version = Database::open(path, &[]).map(|db| file_index_user_version(&db));
+    match version {
+        Ok(FILE_INDEX_SCHEMA_VERSION) => return Ok(()),
+        Ok(stale) => {
+            tracing::info!(stale, "breaking file-index change, starting over");
+        }
+        Err(error) => {
+            tracing::warn!(error = ?error, "file-index database could not be opened, starting over");
+        }
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let mut file = path.as_os_str().to_owned();
+        file.push(suffix);
+        if std::fs::remove_file(Path::new(&file)).is_ok() {
+            tracing::info!(file = ?Path::new(&file), "removed stale file-index file");
+        }
+    }
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let db = Database::open(path, &[])?;
+    ensure_file_index_schema(&db)
+}
 
 #[cfg(test)]
 mod tests {
@@ -820,6 +905,38 @@ mod tests {
 
     fn live_reader(dir: &tempfile::TempDir) -> SqliteReader {
         SqliteReader::open(&dir.path().join("index.db")).expect("reader")
+    }
+
+    #[test]
+    fn live_prepare_stamps_fresh_and_purges_stale() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("index.db");
+
+        prepare_file_index_database(&path).expect("fresh prepare");
+        let version =
+            |path: &Path| file_index_user_version(&Database::open(path, &[]).expect("open"));
+        assert_eq!(version(&path), FILE_INDEX_SCHEMA_VERSION);
+
+        // Idempotent: a stamped database is left alone.
+        prepare_file_index_database(&path).expect("second prepare");
+        assert_eq!(version(&path), FILE_INDEX_SCHEMA_VERSION);
+
+        // A breaking stamp purges everything, not just the version.
+        let setup = Database::open(&path, &[]).expect("open");
+        setup
+            .execute("CREATE TABLE marker (id INT)")
+            .expect("marker table");
+        setup
+            .execute("PRAGMA user_version = 99")
+            .expect("stale stamp");
+        drop(setup);
+        prepare_file_index_database(&path).expect("purge prepare");
+        assert_eq!(version(&path), FILE_INDEX_SCHEMA_VERSION);
+        let check = Database::open(&path, &[]).expect("open");
+        assert!(
+            check.prepare("SELECT id FROM marker").is_err(),
+            "stale tables are gone with the purge"
+        );
     }
 
     fn touch(dir: &tempfile::TempDir, name: &str) -> PathBuf {

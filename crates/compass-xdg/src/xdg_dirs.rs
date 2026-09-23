@@ -154,6 +154,24 @@ pub fn data_home() -> Option<PathBuf> {
     }
 }
 
+/// `$XDG_CONFIG_HOME`, falling back to `~/.config`.
+#[must_use]
+pub fn config_home() -> Option<PathBuf> {
+    match std::env::var_os("XDG_CONFIG_HOME") {
+        Some(value) if !value.is_empty() => Some(PathBuf::from(value)),
+        _ => dirs::config_dir(),
+    }
+}
+
+/// `$XDG_CACHE_HOME`, falling back to `~/.cache`.
+#[must_use]
+pub fn cache_home() -> Option<PathBuf> {
+    match std::env::var_os("XDG_CACHE_HOME") {
+        Some(value) if !value.is_empty() => Some(PathBuf::from(value)),
+        _ => dirs::cache_dir(),
+    }
+}
+
 /// `$XDG_DATA_DIRS`, falling back to [`DEFAULT_DATA_DIRS`].
 #[must_use]
 pub fn data_dirs() -> Vec<PathBuf> {
