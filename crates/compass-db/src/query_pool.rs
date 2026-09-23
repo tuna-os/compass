@@ -202,6 +202,10 @@ mod tests {
         fn has_spellfix_vocabulary(&self) -> bool {
             false
         }
+
+        fn recent_directories(&self, _limit: usize) -> Vec<PathBuf> {
+            Vec::new()
+        }
     }
 
     fn submit(pool: &QueryPool, text: &str) -> mpsc::Receiver<Vec<IndexerFileResult>> {

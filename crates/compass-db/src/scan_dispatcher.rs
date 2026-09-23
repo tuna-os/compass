@@ -686,6 +686,10 @@ mod tests {
         fn has_spellfix_vocabulary(&self) -> bool {
             true
         }
+
+        fn recent_directories(&self, _limit: usize) -> Vec<PathBuf> {
+            Vec::new()
+        }
     }
 
     struct Harness {

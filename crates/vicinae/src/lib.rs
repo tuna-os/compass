@@ -16,6 +16,7 @@ pub mod cli;
 pub mod doctor;
 pub mod engine;
 pub mod hotkey;
+pub mod indexer_watch;
 pub mod ipc;
 pub mod serve;
 pub mod session;

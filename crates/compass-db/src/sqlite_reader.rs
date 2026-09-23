@@ -17,6 +17,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use compass_core::watch_events::DYNAMIC_WATCH_COUNT;
 use compass_sqlcipher_sys::{Database, Statement};
 
 use crate::db_writer::{ScanRecord, ScanStatus, ScanType};
@@ -271,6 +272,34 @@ impl IndexReader for SqliteReader {
             return false;
         };
         matches!(stmt.step(), Ok(true))
+    }
+
+    fn recent_directories(&self, limit: usize) -> Vec<PathBuf> {
+        let mut stmt = match self.db.prepare(
+            "SELECT path FROM indexed_file WHERE type = 1 \
+             ORDER BY last_modified_at DESC LIMIT :limit",
+        ) {
+            Ok(stmt) => stmt,
+            Err(error) => {
+                tracing::warn!(error = ?error, "listing recent directories");
+                return Vec::new();
+            }
+        };
+        if stmt
+            .bind_int64(":limit", i64::try_from(limit).unwrap_or(i64::MAX))
+            .is_err()
+        {
+            return Vec::new();
+        }
+        // No caller keeps more than the watcher's dynamic set; the SQL LIMIT
+        // caps the rows anyway, this only bounds the upfront allocation.
+        let mut dirs = Vec::with_capacity(limit.min(DYNAMIC_WATCH_COUNT));
+        while matches!(stmt.step(), Ok(true)) {
+            if let Some(path) = stmt.column_text(0) {
+                dirs.push(PathBuf::from(path));
+            }
+        }
+        dirs
     }
 }
 
@@ -627,6 +656,44 @@ mod tests {
         let bare = SqliteReader::open(&missing.path().join("empty.db")).expect("open");
         assert!(!bare.has_spellfix_vocabulary());
         assert_eq!(bare.last_scan(Path::new("/home/ada"), ScanType::Full), None);
+    }
+
+    #[test]
+    fn live_recent_directories_lists_newest_dirs_first() {
+        let (_dir, reader) = live_seed();
+        for statement in [
+            "INSERT INTO indexed_file(path, skeleton_path, type, last_modified_at) \
+             VALUES ('/home/ada/old', 'ld', 1, 1000)",
+            "INSERT INTO indexed_file(path, skeleton_path, type, last_modified_at) \
+             VALUES ('/home/ada/new', 'nw', 1, 3000)",
+            "INSERT INTO indexed_file(path, skeleton_path, type, last_modified_at) \
+             VALUES ('/home/ada/mid', 'md', 1, 2000)",
+            "INSERT INTO indexed_file(path, skeleton_path, type, last_modified_at) \
+             VALUES ('/home/ada/file.txt', 'fl txt', 0, 4000)",
+        ] {
+            reader.db.execute(statement).expect("directory seed");
+        }
+
+        // Files never qualify, however fresh — only type 1 rows do.
+        assert_eq!(
+            reader.recent_directories(10),
+            [
+                PathBuf::from("/home/ada/new"),
+                PathBuf::from("/home/ada/mid"),
+                PathBuf::from("/home/ada/old"),
+            ]
+        );
+        assert_eq!(
+            reader.recent_directories(2),
+            [
+                PathBuf::from("/home/ada/new"),
+                PathBuf::from("/home/ada/mid"),
+            ]
+        );
+
+        let missing = tempfile::tempdir().expect("tempdir");
+        let bare = SqliteReader::open(&missing.path().join("empty.db")).expect("open");
+        assert!(bare.recent_directories(10).is_empty());
     }
 
     #[test]
