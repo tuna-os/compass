@@ -427,34 +427,17 @@ mod tests {
         assert!(skeleton.contains("ORDER BY skeleton_idx.rank"));
     }
 
-    /// A live database with the real schema shape: indexed rows, MIME names,
-    /// both FTS tables, and a spellfix vocabulary. These `live_*` tests need
-    /// the sys crate, so they run in CI — not in the header-less scratch
-    /// crate, which runs everything else with `-- --skip live_`.
+    /// A live database with the shared writer schema plus seed rows. These
+    /// `live_*` tests need the sys crate, so they run in CI — not in the
+    /// header-less scratch crate, which runs everything else with
+    /// `-- --skip live_`.
     fn live_seed() -> (tempfile::TempDir, SqliteReader) {
         let dir = tempfile::tempdir().expect("tempdir");
         let reader = SqliteReader::open(&dir.path().join("index.db")).expect("open");
+        for statement in crate::sqlite_writer::WRITER_SCHEMA {
+            reader.db.execute(statement).expect("schema");
+        }
         for statement in [
-            "CREATE TABLE indexed_file (id INTEGER PRIMARY KEY AUTOINCREMENT, \
-             path TEXT UNIQUE NOT NULL, skeleton_path TEXT NOT NULL, \
-             category INT NOT NULL DEFAULT 0, mime_type_id INT)",
-            "CREATE TABLE mime_type (id INTEGER PRIMARY KEY AUTOINCREMENT, \
-             name TEXT UNIQUE NOT NULL)",
-            "CREATE TABLE scan_history (id INTEGER PRIMARY KEY AUTOINCREMENT, \
-             status INTEGER NOT NULL, created_at INT DEFAULT (unixepoch()), \
-             finished_at INT, entrypoint TEXT NOT NULL, error TEXT, \
-             type INT NOT NULL, indexed_file_count INT DEFAULT 0)",
-            "CREATE VIRTUAL TABLE path_idx USING fts5(path, content=indexed_file, \
-             tokenize='fuzzy_trigram remove_diacritics 2')",
-            "CREATE TRIGGER path_idx_ai AFTER INSERT ON indexed_file BEGIN \
-             INSERT INTO path_idx(rowid, path) VALUES (new.id, new.path); END",
-            "CREATE VIRTUAL TABLE skeleton_idx USING fts5(skeleton_path, \
-             content=indexed_file, \
-             tokenize='fuzzy_trigram remove_diacritics 2 skeleton 1 skipgrams 1')",
-            "CREATE TRIGGER skeleton_idx_ai AFTER INSERT ON indexed_file BEGIN \
-             INSERT INTO skeleton_idx(rowid, skeleton_path) \
-             VALUES (new.id, new.skeleton_path); END",
-            "CREATE VIRTUAL TABLE spellfix_vocab USING spellfix1",
             "INSERT INTO mime_type(name) VALUES ('text/plain')",
             "INSERT INTO indexed_file(path, skeleton_path, category, mime_type_id) \
              VALUES ('/home/ada/report.txt', 'rprt txt', 5, 1)",
