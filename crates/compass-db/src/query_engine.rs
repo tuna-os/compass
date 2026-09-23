@@ -284,7 +284,7 @@ pub fn score_candidate(candidate: &SearchCandidate, query: &Query, min_quality: 
     if matched.quality < min_quality {
         return 0;
     }
-    let bonus = substring_match_multiplier(candidate, &query.text()) - 1.0;
+    let bonus = substring_match_multiplier(candidate, query.text()) - 1.0;
     let boosted = f64::from(matched.score) + (100.0 - f64::from(matched.score)) * bonus;
     (boosted * file_relevance_multiplier(candidate)) as i32
 }
@@ -381,12 +381,12 @@ pub fn score_candidates(
         return ranked;
     }
 
-    let thread_count = ((candidates.len() + SCORING_BATCH_SIZE - 1) / SCORING_BATCH_SIZE).min(
+    let thread_count = candidates.len().div_ceil(SCORING_BATCH_SIZE).min(
         thread::available_parallelism()
             .map_or(1, std::num::NonZero::get)
             .max(1),
     );
-    let chunk_size = (candidates.len() + thread_count - 1) / thread_count;
+    let chunk_size = candidates.len().div_ceil(thread_count);
     tracing::debug!(
         count = candidates.len(),
         threads = thread_count,
