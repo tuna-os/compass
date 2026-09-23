@@ -78,6 +78,11 @@ impl<D: IndexDatabase, R: IndexReader> IncrementalScanner<D, R> {
         self.core.interrupt();
     }
 
+    /// A shareable [`IncrementalScanner::interrupt`] over the same flag.
+    pub fn stop_handle(&self) -> Arc<dyn Fn() + Send + Sync> {
+        self.core.interrupt_handle()
+    }
+
     /// Diffs the direct contents of `root` against the index, returning each
     /// visited entry with whether it is new to the index.
     fn process_directory(&mut self, root: &Path) -> Vec<(WalkEntry, bool)> {

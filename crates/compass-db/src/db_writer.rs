@@ -164,9 +164,12 @@ struct Shared<D: IndexDatabase> {
 /// One writer, one worker thread, one database.
 ///
 /// `new` spawns the thread; dropping shuts it down, draining what is queued
-/// first.
+/// first. Shared across scanner threads behind [`Arc`], so the join handle
+/// sits behind a mutex: the handle is only ever taken at drop, but a plain
+/// [`JoinHandle`] is not [`Sync`] and would pin the whole writer to one
+/// thread.
 pub struct DbWriter<D: IndexDatabase> {
-    worker: Option<JoinHandle<()>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
     shared: Arc<Shared<D>>,
 }
 
@@ -222,7 +225,7 @@ impl<D: IndexDatabase> DbWriter<D> {
             }
         });
         Self {
-            worker: Some(worker),
+            worker: Mutex::new(Some(worker)),
             shared,
         }
     }
@@ -409,7 +412,12 @@ impl<D: IndexDatabase> Drop for DbWriter<D> {
         self.shared.active.store(false, Ordering::SeqCst);
         self.shared.update.notify_one();
         self.shared.not_full.notify_all();
-        if let Some(worker) = self.worker.take() {
+        if let Some(worker) = self
+            .worker
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             let _ = worker.join();
         }
     }

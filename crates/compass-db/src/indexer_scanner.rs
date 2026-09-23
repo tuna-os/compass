@@ -65,6 +65,16 @@ impl<D: IndexDatabase> IndexerScanner<D> {
         self.walker.stop();
     }
 
+    /// A shareable [`IndexerScanner::interrupt`] over the same flags.
+    pub fn stop_handle(&self) -> Arc<dyn Fn() + Send + Sync> {
+        let core = self.core.interrupt_handle();
+        let walk = self.walker.stop_handle();
+        Arc::new(move || {
+            core();
+            walk();
+        })
+    }
+
     /// Walks `root`, batching a directory `Modify` for the root and one file
     /// event per entry into the writer.
     fn scan_full(&mut self, root: &Path, full: &FullScan) {

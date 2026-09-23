@@ -50,6 +50,7 @@ pub mod query_policy;
 pub mod query_pool;
 pub mod query_reader;
 pub mod scan;
+pub mod scan_dispatcher;
 pub mod scanner;
 pub mod sqlite_reader;
 pub mod sqlite_writer;
