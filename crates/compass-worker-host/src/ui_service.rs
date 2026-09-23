@@ -21,6 +21,8 @@
 
 use std::sync::Mutex;
 
+use compass_extension_api::action::HandlerId;
+
 use crate::render::{RenderNode, RenderPayload, apply};
 use crate::tsapi::{self, Call};
 
@@ -113,12 +115,13 @@ impl tsapi::Service for UiService {
 ///
 /// `id` is the callback id the reconciler substituted for the function prop,
 /// so it comes straight off a node: an action's `onAction`, a list's
-/// `onSelectionChange`.
+/// `onSelectionChange`. It travels as the seam's opaque [`HandlerId`]: the
+/// host never parses it, it only hands it back.
 #[must_use]
-pub fn handler_activated(handler_id: &str, args: &[serde_json::Value]) -> String {
+pub fn handler_activated(handler_id: &HandlerId, args: &[serde_json::Value]) -> String {
     tsapi::event(
         "EventCore/handlerActivated",
-        serde_json::json!({ "id": handler_id, "args": args }),
+        serde_json::json!({ "id": handler_id.as_str(), "args": args }),
     )
 }
 
@@ -269,9 +272,11 @@ mod tests {
             "figura/tsapi.fig no longer declares handlerActivated with (id, args)"
         );
 
-        let value: serde_json::Value =
-            serde_json::from_str(&handler_activated("cb-7", &[serde_json::json!("row-1")]))
-                .expect("JSON");
+        let value: serde_json::Value = serde_json::from_str(&handler_activated(
+            &HandlerId::new("cb-7"),
+            &[serde_json::json!("row-1")],
+        ))
+        .expect("JSON");
         assert_eq!(value["method"], "EventCore/handlerActivated");
         assert_eq!(value["params"]["id"], "cb-7");
         assert_eq!(value["params"]["args"], serde_json::json!(["row-1"]));
@@ -314,7 +319,7 @@ mod tests {
             .expect("the action carries a callback id");
 
         let event: serde_json::Value =
-            serde_json::from_str(&handler_activated(handler, &[])).expect("JSON");
+            serde_json::from_str(&handler_activated(&HandlerId::new(handler), &[])).expect("JSON");
         assert_eq!(event["params"]["id"], "cb-42");
     }
 }
