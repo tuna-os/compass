@@ -88,7 +88,7 @@ impl<D: IndexDatabase> Scanner<D> {
     }
 
     /// Adds `count` processed files, reporting `Started` when the last
-    /// report is older than [`PROGRESS_NOTIFY_INTERVAL`].
+    /// report is over half a second old.
     pub fn report_progress(&mut self, count: usize) {
         self.processed += count;
         let due = self
