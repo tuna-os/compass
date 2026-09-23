@@ -180,6 +180,22 @@ impl<'a> Session<'a> {
         &mut self.worker
     }
 
+    /// Shuts the worker down politely and reaps it, ending the session.
+    ///
+    /// Settle anything owed first: [`fail_deferred`](Self::fail_deferred)
+    /// while the worker still lives. Past that point nobody waits — a
+    /// deferral answers into the worker, so a dead worker leaves nothing
+    /// outstanding. Use this before dropping a live session, or the child
+    /// outlives its host — [`Worker`] has no [`Drop`](std::ops::Drop) that
+    /// would reap it.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Worker::shutdown`] can fail with.
+    pub fn shutdown(self) -> Result<std::process::ExitStatus, WorkerError> {
+        self.worker.shutdown()
+    }
+
     /// Reads one message and does whatever it asks for.
     ///
     /// # Errors
