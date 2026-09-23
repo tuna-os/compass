@@ -52,6 +52,9 @@ unicode-normalization = "0.1"
 # File-indexer tree walking: parallel traversal with real gitignore semantics.
 # See crates/compass-core/src/file_walk.rs for the vicinae policy layered on it.
 ignore = "0.4"
+# File-indexer MIME probing by extension, the way the C++ asks QMimeDatabase
+# with MatchExtension. See crates/compass-db/src/sqlite_writer.rs.
+mime_guess = "2"
 
 # Clipboard-at-rest crypto. See crates/compass-crypto/src/lib.rs for why these
 # and not the `openssl` crate.
