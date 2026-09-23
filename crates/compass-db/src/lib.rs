@@ -42,6 +42,7 @@
 //! detection. Here a mismatch is an error, because a stored value with no
 //! reader is not a check.
 
+pub mod db_writer;
 pub mod query_policy;
 pub mod vicinae;
 
