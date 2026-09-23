@@ -39,9 +39,10 @@ use crate::query_policy::{
 /// Mirrors the `FileIndexerDatabase` read methods the C++ engine calls, so
 /// the SQLite port implements this trait without the orchestration changing.
 ///
-/// `Send` so an engine moves into its worker thread; never `Sync`, because a
-/// SQLite connection must not be touched from two threads at once.
-pub trait IndexReader: Send {
+/// `Send + 'static` so an engine moves into its worker thread, like the
+/// writer's database; never `Sync`, because a SQLite connection must not be
+/// touched from two threads at once.
+pub trait IndexReader: Send + 'static {
     /// Whether the database opened. A closed database answers nothing, as in
     /// C++.
     fn is_open(&self) -> bool;
