@@ -43,6 +43,7 @@
 //! reader is not a check.
 
 pub mod db_writer;
+pub mod query_engine;
 pub mod query_policy;
 pub mod vicinae;
 

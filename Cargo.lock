@@ -833,6 +833,7 @@ name = "compass-db"
 version = "0.1.0"
 dependencies = [
  "compass-core",
+ "compass-search",
  "compass-sqlcipher-sys",
  "md-5",
  "tempfile",
