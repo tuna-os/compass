@@ -4,8 +4,8 @@
 //! bonuses, filename/dirname weighting through compass-search (the crate that
 //! ports the weighted fuzzy scorer), relevance penalties, the sort order,
 //! parallel batch scoring, and the correction/skeleton confidence math. The
-//! database orchestration (`query`, `queryWithCorrections`) follows once the
-//! read surface lands.
+//! database orchestration (`query`, `queryWithCorrections`) lives in
+//! [`crate::query_reader`], over the read trait.
 //!
 //! The fuzzy engine underneath is nucleo, not the C++'s fzf: absolute scores
 //! differ, but every threshold here compares gated or normalized values, and
