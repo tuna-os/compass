@@ -32,27 +32,33 @@ use compass_core::io_pacer::IoPacer;
 pub const MAX_PENDING_BULK_WRITES: usize = 8;
 
 /// Which shape of scan produced the indexed files.
+///
+/// Stored in SQLite by number: the discriminants are the C++ enum order, so
+/// do not reorder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanType {
     /// Read everything.
-    Full,
+    Full = 0,
     /// Read what changed.
-    Incremental,
+    Incremental = 1,
 }
 
 /// Where a scan stands.
+///
+/// Stored in SQLite by number: the discriminants are the C++ enum order, so
+/// do not reorder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanStatus {
     /// Recorded, not started.
-    Pending,
+    Pending = 0,
     /// Running.
-    Started,
+    Started = 1,
     /// Stopped early.
-    Interrupted,
+    Interrupted = 2,
     /// Stopped with an error.
-    Failed,
+    Failed = 3,
     /// Finished.
-    Succeeded,
+    Succeeded = 4,
 }
 
 /// One row of the scan history.

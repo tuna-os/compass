@@ -47,6 +47,7 @@ pub mod query_engine;
 pub mod query_policy;
 pub mod query_reader;
 pub mod sqlite_reader;
+pub mod sqlite_writer;
 pub mod vicinae;
 
 use std::time::{SystemTime, UNIX_EPOCH};

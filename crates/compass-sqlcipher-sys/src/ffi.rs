@@ -87,6 +87,8 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn sqlite3_finalize(stmt: *mut Sqlite3Stmt) -> c_int;
     pub fn sqlite3_step(stmt: *mut Sqlite3Stmt) -> c_int;
+    pub fn sqlite3_reset(stmt: *mut Sqlite3Stmt) -> c_int;
+    pub fn sqlite3_clear_bindings(stmt: *mut Sqlite3Stmt) -> c_int;
 
     pub fn sqlite3_bind_parameter_index(stmt: *mut Sqlite3Stmt, name: *const c_char) -> c_int;
     pub fn sqlite3_bind_text(
