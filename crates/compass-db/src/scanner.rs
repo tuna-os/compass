@@ -11,7 +11,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use crate::db_writer::{DbWriter, IndexDatabase, ScanStatus};
+use crate::db_writer::{DbWriter, FileEvent, IndexDatabase, ScanStatus};
 use crate::scan::Scan;
 
 /// Progress reports closer together than this collapse into one.
@@ -129,6 +129,12 @@ impl<D: IndexDatabase> Scanner<D> {
             );
         }
         (self.on_status)(ScanStatus::Failed, self.processed);
+    }
+
+    /// Queues scanner-found changes for the writer, the way concrete C++
+    /// scanners call `m_writer->indexEvents` on the shared half.
+    pub fn index_events(&self, events: Vec<FileEvent>) {
+        self.writer.index_events(events);
     }
 
     /// Flags the scan interrupted. The next [`Scanner::finish`] closes it as

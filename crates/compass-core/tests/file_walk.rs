@@ -479,3 +479,15 @@ fn walk_entries_know_files_from_directories() {
         }
     );
 }
+
+#[test]
+fn a_stopped_walk_visits_nothing() {
+    // `FileSystemWalker::stop` breaks the C++ loop; here the loop breaks at
+    // the next entry, so stopping first visits nothing at all.
+    let dir = fixture();
+    write(dir.path(), "a.txt", "notes");
+
+    let walk = walk();
+    walk.stop();
+    assert!(walk.collect(dir.path()).is_empty());
+}

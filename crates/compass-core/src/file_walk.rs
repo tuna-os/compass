@@ -22,7 +22,10 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use ignore::{DirEntry, WalkBuilder, gitignore::GitignoreBuilder};
 
@@ -90,6 +93,10 @@ pub struct IndexWalk {
     /// prunes whole subtrees regardless of listing order. A mutex rather than
     /// a cell because the crate shares the hook across threads.
     cache_dirs: Mutex<HashSet<PathBuf>>,
+    /// Whether a walk in progress should give up. Shared across clones so an
+    /// interrupt reaches the walk however the configuration got there; the
+    /// C++ walker is not copyable at all, this is the closest shape.
+    stopped: Arc<AtomicBool>,
 }
 
 impl Clone for IndexWalk {
@@ -103,8 +110,11 @@ impl Clone for IndexWalk {
             recursive: self.recursive,
             max_depth: self.max_depth,
             // A walk's abandoned directories belong to that walk, not to the
-            // configuration: a clone starts recording from nothing.
+            // configuration: a clone starts recording from nothing. An
+            // interrupt is not configuration either, but dropping it on clone
+            // would strand a walk started from a copy: the flag is shared.
             cache_dirs: Mutex::new(HashSet::new()),
+            stopped: Arc::clone(&self.stopped),
         }
     }
 }
@@ -124,6 +134,7 @@ impl IndexWalk {
             recursive: true,
             max_depth: None,
             cache_dirs: Mutex::new(HashSet::new()),
+            stopped: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -323,6 +334,14 @@ impl IndexWalk {
         )
     }
 
+    /// Stops a walk in progress: the loop breaks at the next entry, the way
+    /// `FileSystemWalker::stop` breaks the C++ walk. A walk that has not
+    /// started yet visits nothing. Takes `&self` so a scanner interrupting
+    /// from another thread needs no mutable borrow.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+    }
+
     /// Walks `root`, calling `visit` for every entry that passes the filter.
     ///
     /// The root itself is never visited: the walk reports what is *in* a tree,
@@ -361,6 +380,9 @@ impl IndexWalk {
             .filter_entry(move |entry| policy.filter_entry(entry))
             .build();
         for result in walker {
+            if self.stopped.load(Ordering::SeqCst) {
+                break;
+            }
             let Ok(entry) = result else {
                 continue;
             };
