@@ -186,7 +186,7 @@ impl<'a> Session<'a> {
     /// while the worker still lives. Past that point nobody waits — a
     /// deferral answers into the worker, so a dead worker leaves nothing
     /// outstanding. Use this before dropping a live session, or the child
-    /// outlives its host — [`Worker`] has no [`Drop`](std::ops::Drop) that
+    /// outlives its host — [`Worker`] has no [`Drop`] that
     /// would reap it.
     ///
     /// # Errors
