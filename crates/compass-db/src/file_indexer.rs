@@ -1158,12 +1158,11 @@ mod tests {
         let root = PathBuf::from("/home/ada");
         inner.mark_full_scan_roots_pending(&[root.join("code"), root.clone()]);
         assert_eq!(
-            inner
+            *inner
                 .pending_full_scan_roots
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone(),
-            [root]
+                .unwrap_or_else(PoisonError::into_inner),
+            [root.clone()]
         );
         assert!(inner.has_pending_full_scan_roots());
         inner.mark_full_scan_succeeded(&root);
