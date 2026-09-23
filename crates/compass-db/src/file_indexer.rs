@@ -1162,7 +1162,7 @@ mod tests {
                 .pending_full_scan_roots
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner),
-            [root.clone()]
+            *std::slice::from_ref(&root)
         );
         assert!(inner.has_pending_full_scan_roots());
         inner.mark_full_scan_succeeded(&root);
