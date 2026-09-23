@@ -45,6 +45,7 @@
 pub mod db_writer;
 pub mod query_engine;
 pub mod query_policy;
+pub mod query_pool;
 pub mod query_reader;
 pub mod sqlite_reader;
 pub mod sqlite_writer;
