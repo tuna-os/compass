@@ -42,10 +42,8 @@
 //! detection. Here a mismatch is an error, because a stored value with no
 //! reader is not a check.
 
-<<<<<<< HEAD
 pub mod db_writer;
 pub mod query_engine;
->>>>>>> 948652a0f (feat: port query-engine scoring over compass-search)
 pub mod query_policy;
 pub mod vicinae;
 

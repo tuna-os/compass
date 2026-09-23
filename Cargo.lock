@@ -832,7 +832,12 @@ dependencies = [
 name = "compass-db"
 version = "0.1.0"
 dependencies = [
+<<<<<<< HEAD
  "compass-core",
+||||||| parent of 64893ff0b (chore: record compass-db edges for the engine slice)
+=======
+ "compass-search",
+>>>>>>> 64893ff0b (chore: record compass-db edges for the engine slice)
  "compass-sqlcipher-sys",
  "md-5",
  "tempfile",

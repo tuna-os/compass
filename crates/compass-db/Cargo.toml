@@ -10,10 +10,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-<<<<<<< HEAD
 compass-core.workspace = true
 compass-search.workspace = true
->>>>>>> 948652a0f (feat: port query-engine scoring over compass-search)
 compass-sqlcipher-sys = { path = "../compass-sqlcipher-sys" }
 md-5 = "0.11"
 thiserror.workspace = true
