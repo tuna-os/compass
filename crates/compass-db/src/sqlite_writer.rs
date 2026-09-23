@@ -26,6 +26,7 @@ use compass_sqlcipher_sys::{Database, Statement};
 
 use crate::db_writer::{FileEvent, FileEventType, IndexDatabase, ScanRecord, ScanStatus, ScanType};
 use crate::query_engine::IndexedFileCategory;
+use crate::sqlite_reader::{file_id, status_from_db};
 
 /// Below this size compaction never pays.
 const COMPACT_MIN_DB_BYTES: i64 = 32 * 1024 * 1024;
@@ -53,18 +54,6 @@ impl SqliteWriter {
             db: Database::open(path, &[])?,
             mime_ids: HashMap::new(),
         })
-    }
-
-    /// The row id for `path`, when indexed.
-    fn retrieve_file_id(db: &Database, path: &Path) -> Option<i64> {
-        let mut stmt = db
-            .prepare("SELECT id FROM indexed_file WHERE path = :path")
-            .ok()?;
-        stmt.bind_text(":path", &path.to_string_lossy()).ok()?;
-        match stmt.step() {
-            Ok(true) => Some(stmt.column_int64(0)),
-            _ => None,
-        }
     }
 
     /// The cached row id for a MIME name, inserting the name on first use.
@@ -113,7 +102,7 @@ impl SqliteWriter {
         if let Some(id) = parents.get(&key) {
             return *id;
         }
-        let id = Self::retrieve_file_id(db, parent);
+        let id = file_id(db, parent);
         parents.insert(key, id);
         id
     }
@@ -688,17 +677,40 @@ fn unix_seconds(time: SystemTime) -> i64 {
     }
 }
 
-/// Reads a stored scan status. Unreachable values fall back to `Pending`:
-/// writers only ever store the pinned discriminants.
-fn status_from_db(value: i64) -> ScanStatus {
-    match value {
-        1 => ScanStatus::Started,
-        2 => ScanStatus::Interrupted,
-        3 => ScanStatus::Failed,
-        4 => ScanStatus::Succeeded,
-        _ => ScanStatus::Pending,
-    }
-}
+/// The file-index schema the `live_*` fixtures seed, shared by the writer
+/// and reader tests so the two cannot drift apart. These tests need the sys
+/// crate, so they run in CI — not in the header-less scratch crate, which
+/// runs everything else with `-- --skip live_`.
+#[cfg(test)]
+pub(crate) static WRITER_SCHEMA: &[&str] = &[
+    "CREATE TABLE scan_history (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+     status INTEGER NOT NULL, created_at INT DEFAULT (unixepoch()), \
+     finished_at INT, entrypoint TEXT NOT NULL, error TEXT, \
+     type INT NOT NULL, indexed_file_count INT DEFAULT 0)",
+    "CREATE TABLE indexed_file (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+     path TEXT UNIQUE NOT NULL, skeleton_path TEXT NOT NULL, \
+     parent_id INT, last_modified_at INT, indexed_at INT NOT NULL DEFAULT (unixepoch()), \
+     type INT NOT NULL DEFAULT 0, category INT NOT NULL DEFAULT 0, \
+     size_bytes INT, mime_type_id INT)",
+    "CREATE TABLE mime_type (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+     name TEXT UNIQUE NOT NULL)",
+    "CREATE VIRTUAL TABLE path_idx USING fts5(path, content=indexed_file, \
+     tokenize='fuzzy_trigram remove_diacritics 2')",
+    "CREATE TRIGGER path_idx_ai AFTER INSERT ON indexed_file BEGIN \
+     INSERT INTO path_idx(rowid, path) VALUES (new.id, new.path); END",
+    "CREATE TRIGGER path_idx_ad AFTER DELETE ON indexed_file BEGIN \
+     INSERT INTO path_idx(path_idx, rowid, path) VALUES('delete', old.id, old.path); END",
+    "CREATE VIRTUAL TABLE skeleton_idx USING fts5(skeleton_path, \
+     content=indexed_file, \
+     tokenize='fuzzy_trigram remove_diacritics 2 skeleton 1 skipgrams 1')",
+    "CREATE TRIGGER skeleton_idx_ai AFTER INSERT ON indexed_file BEGIN \
+     INSERT INTO skeleton_idx(rowid, skeleton_path) \
+     VALUES (new.id, new.skeleton_path); END",
+    "CREATE TRIGGER skeleton_idx_ad AFTER DELETE ON indexed_file BEGIN \
+     INSERT INTO skeleton_idx(skeleton_idx, rowid, skeleton_path) \
+     VALUES('delete', old.id, old.skeleton_path); END",
+    "CREATE VIRTUAL TABLE spellfix_vocab USING spellfix1",
+];
 
 #[cfg(test)]
 mod tests {
@@ -792,39 +804,7 @@ mod tests {
         );
     }
 
-    /// A live database with the writer's schema. These `live_*` tests need
-    /// the sys crate, so they run in CI — not in the header-less scratch
-    /// crate, which runs everything else with `-- --skip live_`.
-    static WRITER_SCHEMA: &[&str] = &[
-        "CREATE TABLE scan_history (id INTEGER PRIMARY KEY AUTOINCREMENT, \
-         status INTEGER NOT NULL, created_at INT DEFAULT (unixepoch()), \
-         finished_at INT, entrypoint TEXT NOT NULL, error TEXT, \
-         type INT NOT NULL, indexed_file_count INT DEFAULT 0)",
-        "CREATE TABLE indexed_file (id INTEGER PRIMARY KEY AUTOINCREMENT, \
-         path TEXT UNIQUE NOT NULL, skeleton_path TEXT NOT NULL, \
-         parent_id INT, last_modified_at INT, indexed_at INT NOT NULL DEFAULT (unixepoch()), \
-         type INT NOT NULL DEFAULT 0, category INT NOT NULL DEFAULT 0, \
-         size_bytes INT, mime_type_id INT)",
-        "CREATE TABLE mime_type (id INTEGER PRIMARY KEY AUTOINCREMENT, \
-         name TEXT UNIQUE NOT NULL)",
-        "CREATE VIRTUAL TABLE path_idx USING fts5(path, content=indexed_file, \
-         tokenize='fuzzy_trigram remove_diacritics 2')",
-        "CREATE TRIGGER path_idx_ai AFTER INSERT ON indexed_file BEGIN \
-         INSERT INTO path_idx(rowid, path) VALUES (new.id, new.path); END",
-        "CREATE TRIGGER path_idx_ad AFTER DELETE ON indexed_file BEGIN \
-         INSERT INTO path_idx(path_idx, rowid, path) VALUES('delete', old.id, old.path); END",
-        "CREATE VIRTUAL TABLE skeleton_idx USING fts5(skeleton_path, \
-         content=indexed_file, \
-         tokenize='fuzzy_trigram remove_diacritics 2 skeleton 1 skipgrams 1')",
-        "CREATE TRIGGER skeleton_idx_ai AFTER INSERT ON indexed_file BEGIN \
-         INSERT INTO skeleton_idx(rowid, skeleton_path) \
-         VALUES (new.id, new.skeleton_path); END",
-        "CREATE TRIGGER skeleton_idx_ad AFTER DELETE ON indexed_file BEGIN \
-         INSERT INTO skeleton_idx(skeleton_idx, rowid, skeleton_path) \
-         VALUES('delete', old.id, old.skeleton_path); END",
-        "CREATE VIRTUAL TABLE spellfix_vocab USING spellfix1",
-    ];
-
+    /// Seeds a live database with the shared `WRITER_SCHEMA` above.
     fn live_writer() -> (tempfile::TempDir, SqliteWriter) {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("index.db");
