@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use compass_search::{MIN_QUALITY, Query};
 
-use crate::db_writer::ScanRecord;
+use crate::db_writer::{ScanRecord, ScanType};
 
 use crate::query_engine::{
     CANDIDATE_LIMIT, CORRECTION_FULL_PAGE_CONFIDENCE_THRESHOLD, IndexerFileResult,
@@ -72,6 +72,12 @@ pub trait IndexReader: Send + 'static {
     fn tracks_file(&self, path: &Path) -> bool;
     /// The latest succeeded scan — full or incremental — for `path`, if any.
     fn last_successful_scan(&self, path: &Path) -> Option<ScanRecord>;
+    /// The latest scan of one shape for `path`, whatever its status: the
+    /// orchestrator restarts from failures, not just successes.
+    fn last_scan(&self, path: &Path, scan_type: ScanType) -> Option<ScanRecord>;
+    /// Whether the typo-correction vocabulary has any words. False doubles
+    /// as "the table is not there yet", so failures read as absent, silently.
+    fn has_spellfix_vocabulary(&self) -> bool;
 }
 
 /// One engine, one database reader.
@@ -400,6 +406,14 @@ mod tests {
 
         fn last_successful_scan(&self, _path: &Path) -> Option<ScanRecord> {
             None
+        }
+
+        fn last_scan(&self, _path: &Path, _scan_type: ScanType) -> Option<ScanRecord> {
+            None
+        }
+
+        fn has_spellfix_vocabulary(&self) -> bool {
+            false
         }
     }
 

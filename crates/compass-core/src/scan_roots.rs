@@ -38,6 +38,16 @@ pub fn is_covered_by_any(path: &Path, roots: &[PathBuf]) -> bool {
         .any(|root| is_same_or_descendant_of(path, root))
 }
 
+/// One absolute, comparable path: `normalizePath` in `util.hpp`.
+///
+/// The working directory stands in for unresolvable paths — `absolute`
+/// only fails when the directory itself is gone, and a relative scan root
+/// still needs to mean something then.
+#[must_use]
+pub fn normalize_path(path: &Path) -> PathBuf {
+    lexically_normal(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
 /// Makes the paths absolute and comparable, then drops the duplicates.
 ///
 /// `resolve` turns a relative path into an absolute one — the C++ calls

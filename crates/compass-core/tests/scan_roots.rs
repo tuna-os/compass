@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use compass_core::scan_roots::{
     compact_subtrees, file_size_for, is_covered_by_any, is_same_or_descendant_of, lexically_normal,
-    normalize_paths,
+    normalize_path, normalize_paths,
 };
 
 fn paths(items: &[PathBuf]) -> Vec<String> {
@@ -143,6 +143,19 @@ fn a_sibling_with_a_shared_prefix_is_kept() {
     let compacted = compact_subtrees(owned(&["/home/user", "/home/user2"]));
 
     assert_eq!(paths(&compacted), ["/home/user", "/home/user2"]);
+}
+
+#[test]
+fn a_single_path_normalises_absolute_against_the_working_directory() {
+    let absolute = normalize_path(Path::new("/home/user/./code"));
+    assert_eq!(absolute.to_string_lossy(), "/home/user/code");
+
+    let cwd = std::env::current_dir().expect("working directory");
+    assert_eq!(
+        normalize_path(Path::new("code")),
+        cwd.join("code"),
+        "relative roots resolve under the working directory, like fs::absolute"
+    );
 }
 
 #[test]

@@ -408,6 +408,17 @@ mod tests {
                 .push(path.to_path_buf());
             self.scans.get(path).cloned()
         }
+
+        fn last_scan(&self, path: &Path, scan_type: ScanType) -> Option<ScanRecord> {
+            self.scans
+                .get(path)
+                .filter(|scan| scan.scan_type == scan_type)
+                .cloned()
+        }
+
+        fn has_spellfix_vocabulary(&self) -> bool {
+            false
+        }
     }
 
     struct Harness {
