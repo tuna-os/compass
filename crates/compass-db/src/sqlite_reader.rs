@@ -235,6 +235,43 @@ impl IndexReader for SqliteReader {
             _ => None,
         }
     }
+
+    fn last_scan(&self, path: &Path, scan_type: ScanType) -> Option<ScanRecord> {
+        let mut stmt = match self.db.prepare(
+            "SELECT id, status, created_at, entrypoint, type, finished_at, indexed_file_count \
+             FROM scan_history \
+             WHERE type = :type \
+             AND entrypoint = :entrypoint \
+             ORDER BY created_at DESC LIMIT 1",
+        ) {
+            Ok(stmt) => stmt,
+            Err(error) => {
+                tracing::warn!(error = ?error, "looking up the last scan");
+                return None;
+            }
+        };
+        if stmt.bind_int64(":type", scan_type as i64).is_err()
+            || stmt
+                .bind_text(":entrypoint", &path.to_string_lossy())
+                .is_err()
+        {
+            return None;
+        }
+        match stmt.step() {
+            Ok(true) => map_scan_record(&stmt),
+            _ => None,
+        }
+    }
+
+    fn has_spellfix_vocabulary(&self) -> bool {
+        let Ok(mut stmt) = self
+            .db
+            .prepare("SELECT 1 FROM spellfix_vocab_vocab LIMIT 1")
+        else {
+            return false;
+        };
+        matches!(stmt.step(), Ok(true))
+    }
 }
 
 /// The row id for `path`, when indexed.
@@ -548,6 +585,48 @@ mod tests {
             reader.last_successful_scan(Path::new("/home/ada/nowhere")),
             None
         );
+    }
+
+    #[test]
+    fn live_last_scan_returns_the_latest_of_one_shape() {
+        let (_dir, reader) = live_seed();
+        for statement in [
+            "INSERT INTO scan_history(entrypoint, type, status, created_at) \
+             VALUES ('/home/ada', 0, 4, 1000)",
+            "INSERT INTO scan_history(entrypoint, type, status, created_at) \
+             VALUES ('/home/ada', 0, 3, 2000)",
+            "INSERT INTO scan_history(entrypoint, type, status, created_at) \
+             VALUES ('/home/ada', 1, 4, 3000)",
+        ] {
+            reader.db.execute(statement).expect("scan seed");
+        }
+
+        // Failures count: the orchestrator restarts from those, not just
+        // successes — so the latest full scan is the failed one at 2000.
+        let full = reader
+            .last_scan(Path::new("/home/ada"), ScanType::Full)
+            .expect("a full scan");
+        assert_eq!(full.status, ScanStatus::Failed);
+        assert_eq!(full.created_at, 2000);
+        let incremental = reader
+            .last_scan(Path::new("/home/ada"), ScanType::Incremental)
+            .expect("an incremental scan");
+        assert_eq!(incremental.created_at, 3000);
+        assert_eq!(
+            reader.last_scan(Path::new("/home/ada/nowhere"), ScanType::Full),
+            None
+        );
+    }
+
+    #[test]
+    fn live_spellfix_vocabulary_reports_words_and_missing_tables() {
+        let (_dir, reader) = live_seed();
+        assert!(reader.has_spellfix_vocabulary());
+
+        let missing = tempfile::tempdir().expect("tempdir");
+        let bare = SqliteReader::open(&missing.path().join("empty.db")).expect("open");
+        assert!(!bare.has_spellfix_vocabulary());
+        assert_eq!(bare.last_scan(Path::new("/home/ada"), ScanType::Full), None);
     }
 
     #[test]

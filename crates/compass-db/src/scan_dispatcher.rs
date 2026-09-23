@@ -113,10 +113,14 @@ struct Debounce {
 }
 
 /// The file-indexer scan queue.
+///
+/// Shared across threads behind [`Arc`], so the join handles sit behind
+/// mutexes: a plain [`JoinHandle`] is not [`Sync`], and the indexer hands
+/// the queue to rebuild threads that outlive any borrow.
 pub struct ScanDispatcher<D: IndexDatabase, R: IndexReader> {
     shared: Arc<Shared<D, R>>,
-    workers: Vec<JoinHandle<()>>,
-    scheduler: Option<JoinHandle<()>>,
+    workers: Mutex<Vec<JoinHandle<()>>>,
+    scheduler: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl<D: IndexDatabase, R: IndexReader> ScanDispatcher<D, R> {
@@ -156,8 +160,8 @@ impl<D: IndexDatabase, R: IndexReader> ScanDispatcher<D, R> {
         let scheduler = std::thread::spawn(move || scheduler_loop(scheduler_shared));
         Self {
             shared,
-            workers,
-            scheduler: Some(scheduler),
+            workers: Mutex::new(workers),
+            scheduler: Mutex::new(Some(scheduler)),
         }
     }
 
@@ -288,10 +292,20 @@ impl<D: IndexDatabase, R: IndexReader> Drop for ScanDispatcher<D, R> {
         self.shared.alive.store(false, Ordering::SeqCst);
         self.shared.pending_cv.notify_all();
         self.shared.work_cv.notify_all();
-        if let Some(scheduler) = self.scheduler.take() {
+        if let Some(scheduler) = self
+            .scheduler
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
             let _ = scheduler.join();
         }
-        for worker in self.workers.drain(..) {
+        for worker in self
+            .workers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
             let _ = worker.join();
         }
     }
@@ -663,6 +677,14 @@ mod tests {
 
         fn last_successful_scan(&self, _path: &Path) -> Option<ScanRecord> {
             None
+        }
+
+        fn last_scan(&self, _path: &Path, _scan_type: ScanType) -> Option<ScanRecord> {
+            None
+        }
+
+        fn has_spellfix_vocabulary(&self) -> bool {
+            true
         }
     }
 

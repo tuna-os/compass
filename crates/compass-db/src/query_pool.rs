@@ -134,7 +134,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use crate::db_writer::ScanRecord;
+    use crate::db_writer::{ScanRecord, ScanType};
     use crate::query_engine::{IndexedFileCategory, SearchCandidate};
     use crate::query_policy::SpellfixSuggestion;
 
@@ -193,6 +193,14 @@ mod tests {
 
         fn last_successful_scan(&self, _path: &Path) -> Option<ScanRecord> {
             None
+        }
+
+        fn last_scan(&self, _path: &Path, _scan_type: ScanType) -> Option<ScanRecord> {
+            None
+        }
+
+        fn has_spellfix_vocabulary(&self) -> bool {
+            false
         }
     }
 
