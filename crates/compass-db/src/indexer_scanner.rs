@@ -2,7 +2,7 @@
 //!
 //! Ports `IndexerScanner`: the root goes out as a directory `Modify` first,
 //! every walked entry follows as a `Modify` with its write time, directory
-//! flag and size, and batches flush to the writer every [`INDEX_BATCH_SIZE`]
+//! flag and size, and batches flush to the writer every `INDEX_BATCH_SIZE`
 //! events with a final flush for the remainder. Progress counts entries, not
 //! the root, exactly like the C++ `reportProgress` calls.
 //!
@@ -10,15 +10,14 @@
 //! fail — lives in [`Scanner`]; this struct owns one alongside its walker,
 //! the way the C++ inherits `AbstractScanner`, and interrupts both together.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use compass_core::file_walk::IndexWalk;
 
-use crate::db_writer::{DbWriter, FileEvent, FileEventType, IndexDatabase};
+use crate::db_writer::{DbWriter, IndexDatabase};
 use crate::scan::{FullScan, Scan, ScanData};
-use crate::scanner::{Scanner, StatusCallback};
+use crate::scanner::{Scanner, StatusCallback, file_event, home_dir, root_event};
 
 /// Events per writer flush: `IndexerScanner::INDEX_BATCH_SIZE`.
 const INDEX_BATCH_SIZE: usize = 5_000;
@@ -70,25 +69,12 @@ impl<D: IndexDatabase> IndexerScanner<D> {
     /// event per entry into the writer.
     fn scan_full(&mut self, root: &Path, full: &FullScan) {
         self.walker.set_excluded_paths(full.excluded_paths.clone());
-        let mut batched = Vec::with_capacity(self.batch_size);
-        batched.push(FileEvent {
-            event_type: FileEventType::Modify,
-            path: root.to_path_buf(),
-            event_time: modified_at(root),
-            is_directory: true,
-            size_bytes: None,
-        });
+        let mut batched = vec![root_event(root)];
         let batch_size = self.batch_size;
         let core = &mut self.core;
         self.walker.walk(root, |entry| {
             core.report_progress(1);
-            batched.push(FileEvent {
-                event_type: FileEventType::Modify,
-                path: entry.path.clone(),
-                event_time: modified_at(&entry.path),
-                is_directory: entry.is_directory,
-                size_bytes: size_bytes(&entry.path, entry.is_directory),
-            });
+            batched.push(file_event(entry.path.clone(), entry.is_directory));
             if batched.len() >= batch_size {
                 core.index_events(std::mem::take(&mut batched));
                 batched.reserve(batch_size);
@@ -98,42 +84,17 @@ impl<D: IndexDatabase> IndexerScanner<D> {
     }
 }
 
-/// The write time, or the epoch when the file will not say: the C++ reads
-/// with an error code and keeps whatever it got, which is also a fallback.
-fn modified_at(path: &Path) -> SystemTime {
-    std::fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH)
-}
-
-/// The size, or nothing for directories, unreadable files and overflows:
-/// `fileSizeBytesFor` in `util.hpp`.
-fn size_bytes(path: &Path, is_directory: bool) -> Option<i64> {
-    if is_directory {
-        return None;
-    }
-    let size = std::fs::metadata(path).ok()?.len();
-    if size > i64::MAX as u64 {
-        return None;
-    }
-    Some(size as i64)
-}
-
-/// `$HOME`, or nothing when it is unset or empty: `homeDir` in `util.hpp`.
-fn home_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    (!home.as_os_str().is_empty()).then_some(home)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::path::PathBuf;
     use std::sync::{Mutex, PoisonError};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
-    use crate::db_writer::{IndexDatabase, ScanRecord, ScanStatus, ScanType};
+    use crate::db_writer::{FileEvent, IndexDatabase, ScanRecord, ScanStatus, ScanType};
     use crate::scan::{FullScan, IncrementalScan, ScanMode};
+    use crate::scanner::{modified_at, size_bytes};
 
     /// A database recording batches and events, in order.
     struct RecordingDb {

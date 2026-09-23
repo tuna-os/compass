@@ -5,13 +5,14 @@
 //! own one of these and call into it; the C++ spells that inheritance, Rust
 //! spells it composition.
 
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
-use crate::db_writer::{DbWriter, FileEvent, IndexDatabase, ScanStatus};
+use crate::db_writer::{DbWriter, FileEvent, FileEventType, IndexDatabase, ScanRecord, ScanStatus};
 use crate::scan::Scan;
 
 /// Progress reports closer together than this collapse into one.
@@ -137,6 +138,12 @@ impl<D: IndexDatabase> Scanner<D> {
         self.writer.index_events(events);
     }
 
+    /// Queues forgetting `paths`, the way concrete C++ scanners call
+    /// `m_writer->deleteIndexedFiles` on the shared half.
+    pub fn delete_indexed_files(&self, paths: Vec<PathBuf>) {
+        self.writer.delete_indexed_files(paths, None);
+    }
+
     /// Flags the scan interrupted. The next [`Scanner::finish`] closes it as
     /// such; scanners also poll [`Scanner::is_interrupted`] to stop early.
     pub fn interrupt(&self) {
@@ -148,6 +155,76 @@ impl<D: IndexDatabase> Scanner<D> {
     pub fn is_interrupted(&self) -> bool {
         self.interrupted.load(Ordering::SeqCst)
     }
+}
+
+/// A directory `Modify` for a scan root, sized nothing: every concrete scan
+/// reports the root before its entries, the way both C++ scanners do.
+pub(crate) fn root_event(root: &Path) -> FileEvent {
+    FileEvent {
+        event_type: FileEventType::Modify,
+        path: root.to_path_buf(),
+        event_time: modified_at(root),
+        is_directory: true,
+        size_bytes: None,
+    }
+}
+
+/// A `Modify` for one walked path, with its write time, directory flag and
+/// size.
+pub(crate) fn file_event(path: PathBuf, is_directory: bool) -> FileEvent {
+    FileEvent {
+        event_type: FileEventType::Modify,
+        path: path.clone(),
+        event_time: modified_at(&path),
+        is_directory,
+        size_bytes: size_bytes(&path, is_directory),
+    }
+}
+
+/// The write time, or the epoch when the file will not say: the C++ reads
+/// with an error code and keeps whatever it got, which is also a fallback.
+pub(crate) fn modified_at(path: &Path) -> SystemTime {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// The write time in unix seconds, or nothing when the disk will not say.
+pub(crate) fn modified_seconds(path: &Path) -> Option<i64> {
+    let seconds = std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    i64::try_from(seconds).ok()
+}
+
+/// The size, or nothing for directories, unreadable files and overflows:
+/// `fileSizeBytesFor` in `util.hpp`.
+pub(crate) fn size_bytes(path: &Path, is_directory: bool) -> Option<i64> {
+    if is_directory {
+        return None;
+    }
+    let size = std::fs::metadata(path).ok()?.len();
+    if size > i64::MAX as u64 {
+        return None;
+    }
+    Some(size as i64)
+}
+
+/// `$HOME`, or nothing when it is unset or empty: `homeDir` in `util.hpp`.
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    (!home.as_os_str().is_empty()).then_some(home)
+}
+
+/// A scan record's timestamp as the cutoff its successors compare against.
+/// The record stores it unsigned; the absurd end of the range scans nothing
+/// but unindexed files rather than wrapping.
+pub(crate) fn cutoff_seconds(record: &ScanRecord) -> i64 {
+    i64::try_from(record.created_at).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
