@@ -245,6 +245,11 @@ fn all_responses() -> Vec<Response> {
                 confirm_text: "Delete".into(),
                 cancel_text: "Cancel".into(),
             }),
+            toast: Some(compass_ipc::ExtensionToast {
+                title: "Copied".into(),
+                message: "to the clipboard".into(),
+                style: compass_ipc::ExtensionToastStyle::Animated,
+            }),
         },
         Response::ExtensionView {
             version: u64::MAX,
@@ -253,6 +258,7 @@ fn all_responses() -> Vec<Response> {
             ended: true,
             depth: 0,
             alert: None,
+            toast: None,
         },
     ]
 }

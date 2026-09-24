@@ -3311,7 +3311,31 @@ impl LauncherApp {
             .into()
     }
 
+    /// An extension's page: its view, with its toast underneath.
     fn extension_body<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+    ) -> Element<'a, Message> {
+        let body = self.extension_view_body(page);
+        let Some(toast) = &page.toast else {
+            return body;
+        };
+        let mut line = toast.title.clone();
+        if !toast.message.is_empty() {
+            line.push_str(" — ");
+            line.push_str(&toast.message);
+        }
+        if toast.animated {
+            line.push('…');
+        }
+        let mut footer = iced::widget::text(line).font(self.font()).size(12);
+        if toast.failure {
+            footer = footer.color(self.theme().palette().danger);
+        }
+        column![body, container(footer).padding(Padding::new(6.0).left(14))].into()
+    }
+
+    fn extension_view_body<'a>(
         &'a self,
         page: &'a crate::extension_page::ExtensionPage,
     ) -> Element<'a, Message> {
@@ -3967,6 +3991,8 @@ mod tests {
         depth: std::sync::Mutex<u32>,
         /// An alert the fake's first view carries.
         alert: Option<crate::backend::ExtensionPrompt>,
+        /// A toast the fake's views carry.
+        toast: Option<crate::backend::ExtensionToast>,
         answers: std::sync::Mutex<Vec<bool>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
@@ -4041,6 +4067,7 @@ mod tests {
                     ended: after > 0,
                     depth: *self.depth.lock().unwrap(),
                     alert: self.alert.clone(),
+                    toast: self.toast.clone(),
                 })
             })
         }
@@ -4315,6 +4342,33 @@ mod tests {
     }
 
     #[test]
+    fn an_extensions_toast_is_drawn_under_its_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(greeting_list(true)),
+            toast: Some(crate::backend::ExtensionToast {
+                failure: true,
+                animated: false,
+                title: "Offline".into(),
+                message: "retrying".into(),
+            }),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend);
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("hello").is_ok(), "{}", app.state_line());
+        assert!(ui.find("Offline — retrying").is_ok());
+    }
+
+    #[test]
     fn a_view_command_draws_its_list_and_enter_runs_the_selected_rows_action() {
         let (mut app, backend, _dir) = open_extension_view(greeting_list(true));
         let Page::Extension(page) = &app.page else {
@@ -4482,6 +4536,7 @@ mod tests {
                 ended: false,
                 depth: 1,
                 alert: None,
+                toast: None,
             });
         }
         for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Escape))) {

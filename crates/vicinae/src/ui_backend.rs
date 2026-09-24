@@ -99,8 +99,15 @@ impl ApplicationBackend for DaemonBackend {
                     ended,
                     depth,
                     alert,
+                    toast,
                 } => Ok(ExtensionViewState {
                     depth,
+                    toast: toast.map(|toast| compass_ui::backend::ExtensionToast {
+                        failure: toast.style == compass_ipc::ExtensionToastStyle::Failure,
+                        animated: toast.style == compass_ipc::ExtensionToastStyle::Animated,
+                        title: toast.title,
+                        message: toast.message,
+                    }),
                     alert: alert.map(|alert| compass_ui::backend::ExtensionPrompt {
                         title: alert.title,
                         message: alert.message,

@@ -70,6 +70,8 @@ pub struct ExtensionPage {
     pub notice: Option<String>,
     /// A confirmation the extension waits on; Enter and Escape answer it.
     pub alert: Option<crate::backend::ExtensionPrompt>,
+    /// The toast the extension shows, drawn under its view.
+    pub toast: Option<crate::backend::ExtensionToast>,
     /// How many views the extension has pushed; Escape pops above one.
     pub depth: u32,
     /// A detail's Markdown, parsed once per render rather than per frame.
@@ -106,6 +108,7 @@ impl ExtensionPage {
             selected: 0,
             notice: None,
             alert: None,
+            toast: None,
             depth: 1,
             markdown: Vec::new(),
             form_values: serde_json::Map::new(),
@@ -121,6 +124,7 @@ impl ExtensionPage {
     pub fn apply(&mut self, state: crate::backend::ExtensionViewState) {
         self.version = state.version;
         self.alert = state.alert;
+        self.toast = state.toast;
         if state.view.is_some() {
             if state.depth != self.depth {
                 // A different screen: its search starts empty, as Raycast's does.
@@ -584,6 +588,7 @@ mod tests {
             ended: false,
             depth: 1,
             alert: None,
+            toast: None,
         }
     }
 
@@ -848,6 +853,7 @@ mod tests {
             ended: false,
             depth: 1,
             alert: None,
+            toast: None,
         });
         assert!(matches!(&page.status, Status::Stopped(why) if why.contains("<grid>")));
 
@@ -859,6 +865,7 @@ mod tests {
             ended: true,
             depth: 1,
             alert: None,
+            toast: None,
         });
         assert_eq!(quiet.status, Status::Stopped("Quiet finished".into()));
     }

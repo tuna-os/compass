@@ -164,6 +164,22 @@ pub struct ExtensionViewState {
     pub depth: u32,
     /// A confirmation the extension waits on.
     pub alert: Option<ExtensionPrompt>,
+    /// The toast it shows, as `(style, title, message)`.
+    pub toast: Option<ExtensionToast>,
+}
+
+/// A toast an extension shows over its view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionToast {
+    /// Whether it reports a failure, which the footer draws in the danger
+    /// colour.
+    pub failure: bool,
+    /// Still working: drawn with an ellipsis.
+    pub animated: bool,
+    /// The heading.
+    pub title: String,
+    /// More text; may be empty.
+    pub message: String,
 }
 
 /// A confirmation an extension asked for, as the launcher shows it.
