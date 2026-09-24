@@ -27,6 +27,7 @@ pub mod spike;
 pub mod typography;
 pub mod ui_backend;
 mod ui_instance;
+pub mod vicinae_import;
 pub mod window;
 pub mod window_service;
 

@@ -139,6 +139,32 @@ impl Oo7Store {
     fn attributes() -> std::collections::HashMap<&'static str, &'static str> {
         KEYRING_ATTRIBUTES.into_iter().collect()
     }
+
+    /// Vicinae's own master key, read only, for the import. `None` when it
+    /// has none or the entry is not one (logged; the import then reads only
+    /// what is unencrypted).
+    pub async fn vicinae_master_key(&self) -> Option<[u8; KEY_SIZE]> {
+        let attributes: std::collections::HashMap<_, _> =
+            compass_crypto::keyring::master_key_attributes()
+                .into_iter()
+                .collect();
+        let item = self
+            .keyring
+            .search_items(&attributes)
+            .await
+            .ok()?
+            .into_iter()
+            .next()?;
+        let secret = item.secret().await.ok()?;
+        let text = std::str::from_utf8(secret.as_bytes()).ok()?;
+        match compass_crypto::keyring::master_key_from_secret(text) {
+            Ok(key) => Some(key),
+            Err(err) => {
+                tracing::warn!(error = %err, "Vicinae's keyring entry is not a key; not used");
+                None
+            }
+        }
+    }
 }
 
 impl SecretStore for Oo7Store {
@@ -270,6 +296,59 @@ impl ClipboardStore {
         Ok(Some((offer.mime_type, data)))
     }
 
+    /// Records one entry from another history with its own times, pin and
+    /// keywords. `false` when the same content is already here, which is
+    /// left exactly as it is: going through [`Self::record`] alone would
+    /// bubble it to now.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Store`] when the lookup, the insert or the metadata update
+    /// fails.
+    pub fn import(&self, entry: &crate::vicinae_import::VicinaeEntry) -> Result<bool, Error> {
+        let hash = ingest::content_hash(&entry.data);
+        {
+            let db = self.db();
+            let mut stmt = db
+                .prepare("SELECT 1 FROM selection WHERE hash_md5 = :hash LIMIT 1")
+                .map_err(|err| Error::Store(err.to_string()))?;
+            stmt.bind_text(":hash", &hash)
+                .map_err(|err| Error::Store(err.to_string()))?;
+            if stmt.step().map_err(|err| Error::Store(err.to_string()))? {
+                return Ok(false);
+            }
+        }
+        let Decision::Inserted { selection_id, .. } =
+            self.record(&entry.data, &entry.mime_type, entry.source.as_deref())?
+        else {
+            // Ignored: empty, blank or of no kind history keeps.
+            return Ok(false);
+        };
+        let db = self.db();
+        let mut stmt = db
+            .prepare(
+                "UPDATE selection SET created_at = :created, updated_at = :updated, \
+                 pinned_at = :pinned WHERE id = :id",
+            )
+            .map_err(|err| Error::Store(err.to_string()))?;
+        let bound = stmt
+            .bind_int64(":created", entry.created_at)
+            .and_then(|()| stmt.bind_int64(":updated", entry.updated_at))
+            .and_then(|()| match entry.pinned_at {
+                Some(pinned) => stmt.bind_int64(":pinned", pinned),
+                None => Ok(()),
+            })
+            .and_then(|()| stmt.bind_text(":id", &selection_id));
+        bound.map_err(|err| Error::Store(err.to_string()))?;
+        stmt.step().map_err(|err| Error::Store(err.to_string()))?;
+        drop(stmt);
+        if !entry.keywords.is_empty() {
+            compass_clipboard::write::set_keywords(&db, &selection_id, &entry.keywords)
+                .map_err(|err| Error::Store(err.to_string()))?;
+        }
+        Ok(true)
+    }
+
     /// Pins or unpins an entry; `false` when no entry has that id.
     ///
     /// # Errors
@@ -370,8 +449,8 @@ const RETRY_MAX: Duration = Duration::from_secs(60);
 /// history unavailable (the request then says so) rather than stopping the
 /// engine.
 pub async fn run(state: Arc<RwLock<EngineState>>) {
-    let store = match open_from_environment().await {
-        Ok(store) => Arc::new(store),
+    let (store, dir, keyring) = match open_from_environment().await {
+        Ok((store, dir, keyring)) => (Arc::new(store), dir, keyring),
         Err(err) => {
             tracing::warn!(error = %err, "clipboard history unavailable");
             return;
@@ -379,15 +458,52 @@ pub async fn run(state: Arc<RwLock<EngineState>>) {
     };
     tracing::info!("clipboard history open");
     state.write().await.set_clipboard(Arc::clone(&store));
+    import_from_vicinae(Arc::clone(&store), dir, &keyring).await;
     record_from_shell(store).await;
 }
 
-async fn open_from_environment() -> Result<ClipboardStore, Error> {
+async fn open_from_environment() -> Result<(ClipboardStore, PathBuf, Oo7Store), Error> {
     let dir = data_dir()?;
-    let key = master_key(&Oo7Store::connect().await?).await?;
-    tokio::task::spawn_blocking(move || ClipboardStore::open(&dir, &key))
+    let keyring = Oo7Store::connect().await?;
+    let key = master_key(&keyring).await?;
+    let opened = dir.clone();
+    let store = tokio::task::spawn_blocking(move || ClipboardStore::open(&opened, &key))
         .await
-        .map_err(|err| Error::Database(err.to_string()))?
+        .map_err(|err| Error::Database(err.to_string()))??;
+    Ok((store, dir, keyring))
+}
+
+/// Brings Vicinae's history across on the first start that can read it.
+///
+/// After the store is published, so a long import never makes history look
+/// unavailable, and before copies are recorded, so the import is the only
+/// writer while it runs. Vicinae keeps its files in the same data directory; its
+/// key is its own keyring entry, which may be absent (Vicinae never ran, or
+/// ran without a keyring) and is then simply not used.
+async fn import_from_vicinae(store: Arc<ClipboardStore>, dir: PathBuf, keyring: &Oo7Store) {
+    if crate::vicinae_import::marker_path(&dir).exists() {
+        return;
+    }
+    let master = keyring.vicinae_master_key().await;
+    let imported = tokio::task::spawn_blocking(move || {
+        crate::vicinae_import::import_once(&store, &dir, &dir, master.as_ref())
+    })
+    .await;
+    match imported {
+        Ok(Ok(Some(report))) if report != crate::vicinae_import::ImportReport::default() => {
+            tracing::info!(
+                imported = report.imported,
+                already_present = report.already_present,
+                skipped = report.skipped,
+                "imported Vicinae's clipboard history"
+            );
+        }
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "Vicinae's clipboard history was not imported; will retry");
+        }
+        Err(err) => tracing::warn!(error = %err, "the Vicinae import task failed"),
+    }
 }
 
 /// Follows `ClipboardChanged` for as long as the extension provides it,
