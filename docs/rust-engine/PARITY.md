@@ -1172,6 +1172,19 @@ the channel that matters.
 Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
 the behaviour changes, so a future fix is loud rather than silent.
 
+### `compass-db` — typo correction without `spellfix1`, in its own file
+
+**Kept on purpose (ADR-0017).** The C++ file indexer asks SQLite's `spellfix1` extension for
+corrections; Compass keeps a plain `vocabulary(word, rank)` table and suggests in Rust
+(`compass_db::vocabulary::suggest`): optimal-string-alignment distance from `strsim`, reported at
+100 per edit so the ported correction policy's thresholds read unchanged. Spellfix's phonetic
+candidate hash and per-character-class substitution costs are not reproduced, so individual
+suggestion lists differ; the ported quality suite (`compass-db/tests/query_quality.rs`) passes
+23/23 either way, and its four correction-dependent cases fail when suggestions are stubbed out.
+
+Because the schema differs (v2), Compass's index lives in `compass-file-index.db` rather than
+`file-indexer.db`, in the same directory. It is a cache: the first scan fills it, nothing migrates.
+
 ### `compass-core::root_items` — one slip no longer makes an app vanish (#204)
 
 **An improvement, kept on purpose (ADR-0017).** Both engines match root items as an ordered

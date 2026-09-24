@@ -485,6 +485,11 @@ pub struct LauncherApp {
     /// `None` until it happens, which is also what keeps the per-frame
     /// subscription from running for the life of the process.
     first_frame_at: Option<std::time::Instant>,
+    /// When a `Show` that has to open a window arrived, until that window's
+    /// first frame is drawn. The summon figure (§8.5); see `FrameDrawn`.
+    summoned_at: Option<std::time::Instant>,
+    /// The last summon figure, kept so it can be asserted on.
+    last_summon_draw: Option<std::time::Duration>,
     /// When the process started. See [`AppFlags::started_at`].
     started_at: Option<std::time::Instant>,
     /// Whether result rows show the application's icon. See [`AppFlags::icons`].
@@ -730,6 +735,8 @@ impl LauncherApp {
             tint: false,
             subtitles: true,
             first_frame_at: None,
+            summoned_at: None,
+            last_summon_draw: None,
             started_at: None,
             awaiting: false,
         }
@@ -1021,7 +1028,7 @@ impl LauncherApp {
         // Only while the first frame is still owed. Once it has been reported
         // this stream is dropped, so the per-frame message stops entirely
         // rather than being produced and discarded at the refresh rate.
-        if self.first_frame_at.is_none() {
+        if self.first_frame_at.is_none() || self.summoned_at.is_some() {
             streams.push(window::frames().map(|_| Message::FrameDrawn));
         }
         if let Some(link) = &self.link {
@@ -1060,7 +1067,15 @@ impl LauncherApp {
         };
 
         if !show {
+            self.summoned_at = None;
             return self.conceal();
+        }
+
+        if self.window.is_none() || self.closing {
+            // A summon that has to put a window on screen: the case the
+            // resident window (ADR-0015) exists to make fast. A second Show
+            // while the first is still opening keeps the earlier start.
+            self.summoned_at.get_or_insert_with(std::time::Instant::now);
         }
 
         if self.pending_window.is_some() {
@@ -1126,6 +1141,25 @@ impl LauncherApp {
             // Recorded, not gated: ADR-0010. A threshold comes from the
             // numbers, once there are some.
             Message::FrameDrawn => {
+                // SUMMON, RECORDED ON THE SAME TERMS AS COLD START BELOW: from
+                // the engine's `Show` reaching this process to the new window's
+                // first `RedrawRequested`. Only once that window has opened --
+                // a frame from a window still closing is not the summoned one.
+                // Logged as `summon_draw_ms`, a floor for the same reason
+                // `first_draw_ms` is: painting what was requested is not in it.
+                if self.window.is_some()
+                    && self.pending_window.is_none()
+                    && !self.closing
+                    && let Some(summoned) = self.summoned_at.take()
+                {
+                    let drawn = summoned.elapsed();
+                    self.last_summon_draw = Some(drawn);
+                    tracing::info!(
+                        target: "compass_ui::startup",
+                        summon_draw_ms = drawn.as_millis() as u64,
+                        "summoned window's first frame requested (a floor on summon latency)"
+                    );
+                }
                 if self.first_frame_at.is_none() {
                     let now = std::time::Instant::now();
                     self.first_frame_at = Some(now);
@@ -4767,6 +4801,67 @@ mod cold_start_tests {
     //
     // The cost of the miss is wasted work rather than wrong behaviour: the
     // latch below keeps a late frame from overwriting the figure either way.
+
+    fn hidden_app() -> (tempfile::TempDir, LauncherApp) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        app.first_frame_at = Some(std::time::Instant::now());
+        app.window = None;
+        app.pending_window = None;
+        (dir, app)
+    }
+
+    #[test]
+    fn a_summon_is_timed_from_show_to_the_new_windows_first_frame() {
+        let (_dir, mut app) = hidden_app();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let pending = app.pending_window.expect("Show opened a window");
+
+        // Nothing drawn yet: the window has not opened.
+        let _ = app.update(Message::FrameDrawn);
+        assert!(
+            app.last_summon_draw.is_none(),
+            "a frame before Opened is not the summoned one"
+        );
+
+        let _ = app.update(Message::Opened(pending));
+        let _ = app.update(Message::FrameDrawn);
+        let first = app.last_summon_draw.expect("the summon was timed");
+        assert!(app.summoned_at.is_none(), "the latch closed");
+
+        let _ = app.update(Message::FrameDrawn);
+        assert_eq!(
+            app.last_summon_draw,
+            Some(first),
+            "a later frame does not re-time it"
+        );
+    }
+
+    #[test]
+    fn show_on_a_visible_window_and_hide_time_nothing() {
+        let (_dir, mut app) = hidden_app();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let pending = app.pending_window.expect("opened");
+        let _ = app.update(Message::Opened(pending));
+        let _ = app.update(Message::FrameDrawn);
+        let first = app.last_summon_draw.expect("timed");
+
+        // Already on screen: raising it is not a summon.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert!(
+            app.summoned_at.is_none(),
+            "a visible window is not summoned"
+        );
+
+        // Hide cancels a pending measurement rather than leaving it to be
+        // closed by whatever frame comes next.
+        app.window = None;
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert!(app.summoned_at.is_some());
+        let _ = app.update(Message::Command(UiCommand::Hide));
+        assert!(app.summoned_at.is_none(), "hide drops the pending summon");
+        assert_eq!(app.last_summon_draw, Some(first));
+    }
 
     #[test]
     fn without_a_start_time_nothing_is_claimed() {

@@ -8,7 +8,7 @@
 
 /// A spellfix suggestion for one query word, mirroring the database's row.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpellfixSuggestion {
+pub struct VocabularySuggestion {
     /// The suggested word.
     pub word: String,
     /// The edit distance from the query word.
@@ -25,7 +25,7 @@ pub struct QueryWord {
     /// The word as typed.
     pub word: String,
     /// Its corrections, best first.
-    pub corrections: Vec<SpellfixSuggestion>,
+    pub corrections: Vec<VocabularySuggestion>,
 }
 
 /// One word of a correction plan: the original or its replacement.
@@ -102,7 +102,7 @@ pub fn prepare_correction_search_query(plan: &CorrectionPlan) -> String {
 
 /// Discounts a suggestion's score by how unfamiliar its word is.
 #[must_use]
-pub fn adjusted_suggestion_score(suggestion: &SpellfixSuggestion) -> f64 {
+pub fn adjusted_suggestion_score(suggestion: &VocabularySuggestion) -> f64 {
     f64::from(suggestion.score) - RANK_LOG_WEIGHT * (1.0 + suggestion.rank as f64).log2()
 }
 
@@ -141,11 +141,11 @@ fn same_family(first: &str, second: &str) -> bool {
 /// preferring the shorter word; and the list stops at `max_count`.
 #[must_use]
 pub fn pick_corrections(
-    suggestions: &[SpellfixSuggestion],
+    suggestions: &[VocabularySuggestion],
     original: &str,
     max_count: usize,
     trust_known_words: bool,
-) -> Vec<SpellfixSuggestion> {
+) -> Vec<VocabularySuggestion> {
     let lowered = original.to_ascii_lowercase();
 
     let known_word = trust_known_words
@@ -158,7 +158,7 @@ pub fn pick_corrections(
         return Vec::new();
     }
 
-    let mut picked: Vec<SpellfixSuggestion> = Vec::new();
+    let mut picked: Vec<VocabularySuggestion> = Vec::new();
     for suggestion in suggestions {
         if suggestion.distance > MAX_CORRECTION_DISTANCE {
             continue;
@@ -257,8 +257,8 @@ pub fn build_correction_plans(words: &[QueryWord], max_plans: usize) -> Vec<Corr
 mod tests {
     use super::*;
 
-    fn suggestion(word: &str, distance: i32, score: i32, rank: i64) -> SpellfixSuggestion {
-        SpellfixSuggestion {
+    fn suggestion(word: &str, distance: i32, score: i32, rank: i64) -> VocabularySuggestion {
+        VocabularySuggestion {
             word: word.to_owned(),
             distance,
             score,

@@ -36,7 +36,7 @@ pub const MIN_CORRECTION_TERM_LENGTH: usize = 3;
 
 /// One suggestion from the spelling index.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SpellfixSuggestion {
+pub struct VocabularySuggestion {
     /// The suggested word, always lowercase.
     pub word: String,
     /// Its edit distance from what was typed.
@@ -53,7 +53,7 @@ pub struct QueryWord {
     /// What was typed.
     pub word: String,
     /// What might have been meant, best first.
-    pub corrections: Vec<SpellfixSuggestion>,
+    pub corrections: Vec<VocabularySuggestion>,
 }
 
 /// What one word of the query becomes in one plan.
@@ -164,7 +164,7 @@ pub fn prepare_correction_search_query(plan: &CorrectionPlan) -> String {
 /// discount is logarithmic so the penalty grows quickly at first and then
 /// flattens.
 #[must_use]
-pub fn adjusted_suggestion_score(suggestion: &SpellfixSuggestion) -> f64 {
+pub fn adjusted_suggestion_score(suggestion: &VocabularySuggestion) -> f64 {
     f64::from(suggestion.score) - RANK_LOG_WEIGHT * (1.0 + suggestion.rank as f64).log2()
 }
 
@@ -202,11 +202,11 @@ pub fn same_family(left: &str, right: &str) -> bool {
 /// a word the corpus knows well — see [`TRUSTED_WORD_MIN_RANK`].
 #[must_use]
 pub fn pick_corrections(
-    suggestions: &[SpellfixSuggestion],
+    suggestions: &[VocabularySuggestion],
     original: &str,
     max_count: usize,
     trust_known_words: bool,
-) -> Vec<SpellfixSuggestion> {
+) -> Vec<VocabularySuggestion> {
     let lowered = original.to_lowercase();
 
     // A word the corpus knows is not a typo, so correcting it would replace a
@@ -221,7 +221,7 @@ pub fn pick_corrections(
         return Vec::new();
     }
 
-    let mut picked: Vec<SpellfixSuggestion> = Vec::with_capacity(max_count);
+    let mut picked: Vec<VocabularySuggestion> = Vec::with_capacity(max_count);
 
     for suggestion in suggestions {
         if suggestion.distance > MAX_CORRECTION_DISTANCE {

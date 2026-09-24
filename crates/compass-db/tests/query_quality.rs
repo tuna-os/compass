@@ -5,23 +5,24 @@
 //! real files on disk, indexed by `SqliteWriter`, queried through
 //! `FileIndexerQueryEngine` over `SqliteReader`. Nothing here is stubbed.
 //!
-//! It exists as the safety net for PLAN.md §12.0 item 2: moving typo
-//! correction off the vendored `spellfix1` extension, and re-basing the SQLite
-//! wrapper on `rusqlite`. The cases are grouped by which part of the stack
-//! they lean on, so a regression points at its cause:
+//! It was the safety net for PLAN.md §12.0 item 2(a): typo correction moved
+//! off the vendored `spellfix1` extension onto a plain vocabulary table and a
+//! Rust suggester (`compass_db::vocabulary`). The cases are grouped by which
+//! part of the stack they lean on, so a regression points at its cause:
 //!
 //! - *strict* and *bridging*: the `fuzzy_trigram` tokenizer's trigram and
 //!   separator handling;
-//! - *fallback*: the vocabulary typo correction `spellfix1` provides today;
+//! - *fallback*: vocabulary typo correction;
 //! - *skeleton*: the tokenizer's vowel-dropped tokens and skip-grams.
 //!
-//! Measured, not assumed: with `spellfix_suggestions` stubbed to return
+//! Measured, not assumed: with vocabulary suggestions stubbed to return
 //! nothing, exactly four cases fail — `fallback_transposition_typo`,
 //! `fallback_a_typoed_extension_is_corrected`,
 //! `fallback_a_numbered_family_does_not_crowd_out_the_real_correction` and
 //! `fallback_weak_words_are_dropped_from_filtering_but_still_ranked`. The other
-//! `fallback_*` cases are rescued by the skeleton index, so they say nothing
-//! about spellfix; those four are the bar a replacement has to clear.
+//! `fallback_*` cases are rescued by the skeleton index. Those four passed
+//! against `spellfix1` and pass against the Rust suggester; the same four fail
+//! when either is stubbed out.
 //!
 //! The C++ cases about database bookkeeping (recent directories, sizes,
 //! refresh times) are not search quality and are not ported here.
@@ -102,7 +103,7 @@ fn env() -> &'static Env {
         prepare_file_index_database(&db).expect("the schema applies");
         let mut writer = SqliteWriter::open(&db).expect("the index opens");
         writer.index_files(&paths);
-        writer.rebuild_spellfix_vocabulary();
+        writer.rebuild_vocabulary();
         drop(writer);
         Env { _root: root, db }
     })

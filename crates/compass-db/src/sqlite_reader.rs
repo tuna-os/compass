@@ -1,7 +1,7 @@
 //! The [`IndexReader`] that talks to SQLite.
 //!
 //! Implements the three read queries `FileIndexerDatabase` serves the query
-//! engine — strict candidates, skeleton candidates, spellfix suggestions —
+//! engine — strict candidates, skeleton candidates, vocabulary suggestions —
 //! over a [`Database`]. The SQL mirrors the C++ row for row: same tables,
 //! same match strings, same category filter, same skeleton rank order.
 //!
@@ -14,6 +14,7 @@
 //! never writes, and never encrypts: the C++ engine keeps the file index
 //! unencrypted.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -22,12 +23,15 @@ use compass_sqlcipher_sys::{Database, Statement};
 
 use crate::db_writer::{ScanRecord, ScanStatus, ScanType};
 use crate::query_engine::{IndexedFileCategory, SearchCandidate, SearchOptions};
-use crate::query_policy::SpellfixSuggestion;
+use crate::query_policy::VocabularySuggestion;
 use crate::query_reader::IndexReader;
+use crate::vocabulary::Vocabulary;
 
 /// One file-index database, open for reading.
 pub struct SqliteReader {
     db: Database,
+    /// The vocabulary as last loaded, and the `data_version` it was loaded at.
+    vocabulary: RefCell<Option<(i64, Vocabulary)>>,
 }
 
 impl SqliteReader {
@@ -39,7 +43,43 @@ impl SqliteReader {
     pub fn open(path: &Path) -> Result<Self, compass_sqlcipher_sys::Error> {
         Ok(Self {
             db: Database::open(path, &[])?,
+            vocabulary: RefCell::new(None),
         })
+    }
+
+    /// Runs `f` over the typo vocabulary, reloading it only when another
+    /// connection has committed since the last load.
+    fn with_vocabulary<T>(&self, f: impl FnOnce(&Vocabulary) -> T) -> T {
+        let version = self
+            .db
+            .query_one_text("PRAGMA data_version")
+            .ok()
+            .flatten()
+            .and_then(|version| version.parse::<i64>().ok());
+        let mut cache = self.vocabulary.borrow_mut();
+        let fresh = matches!((&*cache, version), (Some((cached, _)), Some(now)) if *cached == now);
+        if !fresh {
+            *cache = Some((version.unwrap_or(-1), self.load_vocabulary()));
+        }
+        let (_, words) = cache.get_or_insert_with(|| (-1, Vocabulary::default()));
+        f(words)
+    }
+
+    fn load_vocabulary(&self) -> Vocabulary {
+        let mut stmt = match self.db.prepare("SELECT word, rank FROM vocabulary") {
+            Ok(stmt) => stmt,
+            Err(error) => {
+                tracing::warn!(error = ?error, "reading the vocabulary");
+                return Vocabulary::default();
+            }
+        };
+        let mut words = Vec::new();
+        while let Ok(true) = stmt.step() {
+            if let Some(word) = stmt.column_text(0) {
+                words.push((word, stmt.column_int64(1)));
+            }
+        }
+        Vocabulary::new(words)
     }
 
     /// Runs a candidate query over one FTS table.
@@ -112,40 +152,14 @@ impl IndexReader for SqliteReader {
         self.search_in("skeleton_idx", true, query, limit, options)
     }
 
-    fn spellfix_suggestions(&self, word: &str, top: i32, prefix: bool) -> Vec<SpellfixSuggestion> {
-        let mut stmt = match self.db.prepare(SPELLFIX_SQL) {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::warn!(error = ?error, "preparing the spellfix query");
-                return Vec::new();
-            }
-        };
-        let pattern = spellfix_pattern(word, prefix);
-        if let Err(error) = bind_spellfix(&mut stmt, &pattern, top) {
-            tracing::warn!(error = ?error, "binding the spellfix query");
-            return Vec::new();
-        }
-        let mut results = Vec::new();
-        loop {
-            match stmt.step() {
-                Ok(true) => {}
-                Ok(false) => break,
-                Err(error) => {
-                    tracing::warn!(error = ?error, "reading spellfix rows");
-                    break;
-                }
-            }
-            let Some(found) = stmt.column_text(0) else {
-                continue;
-            };
-            results.push(SpellfixSuggestion {
-                word: found,
-                distance: i32::try_from(stmt.column_int64(1)).unwrap_or(i32::MAX),
-                score: i32::try_from(stmt.column_int64(2)).unwrap_or(i32::MAX),
-                rank: stmt.column_int64(3),
-            });
-        }
-        results
+    fn vocabulary_suggestions(
+        &self,
+        word: &str,
+        top: i32,
+        prefix: bool,
+    ) -> Vec<VocabularySuggestion> {
+        let top = usize::try_from(top).unwrap_or(0);
+        self.with_vocabulary(|words| crate::vocabulary::suggest(words, word, top, prefix))
     }
 
     fn list_indexed_directory_files(&self, path: &Path) -> HashSet<PathBuf> {
@@ -264,11 +278,8 @@ impl IndexReader for SqliteReader {
         }
     }
 
-    fn has_spellfix_vocabulary(&self) -> bool {
-        let Ok(mut stmt) = self
-            .db
-            .prepare("SELECT 1 FROM spellfix_vocab_vocab LIMIT 1")
-        else {
+    fn has_vocabulary(&self) -> bool {
+        let Ok(mut stmt) = self.db.prepare("SELECT 1 FROM vocabulary LIMIT 1") else {
             return false;
         };
         matches!(stmt.step(), Ok(true))
@@ -315,11 +326,6 @@ pub(crate) fn file_id(db: &Database, path: &Path) -> Option<i64> {
     }
 }
 
-/// The spellfix lookup: suggestions near `:pattern`, at most `:top`.
-const SPELLFIX_SQL: &str = "SELECT word, distance, score, rank \
-    FROM spellfix_vocab \
-    WHERE word MATCH :pattern AND top = :top";
-
 /// The strict/skeleton candidate lookup over `table`, one of the two FTS
 /// tables: the row, its category, and its MIME name, narrowed by the category
 /// filter the C++ appends, skeleton results in rank order.
@@ -356,27 +362,6 @@ fn bind_search(
         None => stmt.bind_null(":category")?,
     }
     Ok(())
-}
-
-/// Binds the spellfix parameters: the lowered pattern and the suggestion cap.
-fn bind_spellfix(
-    stmt: &mut Statement<'_>,
-    pattern: &str,
-    top: i32,
-) -> Result<(), compass_sqlcipher_sys::Error> {
-    stmt.bind_text(":pattern", pattern)?;
-    stmt.bind_int64(":top", i64::from(top))?;
-    Ok(())
-}
-
-/// The spellfix pattern for `word`: lowered, prefix-extended when asked, the
-/// way the C++ builds it.
-fn spellfix_pattern(word: &str, prefix: bool) -> String {
-    let mut pattern = word.to_ascii_lowercase();
-    if prefix {
-        pattern.push('*');
-    }
-    pattern
 }
 
 /// Reads a stored scan status. Unreachable values fall back to `Pending`:
@@ -474,13 +459,6 @@ mod tests {
     }
 
     #[test]
-    fn spellfix_patterns_lowercase_and_star_on_request() {
-        assert_eq!(spellfix_pattern("Report", true), "report*");
-        assert_eq!(spellfix_pattern("Report", false), "report");
-        assert_eq!(spellfix_pattern("", true), "*");
-    }
-
-    #[test]
     fn candidate_queries_match_filter_limit_and_rank() {
         let strict = candidate_sql("path_idx", false);
         assert!(strict.contains("path_idx MATCH :search"));
@@ -509,7 +487,7 @@ mod tests {
              VALUES ('/home/ada/report.txt', 'rprt txt', 5, 1)",
             "INSERT INTO indexed_file(path, skeleton_path, category) \
              VALUES ('/home/ada/photo.jpg', 'pht jpg', 2)",
-            "INSERT INTO spellfix_vocab(word, rank) VALUES ('report', 5)",
+            "INSERT INTO vocabulary(word, rank) VALUES ('report', 5)",
         ] {
             reader.db.execute(statement).expect("seed");
         }
@@ -551,16 +529,33 @@ mod tests {
     }
 
     #[test]
-    fn live_spellfix_suggests_the_vocabulary() {
+    fn live_vocabulary_suggests_close_words() {
         let (_dir, reader) = live_seed();
         for prefix in [true, false] {
-            let suggestions = reader.spellfix_suggestions("reprot", 20, prefix);
+            let suggestions = reader.vocabulary_suggestions("reprot", 20, prefix);
             let found = suggestions
                 .iter()
                 .find(|suggestion| suggestion.word == "report")
                 .expect("report is suggested");
             assert_eq!(found.rank, 5);
         }
+    }
+
+    #[test]
+    fn live_vocabulary_is_reloaded_after_another_connection_writes_it() {
+        let (dir, reader) = live_seed();
+        assert!(
+            reader
+                .vocabulary_suggestions("invioce", 20, false)
+                .is_empty()
+        );
+        // A rebuild lands from the writer's connection, not this one.
+        let writer = Database::open(&dir.path().join("index.db"), &[]).expect("writer");
+        writer
+            .execute("INSERT INTO vocabulary(word, rank) VALUES ('invoice', 2)")
+            .expect("vocabulary write");
+        let found = reader.vocabulary_suggestions("invioce", 20, false);
+        assert_eq!(found.first().map(|s| s.word.as_str()), Some("invoice"));
     }
 
     #[test]
@@ -648,13 +643,13 @@ mod tests {
     }
 
     #[test]
-    fn live_spellfix_vocabulary_reports_words_and_missing_tables() {
+    fn live_vocabulary_reports_words_and_missing_tables() {
         let (_dir, reader) = live_seed();
-        assert!(reader.has_spellfix_vocabulary());
+        assert!(reader.has_vocabulary());
 
         let missing = tempfile::tempdir().expect("tempdir");
         let bare = SqliteReader::open(&missing.path().join("empty.db")).expect("open");
-        assert!(!bare.has_spellfix_vocabulary());
+        assert!(!bare.has_vocabulary());
         assert_eq!(bare.last_scan(Path::new("/home/ada"), ScanType::Full), None);
     }
 

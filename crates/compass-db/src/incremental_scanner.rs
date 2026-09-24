@@ -272,7 +272,7 @@ mod tests {
 
     use crate::db_writer::{FileEvent, IndexDatabase, ScanRecord, ScanStatus, ScanType};
     use crate::query_engine::{SearchCandidate, SearchOptions};
-    use crate::query_policy::SpellfixSuggestion;
+    use crate::query_policy::VocabularySuggestion;
     use crate::scan::{FullScan, IncrementalScan, ScanMode};
 
     /// A database recording batches, events and deletes, in order.
@@ -331,7 +331,7 @@ mod tests {
             false
         }
 
-        fn rebuild_spellfix_vocabulary(&mut self) {}
+        fn rebuild_vocabulary(&mut self) {}
 
         fn index_events(&mut self, events: &[FileEvent]) {
             self.batches
@@ -384,12 +384,12 @@ mod tests {
             Vec::new()
         }
 
-        fn spellfix_suggestions(
+        fn vocabulary_suggestions(
             &self,
             _word: &str,
             _top: i32,
             _prefix: bool,
-        ) -> Vec<SpellfixSuggestion> {
+        ) -> Vec<VocabularySuggestion> {
             Vec::new()
         }
 
@@ -416,7 +416,7 @@ mod tests {
                 .cloned()
         }
 
-        fn has_spellfix_vocabulary(&self) -> bool {
+        fn has_vocabulary(&self) -> bool {
             false
         }
 
