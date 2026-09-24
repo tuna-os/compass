@@ -164,8 +164,8 @@ jobs:
 
           # Extensions need both halves inside the sandbox, not on the runner.
           flatpak run --user --command=sh com.vicinae.Vicinae -c \
-            'node --version && test -s /app/share/vicinae/extension-runtime.js' \
-            || { echo "::error::the Flatpak cannot run extensions: Node or the runtime bundle is missing"; exit 1; }
+            'node --version && test -s /app/share/vicinae/extension-runtime.js && test -x /app/libexec/compass-sandbox-exec' \
+            || { echo "::error::the Flatpak cannot run extensions: Node, the runtime bundle or compass-sandbox-exec is missing"; exit 1; }
 
           flatpak run --user com.vicinae.Vicinae --socket /tmp/ci.sock doctor --json | tee /tmp/doctor.json
           python3 -c "

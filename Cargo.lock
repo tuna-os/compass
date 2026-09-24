@@ -5628,6 +5628,7 @@ dependencies = [
  "compass-platform",
  "compass-platform-linux",
  "compass-portals",
+ "compass-sandbox",
  "compass-shell",
  "compass-sqlcipher-sys",
  "compass-testkit",

@@ -1075,12 +1075,23 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
             ]}"#,
     )
     .unwrap();
-    let out = root.join("greeting.txt");
+    // In the extension's support directory, one of the two places the sandbox
+    // lets it write. Not the tempdir: that is under /tmp, which it may not.
+    let out = root.join("data-home/vicinae/support/hello/greeting.txt");
+    // Outside every path the sandbox grants: the data home itself, beside the
+    // support directory the command may write.
+    let escape = root.join("data-home/escape.txt");
     std::fs::write(
         ext.join("write.js"),
         format!(
-            "module.exports.default = async () => {{ require('node:fs').writeFileSync({:?}, 'hi'); }};",
-            out.to_string_lossy()
+            "module.exports.default = async () => {{
+               const fs = require('node:fs');
+               let escaped = 'wrote';
+               try {{ fs.writeFileSync({escape:?}, 'x'); }} catch (e) {{ escaped = e.code; }}
+               fs.writeFileSync({out:?}, 'hi:' + escaped);
+             }};",
+            escape = escape.to_string_lossy(),
+            out = out.to_string_lossy()
         ),
     )
     .unwrap();
@@ -1129,8 +1140,8 @@ fn an_installed_extension_command_is_found_and_a_no_view_one_runs() {
     }
     assert_eq!(
         std::fs::read_to_string(&out).ok().as_deref(),
-        Some("hi"),
-        "the command ran"
+        Some("hi:EACCES"),
+        "the command ran, confined: a write outside its directories is refused"
     );
 
     let Response::Error(err) = daemon.request(Request::RunExtensionCommand {

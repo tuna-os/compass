@@ -46,6 +46,16 @@ pub const RUNTIME_ENV: &str = "COMPASS_EXTENSION_RUNTIME";
 /// Overrides which Node runs it.
 pub const NODE_ENV: &str = "COMPASS_NODE";
 
+/// Overrides where `compass-sandbox-exec` is looked for.
+pub const SANDBOX_EXEC_ENV: &str = "COMPASS_SANDBOX_EXEC";
+
+/// Set to `off` to run extensions unconfined, for development on a machine
+/// without the launcher. Anything else, or unset, means confined or refused.
+pub const SANDBOX_SWITCH_ENV: &str = "COMPASS_EXTENSION_SANDBOX";
+
+/// The sandbox launcher's file name.
+pub const SANDBOX_EXEC_NAME: &str = "compass-sandbox-exec";
+
 /// The bundle's file name wherever it is installed.
 pub const RUNTIME_FILE_NAME: &str = "extension-runtime.js";
 
@@ -69,6 +79,9 @@ pub struct Runtime {
     pub node: PathBuf,
     /// The runtime bundle it runs.
     pub bundle: PathBuf,
+    /// `compass-sandbox-exec`, which confines the runtime before it starts;
+    /// `None` only when [`SANDBOX_SWITCH_ENV`] is `off`.
+    pub sandbox: Option<PathBuf>,
 }
 
 impl Runtime {
@@ -93,8 +106,107 @@ impl Runtime {
             .map(PathBuf::from)
             .or_else(|| on_path("node"))
             .ok_or_else(|| "Running extensions needs Node.js, and none was found".to_owned())?;
-        Ok(Self { node, bundle })
+        let sandbox = if std::env::var_os(SANDBOX_SWITCH_ENV).is_some_and(|v| v == "off") {
+            tracing::warn!("{SANDBOX_SWITCH_ENV}=off: extensions run unconfined");
+            None
+        } else {
+            Some(
+                std::env::var_os(SANDBOX_EXEC_ENV)
+                    .map(PathBuf::from)
+                    .or_else(installed_sandbox)
+                    .filter(|path| path.is_file())
+                    .ok_or_else(|| {
+                        "Running extensions needs compass-sandbox-exec, which this install of \
+                         Compass does not include, and Compass will not run them unconfined"
+                            .to_owned()
+                    })?,
+            )
+        };
+        Ok(Self {
+            node,
+            bundle,
+            sandbox,
+        })
     }
+}
+
+fn installed_sandbox() -> Option<PathBuf> {
+    let beside_exe = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join(SANDBOX_EXEC_NAME)));
+    beside_exe
+        .into_iter()
+        .chain([Path::new("/app/libexec").join(SANDBOX_EXEC_NAME)])
+        .find(|path| path.is_file())
+}
+
+/// What the runtime may touch while it runs `command`.
+///
+/// Read: the system (Node's libraries, certificates, ICU data, `/proc`), Node,
+/// the bundle and the extension's own directory. Write: only the support and
+/// asset directories the runtime creates for this extension. Not `/tmp`:
+/// every other process's temporary files are there, so the extension gets its
+/// own, [`tmp_dir`], as `TMPDIR`.
+/// Execute: Node and the system's programs, so an extension that shells out
+/// still can, inside the same boundary. Paths that do not exist are left out,
+/// since Landlock cannot name them.
+#[must_use]
+pub fn policy(
+    runtime: &Runtime,
+    command: &ExtensionCommand,
+    data_dir: &Path,
+) -> compass_sandbox::Policy {
+    let parent = |path: &Path| path.parent().map(Path::to_path_buf);
+    let read = [
+        "/usr", "/etc", "/proc", "/sys", "/dev", "/lib", "/lib64", "/bin", "/app",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .chain(parent(&runtime.node))
+    .chain(parent(&runtime.bundle))
+    .chain([command.extension_dir.clone()]);
+    let write = [
+        support_dir(data_dir, command),
+        assets_dir(data_dir, command),
+    ];
+    let execute = ["/usr/bin", "/bin", "/app/bin"]
+        .into_iter()
+        .map(PathBuf::from)
+        .chain([runtime.node.clone()]);
+
+    let mut policy = compass_sandbox::Policy::new();
+    for path in read.filter(|path| path.exists()) {
+        policy = policy.read(path);
+    }
+    for path in write.into_iter().filter(|path| path.exists()) {
+        policy = policy.read(path.clone()).write(path);
+    }
+    for path in execute.filter(|path| path.exists()) {
+        policy = policy.execute(path);
+    }
+    policy
+}
+
+/// `<data>/support/<extension id>`, where the runtime keeps an extension's
+/// support files and logs.
+#[must_use]
+pub fn support_dir(data_dir: &Path, command: &ExtensionCommand) -> PathBuf {
+    data_dir.join("support").join(&command.extension_id)
+}
+
+/// `<support>/.tmp`, the extension's private temporary directory.
+#[must_use]
+pub fn tmp_dir(data_dir: &Path, command: &ExtensionCommand) -> PathBuf {
+    support_dir(data_dir, command).join(".tmp")
+}
+
+/// `<data>/extensions/<extension id>/assets`, which the runtime creates.
+#[must_use]
+pub fn assets_dir(data_dir: &Path, command: &ExtensionCommand) -> PathBuf {
+    data_dir
+        .join("extensions")
+        .join(&command.extension_id)
+        .join("assets")
 }
 
 fn installed_bundle() -> Option<PathBuf> {
@@ -176,10 +288,28 @@ pub fn start(
     }
     let preferences = command.default_preferences().unwrap_or_default();
 
-    let mut process = std::process::Command::new(&runtime.node);
-    process.arg(&runtime.bundle);
-    let mut worker = Worker::spawn(process)
-        .map_err(|err| format!("The extension runtime would not start: {err}"))?;
+    // The runtime creates these itself, but a sandbox can only grant a path
+    // that exists, so they are made first.
+    for dir in [tmp_dir(data_dir, command), assets_dir(data_dir, command)] {
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            tracing::info!(dir = %dir.display(), %err, "could not prepare an extension directory");
+        }
+    }
+    let bundle = [runtime.bundle.to_string_lossy().into_owned()];
+    let mut process = match &runtime.sandbox {
+        Some(launcher) => {
+            policy(runtime, command, data_dir).command(launcher, &runtime.node, &bundle)
+        }
+        None => {
+            let mut process = std::process::Command::new(&runtime.node);
+            process.args(bundle);
+            process
+        }
+    };
+    process.env("TMPDIR", tmp_dir(data_dir, command));
+    let spawned = Worker::spawn(process);
+    let mut worker =
+        spawned.map_err(|err| format!("The extension runtime would not start: {err}"))?;
     let pid = worker.pid();
 
     // The watchdog also bounds the handshake: a runtime that never answers

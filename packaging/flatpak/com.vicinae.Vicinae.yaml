@@ -113,8 +113,11 @@ modules:
       env:
         CARGO_NET_OFFLINE: 'true'
     build-commands:
-      - cargo --offline build --release --locked -p vicinae
+      - cargo --offline build --release --locked -p vicinae -p compass-sandbox --bins
       - install -Dm755 target/release/vicinae /app/bin/vicinae
+      # Confines the extension runtime (Landlock + seccomp) before it starts; the engine
+      # refuses to run extensions without it. See crates/compass-sandbox.
+      - install -Dm755 target/release/compass-sandbox-exec /app/libexec/compass-sandbox-exec
       - install -Dm644 packaging/flatpak/com.vicinae.Vicinae.desktop
         /app/share/applications/com.vicinae.Vicinae.desktop
       - install -Dm644 packaging/flatpak/com.vicinae.Vicinae.metainfo.xml

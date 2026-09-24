@@ -2448,8 +2448,15 @@ their `no-view` commands. Until now the Phase 4 crates were tested libraries tha
   - a `view` command (no view renderer yet);
   - a required preference without a default (no preference editor yet);
   - a missing runtime or Node.
-- Still to come: the view renderer, preferences, the sandbox and cgroup cap around the runtime,
-  and shipping Node and the bundle in the Flatpak.
+- The runtime runs **confined**, behind `compass-sandbox-exec` (Landlock + seccomp, strict). It
+  may read the system, Node, the bundle and its own extension, and write only that extension's
+  support and asset directories. It gets a private `TMPDIR` rather than `/tmp`. The engine
+  refuses to run extensions without the launcher unless `COMPASS_EXTENSION_SANDBOX=off`. The
+  end-to-end test requires a write outside those directories to fail with `EACCES`, and fails
+  with the sandbox off.
+- The Flatpak ships Node (`org.freedesktop.Sdk.Extension.node22`), the bundle and the launcher.
+  Its CI asserts all three inside the installed sandbox.
+- Still to come: the view renderer, preferences, arguments, and the cgroup memory cap.
 
 **Needs the project owner:** nothing. ADR-0018 decided the Suite 0 gate (it keeps blocking), GNOME 51
 (reworded gate, #4 closed), team size (one person), rustcast (a seed), and the upstream report (none).
