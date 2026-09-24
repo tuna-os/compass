@@ -16,6 +16,23 @@ use compass_extension_api::View;
 use compass_extension_api::action::{ActionPanel, HandlerId};
 use compass_extension_api::view::ListItem;
 
+/// What a row's icon is drawn from, resolved once per render.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RowIcon {
+    /// A file. A builtin is monochrome and drawn in `tint`, else the text
+    /// colour; other art keeps its own colours.
+    Art {
+        /// The file.
+        art: crate::icons::IconArt,
+        /// Whether it is one of the builtin, single-colour icons.
+        monochrome: bool,
+        /// The colour the extension asked for.
+        tint: Option<iced::Color>,
+    },
+    /// A flat colour: a grid cell whose content is one.
+    Swatch(iced::Color),
+}
+
 /// Where the command is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
@@ -62,6 +79,12 @@ pub struct ExtensionPage {
     /// How many times the person has edited each field, for `onChange`'s
     /// echo count (ADR-0009).
     pub form_edits: std::collections::BTreeMap<String, u64>,
+    /// The extension's `assets` directory, which `Image` paths are relative to.
+    pub assets: Option<std::path::PathBuf>,
+    /// Whether the launcher is dark, for themed images.
+    pub prefers_dark: bool,
+    /// Each row's icon, by `(section, item)` like the list.
+    pub icons: Vec<Vec<Option<RowIcon>>>,
 }
 
 impl ExtensionPage {
@@ -84,6 +107,9 @@ impl ExtensionPage {
             markdown: Vec::new(),
             form_values: serde_json::Map::new(),
             form_edits: std::collections::BTreeMap::new(),
+            assets: None,
+            prefers_dark: false,
+            icons: Vec::new(),
         }
     }
 
@@ -105,8 +131,30 @@ impl ExtensionPage {
             // A grid is shown as rows until the launcher draws image tiles:
             // the same search, selection and actions, one cell per row.
             let view = match *view {
-                View::Grid(grid) => Box::new(View::List(grid_as_list(grid))),
-                other => Box::new(other),
+                View::Grid(grid) => {
+                    self.icons = grid
+                        .sections
+                        .iter()
+                        .map(|s| s.items.iter().map(|c| self.cell_icon(&c.content)).collect())
+                        .collect();
+                    Box::new(View::List(grid_as_list(grid)))
+                }
+                other => {
+                    self.icons = match &other {
+                        View::List(list) => list
+                            .sections
+                            .iter()
+                            .map(|s| {
+                                s.items
+                                    .iter()
+                                    .map(|item| item.icon.as_ref().and_then(|i| self.image_icon(i)))
+                                    .collect()
+                            })
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    Box::new(other)
+                }
             };
             let key = self.selected_item().and_then(|item| item.key.clone());
             self.markdown = match view.as_ref() {
@@ -138,6 +186,50 @@ impl ExtensionPage {
         } else if state.ended && self.status != Status::Ready {
             self.status = Status::Stopped(format!("{} finished", self.title));
         }
+    }
+
+    /// The icon of the row at `(section, item)`.
+    #[must_use]
+    pub fn icon(&self, section: usize, item: usize) -> Option<&RowIcon> {
+        self.icons.get(section)?.get(item)?.as_ref()
+    }
+
+    fn cell_icon(&self, content: &compass_extension_api::view::GridContent) -> Option<RowIcon> {
+        match content {
+            compass_extension_api::view::GridContent::Image(image) => self.image_icon(image),
+            compass_extension_api::view::GridContent::Color(color) => {
+                color_of(color).map(RowIcon::Swatch)
+            }
+        }
+    }
+
+    /// The file an `Image` is drawn from: a builtin icon, a file in the
+    /// extension's assets, or a `file://` URL. Remote URLs and file icons are
+    /// not fetched yet, and fall back to the row's initial.
+    fn image_icon(&self, image: &compass_extension_api::view::Image) -> Option<RowIcon> {
+        use compass_extension_api::view::ImageSource;
+        let tint = image.tint.as_ref().and_then(color_of);
+        let mut source = &image.source;
+        while let ImageSource::Themed { light, dark } = source {
+            source = if self.prefers_dark { dark } else { light };
+        }
+        let (path, monochrome) = match source {
+            ImageSource::Builtin(name) => (compass_core::builtin_icon::path(name)?, true),
+            ImageSource::Asset(relative) => {
+                let path = self.assets.as_ref()?.join(relative);
+                (path.is_file().then_some(path)?, false)
+            }
+            ImageSource::Url(url) => {
+                let path = std::path::PathBuf::from(url.strip_prefix("file://")?);
+                (path.is_file().then_some(path)?, false)
+            }
+            ImageSource::FileIcon(_) | ImageSource::Themed { .. } => return None,
+        };
+        Some(RowIcon::Art {
+            art: crate::icons::classify(&path)?,
+            monochrome,
+            tint,
+        })
     }
 
     /// The list, when the view is one.
@@ -321,6 +413,38 @@ impl ExtensionPage {
             .into_iter()
             .next()
             .map(|action| &action.handler)
+    }
+}
+
+/// A `Color` as drawn: `#rrggbb[aa]`, or one of Raycast's named colours.
+fn color_of(color: &compass_extension_api::view::Color) -> Option<iced::Color> {
+    use compass_extension_api::view::Color;
+    let rgb = |r, g, b| Some(iced::Color::from_rgb8(r, g, b));
+    match color {
+        Color::Literal(hex) => {
+            let hex = hex.strip_prefix('#')?;
+            let byte = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
+            match hex.len() {
+                6 => rgb(byte(0)?, byte(2)?, byte(4)?),
+                8 => Some(iced::Color::from_rgba8(
+                    byte(0)?,
+                    byte(2)?,
+                    byte(4)?,
+                    f32::from(byte(6)?) / 255.0,
+                )),
+                _ => None,
+            }
+        }
+        Color::Named(name) => match name.as_str() {
+            "red" => rgb(0xf4, 0x43, 0x36),
+            "orange" => rgb(0xff, 0x98, 0x00),
+            "yellow" => rgb(0xff, 0xc1, 0x07),
+            "green" => rgb(0x4c, 0xaf, 0x50),
+            "blue" => rgb(0x21, 0x96, 0xf3),
+            "purple" => rgb(0x9c, 0x27, 0xb0),
+            "magenta" => rgb(0xe9, 0x1e, 0x63),
+            _ => None,
+        },
     }
 }
 
@@ -538,6 +662,82 @@ mod tests {
             Some("cb-submit")
         );
         assert_eq!(page.action_args(), [serde_json::json!({"title": "AB"})]);
+    }
+
+    #[test]
+    fn row_icons_resolve_assets_file_urls_themes_and_colour_cells() {
+        use compass_extension_api::view::{
+            Color, GridContent, GridItem, GridSection, GridView, Image, ImageSource,
+        };
+        let assets = tempfile::tempdir().unwrap();
+        std::fs::write(assets.path().join("logo.png"), b"png").unwrap();
+        std::fs::write(assets.path().join("moon.svg"), b"<svg/>").unwrap();
+        let image = |source: ImageSource| {
+            let mut image = Image::builtin(String::new());
+            image.source = source;
+            image
+        };
+        let mut logo = ListItem::new("logo");
+        logo.icon = Some(image(ImageSource::Asset("logo.png".into())));
+        let mut themed = ListItem::new("themed");
+        themed.icon = Some(image(ImageSource::Themed {
+            light: Box::new(ImageSource::Asset("missing.svg".into())),
+            dark: Box::new(ImageSource::Url(format!(
+                "file://{}",
+                assets.path().join("moon.svg").display()
+            ))),
+        }));
+        let mut remote = ListItem::new("remote");
+        remote.icon = Some(image(ImageSource::Url("https://example.com/a.png".into())));
+
+        let mut page = ExtensionPage::new(1, "Icons");
+        page.assets = Some(assets.path().to_owned());
+        page.prefers_dark = true;
+        page.apply(state(1, list(vec![logo, themed, remote], true)));
+        assert!(matches!(
+            page.icon(0, 0),
+            Some(RowIcon::Art {
+                art: crate::icons::IconArt::Raster(_),
+                monochrome: false,
+                ..
+            })
+        ));
+        assert!(
+            matches!(
+                page.icon(0, 1),
+                Some(RowIcon::Art {
+                    art: crate::icons::IconArt::Vector(_),
+                    ..
+                })
+            ),
+            "a dark launcher takes the themed image's dark side"
+        );
+        assert_eq!(page.icon(0, 2), None, "remote images are not fetched yet");
+
+        let cell = GridItem {
+            id: compass_extension_api::id::NodeId::ROOT,
+            key: None,
+            title: "red".into(),
+            subtitle: None,
+            content: GridContent::Color(Color::Literal("#ff0000".into())),
+            tooltip: None,
+            keywords: Vec::new(),
+            actions: None,
+        };
+        page.apply(state(
+            2,
+            View::Grid(GridView {
+                sections: vec![GridSection {
+                    items: vec![cell],
+                    ..GridSection::default()
+                }],
+                ..GridView::default()
+            }),
+        ));
+        assert_eq!(
+            page.icon(0, 0),
+            Some(&RowIcon::Swatch(iced::Color::from_rgb8(0xff, 0, 0)))
+        );
     }
 
     #[test]

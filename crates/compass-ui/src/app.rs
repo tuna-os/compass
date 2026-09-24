@@ -1821,9 +1821,15 @@ impl LauncherApp {
                     Task::none()
                 }
                 Ok(crate::backend::ExtensionStart::View(session)) => {
-                    self.page = Page::Extension(Box::new(
-                        crate::extension_page::ExtensionPage::new(session, title),
-                    ));
+                    let mut page = crate::extension_page::ExtensionPage::new(session, title);
+                    page.assets = self
+                        .app_index
+                        .extension(&id)
+                        .map(|command| command.extension_dir.join("assets"));
+                    let surface = self.palette().surface.to_iced();
+                    page.prefers_dark =
+                        0.299 * surface.r + 0.587 * surface.g + 0.114 * surface.b < 0.5;
+                    self.page = Page::Extension(Box::new(page));
                     Task::batch([self.extension_poll(session, 0), focus_search()])
                 }
                 Err(reason) => {
@@ -2564,6 +2570,60 @@ impl LauncherApp {
         self.list_row(icon, item.name().to_owned(), subtitle, selected)
     }
 
+    /// An extension row's icon: its art, a builtin tinted to read on the
+    /// theme, or a grid cell's colour.
+    fn extension_icon(
+        &self,
+        icon: &crate::extension_page::RowIcon,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        use crate::extension_page::RowIcon;
+        let geometry = self.geometry;
+        let size = Length::Fixed(f32::from(geometry.icon_size));
+        let palette = self.palette();
+        let text_color = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        }
+        .to_iced();
+        let art: Element<Message> = match icon {
+            RowIcon::Swatch(color) => {
+                let color = *color;
+                container(text(""))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(color.into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 6.0.into(),
+                        },
+                        ..container::Style::default()
+                    })
+                    .into()
+            }
+            RowIcon::Art {
+                art: crate::icons::IconArt::Raster(path),
+                ..
+            } => image(path).width(Length::Fill).height(Length::Fill).into(),
+            RowIcon::Art {
+                art: crate::icons::IconArt::Vector(path),
+                monochrome,
+                tint,
+            } => {
+                let color = tint.or(monochrome.then_some(text_color));
+                svg(path)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(move |_: &Theme, _| iced::widget::svg::Style { color })
+                    .into()
+            }
+        };
+        container(art).width(size).height(size).into()
+    }
+
     /// The first letter of `title` in a tinted square, for a row with no art.
     fn initial_badge(&self, title: &str, selected: bool) -> Element<'_, Message> {
         let geometry = self.geometry;
@@ -3268,8 +3328,12 @@ impl LauncherApp {
                 (None, false) => Some(accessories.join("  ")),
                 (None, true) => None,
             };
+            let icon = match page.icon(s, i) {
+                Some(icon) => self.extension_icon(icon, selected),
+                None => self.initial_badge(&item.title, selected),
+            };
             let row = self.list_row(
-                self.initial_badge(&item.title, selected),
+                icon,
                 item.title.clone(),
                 subtitle.filter(|_| self.subtitles),
                 selected,

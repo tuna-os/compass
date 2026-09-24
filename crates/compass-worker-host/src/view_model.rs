@@ -19,8 +19,8 @@
 //! separators, and `Action.SubmitForm`'s `onSubmit`) are covered the same way.
 //! Anything else at the root is an [`Unsupported`] naming the tag, so a front
 //! end can say which component it cannot draw yet instead of drawing nothing.
-//! Props a covered component has but this does not read (icons, colours,
-//! shortcuts) are dropped, not errors: a row without its icon is still the
+//! Props a covered component has but this does not read (accessory icons,
+//! colours) are dropped, not errors: a row without its icon is still the
 //! row.
 
 use compass_extension_api::action::{
@@ -421,27 +421,30 @@ fn grid_item(node: &RenderNode) -> GridItem {
 
 /// `{color}` is a flat colour; anything else is `serializeProtoImage`'s shape.
 fn grid_content(value: &Value) -> Option<GridContent> {
-    if let Some(color) = value.get("color") {
-        // `serializeColorLike`: `{raw}` or `{dynamic: {light, dark}}`, plain
-        // strings accepted too.
-        let raw = color
-            .as_str()
-            .or_else(|| color.get("raw").and_then(Value::as_str))
-            .or_else(|| {
-                let dynamic = color.get("dynamic").unwrap_or(color);
-                dynamic
-                    .get("light")
-                    .or_else(|| dynamic.get("dark"))
-                    .and_then(Value::as_str)
-            })?;
-        let color = if raw.starts_with('#') {
-            Color::Literal(raw.to_owned())
-        } else {
-            Color::Named(raw.to_owned())
-        };
-        return Some(GridContent::Color(color));
+    match value.get("color") {
+        Some(color) => color_like(color).map(GridContent::Color),
+        None => image(value).map(GridContent::Image),
     }
-    image(value).map(GridContent::Image)
+}
+
+/// `serializeColorLike`: `{raw}` or `{dynamic: {light, dark}}`, plain
+/// strings accepted too. A dynamic colour is read as its light side.
+fn color_like(color: &Value) -> Option<Color> {
+    let raw = color
+        .as_str()
+        .or_else(|| color.get("raw").and_then(Value::as_str))
+        .or_else(|| {
+            let dynamic = color.get("dynamic").unwrap_or(color);
+            dynamic
+                .get("light")
+                .or_else(|| dynamic.get("dark"))
+                .and_then(Value::as_str)
+        })?;
+    Some(if raw.starts_with('#') {
+        Color::Literal(raw.to_owned())
+    } else {
+        Color::Named(raw.to_owned())
+    })
 }
 
 /// An image as `serializeProtoImage` writes it: `{source: {raw} | {themed}}`,
@@ -456,6 +459,7 @@ fn image(value: &Value) -> Option<Image> {
     let mut image = Image::builtin(String::new());
     image.source = source;
     image.fallback = value.get("fallback").and_then(image_source);
+    image.tint = value.get("tintColor").and_then(color_like);
     Some(image)
 }
 
@@ -502,6 +506,7 @@ fn item(node: &RenderNode) -> ListItem {
     let mut item = ListItem::new(text(node, "title").unwrap_or_default());
     item.key = text(node, "id");
     item.subtitle = text(node, "subtitle");
+    item.icon = node.props.get("icon").and_then(image);
     item.keywords = node
         .props
         .get("keywords")
@@ -640,7 +645,7 @@ mod tests {
                 {"$t": "list-item", "title": "loose", "id": "l"},
                 {"$t": "list-section", "title": "Mine", "children": [
                     {"$t": "list-item", "title": "compass", "subtitle": "tuna-os", "id": "c",
-                     "keywords": ["launcher"],
+                     "keywords": ["launcher"], "icon": {"source": {"raw": "star"}},
                      "accessories": [{"text": "12"}, {"tag": {"value": "rust", "color": "red"}},
                                      {"icon": "star"}],
                      "children": [
@@ -681,6 +686,8 @@ mod tests {
         assert_eq!(compass.key.as_deref(), Some("c"));
         assert_eq!(compass.subtitle.as_deref(), Some("tuna-os"));
         assert_eq!(compass.keywords, ["launcher"]);
+        assert_eq!(compass.icon, Some(Image::builtin("star")));
+        assert_eq!(list.sections[0].items[0].icon, None);
         assert_eq!(
             compass.accessories.len(),
             2,
