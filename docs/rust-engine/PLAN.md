@@ -2403,14 +2403,14 @@ where it is.
 1. ~~**#204 — typo tolerance in app search.**~~ **Done:** a one-edit `strsim` fallback, ranked
    after every real match; the formerly ignored `search_quality.rs` test is the acceptance
    criterion and passes. The C++ engine has the same gap, which is the point of ADR-0017.
-2. **Storage onto `rusqlite`** (ADR-0017 decision 4). Replace `compass-sqlcipher-sys` in its four
-   callers, move the clipboard and file index to SQLite's built-in `trigram` tokenizer, and remove
-   the workspace's one `unsafe` opt-out. The file index also registers the vendored `spellfix1` C
-   extension for its typo fallback (`sqlite_writer.rs`); that moves into Rust — `fst`'s Levenshtein
-   automaton over the vocabulary, or the `strsim` scan app search now uses — so neither
-   `vendor/fuzzy-trigram` nor `vendor/spellfix` is linked. Three steps, each its own PR: the
-   wrapper onto `rusqlite` keeping its API; the tokenizer swap; spellfix out. Existing storage and
-   `query-quality` tests are the safety net.
+2. **Storage onto `rusqlite`** (ADR-0017 decision 4), in steps that are each their own PR:
+   (a) `spellfix1` out — the file index's vocabulary typo correction moves into Rust over `fst` or
+   `strsim`, measured by the file indexer's quality suite; (b) the hand-written SQLite wrapper
+   re-based on `rusqlite` + `bundled-sqlcipher`, keeping its API so ~400 call sites are
+   untouched. **`fuzzy_trigram` stays** — it carries short-term matching, skeleton tokens,
+   skip-grams and CJK segmentation that SQLite's `trigram` lacks — so one registration call remains
+   `unsafe`, confined to the storage crate. Replacing it is a separate, measured question
+   (`tantivy` for file search), not part of this item.
 3. **A Vicinae importer** for clipboard history, extension storage and OAuth tokens (decision 3),
    reading content tables only. Needed before cutover, not before item 2.
 4. **Summon-to-first-frame** — §8.5's SLA row still has no harness. The paint tier's

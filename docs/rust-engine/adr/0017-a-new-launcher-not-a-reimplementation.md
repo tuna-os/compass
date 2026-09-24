@@ -28,13 +28,13 @@ the results entirely. The C++ engine has the same defect, so the differential se
 harness that measures sameness cannot find a bug both engines share, and cannot tell an improvement
 from a regression.
 
-**Some code exists only to be byte-compatible with Vicinae.** The largest case is the storage stack
-ADR-0014 required: `compass-sqlcipher-sys` (hand-written FFI, the one crate that must opt out of
-`unsafe_code = "forbid"`) plus a vendored C tokenizer of ~1300 lines, most of it a verbatim copy of
-SQLite's own `fts5_unicode2.c`. Its whole justification is ADR-0014's first line: "Two facts about
-the *existing on-disk format* constrain the dependency choice." Without the requirement to open
-Vicinae's files in place, neither fact constrains anything — `rusqlite` bundles SQLite and
-SQLCipher, and SQLite has shipped a `trigram` tokenizer since 3.34 (`remove_diacritics` since 3.45).
+**Some code is justified only by byte compatibility with Vicinae.** The largest case is the storage
+stack ADR-0014 required: `compass-sqlcipher-sys` (hand-written FFI, the one crate that must opt out
+of `unsafe_code = "forbid"`), the vendored `fuzzy_trigram` tokenizer and the vendored `spellfix1`
+extension. ADR-0014's stated justification is its first line: "Two facts about the *existing
+on-disk format* constrain the dependency choice." Take away the need to open Vicinae's files in
+place and that argument disappears — but, as decision 4 records, not every part of the stack was
+only there for the argument.
 
 ## Decisions
 
@@ -60,12 +60,23 @@ read the *content* tables of a Vicinae database, never its FTS index, so it does
 vendored tokenizer either. (ADR-0014 measured that a plain `SELECT` on the FTS table fails without
 it; the content tables are ordinary tables.)
 
-**4. ADR-0014 is superseded.** New stores use `rusqlite` — `bundled-sqlcipher` where the data is
-secret (OAuth tokens, extension storage, clipboard), plain `bundled` where it is not (the file
-index) — and SQLite's built-in `trigram` tokenizer. `compass-sqlcipher-sys` and
-`vendor/fuzzy-trigram` leave the Rust engine's dependency graph, and so does `vendor/spellfix`: the
-file index's typo fallback moves into Rust over an off-the-shelf edit-distance crate. Encryption at rest is kept: it is
-a property users rely on, not a compatibility detail.
+**4. ADR-0014 is superseded, and its parts are judged separately.** ADR-0014 bundled three things
+under one compatibility argument; without that argument each stands or falls on its own:
+
+- *The hand-written SQLite wrapper* (`compass-sqlcipher-sys`'s `open`/`prepare`/`step`/`bind`
+  FFI) goes. `rusqlite` with `bundled-sqlcipher` does all of it in safe Rust. Encryption at rest is
+  kept: it is a property users rely on, not a compatibility detail.
+- *`spellfix1`* goes. It gives the file index vocabulary-level typo correction, which is
+  edit distance over a word list — a thing Rust crates do well (`fst`'s Levenshtein automaton,
+  `strsim`), without a 3000-line C extension.
+- *`fuzzy_trigram` stays for now*, because it was never only compatibility. Read rather than
+  assumed, it matches terms shorter than three characters, emits vowel-dropped "skeleton" tokens
+  and skip-grams (which is how the file index tolerates typos inside a path), and segments CJK.
+  SQLite's built-in `trigram` does none of that. It is a feature missing from the ecosystem —
+  decision 2's own test — so it keeps its one registration call, the only `unsafe` left, confined
+  to the storage crate. The alternative worth measuring later is a Rust-native index
+  (`tantivy`, whose tokenizers are safe Rust) for file search; that is a product decision with a
+  quality suite to answer it, not a clean-up.
 
 **5. Compatibility identifiers from ADR-0012 are unchanged.** The `vicinae` binary, socket, config
 path and `@vicinae/api` package stay until cutover supplies aliases. Those protect users' scripts
@@ -79,10 +90,11 @@ and extensions — a real cost to break — which is a different thing from repr
   has absolute tests". Both are stricter in the way that matters: they fail on shared bugs.
 - **`PARITY.md` becomes a feature ledger.** The "C++ ✓" column stays as provenance; the column that
   gates is "tested ✓".
-- **Storage migration is real work** — four crates call `compass-sqlcipher-sys` (`compass-db`,
-  `compass-local-storage`, `compass-oauth-store`, `compass-worker-host`). It is sequenced after
-  #204 in PLAN.md §12 and lands behind the existing storage tests, which must pass unchanged
-  except where they asserted Vicinae's byte format.
+- **Storage migration is real work** — five crates call `compass-sqlcipher-sys`
+  (`compass-clipboard`, `compass-db`, `compass-local-storage`, `compass-oauth-store`,
+  `compass-worker-host`), about 400 call sites. It is sequenced after #204 in PLAN.md §12 and lands
+  behind the existing storage tests and the file indexer's `query-quality` suite, which must pass
+  unchanged except where they asserted Vicinae's byte format.
 - **Reviewed and kept** under decision 2: `compass-search` (nucleo underneath; the hand-rolled part
   is ranking policy, which is product, not plumbing), `compass-xdg` (fixes six upstream parser bugs
   rather than reproducing them; `freedesktop-desktop-entry` is worth re-evaluating, lowest
