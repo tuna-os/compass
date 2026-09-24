@@ -647,6 +647,17 @@ pub struct ApplicationRootHit<'a> {
     pub index: usize,
     /// Match score on the IPC scale, excluding frecency (zero for empty input).
     pub match_score: u32,
+    /// The root item's `provider:entrypoint` id, e.g.
+    /// `applications:org.mozilla.firefox`.
+    ///
+    /// Carried because the caller could not reconstruct it: `AppItem::key` is
+    /// the desktop key (`org.mozilla.firefox.desktop`) and the entrypoint id
+    /// is what addresses the item across the protocol. `serve::query` put the
+    /// key on the wire, and Suite 0's first real differential caught it — the
+    /// C++ engine answers `applications:host--byobu` for the item this side
+    /// called `host--byobu.desktop`, so every ranked hit read as a
+    /// regression.
+    pub entrypoint_id: &'a str,
 }
 
 impl AppIndex {
@@ -698,6 +709,7 @@ impl AppIndex {
             ApplicationRootHit {
                 item,
                 index,
+                entrypoint_id: &self.roots[hit.index].id,
                 match_score,
             }
         })
@@ -744,6 +756,24 @@ impl AppIndex {
     #[must_use]
     pub fn position(&self, key: &str) -> Option<usize> {
         self.by_key.get(key).copied()
+    }
+
+    /// The position of the item a `provider:entrypoint` id names.
+    ///
+    /// The protocol identifies a hit by its ENTRYPOINT id
+    /// (`applications:org.mozilla.firefox`), which is not the launch key
+    /// (`org.mozilla.firefox.desktop`) — so a client that reads `QueryHit.id`
+    /// cannot look the item up with [`AppIndex::position`]. Both lookups
+    /// exist because both ids are real and neither is a formatting variant of
+    /// the other: `RecordLaunch` takes the key, `QueryHit` carries the
+    /// entrypoint id.
+    #[must_use]
+    pub fn position_by_entrypoint(&self, entrypoint_id: &str) -> Option<usize> {
+        let root = self
+            .roots
+            .iter()
+            .position(|root| root.id == entrypoint_id)?;
+        self.root_indices.get(root).copied()
     }
 
     /// Only the items that can actually be launched. See

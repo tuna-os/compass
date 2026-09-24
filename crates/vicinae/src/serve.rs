@@ -222,7 +222,15 @@ impl EngineState {
             .into_iter()
             .take(self.max_results)
             .map(|ranked| QueryHit {
-                id: ranked.item.key().to_owned(),
+                // The ENTRYPOINT id, not the desktop key. The protocol
+                // documents this field as the "stable identifier of the
+                // underlying root item", and `AppIndex` already builds one
+                // (`app_root_item` -> `entrypoint_id(APPS_PROVIDER_ID, ...)`);
+                // this put `AppItem::key` there instead, so the wire carried
+                // `host--byobu.desktop` for the item every other part of the
+                // system — and the C++ engine — calls
+                // `applications:host--byobu`.
+                id: ranked.entrypoint_id.to_owned(),
                 title: ranked.item.display_name(),
                 subtitle: None,
                 // `match_score`, not `score`. `Ranked::score` is the combined

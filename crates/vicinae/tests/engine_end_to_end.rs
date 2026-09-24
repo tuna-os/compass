@@ -251,7 +251,9 @@ fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() 
         .iter()
         .map(|(id, body)| (*id, body.as_str()))
         .collect::<Vec<_>>();
-    for (enabled, expected) in [(true, vec!["beta.desktop"]), (false, vec![])] {
+    // `applications:beta`, not `beta.desktop` — the same `provider:entrypoint`
+    // form the config below addresses these entries by.
+    for (enabled, expected) in [(true, vec!["applications:beta"]), (false, vec![])] {
         let config = serde_json::json!({"providers": {"applications": {
             "enabled": enabled,
             "entrypoints": {
@@ -325,7 +327,7 @@ fn reporting_a_launch_persists_history_and_changes_root_order() {
         hits
     };
     let before = query();
-    assert_eq!(before[0].id, "alpha.desktop");
+    assert_eq!(before[0].id, "applications:alpha");
     assert_eq!(
         daemon.request(Request::RecordLaunch {
             key: "beta.desktop".to_owned()
@@ -333,7 +335,7 @@ fn reporting_a_launch_persists_history_and_changes_root_order() {
         Response::Ack
     );
     let after = query();
-    assert_eq!(after[0].id, "beta.desktop");
+    assert_eq!(after[0].id, "applications:beta");
     assert_eq!(
         after[0].score, before[1].score,
         "wire score excludes history"
@@ -490,7 +492,10 @@ fn a_desktop_link_without_exec_is_returned_by_root_search() {
         let out = daemon.client(&["query", query, "--json"]);
         let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(rows.as_array().unwrap().len(), 1);
-        assert_eq!(rows[0]["id"], "manual.desktop");
+        // The ENTRYPOINT id, which is what the protocol documents this field
+        // as and what the C++ engine answers. It read `manual.desktop` until
+        // Suite 0's first differential put the two engines side by side.
+        assert_eq!(rows[0]["id"], "applications:manual");
         assert_eq!(rows[0]["title"], "Reference Manual");
     }
 }
@@ -551,7 +556,7 @@ fn queries_use_root_provider_fields_and_do_not_return_desktop_actions() {
     let all: serde_json::Value =
         serde_json::from_str(&daemon.client(&["query", "--json", ""])).unwrap();
     assert_eq!(all.as_array().unwrap().len(), 1);
-    assert_eq!(all[0]["id"], "browser.desktop");
+    assert_eq!(all[0]["id"], "applications:browser");
     for query in ["DescriptionSentinel", "Private"] {
         let hits: serde_json::Value =
             serde_json::from_str(&daemon.client(&["query", "--json", query])).unwrap();
