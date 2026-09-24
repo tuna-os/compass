@@ -1074,6 +1074,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "show", "title": "Show Greeting", "mode": "view"},
               {"name": "nav", "title": "Navigate", "mode": "view"},
               {"name": "ask", "title": "Ask First", "mode": "view"},
+              {"name": "link", "title": "Open Link", "mode": "no-view"},
               {"name": "greet", "title": "Greet Someone", "mode": "no-view",
                "arguments": [{"name": "name", "type": "text", "placeholder": "Name",
                               "required": true}]},
@@ -1133,6 +1134,12 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                }}));",
             acted = acted.to_string_lossy()
         ),
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("link.js"),
+        "const { open } = require('@vicinae/api');
+         module.exports.default = async () => { await open('https://example.com/a b'); };",
     )
     .unwrap();
     let greeted = root.join("data-home/vicinae/support/hello/greeted.txt");
@@ -1575,5 +1582,63 @@ fn a_command_with_arguments_is_asked_for_them_then_runs_with_them() {
     assert_eq!(
         std::fs::read_to_string(&greeted).expect("the command ran"),
         "hi Ada"
+    );
+}
+
+#[test]
+fn a_confined_command_opens_a_link_in_the_application_that_claims_its_scheme() {
+    use compass_ipc::{Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    // The opener is spawned by the engine, not the extension, so it may write
+    // where the sandbox would never let the extension.
+    let mut opened = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        opened = dir.join("opened.txt");
+        let script = dir.join("browser.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$1\" > {:?}\n",
+                opened.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let applications = dir.join("data/applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(
+            applications.join("browser.desktop"),
+            format!(
+                "[Desktop Entry]\nType=Application\nName=Browser\nExec={} %u\n\
+                 MimeType=x-scheme-handler/https;\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    assert_eq!(
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:link".into(),
+            arguments_json: None,
+        }),
+        Response::Ack
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !opened.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&opened).expect("the link was opened"),
+        "https://example.com/a b"
     );
 }

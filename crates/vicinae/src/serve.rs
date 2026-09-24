@@ -349,6 +349,11 @@ async fn run_extension_command(
         views: Arc::clone(&state.read().await.views),
         preferences,
         arguments,
+        apps: Some(crate::extension_apps::EngineApps::new(
+            &state.read().await.index,
+            compass_xdg::mimeapps::Lists::from_environment(),
+            tokio::runtime::Handle::current(),
+        )),
     };
     let started = tokio::task::spawn_blocking(move || {
         crate::extension_runner::start(&runtime, &command, &data_dir, host)

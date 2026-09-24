@@ -30,6 +30,7 @@ use compass_core::alert::Alert;
 use compass_core::extension_commands::ExtensionCommand;
 use compass_core::manifest::CommandMode;
 use compass_worker_host::Worker;
+use compass_worker_host::application_service::ApplicationService;
 use compass_worker_host::clipboard_service::{
     Clipboard, ClipboardService, Content, CopyOptions, ReadContent,
 };
@@ -333,6 +334,7 @@ pub fn start(
         views,
         preferences,
         arguments,
+        apps,
     } = host;
 
     // The runtime creates these itself, but a sandbox can only grant a path
@@ -428,11 +430,12 @@ pub fn start(
         .spawn(move || {
             serve(
                 worker,
-                &Served {
+                Served {
                     session_id,
                     title,
                     name,
                     namespace,
+                    apps,
                 },
                 storage,
                 ShellClipboard {
@@ -461,6 +464,8 @@ pub struct Host {
     pub preferences: serde_json::Value,
     /// The argument values it was launched with.
     pub arguments: serde_json::Value,
+    /// What `open()` and `getApplications()` reach, or `None` to refuse them.
+    pub apps: Option<crate::extension_apps::EngineApps>,
 }
 
 /// How a run began.
@@ -477,11 +482,12 @@ struct Served {
     title: String,
     name: String,
     namespace: String,
+    apps: Option<crate::extension_apps::EngineApps>,
 }
 
 fn serve(
     worker: Worker,
-    served: &Served,
+    served: Served,
     storage: Option<Storage>,
     clipboard: ShellClipboard,
     handle: Option<tokio::runtime::Handle>,
@@ -493,13 +499,14 @@ fn serve(
         title,
         name,
         namespace,
+        apps,
     } = served;
     let title = title.as_str();
     let database = storage.and_then(|storage| open_storage(&storage));
     let local = database
         .as_ref()
         .map(compass_local_storage::LocalStorage::new);
-    let scoped = local.as_ref().map(|local| local.scoped(namespace));
+    let scoped = local.as_ref().map(|local| local.scoped(&namespace));
     let storage_service = scoped.map(StorageService::new);
     let shell = UiShellService::new(
         HeadlessShell {
@@ -516,6 +523,10 @@ fn serve(
     let ui = UiService::new();
     let mut router = Router::new().with(&shell).with(&clipboard).with(&ui);
     if let Some(service) = &storage_service {
+        router = router.with(service);
+    }
+    let applications = apps.map(ApplicationService::new);
+    if let Some(service) = &applications {
         router = router.with(service);
     }
     let mut session = Session::new(worker, session_id.as_str(), router);

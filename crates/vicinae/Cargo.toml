@@ -29,7 +29,9 @@ notify.workspace = true
 compass-portals.workspace = true
 futures-util.workspace = true
 compass-ui.workspace = true
+compass-platform.workspace = true
 compass-platform-linux.workspace = true
+compass-xdg.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -56,8 +58,6 @@ libc.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
-compass-platform.workspace = true
-compass-xdg.workspace = true
 iced = { version = "0.14", features = ["tokio"] }
 iced_winit = "0.14"
 compass-testkit.workspace = true
