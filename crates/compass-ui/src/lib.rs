@@ -21,6 +21,7 @@ pub mod design;
 pub mod extension_page;
 pub mod icons;
 pub mod message;
+pub mod preferences_page;
 pub mod preset;
 pub mod resident;
 pub mod root_list;

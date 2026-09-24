@@ -252,17 +252,62 @@ impl std::fmt::Debug for Storage {
     }
 }
 
-/// Why a command will not run, as a sentence; `None` when it can.
+/// The local-storage namespace an extension's preference values live in,
+/// beside its own `<id>:data`: in the same encrypted database, and out of
+/// the extension's reach, since its `LocalStorage` is scoped to `:data`.
 #[must_use]
-pub fn refusal(command: &ExtensionCommand) -> Option<String> {
-    if let Err(missing) = command.default_preferences() {
-        return Some(format!(
-            "{} needs {} set, and Compass cannot edit extension preferences yet",
-            command.title,
-            missing.join(", ")
-        ));
+pub fn preferences_namespace(extension_id: &str) -> String {
+    format!("compass.preferences:{extension_id}")
+}
+
+/// The preference values stored for `extension_id`; empty when none are, or
+/// the database will not open.
+#[must_use]
+pub fn load_preferences(
+    storage: &Storage,
+    extension_id: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let Some(db) = open_storage(storage) else {
+        return serde_json::Map::new();
+    };
+    let local = compass_local_storage::LocalStorage::new(&db);
+    let scoped = local.scoped(&preferences_namespace(extension_id));
+    match scoped.list() {
+        Ok(values) => values
+            .into_iter()
+            .map(|(name, value)| (name, value.to_json()))
+            .collect(),
+        Err(err) => {
+            tracing::warn!(%err, "could not read extension preferences");
+            serde_json::Map::new()
+        }
     }
-    None
+}
+
+/// Keeps `values` for `extension_id`. A null or empty value removes the
+/// stored one, so clearing a field falls back to its default.
+///
+/// # Errors
+///
+/// A sentence: the database would not open, or a write failed.
+pub fn save_preferences(
+    storage: &Storage,
+    extension_id: &str,
+    values: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let db = open_storage(storage).ok_or("Compass could not open its extension storage")?;
+    let local = compass_local_storage::LocalStorage::new(&db);
+    let scoped = local.scoped(&preferences_namespace(extension_id));
+    for (name, value) in values {
+        let cleared = value.is_null() || value.as_str() == Some("");
+        let written = if cleared {
+            scoped.remove(name).map(drop)
+        } else {
+            scoped.set(name, &compass_local_storage::Value::from_json(value))
+        };
+        written.map_err(|err| format!("Compass could not keep the preference {name}: {err}"))?;
+    }
+    Ok(())
 }
 
 /// Starts `command` and returns once the runtime has loaded it; the run
@@ -286,11 +331,8 @@ pub fn start(
         storage,
         shell,
         views,
+        preferences,
     } = host;
-    if let Some(reason) = refusal(command) {
-        return Err(reason);
-    }
-    let preferences = command.default_preferences().unwrap_or_default();
 
     // The runtime creates these itself, but a sandbox can only grant a path
     // that exists, so they are made first.
@@ -414,6 +456,8 @@ pub struct Host {
     pub shell: Option<Arc<compass_shell::ShellClient>>,
     /// Where a view command's session is published.
     pub views: Arc<Views>,
+    /// The preference values the command reads, already resolved.
+    pub preferences: serde_json::Value,
 }
 
 /// How a run began.
@@ -1050,5 +1094,51 @@ impl Clipboard for ShellClipboard {
             ..ReadContent::default()
         })
         .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn storage(dir: &Path) -> Storage {
+        Storage {
+            path: dir.join(STORAGE_DATABASE),
+            key: [3; compass_crypto::KEY_SIZE],
+        }
+    }
+
+    #[test]
+    fn preferences_round_trip_and_clearing_one_removes_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let storage = storage(dir.path());
+        assert!(load_preferences(&storage, "github").is_empty());
+
+        let values = serde_json::json!({"token": "ghp_x", "limit": 50, "private": true});
+        save_preferences(&storage, "github", values.as_object().unwrap()).expect("saved");
+        assert_eq!(
+            serde_json::Value::Object(load_preferences(&storage, "github")),
+            serde_json::json!({"token": "ghp_x", "limit": 50.0, "private": true}),
+            "strings and booleans come back as they went in, and a number as the \
+             double JavaScript would have had anyway"
+        );
+        assert!(
+            load_preferences(&storage, "other").is_empty(),
+            "per extension"
+        );
+
+        let cleared = serde_json::json!({"token": ""});
+        save_preferences(&storage, "github", cleared.as_object().unwrap()).expect("saved");
+        assert!(!load_preferences(&storage, "github").contains_key("token"));
+    }
+
+    #[test]
+    fn preferences_are_out_of_the_extensions_own_storage() {
+        // An extension's LocalStorage is scoped to `<id>:data`. Keeping
+        // preferences there would let it read and rewrite its own token.
+        assert_ne!(
+            preferences_namespace("github"),
+            compass_local_storage::namespace_for("github")
+        );
     }
 }

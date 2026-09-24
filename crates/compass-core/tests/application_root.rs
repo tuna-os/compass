@@ -290,3 +290,39 @@ fn a_launch_passes_defaults_and_names_required_preferences_it_cannot_fill() {
         Ok(serde_json::json!({"limit": "20"}))
     );
 }
+
+#[test]
+fn stored_preferences_fill_what_defaults_cannot_and_override_the_rest() {
+    let apps = tempfile::tempdir().unwrap();
+    let installed = extensions();
+    let index = AppIndex::builder()
+        .dir(apps.path())
+        .extension_dirs([installed.path()])
+        .build();
+    let command = index
+        .extension("@raycast/github:search-repositories")
+        .unwrap();
+
+    let empty = serde_json::Map::new();
+    let missing: Vec<&str> = command
+        .preferences_with(&empty)
+        .unwrap_err()
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(missing, ["token"]);
+
+    let stored = serde_json::json!({"token": "ghp_x", "limit": "50", "gone": 1});
+    assert_eq!(
+        command.preferences_with(stored.as_object().unwrap()),
+        Ok(serde_json::json!({"token": "ghp_x", "limit": "50"})),
+        "stored wins over the default, and an undeclared name is dropped"
+    );
+    let blank = serde_json::json!({"token": ""});
+    assert!(
+        command
+            .preferences_with(blank.as_object().unwrap())
+            .is_err(),
+        "an empty required value is still missing"
+    );
+}

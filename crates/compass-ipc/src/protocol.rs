@@ -225,6 +225,15 @@ pub enum Request {
         /// Its arguments, as a JSON array.
         args_json: String,
     },
+    /// Keeps an extension's preference values, then answers [`Response::Ack`].
+    /// Sent after [`Response::ExtensionNeedsPreferences`], before running the
+    /// command again.
+    SetExtensionPreferences {
+        /// The command's [`QueryHit::id`]; the values are its extension's.
+        id: String,
+        /// The values, as a JSON object by preference name.
+        values_json: String,
+    },
     /// The person's answer to the view's [`ExtensionAlert`]. Answered with
     /// [`Response::Ack`]; a session with no alert waiting is a bad request.
     ExtensionAlertAnswer {
@@ -320,6 +329,15 @@ pub enum Response {
         /// [`Request::ExtensionAlertAnswer`].
         alert: Option<ExtensionAlert>,
     },
+    /// Answer to [`Request::RunExtensionCommand`] when a required preference
+    /// has no value: the form to show. Answer with
+    /// [`Request::SetExtensionPreferences`], then run the command again.
+    ExtensionNeedsPreferences {
+        /// The command's title, for the form's heading.
+        title: String,
+        /// Every preference the command reads, required ones included.
+        fields: Vec<PreferenceField>,
+    },
 }
 
 /// What the engine asks an attached window to do.
@@ -361,6 +379,50 @@ pub struct QueryHit {
     pub subtitle: Option<String>,
     /// Match score in `0..=100`, matching `compass-search`'s scale.
     pub score: u32,
+}
+
+/// One preference as the launcher's form draws it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreferenceField {
+    /// The name the extension reads it by; the key in `values_json`.
+    pub name: String,
+    /// The label.
+    pub title: String,
+    /// The help text; may be empty.
+    pub description: String,
+    /// The placeholder; may be empty.
+    pub placeholder: String,
+    /// Whether the command cannot run without it.
+    pub required: bool,
+    /// What kind of input it takes.
+    pub kind: PreferenceFieldKind,
+    /// Its current value (stored, else the default), as JSON.
+    pub value_json: Option<String>,
+}
+
+/// What a [`PreferenceField`] takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreferenceFieldKind {
+    /// A line of text.
+    Text,
+    /// A line of text, not echoed.
+    Password,
+    /// A tick box, with its label.
+    Checkbox {
+        /// The text beside the box.
+        label: String,
+    },
+    /// One of a list, as `(title, value)`.
+    Dropdown {
+        /// The options.
+        options: Vec<(String, String)>,
+    },
+    /// A kind the form cannot edit yet (a file or application picker); shown
+    /// so the person sees why the command waits.
+    Unsupported {
+        /// What the manifest calls it.
+        declared: String,
+    },
 }
 
 /// A confirmation an extension asked for (`confirmAlert`), as the launcher

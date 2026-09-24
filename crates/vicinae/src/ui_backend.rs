@@ -57,6 +57,12 @@ impl ApplicationBackend for DaemonBackend {
                 compass_ipc::Response::ExtensionStarted { session } => {
                     Ok(ExtensionStart::View(session))
                 }
+                compass_ipc::Response::ExtensionNeedsPreferences { title, fields } => {
+                    Ok(ExtensionStart::NeedsPreferences {
+                        title,
+                        fields: fields.into_iter().map(preference_input).collect(),
+                    })
+                }
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })
@@ -117,6 +123,26 @@ impl ApplicationBackend for DaemonBackend {
                         args_json,
                     },
                     "Running the action",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_extension_preferences(
+        &self,
+        id: String,
+        values: serde_json::Map<String, serde_json::Value>,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let values_json = serde_json::Value::Object(values).to_string();
+            match self
+                .ask(
+                    Request::SetExtensionPreferences { id, values_json },
+                    "Saving the preferences",
                 )
                 .await?
             {
@@ -325,6 +351,30 @@ fn row(entry: compass_ipc::ClipboardEntry) -> ClipboardRow {
         },
         pinned: entry.pinned,
         url_host: entry.url_host,
+    }
+}
+
+fn preference_input(field: compass_ipc::PreferenceField) -> compass_ui::backend::PreferenceInput {
+    use compass_ipc::PreferenceFieldKind;
+    use compass_ui::backend::PreferenceInputKind;
+    compass_ui::backend::PreferenceInput {
+        kind: match field.kind {
+            PreferenceFieldKind::Text => PreferenceInputKind::Text,
+            PreferenceFieldKind::Password => PreferenceInputKind::Password,
+            PreferenceFieldKind::Checkbox { label } => PreferenceInputKind::Checkbox { label },
+            PreferenceFieldKind::Dropdown { options } => PreferenceInputKind::Dropdown { options },
+            PreferenceFieldKind::Unsupported { declared } => {
+                PreferenceInputKind::Unsupported { declared }
+            }
+        },
+        value: field
+            .value_json
+            .and_then(|json| serde_json::from_str(&json).ok()),
+        name: field.name,
+        title: field.title,
+        description: field.description,
+        placeholder: field.placeholder,
+        required: field.required,
     }
 }
 

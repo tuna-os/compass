@@ -46,6 +46,16 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// Keeps an extension's preference values, by the command's id.
+    fn set_extension_preferences(
+        &self,
+        id: String,
+        values: serde_json::Map<String, serde_json::Value>,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (id, values);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The person's answer to the view's [`ExtensionPrompt`].
     fn extension_alert_answer(&self, session: u64, confirmed: bool) -> BackendFuture<'_, ()> {
         let _ = (session, confirmed);
@@ -68,12 +78,62 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
 const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine";
 
 /// How an extension command began.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionStart {
     /// A no-view command, running on its own.
     Ran,
     /// A view command: follow this session.
     View(u64),
+    /// It did not start: a required preference has no value. The form.
+    NeedsPreferences {
+        /// The command's title.
+        title: String,
+        /// Every preference it reads.
+        fields: Vec<PreferenceInput>,
+    },
+}
+
+/// One preference in the form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreferenceInput {
+    /// The name the extension reads it by.
+    pub name: String,
+    /// The label.
+    pub title: String,
+    /// Help text; may be empty.
+    pub description: String,
+    /// Placeholder; may be empty.
+    pub placeholder: String,
+    /// Whether the command cannot run without it.
+    pub required: bool,
+    /// What it takes.
+    pub kind: PreferenceInputKind,
+    /// Its current value.
+    pub value: Option<serde_json::Value>,
+}
+
+/// What a [`PreferenceInput`] takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreferenceInputKind {
+    /// Text.
+    Text,
+    /// Text, hidden.
+    Password,
+    /// A tick box.
+    Checkbox {
+        /// Its label.
+        label: String,
+    },
+    /// One of a list, as `(title, value)`.
+    Dropdown {
+        /// The options.
+        options: Vec<(String, String)>,
+    },
+    /// A kind the form cannot edit yet.
+    Unsupported {
+        /// What the manifest calls it.
+        declared: String,
+    },
 }
 
 /// What an extension view shows now.

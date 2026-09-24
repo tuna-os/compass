@@ -87,6 +87,42 @@ impl ExtensionCommand {
             .collect()
     }
 
+    /// The preference values a launch passes: what the user stored, else each
+    /// preference's default. A value stored for a name the manifest no longer
+    /// declares is dropped.
+    ///
+    /// # Errors
+    ///
+    /// The required preferences with neither, for the launcher to ask for.
+    pub fn preferences_with(
+        &self,
+        stored: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, Vec<&Preference>> {
+        let set = |preference: &Preference| {
+            stored
+                .get(&preference.name)
+                .filter(|value| !value.is_null() && value.as_str() != Some(""))
+                .or(preference.default.as_ref())
+                .cloned()
+        };
+        let missing: Vec<&Preference> = self
+            .preferences
+            .iter()
+            .filter(|preference| preference.required && set(preference).is_none())
+            .collect();
+        if !missing.is_empty() {
+            return Err(missing);
+        }
+        Ok(serde_json::Value::Object(
+            self.preferences
+                .iter()
+                .filter_map(|preference| {
+                    set(preference).map(|value| (preference.name.clone(), value))
+                })
+                .collect(),
+        ))
+    }
+
     /// The preference values a launch passes when the user has set none:
     /// each preference's default. Compass has no preference editor yet, so a
     /// required preference without a default cannot be satisfied, and those

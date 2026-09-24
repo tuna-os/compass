@@ -101,6 +101,7 @@ async fn echo_handler(request: Request) -> Response {
         | Request::RunExtensionCommand { .. }
         | Request::ExtensionEvent { .. }
         | Request::ExtensionPop { .. }
+        | Request::SetExtensionPreferences { .. }
         | Request::ExtensionAlertAnswer { .. }
         | Request::CloseExtension { .. } => Response::Ack,
         Request::ExtensionView { after, .. } => Response::ExtensionView {

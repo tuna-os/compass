@@ -60,6 +60,8 @@ pub enum Message {
     ClipboardPasted(Result<(), String>),
     /// The engine started an extension command, or said why it could not.
     ExtensionCommandStarted {
+        /// The command's entrypoint id.
+        id: String,
         /// The command's title, for its view until the view names itself.
         title: String,
         /// How it began, or why it could not.
@@ -76,6 +78,12 @@ pub enum Message {
     ExtensionQueryChanged(String),
     /// A row in an extension's list was clicked.
     ExtensionItemSelected(usize),
+    /// A preference field in the form changed.
+    PreferenceEdited(usize, crate::preferences_page::FieldValue),
+    /// The preference form was submitted (Enter).
+    PreferencesSubmit,
+    /// The preferences were kept, or not; on success the command runs.
+    PreferencesSaved(Result<(), String>),
     /// A link in an extension's Markdown was clicked.
     ExtensionLinkClicked(String),
     /// An action or search event reached the extension, or did not.

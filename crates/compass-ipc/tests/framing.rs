@@ -79,6 +79,10 @@ fn all_requests() -> Vec<Request> {
             args_json: "[\"é 🚀\", 3]".into(),
         },
         Request::ExtensionPop { session: 1 },
+        Request::SetExtensionPreferences {
+            id: "@raycast/github:search".into(),
+            values_json: "{\"token\":\"é 🚀\"}".into(),
+        },
         Request::ExtensionAlertAnswer {
             session: 1,
             confirmed: true,
@@ -191,6 +195,31 @@ fn all_responses() -> Vec<Response> {
             }],
         },
         Response::ExtensionStarted { session: 7 },
+        Response::ExtensionNeedsPreferences {
+            title: "Search Repositories".into(),
+            fields: vec![
+                compass_ipc::PreferenceField {
+                    name: "token".into(),
+                    title: "Token".into(),
+                    description: String::new(),
+                    placeholder: "ghp_…".into(),
+                    required: true,
+                    kind: compass_ipc::PreferenceFieldKind::Password,
+                    value_json: None,
+                },
+                compass_ipc::PreferenceField {
+                    name: "sort".into(),
+                    title: "Sort".into(),
+                    description: "Order".into(),
+                    placeholder: String::new(),
+                    required: false,
+                    kind: compass_ipc::PreferenceFieldKind::Dropdown {
+                        options: vec![("Stars".into(), "stars".into())],
+                    },
+                    value_json: Some("\"stars\"".into()),
+                },
+            ],
+        },
         Response::ExtensionView {
             version: 3,
             view_json: Some("{\"kind\":\"list\"}".into()),
@@ -242,6 +271,7 @@ fn request_variants_are_exhaustive() {
             | Request::ExtensionView { .. }
             | Request::ExtensionEvent { .. }
             | Request::ExtensionPop { .. }
+            | Request::SetExtensionPreferences { .. }
             | Request::ExtensionAlertAnswer { .. }
             | Request::CloseExtension { .. }
             | Request::WindowOutcome(_) => {}
@@ -264,6 +294,7 @@ fn response_variants_are_exhaustive() {
             | Response::ClipboardContent { .. }
             | Response::Windows { .. }
             | Response::ExtensionStarted { .. }
+            | Response::ExtensionNeedsPreferences { .. }
             | Response::ExtensionView { .. }
             | Response::Window(_) => {}
         }

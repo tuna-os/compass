@@ -1073,7 +1073,10 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "write", "title": "Write Greeting", "mode": "no-view"},
               {"name": "show", "title": "Show Greeting", "mode": "view"},
               {"name": "nav", "title": "Navigate", "mode": "view"},
-              {"name": "ask", "title": "Ask First", "mode": "view"}
+              {"name": "ask", "title": "Ask First", "mode": "view"},
+              {"name": "needs", "title": "Needs Token", "mode": "no-view",
+               "preferences": [{"name": "token", "title": "API Token", "type": "password",
+                                "required": true}]}
             ]}"#,
     )
     .unwrap();
@@ -1468,5 +1471,32 @@ fn an_alert_reaches_the_launcher_and_its_answer_reaches_the_extension() {
     assert_eq!(
         daemon.request(Request::CloseExtension { session }),
         Response::Ack
+    );
+}
+
+#[test]
+fn a_required_preference_without_a_keyring_is_refused_by_name() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    // These engines run with no session bus, so no keyring: there is nowhere
+    // safe to keep the token, and the engine says so rather than asking.
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let answer = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:needs".into(),
+    });
+    let Response::Error(err) = answer else {
+        panic!("not refused: {answer:?}");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(
+        err.message.contains("API Token") && err.message.contains("keyring"),
+        "{}",
+        err.message
     );
 }
