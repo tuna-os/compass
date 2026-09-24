@@ -153,13 +153,13 @@ fn a_dropped_character_still_finds_it() {
 ///
 /// IGNORED, NOT DELETED. The assertion is right and the engine does not meet
 /// it yet; deleting it would remove the only record that a person typing
-/// `alacrittyy` gets nothing. Tracked in #205.
+/// `alacrittyy` gets nothing. Tracked in #204.
 ///
 /// NOTE this is exactly the kind of gap the Suite 0 differential cannot
 /// find: the C++ app search is a subsequence matcher too, so both engines
 /// agree — on being unhelpful.
 #[test]
-#[ignore = "app search has no typo fallback for transposed or doubled characters; see #205"]
+#[ignore = "app search has no typo fallback for transposed or doubled characters; see #204"]
 fn a_transposed_or_doubled_character_still_finds_it() {
     let index = index();
     for (typo, name) in [
