@@ -138,6 +138,7 @@ def main():
     for entry in plan:
         for field, value in inputs.get(entry["extension"], {}).items():
             entry[field] = value
+    args.plan.parent.mkdir(parents=True, exist_ok=True)
     args.plan.write_text(json.dumps({"commands": plan}, indent=2) + "\n")
     for line in drift:
         print(f"drift: {line}", file=sys.stderr)
