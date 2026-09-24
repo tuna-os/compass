@@ -36,17 +36,31 @@ pub struct BuiltinCommand {
 pub enum CommandKind {
     /// Browse and search clipboard history.
     ClipboardHistory,
+    /// Focus an open window.
+    SwitchWindows,
 }
 
 /// Every builtin command, in the order an empty query lists them.
-pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[BuiltinCommand {
-    kind: CommandKind::ClipboardHistory,
-    entrypoint: "clipboard-history",
-    title: "Clipboard History",
-    subtitle: "Search what you have copied",
-    keywords: &["clipboard", "copy", "paste", "history", "pasteboard"],
-    icon: "copy-clipboard",
-}];
+pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
+    BuiltinCommand {
+        kind: CommandKind::ClipboardHistory,
+        entrypoint: "clipboard-history",
+        title: "Clipboard History",
+        subtitle: "Search what you have copied",
+        keywords: &["clipboard", "copy", "paste", "history", "pasteboard"],
+        icon: "copy-clipboard",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SwitchWindows,
+        entrypoint: "switch-windows",
+        title: "Switch Windows",
+        subtitle: "Focus an open window",
+        keywords: &[
+            "windows", "window", "switch", "focus", "alt tab", "switcher",
+        ],
+        icon: "switch-windows",
+    },
+];
 
 impl BuiltinCommand {
     /// The `commands:<entrypoint>` id that addresses it in root search, on the

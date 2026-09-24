@@ -1860,6 +1860,24 @@ The timeout path is the same kind of thing and is pinned the same way: when focu
 paste is dropped and the clipboard is *not* restored, so what was copied is still there. A port that
 helpfully restored it would take away the only consolation prize the failure has.
 
+### Paste on GNOME — the focus wait moved into the Shell, and it is event-driven
+
+The C++ polls `focusedForeignWindow` every 5 ms for up to 5 s, waits another 30 ms and injects
+Ctrl+V (Ctrl+Shift+V for a terminal) through its input server. On GNOME 50/51 the Rust engine can do
+none of that: no virtual-keyboard protocol, no `/dev/uinput` on Bluefin, and no focus signal outside
+the Shell. So contract v2's `Clipboard.Paste(as)` does it inside the Shell. The extension waits on
+`notify::focus-window` for focus to leave the window that had it when it was called, then 30 ms, then
+presses the shortcut through a Clutter virtual keyboard.
+
+Three things differ on purpose:
+- the wait is 2 s, not 5 s, because it is a signal, not a poll that can miss;
+- "is this a terminal" is decided before focus moves. The engine sends every `TerminalEmulator`
+  application's normalised window classes, and the extension matches the window it lands on;
+- the clipboard is not restored afterwards.
+
+What is kept is the copy that happens anyway (above). The engine sets the clipboard before arming the
+paste, and a launcher whose engine cannot paste copies the entry itself.
+
 ### `compass-core::audio_control` — a volume that is not a number no longer takes the process down
 
 `toAudioSink` reads a channel's volume with `std::stod(percent)`, which parses the leading number

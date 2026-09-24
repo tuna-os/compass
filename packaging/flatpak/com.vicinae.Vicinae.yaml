@@ -57,7 +57,15 @@ finish-args:
   #
   # This is a talk-name, not a filesystem grant. We never install the extension ourselves --
   # see ADR-0004 -- we only speak to it if the user has installed it.
-  - --talk-name=org.gnome.Shell.Extensions.Vicinae
+  #
+  # The name is org.gnome.Shell because a talk-name filters BUS NAMES, and an extension's
+  # objects live on the Shell's own connection. This used to read
+  # org.gnome.Shell.Extensions.Vicinae, an interface name no process owns, so the sandbox's
+  # D-Bus proxy blocked every window and clipboard call. compass-shell's extension_contract
+  # test now ties this line to contract::SHELL_SERVICE. The grant is what every
+  # extension-talking Flatpak needs; Shell guards its sensitive methods (Eval, Screenshot) by
+  # sender allowlist, not by bus policy.
+  - --talk-name=org.gnome.Shell
 
   # --- Launching host applications ----------------------------------------
   # A launcher that cannot launch is not a launcher. flatpak-spawn --host is how a sandboxed app

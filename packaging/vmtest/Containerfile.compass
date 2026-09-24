@@ -14,10 +14,8 @@
 #      type) is meaningless at a login screen;
 #   3. a CMD, for the same corral/podman reason as Containerfile.bluefin.
 #
-# The GNOME Shell extension that #18 also lists is NOT here: this repository
-# does not contain one yet (ADR-0004 — we speak to it, we never ship it), so
-# there is nothing to install. `doctor`'s gnome.shell-extension check will
-# report it absent, which is the honest answer.
+#   4. the Compass GNOME Shell extension, from extensions/gnome-shell, installed
+#      system-wide the way an image (not the Flatpak -- ADR-0004) ships it.
 
 FROM ghcr.io/ublue-os/bluefin:stable
 
@@ -311,6 +309,16 @@ RUN set -eux; \
 # The workflow stages it into the build context alongside the Flatpak bundle.
 COPY harvest-desktop-corpus.sh /usr/libexec/compass-vmtest/harvest-desktop-corpus.sh
 RUN chmod 0755 /usr/libexec/compass-vmtest/harvest-desktop-corpus.sh
+
+# ── the GNOME Shell extension ────────────────────────────────────────────────
+#
+# Installed, not enabled: enabling is per-user state, and writing
+# enabled-extensions as a dconf default would replace Bluefin's own list rather
+# than add to it. `checks.sh shell-extension` enables it in the session with
+# gnome-extensions, as a user would. The workflow stages the in-tree copy into
+# the build context, so the extension booted here is the one the contract test
+# (crates/compass-shell/tests/extension_contract.rs) checked.
+COPY compass@tuna-os.github.io /usr/share/gnome-shell/extensions/compass@tuna-os.github.io/
 
 # ── the assertions ───────────────────────────────────────────────────────────
 #

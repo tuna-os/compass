@@ -30,8 +30,10 @@ use serde::{Deserialize, Serialize};
 /// a human can act on, and it only does so if the number moves.
 ///
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
-/// Version 4 adds clipboard history; version 5, fetching an entry's content.
-pub const PROTOCOL_VERSION: u16 = 5;
+/// Version 4 adds clipboard history; version 5, fetching an entry's content;
+/// version 6, window switching; version 7, pasting, pinning and removing a
+/// clipboard entry.
+pub const PROTOCOL_VERSION: u16 = 7;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +150,49 @@ pub enum Request {
         /// [`ClipboardEntry::id`].
         id: String,
     },
+    /// The open windows, for the window switcher.
+    ///
+    /// Answered with [`Response::Windows`], or refused as
+    /// [`ErrorKind::Unsupported`] without the GNOME Shell extension, which is
+    /// the only way to list windows on GNOME.
+    ListWindows,
+    /// Focus and raise one window. Answered with [`Response::Ack`].
+    ActivateWindow {
+        /// [`WindowInfo::id`].
+        id: u32,
+    },
+    /// Ask one window to close. Answered with [`Response::Ack`].
+    CloseWindow {
+        /// [`WindowInfo::id`].
+        id: u32,
+    },
+    /// Put one clipboard history entry on the clipboard and paste it into the
+    /// window focus moves to next.
+    ///
+    /// Send it while the launcher still has focus and hide the launcher once
+    /// it is answered with [`Response::Ack`]: the paste lands after the focus
+    /// change. Refused as [`ErrorKind::Unsupported`] without the GNOME Shell
+    /// extension, which is the only thing on GNOME that can press a key in
+    /// another window; the caller then copies instead.
+    ClipboardPaste {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// Pin or unpin one clipboard history entry. Pinned entries list first and
+    /// survive eviction. Answered with [`Response::Ack`]; an id that names no
+    /// entry is a bad request.
+    ClipboardSetPinned {
+        /// [`ClipboardEntry::id`].
+        id: String,
+        /// Pin when true, unpin when false.
+        pinned: bool,
+    },
+    /// Remove one clipboard history entry and its stored content. Answered
+    /// with [`Response::Ack`]; an id that names no entry is a bad request.
+    ClipboardRemove {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
 }
 
 /// What the engine answers.
@@ -196,6 +241,11 @@ pub enum Response {
         mime_type: String,
         /// The content, exactly as it was copied.
         data: Vec<u8>,
+    },
+    /// Answer to [`Request::ListWindows`], most recently used first.
+    Windows {
+        /// Every window the extension reports.
+        windows: Vec<WindowInfo>,
     },
 }
 
@@ -261,6 +311,29 @@ pub struct ClipboardEntry {
     pub updated_at: i64,
     /// For links, the host, so a row can say where it points.
     pub url_host: Option<String>,
+}
+
+/// One open window, as the switcher shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowInfo {
+    /// Handle for [`Request::ActivateWindow`] and [`Request::CloseWindow`].
+    pub id: u32,
+    /// The window's title.
+    pub title: String,
+    /// Its `WM_CLASS`.
+    pub wm_class: String,
+    /// The application it belongs to, when the engine recognised one.
+    pub app_name: Option<String>,
+    /// That application's icon name.
+    pub app_icon: Option<String>,
+    /// The owning process, so a client can leave out its own windows.
+    pub pid: Option<u32>,
+    /// Workspace index, when known.
+    pub workspace: Option<i32>,
+    /// Whether it has focus right now.
+    pub focused: bool,
+    /// Whether it can be closed.
+    pub can_close: bool,
 }
 
 /// What kind of thing a [`ClipboardEntry`] holds.

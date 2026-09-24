@@ -108,6 +108,12 @@ fn describe(request: &Request) -> &'static str {
         Request::RecordLaunch { .. } => "RecordLaunch",
         Request::ClipboardHistory { .. } => "ClipboardHistory",
         Request::ClipboardContent { .. } => "ClipboardContent",
+        Request::ListWindows => "ListWindows",
+        Request::ActivateWindow { .. } => "ActivateWindow",
+        Request::CloseWindow { .. } => "CloseWindow",
+        Request::ClipboardPaste { .. } => "ClipboardPaste",
+        Request::ClipboardSetPinned { .. } => "ClipboardSetPinned",
+        Request::ClipboardRemove { .. } => "ClipboardRemove",
     }
 }
 

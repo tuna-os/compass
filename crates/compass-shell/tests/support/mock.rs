@@ -103,6 +103,8 @@ pub struct MockState {
     pub clipboard: (Vec<u8>, String),
     /// Every `(method, argument)` the client invoked, in order.
     pub calls: Vec<(&'static str, u32)>,
+    /// The `shift_wm_classes` of every `Paste`, in order.
+    pub pastes: Vec<Vec<String>>,
 }
 
 pub type SharedState = Arc<Mutex<MockState>>;
@@ -173,6 +175,11 @@ impl ClipboardService {
 
     fn set_clipboard(&self, content: Vec<u8>, mime_type: String) {
         self.state.lock().expect("mock state").clipboard = (content, mime_type);
+    }
+
+    fn paste(&self, shift_wm_classes: Vec<String>) {
+        let mut state = self.state.lock().expect("mock state");
+        state.pastes.push(shift_wm_classes);
     }
 
     #[zbus(signal)]
@@ -268,6 +275,10 @@ impl MockShell {
 
     pub fn calls(&self) -> Vec<(&'static str, u32)> {
         self.state.lock().expect("mock state").calls.clone()
+    }
+
+    pub fn pastes(&self) -> Vec<Vec<String>> {
+        self.state.lock().expect("mock state").pastes.clone()
     }
 
     pub async fn emit_windows_changed(&self) -> zbus::Result<()> {

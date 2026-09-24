@@ -71,4 +71,45 @@ pub trait ClipboardBackend: std::fmt::Debug + Send + Sync {
 
     /// One entry's full content, for copying it back.
     fn clipboard_content(&self, id: String) -> BackendFuture<'_, ClipboardContent>;
+
+    /// Put one entry on the clipboard and paste it into the window focus
+    /// moves to next. Ask while the launcher is focused, then hide it. A
+    /// refusal (no GNOME Shell extension) means the caller copies instead.
+    fn clipboard_paste(&self, id: String) -> BackendFuture<'_, ()>;
+
+    /// Pin or unpin one entry.
+    fn clipboard_set_pinned(&self, id: String, pinned: bool) -> BackendFuture<'_, ()>;
+
+    /// Remove one entry and its stored content.
+    fn clipboard_remove(&self, id: String) -> BackendFuture<'_, ()>;
+}
+
+/// One open window, as the switcher draws it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowRow {
+    /// Handle for activate and close.
+    pub id: u32,
+    /// The window's title.
+    pub title: String,
+    /// The application's name when recognised, else its `WM_CLASS`.
+    pub app: String,
+    /// Its `WM_CLASS`, searched at a low weight.
+    pub wm_class: String,
+    /// The owning process, so the launcher can leave out its own window.
+    pub pid: Option<u32>,
+    /// Whether it can be closed.
+    pub can_close: bool,
+}
+
+/// Window switching, which only the engine can do (through the Shell
+/// extension).
+pub trait WindowBackend: std::fmt::Debug + Send + Sync {
+    /// The open windows, the one worth switching to first.
+    fn list_windows(&self) -> BackendFuture<'_, Vec<WindowRow>>;
+
+    /// Focus and raise a window.
+    fn activate_window(&self, id: u32) -> BackendFuture<'_, ()>;
+
+    /// Ask a window to close.
+    fn close_window(&self, id: u32) -> BackendFuture<'_, ()>;
 }

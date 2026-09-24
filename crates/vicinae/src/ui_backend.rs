@@ -5,7 +5,7 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind,
+    ClipboardRowKind, WindowBackend, WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -109,6 +109,85 @@ impl ClipboardBackend for DaemonBackend {
                 compass_ipc::Response::ClipboardContent { mime_type, data } => {
                     Ok(ClipboardContent { mime_type, data })
                 }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn clipboard_paste(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self.ask(Request::ClipboardPaste { id }, "Pasting").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn clipboard_set_pinned(&self, id: String, pinned: bool) -> BackendFuture<'_, ()> {
+        let what = if pinned { "Pinning" } else { "Unpinning" };
+        Box::pin(async move {
+            match self
+                .ask(Request::ClipboardSetPinned { id, pinned }, what)
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn clipboard_remove(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ClipboardRemove { id }, "Removing the entry")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+}
+
+impl WindowBackend for DaemonBackend {
+    fn list_windows(&self) -> BackendFuture<'_, Vec<WindowRow>> {
+        Box::pin(async move {
+            match self.ask(Request::ListWindows, "Listing windows").await? {
+                compass_ipc::Response::Windows { windows } => Ok(windows
+                    .into_iter()
+                    .map(|window| WindowRow {
+                        id: window.id,
+                        app: window.app_name.unwrap_or_else(|| window.wm_class.clone()),
+                        title: window.title,
+                        wm_class: window.wm_class,
+                        pid: window.pid,
+                        can_close: window.can_close,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn activate_window(&self, id: u32) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ActivateWindow { id }, "Switching windows")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn close_window(&self, id: u32) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::CloseWindow { id }, "Closing a window")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })

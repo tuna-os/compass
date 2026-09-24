@@ -122,6 +122,14 @@ type Result<T> = std::result::Result<T, Error>;
 /// [`write::truncate_for_index`] counts: UTF-16 code units.
 pub const PREVIEW_LEN: usize = 50;
 
+/// The key a copy is deduplicated under: `selection.hash_md5` for a
+/// single-offer selection. An importer checks it before [`ingest`], whose
+/// bubble-up would otherwise move an existing entry to now.
+#[must_use]
+pub fn content_hash(data: &[u8]) -> String {
+    md5hex(data)
+}
+
 /// Lowercase hex MD5, as `QCryptographicHash::hash(...).toHex()` produces.
 fn md5hex(data: &[u8]) -> String {
     let digest = Md5::digest(data);

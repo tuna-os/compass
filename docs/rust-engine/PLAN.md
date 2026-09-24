@@ -2416,6 +2416,14 @@ where it is.
    a bug lands in it.
 3. **A Vicinae importer** for clipboard history, extension storage and OAuth tokens (decision 3),
    reading content tables only. Needed before cutover, not before item 2.
+   **Clipboard history: done** (`crates/vicinae/src/vicinae_import.rs`). On the first engine
+   start that can read it, Vicinae's `clipboard.db` and `clipboard-data/` are read with Vicinae's
+   own keyring key. Entries go into Compass's store re-encrypted, with their times (seconds become
+   milliseconds), pins and keywords. Content Compass already has is left alone, and a marker makes
+   it one-shot. A locked or unkeyed database writes no marker, so the next start retries.
+   **Extension storage and OAuth tokens wait for Phase 4:** nothing in the engine opens them yet
+   (only `compass-worker-host`'s tests do), so there is no Compass-side store to import into
+   until the extension host owns one.
 4. **Summon-to-first-frame — now recorded.** The launcher logs `summon_draw_ms`, from the
    engine's `Show` to the new window's first redraw request, on the same terms as cold start's
    `first_draw_ms` (a floor: the paint after the request is not in it). Tier 2's `session.sh`

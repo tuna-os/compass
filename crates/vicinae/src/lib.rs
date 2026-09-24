@@ -27,7 +27,9 @@ pub mod spike;
 pub mod typography;
 pub mod ui_backend;
 mod ui_instance;
+pub mod vicinae_import;
 pub mod window;
+pub mod window_service;
 
 use std::process::ExitCode;
 
@@ -233,14 +235,17 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         let backend = daemon
             .clone()
             .map(|d| d as std::sync::Arc<dyn compass_ui::backend::ApplicationBackend>);
-        let clipboard =
-            daemon.map(|d| d as std::sync::Arc<dyn compass_ui::backend::ClipboardBackend>);
+        let clipboard = daemon
+            .clone()
+            .map(|d| d as std::sync::Arc<dyn compass_ui::backend::ClipboardBackend>);
+        let windows = daemon.map(|d| d as std::sync::Arc<dyn compass_ui::backend::WindowBackend>);
 
         compass_ui::run_resident(compass_ui::AppFlags {
             theme: theme_choice,
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             backend,
             clipboard,
+            windows,
             root_config,
             link,
             exit_on_engine_disconnect: matches!(cli.command, Command::Start { .. }),

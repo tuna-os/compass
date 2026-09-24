@@ -192,6 +192,8 @@ pub struct AppFlags {
     pub backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
     /// Clipboard history, which only an attached engine has.
     pub clipboard: Option<Arc<dyn crate::backend::ClipboardBackend>>,
+    /// Window switching, which only an attached engine has.
+    pub windows: Option<Arc<dyn crate::backend::WindowBackend>>,
     /// Startup root settings for local searches; attached searches use the engine's settings.
     pub root_config: compass_core::root_items::RootConfig,
     /// The navigation chord scheme, from `launcher.keybinding`.
@@ -260,6 +262,13 @@ pub struct AppFlags {
 
 impl Default for AppFlags {
     fn default() -> Self {
+        #[cfg(target_os = "linux")]
+        let platform_specific = window::settings::PlatformSpecific {
+            application_id: crate::APP_ID.to_owned(),
+            ..Default::default()
+        };
+        #[cfg(not(target_os = "linux"))]
+        let platform_specific = window::settings::PlatformSpecific::default();
         Self {
             theme: crate::theme::Theme::System,
             window_config: window::Settings {
@@ -271,6 +280,7 @@ impl Default for AppFlags {
                 resizable: false,
                 decorations: false,
                 transparent: true,
+                platform_specific,
                 ..Default::default()
             },
             keybinding: compass_core::keybinding::Scheme::default(),
@@ -287,6 +297,7 @@ impl Default for AppFlags {
             launcher: Arc::new(NullLauncher),
             backend: None,
             clipboard: None,
+            windows: None,
             root_config: compass_core::root_items::RootConfig::default(),
             link: None,
             exit_on_engine_disconnect: false,
@@ -414,6 +425,13 @@ fn launch_task(
 /// What the search field sends as the user types.
 type OnInput = fn(String) -> Message;
 
+/// A change to one clipboard history entry, from its keyboard shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardChange {
+    TogglePin,
+    Remove,
+}
+
 /// One row of the root list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootRow {
@@ -430,6 +448,8 @@ enum Page {
     Root,
     /// Clipboard history.
     Clipboard(crate::clipboard_page::ClipboardPage),
+    /// The window switcher.
+    Windows(crate::windows_page::WindowsPage),
 }
 
 /// The launcher application state.
@@ -449,6 +469,8 @@ pub struct LauncherApp {
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
     clipboard: Option<Arc<dyn crate::backend::ClipboardBackend>>,
+    /// Window switching. See [`AppFlags::windows`].
+    windows: Option<Arc<dyn crate::backend::WindowBackend>>,
     /// Which row is selected, as a position in `results`.
     selected: usize,
     /// The last launch failure, shown until the query changes.
@@ -687,6 +709,7 @@ impl LauncherApp {
         app.launcher = flags.launcher;
         app.backend = flags.backend;
         app.clipboard = flags.clipboard;
+        app.windows = flags.windows;
         app.app_index.apply_root_config(&flags.root_config);
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
@@ -735,6 +758,7 @@ impl LauncherApp {
             results: Vec::new(),
             page: Page::Root,
             clipboard: None,
+            windows: None,
             selected: 0,
             panel: None,
             error: None,
@@ -902,6 +926,12 @@ impl LauncherApp {
         self.results.get(self.selected).copied()
     }
 
+    /// Whether the window switcher is the view showing.
+    #[must_use]
+    pub fn showing_windows(&self) -> bool {
+        matches!(self.page, Page::Windows(_))
+    }
+
     /// Whether clipboard history is the view showing.
     #[must_use]
     pub fn showing_clipboard(&self) -> bool {
@@ -952,6 +982,14 @@ impl LauncherApp {
                 line.push_str(&format!(" selected_title={:?}", command.title));
             }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::Windows(page) = &self.page {
+            line.push_str(&format!(
+                " page=windows windows_query={:?} windows_shown={} windows_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
         }
         if let Page::Clipboard(page) = &self.page {
             line.push_str(&format!(
@@ -1536,6 +1574,18 @@ impl LauncherApp {
                 {
                     page.selected = index;
                 }
+                self.paste_selected_clipboard_entry()
+            }
+            Message::ClipboardPasted(Ok(())) => self.conceal(),
+            Message::ClipboardEntryChanged(Ok(())) => self.clipboard_search_task(),
+            Message::ClipboardEntryChanged(Err(reason)) => {
+                if let Page::Clipboard(page) = &mut self.page {
+                    page.notice = Some(reason);
+                }
+                Task::none()
+            }
+            Message::ClipboardPasted(Err(reason)) => {
+                tracing::debug!(%reason, "paste refused; copying instead");
                 self.copy_selected_clipboard_entry()
             }
             Message::ClipboardContentLoaded(result) => {
@@ -1559,6 +1609,44 @@ impl LauncherApp {
                 self.page = Page::Root;
                 focus_search()
             }
+            Message::WindowsQueryChanged(query) => {
+                if let Page::Windows(page) = &mut self.page {
+                    page.query = query;
+                    page.notice = None;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::WindowsLoaded(result) => {
+                if let Page::Windows(page) = &mut self.page {
+                    page.apply(result, std::process::id());
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::WindowSelected(position) => {
+                if let Page::Windows(page) = &mut self.page
+                    && position < page.shown.len()
+                {
+                    page.selected = position;
+                }
+                self.activate_selected_window()
+            }
+            Message::WindowActivated(result) => match result {
+                // The window the user picked is in front now; get out of the way.
+                Ok(()) => self.conceal(),
+                Err(reason) => {
+                    if let Page::Windows(page) = &mut self.page {
+                        page.notice = Some(reason);
+                    }
+                    Task::none()
+                }
+            },
+            Message::ShellWindowClosed(result) => {
+                if let (Err(reason), Page::Windows(page)) = (&result, &mut self.page) {
+                    page.notice = Some(reason.clone());
+                }
+                self.list_windows_task()
+            }
             Message::Keyboard(iced::keyboard::Event::KeyPressed {
                 ref key, modifiers, ..
             }) => {
@@ -1567,12 +1655,49 @@ impl LauncherApp {
                 // A command's view takes every key the root list would, and
                 // Escape goes back to the root rather than hiding the window:
                 // one key undoes opening the wrong command.
-                if let Page::Clipboard(page) = &mut self.page {
+                if let Page::Windows(page) = &mut self.page {
+                    if modifiers.control() && key.as_ref() == Key::Character("q") {
+                        return self.close_selected_window();
+                    }
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
                         Key::Named(Named::Escape) => return self.update(Message::Back),
-                        Key::Named(Named::Enter) => return self.copy_selected_clipboard_entry(),
+                        Key::Named(Named::Enter) => return self.activate_selected_window(),
+                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                    };
+                    if let Some(direction) = direction {
+                        page.selected = next_selection(
+                            page.shown.len(),
+                            page.selected,
+                            direction,
+                            self.wrap_navigation,
+                        );
+                        return crate::scroll::reveal_root_selection();
+                    }
+                    return Task::none();
+                }
+                if let Page::Clipboard(page) = &mut self.page {
+                    // The C++ defaults: `action.pin` is Ctrl+Shift+P and
+                    // `action.remove` is Ctrl+X.
+                    if let Key::Character(c) = key.as_ref()
+                        && modifiers.control()
+                        && !modifiers.alt()
+                        && !modifiers.logo()
+                    {
+                        if modifiers.shift() && c.eq_ignore_ascii_case("p") {
+                            return self
+                                .change_selected_clipboard_entry(ClipboardChange::TogglePin);
+                        }
+                        if !modifiers.shift() && c.eq_ignore_ascii_case("x") {
+                            return self.change_selected_clipboard_entry(ClipboardChange::Remove);
+                        }
+                    }
+                    let direction = match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) => return self.update(Message::Back),
+                        Key::Named(Named::Enter) => return self.paste_selected_clipboard_entry(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                     };
                     if let Some(direction) = direction {
@@ -1717,6 +1842,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::ClipboardQueryChanged as OnInput),
             ),
+            Page::Windows(page) => (
+                "Search windows…",
+                &page.query,
+                Some(Message::WindowsQueryChanged as OnInput),
+            ),
         };
         let input = text_input(placeholder, value)
             .id(SEARCH_INPUT)
@@ -1740,7 +1870,9 @@ impl LauncherApp {
                 ..container::Style::default()
             });
 
-        let body: Element<Message> = if let Page::Clipboard(page) = &self.page {
+        let body: Element<Message> = if let Page::Windows(page) = &self.page {
+            self.windows_body(page)
+        } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
             self.notice(err)
@@ -1845,6 +1977,58 @@ impl LauncherApp {
         .align_x(Alignment::Center)
         .align_y(Alignment::Start)
         .into()
+    }
+
+    /// The window switcher's body: its state, or its rows.
+    fn windows_body<'a>(
+        &'a self,
+        page: &'a crate::windows_page::WindowsPage,
+    ) -> Element<'a, Message> {
+        use crate::windows_page::Status;
+        let geometry = self.geometry;
+        match &page.status {
+            Status::Loading => return self.notice("Loading windows…"),
+            Status::Failed(reason) => return self.notice(reason),
+            Status::Ready if page.all.is_empty() => {
+                return self.notice("No other windows are open");
+            }
+            Status::Ready if page.shown.is_empty() => return self.notice("No matching windows"),
+            Status::Ready => {}
+        }
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        for (position, &index) in page.shown.iter().enumerate() {
+            let Some(window) = page.all.get(index) else {
+                continue;
+            };
+            let selected = position == page.selected;
+            let title = if window.title.is_empty() {
+                window.app.clone()
+            } else {
+                window.title.clone()
+            };
+            let row = self.list_row(
+                self.initial_badge(&window.app, selected),
+                title,
+                self.subtitles.then(|| window.app.clone()),
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::WindowSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![rows, self.notice(notice)].into(),
+            None => rows.into(),
+        }
     }
 
     /// Clipboard history's body: its state, or its rows.
@@ -2280,6 +2464,10 @@ impl LauncherApp {
                 self.page = Page::Clipboard(crate::clipboard_page::ClipboardPage::default());
                 Task::batch([record, self.clipboard_search_task(), focus_search()])
             }
+            CommandKind::SwitchWindows => {
+                self.page = Page::Windows(crate::windows_page::WindowsPage::default());
+                Task::batch([record, self.list_windows_task(), focus_search()])
+            }
         }
     }
 
@@ -2310,7 +2498,103 @@ impl LauncherApp {
         )
     }
 
+    /// Asks the engine for the open windows.
+    fn list_windows_task(&mut self) -> Task<Message> {
+        let Page::Windows(page) = &mut self.page else {
+            return Task::none();
+        };
+        page.notice = None;
+        let Some(windows) = self.windows.clone() else {
+            page.apply(
+                Err(
+                    "Window switching needs the Compass engine, and this window is running \
+                     without one"
+                        .to_owned(),
+                ),
+                std::process::id(),
+            );
+            return Task::none();
+        };
+        Task::perform(
+            async move { windows.list_windows().await },
+            Message::WindowsLoaded,
+        )
+    }
+
+    /// Switches to the selected window.
+    fn activate_selected_window(&mut self) -> Task<Message> {
+        let Page::Windows(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(windows)) = (page.selected_row(), self.windows.clone()) else {
+            return Task::none();
+        };
+        let id = row.id;
+        Task::perform(
+            async move { windows.activate_window(id).await },
+            Message::WindowActivated,
+        )
+    }
+
+    /// Closes the selected window, when it can be closed.
+    fn close_selected_window(&mut self) -> Task<Message> {
+        let Page::Windows(page) = &mut self.page else {
+            return Task::none();
+        };
+        let Some(row) = page.selected_row() else {
+            return Task::none();
+        };
+        if !row.can_close {
+            page.notice = Some(format!("{} cannot be closed", row.title));
+            return Task::none();
+        }
+        let Some(windows) = self.windows.clone() else {
+            return Task::none();
+        };
+        let id = row.id;
+        Task::perform(
+            async move { windows.close_window(id).await },
+            Message::ShellWindowClosed,
+        )
+    }
+
     /// Fetches the selected entry's content, to copy it.
+    fn change_selected_clipboard_entry(&mut self, change: ClipboardChange) -> Task<Message> {
+        let Page::Clipboard(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
+            return Task::none();
+        };
+        let (id, pinned) = (row.id.clone(), row.pinned);
+        Task::perform(
+            async move {
+                match change {
+                    ClipboardChange::TogglePin => clipboard.clipboard_set_pinned(id, !pinned).await,
+                    ClipboardChange::Remove => clipboard.clipboard_remove(id).await,
+                }
+            },
+            Message::ClipboardEntryChanged,
+        )
+    }
+
+    /// Paste where the engine can, and copy where it cannot: the paste needs
+    /// the GNOME Shell extension, and without it the entry still goes on the
+    /// clipboard for the user's own Ctrl+V.
+    fn paste_selected_clipboard_entry(&mut self) -> Task<Message> {
+        let Page::Clipboard(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
+            return Task::none();
+        };
+        let id = row.id.clone();
+        Task::perform(
+            async move { clipboard.clipboard_paste(id).await },
+            Message::ClipboardPasted,
+        )
+    }
+
     fn copy_selected_clipboard_entry(&mut self) -> Task<Message> {
         let Page::Clipboard(page) = &self.page else {
             return Task::none();
@@ -3725,6 +4009,11 @@ mod tests {
         rows: Vec<crate::backend::ClipboardRow>,
         content: Option<crate::backend::ClipboardContent>,
         queries: std::sync::Mutex<Vec<String>>,
+        /// Whether the engine can paste (it has the Shell extension).
+        can_paste: bool,
+        pasted: std::sync::Mutex<Vec<String>>,
+        changes: std::sync::Mutex<Vec<String>>,
+        fail_changes: bool,
     }
 
     impl crate::backend::ClipboardBackend for FakeClipboard {
@@ -3749,6 +4038,40 @@ mod tests {
             _id: String,
         ) -> crate::backend::BackendFuture<'_, crate::backend::ClipboardContent> {
             Box::pin(async move { self.content.clone().ok_or_else(|| "gone".to_owned()) })
+        }
+
+        fn clipboard_set_pinned(
+            &self,
+            id: String,
+            pinned: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.changes
+                    .lock()
+                    .unwrap()
+                    .push(format!("pin {id} {pinned}"));
+                Ok(())
+            })
+        }
+
+        fn clipboard_remove(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.changes.lock().unwrap().push(format!("remove {id}"));
+                if self.fail_changes {
+                    return Err("That entry is already gone".to_owned());
+                }
+                Ok(())
+            })
+        }
+
+        fn clipboard_paste(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if !self.can_paste {
+                    return Err("Pasting needs the Compass GNOME Shell extension".to_owned());
+                }
+                self.pasted.lock().unwrap().push(id);
+                Ok(())
+            })
         }
     }
 
@@ -3899,7 +4222,94 @@ mod tests {
     }
 
     #[test]
-    fn enter_copies_the_whole_entry_and_hides() {
+    fn enter_pastes_through_the_engine_and_hides_without_copying() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "newest"), clip_row("2", "older")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"older".to_vec(),
+            }),
+            can_paste: true,
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(clipboard.pasted.lock().unwrap().as_slice(), ["2"]);
+        assert!(
+            writes.is_empty(),
+            "the engine put it on the clipboard; the launcher must not race it"
+        );
+        assert!(
+            !app.showing_clipboard(),
+            "and the launcher got out of the way"
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_p_toggles_the_pin_and_ctrl_x_removes_then_the_list_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let pinned = crate::backend::ClipboardRow {
+            pinned: true,
+            ..clip_row("2", "pinned one")
+        };
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "loose one"), pinned],
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+        let loads = clipboard.queries.lock().unwrap().len();
+
+        let ctrl = iced::keyboard::Modifiers::CTRL;
+        let ctrl_shift = iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT;
+        let task = app.update(chord("P", ctrl_shift));
+        settle(&mut app, task);
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(chord("P", ctrl_shift));
+        settle(&mut app, task);
+        let task = app.update(chord("x", ctrl));
+        settle(&mut app, task);
+
+        assert_eq!(
+            clipboard.changes.lock().unwrap().as_slice(),
+            ["pin 1 true", "pin 2 false", "remove 1"],
+            "the pin flips each entry's own state, and removal follows the reload's selection"
+        );
+        assert_eq!(
+            clipboard.queries.lock().unwrap().len(),
+            loads + 3,
+            "every change reloads the list"
+        );
+        assert!(app.showing_clipboard(), "and the view stays open");
+    }
+
+    #[test]
+    fn a_refused_change_says_why_and_keeps_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "only one")],
+            fail_changes: true,
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let task = app.update(chord("x", iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.notice.as_deref(), Some("That entry is already gone"));
+        assert_eq!(page.rows.len(), 1);
+    }
+
+    #[test]
+    fn enter_copies_the_whole_entry_and_hides_when_the_engine_cannot_paste() {
         let dir = tempfile::tempdir().unwrap();
         let whole = "the whole entry, not its preview ".repeat(10);
         let clipboard = Arc::new(FakeClipboard {
@@ -3988,6 +4398,180 @@ mod tests {
             writes.extend(settle(&mut app, task));
         }
         assert_eq!(writes, ["second entry"]);
+    }
+
+    #[derive(Debug, Default)]
+    struct FakeWindows {
+        rows: Vec<crate::backend::WindowRow>,
+        fail_activate: bool,
+        activated: std::sync::Mutex<Vec<u32>>,
+        closed: std::sync::Mutex<Vec<u32>>,
+        listed: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::backend::WindowBackend for FakeWindows {
+        fn list_windows(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::WindowRow>> {
+            Box::pin(async move {
+                self.listed
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(self.rows.clone())
+            })
+        }
+        fn activate_window(&self, id: u32) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if self.fail_activate {
+                    return Err("that window has gone".to_owned());
+                }
+                self.activated.lock().unwrap().push(id);
+                Ok(())
+            })
+        }
+        fn close_window(&self, id: u32) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.closed.lock().unwrap().push(id);
+                Ok(())
+            })
+        }
+    }
+
+    fn window_row(id: u32, title: &str, app: &str, pid: u32) -> crate::backend::WindowRow {
+        crate::backend::WindowRow {
+            id,
+            title: title.into(),
+            app: app.into(),
+            wm_class: app.to_lowercase(),
+            pid: Some(pid),
+            can_close: true,
+        }
+    }
+
+    fn windows_app(
+        dir: &std::path::Path,
+        windows: Option<Arc<FakeWindows>>,
+    ) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir));
+        app.apply(AppFlags {
+            windows: windows.map(|w| w as Arc<dyn crate::backend::WindowBackend>),
+            ..AppFlags::default()
+        });
+        app.backend = Some(backend.clone());
+        (app, backend)
+    }
+
+    fn open_windows(app: &mut LauncherApp) {
+        app.query = "switch windows".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Command(
+                compass_core::commands::by_id("commands:switch-windows").unwrap()
+            )),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(app, task);
+    }
+
+    #[test]
+    fn switching_windows_lists_others_and_enter_focuses_one_then_hides() {
+        let dir = tempfile::tempdir().unwrap();
+        let own = std::process::id();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![
+                window_row(7, "Downloads", "Files", 1),
+                window_row(8, "Compass", "Compass", own),
+                window_row(9, "notes.txt", "Text Editor", 2),
+                // Inside the Flatpak the Shell reports a host pid the
+                // launcher cannot see, so its window is known by app id.
+                crate::backend::WindowRow {
+                    wm_class: crate::APP_ID.to_owned(),
+                    ..window_row(10, "Compass", "Compass", 4_000_000)
+                },
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, backend) = windows_app(dir.path(), Some(windows.clone()));
+        open_windows(&mut app);
+        assert!(app.showing_windows());
+        let Page::Windows(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.all.len(), 2, "the launcher's own window is left out");
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["commands:switch-windows"]
+        );
+
+        let task = app.update(Message::WindowsQueryChanged("notes".into()));
+        settle(&mut app, task);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(windows.activated.lock().unwrap().as_slice(), [9]);
+        assert!(
+            !app.showing_windows(),
+            "hidden, and back at the root next time"
+        );
+    }
+
+    #[test]
+    fn control_q_closes_the_selected_window_and_reloads_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![window_row(3, "Old tab", "Browser", 1)],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+        open_windows(&mut app);
+        let before = windows.listed.load(std::sync::atomic::Ordering::SeqCst);
+        let task = app.update(chord("q", iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(windows.closed.lock().unwrap().as_slice(), [3]);
+        assert_eq!(
+            windows.listed.load(std::sync::atomic::Ordering::SeqCst),
+            before + 1,
+            "the list is asked for again"
+        );
+        assert!(
+            app.showing_windows(),
+            "closing a window keeps the switcher open"
+        );
+    }
+
+    #[test]
+    fn a_failed_switch_says_why_and_stays_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![window_row(3, "Gone", "Browser", 1)],
+            fail_activate: true,
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        open_windows(&mut app);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Windows(page) = &app.page else {
+            panic!("a failed switch must not hide the launcher")
+        };
+        assert_eq!(page.notice.as_deref(), Some("that window has gone"));
+    }
+
+    #[test]
+    fn switching_windows_without_an_engine_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = windows_app(dir.path(), None);
+        open_windows(&mut app);
+        let Page::Windows(page) = &app.page else {
+            unreachable!()
+        };
+        assert!(
+            matches!(&page.status, crate::windows_page::Status::Failed(r) if r.contains("engine")),
+            "{:?}",
+            page.status
+        );
     }
 
     #[test]

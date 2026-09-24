@@ -952,15 +952,24 @@ fn clipboard_history_without_a_keyring_is_refused_by_name() {
     // cannot be opened, and the request must say so rather than answer with
     // an empty list a client would show as "nothing copied yet".
     let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
-    let response = daemon.request(compass_ipc::Request::ClipboardHistory {
-        query: String::new(),
-        limit: 10,
-    });
-    let compass_ipc::Response::Error(err) = response else {
-        panic!("expected a refusal, got {response:?}");
-    };
-    assert_eq!(err.kind, compass_ipc::ErrorKind::Unsupported);
-    assert!(err.message.contains("keyring"), "{}", err.message);
+    for request in [
+        compass_ipc::Request::ClipboardHistory {
+            query: String::new(),
+            limit: 10,
+        },
+        compass_ipc::Request::ClipboardSetPinned {
+            id: "1".into(),
+            pinned: true,
+        },
+        compass_ipc::Request::ClipboardRemove { id: "1".into() },
+    ] {
+        let response = daemon.request(request.clone());
+        let compass_ipc::Response::Error(err) = response else {
+            panic!("expected {request:?} to be refused, got {response:?}");
+        };
+        assert_eq!(err.kind, compass_ipc::ErrorKind::Unsupported, "{request:?}");
+        assert!(err.message.contains("keyring"), "{}", err.message);
+    }
 }
 
 #[test]
@@ -1018,4 +1027,24 @@ fn builtin_commands_rank_in_the_root_and_their_use_is_remembered() {
         Some("commands:clipboard-history"),
         "the most-used row leads the empty query"
     );
+}
+
+#[test]
+fn window_requests_without_a_session_bus_are_refused_by_name() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    for request in [
+        Request::ListWindows,
+        Request::ActivateWindow { id: 1 },
+        Request::CloseWindow { id: 1 },
+        // Before the store is consulted: without a Shell there is nothing to
+        // paste into, whether or not the id names an entry.
+        Request::ClipboardPaste { id: "1".into() },
+    ] {
+        let Response::Error(err) = daemon.request(request.clone()) else {
+            panic!("{request:?} was not refused");
+        };
+        assert_eq!(err.kind, ErrorKind::Unsupported, "{request:?}");
+        assert!(err.message.contains("session bus"), "{}", err.message);
+    }
 }

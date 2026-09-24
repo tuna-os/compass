@@ -52,6 +52,35 @@ impl<'a> AppService<'a> {
             .find(|item| identity(item).matches_window_class(wm_class))
     }
 
+    /// The window classes of every terminal emulator (`isTerminalEmulator()`,
+    /// the `TerminalEmulator` category), normalised as
+    /// [`normalize_class`](crate::app_windows::normalize_class) does: each
+    /// one's `StartupWMClass` when it declares one, and its desktop id either
+    /// way, the same two things [`Self::find_by_class`] matches. A paste into
+    /// one of these needs Ctrl+Shift+V.
+    #[must_use]
+    pub fn terminal_window_classes(&self) -> Vec<String> {
+        let mut classes: Vec<String> = self
+            .applications()
+            .filter(|item| item.categories().iter().any(|c| c == "TerminalEmulator"))
+            .flat_map(|item| {
+                let identity = identity(item);
+                identity
+                    .startup_wm_class
+                    .as_deref()
+                    .map(crate::app_windows::normalize_class)
+                    .into_iter()
+                    .chain(std::iter::once(crate::app_windows::normalize_class(
+                        &identity.desktop_id,
+                    )))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        classes.sort_unstable();
+        classes.dedup();
+        classes
+    }
+
     /// `AppService::find`: by id first, then by window class.
     ///
     /// The order matters for a target that is both, and an id is the more
