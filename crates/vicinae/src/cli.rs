@@ -149,6 +149,10 @@ pub enum Command {
     #[command(subcommand)]
     Ext(ExtCommand),
 
+    /// The `vicinae.json` configuration: where it is, its schema, and migration.
+    #[command(subcommand)]
+    Config(ConfigCommand),
+
     /// One-off experiments that answer a question the code cannot.
     ///
     /// Hidden: these are addressed to whoever is answering the question — CI,
@@ -192,6 +196,44 @@ pub enum ThemeCommand {
     },
     /// Reset to System (OS native) theme.
     Reset,
+}
+
+/// Configuration subcommands.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum ConfigCommand {
+    /// Print where `vicinae.json` and the C++ engine's `settings.json` are.
+    Path,
+
+    /// Print the JSON Schema for `vicinae.json`.
+    ///
+    /// The same document is published at `packaging/schema/vicinae.schema.json`.
+    Schema,
+
+    /// Translate the C++ engine's `settings.json` into `vicinae.json`.
+    ///
+    /// Without `--write` this only prints the result and what was and was not
+    /// carried across. The C++ file is never modified.
+    Migrate {
+        /// The settings file to read. Defaults to the C++ engine's own.
+        #[arg(long, value_name = "PATH")]
+        from: Option<PathBuf>,
+
+        /// Where to write. Defaults to this engine's `vicinae.json`.
+        #[arg(long, value_name = "PATH")]
+        to: Option<PathBuf>,
+
+        /// Write the result instead of only printing it.
+        #[arg(long)]
+        write: bool,
+
+        /// Replace an existing `vicinae.json`, keeping it as `vicinae.json.bak`.
+        #[arg(long, requires = "write")]
+        force: bool,
+
+        /// Emit the migration report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Extension management subcommands.

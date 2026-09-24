@@ -14,6 +14,7 @@
 pub mod appearance;
 pub mod cli;
 pub mod clipboard_service;
+pub mod config_cmd;
 pub mod doctor;
 pub mod engine;
 pub mod extension_apps;
@@ -406,6 +407,8 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         }
 
         Command::Theme(theme_cmd) => handle_theme(theme_cmd).await,
+
+        Command::Config(config_cmd) => config_cmd::run(config_cmd),
 
         // Handled in `run`, before the runtime exists.
         Command::Ui | Command::Start { .. } => {

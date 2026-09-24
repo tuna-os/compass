@@ -20,6 +20,10 @@
 //! }
 //! ```
 //!
+//! The JSON Schema for this file is generated from these types ([`json_schema`]) and published at
+//! `packaging/schema/vicinae.schema.json`, which [`SCHEMA_URL`] points at. The C++ engine's
+//! `settings.json` is migrated into this shape by [`crate::config_migration`].
+//!
 //! Two properties drive the design:
 //!
 //! * **Every field is optional and has a documented default** ([`DEFAULT_HOTKEY`],
@@ -35,6 +39,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -113,22 +118,36 @@ pub const DEFAULT_AUTO_UPDATE: bool = true;
 /// Path of the config file relative to `$XDG_CONFIG_HOME`.
 pub const CONFIG_RELATIVE_PATH: &str = "vicinae/vicinae.json";
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// Where the published JSON Schema for `vicinae.json` lives, as a `$schema` value.
+///
+/// The file behind it is `packaging/schema/vicinae.schema.json`, generated from these types by
+/// [`json_schema`] and held to them by the `config_schema` test.
+pub const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/tuna-os/compass/main/packaging/schema/vicinae.schema.json";
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// Per-entrypoint root search settings, keyed by entrypoint id under its provider.
 struct RootEntrypointSettings {
+    /// Whether the entrypoint appears in root search.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     enabled: Option<bool>,
+    /// An extra search term the entrypoint answers to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     alias: Option<String>,
+    /// A hotkey that runs the entrypoint directly, e.g. `ctrl+shift+c`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shortcut: Option<String>,
     #[serde(flatten)]
     unknown: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// Per-provider root search settings, keyed by provider id (e.g. `applications`).
 struct RootProviderSettings {
+    /// Whether the provider contributes to root search at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     enabled: Option<bool>,
+    /// Settings for individual entrypoints of this provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     entrypoints: Option<BTreeMap<String, RootEntrypointSettings>>,
     #[serde(flatten)]
@@ -184,20 +203,33 @@ pub enum ConfigError {
 }
 
 /// The `launcher` section.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LauncherConfig {
+    /// The global chord that toggles the launcher, as `modifier+key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_HOTKEY, "examples" = ["super+space", "alt+space"]))]
     hotkey: Option<String>,
+    /// Whether the launcher hides when it loses keyboard focus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_CLOSE_ON_FOCUS_LOSS))]
     close_on_focus_loss: Option<bool>,
+    /// How many results the launcher shows. `0` shows none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_MAX_RESULTS))]
     max_results: Option<usize>,
+    /// The navigation chord scheme: `default` (the platform's, vim on Linux), `vim` or `emacs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_KEYBINDING, "examples" = ["default", "vim", "emacs"]))]
     keybinding: Option<String>,
+    /// Whether moving past the last result selects the first, and the reverse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_WRAP_NAVIGATION))]
     wrap_navigation: Option<bool>,
+    /// Whether Ctrl+1..9 launches the first through ninth result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_QUICK_LAUNCH))]
     quick_launch: Option<bool>,
+    /// Colour mode and row presentation.
     #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
     appearance: AppearanceConfig,
 
@@ -207,17 +239,30 @@ pub struct LauncherConfig {
 }
 
 /// The `launcher.appearance` section: colour mode and row presentation, not behavior.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AppearanceConfig {
+    /// Light or dark: `system` follows the desktop, `light` and `dark` force one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_COLOR_SCHEME, "examples" = ["system", "light", "dark"]))]
     color_scheme: Option<String>,
+    /// The palette: `system` follows the desktop, anything else names a curated theme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend(
+        "default" = DEFAULT_THEME,
+        "examples" = ["system", "catppuccin", "dracula", "nord", "gruvbox", "tokyo-night", "solarized"]
+    ))]
     theme: Option<String>,
+    /// The named layout preset supplying the defaults for this section.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_PRESET, "examples" = ["gnome", "raycast", "flow", "rofi"]))]
     preset: Option<String>,
+    /// Whether result rows show the application's icon. The preset supplies the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_ICONS))]
     icons: Option<bool>,
+    /// Whether the launcher background is translucent. Translucency, not blur.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_TINT))]
     tint: Option<bool>,
 
     /// Keys this build does not know about, preserved verbatim.
@@ -486,10 +531,13 @@ impl LauncherConfig {
 }
 
 /// The `extensions` section.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ExtensionsConfig {
+    /// Whether installed extensions update themselves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_AUTO_UPDATE))]
     auto_update: Option<bool>,
+    /// The ids of the installed extensions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     installed: Option<Vec<String>>,
 
@@ -546,16 +594,25 @@ impl ExtensionsConfig {
 /// A parsed `vicinae.json`.
 ///
 /// [`Config::default`] is the fully-defaulted configuration and is what an empty file produces.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "vicinae.json", extend("$id" = SCHEMA_URL))]
 pub struct Config {
+    /// The JSON Schema this file follows, for editors. Ignored by the launcher.
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    schema: Option<String>,
+    /// Launcher window behaviour and appearance.
     #[serde(default, skip_serializing_if = "LauncherConfig::is_empty")]
     launcher: LauncherConfig,
+    /// Extension management.
     #[serde(default, skip_serializing_if = "ExtensionsConfig::is_empty")]
     extensions: ExtensionsConfig,
+    /// Root search settings per provider, keyed by provider id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     providers: Option<BTreeMap<String, RootProviderSettings>>,
+    /// Root items pinned to the top of the empty search, as `provider:entrypoint` ids.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     favorites: Option<Vec<String>>,
+    /// Root items offered when a search has no match, as `provider:entrypoint` ids.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fallbacks: Option<Vec<String>>,
 
@@ -697,6 +754,10 @@ impl Config {
 
     /// Loads the configuration from [`default_config_path`].
     ///
+    /// When there is no `vicinae.json` yet but the C++ engine's `settings.json` sits beside it,
+    /// that file is migrated in memory, so someone switching engines keeps their settings before
+    /// anything has been written. See [`Config::load_or_migrate`].
+    ///
     /// Prefer [`Config::load_from`] anywhere the path should be injectable — notably in tests,
     /// which must never touch the invoking user's real configuration.
     ///
@@ -704,7 +765,52 @@ impl Config {
     ///
     /// See [`Config::load_from`], plus [`ConfigError::NoConfigDir`].
     pub fn load() -> Result<Config, ConfigError> {
-        Config::load_from(default_config_path()?)
+        let path = default_config_path()?;
+        let legacy = crate::config_migration::legacy_config_path().ok();
+        Config::load_or_migrate(&path, legacy.as_deref())
+    }
+
+    /// Loads `path`, or, when it does not exist, migrates `legacy` (the C++ `settings.json`).
+    ///
+    /// Nothing is written: the migrated configuration is only materialised when something saves
+    /// it, and `vicinae config migrate --write` does that on purpose. A legacy file that cannot be
+    /// migrated is logged and the defaults are used, since it is not this engine's file to reject.
+    ///
+    /// # Errors
+    ///
+    /// See [`Config::load_from`]; the legacy file never produces an error.
+    pub fn load_or_migrate(path: &Path, legacy: Option<&Path>) -> Result<Config, ConfigError> {
+        let legacy = legacy.filter(|legacy| !path.exists() && legacy.is_file());
+        let Some(legacy) = legacy else {
+            return Config::load_from(path);
+        };
+        match crate::config_migration::migrate_file(legacy) {
+            Ok(migration) => {
+                tracing::info!(
+                    from = %legacy.display(),
+                    mapped = migration.mapped.len(),
+                    skipped = migration.skipped.len(),
+                    "no vicinae.json; using the settings migrated from the C++ engine"
+                );
+                Ok(migration.config)
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not migrate the C++ engine's settings; using defaults");
+                Ok(Config::default())
+            }
+        }
+    }
+
+    /// The `$schema` the file names, if any.
+    #[must_use]
+    pub fn schema(&self) -> Option<&str> {
+        self.schema.as_deref()
+    }
+
+    /// Sets `$schema`. `None` removes the key.
+    pub fn set_schema(&mut self, value: Option<String>) -> &mut Self {
+        self.schema = value;
+        self
     }
 
     /// Serialises the configuration, unknown fields included.
@@ -748,6 +854,24 @@ fn parse_message(err: &serde_json::Error) -> String {
         Some(at) => text[..at].to_owned(),
         None => text,
     }
+}
+
+/// The JSON Schema for `vicinae.json`, generated from [`Config`].
+///
+/// This is what `packaging/schema/vicinae.schema.json` holds. Regenerate the committed copy with
+/// `COMPASS_UPDATE_SCHEMA=1 cargo test -p compass-core --test config_schema`, or print it with
+/// `vicinae config schema`.
+#[must_use]
+pub fn json_schema() -> Value {
+    schemars::schema_for!(Config).to_value()
+}
+
+/// [`json_schema`] as the pretty-printed, newline-terminated text that is committed.
+#[must_use]
+pub fn json_schema_pretty() -> String {
+    let mut out = serde_json::to_string_pretty(&json_schema()).unwrap_or_default();
+    out.push('\n');
+    out
 }
 
 /// `$XDG_CONFIG_HOME/vicinae/vicinae.json`, falling back to `~/.config`.
