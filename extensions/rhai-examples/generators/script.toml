@@ -1,0 +1,5 @@
+title = "Generate"
+description = "UUIDs, lorem ipsum and passwords"
+icon = "dice"
+keywords = ["uuid", "guid", "lorem", "ipsum", "password", "random"]
+capabilities = ["clipboard.write", "clipboard.paste"]

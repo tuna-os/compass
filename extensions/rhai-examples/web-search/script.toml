@@ -1,0 +1,5 @@
+title = "Web Search"
+description = "Search the web, a wiki or a code host"
+icon = "globe"
+keywords = ["search", "web", "google", "duckduckgo", "wikipedia", "github"]
+capabilities = ["application.open", "clipboard.write"]

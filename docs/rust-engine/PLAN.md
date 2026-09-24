@@ -519,6 +519,13 @@ discovery and hot reload; and first-party example scripts with authoring docs. T
 when the examples are good enough that someone can copy one and be productive — an empty tier is
 worse than no tier.
 
+*Track C status (2026-09-24):* **gate met in the crate.** `compass-script` has the hardened
+engine, capability-gated registry, blocking-pool execution with a terminating deadline,
+`script.toml` discovery under `$XDG_DATA_HOME/compass/scripts`, and `notify` hot reload; 26
+negative sandbox tests fail closed, a shared-seam test holds it to the TS tier's `to_view`, and
+five examples ship in `extensions/rhai-examples/` with [RHAI-SCRIPTS.md](./RHAI-SCRIPTS.md).
+Not done: loading scripts into root search and the extension page, and a real `ScriptHost`.
+
 **Gate:** every feature area in the ledger has absolute tests — ported Catch2 cases count where they
 state intended behaviour, not where they pin a C++ quirk (§8.3, ADR-0017).
 For Track C: the Rhai sandbox negative tests (§8.2) all fail closed, and at least four first-party
