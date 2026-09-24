@@ -46,8 +46,12 @@ in
       makeWrapper
       patchelf
     ];
-    # libsqlite3-sys's bundled SQLCipher links libcrypto.
-    buildInputs = [openssl];
+    # libsqlite3-sys's bundled SQLCipher links libcrypto; iced_layershell's
+    # smithay-client-toolkit needs xkbcommon at build time.
+    buildInputs = [
+      openssl
+      libxkbcommon
+    ];
     OPENSSL_LIB_DIR = "${lib.getLib openssl}/lib";
     OPENSSL_INCLUDE_DIR = "${lib.getDev openssl}/include";
 

@@ -125,6 +125,11 @@ jobs:
           restore-keys: cargo-release-${{ runner.os }}-
 
       # rust-toolchain.toml pins the channel; rustup on the runner honours it.
+      - name: Install build dependencies
+        # iced_layershell (the wlroots launcher surface) links xkbcommon.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-dev
       - name: Build the release binaries
         run: cargo build --release --locked -p vicinae -p compass-sandbox --bins
 
