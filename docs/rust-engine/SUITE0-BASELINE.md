@@ -1,6 +1,6 @@
 # Suite 0 baseline — the first measured differential
 
-Recorded before gated, per [ADR-0010](adr/0010-readiness-is-a-state.md). This is the measurement
+Recorded before gated, per [ADR-0010](adr/0010-corral-vm-tier.md). This is the measurement
 [#12](https://github.com/tuna-os/compass/issues/12) and [#4](https://github.com/tuna-os/compass/issues/4)'s
 first exit gate have been waiting for: what the two engines actually do when asked the same
 questions over the same corpus, before anyone picks a threshold.
