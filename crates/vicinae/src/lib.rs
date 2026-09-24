@@ -13,6 +13,7 @@
 
 pub mod appearance;
 pub mod cli;
+pub mod clipboard_service;
 pub mod doctor;
 pub mod engine;
 pub mod hotkey;

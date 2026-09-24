@@ -87,6 +87,9 @@ pub struct EngineState {
     max_results: usize,
     /// The attached launcher window, if one is.
     window: WindowSlot,
+    /// Clipboard history, once [`crate::clipboard_service::run`] has opened
+    /// it. `None` until then, and for good when there is no keyring.
+    clipboard: Option<Arc<crate::clipboard_service::ClipboardStore>>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -137,6 +140,7 @@ impl EngineState {
             socket,
             max_results,
             window: WindowSlot::default(),
+            clipboard: None,
         }
     }
 
@@ -179,7 +183,13 @@ impl EngineState {
             socket,
             max_results,
             window: WindowSlot::default(),
+            clipboard: None,
         }
+    }
+
+    /// Makes clipboard history available to requests.
+    pub fn set_clipboard(&mut self, store: Arc<crate::clipboard_service::ClipboardStore>) {
+        self.clipboard = Some(store);
     }
 
     /// The slot holding the attached launcher window.
@@ -362,6 +372,33 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
 
         // Handled by the serve loop, which owns the shutdown signal; reaching
         // here means the loop did not intercept it.
+        Request::ClipboardHistory { query, limit } => {
+            if limit == 0 {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "a clipboard history request must ask for at least one entry",
+                ));
+            }
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            // SQLite is blocking I/O; keep it off the executor.
+            match tokio::task::spawn_blocking(move || store.history(&query, limit)).await {
+                Ok(Ok(entries)) => Response::ClipboardHistory { entries },
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard history task failed: {err}"),
+                )),
+            }
+        }
+
         Request::Shutdown => Response::ShuttingDown,
 
         Request::Toggle | Request::Show | Request::Hide => {
@@ -434,6 +471,10 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     // Detached: the hotkey is a convenience, the socket is the contract. A
     // portal that never answers must not keep the engine from listening, so
     // this is spawned rather than awaited or raced against the serve loop.
+    // Detached for the same reason: a keyring that is slow or absent costs
+    // clipboard history, never the socket.
+    tokio::spawn(crate::clipboard_service::run(Arc::clone(&state)));
+
     if hotkey {
         tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
     } else {

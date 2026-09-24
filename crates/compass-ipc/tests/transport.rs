@@ -91,6 +91,7 @@ async fn echo_handler(request: Request) -> Response {
                 }
             }
         }
+        Request::ClipboardHistory { .. } => Response::ClipboardHistory { entries: vec![] },
         Request::Doctor => Response::DoctorReport {
             checks: vec![DoctorCheck {
                 name: "ipc.socket".into(),

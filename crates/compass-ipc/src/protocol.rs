@@ -30,7 +30,8 @@ use serde::{Deserialize, Serialize};
 /// a human can act on, and it only does so if the number moves.
 ///
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
-pub const PROTOCOL_VERSION: u16 = 3;
+/// Version 4 adds clipboard history.
+pub const PROTOCOL_VERSION: u16 = 4;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +128,17 @@ pub enum Request {
         /// Stable application/action key, as returned by the index.
         key: String,
     },
+    /// Search clipboard history, newest first with pinned entries on top.
+    ///
+    /// Answered with [`Response::ClipboardHistory`], or with an
+    /// [`ErrorKind::Unsupported`] error while the engine has no store — no
+    /// keyring, or the store would not open. An empty `query` lists.
+    ClipboardHistory {
+        /// Search text; empty for the whole history.
+        query: String,
+        /// Most entries to return. Zero is a bad request.
+        limit: u32,
+    },
 }
 
 /// What the engine answers.
@@ -164,6 +176,11 @@ pub enum Response {
     /// allocated by the engine and echoed by the window in the matching
     /// [`Request::WindowOutcome`].
     Window(WindowCommand),
+    /// Entries for a [`Request::ClipboardHistory`], in presentation order.
+    ClipboardHistory {
+        /// Matching entries: pinned first, then most recently copied.
+        entries: Vec<ClipboardEntry>,
+    },
 }
 
 /// What the engine asks an attached window to do.
@@ -205,6 +222,44 @@ pub struct QueryHit {
     pub subtitle: Option<String>,
     /// Match score in `0..=100`, matching `compass-search`'s scale.
     pub score: u32,
+}
+
+/// One clipboard history entry, as a list row needs it.
+///
+/// The payload itself is not sent: rows show [`preview`](Self::preview), and
+/// copying an entry back is a separate request once there is one to make.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipboardEntry {
+    /// Stable id of the entry.
+    pub id: String,
+    /// Text shown in the row: the start of copied text, or a label such as
+    /// "Image" for content that has none.
+    pub preview: String,
+    /// MIME type of the preferred representation.
+    pub mime_type: String,
+    /// What kind of thing was copied.
+    pub kind: ClipboardKind,
+    /// Whether the entry is pinned to the top.
+    pub pinned: bool,
+    /// When it was last copied, in milliseconds since the Unix epoch.
+    pub updated_at: i64,
+    /// For links, the host, so a row can say where it points.
+    pub url_host: Option<String>,
+}
+
+/// What kind of thing a [`ClipboardEntry`] holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClipboardKind {
+    /// Plain text.
+    Text,
+    /// A URL.
+    Link,
+    /// An image.
+    Image,
+    /// One or more files.
+    File,
+    /// Anything the store kept but could not classify.
+    Unknown,
 }
 
 /// One diagnostic check performed by `vicinae doctor`.

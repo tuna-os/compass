@@ -15,6 +15,12 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+/// A session bus address with nothing behind it, for every engine this file
+/// starts. The engine opens clipboard history through the login keyring on
+/// the session bus; pointed at a real one, running these tests would create a
+/// Compass key in the developer's own keyring.
+const NO_SESSION_BUS: &str = "unix:path=/nonexistent/compass-test-no-session-bus";
+
 /// How long to wait for the daemon to bind before calling it a failure.
 ///
 /// Generous because CI runners are slow and a flaky timeout here would be
@@ -41,6 +47,7 @@ fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
         .arg("--socket")
         .arg(socket.as_path())
         .args(["serve", "--no-hotkey"])
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
         .env("XDG_DATA_HOME", dir.path().join("data"))
         .env("XDG_DATA_DIRS", dir.path().join("empty"))
         .env("XDG_CONFIG_HOME", dir.path().join("config"))
@@ -159,6 +166,7 @@ impl Daemon {
             .arg("--socket")
             .arg(&socket)
             .arg("serve")
+            .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
             .env("XDG_DATA_DIRS", &data)
             // Keep the daemon out of the invoking user's home entirely: its
             // config, its launch history and its data all land in the tempdir.
@@ -642,6 +650,7 @@ fn a_second_engine_on_the_same_socket_refuses_to_start() {
         .arg("--socket")
         .arg(&daemon.socket)
         .arg("serve")
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
         .output()
         .expect("run a second engine");
 
@@ -924,4 +933,34 @@ fn a_window_that_dies_puts_the_engine_back_to_refusing() {
             "attempt {attempt}: the refusal should say how to fix it: {stderr}"
         );
     }
+}
+
+#[test]
+fn clipboard_history_without_a_keyring_is_refused_by_name() {
+    // Every engine here runs with no session bus, so no keyring: the history
+    // cannot be opened, and the request must say so rather than answer with
+    // an empty list a client would show as "nothing copied yet".
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let response = daemon.request(compass_ipc::Request::ClipboardHistory {
+        query: String::new(),
+        limit: 10,
+    });
+    let compass_ipc::Response::Error(err) = response else {
+        panic!("expected a refusal, got {response:?}");
+    };
+    assert_eq!(err.kind, compass_ipc::ErrorKind::Unsupported);
+    assert!(err.message.contains("keyring"), "{}", err.message);
+}
+
+#[test]
+fn a_clipboard_request_for_no_entries_is_a_bad_request() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let response = daemon.request(compass_ipc::Request::ClipboardHistory {
+        query: String::new(),
+        limit: 0,
+    });
+    let compass_ipc::Response::Error(err) = response else {
+        panic!("expected a refusal, got {response:?}");
+    };
+    assert_eq!(err.kind, compass_ipc::ErrorKind::BadRequest);
 }

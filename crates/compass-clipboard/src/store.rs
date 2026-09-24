@@ -196,15 +196,16 @@ fn unfiltered_sql() -> String {
         "SELECT
 {COLUMNS}, s.total_count, s.keywords
          FROM (
-           SELECT id, pinned_at, updated_at, kind, preferred_mime_type, keywords,
-                  COUNT(*) OVER() AS total_count
+           SELECT rowid AS seq, id, pinned_at, updated_at, kind, preferred_mime_type,
+                  keywords, COUNT(*) OVER() AS total_count
            FROM selection
-           ORDER BY pinned_at DESC, updated_at DESC
+           ORDER BY pinned_at DESC, updated_at DESC, rowid DESC
            LIMIT :limit OFFSET :offset
          ) s
          JOIN data_offer o
            ON o.selection_id = s.id
-           AND o.mime_type = s.preferred_mime_type"
+           AND o.mime_type = s.preferred_mime_type
+         ORDER BY s.pinned_at DESC, s.updated_at DESC, s.seq DESC"
     )
 }
 
@@ -242,7 +243,8 @@ fn filtered_sql(plan: &search::Plan<'_>, by_kind: bool, has_query: bool) -> Stri
 
     // GROUP BY because selection_fts holds a row for the content and another
     // for the keywords, so the join multiplies rows per selection.
-    sql.push_str(" GROUP BY s.id ORDER BY s.pinned_at DESC, s.updated_at DESC");
+    // rowid breaks a tie on updated_at: the later insert is the later copy.
+    sql.push_str(" GROUP BY s.id ORDER BY s.pinned_at DESC, s.updated_at DESC, s.rowid DESC");
 
     format!("SELECT * FROM ({sql}) LIMIT :limit OFFSET :offset")
 }

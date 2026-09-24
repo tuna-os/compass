@@ -3,8 +3,9 @@
 
 use compass_ipc::codec::{FrameCodec, LENGTH_PREFIX_LEN, MAX_FRAME_LEN};
 use compass_ipc::{
-    DoctorCheck, DoctorStatus, Error, ErrorKind, PROTOCOL_VERSION, ProtocolError, QueryHit,
-    Request, RequestEnvelope, Response, ResponseEnvelope, WindowCommand, WindowOutcome,
+    ClipboardEntry, ClipboardKind, DoctorCheck, DoctorStatus, Error, ErrorKind, PROTOCOL_VERSION,
+    ProtocolError, QueryHit, Request, RequestEnvelope, Response, ResponseEnvelope, WindowCommand,
+    WindowOutcome,
 };
 use tokio_util::bytes::{BufMut, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
@@ -37,6 +38,14 @@ fn all_requests() -> Vec<Request> {
             key: "app.desktop".into(),
         },
         Request::RecordLaunch { key: String::new() },
+        Request::ClipboardHistory {
+            query: String::new(),
+            limit: 50,
+        },
+        Request::ClipboardHistory {
+            query: "https://é.example 🚀".into(),
+            limit: u32::MAX,
+        },
     ]
 }
 
@@ -98,6 +107,29 @@ fn all_responses() -> Vec<Response> {
         Response::Window(WindowCommand::Show),
         Response::Window(WindowCommand::Hide),
         Response::Window(WindowCommand::Toggle),
+        Response::ClipboardHistory { entries: vec![] },
+        Response::ClipboardHistory {
+            entries: vec![
+                ClipboardEntry {
+                    id: "a".into(),
+                    preview: "hello é 🚀".into(),
+                    mime_type: "text/plain;charset=utf-8".into(),
+                    kind: ClipboardKind::Text,
+                    pinned: true,
+                    updated_at: i64::MAX,
+                    url_host: None,
+                },
+                ClipboardEntry {
+                    id: String::new(),
+                    preview: "Image".into(),
+                    mime_type: "image/png".into(),
+                    kind: ClipboardKind::Image,
+                    pinned: false,
+                    updated_at: 0,
+                    url_host: Some("example.org".into()),
+                },
+            ],
+        },
     ]
 }
 
@@ -116,6 +148,7 @@ fn request_variants_are_exhaustive() {
             | Request::Shutdown
             | Request::AttachWindow
             | Request::RecordLaunch { .. }
+            | Request::ClipboardHistory { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -132,6 +165,7 @@ fn response_variants_are_exhaustive() {
             | Response::ShuttingDown
             | Response::Error(_)
             | Response::WindowAttached
+            | Response::ClipboardHistory { .. }
             | Response::Window(_) => {}
         }
     }

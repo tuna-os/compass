@@ -38,6 +38,13 @@ tokio = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 zbus.workspace = true
+oo7.workspace = true
+compass-clipboard.workspace = true
+compass-shell.workspace = true
+compass-crypto.workspace = true
+compass-sqlcipher-sys.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
 landlock.workspace = true
 seccompiler.workspace = true
 libc.workspace = true
