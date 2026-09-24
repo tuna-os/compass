@@ -67,11 +67,12 @@ tripwire. It is green today, it has a declared-divergence path for every intende
 the cost of keeping it is one declaration per deliberate change. What ADR-0017 changes is how a
 failure is resolved — declare the divergence when Compass is right — not whether it is seen.
 
-### 6. The six desktop-entry bugs are reported upstream
+### 6. The six desktop-entry bugs are to be reported upstream
 
 ADR-0007 committed to reporting them as a courtesy, and one is an unbounded loop with unbounded
 allocation reachable from any truncated `.desktop` file. The report is
-`docs/rust-engine/upstream-bug-report.md`.
+`docs/rust-engine/upstream-bug-report.md`, ready to paste. Filing it on `vicinaehq/vicinae` needs
+a maintainer's account; the automation that wrote this has no access to that repository.
 
 ## Consequences
 
