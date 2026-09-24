@@ -2679,3 +2679,189 @@ fn percent_encode(text: &str) -> String {
         })
         .collect()
 }
+
+/// A fake application in its own directory that appends each argument it is
+/// launched with to `<dir>/<name>.log`, and the desktop entry that runs it
+/// for `mime_types`.
+fn recording_app(dir: &Path, name: &str, mime_types: &str) -> (String, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = dir.join(format!("{name}.log"));
+    let program = dir.join(name);
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do echo \"$arg\" >> '{}'; done\n",
+            log.display()
+        ),
+    )
+    .expect("fake application");
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName={name}\nExec={} %u\nMimeType={mime_types}\n",
+        program.display()
+    );
+    (entry, log)
+}
+
+/// Reads `log` until it has a line, or panics: a launch is spawned, so the
+/// answer can arrive before the program has run.
+fn launched_with(log: &Path) -> Vec<String> {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Ok(text) = std::fs::read_to_string(log)
+            && !text.is_empty()
+        {
+            return text.lines().map(str::to_owned).collect();
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("{} was never launched", log.display());
+}
+
+#[test]
+fn shortcuts_are_imported_created_searched_opened_edited_and_removed() {
+    use compass_ipc::{ErrorKind, Request, Response, ShortcutEntry};
+    let bin = TempDir::new().expect("tempdir");
+    let (browser, log) = recording_app(bin.path(), "browser", "x-scheme-handler/https;");
+    let vicinae_file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("browser.desktop", &browser)], "{}", |root| {
+        let file = root.join("data-home/vicinae/shortcuts/shortcuts.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"[{"id":"sct-aaaaaaaaaaaa","name":"Crate Docs","icon":"icon://omnicast/link",
+                "url":"https://docs.rs/{crate}","app":"default","openCount":4,
+                "createdAt":1700000000,"updatedAt":1700000000}]"#,
+        )
+        .unwrap();
+        vicinae_file.set(file).unwrap();
+        Vec::new()
+    });
+    let list = |response: Response| -> Vec<ShortcutEntry> {
+        match response {
+            Response::Shortcuts { shortcuts } => shortcuts,
+            other => panic!("not a shortcut list: {other:?}"),
+        }
+    };
+
+    let imported = list(daemon.request(Request::ListShortcuts));
+    assert_eq!(imported.len(), 1, "Vicinae's shortcut came across");
+    assert_eq!(imported[0].name, "Crate Docs");
+    assert_eq!(imported[0].open_count, 4);
+
+    let saved = list(daemon.request(Request::SaveShortcut {
+        id: None,
+        name: "Search Rust".into(),
+        icon: "default".into(),
+        url: "https://docs.rs/releases/search?query={query}".into(),
+        app: "default".into(),
+    }));
+    assert_eq!(saved.len(), 2);
+    let created = saved.iter().find(|s| s.name == "Search Rust").unwrap();
+    assert!(created.id.starts_with("sct-"), "{}", created.id);
+    assert_eq!(
+        created.icon, "icon://favicon/docs.rs?fallback=icon://omnicast/image",
+        "the default icon is resolved to the site's favicon when saved"
+    );
+
+    // Root search ranks it with everything else, by its name.
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "search rust".into(),
+    }) else {
+        panic!("no query results");
+    };
+    assert_eq!(
+        hits.first().map(|hit| hit.id.as_str()),
+        Some(format!("shortcuts:{}", created.id).as_str()),
+        "{hits:?}"
+    );
+
+    let Response::Text { text } = daemon.request(Request::ExpandShortcut {
+        id: created.id.clone(),
+        arguments: vec!["serde json".into()],
+    }) else {
+        panic!("not expanded");
+    };
+    assert_eq!(text, "https://docs.rs/releases/search?query=serde json");
+
+    assert_eq!(
+        daemon.request(Request::OpenShortcut {
+            id: created.id.clone(),
+            arguments: vec!["serde".into()],
+        }),
+        Response::Ack
+    );
+    assert_eq!(
+        launched_with(&log),
+        ["https://docs.rs/releases/search?query=serde"],
+        "the browser, which claims https, opened the expanded link"
+    );
+    let after = list(daemon.request(Request::ListShortcuts));
+    let opened = after.iter().find(|s| s.id == created.id).unwrap();
+    assert_eq!(opened.open_count, 1);
+    assert!(opened.last_used_at.is_some());
+
+    let edited = list(daemon.request(Request::SaveShortcut {
+        id: Some(created.id.clone()),
+        name: "Rust Search".into(),
+        icon: "icon://omnicast/bolt".into(),
+        url: created.url.clone(),
+        app: "default".into(),
+    }));
+    let renamed = edited.iter().find(|s| s.id == created.id).unwrap();
+    assert_eq!(renamed.name, "Rust Search");
+    assert_eq!(renamed.icon, "icon://omnicast/bolt");
+    assert_eq!(renamed.open_count, 1, "editing is not opening");
+
+    let remaining = list(daemon.request(Request::RemoveShortcut {
+        id: "sct-aaaaaaaaaaaa".into(),
+    }));
+    assert_eq!(
+        remaining.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        [created.id.as_str()]
+    );
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "crate docs".into(),
+    }) else {
+        panic!("no query results");
+    };
+    assert!(
+        hits.iter()
+            .all(|hit| hit.id != "shortcuts:sct-aaaaaaaaaaaa"),
+        "a removed shortcut leaves root search: {hits:?}"
+    );
+
+    // Compass wrote its own file; Vicinae's is as it was.
+    let vicinae = std::fs::read_to_string(vicinae_file.get().unwrap()).unwrap();
+    assert!(vicinae.contains("Crate Docs"));
+    let compass = std::fs::read_to_string(
+        vicinae_file
+            .get()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("compass-shortcuts.json"),
+    )
+    .unwrap();
+    assert!(compass.contains("Rust Search") && !compass.contains("Crate Docs"));
+
+    let Response::Error(err) = daemon.request(Request::OpenShortcut {
+        id: "sct-gone".into(),
+        arguments: vec![],
+    }) else {
+        panic!("opening a missing shortcut was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    let Response::Error(err) = daemon.request(Request::SaveShortcut {
+        id: None,
+        name: "No link".into(),
+        icon: "default".into(),
+        url: String::new(),
+        app: "default".into(),
+    }) else {
+        panic!("a shortcut with no link was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}

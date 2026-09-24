@@ -110,6 +110,32 @@ fn all_requests() -> Vec<Request> {
         Request::OAuthRedirect {
             url: "raycast://oauth?package_name=Extension&code=é&state=s".into(),
         },
+        Request::ListShortcuts,
+        Request::SaveShortcut {
+            id: None,
+            name: "Recherche 🚀".into(),
+            icon: "default".into(),
+            url: "https://x.test/?q={query}".into(),
+            app: "default".into(),
+        },
+        Request::SaveShortcut {
+            id: Some("sct-0123456789ab".into()),
+            name: String::new(),
+            icon: "icon://builtin/link".into(),
+            url: "{clipboard}".into(),
+            app: "firefox.desktop".into(),
+        },
+        Request::RemoveShortcut {
+            id: "sct-0123456789ab".into(),
+        },
+        Request::OpenShortcut {
+            id: "sct-0123456789ab".into(),
+            arguments: vec!["é".into(), String::new()],
+        },
+        Request::ExpandShortcut {
+            id: "sct-0123456789ab".into(),
+            arguments: vec![],
+        },
     ]
 }
 
@@ -293,6 +319,23 @@ fn all_responses() -> Vec<Response> {
             heading: "Recently Accessed".into(),
             files: vec![],
         },
+        Response::Shortcuts {
+            shortcuts: vec![compass_ipc::ShortcutEntry {
+                id: "sct-0123456789ab".into(),
+                name: "Recherche 🚀".into(),
+                icon: "icon://favicon/x.test".into(),
+                url: "https://x.test/?q={query}".into(),
+                app: "default".into(),
+                open_count: 3,
+                created_at: 1_700_000_000,
+                updated_at: 1_700_000_100,
+                last_used_at: Some(1_700_000_200),
+            }],
+        },
+        Response::Shortcuts { shortcuts: vec![] },
+        Response::Text {
+            text: "https://x.test/?q=é".into(),
+        },
     ]
 }
 
@@ -331,6 +374,11 @@ fn request_variants_are_exhaustive() {
             | Request::SearchFiles { .. }
             | Request::OpenFile { .. }
             | Request::OAuthRedirect { .. }
+            | Request::ListShortcuts
+            | Request::SaveShortcut { .. }
+            | Request::RemoveShortcut { .. }
+            | Request::OpenShortcut { .. }
+            | Request::ExpandShortcut { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -355,6 +403,8 @@ fn response_variants_are_exhaustive() {
             | Response::ExtensionNeedsArguments { .. }
             | Response::ExtensionView { .. }
             | Response::Files { .. }
+            | Response::Shortcuts { .. }
+            | Response::Text { .. }
             | Response::Window(_) => {}
         }
     }

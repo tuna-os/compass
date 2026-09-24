@@ -31,6 +31,7 @@ pub mod resident;
 pub mod root_list;
 mod scroll;
 pub mod settings;
+pub mod shortcuts_page;
 pub mod surface;
 pub mod theme;
 pub mod typography;

@@ -43,6 +43,10 @@ pub enum CommandKind {
     SearchEmojis,
     /// Search the file index and open a file.
     SearchFiles,
+    /// The form a new quicklink is made in.
+    CreateShortcut,
+    /// List, open, edit and remove quicklinks.
+    ManageShortcuts,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -94,6 +98,22 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Search files on your system",
         keywords: &["files", "file", "find", "documents", "folders", "open"],
         icon: "magnifying-glass",
+    },
+    BuiltinCommand {
+        kind: CommandKind::CreateShortcut,
+        entrypoint: "create-shortcut",
+        title: "Create Shortcut",
+        subtitle: "Save a link with placeholders",
+        keywords: &["shortcut", "quicklink", "link", "bookmark", "url", "new"],
+        icon: "bolt",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ManageShortcuts,
+        entrypoint: "manage-shortcuts",
+        title: "Manage Shortcuts",
+        subtitle: "Open, edit and remove your shortcuts",
+        keywords: &["shortcuts", "quicklinks", "links", "bookmarks"],
+        icon: "bolt",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

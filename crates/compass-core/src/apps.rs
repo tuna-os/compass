@@ -497,6 +497,8 @@ impl AppIndexBuilder {
             by_key,
             skipped,
             extensions,
+            shortcuts: Vec::new(),
+            root_config: crate::root_items::RootConfig::default(),
         }
     }
 
@@ -673,6 +675,10 @@ pub struct AppIndex {
     by_key: HashMap<String, usize>,
     skipped: Vec<SkippedEntry>,
     extensions: Vec<crate::extension_commands::ExtensionCommand>,
+    /// Quicklinks, in the store's order; their roots come last in `roots`.
+    shortcuts: Vec<crate::shortcut_service::CachedShortcut>,
+    /// The configuration last applied, kept for roots added later.
+    root_config: crate::root_items::RootConfig,
 }
 
 /// One row of a root search over applications and commands.
@@ -691,6 +697,13 @@ pub enum RootHit<'a> {
     Extension {
         /// Which one.
         command: &'a crate::extension_commands::ExtensionCommand,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
+    /// A quicklink.
+    Shortcut {
+        /// Which one.
+        shortcut: &'a crate::shortcut_service::CachedShortcut,
         /// Match score on the IPC scale, excluding frecency.
         match_score: u32,
     },
@@ -721,6 +734,7 @@ pub struct ApplicationRootHit<'a> {
 impl AppIndex {
     /// Applies user settings without changing catalog positions or launch keys.
     pub fn apply_root_config(&mut self, config: &crate::root_items::RootConfig) {
+        self.root_config = config.clone();
         for root in &mut self.roots {
             // Application defaults have no alias or shortcut. Reset them so a
             // removed setting cannot survive a subsequent configuration merge.
@@ -833,6 +847,14 @@ impl AppIndex {
                                 command,
                                 match_score,
                             })
+                    })
+                    .or_else(|| {
+                        self.shortcut_by_entrypoint(entrypoint_id).map(|shortcut| {
+                            RootHit::Shortcut {
+                                shortcut,
+                                match_score,
+                            }
+                        })
                     }),
             }
         })
@@ -843,6 +865,44 @@ impl AppIndex {
     #[must_use]
     pub fn extensions(&self) -> &[crate::extension_commands::ExtensionCommand] {
         &self.extensions
+    }
+
+    /// The quicklinks root search lists, in the store's order.
+    #[must_use]
+    pub fn shortcuts(&self) -> &[crate::shortcut_service::CachedShortcut] {
+        &self.shortcuts
+    }
+
+    /// The quicklink a `shortcuts:<id>` entrypoint id names.
+    #[must_use]
+    pub fn shortcut_by_entrypoint(
+        &self,
+        entrypoint_id: &str,
+    ) -> Option<&crate::shortcut_service::CachedShortcut> {
+        let (provider, id) = crate::root_items::split_entrypoint_id(entrypoint_id)?;
+        if provider != crate::shortcut::SHORTCUTS_PROVIDER_ID {
+            return None;
+        }
+        self.shortcuts.iter().find(|shortcut| shortcut.id == id)
+    }
+
+    /// Replaces the quicklinks root search lists, applying the configuration
+    /// last given to [`AppIndex::apply_root_config`] to their rows, so an
+    /// alias or a disabled flag set on one survives the list changing.
+    ///
+    /// Quicklinks change while the launcher runs, which is why they are not
+    /// part of [`AppIndexBuilder::build`]: their rows are dropped and rebuilt
+    /// here, after every other root, so no other row's position moves.
+    pub fn set_shortcuts(&mut self, shortcuts: Vec<crate::shortcut_service::CachedShortcut>) {
+        self.roots
+            .retain(|root| root.meta.provider_id != crate::shortcut::SHORTCUTS_PROVIDER_ID);
+        for shortcut in &shortcuts {
+            let mut root =
+                crate::shortcut::root_item(&shortcut.id, &shortcut.name, &shortcut.link.raw);
+            root.merge_config(&self.root_config, false);
+            self.roots.push(root);
+        }
+        self.shortcuts = shortcuts;
     }
 
     /// The installed extension command with this entrypoint id.

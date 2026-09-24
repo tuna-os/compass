@@ -5,8 +5,8 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind, ExtensionStart, ExtensionViewState, FileResults, FileRow, WindowBackend,
-    WindowRow,
+    ClipboardRowKind, ExtensionStart, ExtensionViewState, FileResults, FileRow, Shortcut,
+    ShortcutDraft, WindowBackend, WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -107,6 +107,67 @@ impl ApplicationBackend for DaemonBackend {
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_shortcuts(&self) -> BackendFuture<'_, Vec<Shortcut>> {
+        Box::pin(async move {
+            shortcuts(
+                self.ask(Request::ListShortcuts, "Listing shortcuts")
+                    .await?,
+            )
+        })
+    }
+
+    fn save_shortcut(&self, shortcut: ShortcutDraft) -> BackendFuture<'_, Vec<Shortcut>> {
+        Box::pin(async move {
+            let request = Request::SaveShortcut {
+                id: shortcut.id,
+                name: shortcut.name,
+                icon: shortcut.icon,
+                url: shortcut.url,
+                app: shortcut.app,
+            };
+            shortcuts(self.ask(request, "Saving the shortcut").await?)
+        })
+    }
+
+    fn remove_shortcut(&self, id: String) -> BackendFuture<'_, Vec<Shortcut>> {
+        Box::pin(async move {
+            shortcuts(
+                self.ask(Request::RemoveShortcut { id }, "Removing the shortcut")
+                    .await?,
+            )
+        })
+    }
+
+    fn open_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::OpenShortcut { id, arguments },
+                    "Opening the shortcut",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn expand_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExpandShortcut { id, arguments },
+                    "Expanding the shortcut",
+                )
+                .await?
+            {
+                compass_ipc::Response::Text { text } => Ok(text),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })
@@ -333,6 +394,27 @@ impl DaemonBackend {
             Ok(Ok(compass_ipc::Response::Error(error))) => Err(sentence(&error.message)),
             Ok(Ok(response)) => Ok(response),
         }
+    }
+}
+
+/// The shortcut list in an engine answer.
+fn shortcuts(response: compass_ipc::Response) -> Result<Vec<Shortcut>, String> {
+    match response {
+        compass_ipc::Response::Shortcuts { shortcuts } => Ok(shortcuts
+            .into_iter()
+            .map(|entry| Shortcut {
+                id: entry.id,
+                name: entry.name,
+                icon: entry.icon,
+                url: entry.url,
+                app: entry.app,
+                open_count: entry.open_count,
+                created_at: entry.created_at,
+                updated_at: entry.updated_at,
+                last_used_at: entry.last_used_at,
+            })
+            .collect()),
+        other => Err(format!("Unexpected answer from the engine: {other:?}")),
     }
 }
 

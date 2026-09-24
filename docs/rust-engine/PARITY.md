@@ -2087,6 +2087,27 @@ The negative tests are §8.2's list; each has a positive control beside it.
 | 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v11); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. Every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
 | 3 | An authorize URL without a `state` waits for ever. | Refused at once: nothing could match a redirect to it. | `a_url_without_a_state_is_refused_rather_than_waited_on` |
 | 4 | A redirect with `error=` leaves the request waiting. | The extension's `authorize()` rejects with `error_description` (else `error`). | `every_redirect_shape_raycast_uses_parses` |
+### Shortcuts — what the port does not have yet
+
+Create Shortcut, Manage Shortcuts and shortcuts in root search run end to end: the engine keeps
+the list in `$XDG_DATA_HOME/vicinae/compass-shortcuts.json` (ADR-0017 decision 3; the first start
+with no such file copies Vicinae's `shortcuts/shortcuts.json`, whose shape is the same), answers
+`ListShortcuts`/`SaveShortcut`/`RemoveShortcut`/`OpenShortcut`/`ExpandShortcut` (IPC v13), ranks
+shortcuts in root search by name and link, resolves the opener and the `default` icon, and counts
+visits. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Arguments are completion fields beside the search text of the selected root row. | A form with one field per argument opens when the shortcut is launched; required unless it has a `default=`. | `a_shortcut_in_root_search_asks_for_its_argument_then_opens` |
+| 2 | An argument left empty expands to nothing, even with a `default=` — `expandShortcut` never reads the default. | It expands to its default. | `arguments_fill_their_placeholders_in_order` |
+| 3 | `{date}` is reserved (so not an argument) and then falls into the expansion's argument branch, eating the next argument's value. | Expands to nothing; the arguments stay aligned with their placeholders. | `reserved_placeholders_take_their_values` |
+| 4 | `{selection}`/`{selected}` read the focused application's selection. | Expand to nothing: the selection service is not ported. `{clipboard}` is read through the GNOME Shell extension, and is empty without it. | — |
+| 5 | Open with… lists the link's openers in a submenu. | Not yet; a shortcut opens with its stored application, else the default opener, else the browser. | `the_app_is_the_named_one_or_the_opener_or_the_browser` |
+| 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link). | Rows carry the link as their subtitle; no detail pane yet. | — |
+| 7 | The form's link field offers placeholder completions (Selected Text, Clipboard Text, Argument, UUID) and the app list updates to the link's default opener on blur; the default icon previews the favicon. | The field's help text names the placeholders; `default` app and icon are resolved by the engine when saving (favicon for `http*`, else the opener's icon, else the link glyph). | `the_default_icon_is_the_favicon_then_the_opener_then_the_link_glyph` |
+| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text. | Ranked like every other root item; no fallback rows yet. | — |
+| 9 | The migration from the pre-JSON SQLite `shortcut` table. | Not run: the one-shot import is from Vicinae's JSON file, which already holds a migrated list. | — |
+| 10 | A removal toast ("Removed link") and success toasts after saving. | The list updates in place; failures show in the view. | `manage_shortcuts_filters_edits_and_removes` |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 

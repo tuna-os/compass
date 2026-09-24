@@ -48,6 +48,37 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
     }
 
+    /// Every stored shortcut, in the store's order.
+    fn list_shortcuts(&self) -> BackendFuture<'_, Vec<Shortcut>> {
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Creates a shortcut (`id` is `None`) or updates one, answering with the
+    /// list after the change. `icon` may be `default`, which the engine
+    /// resolves.
+    fn save_shortcut(&self, shortcut: ShortcutDraft) -> BackendFuture<'_, Vec<Shortcut>> {
+        let _ = shortcut;
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Removes a shortcut, answering with the list after the change.
+    fn remove_shortcut(&self, id: String) -> BackendFuture<'_, Vec<Shortcut>> {
+        let _ = id;
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Opens a shortcut with its arguments. An error is the sentence to show.
+    fn open_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, ()> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// A shortcut's link, expanded with its arguments, without opening it.
+    fn expand_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, String> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
     /// Run an installed extension's command by its entrypoint id, with the
     /// argument values entered for it, or `None` when none have been. `Ok`
     /// once the engine has started it; an error is a sentence saying why it
@@ -123,6 +154,27 @@ const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine"
 
 const FILES_NEED_ENGINE: &str =
     "Search Files needs the Compass engine, and this window is running without one";
+
+const SHORTCUTS_NEED_ENGINE: &str =
+    "Shortcuts need the Compass engine, and this window is running without one";
+
+/// A stored shortcut, as the engine lists it.
+pub type Shortcut = compass_core::shortcut_store::SerializedShortcut;
+
+/// A shortcut to save.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortcutDraft {
+    /// The shortcut to update, or `None` for a new one.
+    pub id: Option<String>,
+    /// Its name; may be empty.
+    pub name: String,
+    /// Its icon URL, or `default`.
+    pub icon: String,
+    /// The link.
+    pub url: String,
+    /// The application id, or `default`.
+    pub app: String,
+}
 
 /// One file in Search Files.
 #[derive(Debug, Clone, PartialEq, Eq)]

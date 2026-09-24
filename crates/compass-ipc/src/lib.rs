@@ -61,7 +61,7 @@ pub use protocol::{
     ClipboardEntry, ClipboardKind, DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert,
     ExtensionToast, ExtensionToastStyle, FileHit, PROTOCOL_VERSION, PreferenceField,
     PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope, Response,
-    ResponseEnvelope, WindowCommand, WindowInfo, WindowOutcome,
+    ResponseEnvelope, ShortcutEntry, WindowCommand, WindowInfo, WindowOutcome,
 };
 pub use transport::{
     Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,

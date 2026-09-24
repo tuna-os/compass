@@ -25,6 +25,8 @@ use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
+mod shortcuts;
+
 /// The search field's widget id.
 ///
 /// It exists so the field can be FOCUSED, and that is not a detail. An Iced
@@ -444,6 +446,8 @@ pub enum RootRow {
     Extension(usize),
     /// The calculator's answer to the query, held in `LauncherApp::calculator`.
     Calculator,
+    /// A shortcut (quicklink), as its index in `AppIndex::shortcuts`.
+    Shortcut(usize),
 }
 
 /// Which view the card shows.
@@ -459,6 +463,8 @@ enum Page {
     Emoji(crate::emoji_page::EmojiPage),
     /// Search Files.
     Files(crate::files_page::FilesPage),
+    /// Manage Shortcuts.
+    Shortcuts(crate::shortcuts_page::ShortcutsPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -715,6 +721,9 @@ pub struct LauncherApp {
     /// window -- the precise lie this whole design exists to prevent, arriving
     /// through the mechanism built to prevent it.
     awaiting: bool,
+    /// Manage Shortcuts as it was when a form was opened over it, so going
+    /// back returns to the same filter and selection.
+    parked_shortcuts: Option<crate::shortcuts_page::ShortcutsPage>,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -932,6 +941,7 @@ impl LauncherApp {
             last_summon_draw: None,
             started_at: None,
             awaiting: false,
+            parked_shortcuts: None,
         }
     }
 
@@ -1060,7 +1070,10 @@ impl LauncherApp {
     pub fn selected_item(&self) -> Option<&AppItem> {
         match *self.results.get(self.selected)? {
             RootRow::App(index) => self.app_index.items().get(index),
-            RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+            RootRow::Command(_)
+            | RootRow::Extension(_)
+            | RootRow::Shortcut(_)
+            | RootRow::Calculator => None,
         }
     }
 
@@ -1137,7 +1150,23 @@ impl LauncherApp {
                 let answer = self.calculator.as_ref().map_or("", |a| a.answer.as_str());
                 line.push_str(&format!(" selected_title={answer:?}"));
             }
+            Some(RootRow::Shortcut(index)) => {
+                let title = self
+                    .app_index
+                    .shortcuts()
+                    .get(index)
+                    .map_or("", crate::shortcuts_page::display_name);
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::Shortcuts(page) = &self.page {
+            line.push_str(&format!(
+                " page=shortcuts shortcuts_query={:?} shortcuts_shown={} shortcuts_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
         }
         if let Page::Windows(page) = &self.page {
             line.push_str(&format!(
@@ -1483,11 +1512,26 @@ impl LauncherApp {
                 self.search_task = None;
                 match result {
                     Ok(keys) => {
+                        let shortcuts = self.app_index.shortcuts();
                         let positions: Option<Vec<_>> = keys
                             .iter()
+                            // A shortcut the engine knows and this window has
+                            // not heard of yet (or one just removed) is left
+                            // out rather than failing the list: the next
+                            // refresh brings the two back into step.
+                            .filter(|key| {
+                                !key.starts_with("shortcuts:")
+                                    || self.app_index.shortcut_by_entrypoint(key).is_some()
+                            })
                             .map(|key| {
                                 if let Some(command) = compass_core::commands::by_id(key) {
                                     return Some(RootRow::Command(command));
+                                }
+                                if let Some(shortcut) = self.app_index.shortcut_by_entrypoint(key) {
+                                    return shortcuts
+                                        .iter()
+                                        .position(|known| known.id == shortcut.id)
+                                        .map(RootRow::Shortcut);
                                 }
                                 if let Some(index) = self
                                     .app_index
@@ -1552,6 +1596,9 @@ impl LauncherApp {
                 }
                 if let Some(RootRow::Extension(index)) = self.selected_row() {
                     return self.run_extension_command(index);
+                }
+                if let Some(RootRow::Shortcut(index)) = self.selected_row() {
+                    return self.open_shortcut_at(index);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -1628,7 +1675,11 @@ impl LauncherApp {
                 self.answer(UiOutcome::Shown);
                 // Covers boot and every summon: `conceal` closes the window, so
                 // a summon opens a new one whose field starts unfocused.
-                Task::batch([focus_search(), self.search_task()])
+                Task::batch([
+                    focus_search(),
+                    self.search_task(),
+                    self.refresh_shortcuts_task(),
+                ])
             }
             Message::Closed(id) => {
                 // Only clear the state if *this* window is the one that went;
@@ -1652,6 +1703,8 @@ impl LauncherApp {
                 if self.panel.is_some() {
                     self.panel = None;
                     return focus_search();
+                } else if let Some(task) = self.open_shortcut_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1702,6 +1755,15 @@ impl LauncherApp {
                 self.update(Message::PanelActivate)
             }
             Message::PanelActivate => {
+                if let Some(id) = self
+                    .panel
+                    .as_ref()
+                    .and_then(PanelState::selected_action)
+                    .and_then(|action| action.id.clone())
+                    && let Some(task) = self.shortcut_panel_action(&id)
+                {
+                    return task;
+                }
                 let Some(panel) = self.panel.as_ref() else {
                     return Task::none();
                 };
@@ -1720,6 +1782,7 @@ impl LauncherApp {
                     self.panel = None;
                     return Task::batch([task, focus_search()]);
                 }
+
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
@@ -1793,6 +1856,9 @@ impl LauncherApp {
                 Task::none()
             }
             Message::PreferencesSubmit => {
+                if let Some(task) = self.submit_shortcut_form() {
+                    return task;
+                }
                 let Page::Preferences(page) = &mut self.page else {
                     return Task::none();
                 };
@@ -2039,7 +2105,17 @@ impl LauncherApp {
                     }
                 }
             }
+            Message::ShortcutsLoaded(_)
+            | Message::ShortcutSaved(_)
+            | Message::ShortcutRemoved(_)
+            | Message::ShortcutOpened(_)
+            | Message::ShortcutExpanded(_)
+            | Message::ShortcutsQueryChanged(_)
+            | Message::ShortcutSelected(_) => self.shortcut_message(message),
             Message::Back => {
+                if let Some(task) = self.back_from_shortcut_form() {
+                    return task;
+                }
                 let closing = self.close_extension_view();
                 self.page = Page::Root;
                 Task::batch([closing, focus_search()])
@@ -2245,6 +2321,12 @@ impl LauncherApp {
                         return crate::scroll::reveal_root_selection();
                     }
                     return Task::none();
+                }
+                if !panel_key && let Some(task) = self.shortcut_chord(key, modifiers) {
+                    return task;
+                }
+                if !panel_key && matches!(self.page, Page::Shortcuts(_)) {
+                    return self.shortcuts_page_key(key, modifiers);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2471,6 +2553,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::FilesQueryChanged as OnInput),
             ),
+            Page::Shortcuts(page) => (
+                "Search shortcuts...",
+                &page.query,
+                Some(Message::ShortcutsQueryChanged as OnInput),
+            ),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2528,6 +2615,8 @@ impl LauncherApp {
             self.windows_body(page)
         } else if let Page::Files(page) = &self.page {
             self.files_body(page)
+        } else if let Page::Shortcuts(page) = &self.page {
+            self.shortcuts_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -2572,6 +2661,18 @@ impl LauncherApp {
                             self.initial_badge(&command.title, selected),
                             command.title.clone(),
                             self.subtitles.then(|| command.extension_title.clone()),
+                            selected,
+                        )
+                    }
+                    RootRow::Shortcut(index) => {
+                        let Some(shortcut) = self.app_index.shortcuts().get(*index) else {
+                            continue;
+                        };
+                        let title = crate::shortcuts_page::display_name(shortcut);
+                        self.list_row(
+                            self.initial_badge(title, selected),
+                            title.to_owned(),
+                            self.subtitles.then(|| "Shortcut".to_owned()),
                             selected,
                         )
                     }
@@ -3407,7 +3508,9 @@ impl LauncherApp {
                 crate::preferences_page::Purpose::Preferences => {
                     format!("{} needs a few settings", page.title)
                 }
-                crate::preferences_page::Purpose::Arguments => page.title.clone(),
+                crate::preferences_page::Purpose::Arguments
+                | crate::preferences_page::Purpose::ShortcutArguments
+                | crate::preferences_page::Purpose::ShortcutForm { .. } => page.title.clone(),
             })
             .font(self.font())
             .size(14)
@@ -3479,7 +3582,7 @@ impl LauncherApp {
             form = form.push(entry);
         }
         form = form.push(
-            iced::widget::text("Enter: save and run    Esc: back")
+            iced::widget::text(page.purpose.hint())
                 .font(self.font())
                 .size(12),
         );
@@ -3835,6 +3938,11 @@ impl LauncherApp {
                 self.page = Page::Files(crate::files_page::FilesPage::default());
                 Task::batch([record, self.files_query_task(), focus_search()])
             }
+            CommandKind::CreateShortcut => Task::batch([
+                record,
+                self.open_shortcut_form(compass_core::shortcut_form::Mode::Create, None, false),
+            ]),
+            CommandKind::ManageShortcuts => Task::batch([record, self.open_manage_shortcuts()]),
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
@@ -4062,6 +4170,13 @@ impl LauncherApp {
                         .position(|known| known.id == command.id)
                         .unwrap_or_default(),
                 ),
+                compass_core::RootHit::Shortcut { shortcut, .. } => RootRow::Shortcut(
+                    self.app_index
+                        .shortcuts()
+                        .iter()
+                        .position(|known| known.id == shortcut.id)
+                        .unwrap_or_default(),
+                ),
             })
             .collect();
         // Back to the top on every new query: the old selection pointed into a
@@ -4114,7 +4229,10 @@ impl LauncherApp {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => self.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Calculator => None,
             })
             .filter_map(AppItem::icon)
             .collect();
@@ -4438,6 +4556,12 @@ mod tests {
         file_queries: std::sync::Mutex<Vec<String>>,
         /// The files opened, and whether each was only revealed.
         opened: std::sync::Mutex<Vec<(String, bool)>>,
+        /// The shortcut store.
+        shortcuts: std::sync::Mutex<Vec<crate::backend::Shortcut>>,
+        /// The shortcuts opened, with their arguments.
+        opened_shortcuts: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// The shortcuts saved, as the form sent them.
+        drafts: std::sync::Mutex<Vec<crate::backend::ShortcutDraft>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4496,6 +4620,73 @@ mod tests {
             Box::pin(async move {
                 self.opened.lock().unwrap().push((path, reveal));
                 Ok(())
+            })
+        }
+
+        fn list_shortcuts(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move { Ok(self.shortcuts.lock().unwrap().clone()) })
+        }
+
+        fn save_shortcut(
+            &self,
+            draft: crate::backend::ShortcutDraft,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move {
+                self.drafts.lock().unwrap().push(draft.clone());
+                let mut shortcuts = self.shortcuts.lock().unwrap();
+                let id = draft
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("sct-{}", shortcuts.len()));
+                let stored = crate::backend::Shortcut {
+                    id: id.clone(),
+                    name: draft.name,
+                    icon: draft.icon,
+                    url: draft.url,
+                    app: draft.app,
+                    ..crate::backend::Shortcut::default()
+                };
+                match shortcuts.iter_mut().find(|s| s.id == id) {
+                    Some(existing) => *existing = stored,
+                    None => shortcuts.push(stored),
+                }
+                Ok(shortcuts.clone())
+            })
+        }
+
+        fn remove_shortcut(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move {
+                let mut shortcuts = self.shortcuts.lock().unwrap();
+                shortcuts.retain(|s| s.id != id);
+                Ok(shortcuts.clone())
+            })
+        }
+
+        fn open_shortcut(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened_shortcuts.lock().unwrap().push((id, arguments));
+                Ok(())
+            })
+        }
+
+        fn expand_shortcut(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let shortcuts = self.shortcuts.lock().unwrap();
+                let shortcut = shortcuts.iter().find(|s| s.id == id).ok_or("gone")?;
+                Ok(format!("{}|{}", shortcut.url, arguments.join(",")))
             })
         }
 
@@ -6367,7 +6558,10 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -6533,6 +6727,283 @@ mod tests {
                 if reason.contains("needs the Compass engine")),
             "{:?}",
             page.status
+        );
+    }
+
+    // ---- Shortcuts ----
+
+    fn stored_shortcut(id: &str, name: &str, url: &str) -> crate::backend::Shortcut {
+        crate::backend::Shortcut {
+            id: id.into(),
+            name: name.into(),
+            icon: "icon://omnicast/link".into(),
+            url: url.into(),
+            app: "default".into(),
+            ..crate::backend::Shortcut::default()
+        }
+    }
+
+    /// An app whose engine holds two shortcuts, already listed.
+    fn shortcuts_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 2);
+        (app, backend)
+    }
+
+    fn open_builtin(app: &mut LauncherApp, query: &str, id: &str) {
+        app.query = query.into();
+        app.search();
+        let Some(RootRow::Command(command)) = app.selected_row() else {
+            panic!("{query:?} did not select a command: {}", app.state_line());
+        };
+        assert_eq!(command.id(), id);
+        let task = app.update(Message::LaunchSelected);
+        settle(app, task);
+    }
+
+    #[test]
+    fn a_shortcut_in_root_search_asks_for_its_argument_then_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.query = "crate docs".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Shortcut(0)),
+            "{}",
+            app.state_line()
+        );
+        assert!(app.state_line().contains("selected_title=\"Crate Docs\""));
+
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "crate");
+
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert!(
+            backend.opened_shortcuts.lock().unwrap().is_empty(),
+            "a required argument left empty does not open it"
+        );
+
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("serde".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().as_slice(),
+            [("sct-docs".to_owned(), vec!["serde".to_owned()])]
+        );
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["shortcuts:sct-docs"],
+            "the visit counts in root search's ranking"
+        );
+        assert!(matches!(app.page, Page::Root));
+
+        // One with no arguments opens at once.
+        app.query = "hacker news".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().last(),
+            Some(&("sct-news".to_owned(), Vec::new()))
+        );
+    }
+
+    #[test]
+    fn create_shortcut_saves_the_form_and_the_new_one_is_searchable() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        open_builtin(&mut app, "create shortcut", "commands:create-shortcut");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Create Shortcut");
+        let position = |name: &str| page.fields.iter().position(|f| f.name == name).unwrap();
+        let (name, link, icon) = (position("name"), position("link"), position("icon"));
+
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("the form went away without a link");
+        };
+        assert!(
+            page.notice.as_deref().is_some_and(|n| n.contains("Link")),
+            "{:?}",
+            page.notice
+        );
+
+        let _ = app.update(Message::PreferenceEdited(
+            name,
+            FieldValue::Text("Wiki".into()),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            link,
+            FieldValue::Text("https://en.wikipedia.org/wiki/{page}".into()),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            icon,
+            FieldValue::Choice(Some("icon://omnicast/book".into())),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.drafts.lock().unwrap().as_slice(),
+            [crate::backend::ShortcutDraft {
+                id: None,
+                name: "Wiki".into(),
+                icon: "icon://omnicast/book".into(),
+                url: "https://en.wikipedia.org/wiki/{page}".into(),
+                app: "default".into(),
+            }]
+        );
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        app.query = "wiki".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Shortcut(2)));
+    }
+
+    #[test]
+    fn manage_shortcuts_filters_edits_and_removes() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        open_builtin(&mut app, "manage shortcuts", "commands:manage-shortcuts");
+        assert!(
+            app.state_line().contains("page=shortcuts"),
+            "{}",
+            app.state_line()
+        );
+
+        let _ = app.update(Message::ShortcutsQueryChanged("hackr".into()));
+        let Page::Shortcuts(page) = &app.page else {
+            panic!("not on Manage Shortcuts");
+        };
+        assert_eq!(page.shown, [1], "the filter is fuzzy");
+
+        // Ctrl+E edits it in the form, prefilled; Escape comes back here.
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no edit form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Edit \"Hacker News\"");
+        assert_eq!(page.command_id, "sct-news");
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+
+        // Saving an edit sends the id, and returns to the list.
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend
+                .drafts
+                .lock()
+                .unwrap()
+                .last()
+                .and_then(|d| d.id.clone()),
+            Some("sct-news".to_owned())
+        );
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+
+        // Ctrl+X removes the selected one, here; Ctrl+Shift+X does not.
+        let _ = app.update(Message::ShortcutsQueryChanged(String::new()));
+        let task = app.update(chord("x", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 2);
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            app.app_index
+                .shortcuts()
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            ["sct-news"]
+        );
+
+        // The panel offers the rest; Copy writes the expanded link.
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("copy".into()));
+        let task = app.update(Message::PanelActivate);
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, ["https://news.ycombinator.com|"]);
+    }
+
+    #[test]
+    fn a_root_shortcut_is_removed_with_ctrl_shift_x() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _backend) = shortcuts_app(dir.path());
+        app.query = "hacker news".into();
+        app.search();
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            app.app_index.shortcuts().len(),
+            2,
+            "Ctrl+X is not remove here"
+        );
+        let task = app.update(chord("x", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 1);
+        assert!(
+            app.results
+                .iter()
+                .all(|row| !matches!(row, RootRow::Shortcut(_))),
+            "the removed shortcut left the results"
+        );
+    }
+
+    #[test]
+    fn shortcuts_without_an_engine_say_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        open_builtin(&mut app, "create shortcut", "commands:create-shortcut");
+        let _ = app.update(Message::PreferenceEdited(
+            1,
+            crate::preferences_page::FieldValue::Text("https://x.test".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("the form went away");
+        };
+        assert!(
+            page.notice
+                .as_deref()
+                .is_some_and(|n| n.contains("need the Compass engine")),
+            "{:?}",
+            page.notice
         );
     }
 
@@ -7202,7 +7673,10 @@ mod quick_launch_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -7345,7 +7819,10 @@ mod icon_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => app.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Calculator => None,
             })
             .find(|item| item.name() == name)
             .unwrap_or_else(|| panic!("{name} is not a row"))

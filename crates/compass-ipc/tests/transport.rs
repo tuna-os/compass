@@ -107,7 +107,14 @@ async fn echo_handler(request: Request) -> Response {
         | Request::ExtensionAlertAnswer { .. }
         | Request::CloseExtension { .. }
         | Request::OpenFile { .. }
-        | Request::OAuthRedirect { .. } => Response::Ack,
+        | Request::OAuthRedirect { .. }
+        | Request::OpenShortcut { .. } => Response::Ack,
+        Request::ListShortcuts | Request::SaveShortcut { .. } | Request::RemoveShortcut { .. } => {
+            Response::Shortcuts { shortcuts: vec![] }
+        }
+        Request::ExpandShortcut { .. } => Response::Text {
+            text: String::new(),
+        },
         Request::SearchFiles { .. } => Response::Files {
             heading: "Results".into(),
             files: vec![],

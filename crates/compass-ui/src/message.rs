@@ -123,6 +123,20 @@ pub enum Message {
     FilesSelected(usize),
     /// Opening a file (or showing it in the file browser) finished.
     FileOpened(Result<(), String>),
+    /// The shortcut list arrived, or why it could not be read.
+    ShortcutsLoaded(Result<Vec<crate::backend::Shortcut>, String>),
+    /// A shortcut was saved (the list after it), or why it was not.
+    ShortcutSaved(Result<Vec<crate::backend::Shortcut>, String>),
+    /// A shortcut was removed (the list after it), or why it was not.
+    ShortcutRemoved(Result<Vec<crate::backend::Shortcut>, String>),
+    /// Opening a shortcut finished.
+    ShortcutOpened(Result<(), String>),
+    /// A shortcut's expanded link, to copy, or why it could not be expanded.
+    ShortcutExpanded(Result<String, String>),
+    /// Manage Shortcuts' filter changed.
+    ShortcutsQueryChanged(String),
+    /// A Manage Shortcuts row was clicked, by position.
+    ShortcutSelected(usize),
     /// The open windows arrived, or why they could not be listed.
     WindowsLoaded(Result<Vec<crate::backend::WindowRow>, String>),
     /// A window row was clicked.

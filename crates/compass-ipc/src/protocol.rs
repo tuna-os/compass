@@ -35,8 +35,9 @@ use serde::{Deserialize, Serialize};
 /// clipboard entry, and running an installed extension's command; version 8,
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
-/// version 12, an OAuth provider's redirect back to the launcher.
-pub const PROTOCOL_VERSION: u16 = 12;
+/// version 12, an OAuth provider's redirect back to the launcher; version 13,
+/// shortcuts.
+pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,6 +313,49 @@ pub enum Request {
         /// The deeplink, verbatim.
         url: String,
     },
+    /// Every stored shortcut (quicklink), answered with
+    /// [`Response::Shortcuts`].
+    ListShortcuts,
+    /// Create a shortcut (`id` is `None`) or update one in place. Answered
+    /// with [`Response::Shortcuts`], the list after the change; a store that
+    /// could not be written, or an `id` that names nothing, is refused as
+    /// [`ErrorKind::Internal`] and [`ErrorKind::BadRequest`].
+    SaveShortcut {
+        /// The shortcut to update, or `None` for a new one.
+        id: Option<String>,
+        /// What it is called; may be empty.
+        name: String,
+        /// Its icon as an image URL, or `default` for whatever the link's
+        /// opener or site offers, which the engine resolves when saving.
+        icon: String,
+        /// The link, `{placeholders}` and all.
+        url: String,
+        /// The application id that opens it, or `default`.
+        app: String,
+    },
+    /// Remove a shortcut. Answered with [`Response::Shortcuts`].
+    RemoveShortcut {
+        /// Which one.
+        id: String,
+    },
+    /// Expand a shortcut's link with `arguments` and open it with its
+    /// application, counting the visit. Answered with [`Response::Ack`] once
+    /// the launch started; a shortcut with no application to open it is
+    /// refused as [`ErrorKind::Unsupported`].
+    OpenShortcut {
+        /// Which one.
+        id: String,
+        /// Values for its argument placeholders, in order.
+        arguments: Vec<String>,
+    },
+    /// Expand a shortcut's link without opening it. Answered with
+    /// [`Response::Text`].
+    ExpandShortcut {
+        /// Which one.
+        id: String,
+        /// Values for its argument placeholders, in order.
+        arguments: Vec<String>,
+    },
 }
 
 /// What the engine answers.
@@ -415,6 +459,40 @@ pub enum Response {
         /// The files, in presentation order.
         files: Vec<FileHit>,
     },
+    /// Every stored shortcut, in the store's order: the answer to
+    /// [`Request::ListShortcuts`], and to a change to the list.
+    Shortcuts {
+        /// The shortcuts.
+        shortcuts: Vec<ShortcutEntry>,
+    },
+    /// A piece of text the engine produced, such as an expanded shortcut.
+    Text {
+        /// The text.
+        text: String,
+    },
+}
+
+/// One stored shortcut (quicklink), as `shortcuts.json` holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShortcutEntry {
+    /// `sct-` and twelve hex characters.
+    pub id: String,
+    /// What the user called it; may be empty.
+    pub name: String,
+    /// Its icon, as an image URL.
+    pub icon: String,
+    /// The link, `{placeholders}` and all.
+    pub url: String,
+    /// The application id that opens it, or `default`.
+    pub app: String,
+    /// How many times it has been opened.
+    pub open_count: i64,
+    /// When it was created, in Unix seconds.
+    pub created_at: u64,
+    /// When it was last edited, in Unix seconds.
+    pub updated_at: u64,
+    /// When it was last opened, in Unix seconds, if it ever was.
+    pub last_used_at: Option<u64>,
 }
 
 /// One file in a [`Response::Files`].

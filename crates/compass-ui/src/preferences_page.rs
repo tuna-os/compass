@@ -26,6 +26,29 @@ pub enum Purpose {
     Preferences,
     /// This one run's arguments.
     Arguments,
+    /// A shortcut's arguments, to open it with; the form's `command_id` is
+    /// the shortcut's id.
+    ShortcutArguments,
+    /// Creating, editing or duplicating a shortcut; `command_id` is the
+    /// shortcut edited or duplicated, empty when creating.
+    ShortcutForm {
+        /// Why the form is open.
+        mode: compass_core::shortcut_form::Mode,
+        /// Whether saving goes back to Manage Shortcuts rather than the root.
+        from_manage: bool,
+    },
+}
+
+impl Purpose {
+    /// The line under the form saying what the keys do.
+    #[must_use]
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Preferences | Self::Arguments => "Enter: save and run    Esc: back",
+            Self::ShortcutArguments => "Enter: open    Esc: back",
+            Self::ShortcutForm { .. } => "Enter: save    Esc: back",
+        }
+    }
 }
 
 /// The form.

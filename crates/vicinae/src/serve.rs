@@ -97,6 +97,9 @@ pub struct EngineState {
     views: Arc<crate::extension_runner::Views>,
     /// Search Files, and the file indexer it supervises.
     files: Arc<crate::file_search::FileSearch>,
+    /// Shortcuts (quicklinks). `None` without a data directory to keep them
+    /// in, and in tests that build the state around an index.
+    shortcuts: Option<compass_core::shortcut_service::ShortcutService>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -141,6 +144,11 @@ impl EngineState {
 
         let frecency = Self::open_frecency();
 
+        let shortcuts = crate::shortcuts::data_dir().map(|dir| crate::shortcuts::open(&dir));
+        if let Some(shortcuts) = &shortcuts {
+            index.set_shortcuts(shortcuts.shortcuts().to_vec());
+        }
+
         // Started with the engine, as `FileExtension::initialized` starts
         // it, so the index is warm by the time anyone searches it.
         let files = crate::file_search::FileSearch::start(
@@ -160,6 +168,7 @@ impl EngineState {
             shell: None,
             views: Arc::default(),
             files: Arc::new(files),
+            shortcuts,
         }
     }
 
@@ -206,6 +215,7 @@ impl EngineState {
             shell: None,
             views: Arc::default(),
             files: Arc::default(),
+            shortcuts: None,
         }
     }
 
@@ -276,6 +286,18 @@ impl EngineState {
                     id: command.id.clone(),
                     title: command.title.clone(),
                     subtitle: Some(command.extension_title.clone()),
+                    score: match_score,
+                },
+                compass_core::RootHit::Shortcut {
+                    shortcut,
+                    match_score,
+                } => QueryHit {
+                    id: compass_core::root_items::entrypoint_id(
+                        compass_core::shortcut::SHORTCUTS_PROVIDER_ID,
+                        &shortcut.id,
+                    ),
+                    title: shortcut.name.clone(),
+                    subtitle: Some("Shortcut".to_owned()),
                     score: match_score,
                 },
             })
@@ -386,6 +408,191 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
             "no application opens this kind of file",
         ))
     }
+}
+
+/// The shortcut list as the wire carries it.
+fn shortcuts_response(shortcuts: &compass_core::shortcut_service::ShortcutService) -> Response {
+    Response::Shortcuts {
+        shortcuts: shortcuts
+            .shortcuts()
+            .iter()
+            .map(crate::shortcuts::entry)
+            .collect(),
+    }
+}
+
+fn shortcuts_unavailable() -> Response {
+    Response::Error(ProtocolError::new(
+        ErrorKind::Unsupported,
+        "shortcuts are unavailable: there is no data directory to keep them in",
+    ))
+}
+
+/// The applications an engine request resolves openers against.
+async fn engine_apps(state: &Arc<RwLock<EngineState>>) -> crate::extension_apps::EngineApps {
+    crate::extension_apps::EngineApps::new(
+        &state.read().await.index,
+        compass_xdg::mimeapps::Lists::from_environment(),
+        tokio::runtime::Handle::current(),
+    )
+}
+
+/// Creates or updates a shortcut, as `ShortcutFormViewHost::submit` does
+/// once the form validates: the `default` icon is resolved to what the link
+/// currently offers, and stored as that.
+async fn save_shortcut(
+    state: &Arc<RwLock<EngineState>>,
+    id: Option<String>,
+    name: String,
+    icon: String,
+    url: String,
+    app: String,
+) -> Response {
+    use compass_core::shortcut_form::{Existing, Mode, Submission, submit};
+    let icon = if icon == compass_core::shortcut_form::DEFAULT_ICON {
+        let apps = engine_apps(state).await;
+        crate::shortcuts::resolve_default_icon(&apps, &url)
+    } else {
+        icon
+    };
+    let mut state = state.write().await;
+    let state = &mut *state;
+    let Some(shortcuts) = state.shortcuts.as_mut() else {
+        return shortcuts_unavailable();
+    };
+    let existing = match &id {
+        Some(id) => {
+            let Some(found) = shortcuts.find_by_id(id) else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no shortcut has that id",
+                ));
+            };
+            Some(Existing {
+                id: found.id.clone(),
+                name: found.name.clone(),
+                url: found.link.raw.clone(),
+                app: found.app.clone(),
+                icon: found.icon.clone(),
+            })
+        }
+        None => None,
+    };
+    let mode = if existing.is_some() {
+        Mode::Edit
+    } else {
+        Mode::Create
+    };
+    let now = crate::shortcuts::now();
+    let saved = match submit(mode, existing.as_ref(), &name, &url, &app, &icon, &icon) {
+        Submission::Rejected { errors, toast } => {
+            let field = if errors.link.is_some() {
+                "link"
+            } else if errors.app.is_some() {
+                "application"
+            } else {
+                "icon"
+            };
+            return Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                format!("{toast}: the {field} is required"),
+            ));
+        }
+        Submission::Update {
+            id,
+            name,
+            icon,
+            link,
+            app,
+            failure,
+            ..
+        } => shortcuts
+            .update(&id, &name, &icon, &link, &app, now)
+            .then_some(())
+            .ok_or(failure),
+        Submission::Create {
+            name,
+            icon,
+            link,
+            app,
+            failure,
+            ..
+        } => shortcuts
+            .create(&name, &icon, &link, &app, now)
+            .then_some(())
+            .ok_or(failure),
+    };
+    if let Err(failure) = saved {
+        return Response::Error(ProtocolError::new(ErrorKind::Internal, failure));
+    }
+    state.index.set_shortcuts(shortcuts.shortcuts().to_vec());
+    shortcuts_response(shortcuts)
+}
+
+/// The shortcut `id` names, expanded with `arguments`, reading the clipboard
+/// first when the link asks for it.
+async fn expand_shortcut(
+    state: &Arc<RwLock<EngineState>>,
+    id: &str,
+    arguments: &[String],
+) -> Result<(compass_core::shortcut_service::CachedShortcut, String), Response> {
+    let (shortcut, shell) = {
+        let state = state.read().await;
+        let Some(shortcuts) = &state.shortcuts else {
+            return Err(shortcuts_unavailable());
+        };
+        let Some(shortcut) = shortcuts.find_by_id(id) else {
+            return Err(Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no shortcut has that id",
+            )));
+        };
+        (shortcut.clone(), state.shell.clone())
+    };
+    let mut reserved = crate::shortcuts::Reserved::default();
+    if crate::shortcuts::needs_clipboard(&shortcut) {
+        match shell {
+            Some(shell) => match shell.clipboard().await {
+                Ok(content) => reserved.clipboard = content.as_text().map(str::to_owned),
+                Err(error) => tracing::info!(%error, "could not read the clipboard for a shortcut"),
+            },
+            None => tracing::info!("no GNOME Shell extension; {{clipboard}} expands to nothing"),
+        }
+    }
+    let expanded = compass_core::shortcut::expand(&shortcut.link, arguments, &reserved);
+    Ok((shortcut, expanded))
+}
+
+/// Opens a shortcut, as `OpenShortcutAction::execute` does: expand, find the
+/// application, launch, and count the visit.
+async fn open_shortcut(
+    state: &Arc<RwLock<EngineState>>,
+    id: &str,
+    arguments: &[String],
+) -> Response {
+    use compass_worker_host::application_service::Apps;
+    let (shortcut, expanded) = match expand_shortcut(state, id, arguments).await {
+        Ok(expanded) => expanded,
+        Err(response) => return response,
+    };
+    let apps = engine_apps(state).await;
+    let Some(app) = crate::shortcuts::resolve_app(&apps, &shortcut.app, &expanded) else {
+        let message = if shortcut.app == compass_core::shortcut::DEFAULT_APP_ID {
+            format!("No default app to open {expanded}")
+        } else {
+            format!("No app with id {}", shortcut.app)
+        };
+        return Response::Error(ProtocolError::new(ErrorKind::Unsupported, message));
+    };
+    apps.launch(&app, &expanded);
+    let mut state = state.write().await;
+    let state = &mut *state;
+    if let Some(shortcuts) = state.shortcuts.as_mut()
+        && shortcuts.register_visit(id, crate::shortcuts::now())
+    {
+        state.index.set_shortcuts(shortcuts.shortcuts().to_vec());
+    }
+    Response::Ack
 }
 
 /// The player a media command last acted on, which the next one that names
@@ -1145,6 +1352,48 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
 
         Request::OpenFile { path, reveal } => open_file(state, path, reveal).await,
+        Request::ListShortcuts => {
+            let state = state.read().await;
+            match &state.shortcuts {
+                Some(shortcuts) => shortcuts_response(shortcuts),
+                None => shortcuts_unavailable(),
+            }
+        }
+        Request::SaveShortcut {
+            id,
+            name,
+            icon,
+            url,
+            app,
+        } => save_shortcut(state, id, name, icon, url, app).await,
+        Request::RemoveShortcut { id } => {
+            let mut state = state.write().await;
+            let state = &mut *state;
+            let Some(shortcuts) = state.shortcuts.as_mut() else {
+                return shortcuts_unavailable();
+            };
+            if shortcuts.find_by_id(&id).is_none() {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no shortcut has that id",
+                ));
+            }
+            if !shortcuts.remove(&id) {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    "Failed to remove link",
+                ));
+            }
+            state.index.set_shortcuts(shortcuts.shortcuts().to_vec());
+            shortcuts_response(shortcuts)
+        }
+        Request::OpenShortcut { id, arguments } => open_shortcut(state, &id, &arguments).await,
+        Request::ExpandShortcut { id, arguments } => {
+            match expand_shortcut(state, &id, &arguments).await {
+                Ok((_, expanded)) => Response::Text { text: expanded },
+                Err(response) => response,
+            }
+        }
         Request::RunExtensionCommand { id, arguments_json } => {
             run_extension_command(state, id, arguments_json).await
         }

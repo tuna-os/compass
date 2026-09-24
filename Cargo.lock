@@ -6321,6 +6321,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
+ "uuid",
  "wait-timeout",
  "wayland-client",
  "wayland-protocols",
