@@ -116,3 +116,20 @@ fn the_extension_claims_the_gnome_versions_ci_covers() {
         );
     }
 }
+
+#[test]
+fn the_flatpak_may_talk_to_the_bus_name_the_contract_lives_on() {
+    // A talk-name filters bus names. The extension's objects live on the
+    // Shell's own connection, so the sandbox needs exactly this one; a grant
+    // for the interface name (which no process owns) lets nothing through.
+    let manifest = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packaging/flatpak/com.vicinae.Vicinae.yaml"),
+    )
+    .expect("the Flatpak manifest");
+    let grant = format!("- --talk-name={}", compass_shell::SHELL_SERVICE);
+    assert!(
+        manifest.lines().any(|line| line.trim() == grant),
+        "the manifest must grant `{grant}`"
+    );
+}
