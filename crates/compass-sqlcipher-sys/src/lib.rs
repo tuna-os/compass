@@ -141,6 +141,12 @@ impl Database {
 
         let db = Self { handle };
 
+        // Before anything that takes a lock: keying, registering the tokenizer
+        // and switching to WAL all do, and a connection opened while another
+        // holds one otherwise fails at once with "database is locked". The
+        // pragma touches no page, so it is safe before the key is set.
+        db.execute(BUSY_TIMEOUT)?;
+
         if !key.is_empty() {
             db.key(key)?;
         }
@@ -369,6 +375,10 @@ impl Drop for Transaction<'_> {
 }
 
 /// The pragmas `clipboard-db.cpp` applies on every connection.
+/// How long a connection waits on another's lock before giving up; the same
+/// default `rusqlite` uses.
+const BUSY_TIMEOUT: &str = "PRAGMA busy_timeout = 5000";
+
 const PRAGMAS: [&str; 4] = [
     "PRAGMA journal_mode = WAL",
     "PRAGMA synchronous = normal",
