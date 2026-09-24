@@ -93,6 +93,12 @@ impl ExtensionPage {
             self.depth = state.depth.max(1);
         }
         if let Some(view) = state.view {
+            // A grid is shown as rows until the launcher draws image tiles:
+            // the same search, selection and actions, one cell per row.
+            let view = match *view {
+                View::Grid(grid) => Box::new(View::List(grid_as_list(grid))),
+                other => Box::new(other),
+            };
             let key = self.selected_item().and_then(|item| item.key.clone());
             self.markdown = match view.as_ref() {
                 View::Detail(detail) => detail
@@ -240,6 +246,43 @@ impl ExtensionPage {
     }
 }
 
+/// `grid`'s cells as list rows, sections and actions kept.
+fn grid_as_list(
+    grid: compass_extension_api::view::GridView,
+) -> compass_extension_api::view::ListView {
+    use compass_extension_api::view::{ListSection, ListView};
+    ListView {
+        navigation_title: grid.navigation_title,
+        is_loading: grid.is_loading,
+        on_selection_change: grid.on_selection_change,
+        search: grid.search,
+        actions: grid.actions,
+        empty_state: grid.empty_state,
+        sections: grid
+            .sections
+            .into_iter()
+            .map(|section| ListSection {
+                title: section.title,
+                subtitle: section.subtitle,
+                items: section
+                    .items
+                    .into_iter()
+                    .map(|cell| {
+                        let mut item = ListItem::new(cell.title);
+                        item.key = cell.key;
+                        item.subtitle = cell.subtitle.or(cell.tooltip);
+                        item.keywords = cell.keywords;
+                        item.actions = cell.actions;
+                        item
+                    })
+                    .collect(),
+                ..ListSection::default()
+            })
+            .collect(),
+        ..ListView::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +369,36 @@ mod tests {
             ),
         ));
         assert_eq!(page.selected_item().map(|i| i.title.as_str()), Some("b"));
+    }
+
+    #[test]
+    fn a_grid_is_searched_and_acted_on_like_a_list() {
+        use compass_extension_api::view::{GridContent, GridItem, GridSection, GridView, Image};
+        let cell = |title: &str, handler: &str| GridItem {
+            id: compass_extension_api::id::NodeId::ROOT,
+            key: Some(title.to_owned()),
+            title: title.to_owned(),
+            subtitle: None,
+            content: GridContent::Image(Image::builtin("star")),
+            tooltip: None,
+            keywords: Vec::new(),
+            actions: Some(ActionPanel::of([Action::new("Copy", handler)])),
+        };
+        let mut grid = GridView {
+            sections: vec![GridSection {
+                items: vec![cell("sun", "cb-1"), cell("moon", "cb-2")],
+                ..GridSection::default()
+            }],
+            ..GridView::default()
+        };
+        grid.search.host_filtering = true;
+        let mut page = ExtensionPage::new(1, "Emoji");
+        page.apply(state(1, View::Grid(grid)));
+        assert_eq!(page.status, Status::Ready);
+        assert_eq!(page.shown.len(), 2);
+        page.query = "moon".into();
+        page.refilter();
+        assert_eq!(page.primary_action().map(|h| h.0.as_str()), Some("cb-2"));
     }
 
     #[test]

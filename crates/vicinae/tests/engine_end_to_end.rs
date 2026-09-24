@@ -1075,6 +1075,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "nav", "title": "Navigate", "mode": "view"},
               {"name": "ask", "title": "Ask First", "mode": "view"},
               {"name": "link", "title": "Open Link", "mode": "no-view"},
+              {"name": "tiles", "title": "Tiles", "mode": "view"},
               {"name": "greet", "title": "Greet Someone", "mode": "no-view",
                "arguments": [{"name": "name", "type": "text", "placeholder": "Name",
                               "required": true}]},
@@ -1134,6 +1135,19 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                }}));",
             acted = acted.to_string_lossy()
         ),
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("tiles.js"),
+        "const React = require('react');
+         const { Grid, ActionPanel, Action } = require('@vicinae/api');
+         module.exports.default = () => React.createElement(Grid, { columns: 4 },
+           React.createElement(Grid.Section, { title: 'Weather' },
+             React.createElement(Grid.Item, { title: 'sun', content: 'sun-16', actions:
+               React.createElement(ActionPanel, null,
+                 React.createElement(Action, { title: 'Pick', onAction: () => {} }))
+             }),
+             React.createElement(Grid.Item, { title: 'red', content: { color: '#ff0000' } })));",
     )
     .unwrap();
     std::fs::write(
@@ -1641,4 +1655,48 @@ fn a_confined_command_opens_a_link_in_the_application_that_claims_its_scheme() {
         std::fs::read_to_string(&opened).expect("the link was opened"),
         "https://example.com/a b"
     );
+}
+
+#[test]
+fn a_grid_command_renders_typed_cells() {
+    use compass_extension_api::View;
+    use compass_extension_api::view::{Color, GridContent};
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:tiles".into(),
+        arguments_json: None,
+    }) else {
+        panic!("the grid command did not start a view");
+    };
+    let (view, _) = wait_for_view(
+        &daemon,
+        session,
+        |view, _| matches!(view, View::Grid(grid) if !grid.sections.is_empty()),
+    );
+    let View::Grid(grid) = view else {
+        unreachable!()
+    };
+    assert_eq!(grid.columns, Some(4));
+    let section = &grid.sections[0];
+    assert_eq!(section.title.as_deref(), Some("Weather"));
+    let titles: Vec<&str> = section.items.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(titles, ["sun", "red"]);
+    assert!(section.items[0].actions.is_some());
+    assert_eq!(
+        section.items[1].content,
+        GridContent::Color(Color::Literal("#ff0000".into()))
+    );
+    daemon.request(Request::CloseExtension { session });
 }

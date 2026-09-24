@@ -14,6 +14,8 @@
 //! `list-item` (title, subtitle, `id`, keywords, text and tag accessories,
 //! actions, a Markdown detail) and `detail`, with `action-panel`,
 //! `action-panel-section`, `action-panel-submenu` and `action` beneath them.
+//! `grid` (sections, cells with their image or colour, and actions) is
+//! covered the same way.
 //! Anything else at the root is an [`Unsupported`] naming the tag, so a front
 //! end can say which component it cannot draw yet instead of drawing nothing.
 //! Props a covered component has but this does not read (icons, colours,
@@ -24,7 +26,8 @@ use compass_extension_api::action::{
     Action, ActionItem, ActionPanel, ActionSection, ActionSubmenu, KeyModifier, Shortcut,
 };
 use compass_extension_api::view::{
-    Accessory, Detail, EmptyState, ListItem, ListSection, ListView, View,
+    Accessory, Color, Detail, EmptyState, GridContent, GridFit, GridInset, GridItem, GridSection,
+    GridView, Image, ImageSource, ListItem, ListSection, ListView, View,
 };
 use serde_json::Value;
 
@@ -42,11 +45,12 @@ pub struct Unsupported {
 ///
 /// # Errors
 ///
-/// [`Unsupported`] for a root this does not cover (a `grid`, a `form`).
+/// [`Unsupported`] for a root this does not cover (a `form`).
 pub fn to_view(root: &RenderNode) -> Result<View, Unsupported> {
     match root.tag.as_str() {
         "list" => Ok(View::List(list(root))),
         "detail" => Ok(View::Detail(detail(root))),
+        "grid" => Ok(View::Grid(grid(root))),
         other => Err(Unsupported {
             tag: other.to_owned(),
         }),
@@ -126,6 +130,201 @@ fn list(node: &RenderNode) -> ListView {
     }
     flush(&mut view.sections, &mut loose);
     view
+}
+
+fn grid(node: &RenderNode) -> GridView {
+    let mut view = GridView {
+        navigation_title: text(node, "navigationTitle"),
+        is_loading: flag(node, "isLoading"),
+        columns: columns(node),
+        inset: inset(node).unwrap_or_default(),
+        fit: fit(node).unwrap_or_default(),
+        on_selection_change: handler(node, "onSelectionChange"),
+        ..GridView::default()
+    };
+    view.search.placeholder = text(node, "searchBarPlaceholder");
+    view.search.on_change = handler(node, "onSearchTextChange");
+    view.search.host_filtering = node
+        .props
+        .get("filtering")
+        .and_then(Value::as_bool)
+        .unwrap_or(view.search.on_change.is_none());
+
+    let mut loose = Vec::new();
+    let flush = |sections: &mut Vec<GridSection>, loose: &mut Vec<GridItem>| {
+        if !loose.is_empty() {
+            sections.push(GridSection {
+                items: std::mem::take(loose),
+                ..GridSection::default()
+            });
+        }
+    };
+    for child in node.children() {
+        match child.tag.as_str() {
+            "grid-section" => {
+                flush(&mut view.sections, &mut loose);
+                view.sections.push(GridSection {
+                    title: text(child, "title"),
+                    subtitle: text(child, "subtitle"),
+                    columns: columns(child),
+                    inset: inset(child),
+                    fit: fit(child),
+                    items: child
+                        .children()
+                        .iter()
+                        .filter(|item| item.tag == "grid-item")
+                        .map(grid_item)
+                        .collect(),
+                    ..GridSection::default()
+                });
+            }
+            "grid-item" => loose.push(grid_item(child)),
+            "action-panel" => view.actions = Some(panel(child)),
+            "empty-view" => {
+                view.empty_state = Some(EmptyState {
+                    title: text(child, "title").unwrap_or_default(),
+                    description: text(child, "description"),
+                    actions: child
+                        .children()
+                        .iter()
+                        .find(|c| c.tag == "action-panel")
+                        .map(panel),
+                    ..EmptyState::default()
+                });
+            }
+            _ => {}
+        }
+    }
+    flush(&mut view.sections, &mut loose);
+    view
+}
+
+fn columns(node: &RenderNode) -> Option<u16> {
+    node.props
+        .get("columns")
+        .and_then(Value::as_u64)
+        .and_then(|n| u16::try_from(n).ok())
+}
+
+fn inset(node: &RenderNode) -> Option<GridInset> {
+    match text(node, "inset")?.as_str() {
+        "small" => Some(GridInset::Small),
+        "medium" => Some(GridInset::Medium),
+        "large" => Some(GridInset::Large),
+        _ => None,
+    }
+}
+
+fn fit(node: &RenderNode) -> Option<GridFit> {
+    match text(node, "fit")?.as_str() {
+        "fill" => Some(GridFit::Fill),
+        "contain" => Some(GridFit::Contain),
+        _ => None,
+    }
+}
+
+fn grid_item(node: &RenderNode) -> GridItem {
+    GridItem {
+        id: compass_extension_api::id::NodeId::ROOT,
+        key: text(node, "id"),
+        title: text(node, "title").unwrap_or_default(),
+        subtitle: text(node, "subtitle"),
+        content: node
+            .props
+            .get("content")
+            .and_then(grid_content)
+            .unwrap_or_else(|| GridContent::Image(Image::builtin("question-mark-circle"))),
+        tooltip: text(node, "tooltip"),
+        keywords: node
+            .props
+            .get("keywords")
+            .and_then(Value::as_array)
+            .map(|words| {
+                words
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        actions: node
+            .children()
+            .iter()
+            .find(|c| c.tag == "action-panel")
+            .map(panel),
+    }
+}
+
+/// `{color}` is a flat colour; anything else is `serializeProtoImage`'s shape.
+fn grid_content(value: &Value) -> Option<GridContent> {
+    if let Some(color) = value.get("color") {
+        // `serializeColorLike`: `{raw}` or `{dynamic: {light, dark}}`, plain
+        // strings accepted too.
+        let raw = color
+            .as_str()
+            .or_else(|| color.get("raw").and_then(Value::as_str))
+            .or_else(|| {
+                let dynamic = color.get("dynamic").unwrap_or(color);
+                dynamic
+                    .get("light")
+                    .or_else(|| dynamic.get("dark"))
+                    .and_then(Value::as_str)
+            })?;
+        let color = if raw.starts_with('#') {
+            Color::Literal(raw.to_owned())
+        } else {
+            Color::Named(raw.to_owned())
+        };
+        return Some(GridContent::Color(color));
+    }
+    image(value).map(GridContent::Image)
+}
+
+/// An image as `serializeProtoImage` writes it: `{source: {raw} | {themed}}`,
+/// or `{fileIcon}`.
+fn image(value: &Value) -> Option<Image> {
+    if let Some(path) = value.get("fileIcon").and_then(Value::as_str) {
+        let mut image = Image::builtin(String::new());
+        image.source = ImageSource::FileIcon(path.to_owned());
+        return Some(image);
+    }
+    let source = image_source(value.get("source")?)?;
+    let mut image = Image::builtin(String::new());
+    image.source = source;
+    image.fallback = value.get("fallback").and_then(image_source);
+    Some(image)
+}
+
+fn image_source(value: &Value) -> Option<ImageSource> {
+    if let Some(raw) = value.as_str() {
+        return Some(raw_source(raw));
+    }
+    if let Some(themed) = value.get("themed") {
+        let side = |key: &str| themed.get(key).and_then(Value::as_str).map(raw_source);
+        return match (side("light"), side("dark")) {
+            (Some(light), Some(dark)) => Some(ImageSource::Themed {
+                light: Box::new(light),
+                dark: Box::new(dark),
+            }),
+            (Some(one), None) | (None, Some(one)) => Some(one),
+            (None, None) => None,
+        };
+    }
+    value.get("raw").and_then(Value::as_str).map(raw_source)
+}
+
+/// A URL, an absolute path, a file in the extension's assets, or a builtin
+/// icon name, told apart the way the C++ `ImageURL` does.
+fn raw_source(raw: &str) -> ImageSource {
+    if raw.contains("://") || raw.starts_with("data:") {
+        ImageSource::Url(raw.to_owned())
+    } else if raw.starts_with('/') {
+        ImageSource::Url(format!("file://{raw}"))
+    } else if std::path::Path::new(raw).extension().is_some() {
+        ImageSource::Asset(raw.to_owned())
+    } else {
+        ImageSource::Builtin(raw.to_owned())
+    }
 }
 
 /// Loose items between sections become an untitled section in place.
@@ -366,13 +565,72 @@ mod tests {
             "cb-3"
         );
 
-        let grid = node(serde_json::json!({"$t": "grid"}));
+        let form = node(serde_json::json!({"$t": "form"}));
         assert_eq!(
-            to_view(&grid),
+            to_view(&form),
             Err(Unsupported {
-                tag: "grid".to_owned()
+                tag: "form".to_owned()
             })
         );
+    }
+
+    #[test]
+    fn a_grid_keeps_its_cells_content_and_actions() {
+        let root = node(serde_json::json!({
+            "$t": "grid", "columns": 5, "inset": "small", "navigationTitle": "Emoji",
+            "children": [
+                {"$t": "grid-item", "title": "sun", "id": "s",
+                 "content": {"source": {"raw": "sun-16"}}},
+                {"$t": "grid-section", "title": "Photos", "columns": 3, "children": [
+                    {"$t": "grid-item", "title": "cat", "keywords": ["pet"],
+                     "content": {"source": {"raw": "https://example.com/cat.png"}},
+                     "children": [{"$t": "action-panel", "children": [
+                         {"$t": "action", "title": "Copy", "onAction": "cb-9"}
+                     ]}]},
+                    {"$t": "grid-item", "title": "red", "content": {"color": {"raw": "#ff0000"}}},
+                    {"$t": "grid-item", "title": "logo", "content": {"source": {"raw": "logo.png"}}}
+                ]}
+            ]
+        }));
+        let View::Grid(grid) = to_view(&root).expect("a grid") else {
+            panic!("not a grid");
+        };
+        assert_eq!(grid.navigation_title.as_deref(), Some("Emoji"));
+        assert_eq!((grid.columns, grid.inset), (Some(5), GridInset::Small));
+        assert!(grid.search.host_filtering);
+        assert_eq!(grid.sections.len(), 2);
+        assert_eq!(grid.sections[0].items[0].key.as_deref(), Some("s"));
+        assert_eq!(
+            grid.sections[0].items[0].content,
+            GridContent::Image(Image::builtin("sun-16"))
+        );
+
+        let photos = &grid.sections[1];
+        assert_eq!(
+            (photos.title.as_deref(), photos.columns),
+            (Some("Photos"), Some(3))
+        );
+        let cat = &photos.items[0];
+        assert_eq!(cat.keywords, ["pet"]);
+        assert!(matches!(
+            &cat.content,
+            GridContent::Image(image)
+                if image.source == ImageSource::Url("https://example.com/cat.png".into())
+        ));
+        assert_eq!(
+            cat.actions.as_ref().expect("actions").actions()[0]
+                .handler
+                .0,
+            "cb-9"
+        );
+        assert_eq!(
+            photos.items[1].content,
+            GridContent::Color(Color::Literal("#ff0000".into()))
+        );
+        assert!(matches!(
+            &photos.items[2].content,
+            GridContent::Image(image) if image.source == ImageSource::Asset("logo.png".into())
+        ));
     }
 
     #[test]
