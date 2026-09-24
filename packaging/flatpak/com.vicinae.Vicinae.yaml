@@ -128,30 +128,25 @@ modules:
         CARGO_NET_OFFLINE: 'true'
     build-commands:
       - cargo --offline build --release --locked -p vicinae -p compass-sandbox --bins
-      - install -Dm755 target/release/vicinae /app/bin/vicinae
-      # Search Files' indexer; the engine looks for it beside its own executable.
-      - install -Dm755 target/release/vicinae-file-indexer /app/bin/vicinae-file-indexer
-      # Confines the extension runtime (Landlock + seccomp) before it starts; the engine
-      # refuses to run extensions without it. See crates/compass-sandbox.
-      - install -Dm755 target/release/compass-sandbox-exec /app/libexec/compass-sandbox-exec
-      - install -Dm644 packaging/flatpak/com.vicinae.Vicinae.desktop
-        /app/share/applications/com.vicinae.Vicinae.desktop
-      - install -Dm644 packaging/flatpak/com.vicinae.Vicinae.metainfo.xml
-        /app/share/metainfo/com.vicinae.Vicinae.metainfo.xml
-      - install -Dm644 extra/compass.svg /app/share/icons/hicolor/scalable/apps/com.vicinae.Vicinae.svg
-      # The `Icon.*` set extensions draw with (compass_core::builtin_icon), found through
-      # $XDG_DATA_DIRS as vicinae/builtin-icons.
-      - install -Dm644 -t /app/share/vicinae/builtin-icons src/server/icons/*.svg
-      # The extension runtime: Node, and the bundle `crates/vicinae/src/extension_runner.rs`
-      # looks for at /app/share/vicinae/extension-runtime.js. The bundle is built outside
-      # flatpak-builder (scripts/build-extension-runtime.sh needs figura and npm, neither of
-      # which the offline build has) and picked up from the source tree. A build without it
-      # still works and the engine says the runtime is missing; the Flatpak workflow builds it
-      # first and asserts it arrived.
+      # The same install the AppImage, Arch and Nix packages run, so every output ships the
+      # same files in the same places (Suite 5, scripts/packaging/smoke.sh, checks them):
+      #   bin/vicinae
+      #   libexec/vicinae/compass-sandbox-exec  confines the extension runtime (Landlock +
+      #                                         seccomp); the engine refuses to run
+      #                                         extensions without it
+      #   libexec/vicinae/vicinae-file-indexer  the file-search helper
+      #   share/applications, share/metainfo, share/icons: the desktop entry and its icon
+      #   share/vicinae/builtin-icons           the `Icon.*` set extensions draw with, found
+      #                                         through $XDG_DATA_DIRS
+      #   share/vicinae/vicinae.schema.json     the published config schema
+      #   share/vicinae/extension-runtime.js    the extension runtime bundle, when present
+      # The bundle is built outside flatpak-builder (scripts/build-extension-runtime.sh needs
+      # figura and npm, neither of which the offline build has) and picked up from the source
+      # tree. A build without it still works and the engine says the runtime is missing; the
+      # Flatpak workflow builds it first and asserts it arrived.
+      - PREFIX=/app LIBEXECDIR=/app/libexec ./scripts/packaging/install-rust-engine.sh
+      # Node for the extension runtime: an SDK extension exists at build time only.
       - install -Dm755 /usr/lib/sdk/node22/bin/node /app/bin/node
-      - if [ -f src/typescript/extension-manager/dist/runtime.js ]; then install -Dm644 src/typescript/extension-manager/dist/runtime.js
-        /app/share/vicinae/extension-runtime.js; else echo "no extension runtime bundle; extensions
-        will not run"; fi
     sources:
       - type: dir
         path: ../..

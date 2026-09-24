@@ -11,11 +11,14 @@ on:
     branches: [main]
     paths: &paths
       - packaging/flatpak/**
+      - packaging/schema/**
       - crates/**
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
       - scripts/flatpak/**
+      - scripts/packaging/**
+      - scripts/build-extension-runtime.sh
       - .github/workflows/flatpak.yaml
   pull_request:
     paths: *paths
@@ -164,7 +167,7 @@ jobs:
 
           # Extensions need both halves inside the sandbox, not on the runner.
           flatpak run --user --command=sh com.vicinae.Vicinae -c \
-            'node --version && test -s /app/share/vicinae/extension-runtime.js && test -x /app/libexec/compass-sandbox-exec' \
+            'node --version && test -s /app/share/vicinae/extension-runtime.js && test -x /app/libexec/vicinae/compass-sandbox-exec' \
             || { echo "::error::the Flatpak cannot run extensions: Node, the runtime bundle or compass-sandbox-exec is missing"; exit 1; }
           flatpak run --user --command=sh com.vicinae.Vicinae -c \
             'test -s /app/share/vicinae/builtin-icons/question-mark-circle.svg' \
@@ -180,6 +183,21 @@ jobs:
           for c in checks:
               print(f\"  {c['status']:5} {c['name']}\")
           "
+
+      # Suite 5 (PLAN.md section 8.6), the same script every other output
+      # runs: the installed tree has every file where the engine looks, and a
+      # started engine answers ping. The layout is checked on the host through
+      # the deploy directory, which is /app inside the sandbox. The socket
+      # lives in $XDG_RUNTIME_DIR/app/<id>, the one runtime directory every
+      # instance of an app shares -- each `flatpak run` has its own /tmp.
+      - name: "Suite 5: layout, version, doctor, ping"
+        run: |
+          app="$(flatpak info --user --show-location com.vicinae.Vicinae)/files"
+          runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/app/com.vicinae.Vicinae"
+          mkdir -p "$runtime_dir"
+          REQUIRE_RUNTIME=1 ./scripts/packaging/smoke.sh \
+            --prefix "$app" --keep-env --socket "$runtime_dir/ci.sock" \
+            -- flatpak run --user com.vicinae.Vicinae
 
       # Spike B (#3), and the reason it lives here rather than only in the VM
       # tier: the question is whether Landlock and seccomp nest inside

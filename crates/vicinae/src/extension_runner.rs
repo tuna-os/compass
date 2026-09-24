@@ -136,12 +136,19 @@ impl Runtime {
     }
 }
 
+/// Beside the executable, in the directories the file indexer is looked for
+/// in (`../libexec/vicinae`, `../lib/vicinae`: the AppImage, Nix and Arch
+/// layouts), then the Flatpak's `/app/libexec`.
 fn installed_sandbox() -> Option<PathBuf> {
-    let beside_exe = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.join(SANDBOX_EXEC_NAME)));
-    beside_exe
+    let installed = std::env::current_exe().ok().and_then(|exe| {
+        Some(crate::indexer_client::helper_candidates(
+            exe.parent()?,
+            SANDBOX_EXEC_NAME,
+        ))
+    });
+    installed
         .into_iter()
+        .flatten()
         .chain([Path::new("/app/libexec").join(SANDBOX_EXEC_NAME)])
         .find(|path| path.is_file())
 }

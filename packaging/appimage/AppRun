@@ -1,0 +1,17 @@
+#!/bin/sh
+# Entry point of the Compass AppImage.
+#
+# Deliberately does NOT prepend the AppImage to PATH or XDG_DATA_DIRS, as
+# AppRun scripts often do: a launcher passes its environment to every
+# application it starts, and those would then find our Node first and index
+# our own share/ as though it were the system's. The engine finds its helpers,
+# the extension runtime and the schema relative to its own binary; the two
+# things it cannot find that way are named with its own variables, which mean
+# nothing to anything else.
+here="$(dirname "$(readlink -f "$0")")"
+
+: "${COMPASS_NODE:=$here/usr/bin/node}"
+: "${COMPASS_BUILTIN_ICONS:=$here/usr/share/vicinae/builtin-icons}"
+export COMPASS_NODE COMPASS_BUILTIN_ICONS
+
+exec "$here/usr/bin/vicinae" "$@"

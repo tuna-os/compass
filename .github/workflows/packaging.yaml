@@ -1,0 +1,241 @@
+# Suite 5 (docs/rust-engine/PLAN.md section 8.6): build every non-Flatpak
+# output of the Rust engine and smoke-test what it installed.
+#
+# The Flatpak has its own workflow (flatpak.yaml), which runs the same
+# scripts/packaging/smoke.sh against the installed Flatpak. This one covers the
+# rest: the AppImage, the Arch package and the Nix package, each built with its
+# own standard tooling (linuxdeploy/appimagetool, makepkg, nix build) and each
+# checked by the one script, so "green across all outputs" is one definition.
+#
+# The smoke is deliberately desktop-free: layout, `--version`, `config schema`,
+# `doctor` detecting the missing session, and a started engine answering
+# `ping`. What a real desktop adds is the VM tier's job (section 8.9).
+#
+# Tier 4 by PLAN section 8.8: nightly, plus any change to packaging itself.
+# A crates/ change reaches these outputs through the nightly run and main.
+name: Packaging (Suite 5)
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - packaging/**
+      - scripts/packaging/**
+      - scripts/build-extension-runtime.sh
+      - flake.nix
+      - flake.lock
+      - nix/vicinae.nix
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/packaging.yaml
+  pull_request:
+    paths:
+      - packaging/appimage/**
+      - packaging/arch/**
+      - packaging/nix/**
+      - packaging/schema/**
+      - scripts/packaging/**
+      - scripts/build-extension-runtime.sh
+      - flake.nix
+      - flake.lock
+      - crates/compass-core/src/config.rs
+      - crates/compass-core/src/config_migration.rs
+      - .github/workflows/packaging.yaml
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: packaging-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The default for every job in this file. Jobs that need more say so
+# themselves, and a job-level block REPLACES this one rather than adding to it —
+# so an elevated job must restate `contents: read` if it also checks out code.
+#
+# The point is what happens to the NEXT job somebody adds here: without this it
+# inherits the repository default, which may be write-all. With it, a new job
+# has to ask.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The published vicinae.json schema, checked by a third-party validator. The
+  # config_schema test (in the Rust workflow) holds it to the types; this holds
+  # it to what an editor would do with it.
+  schema:
+    name: Config schema
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate with jsonschema
+        run: |
+          python3 -m pip install --quiet jsonschema
+          python3 scripts/packaging/check-config-schema.py
+
+  # Built once and handed to the AppImage. Arch and Nix build their own, the
+  # way their packages have to.
+  extension-runtime:
+    name: Extension runtime bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        env:
+          CXX: g++-14
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++-14
+          ./scripts/build-extension-runtime.sh
+          test -s src/typescript/extension-manager/dist/runtime.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-runtime
+          path: src/typescript/extension-manager/dist/runtime.js
+          retention-days: 3
+          if-no-files-found: error
+
+  appimage:
+    name: AppImage
+    needs: extension-runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-runtime
+          path: src/typescript/extension-manager/dist
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-release-${{ runner.os }}-
+
+      # rust-toolchain.toml pins the channel; rustup on the runner honours it.
+      - name: Build the release binaries
+        run: cargo build --release --locked -p vicinae -p compass-sandbox --bins
+
+      - name: Cache the AppImage tools
+        uses: actions/cache@v4
+        with:
+          path: .build/appimage-tools
+          key: appimage-tools-${{ hashFiles('packaging/appimage/build-appimage.sh') }}
+
+      - name: Build the AppImage
+        run: |
+          REQUIRE_RUNTIME=1 OUT="$PWD/Compass-x86_64.AppImage" packaging/appimage/build-appimage.sh
+          ls -lh Compass-x86_64.AppImage
+
+      # Twice, because they prove different things. Extracted, the layout can
+      # be checked file by file; mounted through FUSE, it runs the way a user
+      # runs it, AppRun and all.
+      - name: "Suite 5: extracted layout"
+        run: |
+          ./Compass-x86_64.AppImage --appimage-extract >/dev/null
+          test -x squashfs-root/AppRun
+          squashfs-root/usr/bin/node --version
+          REQUIRE_RUNTIME=1 scripts/packaging/smoke.sh --prefix squashfs-root/usr -- squashfs-root/AppRun
+
+      - name: "Suite 5: the AppImage as a user runs it"
+        run: |
+          sudo apt-get install -y -qq libfuse2t64
+          # Said, not silently degraded: without FUSE this is the extracted
+          # run again, and the log should show which one happened.
+          if [ ! -e /dev/fuse ]; then
+            echo "::warning::no /dev/fuse on this runner; running the AppImage extract-and-run"
+            export APPIMAGE_EXTRACT_AND_RUN=1
+          fi
+          scripts/packaging/smoke.sh -- ./Compass-x86_64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: Compass-x86_64.AppImage
+          retention-days: 14
+          if-no-files-found: error
+
+  arch:
+    name: Arch package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container:
+      image: archlinux:base-devel
+    steps:
+      # git before checkout, so the checkout is a real repository makepkg can
+      # clone from rather than a tarball.
+      - name: Prepare the container
+        run: |
+          pacman -Syu --noconfirm --needed git python namcap desktop-file-utils sudo
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          git config --system --add safe.directory '*'
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Lint the PKGBUILD
+        run: |
+          namcap packaging/arch/PKGBUILD || true
+          cp -r packaging/arch /tmp/pkg
+          chown -R builder /tmp/pkg
+          cd /tmp/pkg && sudo -u builder makepkg --printsrcinfo > .SRCINFO && cat .SRCINFO
+
+      # The PKGBUILD's own source is the published repository; point it at
+      # this checkout, at exactly the commit under test.
+      - name: makepkg
+        run: |
+          cd /tmp/pkg
+          sudo -u builder env \
+            COMPASS_GIT_URL="file://$GITHUB_WORKSPACE" \
+            COMPASS_GIT_REF="commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" \
+            makepkg --syncdeps --noconfirm
+          ls -lh ./*.pkg.tar.zst
+
+      - name: Install it
+        run: |
+          pacman -U --noconfirm /tmp/pkg/compass-git-*.pkg.tar.zst
+          pacman -Ql compass-git | grep -v builtin-icons/
+          namcap /tmp/pkg/compass-git-*.pkg.tar.zst || true
+
+      - name: "Suite 5: installed layout, version, doctor, ping"
+        run: |
+          REQUIRE_RUNTIME=1 scripts/packaging/smoke.sh \
+            --prefix /usr --libexecdir /usr/lib -- /usr/bin/vicinae
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: /tmp/pkg/*.pkg.tar.zst
+          retention-days: 14
+          if-no-files-found: error
+
+  nix:
+    name: Nix package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - name: nix build
+        run: nix build -L .#compass
+
+      - name: "Suite 5: installed layout, version, doctor, ping"
+        run: REQUIRE_RUNTIME=1 scripts/packaging/smoke.sh --prefix result -- result/bin/vicinae
