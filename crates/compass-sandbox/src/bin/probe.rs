@@ -1,27 +1,77 @@
-//! Calls one denied syscall and says what the kernel answered.
+//! Makes one call the sandbox should refuse and says what the kernel answered.
 //!
-//! The boundary tests need a program that issues a syscall on the denylist on
-//! purpose. Nothing on a stock system does that reliably: `unshare` needs
-//! namespace privileges the machine may not give (a GitHub runner does not),
-//! and `strace` is not installed everywhere. So this is that program.
+//! The boundary tests need a program that issues a denied call on purpose.
+//! Nothing on a stock system does that reliably: `unshare` needs namespace
+//! privileges the machine may not give (a GitHub runner does not), and
+//! `strace` is not installed everywhere. So this is that program.
 //!
-//! It asks `ptrace(PTRACE_ATTACH, 0)`. Process 0 does not exist, so the answer
-//! without a filter is `ESRCH` — *the call went through and the kernel refused
-//! the argument*. Behind the filter the answer is `EPERM`, before the kernel
-//! ever looks at the argument. Two different errnos from one call, needing no
-//! privilege, no namespace and no second process.
+//! Each call is chosen so that the answer *without* a filter is an errno the
+//! filter never gives, which is what makes "denied" distinguishable from
+//! "failed":
 //!
-//! It exits 0 either way and prints `errno=<name>`: the test reads the name,
-//! because "the program failed" is exactly the ambiguity being avoided.
+//! - `ptrace` (the default): `ptrace(PTRACE_ATTACH, 0)`. Process 0 does not
+//!   exist, so unfiltered the kernel answers `ESRCH` having looked at the
+//!   argument; behind the filter, `EPERM` before it looks.
+//! - `raw-socket`: `socket(AF_INET, SOCK_RAW, 0)`. Unfiltered the kernel
+//!   finds no raw protocol 0 and answers `EPROTONOSUPPORT` before it checks
+//!   `CAP_NET_RAW`, root or not; behind the filter, `EPERM`.
+//! - `packet-socket`: `socket(AF_PACKET, SOCK_DGRAM, 0)`. Unfiltered this is
+//!   `EPERM` for an unprivileged process and a socket for root, so only a
+//!   privileged control can tell the two apart; the tests say so.
+//! - `stream-socket`: `socket(AF_INET, SOCK_STREAM, 0)`, which must work
+//!   behind the filter: the control that the socket rules are not a ban on
+//!   sockets.
+//! - `alloc-512m`: reserves 512 MiB, answering `ENOMEM` when the data limit
+//!   refuses it.
+//!
+//! It exits 0 either way and prints `errno=<name>`, or `errno=ok` when the
+//! call succeeded: the test reads the name, because "the program failed" is
+//! exactly the ambiguity being avoided.
 
 use nix::sys::ptrace;
+use nix::sys::socket::{AddressFamily, SockFlag, SockType, socket};
 use nix::unistd::Pid;
 
 fn main() {
-    // `Pid::from_raw(0)` is the "attach to pid 0" that cannot succeed.
-    let answer = match ptrace::attach(Pid::from_raw(0)) {
-        Ok(()) => "ok".to_owned(),
-        Err(errno) => format!("{errno:?}"),
+    let mode = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "ptrace".to_owned());
+    let answer = match mode.as_str() {
+        // `Pid::from_raw(0)` is the "attach to pid 0" that cannot succeed.
+        "ptrace" => ptrace::attach(Pid::from_raw(0)).map(drop),
+        "raw-socket" => {
+            socket(AddressFamily::Inet, SockType::Raw, SockFlag::empty(), None).map(drop)
+        }
+        "packet-socket" => socket(
+            AddressFamily::Packet,
+            SockType::Datagram,
+            SockFlag::empty(),
+            None,
+        )
+        .map(drop),
+        "stream-socket" => socket(
+            AddressFamily::Inet,
+            SockType::Stream,
+            SockFlag::empty(),
+            None,
+        )
+        .map(drop),
+        // `try_reserve` rather than an allocation, so a refusal is an error
+        // to print rather than an abort; the reservation is a private
+        // writable mapping, which is what RLIMIT_DATA counts.
+        "alloc-512m" => {
+            let mut block: Vec<u8> = Vec::new();
+            block
+                .try_reserve_exact(512 * 1024 * 1024)
+                .map_err(|_| nix::errno::Errno::ENOMEM)
+        }
+        other => {
+            eprintln!("compass-sandbox-probe: unknown mode {other}");
+            std::process::exit(64);
+        }
     };
-    println!("errno={answer}");
+    match answer {
+        Ok(()) => println!("errno=ok"),
+        Err(errno) => println!("errno={errno:?}"),
+    }
 }

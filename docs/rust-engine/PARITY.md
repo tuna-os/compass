@@ -2055,6 +2055,20 @@ differs:
 | 8 | Scan progress (`scanStatusChanged`) feeds a status indicator. | The client tracks scans, and nothing shows them. | — |
 | 9 | Recent files come from `$XDG_DATA_HOME/recently-used.xbel`. | The same — which inside the Flatpak is the sandbox's own data home, not the host's, so there the empty query falls through to "Recently Modified" from the index. | — |
 
+### The extension sandbox — what an extension may not do that the C++ let it
+
+The C++ runs extensions unconfined. Compass runs them behind `compass-sandbox-exec` (Landlock,
+seccomp, a heap cap and now a data limit), so every row here is a divergence by construction.
+The negative tests are §8.2's list; each has a positive control beside it.
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | An extension may run a program it wrote itself (Raycast's `speedtest` downloads its CLI into `supportPath` and runs it). | Execute is granted on the system trees (`/usr`, `/bin`, `/lib*`, `/app`), Node and the extension's installed directory, never on the directories it may write: running what it wrote fails with `EACCES`. The Landlock crate's "read" set includes `Execute`, which had made every readable path executable; read no longer implies execute. Suite 1's `speedtest` fails here, by design. | `a_program_the_worker_wrote_itself_cannot_be_run`, `a_command_sees_its_own_paths_and_preferences_and_may_exec_but_not_unshare` |
+| 2 | A raw socket is whatever the kernel allows the process. | `socket()` with `SOCK_RAW` or `SOCK_PACKET`, or in `AF_PACKET`, answers `EPERM` from the seccomp filter, root or not; an ordinary socket is unaffected. | `a_raw_socket_is_refused_while_an_ordinary_one_is_not` |
+| 3 | No memory limit; the worker asks V8 for 1000 MB of heap. | The heap is capped at 160 MiB (`--max-old-space-size`), and `RLIMIT_DATA` at 512 MiB, which bounds `Buffer`s and native allocations where no cgroup is reachable (a Flatpak): a 512 MiB `Buffer` is a `RangeError` the extension can catch. Measured over Suite 1 the worker's `VmData` peaks at 340 MiB. The heap cap costs one real extension: `dashboard-icons` runs out of heap loading its catalogue. | `an_allocation_past_the_data_limit_fails_and_the_process_carries_on`, `an_extension_that_allocates_past_the_heap_cap_is_stopped` |
+| 4 | Writes anywhere the user may. | Writes only its support and asset directories: `reminders` (Vicinae store) fails making `~/.local/share/vicinae-reminders`. | `an_installed_extension_command_is_found_and_a_no_view_one_runs` |
+| 5 | TLS trusts whatever `NODE_EXTRA_CA_CERTS` names. | The same, because the file it names (and `SSL_CERT_FILE`, `SSL_CERT_DIR`) is granted read; otherwise Node could not load a corporate CA from `$HOME`. | — |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

@@ -52,7 +52,7 @@ fn main() -> ExitCode {
     // Deliberately before the exec and after nothing: every path the policy
     // names has already been checked to exist, and from here this process is
     // confined whatever happens next.
-    if let Err(error) = policy.apply() {
+    if let Err(error) = policy.apply().and_then(|_| policy.apply_limits()) {
         eprintln!("compass-sandbox-exec: {error}");
         return ExitCode::from(EXIT_SANDBOX);
     }

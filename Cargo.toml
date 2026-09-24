@@ -95,7 +95,7 @@ landlock = "0.4"
 seccompiler = "0.5"
 libc = "0.2"
 # Safe wrappers for the syscalls the sandbox tests have to call on purpose.
-nix = { version = "0.29", features = ["ptrace"] }
+nix = { version = "0.29", features = ["ptrace", "socket", "resource"] }
 
 # dev
 insta = "1"

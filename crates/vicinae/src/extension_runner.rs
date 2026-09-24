@@ -177,17 +177,31 @@ pub fn policy(
     .map(PathBuf::from)
     .chain(parent(&runtime.node))
     .chain(parent(&runtime.bundle))
-    .chain([command.extension_dir.clone()]);
+    .chain([command.extension_dir.clone()])
+    // A certificate bundle the user pointed TLS at (a corporate CA, say):
+    // Node reads it at start, and without it every fetch fails.
+    .chain(
+        ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .map(PathBuf::from),
+    );
     let write = [
         support_dir(data_dir, command),
         assets_dir(data_dir, command),
     ];
-    let execute = ["/usr/bin", "/bin", "/app/bin"]
+    // The system's trees whole, since a program run from `/usr/bin` may run
+    // its own helpers from `/usr/lib` or `/usr/libexec` (git does). The
+    // extension's installed directory too, for the few that ship a binary.
+    // Never the directories it may write: a program it wrote there would be
+    // any program it liked.
+    let execute = ["/usr", "/bin", "/lib", "/lib64", "/app"]
         .into_iter()
         .map(PathBuf::from)
-        .chain([runtime.node.clone()]);
+        .chain([runtime.node.clone(), command.extension_dir.clone()]);
 
-    let mut policy = compass_sandbox::Policy::new();
+    let mut policy =
+        compass_sandbox::Policy::new().data_limit(compass_worker_host::cgroups::DATA_LIMIT_BYTES);
     for path in read.filter(|path| path.exists()) {
         policy = policy.read(path);
     }

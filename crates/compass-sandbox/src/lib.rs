@@ -105,6 +105,10 @@ pub enum Error {
     /// access to something.
     #[error("the policy names {0}, which does not exist")]
     MissingPath(PathBuf),
+
+    /// The kernel refused a resource limit.
+    #[error("setting the memory limit failed: {0}")]
+    Limit(std::io::Error),
 }
 
 /// Allowlist as written in an extension's manifest — JSON, not `a{sv}`.
@@ -139,6 +143,7 @@ impl Allowlist {
             execute: self.execute,
             mode: Mode::Strict,
             syscall_filter: true,
+            data_limit: None,
         }
     }
 }
@@ -166,6 +171,17 @@ pub struct Policy {
     /// On by default. Turning it off is for measuring what it costs, not for
     /// running an extension — see [`syscalls`].
     pub syscall_filter: bool,
+    /// The most private writable memory the process may map, in bytes
+    /// (`RLIMIT_DATA`); `None` leaves the limit it inherited.
+    ///
+    /// This is what bounds an allocation outside the JavaScript heap — a
+    /// `Buffer`, a native module's `malloc` — where no cgroup is reachable,
+    /// which is inside a Flatpak. It counts address space committed rather
+    /// than pages touched, so it is set well above what the process should
+    /// use; the point is that an allocation of hundreds of megabytes fails
+    /// with `ENOMEM`, which Node reports as an ordinary error, instead of
+    /// succeeding.
+    pub data_limit: Option<u64>,
 }
 
 impl Default for Policy {
@@ -176,6 +192,7 @@ impl Default for Policy {
             execute: Vec::new(),
             mode: Mode::default(),
             syscall_filter: true,
+            data_limit: None,
         }
     }
 }
@@ -223,6 +240,29 @@ impl Policy {
         self
     }
 
+    /// Caps the private writable memory the process may map; see
+    /// [`Policy::data_limit`].
+    #[must_use]
+    pub fn data_limit(mut self, bytes: u64) -> Self {
+        self.data_limit = Some(bytes);
+        self
+    }
+
+    /// Applies [`Policy::data_limit`] to the calling process, which its
+    /// children inherit.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Limit`] when the kernel refuses it, as it does a limit above
+    /// the hard one this process inherited.
+    pub fn apply_limits(&self) -> Result<(), Error> {
+        if let Some(bytes) = self.data_limit {
+            nix::sys::resource::setrlimit(nix::sys::resource::Resource::RLIMIT_DATA, bytes, bytes)
+                .map_err(|errno| Error::Limit(std::io::Error::from(errno)))?;
+        }
+        Ok(())
+    }
+
     /// Every path the policy names, whatever the right.
     fn paths(&self) -> impl Iterator<Item = &PathBuf> {
         self.read
@@ -250,13 +290,18 @@ impl Policy {
         }
 
         let abi = TARGET_ABI;
+        // The crate's "read" set includes `Execute`, which would make every
+        // readable path executable — the worker's own writable directories
+        // among them, so it could run anything it wrote there. Execute is
+        // granted only where `execute` says.
+        let read = AccessFs::from_read(abi) & !AccessFs::Execute;
         let ruleset = Ruleset::default()
             .handle_access(AccessFs::from_all(abi))?
             .create()?
-            .add_rules(path_beneath_rules(&self.read, AccessFs::from_read(abi)))?
+            .add_rules(path_beneath_rules(&self.read, read))?
             .add_rules(path_beneath_rules(
                 &self.write,
-                AccessFs::from_read(abi) | AccessFs::from_write(abi),
+                read | AccessFs::from_write(abi),
             ))?
             .add_rules(path_beneath_rules(&self.execute, AccessFs::Execute))?;
 
@@ -289,6 +334,10 @@ impl Policy {
         }
         if !self.syscall_filter {
             args.push("--no-syscall-filter".to_owned());
+        }
+        if let Some(bytes) = self.data_limit {
+            args.push("--data-limit".to_owned());
+            args.push(bytes.to_string());
         }
         args
     }
@@ -345,6 +394,13 @@ where
             "--execute" => policy.execute.push(value()?.into()),
             "--best-effort" => policy.mode = Mode::BestEffort,
             "--no-syscall-filter" => policy.syscall_filter = false,
+            "--data-limit" => {
+                let bytes = value()?;
+                policy.data_limit =
+                    Some(bytes.parse().map_err(|_| {
+                        format!("--data-limit needs a number of bytes, not {bytes}")
+                    })?);
+            }
             "--" => {
                 rest.extend(args.map(|a| a.as_ref().to_owned()));
                 break;

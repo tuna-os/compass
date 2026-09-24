@@ -1181,11 +1181,24 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
             "module.exports.default = async () => {{
                const {{ environment, getPreferenceValues }} = require('@vicinae/api');
                const {{ spawnSync }} = require('node:child_process');
+               const fs = require('node:fs');
                const status = (cmd, args) => {{
                  const r = spawnSync(cmd, args);
                  return r.error ? String(r.error.code) : r.status;
                }};
-               require('node:fs').writeFileSync({probed:?}, JSON.stringify({{
+               // A program the command writes itself, into the one place it
+               // may write, and then tries to run.
+               const dropped = environment.supportPath + '/dropped';
+               const original = ['/usr/bin/true', '/bin/true'].find((p) => fs.existsSync(p));
+               fs.copyFileSync(original, dropped);
+               fs.chmodSync(dropped, 0o755);
+               // Outside the JavaScript heap, which the heap cap cannot see.
+               let bigBuffer;
+               try {{ bigBuffer = Buffer.alloc(512 * 1024 * 1024).length; }}
+               catch (e) {{ bigBuffer = e.name; }}
+               fs.writeFileSync({probed:?}, JSON.stringify({{
+                 execDropped: status(dropped, []),
+                 bigBuffer,
                  assetsPath: environment.assetsPath,
                  supportPath: environment.supportPath,
                  isDevelopment: environment.isDevelopment,
@@ -1991,6 +2004,18 @@ fn a_command_sees_its_own_paths_and_preferences_and_may_exec_but_not_unshare() {
     } else {
         eprintln!("unshare -U fails here even unconfined; the denial is not tested");
     }
+    // Suite 1's `fork` case (§8.2): running what it wrote itself is the
+    // escape, and it fails closed, while `true` from the system ran above.
+    assert_eq!(
+        seen["execDropped"], "EACCES",
+        "a program the command wrote into its support directory ran"
+    );
+    // The 512 MB case: a Buffer lives outside the heap cap, and the data
+    // limit refuses it as an error the command can catch rather than a crash.
+    assert_eq!(
+        seen["bigBuffer"], "RangeError",
+        "a 512 MiB Buffer was allocated inside the sandbox"
+    );
 }
 
 #[test]

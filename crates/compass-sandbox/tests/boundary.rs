@@ -446,3 +446,143 @@ fn ptrace_is_refused_while_ordinary_work_continues() {
         "an ordinary program could not run behind the syscall filter: {stderr}"
     );
 }
+
+/// Runs the probe in `mode` behind `policy`, returning the errno it printed.
+fn probe_mode(policy: &Policy, mode: &str) -> String {
+    let output = policy
+        .command(&launcher(), &probe(), &[mode.to_owned()])
+        .output()
+        .expect("the launcher runs");
+    assert!(
+        output.status.success(),
+        "the probe did not run: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// The unconfined answer for `mode`.
+fn probe_plain(mode: &str) -> String {
+    let output = Command::new(probe())
+        .arg(mode)
+        .output()
+        .expect("the probe runs");
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// What the probe needs to run at all.
+fn probe_policy() -> Policy {
+    let dir = probe()
+        .parent()
+        .expect("the probe has a directory")
+        .to_owned();
+    runnable().read(&dir).execute(dir)
+}
+
+#[test]
+fn a_raw_socket_is_refused_while_an_ordinary_one_is_not() {
+    // Suite 1's negative list (§8.2) names raw sockets. The kernel refuses an
+    // unprivileged one already, so the probe asks for raw protocol 0, which
+    // the kernel rejects with EPROTONOSUPPORT *before* it checks
+    // CAP_NET_RAW: that errno means the call reached the socket layer, root
+    // or not, and EPERM means the filter stopped it first.
+    assert_eq!(
+        probe_plain("raw-socket"),
+        "errno=EPROTONOSUPPORT",
+        "the unsandboxed control did not reach the socket layer, so this machine cannot \
+         answer the question"
+    );
+    assert_eq!(
+        probe_mode(&probe_policy().without_syscall_filter(), "raw-socket"),
+        "errno=EPROTONOSUPPORT",
+        "the call did not get through with the filter off, so a denial below would prove nothing"
+    );
+    assert_eq!(
+        probe_mode(&probe_policy(), "raw-socket"),
+        "errno=EPERM",
+        "a raw socket was not refused behind the syscall filter"
+    );
+    // A packet socket is raw at the link layer in every type it has. Only a
+    // privileged control can tell the filter from the kernel here; where the
+    // control opens one, the sandbox must not.
+    assert_eq!(
+        probe_mode(&probe_policy(), "packet-socket"),
+        "errno=EPERM",
+        "an AF_PACKET socket was opened"
+    );
+    if probe_plain("packet-socket") != "errno=ok" {
+        eprintln!("note: AF_PACKET is refused here unconfined too; its denial is the kernel's");
+    }
+    // The control that matters most: the rules are about raw sockets, not
+    // sockets. Every fetch an extension makes starts with this call.
+    assert_eq!(
+        probe_mode(&probe_policy(), "stream-socket"),
+        "errno=ok",
+        "an ordinary TCP socket was refused: the filter would break every extension"
+    );
+}
+
+#[test]
+fn a_program_the_worker_wrote_itself_cannot_be_run() {
+    if !landlock_enforces() {
+        return assert_fails_closed();
+    }
+    // Suite 1's `fork` case (§8.2). Spawning is allowed on purpose: an
+    // extension that wraps a CLI is ordinary. What must fail closed is the
+    // escape, a worker that writes a program into the one directory it may
+    // write and then runs it, which would be every binary it liked.
+    let f = fixture();
+    let Some(sh) = ["/usr/bin/sh", "/bin/sh"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())
+    else {
+        panic!("no sh on this system");
+    };
+    let dropped = f.allowed.join("dropped");
+    let script = format!(
+        "cp {cat} {dropped} && chmod +x {dropped} && {dropped} {inside}",
+        cat = cat().to_string_lossy(),
+        dropped = dropped.to_string_lossy(),
+        inside = f.inside.to_string_lossy()
+    );
+    let policy = runnable().read(&f.allowed).write(&f.allowed);
+    let (ok, _) = run(&policy, &sh, &["-c".to_owned(), script.clone()]);
+    assert!(
+        !ok,
+        "a program the worker copied into its own directory ran"
+    );
+    assert!(
+        dropped.exists(),
+        "the copy itself failed, so the refusal above was not the exec being denied"
+    );
+
+    // Control: with the directory executable, the same script runs.
+    std::fs::remove_file(&dropped).expect("remove the copy");
+    let (ok, stderr) = run(&policy.execute(&f.allowed), &sh, &["-c".to_owned(), script]);
+    assert!(ok, "the exec control failed: {stderr}");
+}
+
+#[test]
+fn an_allocation_past_the_data_limit_fails_and_the_process_carries_on() {
+    // Suite 1's 512 MB case (§8.2). The heap flag bounds JavaScript objects
+    // and a cgroup bounds the rest only where systemd is reachable, which is
+    // not inside a Flatpak; RLIMIT_DATA holds everywhere. The probe reserves
+    // 512 MiB with `try_reserve`, so a refusal comes back as an error it
+    // prints rather than an abort.
+    assert_eq!(
+        probe_plain("alloc-512m"),
+        "errno=ok",
+        "the unconfined control could not reserve 512 MiB"
+    );
+    assert_eq!(
+        probe_mode(&probe_policy(), "alloc-512m"),
+        "errno=ok",
+        "without a data limit the reservation should succeed, or the refusal below proves nothing"
+    );
+    assert_eq!(
+        probe_mode(&probe_policy().data_limit(256 * 1024 * 1024), "alloc-512m"),
+        "errno=ENOMEM",
+        "512 MiB was reserved under a 256 MiB data limit"
+    );
+}
