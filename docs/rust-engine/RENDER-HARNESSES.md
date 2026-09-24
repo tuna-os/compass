@@ -8,11 +8,53 @@ and they are not interchangeable.
 | Harness | Renders with | Round trip | Proves |
 |---|---|---|---|
 | Browser surrogate (`tools/design/`) | HTML + CSS | ~2 s | layout, colour, hierarchy, state |
-| wgpu in a canvas (**not built**) | the real Iced + wgpu, on WebGL | ~1 min | that Iced paints what you designed |
+| **Paint tier** (`crates/compass-ui/tests/paint.rs`) | the real Iced renderer — **wgpu** via lavapipe, and **tiny-skia** | **~3 s** | that Iced paints what the tree describes |
 | VM tier (`scripts/vmtest/launcher.sh`) | the real thing on real GNOME | ~30 min | that it works on the target |
+
+The middle row was "wgpu in a canvas (**not built**)" until the paint tier
+replaced it. It turned out not to need a canvas or WebGL at all: `iced_test`
+already renders headlessly through Iced's own renderer, and the missing piece
+was reading the pixels back and asserting something robust about them.
 
 Use the cheapest one that can answer your question, and **do not let a cheap
 one answer an expensive one's question**. That is the whole discipline here.
+
+## The paint tier — per PR, both backends
+
+```sh
+cargo test -p compass-ui --test paint                       # whichever backend Iced picks
+ICED_TEST_BACKEND=wgpu PAINT_EXPECT_BACKEND=wgpu \
+  cargo test -p compass-ui --test paint                     # force the GPU pipeline
+```
+
+`LauncherApp::view()` rendered through Iced's real renderer, pixels read back,
+and **colour in regions** asserted against the app's own palette, tied to the
+layout bounds the widget tree reports. It catches the one thing the tiers either
+side of it could not on a pull request: **a tree that lays out correctly and
+paints wrong.**
+
+Proven by mutation, on both backends:
+
+| broken | paint tier | 149 lib + 4 insta structural tests |
+|---|---|---|
+| selected row filled with the surface colour | **fails** | all green |
+| unselected title drawn in the surface colour | **fails** | all green |
+
+It asserts invariants, not images. A committed PNG compared byte-for-byte
+reddens whenever a runner changes its font package; region colour does not
+care where glyphs land, and a selection that stops painting cannot hide from
+it. Thresholds were measured before they were set: selection share 0.777 in
+the selected row against 0.000 in an unselected one.
+
+**Which backend is not left to chance.** Iced tries wgpu and falls back to
+tiny-skia silently — right for an application, wrong for a test. CI forces each
+with `ICED_TEST_BACKEND` and confirms it with `PAINT_EXPECT_BACKEND`, so a wgpu
+job cannot pass on tiny-skia. Locally, `apt install mesa-vulkan-drivers` gives
+wgpu an adapter; without it, forcing wgpu panics rather than substituting.
+
+What it still does **not** prove: that GNOME composites the window, that the
+portal binds the shortcut, that the real font stack on the target matches.
+Those are the VM tier's.
 
 ## 1. The browser surrogate — built, use it first
 

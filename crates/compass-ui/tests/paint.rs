@@ -181,7 +181,15 @@ fn paint(app: &LauncherApp, labels: &[&str]) -> (Frame, Vec<iced::Rectangle>) {
     )
 }
 
-/// The backend is printed on every run, so a report says what it proved.
+/// The backend is printed on every run, and CHECKED when a run asks for one.
+///
+/// Iced tries wgpu first and falls back to tiny-skia without a word. That
+/// is the right behaviour for an application and the wrong one for a test:
+/// a job meant to prove the wgpu path could pass on tiny-skia and report
+/// nothing amiss. `ICED_TEST_BACKEND` forces the choice (and wgpu with no
+/// adapter then panics, loudly); `PAINT_EXPECT_BACKEND` makes this test
+/// confirm the backend it got is the one it asked for, so a future change
+/// to Iced's fallback cannot quietly reintroduce the substitution.
 #[test]
 fn renderer_is_reported() {
     let (_dir, app) = launcher(Appearance::Light);
@@ -192,6 +200,13 @@ fn renderer_is_reported() {
         "an unrecognised renderer means this harness is measuring something new: {}",
         frame.renderer
     );
+    if let Ok(expected) = std::env::var("PAINT_EXPECT_BACKEND") {
+        assert_eq!(
+            frame.renderer, expected,
+            "this run asked for {expected} and was painted by {} -- it proved nothing about {expected}",
+            frame.renderer
+        );
+    }
 }
 
 /// Something was actually drawn, and it included anti-aliased text.
