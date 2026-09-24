@@ -1913,7 +1913,7 @@ impl LauncherApp {
                     || (modifiers.control() && key.as_ref() == Key::Character("b"));
                 if !panel_key
                     && let Page::Extension(page) = &self.page
-                    && let Some(handler) = extension_chord(&key, modifiers)
+                    && let Some(handler) = extension_chord(key, modifiers)
                         .and_then(|(mods, name)| page.action_for(&mods, &name))
                         .cloned()
                 {
