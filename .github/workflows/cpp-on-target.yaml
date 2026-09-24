@@ -788,6 +788,7 @@ jobs:
               # engine will not start, or if nothing ranked.
               /src/target/release/parity \
                 --report-only \
+                --cpp-provider applications \
                 --cpp /usr/bin/vicinae \
                 --rust /src/target/release/vicinae \
                 --corpus /src/crates/compass-testkit/corpus/desktop-entries \

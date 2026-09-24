@@ -32,6 +32,8 @@ struct ParityConfig {
     ///
     /// See [`main`]'s `--report-only`.
     report_only: bool,
+    /// Narrow the C++ side to one root provider; see [`Flavour::query_args`].
+    cpp_provider: Option<String>,
 }
 
 /// One ranked hit, as an engine actually emits it.
@@ -102,6 +104,7 @@ fn main() -> Result<()> {
         output_dir: None,
         selftest: false,
         report_only: false,
+        cpp_provider: None,
     };
 
     // Parse command line args
@@ -154,6 +157,10 @@ fn main() -> Result<()> {
             // nothing.
             "--report-only" => {
                 config.report_only = true;
+            }
+            "--cpp-provider" => {
+                i += 1;
+                config.cpp_provider = Some(args[i].clone());
             }
             _ => {}
         }
@@ -270,8 +277,14 @@ fn run_parity(config: &ParityConfig) -> Result<ParityReport> {
     } else {
         Flavour::Cpp
     };
-    let cpp = RunningEngine::start(&config.cpp_engine, "cpp", left_flavour, &corpus)?;
-    let rust = RunningEngine::start(&config.rust_engine, "rust", Flavour::Rust, &corpus)?;
+    let cpp = RunningEngine::start(
+        &config.cpp_engine,
+        "cpp",
+        left_flavour,
+        &corpus,
+        config.cpp_provider.clone(),
+    )?;
+    let rust = RunningEngine::start(&config.rust_engine, "rust", Flavour::Rust, &corpus, None)?;
 
     for query in &queries {
         report.total += 1;
@@ -487,6 +500,8 @@ struct RunningEngine {
     /// The private `XDG_RUNTIME_DIR` a C++ engine was given, and `None` for a
     /// Rust one, which takes `--socket` instead.
     runtime_dir: Option<PathBuf>,
+    /// Narrows this engine to one root provider; see [`Flavour::query_args`].
+    provider: Option<String>,
     /// The staged corpus environment, applied to the server AND to every
     /// client call: the C++ CLI resolves paths the same way its server does,
     /// and a client reading the runner's real `HOME` is a difference between
@@ -552,13 +567,33 @@ impl Flavour {
     }
 
     /// The argv that asks a running server to rank `query`.
-    fn query_args(self, socket: &Path, query: &str) -> Vec<String> {
+    /// `provider` narrows the C++ side to one root provider and is ignored on
+    /// the Rust side.
+    ///
+    /// THE TWO ENGINES RANK DIFFERENT SETS, which PARITY.md declares as
+    /// divergence 2 of Suite 0's ranked-output path: Rust's `Session::query`
+    /// ranks `index.launchable_items()` — applications — while the C++
+    /// `RootItemManager` ranks root items, which is applications *plus*
+    /// commands, extension entrypoints and fallbacks. Comparing the two
+    /// unnarrowed reports a regression on every query where the C++ side
+    /// returns something the Rust engine has no provider for yet, which is
+    /// noise dressed as a finding.
+    ///
+    /// `--provider applications` is how the caller compares like with like.
+    /// Deliberately not defaulted here: PARITY.md says a default would
+    /// silently decide a parity question that belongs to whoever runs the
+    /// comparison, so the job passes it and this records that it did.
+    fn query_args(self, socket: &Path, query: &str, provider: Option<&str>) -> Vec<String> {
         let mut args = match self {
             Self::Rust => vec!["--socket".to_owned(), socket.to_string_lossy().into_owned()],
             Self::Cpp => Vec::new(),
         };
         args.push("query".to_owned());
         args.push("--json".to_owned());
+        if let (Self::Cpp, Some(provider)) = (self, provider) {
+            args.push("--provider".to_owned());
+            args.push(provider.to_owned());
+        }
         args.push(query.to_owned());
         args
     }
@@ -605,7 +640,13 @@ impl RunningEngine {
     /// learning the same lesson the expensive way — three runs screenshotted a
     /// launcher that had not painted yet because the check waited for the
     /// process instead of the renderer.
-    fn start(binary: &Path, name: &str, flavour: Flavour, corpus: &StagedCorpus) -> Result<Self> {
+    fn start(
+        binary: &Path,
+        name: &str,
+        flavour: Flavour,
+        corpus: &StagedCorpus,
+        provider: Option<String>,
+    ) -> Result<Self> {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -657,6 +698,7 @@ impl RunningEngine {
             socket,
             flavour,
             runtime_dir,
+            provider,
             corpus_env,
         };
         engine.wait_until_answering(name)?;
@@ -776,7 +818,11 @@ fn run_search(
     query: &str,
 ) -> Result<Vec<SearchResultItem>> {
     let output = engine
-        .command(engine.flavour.query_args(&engine.socket, query))
+        .command(
+            engine
+                .flavour
+                .query_args(&engine.socket, query, engine.provider.as_deref()),
+        )
         .output()
         .with_context(|| format!("Failed to run {} engine", engine_name))?;
 
@@ -1064,12 +1110,27 @@ mod tests {
         assert_eq!(Flavour::Cpp.serve_args(socket), ["server"]);
 
         assert_eq!(
-            Flavour::Rust.query_args(socket, "fire"),
+            Flavour::Rust.query_args(socket, "fire", None),
             ["--socket", "/tmp/x/ipc.sock", "query", "--json", "fire"]
         );
         assert_eq!(
-            Flavour::Cpp.query_args(socket, "fire"),
+            Flavour::Cpp.query_args(socket, "fire", None),
             ["query", "--json", "fire"]
+        );
+
+        // `--provider` narrows the C++ side only, and only when asked.
+        // PARITY.md divergence 2: the two engines rank different SETS, and
+        // comparing them unnarrowed reports a regression wherever the C++
+        // side returns a command or an extension entrypoint the Rust engine
+        // has no provider for yet.
+        assert_eq!(
+            Flavour::Cpp.query_args(socket, "fire", Some("applications")),
+            ["query", "--json", "--provider", "applications", "fire"]
+        );
+        assert_eq!(
+            Flavour::Rust.query_args(socket, "fire", Some("applications")),
+            ["--socket", "/tmp/x/ipc.sock", "query", "--json", "fire"],
+            "the Rust engine already ranks applications only; narrowing it is not its flag"
         );
 
         assert_eq!(
@@ -1088,7 +1149,7 @@ mod tests {
         // The C++ engine is isolated by XDG_RUNTIME_DIR instead.
         for args in [
             Flavour::Cpp.serve_args(socket),
-            Flavour::Cpp.query_args(socket, "fire"),
+            Flavour::Cpp.query_args(socket, "fire", None),
             Flavour::Cpp.ping_args(socket),
         ] {
             assert!(
