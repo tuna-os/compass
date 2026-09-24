@@ -136,6 +136,7 @@ async fn echo_handler(request: Request) -> Response {
             default_action: "run".into(),
         },
         Request::ListScripts => Response::Scripts { scripts: vec![] },
+        Request::ListRhaiScripts => Response::RhaiScripts { scripts: vec![] },
         Request::RunScript { .. } => Response::ScriptStarted { session: None },
         Request::ScriptOutput { .. } => Response::ScriptOutput {
             output: String::new(),

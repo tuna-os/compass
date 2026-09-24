@@ -3437,3 +3437,100 @@ fn dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice() {
     );
     assert!(!seen[1].output_index);
 }
+
+// ---------------------------------------------------------------------------
+// Rhai scripts. The in-process tests in `rhai_scripts.rs` cover actions,
+// consent and effects against a fake clipboard; these hold the real process
+// to the XDG layout: a packaged script under `$XDG_DATA_DIRS`, the user's
+// directory created under `$XDG_DATA_HOME`, and hot reload.
+
+#[test]
+fn a_packaged_rhai_script_is_found_in_root_search_and_its_view_renders() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extensions/rhai-examples");
+    let mut root = PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        let target = dir.join("data/compass/scripts/web-search");
+        std::fs::create_dir_all(&target).unwrap();
+        for file in ["script.toml", "main.rhai"] {
+            std::fs::copy(examples.join("web-search").join(file), target.join(file)).unwrap();
+        }
+        root = dir.to_path_buf();
+        Vec::new()
+    });
+    let user_dir = root.join("data-home/compass/scripts");
+    assert!(user_dir.is_dir(), "the engine creates the user's directory");
+
+    let Response::RhaiScripts { scripts } = daemon.request(Request::ListRhaiScripts) else {
+        panic!("no script list");
+    };
+    assert_eq!(scripts.len(), 1);
+    assert_eq!(scripts[0].title, "Web Search");
+    assert_eq!(scripts[0].icon.as_deref(), Some("globe"));
+
+    let json = daemon.client(&["query", "--json", "duckduckgo"]);
+    assert!(json.contains("rhai:script.web-search"), "{json}");
+
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "rhai:script.web-search".into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("the script did not open: {started:?}");
+    };
+    let (view, depth) = wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+    assert_eq!(depth, 1);
+    let View::List(list) = view else {
+        unreachable!()
+    };
+    let titles: Vec<&str> = list.sections[0]
+        .items
+        .iter()
+        .map(|item| item.title.as_str())
+        .collect();
+    assert_eq!(titles, ["DuckDuckGo", "Wikipedia", "GitHub", "crates.io"]);
+    let handler = list.search.on_change.expect("the script takes the text");
+    assert_eq!(
+        daemon.request(Request::ExtensionEvent {
+            session,
+            handler: handler.0,
+            args_json: r#"["rust", 1]"#.into(),
+        }),
+        Response::Ack
+    );
+    let (view, _) = wait_for_view(&daemon, session, |view, _| {
+        matches!(view, View::List(list)
+            if list.sections[0].items[0].title.contains("rust"))
+    });
+    let View::List(list) = view else {
+        unreachable!()
+    };
+    assert_eq!(
+        list.sections[0].items[0].subtitle.as_deref(),
+        Some("https://duckduckgo.com/?q=rust")
+    );
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+
+    // A script saved into the user's directory while the engine runs is in
+    // root search without asking for a rescan.
+    let mine = user_dir.join("mine");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("main.rhai"), "fn search(q) { [] }").unwrap();
+    std::fs::write(mine.join("script.toml"), "title = \"Zebra Notes\"").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let json = daemon.client(&["query", "--json", "zebra notes"]);
+        if json.contains("rhai:script.mine") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "hot reload never listed it: {json}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}

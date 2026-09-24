@@ -2237,6 +2237,16 @@ panel offers "Preview font" and "Copy font family". What differs:
 | 4 | The chosen category is remembered across openings (`fontCategory` in local storage). | Kept while the launcher is shown (across a preview); a new opening starts at "All". | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
 | 5 | The specimen is Markdown rendered in the family. | The same Markdown read back line by line (heading, regular, bold, italic, rule) and drawn in the family; bold and italic ask the renderer for that face, which synthesises nothing when the family has none. | `a_specimen_reads_back_as_lines` |
 
+### Rhai scripts — a Compass addition, with no C++ counterpart
+
+Rhai scripts (PLAN §2.2, [RHAI-SCRIPTS.md](./RHAI-SCRIPTS.md)) are new in Compass, so nothing here
+is a divergence from the C++ so much as a boundary of it. Their root entries use their own provider,
+`rhai:script.<name>`, so frecency, aliases and favourites the Rust engine records for them are keys
+the C++ engine has no item for and ignores. They are opened as extension view sessions over IPC
+v14 (`ListRhaiScripts`, then the v8 `RunExtensionCommand` / `ExtensionView` / `ExtensionEvent`
+requests); a v13 launcher does not list them. A script's `paste` on a wlroots compositor copies
+and does not type, as an extension's paste does there ("wlroots" below).
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

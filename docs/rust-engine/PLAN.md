@@ -543,12 +543,26 @@ discovery and hot reload; and first-party example scripts with authoring docs. T
 when the examples are good enough that someone can copy one and be productive — an empty tier is
 worse than no tier.
 
-*Track C status (2026-09-24):* **gate met in the crate.** `compass-script` has the hardened
+*Track C status (2026-09-24):* **wired into the launcher.** `compass-script` has the hardened
 engine, capability-gated registry, blocking-pool execution with a terminating deadline,
 `script.toml` discovery under `$XDG_DATA_HOME/compass/scripts`, and `notify` hot reload; 26
 negative sandbox tests fail closed, a shared-seam test holds it to the TS tier's `to_view`, and
-five examples ship in `extensions/rhai-examples/` with [RHAI-SCRIPTS.md](./RHAI-SCRIPTS.md).
-Not done: loading scripts into root search and the extension page, and a real `ScriptHost`.
+five examples ship in `extensions/rhai-examples/` with [RHAI-SCRIPTS.md](./RHAI-SCRIPTS.md). The
+engine (`crates/vicinae/src/rhai_scripts.rs`, `rhai_host.rs`) loads them at start, lists each as a
+root-search command (`rhai:script.<name>`), and opens one as an extension view session, so the
+launcher's extension page draws it unchanged: the search text goes to `search`, actions run
+through the seam's `ActionIndex`/`Pending`, and toasts, HUDs, re-rendering, closing and popping are
+carried out. The real `ScriptHost` reaches the extensions' clipboard (GNOME Shell extension or
+wlroots data-control), the default-application opener, Compass's encrypted local storage (a
+namespace per script) and `notify-rust`. Grants: packaged scripts get what they declare; the user's
+own get it after a one-time consent prompt in the launcher, kept in
+`$XDG_CONFIG_HOME/compass/script-grants.json`. The user directory is created and watched; edits
+rebuild the script, re-render an open view, and update root search. The five examples install
+under `share/compass/scripts` in every package (`install-rust-engine.sh`). IPC v14 adds only
+`ListRhaiScripts`/`RhaiScripts`. Tested in-process against a `MemoryHost` (`tests/rhai_scripts.rs`)
+and against the real process (`engine_end_to_end.rs`). Not done: script icons in the root list
+(rows use the initial badge, as extension commands do), an action panel on a script's root row,
+and a settings page to review or revoke consent (edit or delete the file).
 
 **Gate:** every feature area in the ledger has absolute tests — ported Catch2 cases count where they
 state intended behaviour, not where they pin a C++ quirk (§8.3, ADR-0017).

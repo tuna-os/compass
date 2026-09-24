@@ -207,6 +207,7 @@ fn all_requests() -> Vec<Request> {
         Request::FontSpecimen {
             name: "Noto Sans ไทย".into(),
         },
+        Request::ListRhaiScripts,
         Request::CreateExtension {
             author: "zoë".into(),
             title: "My Extension".into(),
@@ -475,6 +476,16 @@ fn all_responses() -> Vec<Response> {
             exit_code: Some(0),
             elapsed_ms: 1500,
         },
+        Response::RhaiScripts {
+            scripts: vec![compass_ipc::RhaiScriptEntry {
+                id: "script.unit-converter".into(),
+                title: "Unit Converter".into(),
+                description: Some("Convert °C, km and kg".into()),
+                icon: Some("calculator".into()),
+                keywords: vec!["convert".into(), "单位".into()],
+            }],
+        },
+        Response::RhaiScripts { scripts: vec![] },
         Response::Programs {
             programs: vec!["/usr/bin/htop".into(), "/opt/bin/ünï".into()],
             terminal: Some("Ptyxis".into()),
@@ -572,6 +583,7 @@ fn request_variants_are_exhaustive() {
             | Request::CreateExtension { .. }
             | Request::ListFonts
             | Request::FontSpecimen { .. }
+            | Request::ListRhaiScripts
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -607,6 +619,7 @@ fn response_variants_are_exhaustive() {
             | Response::Fonts { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
+            | Response::RhaiScripts { .. }
             | Response::Window(_) => {}
         }
     }

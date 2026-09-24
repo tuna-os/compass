@@ -30,6 +30,8 @@ pub mod indexer_service;
 pub mod indexer_watch;
 pub mod ipc;
 pub mod programs;
+pub mod rhai_host;
+pub mod rhai_scripts;
 pub mod scripts;
 pub mod serve;
 pub mod session;

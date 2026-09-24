@@ -168,6 +168,13 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
     }
 
+    /// Every Rhai script the engine has loaded, rescanned.
+    fn list_rhai_scripts(
+        &self,
+    ) -> BackendFuture<'_, Vec<compass_core::rhai_scripts::RhaiScriptItem>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// Runs a script command with its arguments: the run to follow, or
     /// `None` when there is nothing to follow (silent and terminal modes).
     fn run_script(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, Option<u64>> {

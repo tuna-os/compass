@@ -194,6 +194,8 @@ pub enum Message {
     ProgramRan(Result<(), String>),
     /// The script commands arrived, or why they could not be listed.
     ScriptsLoaded(Result<Vec<compass_core::script_scan::ScriptItem>, String>),
+    /// The Rhai scripts arrived, or why they could not be listed.
+    RhaiScriptsLoaded(Result<Vec<compass_core::rhai_scripts::RhaiScriptItem>, String>),
     /// A script started: the run to follow, if any.
     ScriptStarted {
         /// Which script.

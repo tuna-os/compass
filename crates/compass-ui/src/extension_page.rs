@@ -100,6 +100,9 @@ pub struct ExtensionPage {
     /// Each date field's text as typed, by field name, while it is not yet
     /// a date; a field with no draft shows its value.
     pub date_drafts: std::collections::BTreeMap<String, String>,
+    /// Whether the view ending without a problem goes back to the root
+    /// search: a Rhai script's does, as popping its only view.
+    pub leaves_on_end: bool,
 }
 
 impl ExtensionPage {
@@ -131,6 +134,7 @@ impl ExtensionPage {
             remote_art: std::collections::HashMap::new(),
             requested: std::collections::BTreeSet::new(),
             date_drafts: std::collections::BTreeMap::new(),
+            leaves_on_end: false,
         }
     }
 

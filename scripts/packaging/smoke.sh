@@ -73,6 +73,10 @@ if [ -n "$prefix" ]; then
   expect_file "$prefix/share/icons/hicolor/scalable/apps/com.vicinae.Vicinae.svg"
   expect_file "$prefix/share/vicinae/builtin-icons/question-mark-circle.svg"
   expect_file "$prefix/share/vicinae/vicinae.schema.json"
+  for script in web-search unit-converter epoch-converter generators quick-notes; do
+    expect_file "$prefix/share/compass/scripts/$script/script.toml"
+    expect_file "$prefix/share/compass/scripts/$script/main.rhai"
+  done
   if [ "${REQUIRE_RUNTIME:-0}" = 1 ]; then
     expect_file "$prefix/share/vicinae/extension-runtime.js"
   fi

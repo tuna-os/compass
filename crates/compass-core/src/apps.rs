@@ -499,6 +499,7 @@ impl AppIndexBuilder {
             extensions,
             shortcuts: Vec::new(),
             scripts: Vec::new(),
+            rhai_scripts: Vec::new(),
             root_config: crate::root_items::RootConfig::default(),
         }
     }
@@ -680,6 +681,8 @@ pub struct AppIndex {
     shortcuts: Vec<crate::shortcut_service::CachedShortcut>,
     /// Script commands, in scan order; their roots come after the shortcuts'.
     scripts: Vec<crate::script_scan::ScriptItem>,
+    /// Rhai scripts, in id order; their roots come after the script commands'.
+    rhai_scripts: Vec<crate::rhai_scripts::RhaiScriptItem>,
     /// The configuration last applied, kept for roots added later.
     root_config: crate::root_items::RootConfig,
 }
@@ -714,6 +717,13 @@ pub enum RootHit<'a> {
     Script {
         /// Which one.
         script: &'a crate::script_scan::ScriptItem,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
+    /// A Rhai script.
+    RhaiScript {
+        /// Which one.
+        script: &'a crate::rhai_scripts::RhaiScriptItem,
         /// Match score on the IPC scale, excluding frecency.
         match_score: u32,
     },
@@ -872,6 +882,14 @@ impl AppIndex {
                                 script,
                                 match_score,
                             })
+                    })
+                    .or_else(|| {
+                        self.rhai_script_by_entrypoint(entrypoint_id).map(|script| {
+                            RootHit::RhaiScript {
+                                script,
+                                match_score,
+                            }
+                        })
                     }),
             }
         })
@@ -949,6 +967,34 @@ impl AppIndex {
             .collect();
         self.replace_provider_roots(crate::script_scan::SCRIPTS_PROVIDER_ID, roots);
         self.scripts = scripts;
+    }
+
+    /// The Rhai scripts root search lists, in id order.
+    #[must_use]
+    pub fn rhai_scripts(&self) -> &[crate::rhai_scripts::RhaiScriptItem] {
+        &self.rhai_scripts
+    }
+
+    /// The Rhai script a `rhai:<id>` entrypoint id names.
+    #[must_use]
+    pub fn rhai_script_by_entrypoint(
+        &self,
+        entrypoint_id: &str,
+    ) -> Option<&crate::rhai_scripts::RhaiScriptItem> {
+        let id = crate::rhai_scripts::script_id(entrypoint_id)?;
+        self.rhai_scripts.iter().find(|script| script.id == id)
+    }
+
+    /// Replaces the Rhai scripts root search lists, as
+    /// [`AppIndex::set_shortcuts`] replaces the quicklinks: scripts come and
+    /// go while the launcher runs (hot reload).
+    pub fn set_rhai_scripts(&mut self, scripts: Vec<crate::rhai_scripts::RhaiScriptItem>) {
+        let roots = scripts
+            .iter()
+            .map(crate::rhai_scripts::RhaiScriptItem::root_item)
+            .collect();
+        self.replace_provider_roots(crate::rhai_scripts::RHAI_PROVIDER_ID, roots);
+        self.rhai_scripts = scripts;
     }
 
     /// Drops `provider`'s roots and appends `roots` in their place, merged

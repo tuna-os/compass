@@ -29,6 +29,7 @@ mod developer;
 mod dmenu;
 mod fonts;
 mod programs;
+mod rhai;
 mod scripts;
 mod shortcuts;
 mod snippets;
@@ -457,6 +458,8 @@ pub enum RootRow {
     Shortcut(usize),
     /// A script command, as its index in `AppIndex::scripts`.
     Script(usize),
+    /// A Rhai script, as its index in `AppIndex::rhai_scripts`.
+    RhaiScript(usize),
 }
 
 /// Which view the card shows.
@@ -1115,6 +1118,7 @@ impl LauncherApp {
             | RootRow::Extension(_)
             | RootRow::Shortcut(_)
             | RootRow::Script(_)
+            | RootRow::RhaiScript(_)
             | RootRow::Calculator => None,
         }
     }
@@ -1204,6 +1208,14 @@ impl LauncherApp {
                 let title = self
                     .app_index
                     .scripts()
+                    .get(index)
+                    .map_or("", |script| script.title.as_str());
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::RhaiScript(index)) => {
+                let title = self
+                    .app_index
+                    .rhai_scripts()
                     .get(index)
                     .map_or("", |script| script.title.as_str());
                 line.push_str(&format!(" selected_title={title:?}"));
@@ -1625,10 +1637,21 @@ impl LauncherApp {
                                     || self.app_index.shortcut_by_entrypoint(key).is_some())
                                     && (!key.starts_with("scripts:")
                                         || self.app_index.script_by_entrypoint(key).is_some())
+                                    && (!key.starts_with("rhai:")
+                                        || self.app_index.rhai_script_by_entrypoint(key).is_some())
                             })
                             .map(|key| {
                                 if let Some(command) = compass_core::commands::by_id(key) {
                                     return Some(RootRow::Command(command));
+                                }
+                                if let Some(script) = self.app_index.rhai_script_by_entrypoint(key)
+                                {
+                                    return self
+                                        .app_index
+                                        .rhai_scripts()
+                                        .iter()
+                                        .position(|known| known.id == script.id)
+                                        .map(RootRow::RhaiScript);
                                 }
                                 if let Some(script) = self.app_index.script_by_entrypoint(key) {
                                     return self
@@ -1714,6 +1737,9 @@ impl LauncherApp {
                 if let Some(RootRow::Script(index)) = self.selected_row() {
                     return self.run_script_at(index);
                 }
+                if let Some(RootRow::RhaiScript(index)) = self.selected_row() {
+                    return self.open_rhai_script_at(index);
+                }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
@@ -1794,6 +1820,7 @@ impl LauncherApp {
                     self.search_task(),
                     self.refresh_shortcuts_task(),
                     self.refresh_scripts_task(),
+                    self.refresh_rhai_scripts_task(),
                 ])
             }
             Message::Closed(id) => {
@@ -2075,6 +2102,7 @@ impl LauncherApp {
                         .app_index
                         .extension(&id)
                         .map(|command| command.extension_dir.join("assets"));
+                    page.leaves_on_end = compass_core::rhai_scripts::script_id(&id).is_some();
                     let surface = self.palette().surface.to_iced();
                     page.prefers_dark =
                         0.299 * surface.r + 0.587 * surface.g + 0.114 * surface.b < 0.5;
@@ -2096,6 +2124,13 @@ impl LauncherApp {
                 match result {
                     Ok(state) => {
                         let ended = state.ended;
+                        // A script that popped itself: back to the root
+                        // search, as leaving any view does.
+                        if ended && state.problem.is_none() && page.leaves_on_end {
+                            let close = self.close_extension_view();
+                            self.page = Page::Root;
+                            return Task::batch([close, focus_search(), self.search_task()]);
+                        }
                         page.apply(state);
                         let after = page.version;
                         let images = crate::remote_image::fetch_tasks(page.wanted_images());
@@ -2267,6 +2302,7 @@ impl LauncherApp {
             Message::ScriptsLoaded(_)
             | Message::ScriptStarted { .. }
             | Message::ScriptPolled { .. } => self.script_message(message),
+            Message::RhaiScriptsLoaded(_) => self.rhai_message(message),
             Message::ProgramsLoaded(_)
             | Message::ProgramsQueryChanged(_)
             | Message::ProgramSelected(_)
@@ -2929,6 +2965,17 @@ impl LauncherApp {
                             self.initial_badge(&script.title, selected),
                             script.title.clone(),
                             self.subtitles.then(|| script.subtitle.clone()),
+                            selected,
+                        )
+                    }
+                    RootRow::RhaiScript(index) => {
+                        let Some(script) = self.app_index.rhai_scripts().get(*index) else {
+                            continue;
+                        };
+                        self.list_row(
+                            self.initial_badge(&script.title, selected),
+                            script.title.clone(),
+                            self.subtitles.then(|| script.subtitle().to_owned()),
                             selected,
                         )
                     }
@@ -4471,6 +4518,13 @@ impl LauncherApp {
                         .position(|known| known.id == script.id)
                         .unwrap_or_default(),
                 ),
+                compass_core::RootHit::RhaiScript { script, .. } => RootRow::RhaiScript(
+                    self.app_index
+                        .rhai_scripts()
+                        .iter()
+                        .position(|known| known.id == script.id)
+                        .unwrap_or_default(),
+                ),
                 compass_core::RootHit::Shortcut { shortcut, .. } => RootRow::Shortcut(
                     self.app_index
                         .shortcuts()
@@ -4534,6 +4588,7 @@ impl LauncherApp {
                 | RootRow::Extension(_)
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
                 | RootRow::Calculator => None,
             })
             .filter_map(AppItem::icon)
@@ -5388,6 +5443,62 @@ mod tests {
             ["@someone/hello:write"]
         );
         assert!(app.error.is_none());
+    }
+
+    #[test]
+    fn a_rhai_script_is_a_row_opens_as_an_extension_view_and_leaves_when_it_pops() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["rhai:script.hello".to_owned()],
+            view: Some(greeting_list(false)),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let _ = app.update(Message::RhaiScriptsLoaded(Ok(vec![
+            compass_core::rhai_scripts::RhaiScriptItem {
+                id: "script.hello".into(),
+                title: "Hello Script".into(),
+                description: Some("Says hello".into()),
+                icon: Some("globe".into()),
+                keywords: Vec::new(),
+            },
+        ])));
+        for message in task_messages(app.update(Message::QueryChanged("hello script".into()))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::RhaiScript(0)),
+            "{}",
+            app.state_line()
+        );
+        assert!(app.state_line().contains("selected_title=\"Hello Script\""));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(
+                ui.find("Says hello").is_ok(),
+                "the description is the subtitle"
+            );
+        }
+
+        // The fake draws the list on the first poll and ends on the second,
+        // as a script that popped itself does.
+        let mut drawn = false;
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+            if let Page::Extension(page) = &app.page {
+                assert!(page.leaves_on_end);
+                drawn |= page.shown.len() == 2;
+            }
+        }
+        assert_eq!(
+            backend.ran.lock().unwrap().as_slice(),
+            ["rhai:script.hello"]
+        );
+        assert!(drawn, "the script's list was drawn");
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        assert_eq!(backend.closed.lock().unwrap().as_slice(), [7]);
     }
 
     fn greeting_list(host_filtering: bool) -> compass_extension_api::View {
@@ -7101,6 +7212,7 @@ mod tests {
                 | RootRow::Extension(_)
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
                 | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
@@ -8768,6 +8880,7 @@ mod quick_launch_tests {
                 | RootRow::Extension(_)
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
                 | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
@@ -8915,6 +9028,7 @@ mod icon_tests {
                 | RootRow::Extension(_)
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
+                | RootRow::RhaiScript(_)
                 | RootRow::Calculator => None,
             })
             .find(|item| item.name() == name)

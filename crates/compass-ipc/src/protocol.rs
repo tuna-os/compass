@@ -37,8 +37,8 @@ use serde::{Deserialize, Serialize};
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
 /// shortcuts, snippets, script commands, Run Terminal Program, dmenu, themes,
-/// create-extension and fonts.
-pub const PROTOCOL_VERSION: u16 = 13;
+/// create-extension and fonts; version 14, Rhai scripts.
+pub const PROTOCOL_VERSION: u16 = 14;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -501,6 +501,11 @@ pub enum Request {
         /// The family's name, as [`FontEntry::name`] carries it.
         name: String,
     },
+    /// Every Rhai script the engine has loaded, as root search lists them.
+    /// Answered with [`Response::RhaiScripts`]. A script is opened with
+    /// [`Request::RunExtensionCommand`] and its `rhai:` id, and then followed
+    /// and driven exactly as an extension's view is.
+    ListRhaiScripts,
 }
 
 /// What the engine answers.
@@ -677,6 +682,26 @@ pub enum Response {
         /// Milliseconds since it started, or how long it ran once finished.
         elapsed_ms: u64,
     },
+    /// Answer to [`Request::ListRhaiScripts`], in id order.
+    RhaiScripts {
+        /// The scripts.
+        scripts: Vec<RhaiScriptEntry>,
+    },
+}
+
+/// One Rhai script, as root search and the launcher need it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RhaiScriptEntry {
+    /// `script.<folder name>`; the root entry is `rhai:<id>`.
+    pub id: String,
+    /// The manifest's `title`.
+    pub title: String,
+    /// The manifest's `description`.
+    pub description: Option<String>,
+    /// A builtin icon name.
+    pub icon: Option<String>,
+    /// Extra search terms.
+    pub keywords: Vec<String>,
 }
 
 /// One script command, as root search and the launcher need it.

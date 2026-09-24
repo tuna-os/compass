@@ -841,7 +841,9 @@ pub fn oauth_redirect(url: &str) -> Result<(), String> {
     answered.map_err(|err| format!("The extension did not take the authorization: {err}"))
 }
 
-fn open_storage(storage: &Storage) -> Option<compass_sqlcipher_sys::rusqlite::Connection> {
+pub(crate) fn open_storage(
+    storage: &Storage,
+) -> Option<compass_sqlcipher_sys::rusqlite::Connection> {
     let opened = compass_sqlcipher_sys::open(&storage.path, &storage.key)
         .map_err(|err| err.to_string())
         .and_then(|db| {
@@ -1132,6 +1134,13 @@ impl Views {
         }
     }
 
+    /// A session number no view has, for a view this module does not run
+    /// (a Rhai script's), so the launcher's session numbers stay unique.
+    #[must_use]
+    pub fn reserve(&self) -> u64 {
+        self.next.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
     /// Follows `session`'s state; `None` for a session that is not running.
     #[must_use]
     pub fn watch(&self, session: u64) -> Option<tokio::sync::watch::Receiver<ViewState>> {
@@ -1352,9 +1361,20 @@ fn settle(
 
 /// The clipboard an extension reaches: the GNOME Shell extension's, or
 /// data-control on a wlroots compositor.
-struct ShellClipboard {
+pub(crate) struct ShellClipboard {
     shell: Option<Arc<compass_shell::ShellClient>>,
     handle: Option<tokio::runtime::Handle>,
+}
+
+impl ShellClipboard {
+    /// The clipboard through `shell`, or data-control on wlroots; `None`
+    /// when this session has neither.
+    pub(crate) fn available(
+        shell: Option<Arc<compass_shell::ShellClient>>,
+        handle: Option<tokio::runtime::Handle>,
+    ) -> Option<Self> {
+        (data_control() || (shell.is_some() && handle.is_some())).then_some(Self { shell, handle })
+    }
 }
 
 impl ShellClipboard {

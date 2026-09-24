@@ -13,8 +13,9 @@ checks it (PLAN.md §8.6, Suite 5).
 | `share/vicinae/builtin-icons/*.svg` | the `Icon.*` set extensions draw with |
 | `share/vicinae/extension-runtime.js` | the extension runtime bundle (`scripts/build-extension-runtime.sh`) |
 | `share/vicinae/vicinae.schema.json` | the `vicinae.json` JSON Schema |
+| `share/compass/scripts/<name>/` | the first-party Rhai scripts (`extensions/rhai-examples/`), granted what they declare |
 
-The engine finds the helpers, the runtime bundle and the schema relative to its own binary, so a
+The engine finds the helpers, the runtime bundle, the schema and the scripts relative to its own binary, so a
 prefix is relocatable. Node is the Flatpak's and the AppImage's own; the Arch and Nix packages use
 the distribution's.
 

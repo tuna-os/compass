@@ -6366,6 +6366,7 @@ dependencies = [
  "compass-portals",
  "compass-power",
  "compass-sandbox",
+ "compass-script",
  "compass-shell",
  "compass-sqlcipher-sys",
  "compass-testkit",

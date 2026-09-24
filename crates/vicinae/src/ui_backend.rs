@@ -265,6 +265,29 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn list_rhai_scripts(
+        &self,
+    ) -> BackendFuture<'_, Vec<compass_core::rhai_scripts::RhaiScriptItem>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ListRhaiScripts, "Listing Rhai scripts")
+                .await?
+            {
+                compass_ipc::Response::RhaiScripts { scripts } => Ok(scripts
+                    .into_iter()
+                    .map(|script| compass_core::rhai_scripts::RhaiScriptItem {
+                        id: script.id,
+                        title: script.title,
+                        description: script.description,
+                        icon: script.icon,
+                        keywords: script.keywords,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn run_script(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, Option<u64>> {
         Box::pin(async move {
             match self

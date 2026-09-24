@@ -26,6 +26,7 @@ compass-ipc = { path = "crates/compass-ipc" }
 compass-shell = { path = "crates/compass-shell" }
 compass-worker-host = { path = "crates/compass-worker-host" }
 compass-extension-api = { path = "crates/compass-extension-api" }
+compass-script = { path = "crates/compass-script" }
 compass-portals = { path = "crates/compass-portals" }
 compass-wayland = { path = "crates/compass-wayland" }
 compass-wayland-protocols = { path = "crates/compass-wayland-protocols" }

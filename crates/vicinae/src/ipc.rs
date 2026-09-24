@@ -133,6 +133,7 @@ fn describe(request: &Request) -> &'static str {
         Request::CreateExtension { .. } => "CreateExtension",
         Request::ListFonts => "ListFonts",
         Request::FontSpecimen { .. } => "FontSpecimen",
+        Request::ListRhaiScripts => "ListRhaiScripts",
         Request::Dmenu { .. } => "Dmenu",
         Request::DmenuFetch { .. } => "DmenuFetch",
         Request::DmenuChoose { .. } => "DmenuChoose",

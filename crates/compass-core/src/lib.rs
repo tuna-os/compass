@@ -86,6 +86,7 @@ pub mod query_ranking;
 pub mod rank;
 pub mod raycast_store;
 pub mod raycast_store_view;
+pub mod rhai_scripts;
 pub mod root_items;
 pub mod root_view;
 pub mod scan_dispatch;
