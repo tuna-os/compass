@@ -340,6 +340,17 @@ jobs:
           COMPASS_REQUIRE_RUNTIME: "1"
         run: cargo test -p compass-worker-host --test real_runtime -- --nocapture
 
+      # The engine end to end: an installed extension's no-view command found
+      # by a query and run through the socket, behind compass-sandbox-exec,
+      # which the engine looks for beside its own binary. The command also
+      # tries a write outside its directories, and the test requires EACCES.
+      - name: The engine runs an installed extension, confined
+        env:
+          COMPASS_REQUIRE_RUNTIME: "1"
+        run: |
+          cargo build -p vicinae -p compass-sandbox --bins
+          cargo test -p vicinae --test engine_end_to_end an_installed_extension -- --nocapture
+
       - name: Building it must not dirty the tree
         run: |
           # `npm ci` rather than `npm install`, and generated protos are

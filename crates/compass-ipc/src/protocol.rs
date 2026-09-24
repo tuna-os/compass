@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
 /// Version 4 adds clipboard history; version 5, fetching an entry's content;
 /// version 6, window switching; version 7, pasting, pinning and removing a
-/// clipboard entry.
+/// clipboard entry, and running an installed extension's command.
 pub const PROTOCOL_VERSION: u16 = 7;
 
 /// A client-to-server frame.
@@ -191,6 +191,15 @@ pub enum Request {
     /// with [`Response::Ack`]; an id that names no entry is a bad request.
     ClipboardRemove {
         /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// Run an installed extension's command, by the entrypoint id a
+    /// [`QueryHit`] carries. Answered with [`Response::Ack`] once it has
+    /// started; refused as [`ErrorKind::Unsupported`], with the reason, when
+    /// this engine cannot run it (a view command, a preference it cannot
+    /// fill, no extension runtime).
+    RunExtensionCommand {
+        /// [`QueryHit::id`].
         id: String,
     },
 }

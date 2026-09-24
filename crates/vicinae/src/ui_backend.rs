@@ -46,6 +46,18 @@ impl ApplicationBackend for DaemonBackend {
             .map_err(|error| error.to_string())
         })
     }
+
+    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::RunExtensionCommand { id }, "Running the command")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
 }
 
 impl DaemonBackend {

@@ -439,6 +439,9 @@ pub enum RootRow {
     App(usize),
     /// A builtin command.
     Command(&'static compass_core::commands::BuiltinCommand),
+    /// An installed extension's command, as its index in
+    /// `AppIndex::extensions`.
+    Extension(usize),
 }
 
 /// Which view the card shows.
@@ -916,7 +919,7 @@ impl LauncherApp {
     pub fn selected_item(&self) -> Option<&AppItem> {
         match *self.results.get(self.selected)? {
             RootRow::App(index) => self.app_index.items().get(index),
-            RootRow::Command(_) => None,
+            RootRow::Command(_) | RootRow::Extension(_) => None,
         }
     }
 
@@ -980,6 +983,14 @@ impl LauncherApp {
             }
             Some(RootRow::Command(command)) => {
                 line.push_str(&format!(" selected_title={:?}", command.title));
+            }
+            Some(RootRow::Extension(index)) => {
+                let title = self
+                    .app_index
+                    .extensions()
+                    .get(index)
+                    .map_or("", |command| command.title.as_str());
+                line.push_str(&format!(" selected_title={title:?}"));
             }
             None => line.push_str(" selected_title=none"),
         }
@@ -1323,6 +1334,14 @@ impl LauncherApp {
                                 if let Some(command) = compass_core::commands::by_id(key) {
                                     return Some(RootRow::Command(command));
                                 }
+                                if let Some(index) = self
+                                    .app_index
+                                    .extensions()
+                                    .iter()
+                                    .position(|command| command.id == *key)
+                                {
+                                    return Some(RootRow::Extension(index));
+                                }
                                 // By ENTRYPOINT id: `QueryHit.id` is
                                 // `applications:foo`, not the launch key
                                 // `foo.desktop`, and `position` answers only
@@ -1366,6 +1385,9 @@ impl LauncherApp {
             Message::LaunchSelected => {
                 if let Some(RootRow::Command(command)) = self.selected_row() {
                     return self.open_command(command);
+                }
+                if let Some(RootRow::Extension(index)) = self.selected_row() {
+                    return self.run_extension_command(index);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -1575,6 +1597,11 @@ impl LauncherApp {
                     page.selected = index;
                 }
                 self.paste_selected_clipboard_entry()
+            }
+            Message::ExtensionCommandStarted(Ok(())) => self.conceal(),
+            Message::ExtensionCommandStarted(Err(reason)) => {
+                self.error = Some(reason);
+                Task::none()
             }
             Message::ClipboardPasted(Ok(())) => self.conceal(),
             Message::ClipboardEntryChanged(Ok(())) => self.clipboard_search_task(),
@@ -1897,6 +1924,17 @@ impl LauncherApp {
                         self.subtitles.then(|| command.subtitle.to_owned()),
                         selected,
                     ),
+                    RootRow::Extension(index) => {
+                        let Some(command) = self.app_index.extensions().get(*index) else {
+                            continue;
+                        };
+                        self.list_row(
+                            self.initial_badge(&command.title, selected),
+                            command.title.clone(),
+                            self.subtitles.then(|| command.extension_title.clone()),
+                            selected,
+                        )
+                    }
                 };
                 let row: Element<Message> = if selected {
                     container(row).id(crate::scroll::ROOT_SELECTION).into()
@@ -2441,6 +2479,27 @@ impl LauncherApp {
     }
 
     /// Opens a builtin command's view, and counts the use like a launch.
+    /// Hands an extension command to the engine, which runs it; the launcher
+    /// hides once it has started, and says why when it could not.
+    fn run_extension_command(&mut self, index: usize) -> Task<Message> {
+        self.panel = None;
+        let Some(command) = self.app_index.extensions().get(index) else {
+            return Task::none();
+        };
+        let Some(backend) = self.backend.clone() else {
+            self.error = Some(format!(
+                "{} needs the Compass engine to run, and this window is running without one",
+                command.title
+            ));
+            return Task::none();
+        };
+        let id = command.id.clone();
+        Task::perform(
+            async move { backend.run_extension_command(id).await },
+            Message::ExtensionCommandStarted,
+        )
+    }
+
     fn open_command(
         &mut self,
         command: &'static compass_core::commands::BuiltinCommand,
@@ -2624,6 +2683,13 @@ impl LauncherApp {
             .map(|hit| match hit {
                 compass_core::RootHit::App(app) => RootRow::App(app.index),
                 compass_core::RootHit::Command { command, .. } => RootRow::Command(command),
+                compass_core::RootHit::Extension { command, .. } => RootRow::Extension(
+                    self.app_index
+                        .extensions()
+                        .iter()
+                        .position(|known| known.id == command.id)
+                        .unwrap_or_default(),
+                ),
             })
             .collect();
         // Back to the top on every new query: the old selection pointed into a
@@ -2666,7 +2732,7 @@ impl LauncherApp {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => self.app_index.items().get(*index),
-                RootRow::Command(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) => None,
             })
             .filter_map(AppItem::icon)
             .collect();
@@ -2961,6 +3027,8 @@ mod tests {
         keys: Vec<String>,
         recorded: std::sync::Mutex<Vec<String>>,
         fail_history: bool,
+        ran: std::sync::Mutex<Vec<String>>,
+        refuse_runs: Option<String>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -2978,6 +3046,92 @@ mod tests {
                 }
             })
         }
+
+        fn run_extension_command(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.ran.lock().unwrap().push(id);
+                self.refuse_runs.clone().map_or(Ok(()), Err)
+            })
+        }
+    }
+
+    fn extension_app(dir: &std::path::Path, backend: Arc<TestBackend>) -> LauncherApp {
+        let ext = dir.join("extensions/hello");
+        fs::create_dir_all(&ext).unwrap();
+        fs::write(
+            ext.join("package.json"),
+            r#"{"name": "hello", "title": "Hello", "author": "someone",
+                "commands": [{"name": "write", "title": "Write Greeting", "mode": "no-view"}]}"#,
+        )
+        .unwrap();
+        index(dir);
+        let index = AppIndex::builder()
+            .dir(dir)
+            .extension_dirs([dir.join("extensions")])
+            .build();
+        let mut app = LauncherApp::with_index(index);
+        app.backend = Some(backend);
+        app
+    }
+
+    #[test]
+    fn an_extension_command_is_a_row_and_enter_hands_it_to_the_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Extension(0)),
+            "{}",
+            app.state_line()
+        );
+        assert!(
+            app.state_line()
+                .contains("selected_title=\"Write Greeting\"")
+        );
+
+        let mut ui = iced_test::simulator(app.view());
+        assert!(
+            ui.find("Hello").is_ok(),
+            "the extension's title is the subtitle"
+        );
+        drop(ui);
+
+        for message in task_messages(app.update(Message::LaunchSelected)) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.ran.lock().unwrap().as_slice(),
+            ["@someone/hello:write"]
+        );
+        assert!(app.error.is_none());
+    }
+
+    #[test]
+    fn a_refused_extension_command_says_why_and_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            refuse_runs: Some("Running extensions needs Node.js, and none was found".into()),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend);
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        for message in task_messages(app.update(Message::LaunchSelected)) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Running extensions needs Node.js, and none was found")
+        );
     }
 
     fn task_messages(task: Task<Message>) -> Vec<Message> {
@@ -3981,7 +4135,7 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -4668,7 +4822,7 @@ mod quick_launch_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -4811,7 +4965,7 @@ mod icon_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => app.app_index.items().get(*index),
-                RootRow::Command(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) => None,
             })
             .find(|item| item.name() == name)
             .unwrap_or_else(|| panic!("{name} is not a row"))

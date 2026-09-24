@@ -252,8 +252,85 @@ impl EngineState {
                     subtitle: Some(command.subtitle.to_owned()),
                     score: match_score,
                 },
+                compass_core::RootHit::Extension {
+                    command,
+                    match_score,
+                } => QueryHit {
+                    id: command.id.clone(),
+                    title: command.title.clone(),
+                    subtitle: Some(command.extension_title.clone()),
+                    score: match_score,
+                },
             })
             .collect()
+    }
+}
+
+async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> Response {
+    let Some(command) = state.read().await.index.extension(&id).cloned() else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no installed extension command has that id",
+        ));
+    };
+    if let Some(reason) = crate::extension_runner::refusal(&command) {
+        return Response::Error(ProtocolError::new(ErrorKind::Unsupported, reason));
+    }
+    let runtime = match crate::extension_runner::Runtime::locate() {
+        Ok(runtime) => runtime,
+        Err(reason) => return Response::Error(ProtocolError::new(ErrorKind::Unsupported, reason)),
+    };
+    let Some(data_dir) = compass_core::xdg_dirs::data_home().map(|home| home.join("vicinae"))
+    else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "Running extensions needs a data directory, and $XDG_DATA_HOME and $HOME are unset",
+        ));
+    };
+    let storage = extension_storage(&data_dir).await;
+    let started = tokio::task::spawn_blocking(move || {
+        crate::extension_runner::start(&runtime, &command, &data_dir, storage)
+    })
+    .await;
+    match started {
+        Ok(Ok(())) => {
+            let recorded = tokio::task::spawn_blocking({
+                let state = Arc::clone(state);
+                move || state.blocking_write().frecency.record_launch(&id)
+            })
+            .await;
+            if !matches!(recorded, Ok(Ok(()))) {
+                tracing::warn!("could not record running an extension command");
+            }
+            Response::Ack
+        }
+        Ok(Err(reason)) => Response::Error(ProtocolError::new(ErrorKind::Internal, reason)),
+        Err(err) => Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!("the extension task failed: {err}"),
+        )),
+    }
+}
+
+/// Extensions' local storage, keyed from Compass's own master key; `None`
+/// (and local storage answered "not implemented") without a keyring.
+async fn extension_storage(data_dir: &std::path::Path) -> Option<crate::extension_runner::Storage> {
+    let keyring = match crate::clipboard_service::Oo7Store::connect().await {
+        Ok(keyring) => keyring,
+        Err(err) => {
+            tracing::info!(error = %err, "no keyring; extension storage unavailable");
+            return None;
+        }
+    };
+    match crate::clipboard_service::master_key(&keyring).await {
+        Ok(master) => Some(crate::extension_runner::Storage {
+            path: data_dir.join(crate::extension_runner::STORAGE_DATABASE),
+            key: compass_crypto::keys::derive_all(&master).database,
+        }),
+        Err(err) => {
+            tracing::info!(error = %err, "no master key; extension storage unavailable");
+            None
+        }
     }
 }
 
@@ -489,6 +566,8 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 Err(err) => Response::Error(crate::window_service::refusal(&err, what)),
             }
         }
+
+        Request::RunExtensionCommand { id } => run_extension_command(state, id).await,
 
         Request::ClipboardSetPinned { .. } | Request::ClipboardRemove { .. } => {
             let Some(store) = state.read().await.clipboard.clone() else {

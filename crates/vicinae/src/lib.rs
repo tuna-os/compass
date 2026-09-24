@@ -16,6 +16,7 @@ pub mod cli;
 pub mod clipboard_service;
 pub mod doctor;
 pub mod engine;
+pub mod extension_runner;
 pub mod hotkey;
 pub mod indexer_client;
 pub mod indexer_service;

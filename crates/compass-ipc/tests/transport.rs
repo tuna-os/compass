@@ -97,7 +97,8 @@ async fn echo_handler(request: Request) -> Response {
         | Request::CloseWindow { .. }
         | Request::ClipboardPaste { .. }
         | Request::ClipboardSetPinned { .. }
-        | Request::ClipboardRemove { .. } => Response::Ack,
+        | Request::ClipboardRemove { .. }
+        | Request::RunExtensionCommand { .. } => Response::Ack,
         Request::ClipboardContent { .. } => Response::ClipboardContent {
             mime_type: "text/plain".into(),
             data: vec![],

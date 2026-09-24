@@ -62,6 +62,9 @@ fn all_requests() -> Vec<Request> {
             pinned: false,
         },
         Request::ClipboardRemove { id: "abc".into() },
+        Request::RunExtensionCommand {
+            id: "@raycast/github:search-repositories".into(),
+        },
     ]
 }
 
@@ -194,6 +197,7 @@ fn request_variants_are_exhaustive() {
             | Request::ClipboardPaste { .. }
             | Request::ClipboardSetPinned { .. }
             | Request::ClipboardRemove { .. }
+            | Request::RunExtensionCommand { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

@@ -125,7 +125,7 @@ fn command_ids(hits: &[compass_core::RootHit<'_>]) -> Vec<String> {
     hits.iter()
         .filter_map(|hit| match hit {
             compass_core::RootHit::Command { command, .. } => Some(command.id()),
-            compass_core::RootHit::App(_) => None,
+            compass_core::RootHit::App(_) | compass_core::RootHit::Extension { .. } => None,
         })
         .collect()
 }
@@ -180,5 +180,113 @@ fn a_command_used_often_rises_on_the_empty_query() {
     assert!(
         matches!(hits.first(), Some(compass_core::RootHit::Command { .. })),
         "{hits:?}"
+    );
+}
+
+/// An extension directory holding one extension with a view and a no-view
+/// command, the second disabled by its manifest.
+fn extensions() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let ext = dir.path().join("github");
+    std::fs::create_dir_all(&ext).unwrap();
+    std::fs::write(
+        ext.join("package.json"),
+        r#"{
+            "name": "github", "title": "GitHub", "author": "raycast",
+            "preferences": [
+                {"name": "token", "title": "Personal Access Token", "type": "password",
+                 "required": true},
+                {"name": "limit", "title": "Limit", "type": "textfield", "default": "20"}
+            ],
+            "commands": [
+                {"name": "search-repositories", "title": "Search Repositories",
+                 "mode": "view", "keywords": ["repo"]},
+                {"name": "sync", "title": "Sync Notifications", "mode": "no-view",
+                 "disabledByDefault": true}
+            ]
+        }"#,
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn installed_extension_commands_are_found_under_their_extension() {
+    let apps = tempfile::tempdir().unwrap();
+    let installed = extensions();
+    let index = AppIndex::builder()
+        .dir(apps.path())
+        .extension_dirs([installed.path()])
+        .build();
+
+    for query in ["Search Repositories", "repo", "search repos"] {
+        let hits = index.search_root_all(query, None);
+        let Some(compass_core::RootHit::Extension { command, .. }) = hits.first() else {
+            panic!("{query:?}: {hits:?}");
+        };
+        assert_eq!(
+            command.id, "@raycast/github:search-repositories",
+            "{query:?}"
+        );
+        assert_eq!(command.extension_title, "GitHub");
+        assert_eq!(command.mode, compass_core::manifest::CommandMode::View);
+        assert!(
+            command
+                .entrypoint
+                .ends_with("github/search-repositories.js")
+        );
+    }
+    assert!(
+        index
+            .search_root_all("Sync Notifications", None)
+            .iter()
+            .all(|hit| !matches!(
+                hit,
+                compass_core::RootHit::Extension { command, .. } if command.name == "sync"
+            )),
+        "a command its manifest disables stays out of the root"
+    );
+    assert!(
+        index.extension("@raycast/github:sync").is_some(),
+        "but is still known"
+    );
+    assert!(
+        index.search_root("repo", None).is_empty(),
+        "never an application hit"
+    );
+}
+
+#[test]
+fn an_index_built_without_extension_dirs_has_no_extensions() {
+    let apps = tempfile::tempdir().unwrap();
+    let index = AppIndex::builder().dir(apps.path()).build();
+    assert!(index.extensions().is_empty());
+}
+
+#[test]
+fn a_launch_passes_defaults_and_names_required_preferences_it_cannot_fill() {
+    let apps = tempfile::tempdir().unwrap();
+    let installed = extensions();
+    let index = AppIndex::builder()
+        .dir(apps.path())
+        .extension_dirs([installed.path()])
+        .build();
+    let command = index
+        .extension("@raycast/github:search-repositories")
+        .unwrap();
+    assert_eq!(command.extension_name, "github");
+    assert_eq!(command.author, "raycast");
+    assert_eq!(
+        command.default_preferences(),
+        Err(vec!["Personal Access Token".to_owned()])
+    );
+
+    let mut satisfied = command.clone();
+    satisfied
+        .preferences
+        .retain(|preference| !preference.required);
+    assert_eq!(
+        satisfied.default_preferences(),
+        Ok(serde_json::json!({"limit": "20"}))
     );
 }
