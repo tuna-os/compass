@@ -38,6 +38,11 @@ finish-args:
   # Wayland is the target. No fallback-x11: the engine is Wayland-only by design, and claiming an
   # X11 socket we never use would be asking for a permission we do not need.
   - --socket=wayland
+  # It is also the only grant the wlroots track needs (PLAN.md Phase 5, Track B): layer-shell,
+  # foreign-toplevel, data-control and xx-hotkey are all globals on this one socket. No permission
+  # here can widen them: where Flatpak connects through wp_security_context_v1 (Flatpak 1.16+),
+  # the compositor may hide privileged globals such as data-control or foreign-toplevel from a
+  # sandboxed client, and the launcher then degrades exactly as when they are absent.
   # Iced renders through wgpu, which needs the GPU. Without this it falls back to software
   # rendering, if it starts at all.
   - --device=dri

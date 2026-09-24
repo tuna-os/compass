@@ -30,6 +30,10 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     "compass-portals",
     "compass-shell",
     "compass-wayland",
+    // Generated bindings for Wayland protocols no published crate carries
+    // (xx-hotkey-v1), split out of compass-wayland only because the
+    // generated code needs `unsafe`.
+    "compass-wayland-protocols",
     "vicinae",
     // The test harness drives Linux surfaces on purpose.
     "compass-testkit",
@@ -51,6 +55,7 @@ const LINUX_ONLY_CRATES: &[&str] = &[
     "compass-portals",
     "compass-shell",
     "compass-wayland",
+    "compass-wayland-protocols",
     "compass-platform-linux",
     // The direct ones, in case a shared crate reaches past our wrappers.
     "zbus",

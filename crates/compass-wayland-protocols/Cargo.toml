@@ -1,0 +1,26 @@
+[package]
+name = "compass-wayland-protocols"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Client bindings for Wayland protocols no published crate carries yet (xx-hotkey-v1)"
+
+# Not `workspace = true`: `wayland_scanner::generate_interfaces!` always emits
+# the C interface tables, which contain `unsafe`, and the workspace sets
+# `unsafe_code = "forbid"`, which no `allow` can relax. `deny` here keeps every
+# hand-written line of this crate under the same rule; only the generated
+# module opts out, in `src/lib.rs`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[dependencies]
+wayland-client = "0.31"
+wayland-backend = "0.3"
+wayland-scanner = "0.31"
+# Named by the generated code for bitfield enums (`modifiers`).
+bitflags = "2"

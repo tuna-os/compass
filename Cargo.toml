@@ -28,6 +28,7 @@ compass-worker-host = { path = "crates/compass-worker-host" }
 compass-extension-api = { path = "crates/compass-extension-api" }
 compass-portals = { path = "crates/compass-portals" }
 compass-wayland = { path = "crates/compass-wayland" }
+compass-wayland-protocols = { path = "crates/compass-wayland-protocols" }
 compass-platform = { path = "crates/compass-platform" }
 compass-platform-linux = { path = "crates/compass-platform-linux" }
 compass-ui = { path = "crates/compass-ui" }

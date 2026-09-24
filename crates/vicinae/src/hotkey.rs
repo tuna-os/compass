@@ -100,12 +100,77 @@ pub async fn on_event(state: &Arc<RwLock<EngineState>>, event: ShortcutEvent) ->
     }
 }
 
+/// Binds `Super+Space` over `xx-hotkey-v1` and forwards each trigger as a
+/// toggle. `false` when the compositor does not offer the protocol or refuses
+/// the trigger, so the caller can try the portal; `true` once a binding was
+/// made, even after the compositor revokes it — the protocol leaves retrying
+/// to the user.
+async fn run_xx_hotkey(state: &Arc<RwLock<EngineState>>) -> bool {
+    use compass_wayland::hotkey::{self, Hotkey, HotkeyError, HotkeyEvent, HotkeyRequest};
+
+    let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+    let request = HotkeyRequest {
+        app_id: compass_ui::APP_ID.to_owned(),
+        description: TOGGLE_DESCRIPTION.to_owned(),
+        keysym: hotkey::KEYSYM_SPACE,
+        modifiers: hotkey::modifiers::SUPER,
+    };
+    let bound = tokio::task::spawn_blocking(move || Hotkey::bind(&request, tx)).await;
+    let _binding = match bound {
+        Ok(Ok(binding)) => {
+            tracing::info!(
+                trigger = "Super+Space",
+                "launcher hotkey bound over xx-hotkey-v1"
+            );
+            binding
+        }
+        Ok(Err(HotkeyError::Unsupported)) => return false,
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "the compositor did not bind the launcher hotkey");
+            return false;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "the hotkey task failed");
+            return false;
+        }
+    };
+    while let Some(event) = events.recv().await {
+        match event {
+            HotkeyEvent::Triggered { .. } => {
+                let slot = state.read().await.window_slot();
+                forward(&slot, WindowCommand::Toggle, "toggle a window").await;
+            }
+            HotkeyEvent::Revoked { message } => {
+                tracing::warn!(
+                    message,
+                    "the compositor revoked the launcher hotkey; `vicinae toggle` still works"
+                );
+                break;
+            }
+        }
+    }
+    true
+}
+
 /// Binds the launcher hotkey and forwards activations for as long as it lives.
 ///
 /// Returns once the portal session ends. Never returns an error: everything
 /// that can go wrong here is degradation, and the caller has an engine to keep
 /// running. What went wrong is logged at the level it deserves.
 pub async fn run(state: Arc<RwLock<EngineState>>) {
+    // wlroots first: `xdg-desktop-portal-wlr` has no GlobalShortcuts, so the
+    // portal below cannot help there. Never reached on GNOME.
+    if let Some(wlroots) = crate::wlroots::detect().await {
+        if run_xx_hotkey(&state).await {
+            return;
+        }
+        let hint = compass_wayland::hotkey::manual_binding_hint(wlroots.desktop.as_deref());
+        tracing::info!(
+            "this compositor has no xx-hotkey-v1; trying the GlobalShortcuts portal, \
+             and if that is missing too, {hint}"
+        );
+    }
+
     let portals = match Portals::connect(PortalConfig::default()).await {
         Ok(portals) => portals,
         Err(err) => {

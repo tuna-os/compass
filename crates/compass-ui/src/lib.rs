@@ -29,6 +29,7 @@ pub mod resident;
 pub mod root_list;
 mod scroll;
 pub mod settings;
+pub mod surface;
 pub mod theme;
 pub mod typography;
 pub mod windows_page;
@@ -112,5 +113,56 @@ pub fn run_resident(flags: AppFlags) -> iced::Result {
     .title(title)
     .theme(theme)
     .subscription(LauncherApp::subscription)
+    .run()
+}
+
+/// [`run_resident`], presenting the launcher as a `wlr-layer-shell`
+/// surface through `iced_layershell` instead of an `xdg_toplevel`.
+///
+/// For the wlroots family only; the binary decides, from the compositor's
+/// registry and never on GNOME (`compass_wayland::select_surface`). The app
+/// is the same `LauncherApp` and behaves the same — resident, hidden by
+/// closing the surface, reopened on `Show` — because the only difference is
+/// how the window is asked for (`surface::open`).
+///
+/// # Errors
+///
+/// `iced_layershell`'s error when the compositor has no layer shell or the
+/// event loop cannot start.
+#[cfg(target_os = "linux")]
+pub fn run_resident_layer_shell(flags: AppFlags) -> Result<(), iced_layershell::Error> {
+    use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
+
+    fn view(app: &LauncherApp, _window: iced::window::Id) -> iced::Element<'_, Message> {
+        app.view()
+    }
+    fn title(app: &LauncherApp, _window: iced::window::Id) -> Option<String> {
+        Some(app.title())
+    }
+    fn theme(app: &LauncherApp, _window: iced::window::Id) -> iced::Theme {
+        app.theme()
+    }
+
+    surface::set_presentation(surface::Presentation::LayerShell);
+    iced_layershell::build_pattern::daemon(
+        move || LauncherApp::boot(flags.clone()),
+        surface::layer::NAMESPACE,
+        LauncherApp::update,
+        view,
+    )
+    .title(title)
+    .theme(theme)
+    .subscription(LauncherApp::subscription)
+    .settings(Settings {
+        id: Some(APP_ID.to_owned()),
+        // No surface at start: the first one comes from `LauncherApp::boot`
+        // through `surface::open`, exactly as the first window does under
+        // `iced::daemon`, so `start_hidden` means the same thing on both.
+        layer_settings: LayerShellSettings {
+            start_mode: StartMode::Background,
+            ..LayerShellSettings::default()
+        },
+        ..Settings::default()
+    })
     .run()
 }

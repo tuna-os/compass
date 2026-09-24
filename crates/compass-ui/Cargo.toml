@@ -32,6 +32,14 @@ compass-xdg.workspace = true
 compass-platform.workspace = true
 serde = { workspace = true }
 
+# The layer-shell presentation for wlroots compositors (PLAN.md Phase 5 Track
+# B). Linux-only by target so the platform seam holds: macOS and Windows never
+# build it. Default features off: the one default, `linux-theme-detection`,
+# pulls `mundy` to read the colour scheme, which `crate::appearance` already
+# does through the Settings portal.
+[target.'cfg(target_os = "linux")'.dependencies]
+iced_layershell = { version = "0.19", default-features = false }
+
 [dev-dependencies]
 tempfile.workspace = true
 insta.workspace = true

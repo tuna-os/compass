@@ -185,6 +185,9 @@ pub enum Message {
     /// report `Shown` is when the window exists, not when opening it was
     /// requested.
     Opened(iced::window::Id),
+    /// A request for `iced_layershell`'s runtime, which takes it before
+    /// `update` would see it. See [`crate::surface`].
+    Layer(crate::surface::LayerRequest),
     /// A window was closed by the compositor or the user.
     ///
     /// Distinct from [`Message::Dismiss`]: this is the window telling us it is

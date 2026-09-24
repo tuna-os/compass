@@ -34,6 +34,7 @@ mod ui_instance;
 pub mod vicinae_import;
 pub mod window;
 pub mod window_service;
+pub mod wlroots;
 
 use std::process::ExitCode;
 
@@ -244,7 +245,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             .map(|d| d as std::sync::Arc<dyn compass_ui::backend::ClipboardBackend>);
         let windows = daemon.map(|d| d as std::sync::Arc<dyn compass_ui::backend::WindowBackend>);
 
-        compass_ui::run_resident(compass_ui::AppFlags {
+        let flags = compass_ui::AppFlags {
             theme: theme_choice,
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             backend,
@@ -265,8 +266,21 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             font_family,
             typography_link,
             ..compass_ui::AppFlags::default()
-        })
-        .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+        };
+
+        // The surface: a layer surface on the wlroots family, an
+        // `xdg_toplevel` everywhere else, and always on GNOME.
+        match launcher_surface() {
+            compass_wayland::SurfaceKind::LayerShell => {
+                tracing::info!("presenting the launcher as a wlr-layer-shell surface");
+                compass_ui::run_resident_layer_shell(flags)
+                    .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+            }
+            compass_wayland::SurfaceKind::XdgToplevel => {
+                compass_ui::run_resident(flags)
+                    .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+            }
+        }
         return Ok(ExitCode::from(EXIT_OK));
     }
 
@@ -280,6 +294,25 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             .build()?
     };
     runtime.block_on(dispatch(cli))
+}
+
+/// Which surface the launcher window is, from the compositor's registry.
+///
+/// No compositor to ask (a probe that fails) is `xdg_toplevel`, which is what
+/// Iced would have tried anyway, so its own error reaches the user unchanged.
+fn launcher_surface() -> compass_wayland::SurfaceKind {
+    match compass_wayland::Session::detect() {
+        Ok(session) => compass_wayland::select_surface(
+            &session,
+            std::env::var(compass_wayland::layer_shell::OVERRIDE_ENV)
+                .ok()
+                .as_deref(),
+        ),
+        Err(err) => {
+            tracing::debug!(error = %err, "no compositor to probe for a layer shell");
+            compass_wayland::SurfaceKind::XdgToplevel
+        }
+    }
 }
 
 async fn dispatch(cli: Cli) -> Result<ExitCode> {

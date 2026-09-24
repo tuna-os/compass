@@ -1,4 +1,4 @@
-//! `wlr-layer-shell` stub for wlroots compositors — Phase 5 Track B.
+//! Choosing the launcher's surface: `xdg_toplevel` or `wlr-layer-shell`.
 //!
 //! On GNOME (our first target) `wlr-layer-shell` is not implemented
 //! (Mutter 51 `src/meson.build` has no `wlr-layer-shell`). The launcher
@@ -8,9 +8,9 @@
 //!
 //! This module is the seam: it decides which surface to use based on the
 //! compositor, falling back to `xdg_toplevel` when `wlr-layer-shell` is not
-//! advertised. The actual `iced_layershell` integration is a feature-gated
-//! dependency; the `xdg_toplevel` path is always available and is what the
-//! container harness exercises.
+//! advertised **or the session is GNOME**. The surface itself is
+//! `iced_layershell`, run by `compass_ui::run_resident_layer_shell`; the
+//! binary asks [`select_surface`] which of the two entry points to call.
 
 /// Which surface the launcher should use on this compositor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,9 +50,56 @@ pub fn should_use_layer_shell(surface: SurfaceKind, feature_enabled: bool) -> bo
     matches!((surface, feature_enabled), (SurfaceKind::LayerShell, true))
 }
 
+/// Environment override: `VICINAE_LAYER_SHELL=0` keeps the `xdg_toplevel`
+/// surface on a wlroots compositor (a layer shell that misbehaves with the
+/// launcher, or a user who wants it tiled). Any other value, or unset, leaves
+/// the decision to the compositor.
+pub const OVERRIDE_ENV: &str = "VICINAE_LAYER_SHELL";
+
+/// Decide the surface for a session: layer shell only on the wlroots family,
+/// only where it is advertised, and only if the user has not turned it off.
+///
+/// GNOME is `xdg_toplevel` whatever it advertises — see
+/// [`crate::compositor::family`].
+#[must_use]
+pub fn select_surface(
+    session: &crate::compositor::Session,
+    override_value: Option<&str>,
+) -> SurfaceKind {
+    if override_value.is_some_and(|value| matches!(value.trim(), "0" | "false" | "no" | "off")) {
+        return SurfaceKind::XdgToplevel;
+    }
+    if session.wlroots_capabilities().layer_shell {
+        SurfaceKind::LayerShell
+    } else {
+        SurfaceKind::XdgToplevel
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn select_surface_keeps_gnome_on_xdg_toplevel_and_honours_the_override() {
+        use crate::compositor::{Family, Globals, Session};
+        let globals = Globals::from_pairs([("zwlr_layer_shell_v1", 4)]);
+        let wlroots = Session {
+            family: Family::Wlroots,
+            globals: globals.clone(),
+        };
+        let gnome = Session {
+            family: Family::Gnome,
+            globals,
+        };
+        assert_eq!(select_surface(&wlroots, None), SurfaceKind::LayerShell);
+        assert_eq!(select_surface(&wlroots, Some("1")), SurfaceKind::LayerShell);
+        assert_eq!(
+            select_surface(&wlroots, Some("0")),
+            SurfaceKind::XdgToplevel
+        );
+        assert_eq!(select_surface(&gnome, None), SurfaceKind::XdgToplevel);
+    }
 
     #[test]
     fn gnome_without_layer_shell_uses_xdg_toplevel() {

@@ -188,6 +188,9 @@ impl Daemon {
             // receive from a test.
             .env("XDG_CACHE_HOME", dirs.path().join(".cache"))
             .env("HOME", dirs.path())
+            // Nor its compositor: on a wlroots session the engine would answer
+            // window requests over Wayland (`tests/wlroots_engine.rs`).
+            .env_remove("WAYLAND_DISPLAY")
             .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())

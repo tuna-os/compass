@@ -1289,6 +1289,7 @@ impl LauncherApp {
         let mut streams = vec![
             iced::event::listen_with(keyboard_events),
             window::close_events().map(Message::Closed),
+            crate::surface::opened_events(),
         ];
         // Only while the first frame is still owed. Once it has been reported
         // this stream is dropped, so the per-frame message stops entirely
@@ -1364,10 +1365,10 @@ impl LauncherApp {
     }
 
     fn open_window(&mut self) -> Task<Message> {
-        let (id, opened) = window::open(self.window_config.clone());
+        let (id, opened) = crate::surface::open(self.window_config.clone());
         self.pending_window = Some(id);
         self.pending_hide = false;
-        opened.map(Message::Opened)
+        opened
     }
 
     /// Update the application state.
@@ -1609,6 +1610,8 @@ impl LauncherApp {
                     Task::none()
                 }
             }
+            // Taken by `iced_layershell` before `update`; see `crate::surface`.
+            Message::Layer(_) => Task::none(),
             Message::Opened(id) => {
                 if self.window.is_some_and(|current| current != id)
                     || self.pending_window.is_some_and(|pending| pending != id)

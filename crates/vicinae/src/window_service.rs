@@ -7,6 +7,8 @@
 //! requests through it; without the extension they are refused by name.
 
 use compass_core::{AppIndex, app_service::AppService};
+use std::sync::Arc;
+
 use compass_ipc::{ErrorKind, ProtocolError, WindowInfo};
 use compass_shell::{ShellError, Window};
 
@@ -76,6 +78,88 @@ pub fn rows(windows: Vec<ShellWindow>, index: &AppIndex) -> Vec<WindowInfo> {
         .collect();
     rows.sort_by_key(|row| row.focused);
     rows
+}
+
+impl From<compass_wayland::Toplevel> for ShellWindow {
+    fn from(window: compass_wayland::Toplevel) -> Self {
+        Self {
+            id: window.id,
+            title: window.title,
+            wm_class: window.app_id,
+            // Neither toplevel protocol reports a pid or a workspace.
+            pid: None,
+            workspace: None,
+            focused: window.activated,
+            can_close: window.can_act,
+        }
+    }
+}
+
+/// `ListWindows` on a wlroots compositor, or `None` when this session is not
+/// one and the Shell extension path should answer instead.
+///
+/// The launcher's own window is left out by `app_id`: the toplevel protocols
+/// carry no pid, and on the `xdg_toplevel` surface the launcher is a window
+/// like any other.
+pub async fn wlroots_list(index: &AppIndex) -> Option<compass_ipc::Response> {
+    let toplevels = wlroots_toplevels().await?;
+    let windows = match toplevels {
+        Ok(toplevels) => toplevels
+            .list()
+            .into_iter()
+            .filter(|window| !window.app_id.eq_ignore_ascii_case(compass_ui::APP_ID))
+            .map(Into::into)
+            .collect(),
+        Err(refusal) => return Some(compass_ipc::Response::Error(refusal)),
+    };
+    Some(compass_ipc::Response::Windows {
+        windows: rows(windows, index),
+    })
+}
+
+/// `ActivateWindow` / `CloseWindow` on a wlroots compositor, or `None` when
+/// this session is not one.
+pub async fn wlroots_act(id: u32, close: bool, what: &str) -> Option<compass_ipc::Response> {
+    let toplevels = match wlroots_toplevels().await? {
+        Ok(toplevels) => toplevels,
+        Err(refusal) => return Some(compass_ipc::Response::Error(refusal)),
+    };
+    let done = if close {
+        toplevels.close(id)
+    } else {
+        toplevels.activate(id)
+    };
+    Some(match done {
+        Ok(()) => compass_ipc::Response::Ack,
+        Err(err) => compass_ipc::Response::Error(wlroots_refusal(&err, what)),
+    })
+}
+
+/// `None` off wlroots; on it, the window list or the reason there is none.
+async fn wlroots_toplevels() -> Option<Result<Arc<compass_wayland::Toplevels>, ProtocolError>> {
+    let session = crate::wlroots::detect().await?;
+    Some(session.toplevels.clone().ok_or_else(|| {
+        ProtocolError::new(
+            ErrorKind::Unsupported,
+            "window switching needs zwlr_foreign_toplevel_manager_v1 or \
+             ext_foreign_toplevel_list_v1, and this compositor advertises neither \
+             (a sandboxed client may be denied them; `vicinae doctor` says which)",
+        )
+    }))
+}
+
+/// The refusal for a failed toplevel request.
+#[must_use]
+pub fn wlroots_refusal(err: &compass_wayland::ToplevelError, what: &str) -> ProtocolError {
+    use compass_wayland::ToplevelError;
+    let kind = match err {
+        ToplevelError::NoSuchWindow(_) => ErrorKind::BadRequest,
+        ToplevelError::ListOnly | ToplevelError::Unsupported | ToplevelError::NoSeat => {
+            ErrorKind::Unsupported
+        }
+        _ => ErrorKind::Internal,
+    };
+    ProtocolError::new(kind, format!("{what} failed: {err}"))
 }
 
 /// The refusal for a failed shell call, in words a user can act on.
