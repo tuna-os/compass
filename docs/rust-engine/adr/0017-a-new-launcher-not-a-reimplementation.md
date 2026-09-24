@@ -99,9 +99,9 @@ and extensions — a real cost to break — which is a different thing from repr
   is ranking policy, which is product, not plumbing), `compass-xdg` (fixes six upstream parser bugs
   rather than reproducing them; `freedesktop-desktop-entry` is worth re-evaluating, lowest
   priority), `compass-notify` and `compass-media` (thin over `zbus`; no crate does the whole job).
-- **Upstream remains credited** as the source project and a behavioural reference. The six
-  desktop-entry bugs in [`upstream-bug-report.md`](../upstream-bug-report.md) are still worth
-  reporting as a courtesy; filing is the owner's call.
+- **Upstream remains credited** as the source project and a behavioural reference. Nothing is
+  reported back to it (ADR-0018): the desktop-entry bugs we avoid are recorded as declared
+  divergences in `PARITY.md`, which is all the record a hard fork needs.
 
 ## What would change this
 

@@ -1893,9 +1893,8 @@ The questions that were open when this plan was written have been decided and re
 2. **rustcast relationship** — one-time seed (what the plan assumes and what the crate split
    reflects), or an ongoing sync? The latter would constrain the crate boundaries in §2 and cost
    design freedom. Assumed one-time until someone says otherwise.
-3. **Whether to report the six C++ desktop-entry bugs upstream.** ADR-0007 says we should as a
-   courtesy; someone has to actually do it. See PARITY.md for the list, one of which is an unbounded
-   loop reachable from any malformed `.desktop` file on disk.
+3. ~~Whether to report the six C++ desktop-entry bugs upstream.~~ **No** (ADR-0018): a hard fork
+   does not report back. The bugs stay recorded as declared divergences in PARITY.md.
 
 ### Decided by doing, not by discussion
 
@@ -2426,9 +2425,8 @@ where it is.
    exists for good reasons, but decision 2 says to check.
 6. **Promote the VM tier to the merge queue** — unchanged from item 6 below.
 
-**Needs the project owner:** loosening or re-scoping the Suite 0 merge gate under ADR-0017; GNOME 51
-in CI (#4 — every Bluefin tag is still Fedora 44); team size and the rustcast relationship (§10);
-filing the upstream bug report.
+**Needs the project owner:** nothing. ADR-0018 decided the Suite 0 gate (it keeps blocking), GNOME 51
+(reworded gate, #4 closed), team size (one person), rustcast (a seed), and the upstream report (none).
 
 **Current implementation check:** `UI/confirmAlert` already has a deferred transport and
 adapter; it must not be reimplemented from the older “not started” entry. The application
