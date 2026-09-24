@@ -88,6 +88,8 @@ pub enum Message {
     ExtensionLinkClicked(String),
     /// The person changed a field of an extension's form: its name and value.
     ExtensionFieldEdited(String, serde_json::Value),
+    /// An edit in a form's text area: its name and the editor action.
+    ExtensionTextAreaEdited(String, iced::widget::text_editor::Action),
     /// An action or search event reached the extension, or did not.
     ExtensionEventSent(Result<(), String>),
     /// An entry was pinned, unpinned or removed, or could not be; the list
@@ -99,6 +101,10 @@ pub enum Message {
     Back,
     /// The window switcher's filter changed.
     WindowsQueryChanged(String),
+    /// The emoji picker's filter changed.
+    EmojiQueryChanged(String),
+    /// An emoji row was clicked, by position in the shown list.
+    EmojiSelected(usize),
     /// The open windows arrived, or why they could not be listed.
     WindowsLoaded(Result<Vec<crate::backend::WindowRow>, String>),
     /// A window row was clicked.

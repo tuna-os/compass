@@ -1075,8 +1075,13 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "nav", "title": "Navigate", "mode": "view"},
               {"name": "ask", "title": "Ask First", "mode": "view"},
               {"name": "link", "title": "Open Link", "mode": "no-view"},
+              {"name": "term", "title": "In Terminal", "mode": "no-view"},
               {"name": "tiles", "title": "Tiles", "mode": "view"},
+              {"name": "toaster", "title": "Toaster", "mode": "view"},
               {"name": "heap", "title": "Heap", "mode": "no-view"},
+              {"name": "probe", "title": "Probe", "mode": "no-view",
+               "preferences": [{"name": "limit", "title": "Limit", "type": "textfield",
+                                "required": false, "default": "20"}]},
               {"name": "issue", "title": "New Issue", "mode": "view"},
               {"name": "greet", "title": "Greet Someone", "mode": "no-view",
                "arguments": [{"name": "name", "type": "text", "placeholder": "Name",
@@ -1162,6 +1167,32 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
         ),
     )
     .unwrap();
+    let probed = root.join("data-home/vicinae/support/hello/probe.json");
+    std::fs::write(
+        ext.join("probe.js"),
+        format!(
+            "module.exports.default = async () => {{
+               const {{ environment, getPreferenceValues }} = require('@vicinae/api');
+               const {{ spawnSync }} = require('node:child_process');
+               const status = (cmd, args) => {{
+                 const r = spawnSync(cmd, args);
+                 return r.error ? String(r.error.code) : r.status;
+               }};
+               require('node:fs').writeFileSync({probed:?}, JSON.stringify({{
+                 assetsPath: environment.assetsPath,
+                 supportPath: environment.supportPath,
+                 isDevelopment: environment.isDevelopment,
+                 extensionName: environment.extensionName,
+                 commandName: environment.commandName,
+                 preferences: getPreferenceValues(),
+                 execTrue: status('true', []),
+                 execUnshare: status('unshare', ['-U', 'true']),
+               }}));
+             }};",
+            probed = probed.to_string_lossy()
+        ),
+    )
+    .unwrap();
     // `heap_size_limit` would be the obvious probe, and it lies in a worker
     // thread (it reports the process figure), so this allocates instead.
     let heap = root.join("data-home/vicinae/support/hello/heap");
@@ -1181,6 +1212,24 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
     )
     .unwrap();
     std::fs::write(
+        ext.join("toaster.js"),
+        "const React = require('react');
+         const { List, ActionPanel, Action, showToast, Toast } = require('@vicinae/api');
+         let toast;
+         module.exports.default = function Toaster() {
+           React.useEffect(() => {
+             showToast({ style: Toast.Style.Failure, title: 'Offline', message: 'retrying' })
+               .then((t) => { toast = t; });
+           }, []);
+           return React.createElement(List, null,
+             React.createElement(List.Item, { title: 'hide', actions:
+               React.createElement(ActionPanel, null,
+                 React.createElement(Action, { title: 'Hide', onAction: () => toast.hide() }))
+             }));
+         };",
+    )
+    .unwrap();
+    std::fs::write(
         ext.join("tiles.js"),
         "const React = require('react');
          const { Grid, ActionPanel, Action } = require('@vicinae/api');
@@ -1191,6 +1240,14 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                  React.createElement(Action, { title: 'Pick', onAction: () => {} }))
              }),
              React.createElement(Grid.Item, { title: 'red', content: { color: '#ff0000' } })));",
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("term.js"),
+        "const { runInTerminal } = require('@vicinae/api');
+         module.exports.default = async () => {
+           await runInTerminal(['htop', '-d', '5'], { title: 'Top' });
+         };",
     )
     .unwrap();
     std::fs::write(
@@ -1228,6 +1285,15 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
     )
     .unwrap();
     out
+}
+
+/// Waits up to 20 s for `path` to exist with something in it: an extension's
+/// `writeFileSync` creates the file before it writes, so existing is not enough.
+fn wait_for_content(path: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !std::fs::metadata(path).is_ok_and(|m| m.len() > 0) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn extension_runtime() -> Option<std::path::PathBuf> {
@@ -1269,10 +1335,7 @@ fn an_installed_extension_command_is_found_and_a_no_view_one_runs() {
         arguments_json: None,
     });
     assert_eq!(started, Response::Ack, "{started:?}");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !out.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_content(&out);
     assert_eq!(
         std::fs::read_to_string(&out).ok().as_deref(),
         Some("hi:EACCES"),
@@ -1353,10 +1416,7 @@ fn a_view_command_renders_and_its_action_runs() {
         }),
         Response::Ack
     );
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !acted.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_content(&acted);
     assert_eq!(
         std::fs::read_to_string(&acted).ok().as_deref(),
         Some("acted"),
@@ -1544,10 +1604,7 @@ fn an_alert_reaches_the_launcher_and_its_answer_reaches_the_extension() {
         Response::Ack
     );
     let answered = root.join("data-home/vicinae/support/hello/answered.txt");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !answered.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_content(&answered);
     assert_eq!(
         std::fs::read_to_string(&answered).ok().as_deref(),
         Some("true"),
@@ -1632,10 +1689,7 @@ fn a_command_with_arguments_is_asked_for_them_then_runs_with_them() {
     assert!(!greeted.exists(), "and nothing ran");
 
     assert_eq!(run(Some(r#"{"name": "Ada"}"#)), Response::Ack);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while !greeted.exists() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    wait_for_content(&greeted);
     assert_eq!(
         std::fs::read_to_string(&greeted).expect("the command ran"),
         "hi Ada"
@@ -1690,10 +1744,7 @@ fn a_confined_command_opens_a_link_in_the_application_that_claims_its_scheme() {
         }),
         Response::Ack
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while !opened.exists() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    wait_for_content(&opened);
     assert_eq!(
         std::fs::read_to_string(&opened).expect("the link was opened"),
         "https://example.com/a b"
@@ -1814,10 +1865,7 @@ fn a_form_command_takes_edits_and_its_submit_gets_the_values() {
         handler: submit.0,
         args_json: r#"[{"title": "Crash on paste", "urgent": true}]"#.into(),
     });
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !submitted.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_content(&submitted);
     let got: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&submitted).expect("submitted")).unwrap();
     assert_eq!(
@@ -1858,10 +1906,7 @@ fn an_extension_that_allocates_past_the_heap_cap_is_stopped() {
         heap.with_extension("started"),
         heap.with_extension("survived"),
     );
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !started.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_content(&started);
     assert!(started.exists(), "the command never ran");
     // 400 MiB takes well under a second to allocate; give it five.
     std::thread::sleep(Duration::from_secs(5));
@@ -1869,4 +1914,205 @@ fn an_extension_that_allocates_past_the_heap_cap_is_stopped() {
         !survived.exists(),
         "an extension allocated 400 MiB of heap under a 160 MiB cap"
     );
+}
+
+/// Suite 1: what a command sees of its environment, and what the sandbox
+/// lets it run.
+#[test]
+fn a_command_sees_its_own_paths_and_preferences_and_may_exec_but_not_unshare() {
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_owned();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let probed = root.join("data-home/vicinae/support/hello/probe.json");
+    assert_eq!(
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:probe".into(),
+            arguments_json: None,
+        }),
+        Response::Ack
+    );
+    wait_for_content(&probed);
+    let seen: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&probed).expect("the command ran")).unwrap();
+    let data = root.join("data-home/vicinae");
+    assert_eq!(
+        seen["supportPath"],
+        data.join("support/hello").to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        seen["assetsPath"],
+        data.join("extensions/hello/assets")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(seen["isDevelopment"], false);
+    assert_eq!(
+        (&seen["extensionName"], &seen["commandName"]),
+        (&"hello".into(), &"probe".into())
+    );
+    assert_eq!(
+        seen["preferences"],
+        serde_json::json!({"limit": "20"}),
+        "a preference's default is resolved"
+    );
+    // Shelling out is allowed on purpose: `useExec` and every extension that
+    // wraps a CLI depend on it.
+    assert_eq!(seen["execTrue"], 0);
+    // `unshare` is on the denylist. The control: where this machine lets an
+    // unconfined process make a user namespace, the sandbox must not.
+    let outside = std::process::Command::new("unshare")
+        .args(["-U", "true"])
+        .status()
+        .is_ok_and(|status| status.success());
+    if outside {
+        assert_ne!(
+            seen["execUnshare"], 0,
+            "unshare -U works outside the sandbox and must not inside it"
+        );
+    } else {
+        eprintln!("unshare -U fails here even unconfined; the denial is not tested");
+    }
+}
+
+#[test]
+fn a_confined_command_runs_a_command_in_the_terminal() {
+    use compass_ipc::{Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut launched = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        launched = dir.join("terminal-argv.txt");
+        let script = dir.join("term.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s|' \"$@\" > {:?}\n",
+                launched.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let applications = dir.join("data/applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(
+            applications.join("term.desktop"),
+            format!(
+                "[Desktop Entry]\nType=Application\nName=Term\nExec={}\n\
+                 Categories=System;TerminalEmulator;\n\
+                 X-TerminalArgExec=--\nX-TerminalArgTitle=--title=\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    assert_eq!(
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:term".into(),
+            arguments_json: None,
+        }),
+        Response::Ack
+    );
+    wait_for_content(&launched);
+    assert_eq!(
+        std::fs::read_to_string(&launched).expect("the terminal was launched"),
+        "--title=Top|--|htop|-d|5|"
+    );
+}
+
+#[test]
+fn a_views_toast_reaches_the_launcher_and_hiding_it_clears_it() {
+    use compass_extension_api::View;
+    use compass_ipc::{ExtensionToastStyle, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:toaster".into(),
+        arguments_json: None,
+    }) else {
+        panic!("the view did not start");
+    };
+    // Follow the raw answers: the toast is not part of the view.
+    let mut after = 0;
+    let mut hide = None;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let toast = loop {
+        assert!(Instant::now() < deadline, "no toast arrived");
+        let Response::ExtensionView {
+            version,
+            view_json,
+            toast,
+            ..
+        } = daemon.request(Request::ExtensionView { session, after })
+        else {
+            panic!("no view answer");
+        };
+        after = version;
+        if let Some(Ok(View::List(list))) =
+            view_json.map(|json| serde_json::from_str::<View>(&json))
+        {
+            hide = list.sections[0].items[0]
+                .actions
+                .as_ref()
+                .map(|panel| panel.actions()[0].handler.clone());
+        }
+        if let (Some(toast), Some(_)) = (toast, &hide) {
+            break toast;
+        }
+    };
+    assert_eq!(
+        (toast.title.as_str(), toast.message.as_str(), toast.style),
+        ("Offline", "retrying", ExtensionToastStyle::Failure)
+    );
+
+    let hide = hide.expect("the list's action");
+    daemon.request(Request::ExtensionEvent {
+        session,
+        handler: hide.0,
+        args_json: "[]".into(),
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        assert!(Instant::now() < deadline, "the toast was never hidden");
+        let Response::ExtensionView { version, toast, .. } =
+            daemon.request(Request::ExtensionView { session, after })
+        else {
+            panic!("no view answer");
+        };
+        after = version;
+        if toast.is_none() {
+            break;
+        }
+    }
+    daemon.request(Request::CloseExtension { session });
 }

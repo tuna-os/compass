@@ -536,6 +536,7 @@ fn serve(
             title: title.to_owned(),
             handle,
             alert: std::sync::Mutex::new(None),
+            view: view.as_ref().map(|view| view.state.clone()),
         },
         CommandInfo {
             name: name.to_owned(),
@@ -727,6 +728,9 @@ struct HeadlessShell {
     /// The alert `show_alert` was last given, for the serving loop to hand
     /// the launcher when the call defers.
     alert: std::sync::Mutex<Option<compass_ipc::ExtensionAlert>>,
+    /// A view's state, where its toasts are shown; `None` for a no-view run,
+    /// whose toasts become notifications.
+    view: Option<tokio::sync::watch::Sender<ViewState>>,
 }
 
 impl HeadlessShell {
@@ -757,6 +761,24 @@ impl HeadlessShell {
 
 impl Shell for HeadlessShell {
     fn set_toast(&self, title: &str, style: ToastStyle, message: &str) {
+        if let Some(view) = &self.view {
+            let toast = compass_ipc::ExtensionToast {
+                title: title.to_owned(),
+                message: message.to_owned(),
+                style: match style {
+                    ToastStyle::Success => compass_ipc::ExtensionToastStyle::Success,
+                    ToastStyle::Info => compass_ipc::ExtensionToastStyle::Info,
+                    ToastStyle::Warning => compass_ipc::ExtensionToastStyle::Warning,
+                    ToastStyle::Danger => compass_ipc::ExtensionToastStyle::Failure,
+                    ToastStyle::Dynamic => compass_ipc::ExtensionToastStyle::Animated,
+                },
+            };
+            view.send_modify(|state| {
+                state.version += 1;
+                state.toast = Some(toast);
+            });
+            return;
+        }
         // A no-view command's success toast is the same news as the HUD it
         // usually shows next; only a failure is worth interrupting for.
         if style == ToastStyle::Danger {
@@ -766,7 +788,15 @@ impl Shell for HeadlessShell {
         }
     }
 
-    fn clear_toast(&self) {}
+    fn clear_toast(&self) {
+        if let Some(view) = &self.view {
+            view.send_modify(|state| {
+                if state.toast.take().is_some() {
+                    state.version += 1;
+                }
+            });
+        }
+    }
 
     fn close_window(&self, _options: CloseWindow) {}
 
@@ -841,6 +871,8 @@ pub struct ViewState {
     pub depth: u32,
     /// A confirmation the extension waits on.
     pub alert: Option<compass_ipc::ExtensionAlert>,
+    /// The toast the extension shows over its view.
+    pub toast: Option<compass_ipc::ExtensionToast>,
 }
 
 impl Views {

@@ -10,6 +10,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+percent-encoding.workspace = true
+fend-core.workspace = true
 compass-xdg.workspace = true
 compass-search.workspace = true
 serde.workspace = true

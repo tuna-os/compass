@@ -542,6 +542,7 @@ async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u
         ended: view.ended,
         depth: view.depth,
         alert: view.alert,
+        toast: view.toast,
     }
 }
 

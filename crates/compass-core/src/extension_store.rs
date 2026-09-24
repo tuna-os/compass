@@ -279,16 +279,7 @@ pub fn post_process(response: &mut ListResponse, platform: &str) {
 /// ordinary search produces the same URL as before.
 #[must_use]
 pub fn encode_query_value(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(byte as char);
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
+    percent_encoding::utf8_percent_encode(text, crate::uri::UNRESERVED).to_string()
 }
 
 /// The path that lists a page of the store.

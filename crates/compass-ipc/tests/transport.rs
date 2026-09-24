@@ -111,6 +111,7 @@ async fn echo_handler(request: Request) -> Response {
             ended: false,
             depth: 0,
             alert: None,
+            toast: None,
         },
         Request::ClipboardContent { .. } => Response::ClipboardContent {
             mime_type: "text/plain".into(),

@@ -33,8 +33,9 @@ use serde::{Deserialize, Serialize};
 /// Version 4 adds clipboard history; version 5, fetching an entry's content;
 /// version 6, window switching; version 7, pasting, pinning and removing a
 /// clipboard entry, and running an installed extension's command; version 8,
-/// following and driving an extension's view.
-pub const PROTOCOL_VERSION: u16 = 8;
+/// following and driving an extension's view; version 9, an extension view's
+/// toast.
+pub const PROTOCOL_VERSION: u16 = 9;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,6 +333,8 @@ pub enum Response {
         /// A confirmation the extension is waiting on, if any. Answer it with
         /// [`Request::ExtensionAlertAnswer`].
         alert: Option<ExtensionAlert>,
+        /// The toast the extension is showing, if any.
+        toast: Option<ExtensionToast>,
     },
     /// Answer to [`Request::RunExtensionCommand`] when a required preference
     /// has no value: the form to show. Answer with
@@ -450,6 +453,32 @@ pub struct ExtensionAlert {
     pub confirm_text: String,
     /// The cancel button's text.
     pub cancel_text: String,
+}
+
+/// A toast an extension shows over its view (`showToast`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionToast {
+    /// The heading.
+    pub title: String,
+    /// More text; may be empty.
+    pub message: String,
+    /// How it reads.
+    pub style: ExtensionToastStyle,
+}
+
+/// A toast's style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExtensionToastStyle {
+    /// Done.
+    Success,
+    /// For information.
+    Info,
+    /// Something to notice.
+    Warning,
+    /// Something failed.
+    Failure,
+    /// Still working.
+    Animated,
 }
 
 /// One clipboard history entry, as a list row needs it.

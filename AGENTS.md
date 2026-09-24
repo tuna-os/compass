@@ -104,6 +104,7 @@ User-visible natural-language strings must be marked for translation. English so
 ## General guidelines
 
 - Search should always be fuzzy, unless it has a good reason not to. We have fuzzy utilities already, and we like to use our fuzzy trait system by specializing the `FuzzySearchable` template
+- Rust engine: before porting a C++ feature, look for an existing crate that does the job (the calculator uses `fend-core` rather than a port of Numen). Port only what no maintained crate covers, and record a behaviour difference in `docs/rust-engine/PARITY.md`.
 - We are building Vicinae with cross-platform compatibility in mind (Linux, MacOS, Windows) so abstractions need to be designed accordingly. While Linux is our main development target, we should avoid making abstractions that are too platform specific.
 
 ## React/TypeScript extensions

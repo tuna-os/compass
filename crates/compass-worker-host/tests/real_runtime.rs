@@ -102,44 +102,40 @@ fn load_options(entrypoint: &Path) -> extension_manager::LoadOptions {
     }
 }
 
-#[test]
-fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
-    let Some(runtime) = runtime() else {
-        assert!(
-            !require_runtime(),
-            "COMPASS_REQUIRE_RUNTIME=1 but the runtime bundle is missing; \
-             build it with `make extension-runtime`"
-        );
-        eprintln!("skipping: no extension runtime bundle; see the module docs");
-        return;
-    };
-
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let out = dir.path().join("observed.json");
-    let entrypoint = dir.path().join("command.js");
-    std::fs::write(&entrypoint, COMMAND).expect("write the command");
+/// Runs `source` as a no-view command in a fresh runtime process, serving its
+/// `Storage` calls from `storage`, until it has made `last` or closed. Returns
+/// the methods answered and the JSON the command wrote. The process is ended
+/// before this returns, as a kill would.
+fn run_command(
+    runtime: &Path,
+    dir: &Path,
+    storage: &LocalStorage<'_>,
+    source: &str,
+    last: &str,
+) -> (Vec<String>, serde_json::Value) {
+    let out = dir.join("observed.json");
+    let _ = std::fs::remove_file(&out);
+    let entrypoint = dir.join("command.js");
+    std::fs::write(&entrypoint, source).expect("write the command");
 
     // Under `timeout`, so a runtime that never answers ends the test with a
     // failed assertion instead of hanging the suite: the host blocks on a read
-    // until the pipe closes, and killing the child is what closes it. The
-    // conversation is six messages long and takes milliseconds.
+    // until the pipe closes, and killing the child is what closes it.
     let mut command = std::process::Command::new("timeout");
     command
         .arg("30")
         .arg(node())
-        .arg(&runtime)
+        .arg(runtime)
         .env("COMPASS_TEST_OUT", &out);
 
     let mut worker = Worker::spawn(command).expect("the runtime starts");
     // Kept so the runtime can be ended explicitly below. Without it the process
-    // lives until `timeout` reaps it, which `cargo nextest` reports as a LEAK
-    // and which holds a node process for the rest of the suite.
+    // lives until `timeout` reaps it, which `cargo nextest` reports as a LEAK.
     let worker_pid = worker.pid();
 
     let load_id = ManagerClient::new(&mut worker)
         .load(&load_options(&entrypoint))
         .expect("sending load");
-
     let response = worker
         .next_message()
         .expect("reading the load response")
@@ -159,11 +155,7 @@ fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
         .ready(&session_id)
         .expect("sending ready");
 
-    let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
-    compass_db::vicinae::run(&db).expect("the migrations apply");
-    let storage = LocalStorage::new(&db);
     let service = StorageService::new(storage.scoped(&namespace_for("hn")));
-
     let mut session = Session::new(worker, &session_id, Router::new().with(&service));
 
     // A real runtime says more than a mock one: it starts a worker thread,
@@ -179,16 +171,14 @@ fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
             Turn::Nothing | Turn::OtherSession { .. } => {}
         }
         // Stop pumping once the command has had its last answer. Pumping past
-        // it would block on a runtime that has nothing left to say, and only
-        // the `timeout` around it would end the test.
-        if answered.iter().any(|method| method == "Storage/get") {
+        // it would block on a runtime that has nothing left to say.
+        if answered.iter().any(|method| method == last) {
             break;
         }
     }
 
-    // The command writes the file *after* its last reply lands, so give it a
-    // moment rather than racing it. Five seconds is a bound on a hang, not a
-    // tuning knob: the write follows the reply immediately.
+    // The command writes the file *after* its last reply lands. Five seconds
+    // is a bound on a hang, not a tuning knob.
     for _ in 0..500 {
         if out.exists() {
             break;
@@ -196,28 +186,45 @@ fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
-    assert_eq!(
-        answered,
-        ["Storage/set".to_owned(), "Storage/get".to_owned()],
-        "the runtime did not make the two calls the command makes"
-    );
-
-    let observed: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&out).expect("the command wrote its result"))
-            .expect("it wrote JSON");
-    assert_eq!(
-        observed["read"], "hello",
-        "the command read back something else: {observed}"
-    );
-
-    // Before the remaining assertions, so a failure does not leak the process
-    // either. SIGTERM goes to `timeout`, which forwards it to node.
+    // SIGTERM goes to `timeout`, which forwards it to node.
     drop(session);
     let _ = std::process::Command::new("kill")
         .arg("-TERM")
         .arg(worker_pid.to_string())
         .status();
 
+    let observed =
+        serde_json::from_slice(&std::fs::read(&out).expect("the command wrote its result"))
+            .expect("it wrote JSON");
+    (answered, observed)
+}
+
+#[test]
+fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
+    let Some(runtime) = runtime() else {
+        assert!(
+            !require_runtime(),
+            "COMPASS_REQUIRE_RUNTIME=1 but the runtime bundle is missing; \
+             build it with `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle; see the module docs");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+    compass_db::vicinae::run(&db).expect("the migrations apply");
+    let storage = LocalStorage::new(&db);
+
+    let (answered, observed) = run_command(&runtime, dir.path(), &storage, COMMAND, "Storage/get");
+    assert_eq!(
+        answered,
+        ["Storage/set".to_owned(), "Storage/get".to_owned()],
+        "the runtime did not make the two calls the command makes"
+    );
+    assert_eq!(
+        observed["read"], "hello",
+        "the command read back something else: {observed}"
+    );
     assert_eq!(
         storage
             .scoped(&namespace_for("hn"))
@@ -228,4 +235,47 @@ fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
         serde_json::json!("hello"),
         "and the host's own store disagrees"
     );
+}
+
+/// Suite 1's persistence case: a value one worker stored is there for the
+/// next, after the first process was killed.
+#[test]
+fn a_value_stored_before_the_worker_is_killed_is_read_by_the_next_one() {
+    let Some(runtime) = runtime() else {
+        assert!(
+            !require_runtime(),
+            "COMPASS_REQUIRE_RUNTIME=1 but the runtime bundle is missing; \
+             build it with `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle; see the module docs");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("vicinae.db");
+    {
+        let db = Database::open(&path, &[]).expect("an unencrypted db");
+        compass_db::vicinae::run(&db).expect("the migrations apply");
+        let storage = LocalStorage::new(&db);
+        run_command(&runtime, dir.path(), &storage, COMMAND, "Storage/get");
+    }
+
+    // A new database handle as well as a new process: nothing survives in
+    // memory on either side.
+    let db = Database::open(&path, &[]).expect("reopened");
+    let storage = LocalStorage::new(&db);
+    let (answered, observed) = run_command(
+        &runtime,
+        dir.path(),
+        &storage,
+        r#"
+const { LocalStorage } = require("@vicinae/api");
+module.exports.default = async () => {
+  const read = await LocalStorage.getItem("greeting");
+  require("node:fs").writeFileSync(process.env.COMPASS_TEST_OUT, JSON.stringify({ read }));
+};
+"#,
+        "Storage/get",
+    );
+    assert_eq!(answered, ["Storage/get".to_owned()]);
+    assert_eq!(observed["read"], "hello", "{observed}");
 }

@@ -442,6 +442,8 @@ pub enum RootRow {
     /// An installed extension's command, as its index in
     /// `AppIndex::extensions`.
     Extension(usize),
+    /// The calculator's answer to the query, held in `LauncherApp::calculator`.
+    Calculator,
 }
 
 /// Which view the card shows.
@@ -453,6 +455,8 @@ enum Page {
     Clipboard(crate::clipboard_page::ClipboardPage),
     /// The window switcher.
     Windows(crate::windows_page::WindowsPage),
+    /// The emoji and symbol picker.
+    Emoji(crate::emoji_page::EmojiPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -590,6 +594,8 @@ pub struct LauncherApp {
     /// space, an `AppItem` carries its whole parsed desktop entry, and a
     /// launcher re-ranks on every keystroke.
     results: Vec<RootRow>,
+    /// The calculator's answer to the query, shown first when there is one.
+    calculator: Option<compass_core::calculator::Answer>,
     /// Which view is showing. See [`Page`].
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
@@ -881,6 +887,7 @@ impl LauncherApp {
             app_index,
             query: String::new(),
             results: Vec::new(),
+            calculator: None,
             page: Page::Root,
             clipboard: None,
             windows: None,
@@ -1048,7 +1055,7 @@ impl LauncherApp {
     pub fn selected_item(&self) -> Option<&AppItem> {
         match *self.results.get(self.selected)? {
             RootRow::App(index) => self.app_index.items().get(index),
-            RootRow::Command(_) | RootRow::Extension(_) => None,
+            RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
         }
     }
 
@@ -1120,6 +1127,10 @@ impl LauncherApp {
                     .get(index)
                     .map_or("", |command| command.title.as_str());
                 line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::Calculator) => {
+                let answer = self.calculator.as_ref().map_or("", |a| a.answer.as_str());
+                line.push_str(&format!(" selected_title={answer:?}"));
             }
             None => line.push_str(" selected_title=none"),
         }
@@ -1485,6 +1496,7 @@ impl LauncherApp {
                         if let Some(positions) = positions {
                             self.results = positions;
                             self.selected = 0;
+                            self.apply_calculator();
                             self.warm_icons();
                         } else {
                             self.error = Some(
@@ -1512,6 +1524,14 @@ impl LauncherApp {
                 crate::scroll::reveal_root_selection()
             }
             Message::LaunchSelected => {
+                if let Some(RootRow::Calculator) = self.selected_row()
+                    && let Some(answer) = &self.calculator
+                {
+                    // The C++ primary action: copy the answer, then get out of
+                    // the way so it can be pasted.
+                    let copy = iced::clipboard::write(answer.answer.clone());
+                    return Task::batch([copy, self.conceal()]);
+                }
                 if let Some(RootRow::Command(command)) = self.selected_row() {
                     return self.open_command(command);
                 }
@@ -1909,6 +1929,16 @@ impl LauncherApp {
                     None => Task::none(),
                 }
             }
+            Message::ExtensionTextAreaEdited(name, action) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let session = page.session;
+                match page.edit_text_area(&name, action) {
+                    Some((handler, args)) => self.extension_event(session, handler.0, args),
+                    None => Task::none(),
+                }
+            }
             Message::ExtensionLinkClicked(url) => {
                 // No URL opener in the launcher yet; the link is said, not lost.
                 tracing::info!(%url, "a link in an extension's view was clicked");
@@ -1953,6 +1983,21 @@ impl LauncherApp {
                 let closing = self.close_extension_view();
                 self.page = Page::Root;
                 Task::batch([closing, focus_search()])
+            }
+            Message::EmojiQueryChanged(query) => {
+                if let Page::Emoji(page) = &mut self.page {
+                    page.query = query;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::EmojiSelected(position) => {
+                if let Page::Emoji(page) = &mut self.page
+                    && position < page.shown.len()
+                {
+                    page.selected = position;
+                }
+                self.copy_selected_emoji()
             }
             Message::WindowsQueryChanged(query) => {
                 if let Page::Windows(page) = &mut self.page {
@@ -2057,7 +2102,33 @@ impl LauncherApp {
                             return self.extension_pop(session);
                         }
                         Key::Named(Named::Escape) => return self.update(Message::Back),
+                        // A text area's Enter is a newline; its form submits
+                        // with Ctrl+Enter.
+                        Key::Named(Named::Enter)
+                            if page.has_text_area() && !modifiers.control() =>
+                        {
+                            return Task::none();
+                        }
                         Key::Named(Named::Enter) => return self.activate_extension_action(),
+                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                    };
+                    if let Some(direction) = direction {
+                        page.selected = next_selection(
+                            page.shown.len(),
+                            page.selected,
+                            direction,
+                            self.wrap_navigation,
+                        );
+                        return crate::scroll::reveal_root_selection();
+                    }
+                    return Task::none();
+                }
+                if let Page::Emoji(page) = &mut self.page {
+                    let direction = match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) => return self.update(Message::Back),
+                        Key::Named(Named::Enter) => return self.copy_selected_emoji(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                     };
                     if let Some(direction) = direction {
@@ -2258,6 +2329,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::ClipboardQueryChanged as OnInput),
             ),
+            Page::Emoji(page) => (
+                "Search emojis and symbols…",
+                &page.query,
+                Some(Message::EmojiQueryChanged as OnInput),
+            ),
             Page::Windows(page) => (
                 "Search windows…",
                 &page.query,
@@ -2298,6 +2374,8 @@ impl LauncherApp {
             self.preferences_body(page)
         } else if let Page::Extension(page) = &self.page {
             self.extension_body(page)
+        } else if let Page::Emoji(page) = &self.page {
+            self.emoji_body(page)
         } else if let Page::Windows(page) = &self.page {
             self.windows_body(page)
         } else if let Page::Clipboard(page) = &self.page {
@@ -2325,6 +2403,17 @@ impl LauncherApp {
                         self.subtitles.then(|| command.subtitle.to_owned()),
                         selected,
                     ),
+                    RootRow::Calculator => {
+                        let Some(answer) = &self.calculator else {
+                            continue;
+                        };
+                        self.list_row(
+                            self.initial_badge("=", selected),
+                            answer.answer.clone(),
+                            Some(answer.question.clone()),
+                            selected,
+                        )
+                    }
                     RootRow::Extension(index) => {
                         let Some(command) = self.app_index.extensions().get(*index) else {
                             continue;
@@ -2419,6 +2508,60 @@ impl LauncherApp {
     }
 
     /// The window switcher's body: its state, or its rows.
+    /// The emoji picker's rows: the character in the icon slot, its name.
+    fn emoji_body<'a>(&'a self, page: &'a crate::emoji_page::EmojiPage) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        if page.shown.is_empty() {
+            return self.notice("No matching emojis or symbols");
+        }
+        let glyphs = compass_core::glyph::glyphs();
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        for (position, &index) in page.shown.iter().enumerate() {
+            let Some(glyph) = glyphs.get(index) else {
+                continue;
+            };
+            let selected = position == page.selected;
+            let icon = container(text(glyph.character).size(f32::from(geometry.icon_size) * 0.75))
+                .width(Length::Fixed(f32::from(geometry.icon_size)))
+                .height(Length::Fixed(f32::from(geometry.icon_size)))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into();
+            let row = self.list_row(
+                icon,
+                glyph.name.to_owned(),
+                self.subtitles.then(|| glyph.category.label().to_owned()),
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::EmojiSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink)
+            .into()
+    }
+
+    /// Copies the selected emoji and gets out of the way, so it can be
+    /// pasted where the person was.
+    fn copy_selected_emoji(&mut self) -> Task<Message> {
+        let Page::Emoji(page) = &self.page else {
+            return Task::none();
+        };
+        let Some(glyph) = page.selected_glyph() else {
+            return Task::none();
+        };
+        let copy = iced::clipboard::write(glyph.character.to_owned());
+        Task::batch([copy, self.conceal()])
+    }
+
     fn windows_body<'a>(
         &'a self,
         page: &'a crate::windows_page::WindowsPage,
@@ -3167,9 +3310,19 @@ impl LauncherApp {
                 entry = entry.push(iced::widget::text(title.clone()).font(self.font()).size(13));
             }
             let input: Element<Message> = match &field.kind {
-                FieldKind::Text { placeholder }
-                | FieldKind::Password { placeholder }
-                | FieldKind::TextArea { placeholder, .. } => {
+                FieldKind::TextArea { placeholder, .. } => match page.editors.get(&field.name) {
+                    Some(editor) => iced::widget::text_editor(editor)
+                        .placeholder(placeholder.as_deref().unwrap_or_default())
+                        .font(self.font())
+                        .height(Length::Fixed(96.0))
+                        .padding(8)
+                        .on_action(move |action| {
+                            Message::ExtensionTextAreaEdited(name.clone(), action)
+                        })
+                        .into(),
+                    None => iced::widget::text("").into(),
+                },
+                FieldKind::Text { placeholder } | FieldKind::Password { placeholder } => {
                     text_input(placeholder.as_deref().unwrap_or_default(), text_value)
                         .secure(matches!(field.kind, FieldKind::Password { .. }))
                         .font(self.font())
@@ -3236,7 +3389,14 @@ impl LauncherApp {
             .and_then(|panel| panel.actions().into_iter().next())
             .map_or_else(
                 || "Esc: back".to_owned(),
-                |action| format!("Enter: {}    Esc: back", action.title),
+                |action| {
+                    let submit = if page.has_text_area() {
+                        "Ctrl+Enter"
+                    } else {
+                        "Enter"
+                    };
+                    format!("{submit}: {}    Esc: back", action.title)
+                },
             );
         body = body.push(iced::widget::text(submit).font(self.font()).size(12));
         if let Some(notice) = &page.notice {
@@ -3248,7 +3408,31 @@ impl LauncherApp {
             .into()
     }
 
+    /// An extension's page: its view, with its toast underneath.
     fn extension_body<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+    ) -> Element<'a, Message> {
+        let body = self.extension_view_body(page);
+        let Some(toast) = &page.toast else {
+            return body;
+        };
+        let mut line = toast.title.clone();
+        if !toast.message.is_empty() {
+            line.push_str(" — ");
+            line.push_str(&toast.message);
+        }
+        if toast.animated {
+            line.push('…');
+        }
+        let mut footer = iced::widget::text(line).font(self.font()).size(12);
+        if toast.failure {
+            footer = footer.color(self.theme().palette().danger);
+        }
+        column![body, container(footer).padding(Padding::new(6.0).left(14))].into()
+    }
+
+    fn extension_view_body<'a>(
         &'a self,
         page: &'a crate::extension_page::ExtensionPage,
     ) -> Element<'a, Message> {
@@ -3379,6 +3563,10 @@ impl LauncherApp {
             CommandKind::ClipboardHistory => {
                 self.page = Page::Clipboard(crate::clipboard_page::ClipboardPage::default());
                 Task::batch([record, self.clipboard_search_task(), focus_search()])
+            }
+            CommandKind::SearchEmojis => {
+                self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
+                Task::batch([record, focus_search()])
             }
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
@@ -3553,7 +3741,17 @@ impl LauncherApp {
         // different list, and keeping its position would silently select an
         // unrelated application.
         self.selected = 0;
+        self.apply_calculator();
         self.warm_icons();
+    }
+
+    /// Puts the calculator's answer to the query first, when there is one.
+    fn apply_calculator(&mut self) {
+        self.results.retain(|row| *row != RootRow::Calculator);
+        self.calculator = compass_core::calculator::evaluate(&self.query, !self.results.is_empty());
+        if self.calculator.is_some() {
+            self.results.insert(0, RootRow::Calculator);
+        }
     }
 
     /// What goes in a row's icon slot: resolved art, or nothing for the initial.
@@ -3589,7 +3787,7 @@ impl LauncherApp {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => self.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
             })
             .filter_map(AppItem::icon)
             .collect();
@@ -3894,6 +4092,8 @@ mod tests {
         depth: std::sync::Mutex<u32>,
         /// An alert the fake's first view carries.
         alert: Option<crate::backend::ExtensionPrompt>,
+        /// A toast the fake's views carry.
+        toast: Option<crate::backend::ExtensionToast>,
         answers: std::sync::Mutex<Vec<bool>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
@@ -3968,6 +4168,7 @@ mod tests {
                     ended: after > 0,
                     depth: *self.depth.lock().unwrap(),
                     alert: self.alert.clone(),
+                    toast: self.toast.clone(),
                 })
             })
         }
@@ -4123,6 +4324,63 @@ mod tests {
     }
 
     #[test]
+    fn in_a_form_with_a_text_area_enter_is_a_newline_and_ctrl_enter_submits() {
+        use compass_extension_api::action::{Action, ActionPanel};
+        use compass_extension_api::view::{FieldKind, FormField, FormItem, FormView};
+        let form = compass_extension_api::View::Form(FormView {
+            items: vec![FormItem::Field(Box::new(FormField {
+                id: compass_extension_api::id::NodeId::ROOT,
+                name: "body".into(),
+                title: Some("Body".into()),
+                error: None,
+                info: None,
+                autofocus: false,
+                value: None,
+                echo: None,
+                on_change: None,
+                kind: FieldKind::TextArea {
+                    placeholder: None,
+                    markdown: false,
+                },
+            }))],
+            actions: Some(ActionPanel::of([Action::new("Save", "submit")])),
+            ..FormView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(form);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Ctrl+Enter: Save    Esc: back").is_ok());
+        }
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert!(
+            backend.events.lock().unwrap().is_empty(),
+            "Enter in a text area is a newline, not a submit"
+        );
+        let ctrl_enter = Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        });
+        let mut pending = task_messages(app.update(ctrl_enter));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("submit".to_owned(), vec![serde_json::json!({})])]
+        );
+    }
+
+    #[test]
     fn an_extension_form_is_filled_in_and_enter_submits_its_values() {
         use compass_extension_api::action::{Action, ActionPanel, HandlerId};
         use compass_extension_api::view::{FieldKind, FormField, FormItem, FormView};
@@ -4182,6 +4440,33 @@ mod tests {
             "submit".to_owned(),
             vec![serde_json::json!({"title": "Crash on paste", "urgent": true})]
         )));
+    }
+
+    #[test]
+    fn an_extensions_toast_is_drawn_under_its_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(greeting_list(true)),
+            toast: Some(crate::backend::ExtensionToast {
+                failure: true,
+                animated: false,
+                title: "Offline".into(),
+                message: "retrying".into(),
+            }),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend);
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("hello").is_ok(), "{}", app.state_line());
+        assert!(ui.find("Offline — retrying").is_ok());
     }
 
     #[test]
@@ -4352,6 +4637,7 @@ mod tests {
                 ended: false,
                 depth: 1,
                 alert: None,
+                toast: None,
             });
         }
         for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Escape))) {
@@ -5323,6 +5609,48 @@ mod tests {
     }
 
     #[test]
+    fn the_emoji_picker_opens_from_root_search_and_filters() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("emoji".to_owned()));
+        let position = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "search-emojis"))
+            .expect("the command is in root search");
+        app.selected = position;
+        let _ = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::EmojiQueryChanged("thumbs up".into()));
+        let Page::Emoji(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.selected_glyph().map(|g| g.character), Some("👍"));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("thumbs up").is_ok());
+    }
+
+    #[test]
+    fn a_calculation_that_matches_nothing_is_answered_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("12*3+6".to_owned()));
+        assert_eq!(app.results, [RootRow::Calculator], "{}", app.state_line());
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("42").is_ok() && ui.find("12*3+6").is_ok());
+        }
+        assert!(app.state_line().contains("selected_title=\"42\""));
+
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        assert!(
+            !app.results.contains(&RootRow::Calculator),
+            "a query that matches applications is not a calculation"
+        );
+        let _ = app.update(Message::QueryChanged("=2^10".to_owned()));
+        assert_eq!(app.results.first(), Some(&RootRow::Calculator));
+    }
+
+    #[test]
     fn the_action_panel_is_not_bound_to_the_vim_chord() {
         // Ctrl+K is "move up" in the default Linux scheme. The C++ binds the
         // panel to Ctrl+K on macOS only and Ctrl+B everywhere else, and this
@@ -5595,7 +5923,7 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -5609,9 +5937,13 @@ mod tests {
             );
             let _ = app.update(Message::MoveSelection(Direction::Down));
         }
+        // Commands rank after the applications here; walk past them too.
+        for _ in expected.len()..app.results.len() {
+            let _ = app.update(Message::MoveSelection(Direction::Down));
+        }
         assert_eq!(
             app.selected,
-            expected.len() - 1,
+            app.results.len() - 1,
             "and it stayed on the last row, because wrap_navigation is off by default"
         );
     }
@@ -6282,7 +6614,7 @@ mod quick_launch_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -6425,7 +6757,7 @@ mod icon_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => app.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
             })
             .find(|item| item.name() == name)
             .unwrap_or_else(|| panic!("{name} is not a row"))
