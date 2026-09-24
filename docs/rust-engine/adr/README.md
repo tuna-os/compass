@@ -25,4 +25,4 @@ drifting away from a recorded decision is not.
 | [0015](./0015-the-launcher-window-is-resident.md) | The launcher window is resident and `serve` summons it; amends ADR-0011 | Accepted |
 | [0016](./0016-a11y-gap.md) | Screen-reader gap — Orca cannot see the Rust launcher | Amended by ADR-0018 |
 | [0017](./0017-a-new-launcher-not-a-reimplementation.md) | Compass is a new launcher, not a reimplementation; quality asserted absolutely, crates first, user data imported | Accepted |
-| [0018](./0018-the-open-calls-decided.md) | Screen-reader users keep the accessible engine until the Rust one has a tree; Phase 1's gate reworded; one-person plan; rustcast was a seed; the parity gate keeps blocking | Accepted |
+| [0018](./0018-the-open-calls-decided.md) | Screen-reader users keep the accessible engine until the Rust one has a tree; Phase 1's gate reworded; one-person plan; rustcast was a seed; the parity gate keeps blocking; nothing reported upstream | Accepted |

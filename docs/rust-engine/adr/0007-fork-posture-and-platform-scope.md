@@ -15,8 +15,9 @@ They are answered together because they are one question: what is this project, 
 **1. Hard fork, acknowledged rather than drifted into.** Rewriting the core in Rust makes merging
 upstream C++ changes impossible after Phase 1. Say so, rather than maintaining the fiction of a
 tracking fork and discovering it six months in. Upstream remains valuable as a *behavioural*
-reference and a source of bug reports worth porting by hand — the six C++ bugs found while porting
-the desktop-entry parser are worth reporting upstream, and that courtesy should continue.
+reference and a source of bug reports worth porting by hand. (This ADR once said the six C++ bugs
+found while porting the desktop-entry parser should be reported upstream; ADR-0018 withdraws that.
+It is a hard fork, and upstream is not asked for anything.)
 
 **2. Keep the `vicinae` binary, socket, config and DBus names.** Crates are `compass-*`; the things
 users and their configs touch stay `vicinae`. Renaming buys nothing and breaks every existing
