@@ -21,7 +21,7 @@
 //! row.
 
 use compass_extension_api::action::{
-    Action, ActionItem, ActionPanel, ActionSection, ActionSubmenu,
+    Action, ActionItem, ActionPanel, ActionSection, ActionSubmenu, KeyModifier, Shortcut,
 };
 use compass_extension_api::view::{
     Accessory, Detail, EmptyState, ListItem, ListSection, ListView, View,
@@ -240,6 +240,7 @@ fn action_item(node: &RenderNode) -> Option<ActionItem> {
             let handler = text(node, "onAction")?;
             let mut action = Action::new(text(node, "title").unwrap_or_default(), handler);
             action.key = text(node, "stableId");
+            action.shortcut = node.props.get("shortcut").and_then(shortcut);
             Some(ActionItem::Action(action))
         }
         "action-panel-submenu" => Some(ActionItem::Submenu(ActionSubmenu {
@@ -383,5 +384,84 @@ mod tests {
             panic!("not a detail");
         };
         assert!(detail.actions.expect("a panel").actions().is_empty());
+    }
+}
+
+/// The C++ `NAMED_SHORTCUTS` (`model-deser.cpp`), resolved to the defaults
+/// `keybind-manager.cpp` gives them.
+fn named_shortcut(name: &str) -> Option<Shortcut> {
+    use KeyModifier::{Ctrl, Shift};
+    let (modifiers, key): (&[KeyModifier], &str) = match name {
+        "copy" | "copy-deeplink" => (&[Ctrl, Shift], "c"),
+        "copy-name" => (&[Ctrl, Shift], "."),
+        "copy-path" => (&[Ctrl, Shift], ","),
+        "save" => (&[Ctrl], "s"),
+        "duplicate" => (&[Ctrl], "d"),
+        "edit" => (&[Ctrl], "e"),
+        "move-down" => (&[Ctrl, Shift], "arrowDown"),
+        "move-up" => (&[Ctrl, Shift], "arrowUp"),
+        "new" => (&[Ctrl], "n"),
+        "open" | "open-with" => (&[Ctrl], "o"),
+        "pin" => (&[Ctrl, Shift], "p"),
+        "refresh" => (&[Ctrl], "r"),
+        "remove" => (&[Ctrl], "x"),
+        "remove-all" => (&[Ctrl, Shift], "x"),
+        _ => return None,
+    };
+    Some(Shortcut::new(modifiers.iter().copied(), key))
+}
+
+/// A `shortcut` prop: a named common shortcut, or `{key, modifiers}`.
+///
+/// `cmd` is Control here, as Qt makes it off macOS; `opt` is `alt`, and
+/// `windows` is `meta`. A modifier this does not know drops the shortcut
+/// rather than binding a different chord.
+fn shortcut(value: &Value) -> Option<Shortcut> {
+    if let Some(name) = value.as_str() {
+        return named_shortcut(name);
+    }
+    let key = value.get("key")?.as_str().filter(|key| !key.is_empty())?;
+    let mut modifiers = Vec::new();
+    for modifier in value
+        .get("modifiers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let modifier = match modifier.as_str()? {
+            "cmd" | "ctrl" => KeyModifier::Ctrl,
+            "opt" | "alt" => KeyModifier::Alt,
+            "shift" => KeyModifier::Shift,
+            "meta" | "windows" => KeyModifier::Meta,
+            _ => return None,
+        };
+        if !modifiers.contains(&modifier) {
+            modifiers.push(modifier);
+        }
+    }
+    Some(Shortcut::new(modifiers, key))
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    #[test]
+    fn named_and_explicit_shortcuts_resolve_as_the_cpp_does() {
+        assert_eq!(
+            shortcut(&serde_json::json!("copy")),
+            Some(Shortcut::new([KeyModifier::Ctrl, KeyModifier::Shift], "c"))
+        );
+        assert_eq!(
+            shortcut(&serde_json::json!({"key": "r", "modifiers": ["cmd", "cmd", "shift"]})),
+            Some(Shortcut::new([KeyModifier::Ctrl, KeyModifier::Shift], "r")),
+            "cmd is Control off macOS, and a repeat is one modifier"
+        );
+        assert_eq!(shortcut(&serde_json::json!("nonsense")), None);
+        assert_eq!(
+            shortcut(&serde_json::json!({"key": "r", "modifiers": ["hyper"]})),
+            None,
+            "an unknown modifier drops the shortcut rather than binding plain r"
+        );
     }
 }

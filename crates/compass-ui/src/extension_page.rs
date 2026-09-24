@@ -188,6 +188,32 @@ impl ExtensionPage {
         }
     }
 
+    /// The handler a chord runs: the action on offer whose shortcut is
+    /// exactly `modifiers` plus `key` (key names as `jsx.d.ts` gives them,
+    /// compared without case).
+    #[must_use]
+    pub fn action_for(
+        &self,
+        modifiers: &[compass_extension_api::action::KeyModifier],
+        key: &str,
+    ) -> Option<&HandlerId> {
+        let mut wanted = modifiers.to_vec();
+        wanted.sort();
+        wanted.dedup();
+        self.actions()?
+            .actions()
+            .into_iter()
+            .find(|action| {
+                action.shortcut.as_ref().is_some_and(|shortcut| {
+                    let mut has = shortcut.modifiers.clone();
+                    has.sort();
+                    has.dedup();
+                    has == wanted && shortcut.key.as_str().eq_ignore_ascii_case(key)
+                })
+            })
+            .map(|action| &action.handler)
+    }
+
     /// The handler Enter runs: the first action on offer.
     #[must_use]
     pub fn primary_action(&self) -> Option<&HandlerId> {

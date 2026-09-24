@@ -457,6 +457,84 @@ enum Page {
     Extension(Box<crate::extension_page::ExtensionPage>),
 }
 
+/// A key press as an extension shortcut: its modifiers and the key's name
+/// as `jsx.d.ts` spells it. `None` for a press with no Control, Alt or Super,
+/// which is typing or navigation, never a shortcut.
+fn extension_chord(
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<(Vec<compass_extension_api::action::KeyModifier>, String)> {
+    use compass_extension_api::action::KeyModifier;
+    use iced::keyboard::{Key, key::Named};
+    if !(modifiers.control() || modifiers.alt() || modifiers.logo()) {
+        return None;
+    }
+    let name = match key {
+        Key::Character(c) => c.to_lowercase(),
+        Key::Named(named) => match named {
+            Named::Enter => "return",
+            Named::Delete => "delete",
+            Named::Backspace => "backspace",
+            Named::Tab => "tab",
+            Named::Space => "space",
+            Named::ArrowUp => "arrowUp",
+            Named::ArrowDown => "arrowDown",
+            Named::ArrowLeft => "arrowLeft",
+            Named::ArrowRight => "arrowRight",
+            Named::Home => "home",
+            Named::End => "end",
+            Named::PageUp => "pageUp",
+            Named::PageDown => "pageDown",
+            _ => return None,
+        }
+        .to_owned(),
+        Key::Unidentified => return None,
+    };
+    let mut mods = Vec::new();
+    if modifiers.control() {
+        mods.push(KeyModifier::Ctrl);
+    }
+    if modifiers.alt() {
+        mods.push(KeyModifier::Alt);
+    }
+    if modifiers.shift() {
+        mods.push(KeyModifier::Shift);
+    }
+    if modifiers.logo() {
+        mods.push(KeyModifier::Meta);
+    }
+    Some((mods, name))
+}
+
+/// How a shortcut reads in the action panel: `Ctrl+Shift+C`.
+fn shortcut_label(shortcut: &compass_extension_api::action::Shortcut) -> String {
+    use compass_extension_api::action::KeyModifier;
+    let mut parts: Vec<String> = shortcut
+        .modifiers
+        .iter()
+        .map(|modifier| {
+            match modifier {
+                KeyModifier::Ctrl | KeyModifier::Cmd => "Ctrl",
+                KeyModifier::Alt => "Alt",
+                KeyModifier::Shift => "Shift",
+                KeyModifier::Meta => "Super",
+            }
+            .to_owned()
+        })
+        .collect();
+    let key = shortcut.key.as_str();
+    parts.push(if key.chars().count() == 1 {
+        key.to_uppercase()
+    } else {
+        let mut chars = key.chars();
+        chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default()
+    });
+    parts.join("+")
+}
+
 /// Panel ids for an extension's actions: this prefix, then the handler.
 const EXTENSION_ACTION: &str = "ext:";
 
@@ -467,10 +545,14 @@ fn extension_panel_sections(page: &crate::extension_page::ExtensionPage) -> Vec<
     fn actions(items: &[ActionItem], out: &mut Vec<action_panel::Action>) {
         for item in items {
             match item {
-                ActionItem::Action(action) => out.push(
-                    action_panel::Action::new(action.title.clone())
-                        .with_id(format!("{EXTENSION_ACTION}{}", action.handler.0)),
-                ),
+                ActionItem::Action(action) => {
+                    let row = action_panel::Action::new(action.title.clone())
+                        .with_id(format!("{EXTENSION_ACTION}{}", action.handler.0));
+                    out.push(match &action.shortcut {
+                        Some(shortcut) => row.with_shortcut(shortcut_label(shortcut)),
+                        None => row,
+                    });
+                }
                 ActionItem::Submenu(submenu) => actions(&submenu.items, out),
             }
         }
@@ -1829,6 +1911,14 @@ impl LauncherApp {
                 // one key undoes opening the wrong command.
                 let panel_key = self.panel.is_some()
                     || (modifiers.control() && key.as_ref() == Key::Character("b"));
+                if !panel_key
+                    && let Page::Extension(page) = &self.page
+                    && let Some(handler) = extension_chord(&key, modifiers)
+                        .and_then(|(mods, name)| page.action_for(&mods, &name))
+                        .cloned()
+                {
+                    return self.extension_event(page.session, handler.0, Vec::new());
+                }
                 if !panel_key && let Page::Extension(page) = &mut self.page {
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
@@ -3599,6 +3689,51 @@ mod tests {
             matches!(app.page, Page::Extension(_)),
             "and stays in the view"
         );
+    }
+
+    #[test]
+    fn an_actions_shortcut_runs_it_and_the_panel_shows_the_chord() {
+        use compass_extension_api::action::{Action, ActionPanel, KeyModifier, Shortcut};
+        use compass_extension_api::view::{ListItem, ListSection, ListView};
+        let view = compass_extension_api::View::List(ListView {
+            sections: vec![ListSection::untitled([ListItem::new("repo").with_actions(
+                ActionPanel::of([
+                    Action::new("Open", "cb-open"),
+                    Action::new("Copy URL", "cb-copy")
+                        .with_shortcut(Shortcut::new([KeyModifier::Ctrl, KeyModifier::Shift], "c")),
+                ]),
+            )])],
+            ..ListView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(view);
+
+        for message in task_messages(app.update(chord("c", iced::keyboard::Modifiers::default()))) {
+            let _ = app.update(message);
+        }
+        assert!(
+            backend.events.lock().unwrap().is_empty(),
+            "typing c is not a shortcut"
+        );
+
+        let ctrl_shift = iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT;
+        for message in task_messages(app.update(chord("C", ctrl_shift))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("cb-copy".to_owned(), vec![])]
+        );
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let shortcuts: Vec<Option<&str>> = app
+            .panel
+            .as_ref()
+            .expect("the panel")
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|a| a.shortcut.as_deref()))
+            .collect();
+        assert_eq!(shortcuts, [None, Some("Ctrl+Shift+C")]);
     }
 
     #[test]
