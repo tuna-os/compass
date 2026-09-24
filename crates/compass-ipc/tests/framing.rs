@@ -46,6 +46,8 @@ fn all_requests() -> Vec<Request> {
             query: "https://é.example 🚀".into(),
             limit: u32::MAX,
         },
+        Request::ClipboardContent { id: "abc".into() },
+        Request::ClipboardContent { id: String::new() },
     ]
 }
 
@@ -130,6 +132,14 @@ fn all_responses() -> Vec<Response> {
                 },
             ],
         },
+        Response::ClipboardContent {
+            mime_type: "text/plain".into(),
+            data: "é 🚀".into(),
+        },
+        Response::ClipboardContent {
+            mime_type: "image/png".into(),
+            data: vec![0, 255, 0x89, b'P', b'N', b'G'],
+        },
     ]
 }
 
@@ -149,6 +159,7 @@ fn request_variants_are_exhaustive() {
             | Request::AttachWindow
             | Request::RecordLaunch { .. }
             | Request::ClipboardHistory { .. }
+            | Request::ClipboardContent { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -166,6 +177,7 @@ fn response_variants_are_exhaustive() {
             | Response::Error(_)
             | Response::WindowAttached
             | Response::ClipboardHistory { .. }
+            | Response::ClipboardContent { .. }
             | Response::Window(_) => {}
         }
     }

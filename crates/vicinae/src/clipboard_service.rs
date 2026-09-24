@@ -244,6 +244,32 @@ impl ClipboardStore {
         .map_err(|err| Error::Store(err.to_string()))
     }
 
+    /// One entry's content, decrypted: `(mime_type, bytes)`, or `None` when no
+    /// entry has that id.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Store`] when the lookup fails, the payload file is missing, or
+    /// it will not decrypt.
+    pub fn content(&self, id: &str) -> Result<Option<(String, Vec<u8>)>, Error> {
+        let Some(offer) = compass_clipboard::write::find_preferred_offer(&self.db(), id)
+            .map_err(|err| Error::Store(err.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let path = ingest::payload_path(&self.payload_dir, &offer.id);
+        let stored = std::fs::read(&path)
+            .map_err(|err| Error::Store(format!("reading {}: {err}", path.display())))?;
+        let data = match offer.encryption {
+            compass_clipboard::kind::EncryptionType::None => stored,
+            compass_clipboard::kind::EncryptionType::Local => {
+                compass_crypto::decrypt(&stored, &self.payload_key)
+                    .map_err(|err| Error::Store(format!("decrypting {}: {err}", offer.id)))?
+            }
+        };
+        Ok(Some((offer.mime_type, data)))
+    }
+
     /// Pinned entries first, then newest first; `query` filters, empty lists.
     ///
     /// # Errors
@@ -519,6 +545,32 @@ mod tests {
             !dir.path().join("clipboard.db").exists(),
             "not Vicinae's file"
         );
+    }
+
+    #[test]
+    fn content_comes_back_whole_and_decrypted_not_as_the_preview() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
+        let long = "a line of text that goes on ".repeat(40);
+        store
+            .record(long.as_bytes(), "text/plain", None)
+            .expect("recorded");
+        let entry = store.history("", 1).expect("listed").remove(0);
+        assert!(entry.preview.len() < long.len(), "the preview is truncated");
+
+        let (mime, data) = store.content(&entry.id).expect("read").expect("present");
+        assert_eq!(mime, "text/plain");
+        assert_eq!(data, long.as_bytes());
+
+        let payload_dir = dir.path().join(PAYLOAD_DIR_NAME);
+        let on_disk: Vec<u8> = std::fs::read_dir(&payload_dir)
+            .expect("payloads")
+            .map(|file| std::fs::read(file.expect("entry").path()).expect("read"))
+            .next()
+            .expect("one payload");
+        assert_ne!(on_disk, long.as_bytes(), "encrypted at rest");
+
+        assert!(store.content("no-such-entry").expect("lookup").is_none());
     }
 
     #[test]

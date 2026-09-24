@@ -107,6 +107,7 @@ fn describe(request: &Request) -> &'static str {
         Request::WindowOutcome(_) => "WindowOutcome",
         Request::RecordLaunch { .. } => "RecordLaunch",
         Request::ClipboardHistory { .. } => "ClipboardHistory",
+        Request::ClipboardContent { .. } => "ClipboardContent",
     }
 }
 

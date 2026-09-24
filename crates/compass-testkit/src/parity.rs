@@ -671,17 +671,15 @@ impl Flavour {
     }
 
     /// The argv that asks a running server to rank `query`.
-    /// `provider` narrows the C++ side to one root provider and is ignored on
-    /// the Rust side.
+    /// `provider` narrows both engines to one root provider.
     ///
     /// THE TWO ENGINES RANK DIFFERENT SETS, which PARITY.md declares as
-    /// divergence 2 of Suite 0's ranked-output path: Rust's `Session::query`
-    /// ranks `index.launchable_items()` — applications — while the C++
-    /// `RootItemManager` ranks root items, which is applications *plus*
-    /// commands, extension entrypoints and fallbacks. Comparing the two
-    /// unnarrowed reports a regression on every query where the C++ side
-    /// returns something the Rust engine has no provider for yet, which is
-    /// noise dressed as a finding.
+    /// divergence 2 of Suite 0's ranked-output path: the Rust root ranks
+    /// applications and its own builtin commands, while the C++
+    /// `RootItemManager` ranks applications plus its commands, extension
+    /// entrypoints and fallbacks. Comparing the two unnarrowed reports a
+    /// regression on every query where one side returns something the other
+    /// has no provider for, which is noise dressed as a finding.
     ///
     /// `--provider applications` is how the caller compares like with like.
     /// Deliberately not defaulted here: PARITY.md says a default would
@@ -694,7 +692,9 @@ impl Flavour {
         };
         args.push("query".to_owned());
         args.push("--json".to_owned());
-        if let (Self::Cpp, Some(provider)) = (self, provider) {
+        // Both engines: the Rust one ranks builtin commands in the root too,
+        // so "like with like" needs the same narrowing on each side.
+        if let Some(provider) = provider {
             args.push("--provider".to_owned());
             args.push(provider.to_owned());
         }
@@ -1502,19 +1502,26 @@ mod tests {
             ["query", "--json", "fire"]
         );
 
-        // `--provider` narrows the C++ side only, and only when asked.
-        // PARITY.md divergence 2: the two engines rank different SETS, and
-        // comparing them unnarrowed reports a regression wherever the C++
-        // side returns a command or an extension entrypoint the Rust engine
-        // has no provider for yet.
+        // `--provider` narrows both sides, and only when asked. PARITY.md
+        // divergence 2: the two engines rank different SETS -- the C++ root
+        // holds commands and extension entrypoints, the Rust one its own
+        // builtin commands -- so like is compared with like on each side.
         assert_eq!(
             Flavour::Cpp.query_args(socket, "fire", Some("applications")),
             ["query", "--json", "--provider", "applications", "fire"]
         );
         assert_eq!(
             Flavour::Rust.query_args(socket, "fire", Some("applications")),
-            ["--socket", "/tmp/x/ipc.sock", "query", "--json", "fire"],
-            "the Rust engine already ranks applications only; narrowing it is not its flag"
+            [
+                "--socket",
+                "/tmp/x/ipc.sock",
+                "query",
+                "--json",
+                "--provider",
+                "applications",
+                "fire"
+            ],
+            "the Rust root ranks builtin commands too, so it is narrowed alike"
         );
 
         assert_eq!(

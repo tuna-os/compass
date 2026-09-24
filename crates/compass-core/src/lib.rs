@@ -45,6 +45,7 @@ pub mod bug_report;
 pub mod builtin_icon;
 pub mod calculator_history;
 pub mod clipboard_history;
+pub mod commands;
 pub mod config;
 pub mod contrast;
 pub mod create_extension;
@@ -114,7 +115,7 @@ pub mod window_manager;
 pub mod window_switcher;
 pub mod xdg_dirs;
 
-pub use apps::{AppIndex, AppIndexBuilder, AppItem, SkipReason, SkippedEntry};
+pub use apps::{AppIndex, AppIndexBuilder, AppItem, RootHit, SkipReason, SkippedEntry};
 pub use config::{Config, ConfigError, ExtensionsConfig, LauncherConfig};
 pub use frecency::{
     Clock, FrecencyError, FrecencyRecord, FrecencyStore, JsonFrecencyStore, ManualClock,

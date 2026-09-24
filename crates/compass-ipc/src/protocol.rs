@@ -30,8 +30,8 @@ use serde::{Deserialize, Serialize};
 /// a human can act on, and it only does so if the number moves.
 ///
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
-/// Version 4 adds clipboard history.
-pub const PROTOCOL_VERSION: u16 = 4;
+/// Version 4 adds clipboard history; version 5, fetching an entry's content.
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,6 +139,15 @@ pub enum Request {
         /// Most entries to return. Zero is a bad request.
         limit: u32,
     },
+    /// The full content of one clipboard history entry, decrypted.
+    ///
+    /// Answered with [`Response::ClipboardContent`]; an id that names no entry
+    /// is a bad request. Separate from the list because a list row needs only
+    /// the preview, and content can be a whole image.
+    ClipboardContent {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
 }
 
 /// What the engine answers.
@@ -180,6 +189,13 @@ pub enum Response {
     ClipboardHistory {
         /// Matching entries: pinned first, then most recently copied.
         entries: Vec<ClipboardEntry>,
+    },
+    /// Content for a [`Request::ClipboardContent`].
+    ClipboardContent {
+        /// MIME type of the bytes.
+        mime_type: String,
+        /// The content, exactly as it was copied.
+        data: Vec<u8>,
     },
 }
 
