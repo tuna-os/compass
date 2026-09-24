@@ -20,6 +20,13 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// Record an already successful launch; never execute the application again.
     fn record_launch(&self, key: String) -> BackendFuture<'_, ()>;
 
+    /// Run a Power Management command by its id. An error is the sentence to
+    /// show.
+    fn run_power_command(&self, id: String) -> BackendFuture<'_, ()> {
+        let _ = id;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// Run an installed extension's command by its entrypoint id, with the
     /// argument values entered for it, or `None` when none have been. `Ok`
     /// once the engine has started it; an error is a sentence saying why it

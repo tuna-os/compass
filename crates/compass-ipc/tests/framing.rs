@@ -62,6 +62,9 @@ fn all_requests() -> Vec<Request> {
             pinned: false,
         },
         Request::ClipboardRemove { id: "abc".into() },
+        Request::RunPowerCommand {
+            id: "reboot".into(),
+        },
         Request::RunExtensionCommand {
             id: "@raycast/github:search-repositories".into(),
             arguments_json: Some(r#"{"query":"compass"}"#.into()),
@@ -287,6 +290,7 @@ fn request_variants_are_exhaustive() {
             | Request::ClipboardSetPinned { .. }
             | Request::ClipboardRemove { .. }
             | Request::RunExtensionCommand { .. }
+            | Request::RunPowerCommand { .. }
             | Request::ExtensionView { .. }
             | Request::ExtensionEvent { .. }
             | Request::ExtensionPop { .. }

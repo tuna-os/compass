@@ -2116,3 +2116,31 @@ fn a_views_toast_reaches_the_launcher_and_hiding_it_clears_it() {
     }
     daemon.request(Request::CloseExtension { session });
 }
+
+#[test]
+fn a_power_command_answers_with_its_own_sentences_and_never_touches_this_machine() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    // A system bus that does not exist: whatever this engine tries, the
+    // machine running the test cannot be rebooted by it.
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        vec![(
+            "DBUS_SYSTEM_BUS_ADDRESS",
+            "unix:path=/nonexistent/compass-test-system-bus".into(),
+        )]
+    });
+    let Response::Error(err) = daemon.request(Request::RunPowerCommand {
+        id: "reboot".into(),
+    }) else {
+        panic!("a reboot with no logind was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::Internal, "Failed to reboot")
+    );
+    let Response::Error(err) = daemon.request(Request::RunPowerCommand {
+        id: "self-destruct".into(),
+    }) else {
+        panic!("an unknown power command was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}

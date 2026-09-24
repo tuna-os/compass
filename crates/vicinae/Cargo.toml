@@ -27,6 +27,7 @@ compass-db = { path = "../compass-db" }
 compass-ipc.workspace = true
 notify.workspace = true
 compass-portals.workspace = true
+compass-power = { path = "../compass-power" }
 futures-util.workspace = true
 compass-ui.workspace = true
 compass-platform.workspace = true

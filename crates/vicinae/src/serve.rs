@@ -270,6 +270,77 @@ impl EngineState {
     }
 }
 
+/// Runs a Power Management command through logind, or the desktop's session
+/// manager for logout, answering with the command's own sentences.
+async fn run_power_command(id: &str) -> Response {
+    use compass_power::{Action, PowerManager};
+    use std::os::unix::fs::MetadataExt;
+    let Some(command) = compass_core::power_commands::command(id) else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no power command has that id",
+        ));
+    };
+    let cannot = || {
+        Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            command.cannot_message,
+        ))
+    };
+    let failed = |err: &dyn std::fmt::Display| {
+        tracing::warn!(%err, command = id, "power command failed");
+        Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            command.failed_message,
+        ))
+    };
+    let system = match zbus::Connection::system().await {
+        Ok(connection) => connection,
+        Err(err) => return failed(&err),
+    };
+    let manager = PowerManager::new(system);
+    // The owner of /proc/self is this process's uid, without `unsafe`.
+    let uid = std::fs::metadata("/proc/self").map_or(u32::MAX, |m| m.uid());
+    let checked = match id {
+        "power-off" => Some(Action::PowerOff),
+        "reboot" | "soft-reboot" => Some(Action::Reboot),
+        "suspend" | "sleep" => Some(Action::Suspend),
+        "hibernate" => Some(Action::Hibernate),
+        _ => None,
+    };
+    if let Some(action) = checked {
+        match manager.can(action).await {
+            Ok(capability) if capability.is_offerable() => {}
+            Ok(_) => return cannot(),
+            Err(err) => return failed(&err),
+        }
+    }
+    let result = match id {
+        "sleep" => manager.sleep().await,
+        "soft-reboot" => manager.soft_reboot().await,
+        "lock" => manager.lock(uid).await,
+        "logout" => {
+            let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+            match zbus::Connection::session().await {
+                Ok(session) => {
+                    manager
+                        .logout(compass_power::logout_target(&desktop), &session, uid)
+                        .await
+                }
+                Err(err) => return failed(&err),
+            }
+        }
+        _ => match checked {
+            Some(action) => manager.perform(action, true).await,
+            None => return cannot(),
+        },
+    };
+    match result {
+        Ok(()) => Response::Ack,
+        Err(err) => failed(&err),
+    }
+}
+
 async fn run_extension_command(
     state: &Arc<RwLock<EngineState>>,
     id: String,
@@ -801,6 +872,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
+        Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunExtensionCommand { id, arguments_json } => {
             run_extension_command(state, id, arguments_json).await
         }

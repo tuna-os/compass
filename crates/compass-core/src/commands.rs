@@ -8,6 +8,7 @@
 //! `AppIndex::search_root` stays applications-only; `AppIndex::search_root_all`
 //! returns both.
 
+use crate::power_commands;
 use crate::root_items::{RootItem, RootItemMeta, entrypoint_id};
 
 /// Provider id of builtin commands.
@@ -40,9 +41,13 @@ pub enum CommandKind {
     SwitchWindows,
     /// Find an emoji or symbol and copy it.
     SearchEmojis,
+    /// A Power Management command, by its id in [`crate::power_commands`].
+    Power(&'static str),
 }
 
-/// Every builtin command, in the order an empty query lists them.
+/// Every builtin command, in the order an empty query lists them. The power
+/// commands index [`power_commands::COMMANDS`] in its registration order,
+/// which a test pins.
 pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         kind: CommandKind::ClipboardHistory,
@@ -77,6 +82,70 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             "unicode",
         ],
         icon: "emoji",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Power(power_commands::COMMANDS[0].id),
+        entrypoint: power_commands::COMMANDS[0].id,
+        title: power_commands::COMMANDS[0].name,
+        subtitle: power_commands::COMMANDS[0].description,
+        keywords: power_commands::COMMANDS[0].keywords,
+        icon: "power",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Power(power_commands::COMMANDS[1].id),
+        entrypoint: power_commands::COMMANDS[1].id,
+        title: power_commands::COMMANDS[1].name,
+        subtitle: power_commands::COMMANDS[1].description,
+        keywords: power_commands::COMMANDS[1].keywords,
+        icon: "rotate-clockwise",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Power(power_commands::COMMANDS[2].id),
+        entrypoint: power_commands::COMMANDS[2].id,
+        title: power_commands::COMMANDS[2].name,
+        subtitle: power_commands::COMMANDS[2].description,
+        keywords: power_commands::COMMANDS[2].keywords,
+        icon: "moon",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Power(power_commands::COMMANDS[3].id),
+        entrypoint: power_commands::COMMANDS[3].id,
+        title: power_commands::COMMANDS[3].name,
+        subtitle: power_commands::COMMANDS[3].description,
+        keywords: power_commands::COMMANDS[3].keywords,
+        icon: "lock",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Power(power_commands::COMMANDS[4].id),
+        entrypoint: power_commands::COMMANDS[4].id,
+        title: power_commands::COMMANDS[4].name,
+        subtitle: power_commands::COMMANDS[4].description,
+        keywords: power_commands::COMMANDS[4].keywords,
+        icon: "logout",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Power(power_commands::COMMANDS[5].id),
+        entrypoint: power_commands::COMMANDS[5].id,
+        title: power_commands::COMMANDS[5].name,
+        subtitle: power_commands::COMMANDS[5].description,
+        keywords: power_commands::COMMANDS[5].keywords,
+        icon: "moon",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Power(power_commands::COMMANDS[6].id),
+        entrypoint: power_commands::COMMANDS[6].id,
+        title: power_commands::COMMANDS[6].name,
+        subtitle: power_commands::COMMANDS[6].description,
+        keywords: power_commands::COMMANDS[6].keywords,
+        icon: "moon",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Power(power_commands::COMMANDS[7].id),
+        entrypoint: power_commands::COMMANDS[7].id,
+        title: power_commands::COMMANDS[7].name,
+        subtitle: power_commands::COMMANDS[7].description,
+        keywords: power_commands::COMMANDS[7].keywords,
+        icon: "rotate-clockwise",
     },
 ];
 
@@ -115,6 +184,19 @@ pub fn by_id(id: &str) -> Option<&'static BuiltinCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_power_commands_are_the_power_catalogue_in_order() {
+        let power: Vec<&str> = BUILTIN_COMMANDS
+            .iter()
+            .filter_map(|c| match c.kind {
+                CommandKind::Power(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        let catalogue: Vec<&str> = power_commands::COMMANDS.iter().map(|c| c.id).collect();
+        assert_eq!(power, catalogue);
+    }
 
     #[test]
     fn ids_are_unique_and_round_trip() {

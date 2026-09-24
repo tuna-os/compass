@@ -99,6 +99,7 @@ async fn echo_handler(request: Request) -> Response {
         | Request::ClipboardSetPinned { .. }
         | Request::ClipboardRemove { .. }
         | Request::RunExtensionCommand { .. }
+        | Request::RunPowerCommand { .. }
         | Request::ExtensionEvent { .. }
         | Request::ExtensionPop { .. }
         | Request::SetExtensionPreferences { .. }
