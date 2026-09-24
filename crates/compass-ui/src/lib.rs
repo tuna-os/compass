@@ -29,6 +29,7 @@ pub mod preset;
 pub mod remote_image;
 pub mod resident;
 pub mod root_list;
+pub mod script_page;
 mod scroll;
 pub mod settings;
 pub mod shortcuts_page;

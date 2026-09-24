@@ -113,6 +113,30 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
     }
 
+    /// Every script command, scanned afresh.
+    fn list_scripts(&self) -> BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Runs a script command with its arguments: the run to follow, or
+    /// `None` when there is nothing to follow (silent and terminal modes).
+    fn run_script(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, Option<u64>> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// What a script run has printed so far.
+    fn script_output(&self, session: u64) -> BackendFuture<'_, ScriptOutputState> {
+        let _ = session;
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Stops a script run.
+    fn stop_script(&self, session: u64) -> BackendFuture<'_, ()> {
+        let _ = session;
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
     /// Run an installed extension's command by its entrypoint id, with the
     /// argument values entered for it, or `None` when none have been. `Ok`
     /// once the engine has started it; an error is a sentence saying why it
@@ -191,6 +215,22 @@ const FILES_NEED_ENGINE: &str =
 
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
+
+const SCRIPTS_NEED_ENGINE: &str =
+    "Script commands need the Compass engine, and this window is running without one";
+
+/// What a script run has printed, and whether it has ended.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScriptOutputState {
+    /// Everything read so far.
+    pub output: String,
+    /// Whether it has ended.
+    pub finished: bool,
+    /// Its exit code, when it exited normally.
+    pub exit_code: Option<i32>,
+    /// How long it has run, or ran.
+    pub elapsed_ms: u64,
+}
 
 const SNIPPETS_NEED_ENGINE: &str =
     "Snippets need the Compass engine, and this window is running without one";

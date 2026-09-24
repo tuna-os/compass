@@ -102,6 +102,10 @@ pub struct EngineState {
     shortcuts: Option<compass_core::shortcut_service::ShortcutService>,
     /// Snippets, `None` on the same terms as `shortcuts`.
     snippets: Option<compass_core::snippet_store::SnippetStore>,
+    /// Script commands, as the last scan found them.
+    scripts: crate::scripts::Scripts,
+    /// Script runs the launcher follows.
+    script_runs: Arc<crate::scripts::Runs>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -148,6 +152,17 @@ impl EngineState {
 
         let shortcuts = crate::shortcuts::data_dir().map(|dir| crate::shortcuts::open(&dir));
         let snippets = crate::shortcuts::data_dir().map(|dir| crate::snippets::open(&dir));
+        let mut scripts = crate::scripts::Scripts::new(
+            compass_core::script_scan::scan_directories(
+                &crate::scripts::custom_directories(
+                    config.provider_preferences(crate::scripts::PREFERENCES_PROVIDER_ID),
+                ),
+                &crate::scripts::default_directories(),
+            ),
+            crate::shortcuts::data_dir().map(|dir| dir.join(crate::scripts::METADATA_FILE)),
+        );
+        scripts.rescan();
+        index.set_scripts(scripts.items());
         if let Some(shortcuts) = &shortcuts {
             index.set_shortcuts(shortcuts.shortcuts().to_vec());
         }
@@ -173,6 +188,8 @@ impl EngineState {
             files: Arc::new(files),
             shortcuts,
             snippets,
+            scripts,
+            script_runs: Arc::default(),
         }
     }
 
@@ -221,6 +238,8 @@ impl EngineState {
             files: Arc::default(),
             shortcuts: None,
             snippets: None,
+            scripts: crate::scripts::Scripts::default(),
+            script_runs: Arc::default(),
         }
     }
 
@@ -291,6 +310,18 @@ impl EngineState {
                     id: command.id.clone(),
                     title: command.title.clone(),
                     subtitle: Some(command.extension_title.clone()),
+                    score: match_score,
+                },
+                compass_core::RootHit::Script {
+                    script,
+                    match_score,
+                } => QueryHit {
+                    id: compass_core::root_items::entrypoint_id(
+                        compass_core::script_scan::SCRIPTS_PROVIDER_ID,
+                        &script.id,
+                    ),
+                    title: script.title.clone(),
+                    subtitle: Some(script.subtitle.clone()),
                     score: match_score,
                 },
                 compass_core::RootHit::Shortcut {
@@ -412,6 +443,107 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
             ErrorKind::Unsupported,
             "no application opens this kind of file",
         ))
+    }
+}
+
+/// Runs a script command in its mode, as `ScriptExecutorAction::execute`
+/// does; see [`crate::scripts`].
+async fn run_script(state: &Arc<RwLock<EngineState>>, id: &str, arguments: &[String]) -> Response {
+    use compass_core::script_command::OutputMode;
+    use compass_worker_host::application_service::{Apps, TerminalOptions};
+    let bad = |message: String| Response::Error(ProtocolError::new(ErrorKind::BadRequest, message));
+    let (path, runs) = {
+        let state = state.read().await;
+        let Some(script) = state.scripts.find(id) else {
+            return bad("no script command has that id".to_owned());
+        };
+        (script.path.clone(), Arc::clone(&state.script_runs))
+    };
+    // Read again, as the C++ reloads before every run: the file is the
+    // user's and may have changed since the scan.
+    let script = match std::fs::read_to_string(&path)
+        .map_err(|error| error.to_string())
+        .and_then(|text| compass_core::script_scan::ScriptCommandFile::parse(&path, id, &text))
+    {
+        Ok(script) => script,
+        Err(error) => return bad(format!("Failed to parse script: {error}")),
+    };
+    let argv = match crate::scripts::command_line(&script, arguments) {
+        Ok(argv) => argv,
+        Err(error) => return bad(error),
+    };
+    let cwd = crate::scripts::working_directory(&script);
+    let mode = script.data.mode;
+    if mode == OutputMode::Terminal {
+        let data = &script.data;
+        let options = TerminalOptions {
+            hold: data.terminal.as_ref().and_then(|t| t.hold).unwrap_or(true),
+            app_id: data.terminal.as_ref().and_then(|t| t.app_id.clone()),
+            title: data
+                .terminal
+                .as_ref()
+                .and_then(|t| t.title.clone())
+                .or_else(|| (!data.title.is_empty()).then(|| data.title.clone())),
+            working_directory: data
+                .terminal
+                .as_ref()
+                .and_then(|t| t.working_directory.clone())
+                .or_else(|| data.current_directory_path.clone()),
+        };
+        let apps = engine_apps(state).await;
+        return if apps.run_in_terminal(&argv, &options) {
+            Response::ScriptStarted { session: None }
+        } else {
+            Response::Error(ProtocolError::new(
+                ErrorKind::Unsupported,
+                "Failed to execute script",
+            ))
+        };
+    }
+    let (combined, timeout) = if mode == OutputMode::Full {
+        (true, None)
+    } else {
+        (false, Some(crate::scripts::ONE_LINE_TIMEOUT))
+    };
+    let (session, run, task) = match runs.start(&argv, &cwd, combined, timeout) {
+        Ok(started) => started,
+        Err(error) => return Response::Error(ProtocolError::new(ErrorKind::Internal, error)),
+    };
+    match mode {
+        OutputMode::Silent => {
+            tokio::spawn(async move {
+                let _ = task.await;
+                let (ok, line) = run
+                    .lock()
+                    .map(|run| (run.exit_code == Some(0), run.first_line()))
+                    .unwrap_or_default();
+                show_hud(&crate::scripts::one_line_message(mode, ok, &line)).await;
+            });
+            Response::ScriptStarted { session: None }
+        }
+        OutputMode::Inline => {
+            let state = Arc::clone(state);
+            let id = id.to_owned();
+            tokio::spawn(async move {
+                let _ = task.await;
+                let (ok, line) = run
+                    .lock()
+                    .map(|run| (run.exit_code == Some(0), run.first_line()))
+                    .unwrap_or_default();
+                if ok {
+                    let mut state = state.write().await;
+                    let state = &mut *state;
+                    state.scripts.save_run(&id, &line);
+                    state.index.set_scripts(state.scripts.items());
+                }
+            });
+            Response::ScriptStarted {
+                session: Some(session),
+            }
+        }
+        _ => Response::ScriptStarted {
+            session: Some(session),
+        },
     }
 }
 
@@ -1517,6 +1649,42 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             shortcuts_response(shortcuts)
         }
         Request::OpenShortcut { id, arguments } => open_shortcut(state, &id, &arguments).await,
+        Request::ListScripts => {
+            let mut state = state.write().await;
+            let state = &mut *state;
+            state.scripts.rescan();
+            let items = state.scripts.items();
+            let scripts = items.iter().map(crate::scripts::entry).collect();
+            state.index.set_scripts(items);
+            Response::Scripts { scripts }
+        }
+        Request::RunScript { id, arguments } => run_script(state, &id, &arguments).await,
+        Request::ScriptOutput { session } => {
+            let runs = Arc::clone(&state.read().await.script_runs);
+            let Some(run) = runs.get(session) else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no script run has that session",
+                ));
+            };
+            let run = run.lock().map_err(|_| ()).ok();
+            match run {
+                Some(run) => Response::ScriptOutput {
+                    output: String::from_utf8_lossy(&run.output).into_owned(),
+                    finished: run.finished,
+                    exit_code: run.exit_code,
+                    elapsed_ms: u64::try_from(run.elapsed().as_millis()).unwrap_or(u64::MAX),
+                },
+                None => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    "the script run's state is poisoned",
+                )),
+            }
+        }
+        Request::StopScript { session } => {
+            state.read().await.script_runs.stop(session);
+            Response::Ack
+        }
         Request::ListSnippets => {
             let state = state.read().await;
             match &state.snippets {

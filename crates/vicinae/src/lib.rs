@@ -26,6 +26,7 @@ pub mod indexer_client;
 pub mod indexer_service;
 pub mod indexer_watch;
 pub mod ipc;
+pub mod scripts;
 pub mod serve;
 pub mod session;
 pub mod shortcuts;

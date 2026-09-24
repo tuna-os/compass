@@ -3003,3 +3003,171 @@ fn snippets_are_imported_created_expanded_edited_and_removed() {
     .unwrap();
     assert!(compass.contains("\"name\":\"Hello\"") && !compass.contains("Signature"));
 }
+
+/// Asks for a script run's output until it has finished, or panics.
+fn script_output_until_finished(daemon: &Daemon, session: u64) -> (String, Option<i32>) {
+    use compass_ipc::{Request, Response};
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        match daemon.request(Request::ScriptOutput { session }) {
+            Response::ScriptOutput {
+                output,
+                finished: true,
+                exit_code,
+                ..
+            } => return (output, exit_code),
+            Response::ScriptOutput { .. } => {}
+            other => panic!("not a script output: {other:?}"),
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("script run {session} never finished");
+}
+
+#[test]
+fn script_commands_are_scanned_searched_and_run_in_their_modes() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let marker = std::sync::OnceLock::new();
+    let custom = TempDir::new().expect("tempdir");
+    let write = |dir: &Path, name: &str, mode: &str, title: &str, body: &str| {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\n# @raycast.schemaVersion 1\n# @raycast.title {title}\n\
+                 # @raycast.mode {mode}\n{body}\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    write(
+        custom.path(),
+        "compact.sh",
+        "compact",
+        "Custom Compact",
+        "echo custom; exit 1",
+    );
+    let config = format!(
+        r#"{{"providers": {{"scripts": {{"preferences": {{"customDirs": ["{}"]}}}}}}}}"#,
+        custom.path().display()
+    );
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], &config, |root| {
+        let dir = root.join("data-home/vicinae/scripts");
+        write(
+            &dir,
+            "full.sh",
+            "fullOutput",
+            "Full Report",
+            "# @raycast.argument1 {\"type\":\"text\",\"placeholder\":\"who\"}\n\
+             printf '\\033[32mgreen\\033[0m %s https://x.test\\n' \"$1\"; echo err >&2",
+        );
+        write(&dir, "inline.sh", "inline", "Queue Size", "echo '42 items'");
+        write(
+            &dir,
+            "compact.sh",
+            "compact",
+            "Packaged Compact",
+            "echo packaged",
+        );
+        let flag = root.join("silent-ran");
+        write(
+            &dir.join("tools"),
+            "silent.sh",
+            "silent",
+            "Touch Marker",
+            &format!("touch '{}'", flag.display()),
+        );
+        marker.set(flag).unwrap();
+        Vec::new()
+    });
+
+    let Response::Scripts { scripts } = daemon.request(Request::ListScripts) else {
+        panic!("no script list");
+    };
+    let mut listed: Vec<(&str, &str, &str)> = scripts
+        .iter()
+        .map(|s| (s.id.as_str(), s.title.as_str(), s.mode.as_str()))
+        .collect();
+    listed.sort_unstable();
+    assert_eq!(
+        listed,
+        [
+            ("compact.sh", "Custom Compact", "compact"),
+            ("full.sh", "Full Report", "fullOutput"),
+            ("inline.sh", "Queue Size", "inline"),
+            ("tools.silent.sh", "Touch Marker", "silent"),
+        ],
+        "a custom directory's script shadows the packaged one with the same id"
+    );
+    let full = scripts.iter().find(|s| s.id == "full.sh").unwrap();
+    assert_eq!(full.arguments.len(), 1);
+    assert_eq!(full.arguments[0].placeholder.as_deref(), Some("who"));
+
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "full report".into(),
+    }) else {
+        panic!("no query results");
+    };
+    assert_eq!(hits.first().map(|h| h.id.as_str()), Some("scripts:full.sh"));
+
+    let started = |id: &str, arguments: Vec<String>| match daemon.request(Request::RunScript {
+        id: id.into(),
+        arguments,
+    }) {
+        Response::ScriptStarted { session } => session,
+        other => panic!("{id} did not start: {other:?}"),
+    };
+
+    let session = started("full.sh", vec!["Zoë".into()]).expect("full output is followed");
+    let (output, exit) = script_output_until_finished(&daemon, session);
+    assert_eq!(exit, Some(0));
+    assert!(
+        output.contains("\u{1b}[32mgreen\u{1b}[0m Zoë https://x.test"),
+        "{output:?}"
+    );
+    assert!(output.contains("err"), "stderr is part of full output");
+
+    let session = started("inline.sh", vec![]).expect("inline is followed");
+    let (output, _) = script_output_until_finished(&daemon, session);
+    assert_eq!(output.trim(), "42 items");
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    loop {
+        let Response::Scripts { scripts } = daemon.request(Request::ListScripts) else {
+            panic!("no script list");
+        };
+        let inline = scripts.iter().find(|s| s.id == "inline.sh").unwrap();
+        if inline.subtitle == "42 items" {
+            break;
+        }
+        assert_eq!(inline.subtitle, "No data");
+        assert!(
+            Instant::now() < deadline,
+            "the inline line never became the subtitle"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let session = started("compact.sh", vec![]).expect("compact is followed");
+    assert_eq!(
+        script_output_until_finished(&daemon, session),
+        ("custom\n".to_owned(), Some(1))
+    );
+
+    assert_eq!(started("tools.silent.sh", vec![]), None);
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while !marker.get().unwrap().exists() {
+        assert!(Instant::now() < deadline, "the silent script never ran");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    let Response::Error(err) = daemon.request(Request::RunScript {
+        id: "nothing.sh".into(),
+        arguments: vec![],
+    }) else {
+        panic!("an unknown script was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}

@@ -164,6 +164,13 @@ fn all_requests() -> Vec<Request> {
             id: "snp-0123456789ab".into(),
             arguments: vec![],
         },
+        Request::ListScripts,
+        Request::RunScript {
+            id: "tools.uptime.sh".into(),
+            arguments: vec!["é".into(), String::new()],
+        },
+        Request::ScriptOutput { session: 3 },
+        Request::StopScript { session: 3 },
     ]
 }
 
@@ -391,6 +398,32 @@ fn all_responses() -> Vec<Response> {
             ],
         },
         Response::Snippets { snippets: vec![] },
+        Response::Scripts {
+            scripts: vec![compass_ipc::ScriptEntry {
+                id: "tools.uptime.sh".into(),
+                title: "Uptime ⏱".into(),
+                subtitle: "tools".into(),
+                keywords: vec!["load".into()],
+                mode: "fullOutput".into(),
+                needs_confirmation: true,
+                path: "/home/me/.local/share/vicinae/scripts/tools/uptime.sh".into(),
+                arguments: vec![compass_ipc::ScriptArgumentEntry {
+                    kind: "dropdown".into(),
+                    placeholder: Some("Unit".into()),
+                    optional: false,
+                    options: vec![("Seconds".into(), "s".into())],
+                }],
+            }],
+        },
+        Response::Scripts { scripts: vec![] },
+        Response::ScriptStarted { session: Some(3) },
+        Response::ScriptStarted { session: None },
+        Response::ScriptOutput {
+            output: "\u{1b}[31mred\u{1b}[0m https://x.test é".into(),
+            finished: true,
+            exit_code: Some(0),
+            elapsed_ms: 1500,
+        },
     ]
 }
 
@@ -439,6 +472,10 @@ fn request_variants_are_exhaustive() {
             | Request::RemoveSnippet { .. }
             | Request::ExpandSnippet { .. }
             | Request::PasteSnippet { .. }
+            | Request::ListScripts
+            | Request::RunScript { .. }
+            | Request::ScriptOutput { .. }
+            | Request::StopScript { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -466,6 +503,9 @@ fn response_variants_are_exhaustive() {
             | Response::Shortcuts { .. }
             | Response::Text { .. }
             | Response::Snippets { .. }
+            | Response::Scripts { .. }
+            | Response::ScriptStarted { .. }
+            | Response::ScriptOutput { .. }
             | Response::Window(_) => {}
         }
     }

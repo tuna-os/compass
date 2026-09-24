@@ -25,6 +25,7 @@ use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
+mod scripts;
 mod shortcuts;
 mod snippets;
 
@@ -449,6 +450,8 @@ pub enum RootRow {
     Calculator,
     /// A shortcut (quicklink), as its index in `AppIndex::shortcuts`.
     Shortcut(usize),
+    /// A script command, as its index in `AppIndex::scripts`.
+    Script(usize),
 }
 
 /// Which view the card shows.
@@ -468,6 +471,8 @@ enum Page {
     Shortcuts(crate::shortcuts_page::ShortcutsPage),
     /// Manage Snippets.
     Snippets(crate::snippets_page::SnippetsPage),
+    /// A script command's full output.
+    ScriptOutput(crate::script_page::ScriptOutputPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -729,6 +734,8 @@ pub struct LauncherApp {
     parked_shortcuts: Option<crate::shortcuts_page::ShortcutsPage>,
     /// Manage Snippets as it was when a form was opened over it.
     parked_snippets: Option<crate::snippets_page::SnippetsPage>,
+    /// A compact or inline script run the root list is waiting on.
+    following_script: Option<scripts::FollowedScript>,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -948,6 +955,7 @@ impl LauncherApp {
             awaiting: false,
             parked_shortcuts: None,
             parked_snippets: None,
+            following_script: None,
         }
     }
 
@@ -1079,6 +1087,7 @@ impl LauncherApp {
             RootRow::Command(_)
             | RootRow::Extension(_)
             | RootRow::Shortcut(_)
+            | RootRow::Script(_)
             | RootRow::Calculator => None,
         }
     }
@@ -1164,7 +1173,21 @@ impl LauncherApp {
                     .map_or("", crate::shortcuts_page::display_name);
                 line.push_str(&format!(" selected_title={title:?}"));
             }
+            Some(RootRow::Script(index)) => {
+                let title = self
+                    .app_index
+                    .scripts()
+                    .get(index)
+                    .map_or("", |script| script.title.as_str());
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::ScriptOutput(page) = &self.page {
+            line.push_str(&format!(
+                " page=script_output script_session={} script_finished={} script_exit={:?}",
+                page.session, page.state.finished, page.state.exit_code
+            ));
         }
         if let Page::Snippets(page) = &self.page {
             line.push_str(&format!(
@@ -1534,12 +1557,22 @@ impl LauncherApp {
                             // out rather than failing the list: the next
                             // refresh brings the two back into step.
                             .filter(|key| {
-                                !key.starts_with("shortcuts:")
-                                    || self.app_index.shortcut_by_entrypoint(key).is_some()
+                                (!key.starts_with("shortcuts:")
+                                    || self.app_index.shortcut_by_entrypoint(key).is_some())
+                                    && (!key.starts_with("scripts:")
+                                        || self.app_index.script_by_entrypoint(key).is_some())
                             })
                             .map(|key| {
                                 if let Some(command) = compass_core::commands::by_id(key) {
                                     return Some(RootRow::Command(command));
+                                }
+                                if let Some(script) = self.app_index.script_by_entrypoint(key) {
+                                    return self
+                                        .app_index
+                                        .scripts()
+                                        .iter()
+                                        .position(|known| known.id == script.id)
+                                        .map(RootRow::Script);
                                 }
                                 if let Some(shortcut) = self.app_index.shortcut_by_entrypoint(key) {
                                     return shortcuts
@@ -1613,6 +1646,9 @@ impl LauncherApp {
                 }
                 if let Some(RootRow::Shortcut(index)) = self.selected_row() {
                     return self.open_shortcut_at(index);
+                }
+                if let Some(RootRow::Script(index)) = self.selected_row() {
+                    return self.run_script_at(index);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -1693,6 +1729,7 @@ impl LauncherApp {
                     focus_search(),
                     self.search_task(),
                     self.refresh_shortcuts_task(),
+                    self.refresh_scripts_task(),
                 ])
             }
             Message::Closed(id) => {
@@ -1720,6 +1757,8 @@ impl LauncherApp {
                 } else if let Some(task) = self.open_shortcut_panel() {
                     return task;
                 } else if let Some(task) = self.open_snippet_panel() {
+                    return task;
+                } else if let Some(task) = self.open_script_panel() {
                     return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
@@ -1779,6 +1818,7 @@ impl LauncherApp {
                     && let Some(task) = self
                         .shortcut_panel_action(&id)
                         .or_else(|| self.snippet_panel_action(&id))
+                        .or_else(|| self.script_panel_action(&id))
                 {
                     return task;
                 }
@@ -1884,6 +1924,9 @@ impl LauncherApp {
                     return task;
                 }
                 if let Some(task) = self.submit_snippet_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_script_form() {
                     return task;
                 }
                 let Page::Preferences(page) = &mut self.page else {
@@ -2145,6 +2188,9 @@ impl LauncherApp {
             | Message::SnippetPasted(_)
             | Message::SnippetsQueryChanged(_)
             | Message::SnippetSelected(_) => self.snippet_message(message),
+            Message::ScriptsLoaded(_)
+            | Message::ScriptStarted { .. }
+            | Message::ScriptPolled { .. } => self.script_message(message),
             Message::Back => {
                 if let Some(task) = self.back_from_shortcut_form() {
                     return task;
@@ -2373,6 +2419,9 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::Snippets(_)) {
                     return self.snippets_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::ScriptOutput(_)) {
+                    return self.script_output_key(key, modifiers);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2609,6 +2658,7 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::SnippetsQueryChanged as OnInput),
             ),
+            Page::ScriptOutput(page) => ("", &page.title, None),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2670,6 +2720,8 @@ impl LauncherApp {
             self.shortcuts_body(page)
         } else if let Page::Snippets(page) = &self.page {
             self.snippets_body(page)
+        } else if let Page::ScriptOutput(page) = &self.page {
+            self.script_output_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -2714,6 +2766,17 @@ impl LauncherApp {
                             self.initial_badge(&command.title, selected),
                             command.title.clone(),
                             self.subtitles.then(|| command.extension_title.clone()),
+                            selected,
+                        )
+                    }
+                    RootRow::Script(index) => {
+                        let Some(script) = self.app_index.scripts().get(*index) else {
+                            continue;
+                        };
+                        self.list_row(
+                            self.initial_badge(&script.title, selected),
+                            script.title.clone(),
+                            self.subtitles.then(|| script.subtitle.clone()),
                             selected,
                         )
                     }
@@ -3565,7 +3628,8 @@ impl LauncherApp {
                 | crate::preferences_page::Purpose::ShortcutArguments
                 | crate::preferences_page::Purpose::ShortcutForm { .. }
                 | crate::preferences_page::Purpose::SnippetArguments { .. }
-                | crate::preferences_page::Purpose::SnippetForm { .. } => page.title.clone(),
+                | crate::preferences_page::Purpose::SnippetForm { .. }
+                | crate::preferences_page::Purpose::ScriptArguments => page.title.clone(),
             })
             .font(self.font())
             .size(14)
@@ -4240,6 +4304,13 @@ impl LauncherApp {
                         .position(|known| known.id == command.id)
                         .unwrap_or_default(),
                 ),
+                compass_core::RootHit::Script { script, .. } => RootRow::Script(
+                    self.app_index
+                        .scripts()
+                        .iter()
+                        .position(|known| known.id == script.id)
+                        .unwrap_or_default(),
+                ),
                 compass_core::RootHit::Shortcut { shortcut, .. } => RootRow::Shortcut(
                     self.app_index
                         .shortcuts()
@@ -4302,6 +4373,7 @@ impl LauncherApp {
                 RootRow::Command(_)
                 | RootRow::Extension(_)
                 | RootRow::Shortcut(_)
+                | RootRow::Script(_)
                 | RootRow::Calculator => None,
             })
             .filter_map(AppItem::icon)
@@ -4641,6 +4713,10 @@ mod tests {
         snippet_drafts: std::sync::Mutex<Vec<crate::backend::SnippetDraft>>,
         /// The snippets expanded or pasted: `(id, arguments, pasted)`.
         snippet_uses: std::sync::Mutex<Vec<SnippetUse>>,
+        /// The script commands the fake lists.
+        scripts: Vec<compass_core::script_scan::ScriptItem>,
+        /// The scripts run, with their arguments.
+        script_runs: std::sync::Mutex<Vec<(String, Vec<String>)>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4699,6 +4775,52 @@ mod tests {
             Box::pin(async move {
                 self.opened.lock().unwrap().push((path, reveal));
                 Ok(())
+            })
+        }
+
+        fn list_scripts(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
+            Box::pin(async move { Ok(self.scripts.clone()) })
+        }
+
+        fn run_script(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, Option<u64>> {
+            Box::pin(async move {
+                let mode = self
+                    .scripts
+                    .iter()
+                    .find(|script| script.id == id)
+                    .map(|script| script.mode)
+                    .ok_or("No script command has that id")?;
+                self.script_runs.lock().unwrap().push((id, arguments));
+                Ok(match mode {
+                    compass_core::script_command::OutputMode::Silent
+                    | compass_core::script_command::OutputMode::Terminal => None,
+                    _ => Some(7),
+                })
+            })
+        }
+
+        fn script_output(
+            &self,
+            session: u64,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ScriptOutputState> {
+            Box::pin(async move {
+                let (id, arguments) = self.script_runs.lock().unwrap().last().cloned().unwrap();
+                assert_eq!(session, 7);
+                Ok(crate::backend::ScriptOutputState {
+                    output: format!(
+                        "\u{1b}[31m{id}\u{1b}[0m {}\nsecond line",
+                        arguments.join(" ")
+                    ),
+                    finished: true,
+                    exit_code: Some(0),
+                    elapsed_ms: 1200,
+                })
             })
         }
 
@@ -6716,6 +6838,7 @@ mod tests {
                 RootRow::Command(_)
                 | RootRow::Extension(_)
                 | RootRow::Shortcut(_)
+                | RootRow::Script(_)
                 | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
@@ -7160,6 +7283,120 @@ mod tests {
             "{:?}",
             page.notice
         );
+    }
+
+    // ---- Script commands ----
+
+    fn script_item(
+        id: &str,
+        title: &str,
+        mode: compass_core::script_command::OutputMode,
+        arguments: usize,
+    ) -> compass_core::script_scan::ScriptItem {
+        compass_core::script_scan::ScriptItem {
+            id: id.into(),
+            title: title.into(),
+            subtitle: "scripts".into(),
+            keywords: vec![],
+            mode,
+            needs_confirmation: false,
+            arguments: (0..arguments)
+                .map(|n| compass_core::script_command::ScriptArgument {
+                    argument_type: compass_core::script_command::ArgumentType::Text,
+                    placeholder: Some(format!("arg{n}")),
+                    optional: false,
+                    percent_encoded: false,
+                    data: None,
+                })
+                .collect(),
+            path: format!("/scripts/{id}"),
+        }
+    }
+
+    fn scripts_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        use compass_core::script_command::OutputMode;
+        let backend = Arc::new(TestBackend {
+            scripts: vec![
+                script_item("report.sh", "Disk Report", OutputMode::Full, 1),
+                script_item("count.sh", "Count Things", OutputMode::Compact, 0),
+                script_item("touch.sh", "Touch Marker", OutputMode::Silent, 0),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_scripts_task();
+        settle(&mut app, task);
+        assert_eq!(app.app_index.scripts().len(), 3);
+        (app, backend)
+    }
+
+    #[test]
+    fn a_full_output_script_asks_for_its_argument_and_shows_its_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "disk report".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Script(0)),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "arg0");
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("/home".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.script_runs.lock().unwrap().as_slice(),
+            [("report.sh".to_owned(), vec!["/home".to_owned()])]
+        );
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["scripts:report.sh"]
+        );
+        let Page::ScriptOutput(page) = &app.page else {
+            panic!("no output view: {}", app.state_line());
+        };
+        assert_eq!(page.heading(), "Done in 1.2s (exit=0)");
+        assert_eq!(page.runs[0].text, "report.sh");
+        assert_eq!(
+            page.runs[0].foreground,
+            Some(compass_core::script_output::Color::Red)
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+    }
+
+    #[test]
+    fn a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "count things".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            app.error.as_deref(),
+            Some("count.sh "),
+            "{}",
+            app.state_line()
+        );
+
+        app.query = "touch marker".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(backend.script_runs.lock().unwrap().len(), 2);
     }
 
     // ---- Snippets ----
@@ -8054,6 +8291,7 @@ mod quick_launch_tests {
                 RootRow::Command(_)
                 | RootRow::Extension(_)
                 | RootRow::Shortcut(_)
+                | RootRow::Script(_)
                 | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
@@ -8200,6 +8438,7 @@ mod icon_tests {
                 RootRow::Command(_)
                 | RootRow::Extension(_)
                 | RootRow::Shortcut(_)
+                | RootRow::Script(_)
                 | RootRow::Calculator => None,
             })
             .find(|item| item.name() == name)

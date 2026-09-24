@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
-/// shortcuts and snippets.
+/// shortcuts, snippets and script commands.
 pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
@@ -398,6 +398,32 @@ pub enum Request {
         /// `(name, value)` for its arguments.
         arguments: Vec<(String, String)>,
     },
+    /// Every script command in the script directories, scanned afresh.
+    /// Answered with [`Response::Scripts`].
+    ListScripts,
+    /// Run a script command with its arguments, in the mode its header
+    /// declares. Answered with [`Response::ScriptStarted`]: a session to
+    /// follow with [`Request::ScriptOutput`] for `fullOutput`, `compact` and
+    /// `inline`, none for `silent` (the engine shows the result itself) and
+    /// `terminal`. A script that no longer parses, or has no interpreter, is
+    /// refused as [`ErrorKind::BadRequest`].
+    RunScript {
+        /// The script's id, as [`ScriptEntry::id`] carries it.
+        id: String,
+        /// Values for its arguments, in order.
+        arguments: Vec<String>,
+    },
+    /// What a running script has printed so far. Answered with
+    /// [`Response::ScriptOutput`].
+    ScriptOutput {
+        /// From [`Response::ScriptStarted`].
+        session: u64,
+    },
+    /// Stop a running script. Answered with [`Response::Ack`].
+    StopScript {
+        /// From [`Response::ScriptStarted`].
+        session: u64,
+    },
 }
 
 /// What the engine answers.
@@ -518,6 +544,62 @@ pub enum Response {
         /// The snippets.
         snippets: Vec<SnippetEntry>,
     },
+    /// Answer to [`Request::ListScripts`], in scan order.
+    Scripts {
+        /// The script commands.
+        scripts: Vec<ScriptEntry>,
+    },
+    /// Answer to [`Request::RunScript`].
+    ScriptStarted {
+        /// The run to follow, when the launcher shows its output.
+        session: Option<u64>,
+    },
+    /// Answer to [`Request::ScriptOutput`].
+    ScriptOutput {
+        /// Everything read so far: stdout and stderr interleaved for
+        /// `fullOutput`, stdout alone otherwise.
+        output: String,
+        /// Whether the script has exited (or was stopped, or timed out).
+        finished: bool,
+        /// Its exit code, once it exited normally.
+        exit_code: Option<i32>,
+        /// Milliseconds since it started, or how long it ran once finished.
+        elapsed_ms: u64,
+    },
+}
+
+/// One script command, as root search and the launcher need it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptEntry {
+    /// The dotted id the scan gave it, from its path below its directory.
+    pub id: String,
+    /// `@raycast.title`.
+    pub title: String,
+    /// Its package name, or an inline script's last line of output.
+    pub subtitle: String,
+    /// Extra search terms.
+    pub keywords: Vec<String>,
+    /// `fullOutput`, `compact`, `inline`, `silent` or `terminal`.
+    pub mode: String,
+    /// Whether to ask before running it.
+    pub needs_confirmation: bool,
+    /// Where the file is.
+    pub path: String,
+    /// What it asks for, in order.
+    pub arguments: Vec<ScriptArgumentEntry>,
+}
+
+/// One argument a script command declares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptArgumentEntry {
+    /// `text`, `password` or `dropdown`.
+    pub kind: String,
+    /// The field's placeholder, if it declares one.
+    pub placeholder: Option<String>,
+    /// Whether it may be left empty.
+    pub optional: bool,
+    /// A dropdown's options, as `(title, value)`.
+    pub options: Vec<(String, String)>,
 }
 
 /// One stored snippet, as `snippets.json` holds it.

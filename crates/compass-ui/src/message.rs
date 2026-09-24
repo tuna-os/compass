@@ -138,6 +138,24 @@ pub enum Message {
     SnippetsQueryChanged(String),
     /// A Manage Snippets row was clicked, by position.
     SnippetSelected(usize),
+    /// The script commands arrived, or why they could not be listed.
+    ScriptsLoaded(Result<Vec<compass_core::script_scan::ScriptItem>, String>),
+    /// A script started: the run to follow, if any.
+    ScriptStarted {
+        /// Which script.
+        id: String,
+        /// The arguments it ran with.
+        arguments: Vec<String>,
+        /// The run, or why it did not start.
+        result: Result<Option<u64>, String>,
+    },
+    /// A report on script run `session` arrived.
+    ScriptPolled {
+        /// Which run.
+        session: u64,
+        /// What it printed so far, or why it could not be read.
+        result: Result<crate::backend::ScriptOutputState, String>,
+    },
     /// The shortcut list arrived, or why it could not be read.
     ShortcutsLoaded(Result<Vec<crate::backend::Shortcut>, String>),
     /// A shortcut was saved (the list after it), or why it was not.

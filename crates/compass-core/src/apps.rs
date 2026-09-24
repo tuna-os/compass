@@ -498,6 +498,7 @@ impl AppIndexBuilder {
             skipped,
             extensions,
             shortcuts: Vec::new(),
+            scripts: Vec::new(),
             root_config: crate::root_items::RootConfig::default(),
         }
     }
@@ -677,6 +678,8 @@ pub struct AppIndex {
     extensions: Vec<crate::extension_commands::ExtensionCommand>,
     /// Quicklinks, in the store's order; their roots come last in `roots`.
     shortcuts: Vec<crate::shortcut_service::CachedShortcut>,
+    /// Script commands, in scan order; their roots come after the shortcuts'.
+    scripts: Vec<crate::script_scan::ScriptItem>,
     /// The configuration last applied, kept for roots added later.
     root_config: crate::root_items::RootConfig,
 }
@@ -704,6 +707,13 @@ pub enum RootHit<'a> {
     Shortcut {
         /// Which one.
         shortcut: &'a crate::shortcut_service::CachedShortcut,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
+    /// A script command.
+    Script {
+        /// Which one.
+        script: &'a crate::script_scan::ScriptItem,
         /// Match score on the IPC scale, excluding frecency.
         match_score: u32,
     },
@@ -855,6 +865,13 @@ impl AppIndex {
                                 match_score,
                             }
                         })
+                    })
+                    .or_else(|| {
+                        self.script_by_entrypoint(entrypoint_id)
+                            .map(|script| RootHit::Script {
+                                script,
+                                match_score,
+                            })
                     }),
             }
         })
@@ -894,15 +911,54 @@ impl AppIndex {
     /// part of [`AppIndexBuilder::build`]: their rows are dropped and rebuilt
     /// here, after every other root, so no other row's position moves.
     pub fn set_shortcuts(&mut self, shortcuts: Vec<crate::shortcut_service::CachedShortcut>) {
-        self.roots
-            .retain(|root| root.meta.provider_id != crate::shortcut::SHORTCUTS_PROVIDER_ID);
-        for shortcut in &shortcuts {
-            let mut root =
-                crate::shortcut::root_item(&shortcut.id, &shortcut.name, &shortcut.link.raw);
+        let roots = shortcuts
+            .iter()
+            .map(|shortcut| {
+                crate::shortcut::root_item(&shortcut.id, &shortcut.name, &shortcut.link.raw)
+            })
+            .collect();
+        self.replace_provider_roots(crate::shortcut::SHORTCUTS_PROVIDER_ID, roots);
+        self.shortcuts = shortcuts;
+    }
+
+    /// The script commands root search lists, in scan order.
+    #[must_use]
+    pub fn scripts(&self) -> &[crate::script_scan::ScriptItem] {
+        &self.scripts
+    }
+
+    /// The script a `scripts:<id>` entrypoint id names.
+    #[must_use]
+    pub fn script_by_entrypoint(
+        &self,
+        entrypoint_id: &str,
+    ) -> Option<&crate::script_scan::ScriptItem> {
+        let (provider, id) = crate::root_items::split_entrypoint_id(entrypoint_id)?;
+        if provider != crate::script_scan::SCRIPTS_PROVIDER_ID {
+            return None;
+        }
+        self.scripts.iter().find(|script| script.id == id)
+    }
+
+    /// Replaces the script commands root search lists, as
+    /// [`AppIndex::set_shortcuts`] replaces the quicklinks.
+    pub fn set_scripts(&mut self, scripts: Vec<crate::script_scan::ScriptItem>) {
+        let roots = scripts
+            .iter()
+            .map(crate::script_scan::ScriptItem::root_item)
+            .collect();
+        self.replace_provider_roots(crate::script_scan::SCRIPTS_PROVIDER_ID, roots);
+        self.scripts = scripts;
+    }
+
+    /// Drops `provider`'s roots and appends `roots` in their place, merged
+    /// with the configuration last applied.
+    fn replace_provider_roots(&mut self, provider: &str, roots: Vec<crate::root_items::RootItem>) {
+        self.roots.retain(|root| root.meta.provider_id != provider);
+        for mut root in roots {
             root.merge_config(&self.root_config, false);
             self.roots.push(root);
         }
-        self.shortcuts = shortcuts;
     }
 
     /// The installed extension command with this entrypoint id.

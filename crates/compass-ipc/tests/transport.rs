@@ -109,7 +109,16 @@ async fn echo_handler(request: Request) -> Response {
         | Request::OpenFile { .. }
         | Request::OAuthRedirect { .. }
         | Request::OpenShortcut { .. }
-        | Request::PasteSnippet { .. } => Response::Ack,
+        | Request::PasteSnippet { .. }
+        | Request::StopScript { .. } => Response::Ack,
+        Request::ListScripts => Response::Scripts { scripts: vec![] },
+        Request::RunScript { .. } => Response::ScriptStarted { session: None },
+        Request::ScriptOutput { .. } => Response::ScriptOutput {
+            output: String::new(),
+            finished: true,
+            exit_code: Some(0),
+            elapsed_ms: 0,
+        },
         Request::ListSnippets | Request::SaveSnippet { .. } | Request::RemoveSnippet { .. } => {
             Response::Snippets { snippets: vec![] }
         }

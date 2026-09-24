@@ -2132,6 +2132,30 @@ arguments by name. What differs:
 | 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | Parsed with the quicklink parser, which has no escape: `\{` is a backslash and a placeholder. | — |
 | 8 | `{argument}` with no `name=` is collected as an argument with an empty name. | Left out of the form; it expands to nothing either way. | `arguments_are_named_once_and_reserved_ids_are_not_arguments` |
 
+### Script commands — what the port does not have yet
+
+Script commands run end to end: the engine scans `vicinae/scripts` under the data home and each
+data directory, after the `customDirs` in `providers.scripts.preferences`, lists them in root search
+(title, package name, keywords; `scripts:<id>`), rescans whenever the launcher lists them, re-reads
+a script before running it, and runs it in its mode (IPC v11 `ListScripts`, `RunScript`,
+`ScriptOutput`, `StopScript`): `fullOutput` streams stdout and stderr with `FORCE_COLOR=1` to a view
+that colours them with the ported tokenizer; `compact` and `inline` take the first stdout line
+within 10 s, an inline line becoming the script's subtitle (kept in
+`compass-script-metadata.json`); `silent` says its line in a transient notification; `terminal` runs
+in the terminal emulator with the header's options. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Every root is pushed on one stack, so the *last* directory is walked first and a packaged script shadows a custom one with the same id, although the preference promises the opposite. | Roots are walked in order, so a custom directory wins. | `the_scan_finds_scripts_ids_them_by_path_and_lets_custom_dirs_win`, `script_commands_are_scanned_searched_and_run_in_their_modes` |
+| 2 | Arguments are completion fields beside the search text; confirmation is an alert. | One form carries both: a field per argument (text, password, dropdown), and the confirmation sentence in its title when the header asks for one. | `a_script_asks_for_its_arguments_or_its_confirmation` |
+| 3 | The directories are watched (100 ms debounce) and rescanned every 15 minutes. | Rescanned at start and each time the launcher is summoned; no watcher. | — |
+| 4 | `compact` and `inline` results are toasts; the window is reopened with the title as search text if it had closed. | The result shows in the root list's notice line; the window is not reopened. `silent`'s HUD is a transient notification, as the media commands' is. | `a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher` |
+| 5 | The full-output view's action panel runs the script again or kills it, and a toast counts the seconds. | The same two actions (Ctrl+R to run again), and the count is in the view's heading; Escape kills a running script, as leaving the view does. | `a_full_output_script_asks_for_its_argument_and_shows_its_output` |
+| 6 | The root row's panel opens the script in the text editor and its folder in the file browser. | Run and Copy path only. | — |
+| 7 | `refreshTime` (inline) is parsed and validated. | Parsed and validated, and not acted on — nor is it in the C++. | — |
+| 8 | Links in full output are clickable. | Drawn as links; a click is logged, the launcher having no URL opener yet (as for extension views). | — |
+| 9 | The script's icon (emoji, file, `https`). | Rows use the initial badge, like every root row without resolved art. | — |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

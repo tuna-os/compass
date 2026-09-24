@@ -51,6 +51,9 @@ pub enum Purpose {
         /// Whether saving goes back to Manage Snippets rather than the root.
         from_manage: bool,
     },
+    /// A script command's arguments, or its confirmation; `command_id` is
+    /// the script's id.
+    ScriptArguments,
 }
 
 impl Purpose {
@@ -64,6 +67,7 @@ impl Purpose {
             Self::SnippetArguments { paste: false } => "Enter: copy    Esc: back",
             Self::SnippetArguments { paste: true } => "Enter: paste    Esc: back",
             Self::SnippetForm { .. } => "Ctrl+Enter: save    Esc: back",
+            Self::ScriptArguments => "Enter: run    Esc: cancel",
         }
     }
 }

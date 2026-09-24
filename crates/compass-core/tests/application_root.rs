@@ -127,7 +127,8 @@ fn command_ids(hits: &[compass_core::RootHit<'_>]) -> Vec<String> {
             compass_core::RootHit::Command { command, .. } => Some(command.id()),
             compass_core::RootHit::App(_)
             | compass_core::RootHit::Extension { .. }
-            | compass_core::RootHit::Shortcut { .. } => None,
+            | compass_core::RootHit::Shortcut { .. }
+            | compass_core::RootHit::Script { .. } => None,
         })
         .collect()
 }
