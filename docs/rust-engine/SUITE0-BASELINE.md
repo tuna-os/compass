@@ -79,9 +79,34 @@ fifteen (`Dev`) is a tie at equal score; the rest are genuine scoring difference
 named "Development" and only C++ ranks it first, which looks less like boundary weighting and
 more like an exact-title bonus one side applies and the other does not.
 
-## What a gate could say, once someone picks
+## The gate, now set from these numbers
 
-Nothing here is gated yet. Three candidates, cheapest first:
+**`--gate-top-result 4` is on** in the `parity` job: a query of four or more characters that
+disagrees on its first result fails the run. Today that is **906 comparable queries and 0
+disagreements**, and the gate also fails if it compared nothing, so a threshold nobody reaches
+cannot pass by default.
+
+It is clean at 906/906 only because the harness now accounts for one **declared** divergence. Both
+of the two failures this gate would otherwise have are the same item:
+
+| query | C++ top | Rust top |
+|---|---|---|
+| `Deve` | Development | Devhelp |
+| `Development` | Development | Accerciser |
+
+`Development` is `synthetic/type-directory.desktop`, which is `Type=Directory` — a menu category,
+not an application. The C++ `Type` mapping has no `else`, so an unrecognised type silently becomes
+`Application` and the category file is ranked as launchable. That is `compass-xdg` divergence 5 in
+[`PARITY.md`](PARITY.md), a bug we deliberately do not reproduce, and the corpus entry exists to
+exercise it. `DECLARED_CPP_ONLY` in the harness records it with that reason; an item not on that
+list is still a regression, and a declared item does not excuse a real difference sitting beside it
+in the same ranking. Both of those are pinned by tests.
+
+The whole-ranking diff stays informational (`--report-only`) for the reason the table above gives.
+
+### What was considered, and what it would have cost
+
+Three candidates, cheapest first:
 
 1. **Top-result parity on queries of 4+ characters.** 3 regressions in 268 for 5–9, 2 in 433 for
    10+, 31 in 467 for 4. Almost free today, and it gates the thing a user notices.
@@ -90,6 +115,10 @@ Nothing here is gated yet. Three candidates, cheapest first:
 3. **Whole-ranking parity on 4+ characters.** 93.4% today, so it needs work first — the 31 are
    the list to work through.
 
-Short queries should stay ungated until the boundary-bonus difference above is either reconciled
-or declared in [`PARITY.md`](PARITY.md). Gating a 25%-agreement bucket produces a red job nobody
-reads, which is the failure mode this whole suite exists to avoid.
+**Option 1 is what shipped.** Short queries stay ungated until the boundary-bonus difference above
+is either reconciled or declared in [`PARITY.md`](PARITY.md). Gating a 25%-agreement bucket
+produces a red job nobody reads, which is the failure mode this whole suite exists to avoid.
+
+Option 2 — top-result parity overall, with the remaining 13 short-query cases as a shrinking
+allowlist — is the next target, and the boundary-bonus signature is the thing to understand before
+attempting it.

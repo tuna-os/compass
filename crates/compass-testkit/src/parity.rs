@@ -32,6 +32,11 @@ struct ParityConfig {
     report_only: bool,
     /// Narrow the C++ side to one root provider; see [`Flavour::query_args`].
     cpp_provider: Option<String>,
+    /// Fail the run when a query of at least this many characters disagrees
+    /// on its FIRST result. `None` gates nothing.
+    ///
+    /// See [`main`]'s `--gate-top-result`.
+    gate_top_result: Option<usize>,
 }
 
 /// One ranked hit, as an engine actually emits it.
@@ -103,6 +108,7 @@ fn main() -> Result<()> {
         selftest: false,
         report_only: false,
         cpp_provider: None,
+        gate_top_result: None,
     };
 
     // Parse command line args
@@ -160,6 +166,21 @@ fn main() -> Result<()> {
                 i += 1;
                 config.cpp_provider = Some(args[i].clone());
             }
+            // THE GATE, SET FROM MEASURED NUMBERS RATHER THAN CHOSEN.
+            //
+            // SUITE0-BASELINE.md records what the two engines do: top-result
+            // agreement is 1541/1556, and the disagreements collapse as
+            // queries get longer -- 25% agreement at two characters, 93% at
+            // four, 99.5% at ten. Gating the whole ranking on short queries
+            // would redden the job over tail order that is near-arbitrary on
+            // both sides, and a job that is always red is a job nobody reads.
+            //
+            // So the gate is the TOP RESULT -- the row a person launches --
+            // on queries long enough for the ranking to be meaningful.
+            "--gate-top-result" => {
+                i += 1;
+                config.gate_top_result = args[i].parse().ok();
+            }
             _ => {}
         }
         i += 1;
@@ -207,6 +228,64 @@ fn main() -> Result<()> {
             );
             std::process::exit(1);
         }
+    }
+
+    // THE GATE. Checked before the report-only banner below, because
+    // `--report-only` is about the whole-ranking diff being informational and
+    // must not silence a gate that was explicitly asked for.
+    if let Some(min_len) = config.gate_top_result {
+        let mut failures = Vec::new();
+        for detail in &report.details {
+            if detail.query.trim().chars().count() < min_len {
+                continue;
+            }
+            let (Some(cpp), Some(rust)) = (detail.cpp_results.first(), detail.rust_results.first())
+            else {
+                continue;
+            };
+            if cpp.id != rust.id {
+                failures.push((detail.query.as_str(), cpp, rust));
+            }
+        }
+
+        let compared = report
+            .details
+            .iter()
+            .filter(|detail| {
+                detail.query.trim().chars().count() >= min_len
+                    && !detail.cpp_results.is_empty()
+                    && !detail.rust_results.is_empty()
+            })
+            .count();
+
+        println!("\nTop-result gate (queries of {min_len}+ characters):");
+        println!("  Compared:          {compared}");
+        println!("  Disagreements:     {}", failures.len());
+
+        // A GATE THAT COMPARED NOTHING IS NOT A GATE THAT PASSED. Without
+        // this, a run whose queries all fell below the threshold -- or whose
+        // engines ranked nothing at all -- reports a clean gate having
+        // checked zero pairs.
+        if compared == 0 {
+            eprintln!(
+                "\n❌ THE TOP-RESULT GATE COMPARED NOTHING: no query of {min_len}+ characters \
+                 ranked on both sides, so passing it means nothing."
+            );
+            std::process::exit(1);
+        }
+
+        if !failures.is_empty() {
+            eprintln!(
+                "\n❌ TOP-RESULT PARITY FAILED on {} queries:",
+                failures.len()
+            );
+            for (query, cpp, rust) in &failures {
+                eprintln!("  {query:?}\n    cpp:  {} ({})", cpp.title, cpp.id);
+                eprintln!("    rust: {} ({})", rust.title, rust.id);
+            }
+            std::process::exit(1);
+        }
+        println!("  ✅ every query of {min_len}+ characters agrees on its first result");
     }
 
     if report.regression > 0 {
@@ -910,12 +989,60 @@ fn run_search(
 /// with the scale named -- declared, per §8.1, not discovered. Anything that
 /// changes *which* items appear or *in what order* is a
 /// [`ParityStatus::Regression`], which is the thing Suite 0 exists to catch.
+/// Items the C++ engine ranks and the Rust engine deliberately does not,
+/// each because PARITY.md already declares the difference.
+///
+/// DECLARED, NOT DISCOVERED, which is what §8.1 requires of a divergence. An
+/// entry here is not "a disagreement we tolerate": it is one the ledger
+/// argues for, with a test on the Rust side pinning the behaviour. Anything
+/// not on this list that differs is a regression, and the list is short on
+/// purpose.
+const DECLARED_CPP_ONLY: &[(&str, &str)] = &[(
+    "applications:type-directory",
+    "`Type=Directory` is not an application. The C++ `if`/`else` chain mapping `Type` has no      `else`, so an unrecognised type silently becomes `Application` and this menu-category file      is ranked as a launchable one — PARITY.md, `compass-xdg` divergence 5.",
+)];
+
 fn compare_results(
     cpp: &[SearchResultItem],
     rust: &[SearchResultItem],
 ) -> (ParityStatus, Option<String>) {
-    let cpp_ids: Vec<&str> = cpp.iter().map(|hit| hit.id.as_str()).collect();
+    // Declared C++-only items are removed from the C++ side before the
+    // comparison, so they neither hide a regression elsewhere in the ranking
+    // nor report as one themselves.
+    let declared: Vec<&str> = cpp
+        .iter()
+        .map(|hit| hit.id.as_str())
+        .filter(|id| {
+            DECLARED_CPP_ONLY.iter().any(|(declared, _)| declared == id)
+                && !rust.iter().any(|hit| hit.id == *id)
+        })
+        .collect();
+
+    let cpp_ids: Vec<&str> = cpp
+        .iter()
+        .map(|hit| hit.id.as_str())
+        .filter(|id| !declared.contains(id))
+        .collect();
     let rust_ids: Vec<&str> = rust.iter().map(|hit| hit.id.as_str()).collect();
+
+    if !declared.is_empty() && cpp_ids == rust_ids {
+        let reasons: Vec<&str> = declared
+            .iter()
+            .filter_map(|id| {
+                DECLARED_CPP_ONLY
+                    .iter()
+                    .find(|(declared, _)| declared == id)
+                    .map(|(_, why)| *why)
+            })
+            .collect();
+        return (
+            ParityStatus::KnownDivergence,
+            Some(format!(
+                "the C++ engine ranked {declared:?}, which this engine excludes by design: {}",
+                reasons.join(" ")
+            )),
+        );
+    }
 
     if cpp_ids != rust_ids {
         return (
@@ -1160,6 +1287,61 @@ mod tests {
                 "{key} must point at an empty directory, or the runner's own apps leak in"
             );
         }
+    }
+
+    /// A declared C++-only item is a KNOWN DIVERGENCE, not a regression.
+    ///
+    /// `Type=Directory` is a menu category, not an application. The C++
+    /// `Type` mapping has no `else`, so it becomes `Application` and gets
+    /// ranked; PARITY.md declares that we do not reproduce the bug. Without
+    /// this the ledger's own entry would read as a parity failure.
+    #[test]
+    fn a_declared_cpp_only_item_is_not_a_regression() {
+        let cpp = vec![
+            hit("applications:type-directory", 100.0),
+            hit("applications:host--anjuta", 59.0),
+        ];
+        let rust = vec![hit("applications:host--anjuta", 59.0)];
+
+        let (status, reason) = compare_results(&cpp, &rust);
+        assert_eq!(status, ParityStatus::KnownDivergence);
+        let reason = reason.expect("a declared divergence states its reason");
+        assert!(
+            reason.contains("Type=Directory"),
+            "the reason must name the behaviour, not just the id: {reason}"
+        );
+    }
+
+    /// The allowlist must not swallow a real difference sitting beside it.
+    ///
+    /// A list that forgives everything in a ranking containing a declared
+    /// item would be a hole exactly where the corpus exercises edge cases.
+    #[test]
+    fn a_declared_item_does_not_excuse_a_real_difference_in_the_same_ranking() {
+        let cpp = vec![
+            hit("applications:type-directory", 100.0),
+            hit("applications:host--anjuta", 59.0),
+        ];
+        let rust = vec![hit("applications:host--accerciser", 59.0)];
+
+        let (status, _) = compare_results(&cpp, &rust);
+        assert_eq!(
+            status,
+            ParityStatus::Regression,
+            "the declared item is removed, and what is left still differs"
+        );
+    }
+
+    /// An id NOT on the list is a regression however much it looks like one.
+    #[test]
+    fn an_undeclared_cpp_only_item_is_still_a_regression() {
+        let cpp = vec![
+            hit("applications:host--nautilus", 58.0),
+            hit("applications:host--anjuta", 59.0),
+        ];
+        let rust = vec![hit("applications:host--anjuta", 59.0)];
+
+        assert_eq!(compare_results(&cpp, &rust).0, ParityStatus::Regression);
     }
 
     /// The two engines' argv, pinned.
