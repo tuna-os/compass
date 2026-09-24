@@ -154,7 +154,7 @@ impl Database {
         db.register_spellfix()?;
 
         for pragma in PRAGMAS {
-            db.execute(pragma)?;
+            db.execute_through_busy(pragma)?;
         }
 
         Ok(db)
@@ -222,6 +222,31 @@ impl Database {
             message: unsafe { last_error(self.handle) },
             code: rc,
         })
+    }
+
+    /// [`Database::execute`], retried while another connection holds a lock.
+    ///
+    /// The busy timeout covers most contention, but SQLite deliberately skips
+    /// the busy handler where waiting could deadlock — two fresh connections
+    /// racing to switch a new file into WAL is one — and reports `SQLITE_BUSY`
+    /// at once. `open` retries its pragmas through that, within the same
+    /// budget, rather than failing a connection that would succeed a
+    /// millisecond later.
+    fn execute_through_busy(&self, sql: &str) -> Result<()> {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(BUSY_TIMEOUT_MS);
+        let mut pause = std::time::Duration::from_millis(1);
+        loop {
+            match self.execute(sql) {
+                Err(Error::Sqlite { code, .. })
+                    if code & 0xff == ffi::BUSY && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(pause);
+                    pause = (pause * 2).min(std::time::Duration::from_millis(50));
+                }
+                other => return other,
+            }
+        }
     }
 
     /// Run SQL that returns no rows.
@@ -378,6 +403,9 @@ impl Drop for Transaction<'_> {
 /// How long a connection waits on another's lock before giving up; the same
 /// default `rusqlite` uses.
 const BUSY_TIMEOUT: &str = "PRAGMA busy_timeout = 5000";
+
+/// [`BUSY_TIMEOUT`]'s budget, for the waits SQLite does not make itself.
+const BUSY_TIMEOUT_MS: u64 = 5000;
 
 const PRAGMAS: [&str; 4] = [
     "PRAGMA journal_mode = WAL",
