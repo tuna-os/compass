@@ -60,6 +60,22 @@ on:
       - 'figura/**'
       - 'scripts/runners/**'
       - '.github/workflows/cpp-on-target.yaml'
+      # THE RUST HALF OF THE DIFFERENTIAL.
+      #
+      # The Suite 0 gate exists to catch a change in how this engine ranks,
+      # and until now it could not fire on one: the paths above are all C++,
+      # so a Rust ranking change never started this workflow and the gate ran
+      # only when someone dispatched it by hand. A gate that cannot trigger on
+      # the change it guards is not a gate.
+      #
+      # Narrow on purpose -- this costs ~12 minutes, so it is the code that
+      # decides a ranking and nothing else. A clipboard or portal change does
+      # not need the C++ engine built to answer for it.
+      - 'crates/compass-search/**'
+      - 'crates/compass-core/src/apps.rs'
+      - 'crates/compass-core/src/root_items.rs'
+      - 'crates/vicinae/src/serve.rs'
+      - 'crates/compass-testkit/**'
   workflow_dispatch:
 
   # Nightly, so the artifact this job publishes actually exists when something
@@ -173,12 +189,17 @@ jobs:
   build:
     name: The C++ engine builds on Bluefin
     needs: configure
-    # Not on pull requests. `configure` is the PR-affordable half — a minute
-    # against this job's twenty-plus — and running both on every C++ change
-    # would spend the budget that made restoring the trigger defensible.
-    # Nightly and `workflow_dispatch` still build, which is where the
-    # `vicinae-cpp-bluefin.tar.gz` Suite 0 needs comes from.
-    if: github.event_name != 'pull_request'
+    # ON PULL REQUESTS NOW, because the `parity` gate below needs the engine
+    # this job publishes. It was dispatch-and-nightly only, back when nothing
+    # on a PR consumed the artifact; that made the Suite 0 gate unable to fire
+    # on the very changes it guards.
+    #
+    # The cost is bounded by the trigger's paths rather than by skipping the
+    # job: ~4 minutes with a warm ccache, only on changes that touch the C++
+    # tree or the Rust code that decides a ranking.
+    #
+    # `parity-spike` stays dispatch-only — it is a diagnostic for a question
+    # already answered, not a check.
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -727,7 +748,6 @@ jobs:
   parity:
     name: "Suite 0: the two engines, side by side"
     needs: build
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
 

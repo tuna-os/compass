@@ -71,15 +71,18 @@ on:
       # What it packages and runs.
       - .github/workflows/flatpak.yaml
       - packaging/flatpak/**
-      # The code it exercises: the engine that answers, the indexing that
-      # decides what it answers with, and the sandbox seam between them.
-      # Narrower than `crates/**` — a change to the clipboard crypto does not
-      # need a compositor to answer for it.
-      - crates/vicinae/**
-      - crates/compass-core/**
-      - crates/compass-xdg/**
-      - crates/compass-ipc/**
-      - crates/compass-ui/**
+      # The code it exercises. This was five crates, on the reasoning that a
+      # clipboard change does not need a compositor to answer for it — but
+      # the launcher this tier boots links the whole workspace, so a crate
+      # left off the list is a crate whose regression reaches a user without
+      # anything having started a compositor. `compass-shell`,
+      # `compass-platform-linux`, `compass-wayland`, `compass-portals` and
+      # `compass-sandbox` are all in the path between a keypress and a window.
+      #
+      # At 92 seconds measured — against the ten minutes §8.8 budgets — the
+      # tier can afford the whole of `crates/**`, and the narrow list was
+      # buying a saving it did not need.
+      - crates/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
