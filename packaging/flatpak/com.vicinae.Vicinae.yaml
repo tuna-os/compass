@@ -34,6 +34,11 @@ build-options:
     CARGO_HOME: /run/build/vicinae/cargo
 
 finish-args:
+  # --- Network -------------------------------------------------------------
+  # Extensions fetch their data (translate, GIPHY, Flathub, stocks...), views load remote images,
+  # OAuth exchanges its code, and the stores download bundles. Without this every lookup inside the
+  # sandbox fails with EAI_AGAIN; Suite 1 inside the Flatpak found it.
+  - --share=network
   # --- Display -------------------------------------------------------------
   # Wayland is the target. No fallback-x11: the engine is Wayland-only by design, and claiming an
   # X11 socket we never use would be asking for a permission we do not need.
