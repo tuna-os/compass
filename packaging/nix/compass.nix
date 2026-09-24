@@ -31,8 +31,8 @@
     vulkan-loader
     libGL
   ];
-in
-  craneLib.buildPackage {
+
+  commonArgs = {
     pname = "compass";
     version = "0.1.0";
     inherit src;
@@ -54,30 +54,39 @@ in
     ];
     OPENSSL_LIB_DIR = "${lib.getLib openssl}/lib";
     OPENSSL_INCLUDE_DIR = "${lib.getDev openssl}/include";
+  };
 
-    installPhaseCommand = ''
-      PREFIX="$out" LIBEXECDIR="$out/libexec" BIN_DIR="$PWD/target/release" \
-        RUNTIME_JS=${extensionRuntime}/share/vicinae/extension-runtime.js REQUIRE_RUNTIME=1 \
-        bash scripts/packaging/install-rust-engine.sh
-    '';
+  # Built on its own so the install and fixup below apply to the package
+  # only: the dependencies-only build has no bin/vicinae to patch.
+  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+in
+  craneLib.buildPackage (commonArgs
+    // {
+      inherit cargoArtifacts;
 
-    # COMPASS_NODE rather than Node on PATH: the launcher passes its
-    # environment to every application it starts, and they should not inherit
-    # our Node. COMPASS_BUILTIN_ICONS because `nix run` puts nothing on
-    # XDG_DATA_DIRS. The helpers, the runtime bundle and the schema are found
-    # relative to the binary, which the wrapper keeps in $out/bin.
-    postFixup = ''
-      patchelf --add-rpath ${dlopened} "$out/bin/vicinae"
-      wrapProgram "$out/bin/vicinae" \
-        --set-default COMPASS_NODE ${lib.getExe nodejs} \
-        --set-default COMPASS_BUILTIN_ICONS "$out/share/vicinae/builtin-icons"
-    '';
+      installPhaseCommand = ''
+        PREFIX="$out" LIBEXECDIR="$out/libexec" BIN_DIR="$PWD/target/release" \
+          RUNTIME_JS=${extensionRuntime}/share/vicinae/extension-runtime.js REQUIRE_RUNTIME=1 \
+          bash scripts/packaging/install-rust-engine.sh
+      '';
 
-    meta = {
-      description = "Compass, the Rust engine of Vicinae";
-      homepage = "https://github.com/tuna-os/compass";
-      license = lib.licenses.gpl3Only;
-      platforms = lib.platforms.linux;
-      mainProgram = "vicinae";
-    };
-  }
+      # COMPASS_NODE rather than Node on PATH: the launcher passes its
+      # environment to every application it starts, and they should not inherit
+      # our Node. COMPASS_BUILTIN_ICONS because `nix run` puts nothing on
+      # XDG_DATA_DIRS. The helpers, the runtime bundle and the schema are found
+      # relative to the binary, which the wrapper keeps in $out/bin.
+      postFixup = ''
+        patchelf --add-rpath ${dlopened} "$out/bin/vicinae"
+        wrapProgram "$out/bin/vicinae" \
+          --set-default COMPASS_NODE ${lib.getExe nodejs} \
+          --set-default COMPASS_BUILTIN_ICONS "$out/share/vicinae/builtin-icons"
+      '';
+
+      meta = {
+        description = "Compass, the Rust engine of Vicinae";
+        homepage = "https://github.com/tuna-os/compass";
+        license = lib.licenses.gpl3Only;
+        platforms = lib.platforms.linux;
+        mainProgram = "vicinae";
+      };
+    })
