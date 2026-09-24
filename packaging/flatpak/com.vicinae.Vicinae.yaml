@@ -70,6 +70,14 @@ finish-args:
   # sender allowlist, not by bus policy.
   - --talk-name=org.gnome.Shell
 
+  # --- Power Management ---------------------------------------------------
+  # Power off, reboot, suspend, hibernate, lock and log out (compass-power). logind is on the
+  # system bus; logout asks the desktop's own session manager on the session bus, as the C++
+  # does. Every action is still subject to logind's polkit policy.
+  - --system-talk-name=org.freedesktop.login1
+  - --talk-name=org.gnome.SessionManager
+  - --talk-name=org.kde.Shutdown
+
   # --- Launching host applications ----------------------------------------
   # A launcher that cannot launch is not a launcher. flatpak-spawn --host is how a sandboxed app
   # starts a host program, and it is genuinely a large grant: it is equivalent to running outside

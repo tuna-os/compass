@@ -2116,3 +2116,154 @@ fn a_views_toast_reaches_the_launcher_and_hiding_it_clears_it() {
     }
     daemon.request(Request::CloseExtension { session });
 }
+
+#[test]
+fn a_power_command_answers_with_its_own_sentences_and_never_touches_this_machine() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    // A system bus that does not exist: whatever this engine tries, the
+    // machine running the test cannot be rebooted by it.
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        vec![(
+            "DBUS_SYSTEM_BUS_ADDRESS",
+            "unix:path=/nonexistent/compass-test-system-bus".into(),
+        )]
+    });
+    let Response::Error(err) = daemon.request(Request::RunPowerCommand {
+        id: "reboot".into(),
+    }) else {
+        panic!("a reboot with no logind was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::Internal, "Failed to reboot")
+    );
+    let Response::Error(err) = daemon.request(Request::RunPowerCommand {
+        id: "self-destruct".into(),
+    }) else {
+        panic!("an unknown power command was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+#[test]
+fn a_media_command_says_why_it_did_nothing() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::io::{BufRead, BufReader};
+    let play_pause = || Request::RunMediaCommand {
+        id: "play-pause".into(),
+    };
+
+    // No session bus at all: the player could not be reached.
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let Response::Error(err) = daemon.request(play_pause()) else {
+        panic!("play/pause with no session bus was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::Internal, "Failed to toggle playback")
+    );
+    let Response::Error(err) = daemon.request(Request::RunMediaCommand {
+        id: "rewind-time".into(),
+    }) else {
+        panic!("an unknown media command was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    drop(daemon);
+
+    // A bus with no player on it: the C++'s own sentence.
+    let mut bus = match Command::new("dbus-daemon")
+        .args(["--session", "--print-address", "--nofork"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(bus) => bus,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("SKIPPED the empty-bus half: no dbus-daemon on this machine");
+            return;
+        }
+        Err(err) => panic!("failed to spawn dbus-daemon: {err}"),
+    };
+    let mut address = String::new();
+    BufReader::new(bus.stdout.take().expect("piped stdout"))
+        .read_line(&mut address)
+        .expect("dbus-daemon prints its address");
+    let address = address.trim().to_owned();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())]
+    });
+    let answer = daemon.request(play_pause());
+    let _ = bus.kill();
+    let _ = bus.wait();
+    let Response::Error(err) = answer else {
+        panic!("play/pause with no player was not refused: {answer:?}");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::Unsupported, "No media player is running")
+    );
+}
+
+#[test]
+fn a_volume_command_runs_pactl_with_the_cpp_arguments() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let bin = TempDir::new().expect("tempdir");
+    let log = bin.path().join("pactl.log");
+    let fake = bin.path().join("pactl");
+    std::fs::write(
+        &fake,
+        format!(
+            r#"#!/bin/sh
+echo "$*" >> '{log}'
+[ -e '{fail}' ] && exit 1
+case "$*" in
+  get-default-sink) echo sink0 ;;
+  "--format=json list sinks") echo '[{{"name":"sink0","mute":false,"volume":{{"mono":{{"value_percent":"45%"}}}}}}]' ;;
+esac
+exit 0
+"#,
+            log = log.display(),
+            fail = bin.path().join("fail").display(),
+        ),
+    )
+    .expect("fake pactl");
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let path = std::env::join_paths(std::iter::once(bin.path().to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .expect("PATH");
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        vec![("PATH", path)]
+    });
+    let run = |id: &str| daemon.request(Request::RunMediaCommand { id: id.to_owned() });
+
+    assert!(matches!(run("volume-50"), Response::Ack));
+    assert!(matches!(run("volume-up"), Response::Ack));
+    assert!(matches!(run("toggle-mute"), Response::Ack));
+    let calls = std::fs::read_to_string(&log).expect("pactl ran");
+    let calls: Vec<&str> = calls.lines().collect();
+    assert_eq!(
+        calls,
+        [
+            "set-sink-volume @DEFAULT_SINK@ 50%",
+            "set-sink-volume @DEFAULT_SINK@ +5%",
+            "get-default-sink",
+            "--format=json list sinks",
+            "set-sink-mute @DEFAULT_SINK@ toggle",
+            "get-default-sink",
+            "--format=json list sinks",
+            "get-default-sink",
+            "--format=json list sinks",
+        ]
+    );
+
+    std::fs::write(bin.path().join("fail"), "").expect("make pactl fail");
+    let Response::Error(err) = run("volume-0") else {
+        panic!("a failing pactl was not reported");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::Internal, "Failed to set volume")
+    );
+}

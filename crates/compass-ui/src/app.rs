@@ -596,6 +596,8 @@ pub struct LauncherApp {
     results: Vec<RootRow>,
     /// The calculator's answer to the query, shown first when there is one.
     calculator: Option<compass_core::calculator::Answer>,
+    /// A power command waiting on the person's yes.
+    power_confirm: Option<&'static compass_core::power_commands::PowerCommand>,
     /// Which view is showing. See [`Page`].
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
@@ -888,6 +890,7 @@ impl LauncherApp {
             query: String::new(),
             results: Vec::new(),
             calculator: None,
+            power_confirm: None,
             page: Page::Root,
             clipboard: None,
             windows: None,
@@ -1984,6 +1987,12 @@ impl LauncherApp {
                 self.page = Page::Root;
                 Task::batch([closing, focus_search()])
             }
+            Message::BuiltinCommandDone(result) => {
+                if let Err(reason) = result {
+                    self.error = Some(reason);
+                }
+                Task::none()
+            }
             Message::EmojiQueryChanged(query) => {
                 if let Page::Emoji(page) = &mut self.page {
                     page.query = query;
@@ -2047,6 +2056,16 @@ impl LauncherApp {
                 // one key undoes opening the wrong command.
                 let panel_key = self.panel.is_some()
                     || (modifiers.control() && key.as_ref() == Key::Character("b"));
+                if let Some(power) = self.power_confirm {
+                    return match key.as_ref() {
+                        Key::Named(Named::Enter) => self.run_power_command(power),
+                        Key::Named(Named::Escape) => {
+                            self.power_confirm = None;
+                            Task::none()
+                        }
+                        _ => Task::none(),
+                    };
+                }
                 if let Page::Preferences(_) = &self.page {
                     return match key.as_ref() {
                         Key::Named(Named::Enter) => self.update(Message::PreferencesSubmit),
@@ -2370,7 +2389,23 @@ impl LauncherApp {
                 ..container::Style::default()
             });
 
-        let body: Element<Message> = if let Page::Preferences(page) = &self.page {
+        let body: Element<Message> = if let Some(power) = self.power_confirm {
+            column![
+                text(compass_core::power_commands::CONFIRM_TITLE)
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..self.font()
+                    })
+                    .size(16),
+                text(compass_core::power_commands::CONFIRM_BODY).font(self.font()),
+                text(format!("Enter: {}    Esc: cancel", power.name))
+                    .font(self.font())
+                    .size(12),
+            ]
+            .spacing(8)
+            .padding(Padding::new(18.0))
+            .into()
+        } else if let Page::Preferences(page) = &self.page {
             self.preferences_body(page)
         } else if let Page::Extension(page) = &self.page {
             self.extension_body(page)
@@ -2547,6 +2582,28 @@ impl LauncherApp {
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink)
             .into()
+    }
+
+    /// Hides the launcher, then runs `power` in the engine, as the C++ plan
+    /// does (the window closes first). A refusal is shown when it comes back.
+    fn run_power_command(
+        &mut self,
+        power: &'static compass_core::power_commands::PowerCommand,
+    ) -> Task<Message> {
+        self.power_confirm = None;
+        let Some(backend) = self.backend.clone() else {
+            self.error = Some(format!(
+                "{} needs the Compass engine, and this window is running without one",
+                power.name
+            ));
+            return Task::none();
+        };
+        let id = power.id.to_owned();
+        let run = Task::perform(
+            async move { backend.run_power_command(id).await },
+            Message::BuiltinCommandDone,
+        );
+        Task::batch([self.conceal(), run])
     }
 
     /// Copies the selected emoji and gets out of the way, so it can be
@@ -3564,6 +3621,31 @@ impl LauncherApp {
                 self.page = Page::Clipboard(crate::clipboard_page::ClipboardPage::default());
                 Task::batch([record, self.clipboard_search_task(), focus_search()])
             }
+            CommandKind::Power(id) => {
+                let Some(power) = compass_core::power_commands::command(id) else {
+                    return record;
+                };
+                if power.confirm_by_default {
+                    self.power_confirm = Some(power);
+                    return record;
+                }
+                Task::batch([record, self.run_power_command(power)])
+            }
+            CommandKind::Media(id) => {
+                let Some(backend) = self.backend.clone() else {
+                    self.error = Some(format!(
+                        "{} needs the Compass engine, and this window is running without one",
+                        command.title
+                    ));
+                    return record;
+                };
+                let id = id.to_owned();
+                let run = Task::perform(
+                    async move { backend.run_media_command(id).await },
+                    Message::BuiltinCommandDone,
+                );
+                Task::batch([record, self.conceal(), run])
+            }
             CommandKind::SearchEmojis => {
                 self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
                 Task::batch([record, focus_search()])
@@ -4094,6 +4176,10 @@ mod tests {
         alert: Option<crate::backend::ExtensionPrompt>,
         /// A toast the fake's views carry.
         toast: Option<crate::backend::ExtensionToast>,
+        /// The power commands asked for.
+        powered: std::sync::Mutex<Vec<String>>,
+        /// The media commands asked for.
+        played: std::sync::Mutex<Vec<String>>,
         answers: std::sync::Mutex<Vec<bool>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
@@ -4116,6 +4202,20 @@ mod tests {
                 } else {
                     Ok(())
                 }
+            })
+        }
+
+        fn run_power_command(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.powered.lock().unwrap().push(id);
+                Ok(())
+            })
+        }
+
+        fn run_media_command(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.played.lock().unwrap().push(id);
+                Err("No media player is running".to_owned())
             })
         }
 
@@ -5606,6 +5706,70 @@ mod tests {
         let _ = app.update(Message::QueryChanged("fi".to_owned()));
         assert!(app.results.len() > 1, "need several rows to move between");
         app
+    }
+
+    #[test]
+    fn a_power_command_asks_first_and_only_a_yes_runs_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:reboot".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let open = |app: &mut LauncherApp| {
+            for message in task_messages(app.update(Message::QueryChanged("reboot".into()))) {
+                let _ = app.update(message);
+            }
+            app.selected = app
+                .results
+                .iter()
+                .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "reboot"))
+                .expect("Reboot System is in root search");
+            let _ = app.update(Message::LaunchSelected);
+        };
+        open(&mut app);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Enter: Reboot System    Esc: cancel").is_ok());
+        }
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.power_confirm.is_none());
+        assert!(
+            backend.powered.lock().unwrap().is_empty(),
+            "Escape runs nothing"
+        );
+
+        open(&mut app);
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+    }
+
+    #[test]
+    fn a_media_command_runs_at_once_and_shows_why_it_did_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:next-track".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("next track".into()))) {
+            let _ = app.update(message);
+        }
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "next-track"))
+            .expect("Next Track is in root search");
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert!(app.power_confirm.is_none(), "media commands do not ask");
+        assert_eq!(backend.played.lock().unwrap().as_slice(), ["next-track"]);
+        assert_eq!(app.error.as_deref(), Some("No media player is running"));
     }
 
     #[test]

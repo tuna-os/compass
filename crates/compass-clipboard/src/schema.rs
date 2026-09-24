@@ -13,7 +13,7 @@
 
 pub use compass_db::{Error, Migration, checksum, run as run_migrations};
 
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::Connection;
 
 /// Every clipboard migration, in the order they must be applied.
 ///
@@ -42,7 +42,7 @@ pub const MIGRATIONS: &[Migration] = &[
 /// # Errors
 ///
 /// See [`compass_db::run`].
-pub fn run(db: &Database) -> Result<(), Error> {
+pub fn run(db: &Connection) -> Result<(), Error> {
     run_migrations(db, MIGRATIONS)
 }
 

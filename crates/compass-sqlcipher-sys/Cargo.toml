@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "SQLCipher and the fuzzy_trigram FTS5 tokenizer, built from vendor/ and wrapped for Compass."
+description = "Opens Compass databases: rusqlite over SQLCipher, keyed, with the vendored fuzzy_trigram FTS5 tokenizer registered."
 links = "compass_sqlcipher"
 
 # DELIBERATELY NOT `[lints] workspace = true`.
@@ -28,9 +28,11 @@ missing_docs = "deny"
 all = "deny"
 
 [dependencies]
-libc.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
+rusqlite.workspace = true
+# Named directly, not only through rusqlite, so that this build script receives
+# `DEP_SQLITE3_INCLUDE` and compiles the tokenizer against the headers of the
+# SQLite that is actually linked.
+libsqlite3-sys.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

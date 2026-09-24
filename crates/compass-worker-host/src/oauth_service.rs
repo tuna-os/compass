@@ -183,7 +183,7 @@ impl tsapi::Service for OAuthService<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compass_sqlcipher_sys::Database;
+    use compass_sqlcipher_sys::rusqlite::Connection;
     use std::path::Path;
 
     const FIG: &str = "figura/tsapi.fig";
@@ -216,9 +216,10 @@ mod tests {
             .collect()
     }
 
-    fn open() -> (tempfile::TempDir, Database) {
+    fn open() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+        let db = compass_sqlcipher_sys::open(&dir.path().join("vicinae.db"), &[])
+            .expect("an unencrypted db");
         compass_db::vicinae::run(&db).expect("the migrations apply");
         (dir, db)
     }
@@ -243,7 +244,7 @@ mod tests {
         answer["result"].clone()
     }
 
-    fn service<'a>(db: &'a Database) -> OAuthService<'a> {
+    fn service<'a>(db: &'a Connection) -> OAuthService<'a> {
         OAuthService::with_clock(TokenStore::new(db), "hn", || 1_700_000_000)
     }
 

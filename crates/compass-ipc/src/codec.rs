@@ -30,8 +30,8 @@
 use std::marker::PhantomData;
 
 use serde::{Serialize, de::DeserializeOwned};
-use tokio_util::bytes::{Buf, BufMut, BytesMut};
-use tokio_util::codec::{Decoder, Encoder};
+use tokio_util::bytes::{Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use crate::error::Error;
 
@@ -46,35 +46,44 @@ pub const LENGTH_PREFIX_LEN: usize = 4;
 /// connections.
 pub const MAX_FRAME_LEN: usize = 1024 * 1024;
 
-/// A [`tokio_util::codec`] codec for the frame format documented at the
-/// [module level](self).
+/// Frames postcard-encoded values with a little-endian `u32` length prefix.
 ///
-/// It decodes `T` and encodes any [`Serialize`] value, so a server uses
-/// `FrameCodec<RequestEnvelope>` (decoding requests, encoding responses) and a
-/// client uses `FrameCodec<ResponseEnvelope>`.
+/// The framing itself is `tokio_util`'s [`LengthDelimitedCodec`]; this adds
+/// postcard on either side, and reads the prefix first on decode so that an
+/// oversized frame is reported with its length.
 #[derive(Debug)]
 pub struct FrameCodec<T> {
+    inner: LengthDelimitedCodec,
     max_frame_len: usize,
+    /// Whether the next bytes are a length prefix: the inner codec consumes
+    /// the prefix once it has it, so the check below must not read a body.
+    at_head: bool,
     _item: PhantomData<fn() -> T>,
 }
 
 impl<T> FrameCodec<T> {
-    /// A codec with the default [`MAX_FRAME_LEN`] limit.
+    /// A codec refusing frames over [`MAX_FRAME_LEN`].
     #[must_use]
     pub fn new() -> Self {
         Self::with_max_frame_len(MAX_FRAME_LEN)
     }
 
-    /// A codec with a custom maximum body size.
+    /// A codec refusing frames over `max_frame_len`.
     #[must_use]
     pub fn with_max_frame_len(max_frame_len: usize) -> Self {
         Self {
+            inner: LengthDelimitedCodec::builder()
+                .little_endian()
+                .length_field_length(LENGTH_PREFIX_LEN)
+                .max_frame_length(max_frame_len)
+                .new_codec(),
             max_frame_len,
+            at_head: true,
             _item: PhantomData,
         }
     }
 
-    /// The maximum body size this codec accepts, in bytes.
+    /// The largest frame body accepted.
     #[must_use]
     pub fn max_frame_len(&self) -> usize {
         self.max_frame_len
@@ -89,10 +98,7 @@ impl<T> Default for FrameCodec<T> {
 
 impl<T> Clone for FrameCodec<T> {
     fn clone(&self) -> Self {
-        Self {
-            max_frame_len: self.max_frame_len,
-            _item: PhantomData,
-        }
+        Self::with_max_frame_len(self.max_frame_len)
     }
 }
 
@@ -101,26 +107,13 @@ impl<T, I: Serialize> Encoder<I> for FrameCodec<T> {
 
     fn encode(&mut self, item: I, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let body = postcard::to_stdvec(&item).map_err(Error::Encode)?;
-
         if body.len() > self.max_frame_len {
             return Err(Error::FrameTooLarge {
                 len: body.len(),
                 max: self.max_frame_len,
             });
         }
-
-        // `body.len() <= max_frame_len <= usize::MAX`, and the limit is far
-        // below `u32::MAX`, so the cast cannot truncate.
-        let len = u32::try_from(body.len()).map_err(|_| Error::FrameTooLarge {
-            len: body.len(),
-            max: self.max_frame_len,
-        })?;
-
-        dst.reserve(LENGTH_PREFIX_LEN + body.len());
-        dst.put_u32_le(len);
-        dst.put_slice(&body);
-
-        Ok(())
+        self.inner.encode(Bytes::from(body), dst).map_err(Error::Io)
     }
 }
 
@@ -129,34 +122,31 @@ impl<T: DeserializeOwned> Decoder for FrameCodec<T> {
     type Error = Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if src.len() < LENGTH_PREFIX_LEN {
-            return Ok(None);
+        // The codec refuses an oversized frame too, but without its length.
+        let reading_head = self.at_head && src.len() >= LENGTH_PREFIX_LEN;
+        if reading_head {
+            let mut prefix = [0u8; LENGTH_PREFIX_LEN];
+            prefix.copy_from_slice(&src[..LENGTH_PREFIX_LEN]);
+            let len = u32::from_le_bytes(prefix) as usize;
+            if len > self.max_frame_len {
+                return Err(Error::FrameTooLarge {
+                    len,
+                    max: self.max_frame_len,
+                });
+            }
         }
-
-        let mut prefix = [0u8; LENGTH_PREFIX_LEN];
-        prefix.copy_from_slice(&src[..LENGTH_PREFIX_LEN]);
-        let len = u32::from_le_bytes(prefix) as usize;
-
-        // Checked before any `reserve`: an unbounded length prefix from a peer
-        // must never turn into an allocation.
-        if len > self.max_frame_len {
-            return Err(Error::FrameTooLarge {
-                len,
-                max: self.max_frame_len,
-            });
+        match self.inner.decode(src).map_err(Error::Io)? {
+            Some(body) => {
+                self.at_head = true;
+                postcard::from_bytes(&body).map(Some).map_err(Error::Decode)
+            }
+            None => {
+                if reading_head {
+                    self.at_head = false;
+                }
+                Ok(None)
+            }
         }
-
-        let frame_len = LENGTH_PREFIX_LEN + len;
-
-        if src.len() < frame_len {
-            src.reserve(frame_len - src.len());
-            return Ok(None);
-        }
-
-        src.advance(LENGTH_PREFIX_LEN);
-        let body = src.split_to(len);
-
-        postcard::from_bytes(&body).map(Some).map_err(Error::Decode)
     }
 }
 
@@ -164,6 +154,7 @@ impl<T: DeserializeOwned> Decoder for FrameCodec<T> {
 mod tests {
     use super::*;
     use crate::protocol::{Request, RequestEnvelope, Response, ResponseEnvelope};
+    use tokio_util::bytes::BufMut;
 
     fn encoded(env: &RequestEnvelope) -> BytesMut {
         let mut buf = BytesMut::new();

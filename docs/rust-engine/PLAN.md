@@ -642,9 +642,9 @@ reaches it, implemented once for Linux and once for macOS:
    and which cannot be requested silently. The Linux engine has no equivalent step, so the
    onboarding flow gains a macOS-only branch — a product decision, not only an engineering one.
 2. **SQLCipher's crypto provider is `SQLCIPHER_CRYPTO_CC` (CommonCrypto) on macOS**, chosen at
-   compile time. `compass-sqlcipher-sys`'s `build.rs` already selects it, transcribed from
-   `vendor/sqlcipher/CMakeLists.txt` — but **that path has never been built or run**, by CI or by
-   anyone, since CI went Linux-only. It is a reading, not a green check. Phase 9 starts by
+   compile time. `libsqlite3-sys`'s `bundled-sqlcipher` build (through `rusqlite`) selects it when
+   no OpenSSL is configured, as `vendor/sqlcipher/CMakeLists.txt` does — but **that path has never
+   been built or run** for Compass, by CI or by anyone, since CI went Linux-only. It is a reading, not a green check. Phase 9 starts by
    re-enabling `Build (macOS)` and finding out; see [ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md).
 
 **What this phase deletes:** the three macOS translation units, the `if (APPLE)` CMake blocks, and
@@ -686,7 +686,7 @@ manifests:
 
 | tree | after Phase 10 |
 |---|---|
-| `sqlcipher` | **stays** — linked by `compass-sqlcipher-sys`. It is the clipboard file format, not an implementation of it (ADR-0014) |
+| `sqlcipher` | **goes** with the C++ engine, which is the only thing still compiling it. The format stays (ADR-0014): the Rust engine links `libsqlite3-sys`'s bundled SQLCipher 4, which reads and writes the same files |
 | `fuzzy-trigram` | **stays** — same reason: without it the FTS table cannot be opened at all |
 | `everything-sdk3` | **stays only if** Phase 10 keeps Everything for Windows file search; goes with that decision |
 | `cmark-gfm`, `pugixml`, `spellfix`, `kirigami-wheelhandler` | **go** with the C++ engine — referenced only by its CMake |
@@ -753,8 +753,9 @@ already exist by then, so the limit is how many people can usefully work on one 
 seam, not how much work there is.
 
 **What is not in this estimate:** neither 9 nor 10 has been costed against a working build. CI has
-been Linux-only since #71, so the macOS and Windows paths in `compass-sqlcipher-sys`'s `build.rs`
-have never run anywhere. The first task of Phase 9 is re-enabling `Build (macOS)` and replacing
+been Linux-only since #71, so the macOS and Windows paths of the SQLCipher build Compass links
+(`libsqlite3-sys`'s `bundled-sqlcipher`) have never run anywhere. On Windows that build wants
+OpenSSL (`OPENSSL_DIR`), where the C++ engine uses a CNG provider; both write SQLCipher 4 files. The first task of Phase 9 is re-enabling `Build (macOS)` and replacing
 that estimate with a measured one.
 
 ---
@@ -1964,8 +1965,9 @@ re-measured rather than adjusted.
   requires before Phase 4. `compass-platform` names what a launcher is and has **zero** Linux
   dependencies; the implementation moved out. A manifest test fails if a crate shared by every
   platform takes a dependency on a Linux-specific one.
-- **`compass-sqlcipher-sys`** (7) — SQLCipher and the `fuzzy_trigram` FTS5 tokenizer, built from
-  `vendor/` (ADR-0014), wrapped as `Database`/`Statement`. The one crate that declines the
+- **`compass-sqlcipher-sys`** (7) — opens every Compass database as a `rusqlite::Connection` over
+  SQLCipher (`bundled-sqlcipher`), keyed, with the `fuzzy_trigram` FTS5 tokenizer from `vendor/`
+  (ADR-0014) registered and the C++ engine's pragmas applied. The one crate that declines the
   workspace's `unsafe_code = "forbid"`, because tokenizer registration is FFI on a raw `sqlite3*`;
   it restates every other workspace lint so the exception is visible as a missing manifest line.
 - **`compass-clipboard`** (76) — **`clipboard-db.cpp` ported in full**: query planning, the schema
@@ -2407,7 +2409,11 @@ where it is.
    (`compass_db::vocabulary`), passing the ported file-search quality suite (23/23, including the
    four cases that depend on typo correction); Compass's index moved to its own file,
    `compass-file-index.db`, at schema v2, so the two engines stop purging each other's.
-   (b) **Deferred, and re-ranked below items 3–4.** Re-basing the wrapper on `rusqlite` was
+   (b) ~~re-base the wrapper on `rusqlite`~~ **done (2026-09-24):** the hand-written FFI and its
+   `Database`/`Statement`/`Transaction` are gone; `compass_sqlcipher_sys::open` returns a
+   `rusqlite::Connection` and every caller uses rusqlite's API (see
+   [`CRATE-AUDIT.md`](./CRATE-AUDIT.md)). The history of the decision: it was first
+   **deferred, and re-ranked below items 3–4.** Re-basing the wrapper on `rusqlite` was
    justified by removing the workspace's one `unsafe` opt-out, and that premise did not survive
    (a): `fuzzy_trigram` stays, its registration needs the raw `sqlite3*` after keying, so the
    crate keeps `unsafe` either way. What (b) would still buy is ~500 lines of FFI replaced by a

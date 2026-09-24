@@ -87,6 +87,23 @@ pub struct MediaPlayer {
     pub can_go_previous: bool,
 }
 
+/// Which player a command that names none acts on: the one last acted on,
+/// while it is still running; else the first one playing; else the first.
+/// The C++'s `AbstractMediaControl::defaultPlayer`.
+#[must_use]
+pub fn default_player(players: &[MediaPlayer], last: Option<&str>) -> Option<usize> {
+    if players.is_empty() {
+        return None;
+    }
+    last.and_then(|last| players.iter().position(|p| p.id == last))
+        .or_else(|| {
+            players
+                .iter()
+                .position(|p| p.status == PlaybackStatus::Playing)
+        })
+        .or(Some(0))
+}
+
 /// Whether a bus name is a player's.
 #[must_use]
 pub fn is_player_name(service: &str) -> bool {
@@ -285,22 +302,29 @@ impl MediaControl {
     ///
     /// [`Error::Bus`] if the bus will not list its names.
     pub async fn player_names(&self) -> Result<Vec<String>, Error> {
-        let reply = self
-            .connection
-            .call_method(
-                Some("org.freedesktop.DBus"),
-                "/org/freedesktop/DBus",
-                Some("org.freedesktop.DBus"),
-                "ListNames",
-                &(),
-            )
-            .await?;
-        let names: Vec<String> = reply.body().deserialize()?;
-
+        let names = zbus::fdo::DBusProxy::new(&self.connection)
+            .await?
+            .list_names()
+            .await
+            .map_err(zbus::Error::from)?;
         Ok(names
             .into_iter()
+            .map(|name| name.to_string())
             .filter(|name| is_player_name(name))
             .collect())
+    }
+
+    /// Bounds a call on a third-party player by [`CALL_TIMEOUT`].
+    async fn bounded<T>(
+        service: &str,
+        call: impl std::future::Future<Output = zbus::Result<T>>,
+    ) -> Result<T, Error> {
+        tokio::time::timeout(CALL_TIMEOUT, call)
+            .await
+            .map_err(|_| Error::Timeout {
+                service: service.to_owned(),
+            })?
+            .map_err(Error::from)
     }
 
     async fn properties(
@@ -308,20 +332,27 @@ impl MediaControl {
         service: &str,
         interface: &str,
     ) -> Result<HashMap<String, OwnedValue>, Error> {
-        let body = (interface,);
-        let call = self.connection.call_method(
-            Some(service),
-            PATH,
-            Some("org.freedesktop.DBus.Properties"),
-            "GetAll",
-            &body,
-        );
-        let reply = tokio::time::timeout(CALL_TIMEOUT, call)
-            .await
-            .map_err(|_| Error::Timeout {
-                service: service.to_owned(),
-            })??;
-        Ok(reply.body().deserialize()?)
+        let properties = zbus::fdo::PropertiesProxy::builder(&self.connection)
+            .destination(service.to_owned())?
+            .path(PATH)?
+            .build()
+            .await?;
+        let interface = zbus::names::InterfaceName::try_from(interface.to_owned())
+            .map_err(zbus::Error::from)?;
+        Self::bounded(service, async {
+            properties
+                .get_all(interface)
+                .await
+                .map_err(zbus::Error::from)
+        })
+        .await
+    }
+
+    async fn player_proxy(&self, service: &str) -> Result<PlayerProxy<'_>, Error> {
+        Ok(PlayerProxy::builder(&self.connection)
+            .destination(service.to_owned())?
+            .build()
+            .await?)
     }
 
     /// Everything known about one player.
@@ -358,53 +389,71 @@ impl MediaControl {
         Ok(players)
     }
 
-    /// Calls a method with no arguments on a player.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Bus`] if the player refuses or is gone.
-    pub async fn control(&self, service: &str, method: &str) -> Result<(), Error> {
-        let call =
-            self.connection
-                .call_method(Some(service), PATH, Some(PLAYER_INTERFACE), method, &());
-        tokio::time::timeout(CALL_TIMEOUT, call)
-            .await
-            .map_err(|_| Error::Timeout {
-                service: service.to_owned(),
-            })??;
-        Ok(())
-    }
-
     /// `PlayPause`.
     ///
     /// # Errors
     ///
-    /// As [`control`](Self::control).
+    /// [`Error::Bus`] if the player refuses or is gone, [`Error::Timeout`] if
+    /// it does not answer.
     pub async fn play_pause(&self, service: &str) -> Result<(), Error> {
-        self.control(service, "PlayPause").await
+        let player = self.player_proxy(service).await?;
+        Self::bounded(service, player.play_pause()).await
     }
 
     /// `Next`.
     ///
     /// # Errors
     ///
-    /// As [`control`](Self::control).
+    /// As [`play_pause`](Self::play_pause).
     pub async fn next(&self, service: &str) -> Result<(), Error> {
-        self.control(service, "Next").await
+        let player = self.player_proxy(service).await?;
+        Self::bounded(service, player.next()).await
     }
 
     /// `Previous`.
     ///
     /// # Errors
     ///
-    /// As [`control`](Self::control).
+    /// As [`play_pause`](Self::play_pause).
     pub async fn previous(&self, service: &str) -> Result<(), Error> {
-        self.control(service, "Previous").await
+        let player = self.player_proxy(service).await?;
+        Self::bounded(service, player.previous()).await
     }
+}
+
+/// `org.mpris.MediaPlayer2.Player`: the controls this crate calls.
+#[allow(missing_docs)]
+#[zbus::proxy(
+    interface = "org.mpris.MediaPlayer2.Player",
+    default_path = "/org/mpris/MediaPlayer2"
+)]
+trait Player {
+    fn play_pause(&self) -> zbus::Result<()>;
+    fn next(&self) -> zbus::Result<()>;
+    fn previous(&self) -> zbus::Result<()>;
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_default_player_is_the_last_then_the_playing_then_the_first() {
+        let player = |id: &str, status| super::MediaPlayer {
+            id: id.to_owned(),
+            status,
+            ..super::MediaPlayer::default()
+        };
+        let players = [
+            player("a", super::PlaybackStatus::Paused),
+            player("b", super::PlaybackStatus::Playing),
+            player("c", super::PlaybackStatus::Stopped),
+        ];
+        assert_eq!(super::default_player(&[], Some("a")), None);
+        assert_eq!(super::default_player(&players, Some("c")), Some(2));
+        assert_eq!(super::default_player(&players, Some("gone")), Some(1));
+        assert_eq!(super::default_player(&players, None), Some(1));
+        assert_eq!(super::default_player(&players[..1], None), Some(0));
+    }
+
     use super::*;
 
     fn value(text: &str) -> OwnedValue {

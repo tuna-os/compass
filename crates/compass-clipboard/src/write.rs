@@ -4,7 +4,9 @@
 //! than reproduce them; both are recorded in
 //! [PARITY.md](../../../docs/rust-engine/PARITY.md) and both have a test.
 
-use compass_sqlcipher_sys::{Database, Transaction};
+use compass_sqlcipher_sys::rusqlite::{
+    self, Connection, OptionalExtension as _, Params, Transaction, named_params,
+};
 
 use crate::kind::{EncryptionType, OfferKind};
 
@@ -76,7 +78,7 @@ pub struct NewOffer<'a> {
 pub enum Error {
     /// SQLite refused.
     #[error(transparent)]
-    Database(#[from] compass_sqlcipher_sys::Error),
+    Database(#[from] rusqlite::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -109,13 +111,10 @@ pub(crate) fn now() -> i64 {
 /// because a bubbled-up entry keeps its old row. So each copy is stamped
 /// `max(now, newest + 1)`: strictly after everything before it, and equal to
 /// the wall clock whenever the clock is ahead (which is all but always).
-fn next_stamp(db: &Database) -> Result<i64> {
-    let mut stmt = db.prepare("SELECT MAX(updated_at) FROM selection")?;
-    let newest = if stmt.step()? && !stmt.is_null(0) {
-        Some(stmt.column_int64(0))
-    } else {
-        None
-    };
+fn next_stamp(db: &Connection) -> Result<i64> {
+    let newest: Option<i64> = db.query_row("SELECT MAX(updated_at) FROM selection", [], |row| {
+        row.get(0)
+    })?;
     Ok(newest.map_or_else(now, |newest| now().max(newest.saturating_add(1))))
 }
 
@@ -126,19 +125,18 @@ fn next_stamp(db: &Database) -> Result<i64> {
 ///
 /// Returns [`Error::Database`] if the insert fails — including on a duplicate
 /// id, which the primary key rejects.
-pub fn insert_selection(db: &Database, selection: &NewSelection<'_>) -> Result<()> {
-    let mut stmt = db.prepare(INSERT_SELECTION)?;
-    stmt.bind_text(":id", selection.id)?;
-    stmt.bind_int64(":kind", selection.kind.to_stored())?;
-    stmt.bind_int64(":offer_count", selection.offer_count)?;
-    stmt.bind_text(":hash_md5", selection.hash)?;
-    stmt.bind_text(":preferred_mime_type", selection.preferred_mime_type)?;
-    match selection.source {
-        Some(source) => stmt.bind_text(":source", source)?,
-        None => stmt.bind_null(":source")?,
-    }
-    stmt.bind_int64(":epoch", next_stamp(db)?)?;
-    stmt.step()?;
+pub fn insert_selection(db: &Connection, selection: &NewSelection<'_>) -> Result<()> {
+    let epoch = next_stamp(db)?;
+    db.prepare_cached(INSERT_SELECTION)?
+        .execute(named_params! {
+            ":id": selection.id,
+            ":kind": selection.kind.to_stored(),
+            ":offer_count": selection.offer_count,
+            ":hash_md5": selection.hash,
+            ":preferred_mime_type": selection.preferred_mime_type,
+            ":source": selection.source,
+            ":epoch": epoch,
+        })?;
     Ok(())
 }
 
@@ -147,21 +145,18 @@ pub fn insert_selection(db: &Database, selection: &NewSelection<'_>) -> Result<(
 /// # Errors
 ///
 /// Returns [`Error::Database`] if the insert fails.
-pub fn insert_offer(db: &Database, offer: &NewOffer<'_>) -> Result<()> {
-    let mut stmt = db.prepare(INSERT_OFFER)?;
-    stmt.bind_text(":id", offer.id)?;
-    stmt.bind_text(":selection_id", offer.selection_id)?;
-    stmt.bind_text(":mime_type", offer.mime_type)?;
-    stmt.bind_text(":text_preview", offer.text_preview)?;
-    stmt.bind_text(":content_hash_md5", offer.md5sum)?;
-    stmt.bind_int64(":encryption", offer.encryption.to_stored())?;
-    stmt.bind_int64(":size", offer.size)?;
-    stmt.bind_int64(":kind", offer.kind.to_stored())?;
-    match offer.url_host {
-        Some(host) => stmt.bind_text(":url_host", host)?,
-        None => stmt.bind_null(":url_host")?,
-    }
-    stmt.step()?;
+pub fn insert_offer(db: &Connection, offer: &NewOffer<'_>) -> Result<()> {
+    db.prepare_cached(INSERT_OFFER)?.execute(named_params! {
+        ":id": offer.id,
+        ":selection_id": offer.selection_id,
+        ":mime_type": offer.mime_type,
+        ":text_preview": offer.text_preview,
+        ":content_hash_md5": offer.md5sum,
+        ":encryption": offer.encryption.to_stored(),
+        ":size": offer.size,
+        ":kind": offer.kind.to_stored(),
+        ":url_host": offer.url_host,
+    })?;
     Ok(())
 }
 
@@ -192,11 +187,12 @@ pub fn truncate_for_index(content: &str) -> &str {
 /// # Errors
 ///
 /// Returns [`Error::Database`] if the insert fails.
-pub fn index_content(db: &Database, selection_id: &str, content: &str) -> Result<()> {
-    let mut stmt = db.prepare(INSERT_INDEXED_CONTENT)?;
-    stmt.bind_text(":id", selection_id)?;
-    stmt.bind_text(":content", truncate_for_index(content))?;
-    stmt.step()?;
+pub fn index_content(db: &Connection, selection_id: &str, content: &str) -> Result<()> {
+    db.prepare_cached(INSERT_INDEXED_CONTENT)?
+        .execute(named_params! {
+            ":id": selection_id,
+            ":content": truncate_for_index(content),
+        })?;
     Ok(())
 }
 
@@ -217,22 +213,41 @@ pub fn index_content(db: &Database, selection_id: &str, content: &str) -> Result
 /// thing the user copied never reaches the history.
 ///
 /// `RETURNING id` answers the actual question — did *this* statement touch a
-/// row — per statement rather than per connection. `compass-sqlcipher-sys`
-/// deliberately does not expose `sqlite3_changes`, so the original shape is not
-/// available to reproduce by accident.
+/// row — per statement rather than per connection. Nothing here calls
+/// `Connection::changes`, which reads that same connection-wide counter, so the
+/// original shape is not reproduced by accident.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Database`] if the update fails, rather than reporting a
 /// stale success.
-pub fn bubble_up(db: &Database, id_or_hash: &str) -> Result<bool> {
-    let mut stmt = db.prepare(
+pub fn bubble_up(db: &Connection, id_or_hash: &str) -> Result<bool> {
+    let updated_at = next_stamp(db)?;
+    returns_a_row(
+        db,
         "UPDATE selection SET updated_at = :updated_at \
          WHERE hash_md5 = :id OR id = :id RETURNING id",
-    )?;
-    stmt.bind_text(":id", id_or_hash)?;
-    stmt.bind_int64(":updated_at", next_stamp(db)?)?;
-    stmt.step().map_err(Error::Database)
+        named_params! { ":id": id_or_hash, ":updated_at": updated_at },
+    )
+}
+
+/// Whether a `RETURNING` statement produced any row. SQLite applies every
+/// change on the first step, so one step is all it takes.
+fn returns_a_row(db: &Connection, sql: &str, params: impl Params) -> Result<bool> {
+    let mut stmt = db.prepare_cached(sql)?;
+    let found = stmt.query(params)?.next()?.is_some();
+    Ok(found)
+}
+
+/// The text of the first column of every row `sql` returns, NULLs skipped.
+fn ids(db: &Connection, sql: &str, params: impl Params) -> Result<Vec<String>> {
+    let mut stmt = db.prepare(sql)?;
+    let rows = stmt.query_map(params, |row| row.get::<_, Option<String>>(0))?;
+    let mut out = Vec::new();
+    for id in rows {
+        out.extend(id?);
+    }
+    Ok(out)
 }
 
 /// Delete a selection and its offers, returning the offer ids whose payloads
@@ -242,28 +257,18 @@ pub fn bubble_up(db: &Database, id_or_hash: &str) -> Result<bool> {
 ///
 /// Returns [`Error::Database`] if either delete fails, in which case nothing is
 /// committed.
-pub fn remove_selection(db: &Database, selection_id: &str) -> Result<Vec<String>> {
-    let tx = db.transaction()?;
-    let removed = delete_offers_of(db, selection_id)?;
-
-    let mut stmt = db.prepare("DELETE FROM selection WHERE id = :id")?;
-    stmt.bind_text(":id", selection_id)?;
-    stmt.step()?;
-    drop(stmt);
-
+pub fn remove_selection(db: &Connection, selection_id: &str) -> Result<Vec<String>> {
+    let tx = db.unchecked_transaction()?;
+    let removed = ids(
+        &tx,
+        "DELETE FROM data_offer WHERE selection_id = :id RETURNING id",
+        named_params! { ":id": selection_id },
+    )?;
+    tx.execute(
+        "DELETE FROM selection WHERE id = :id",
+        named_params! { ":id": selection_id },
+    )?;
     tx.commit()?;
-    Ok(removed)
-}
-
-fn delete_offers_of(db: &Database, selection_id: &str) -> Result<Vec<String>> {
-    let mut stmt = db.prepare("DELETE FROM data_offer WHERE selection_id = :id RETURNING id")?;
-    stmt.bind_text(":id", selection_id)?;
-    let mut removed = Vec::new();
-    while stmt.step()? {
-        if let Some(id) = stmt.column_text(0) {
-            removed.push(id);
-        }
-    }
     Ok(removed)
 }
 
@@ -293,7 +298,7 @@ fn delete_offers_of(db: &Database, selection_id: &str) -> Result<Vec<String>> {
 /// Returns [`Error::Database`] if either statement fails, in which case nothing
 /// is committed.
 pub fn evict_older_than(
-    db: &Database,
+    db: &Connection,
     age: std::time::Duration,
     preserve_tagged: bool,
 ) -> Result<Vec<String>> {
@@ -302,7 +307,7 @@ pub fn evict_older_than(
     // One reading of the clock, used by both statements below.
     let cutoff = now().saturating_sub(i64::try_from(age.as_millis()).unwrap_or(i64::MAX));
 
-    let tx = db.transaction()?;
+    let tx = db.unchecked_transaction()?;
 
     let mut select = String::from(
         "SELECT o.id FROM data_offer o \
@@ -312,15 +317,7 @@ pub fn evict_older_than(
     if preserve_tagged {
         select.push_str(PRESERVE);
     }
-    let mut stmt = db.prepare(&select)?;
-    stmt.bind_int64(":cutoff", cutoff)?;
-    let mut evicted = Vec::new();
-    while stmt.step()? {
-        if let Some(id) = stmt.column_text(0) {
-            evicted.push(id);
-        }
-    }
-    drop(stmt);
+    let evicted = ids(&tx, &select, named_params! { ":cutoff": cutoff })?;
 
     if evicted.is_empty() {
         return Ok(evicted);
@@ -330,10 +327,7 @@ pub fn evict_older_than(
     if preserve_tagged {
         delete.push_str(PRESERVE);
     }
-    let mut stmt = db.prepare(&delete)?;
-    stmt.bind_int64(":cutoff", cutoff)?;
-    stmt.step()?;
-    drop(stmt);
+    tx.execute(&delete, named_params! { ":cutoff": cutoff })?;
 
     tx.commit()?;
     Ok(evicted)
@@ -344,8 +338,8 @@ pub fn evict_older_than(
 /// # Errors
 ///
 /// Returns [`Error::Database`] if either statement fails.
-pub fn remove_all(db: &Database, preserve_tagged: bool) -> Result<Vec<String>> {
-    let tx = db.transaction()?;
+pub fn remove_all(db: &Connection, preserve_tagged: bool) -> Result<Vec<String>> {
+    let tx = db.unchecked_transaction()?;
 
     let (select, delete) = if preserve_tagged {
         (
@@ -357,18 +351,8 @@ pub fn remove_all(db: &Database, preserve_tagged: bool) -> Result<Vec<String>> {
         ("SELECT id FROM data_offer", "DELETE FROM selection")
     };
 
-    let mut stmt = db.prepare(select)?;
-    let mut removed = Vec::new();
-    while stmt.step()? {
-        if let Some(id) = stmt.column_text(0) {
-            removed.push(id);
-        }
-    }
-    drop(stmt);
-
-    let mut stmt = db.prepare(delete)?;
-    stmt.step()?;
-    drop(stmt);
+    let removed = ids(&tx, select, [])?;
+    tx.execute(delete, [])?;
 
     tx.commit()?;
     Ok(removed)
@@ -376,8 +360,8 @@ pub fn remove_all(db: &Database, preserve_tagged: bool) -> Result<Vec<String>> {
 
 /// Borrow of a transaction so callers can group several writes.
 ///
-/// Re-exported so a caller does not have to depend on `compass-sqlcipher-sys`
-/// directly to batch an insert of a selection and its offers.
+/// Re-exported so a caller does not have to name `rusqlite` to batch an insert
+/// of a selection and its offers.
 pub type Batch<'db> = Transaction<'db>;
 
 #[cfg(test)]
@@ -449,17 +433,20 @@ mod tests {
 /// # Errors
 ///
 /// Returns [`Error::Database`] if the update fails.
-pub fn set_pinned(db: &Database, id: &str, pinned: bool) -> Result<bool> {
-    let mut stmt = if pinned {
-        let mut stmt =
-            db.prepare("UPDATE selection SET pinned_at = :epoch WHERE id = :id RETURNING id")?;
-        stmt.bind_int64(":epoch", now())?;
-        stmt
+pub fn set_pinned(db: &Connection, id: &str, pinned: bool) -> Result<bool> {
+    if pinned {
+        returns_a_row(
+            db,
+            "UPDATE selection SET pinned_at = :epoch WHERE id = :id RETURNING id",
+            named_params! { ":epoch": now(), ":id": id },
+        )
     } else {
-        db.prepare("UPDATE selection SET pinned_at = NULL WHERE id = :id RETURNING id")?
-    };
-    stmt.bind_text(":id", id)?;
-    stmt.step().map_err(Error::Database)
+        returns_a_row(
+            db,
+            "UPDATE selection SET pinned_at = NULL WHERE id = :id RETURNING id",
+            named_params! { ":id": id },
+        )
+    }
 }
 
 /// Set a selection's keywords.
@@ -478,11 +465,12 @@ pub fn set_pinned(db: &Database, id: &str, pinned: bool) -> Result<bool> {
 /// # Errors
 ///
 /// Returns [`Error::Database`] if the update fails.
-pub fn set_keywords(db: &Database, id: &str, keywords: &str) -> Result<bool> {
-    let mut stmt = db.prepare("UPDATE selection SET keywords = :kw WHERE id = :id RETURNING id")?;
-    stmt.bind_text(":kw", keywords)?;
-    stmt.bind_text(":id", id)?;
-    stmt.step().map_err(Error::Database)
+pub fn set_keywords(db: &Connection, id: &str, keywords: &str) -> Result<bool> {
+    returns_a_row(
+        db,
+        "UPDATE selection SET keywords = :kw WHERE id = :id RETURNING id",
+        named_params! { ":kw": keywords, ":id": id },
+    )
 }
 
 /// A selection's keywords, or `None` if there is no such selection.
@@ -493,14 +481,15 @@ pub fn set_keywords(db: &Database, id: &str, keywords: &str) -> Result<bool> {
 /// # Errors
 ///
 /// Returns [`Error::Database`] if the query fails.
-pub fn keywords_of(db: &Database, id: &str) -> Result<Option<String>> {
-    let mut stmt = db.prepare("SELECT keywords FROM selection WHERE id = :id")?;
-    stmt.bind_text(":id", id)?;
-    if stmt.step()? {
-        Ok(Some(stmt.column_text(0).unwrap_or_default()))
-    } else {
-        Ok(None)
-    }
+pub fn keywords_of(db: &Connection, id: &str) -> Result<Option<String>> {
+    let keywords = db
+        .query_row(
+            "SELECT keywords FROM selection WHERE id = :id",
+            named_params! { ":id": id },
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+    Ok(keywords.map(Option::unwrap_or_default))
 }
 
 /// The `updated_at` of the oldest selection eviction would consider, so a
@@ -511,20 +500,15 @@ pub fn keywords_of(db: &Database, id: &str) -> Result<Option<String>> {
 /// # Errors
 ///
 /// Returns [`Error::Database`] if the query fails.
-pub fn oldest_evictable(db: &Database, preserve_tagged: bool) -> Result<Option<i64>> {
+pub fn oldest_evictable(db: &Connection, preserve_tagged: bool) -> Result<Option<i64>> {
     let sql = if preserve_tagged {
         "SELECT MIN(updated_at) FROM selection WHERE pinned_at IS NULL AND keywords == ''"
     } else {
         "SELECT MIN(updated_at) FROM selection"
     };
-    let mut stmt = db.prepare(sql)?;
-    if stmt.step()? && !stmt.is_null(0) {
-        Ok(Some(stmt.column_int64(0)))
-    } else {
-        // MIN over no rows is one row holding NULL, so "no rows" and "no
-        // evictable rows" both arrive here.
-        Ok(None)
-    }
+    // MIN over no rows is one row holding NULL, so "no rows" and "no evictable
+    // rows" both arrive as `None`.
+    Ok(db.query_row(sql, [], |row| row.get(0))?)
 }
 
 /// One offer of a selection, as [`find_selection`] reports it.
@@ -559,37 +543,47 @@ pub struct SelectionRecord {
 /// Returns [`Error::Database`] if the query fails, or
 /// [`crate::kind::UnknownDiscriminant`] wrapped in it if a stored
 /// `encryption_type` names no variant.
-pub fn find_selection(db: &Database, id: &str) -> Result<Option<SelectionRecord>> {
-    let mut stmt = db.prepare(
+pub fn find_selection(db: &Connection, id: &str) -> Result<Option<SelectionRecord>> {
+    let mut stmt = db.prepare_cached(
         "SELECT s.source, o.id, o.mime_type, o.encryption_type \
          FROM selection s \
          LEFT JOIN data_offer o ON o.selection_id = s.id \
          WHERE s.id = :id",
     )?;
-    stmt.bind_text(":id", id)?;
+    let mut rows = stmt.query(named_params! { ":id": id })?;
 
     let mut found: Option<SelectionRecord> = None;
-    while stmt.step()? {
-        let record = found.get_or_insert_with(|| SelectionRecord {
-            source: stmt.column_text(0),
-            offers: Vec::new(),
-        });
-        if stmt.is_null(1) {
+    while let Some(row) = rows.next()? {
+        let record = match &mut found {
+            Some(record) => record,
+            None => found.insert(SelectionRecord {
+                source: row.get(0)?,
+                offers: Vec::new(),
+            }),
+        };
+        let Some(offer_id) = row.get::<_, Option<String>>(1)? else {
             continue;
-        }
+        };
         record.offers.push(OfferRecord {
-            id: stmt.column_text(1).unwrap_or_default(),
-            mime_type: stmt.column_text(2).unwrap_or_default(),
-            encryption: EncryptionType::from_stored(stmt.column_int64(3)).map_err(|err| {
-                Error::Database(compass_sqlcipher_sys::Error::Sqlite {
-                    context: "reading an offer's encryption type",
-                    message: err.to_string(),
-                    code: -1,
-                })
-            })?,
+            id: offer_id,
+            mime_type: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            encryption: encryption_at(row, 3)?,
         });
     }
     Ok(found)
+}
+
+/// The stored `encryption_type` in `column`, refused as a conversion failure
+/// when it names no variant.
+fn encryption_at(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<EncryptionType> {
+    let stored = row.get::<_, Option<i64>>(column)?.unwrap_or(0);
+    EncryptionType::from_stored(stored).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Integer,
+            Box::new(err),
+        )
+    })
 }
 
 /// The offer a selection's list entry shows — the one whose MIME type matches
@@ -598,27 +592,22 @@ pub fn find_selection(db: &Database, id: &str) -> Result<Option<SelectionRecord>
 /// # Errors
 ///
 /// Returns [`Error::Database`] if the query fails.
-pub fn find_preferred_offer(db: &Database, selection_id: &str) -> Result<Option<OfferRecord>> {
-    let mut stmt = db.prepare(
-        "SELECT o.id, o.mime_type, o.encryption_type FROM data_offer o \
-         JOIN selection s ON s.id = o.selection_id \
-         WHERE o.mime_type = s.preferred_mime_type AND o.selection_id = :id",
-    )?;
-    stmt.bind_text(":id", selection_id)?;
-    if !stmt.step()? {
-        return Ok(None);
-    }
-    Ok(Some(OfferRecord {
-        id: stmt.column_text(0).unwrap_or_default(),
-        mime_type: stmt.column_text(1).unwrap_or_default(),
-        encryption: EncryptionType::from_stored(stmt.column_int64(2)).map_err(|err| {
-            Error::Database(compass_sqlcipher_sys::Error::Sqlite {
-                context: "reading the preferred offer's encryption type",
-                message: err.to_string(),
-                code: -1,
+pub fn find_preferred_offer(db: &Connection, selection_id: &str) -> Result<Option<OfferRecord>> {
+    let offer = db
+        .prepare_cached(
+            "SELECT o.id, o.mime_type, o.encryption_type FROM data_offer o \
+             JOIN selection s ON s.id = o.selection_id \
+             WHERE o.mime_type = s.preferred_mime_type AND o.selection_id = :id",
+        )?
+        .query_row(named_params! { ":id": selection_id }, |row| {
+            Ok(OfferRecord {
+                id: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                mime_type: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                encryption: encryption_at(row, 2)?,
             })
-        })?,
-    }))
+        })
+        .optional()?;
+    Ok(offer)
 }
 
 /// The write statements, pinned against the C++ engine's.

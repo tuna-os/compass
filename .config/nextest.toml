@@ -5,3 +5,9 @@
 [[profile.default.overrides]]
 filter = 'test(roundtrip_p99_is_within_the_phase_2_budget)'
 threads-required = "num-cpus"
+
+# The ranking budget likewise: its debug p99 crossed the 60 ms ceiling by 1.5%
+# while the ranking benches ran beside it, and release timings were unchanged.
+[[profile.default.overrides]]
+filter = 'binary_id(compass-search::ranking_budget)'
+threads-required = "num-cpus"

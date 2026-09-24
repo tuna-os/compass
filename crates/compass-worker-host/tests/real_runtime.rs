@@ -18,7 +18,6 @@
 use std::path::{Path, PathBuf};
 
 use compass_local_storage::{LocalStorage, namespace_for};
-use compass_sqlcipher_sys::Database;
 use compass_worker_host::extension_manager::ManagerClient;
 use compass_worker_host::session::{Router, Session, Turn};
 use compass_worker_host::storage_service::StorageService;
@@ -211,7 +210,8 @@ fn the_real_runtime_runs_a_command_that_stores_through_this_host() {
         return;
     };
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+    let db = compass_sqlcipher_sys::open(&dir.path().join("vicinae.db"), &[])
+        .expect("an unencrypted db");
     compass_db::vicinae::run(&db).expect("the migrations apply");
     let storage = LocalStorage::new(&db);
 
@@ -253,7 +253,7 @@ fn a_value_stored_before_the_worker_is_killed_is_read_by_the_next_one() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let path = dir.path().join("vicinae.db");
     {
-        let db = Database::open(&path, &[]).expect("an unencrypted db");
+        let db = compass_sqlcipher_sys::open(&path, &[]).expect("an unencrypted db");
         compass_db::vicinae::run(&db).expect("the migrations apply");
         let storage = LocalStorage::new(&db);
         run_command(&runtime, dir.path(), &storage, COMMAND, "Storage/get");
@@ -261,7 +261,7 @@ fn a_value_stored_before_the_worker_is_killed_is_read_by_the_next_one() {
 
     // A new database handle as well as a new process: nothing survives in
     // memory on either side.
-    let db = Database::open(&path, &[]).expect("reopened");
+    let db = compass_sqlcipher_sys::open(&path, &[]).expect("reopened");
     let storage = LocalStorage::new(&db);
     let (answered, observed) = run_command(
         &runtime,

@@ -270,6 +270,264 @@ impl EngineState {
     }
 }
 
+/// Runs a Power Management command through logind, or the desktop's session
+/// manager for logout, answering with the command's own sentences.
+async fn run_power_command(id: &str) -> Response {
+    use compass_power::{Action, PowerManager};
+    use std::os::unix::fs::MetadataExt;
+    let Some(command) = compass_core::power_commands::command(id) else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no power command has that id",
+        ));
+    };
+    let cannot = || {
+        Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            command.cannot_message,
+        ))
+    };
+    let failed = |err: &dyn std::fmt::Display| {
+        tracing::warn!(%err, command = id, "power command failed");
+        Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            command.failed_message,
+        ))
+    };
+    let system = match zbus::Connection::system().await {
+        Ok(connection) => connection,
+        Err(err) => return failed(&err),
+    };
+    let manager = PowerManager::new(system);
+    // The owner of /proc/self is this process's uid, without `unsafe`.
+    let uid = std::fs::metadata("/proc/self").map_or(u32::MAX, |m| m.uid());
+    let checked = match id {
+        "power-off" => Some(Action::PowerOff),
+        "reboot" | "soft-reboot" => Some(Action::Reboot),
+        "suspend" | "sleep" => Some(Action::Suspend),
+        "hibernate" => Some(Action::Hibernate),
+        _ => None,
+    };
+    if let Some(action) = checked {
+        match manager.can(action).await {
+            Ok(capability) if capability.is_offerable() => {}
+            Ok(_) => return cannot(),
+            Err(err) => return failed(&err),
+        }
+    }
+    let result = match id {
+        "sleep" => manager.sleep().await,
+        "soft-reboot" => manager.soft_reboot().await,
+        "lock" => manager.lock(uid).await,
+        "logout" => {
+            let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+            match zbus::Connection::session().await {
+                Ok(session) => {
+                    manager
+                        .logout(compass_power::logout_target(&desktop), &session, uid)
+                        .await
+                }
+                Err(err) => return failed(&err),
+            }
+        }
+        _ => match checked {
+            Some(action) => manager.perform(action, true).await,
+            None => return cannot(),
+        },
+    };
+    match result {
+        Ok(()) => Response::Ack,
+        Err(err) => failed(&err),
+    }
+}
+
+/// The player a media command last acted on, which the next one that names
+/// none prefers while it is still running.
+static LAST_PLAYER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// `pactl` on the host, bounded by the C++'s timeout.
+struct HostPactl;
+
+impl compass_core::audio_control::Pactl for HostPactl {
+    fn run(&self, args: &[&str]) -> Option<String> {
+        use std::io::Read;
+        use wait_timeout::ChildExt;
+        let mut child = compass_platform_linux::host_command("pactl")
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let mut stdout = child.stdout.take()?;
+        // Read while waiting, so a long sink list cannot fill the pipe.
+        let reader = std::thread::spawn(move || {
+            let mut out = String::new();
+            stdout.read_to_string(&mut out).map(|_| out)
+        });
+        let timeout = std::time::Duration::from_millis(compass_core::audio_control::TIMEOUT_MS);
+        match child.wait_timeout(timeout).ok()? {
+            Some(status) if status.success() => reader.join().ok()?.ok(),
+            Some(_) => None,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                None
+            }
+        }
+    }
+}
+
+/// Runs a volume command through `pactl`, answering with the sentence the
+/// C++ puts in its HUD, or refusing with its toast.
+fn run_volume_command(id: &str) -> Result<String, &'static str> {
+    use compass_core::media_commands::{
+        VOLUME_DOWN_STEP, VOLUME_PRESETS, VOLUME_UP_STEP, mute_message, step_fraction,
+        volume_hud_text,
+    };
+    let audio = compass_core::audio_control::PactlAudioControl::new(HostPactl);
+    match id {
+        "volume-up" | "volume-down" => {
+            let step = if id == "volume-up" {
+                VOLUME_UP_STEP
+            } else {
+                VOLUME_DOWN_STEP
+            };
+            audio
+                .adjust_volume(step_fraction(step))
+                .map(volume_hud_text)
+                .ok_or("Failed to adjust volume")
+        }
+        "toggle-mute" => {
+            if !audio.toggle_mute() {
+                return Err("Failed to toggle mute");
+            }
+            Ok(mute_message(audio.is_muted(), audio.volume()))
+        }
+        _ => {
+            let percent = VOLUME_PRESETS
+                .iter()
+                .map(|(percent, _)| *percent)
+                .find(|percent| id.strip_prefix("volume-") == Some(&percent.to_string()))
+                .ok_or("Failed to set volume")?;
+            audio
+                .set_volume(step_fraction(percent))
+                .map(volume_hud_text)
+                .ok_or("Failed to set volume")
+        }
+    }
+}
+
+/// Shows what the C++ puts in its HUD, as a short transient notification:
+/// the launcher has already hidden.
+async fn show_hud(text: &str) {
+    let shown = notify_rust::Notification::new()
+        .appname("Vicinae")
+        .summary(text)
+        .hint(notify_rust::Hint::Transient(true))
+        .timeout(notify_rust::Timeout::Milliseconds(1500))
+        .show_async()
+        .await;
+    if let Err(err) = shown {
+        tracing::info!(%err, text, "HUD not shown");
+    }
+}
+
+/// Runs a media command on the default player over MPRIS. What the C++ shows
+/// in its HUD goes out as a short-lived notification, since the launcher has
+/// already hidden.
+async fn run_media_command(id: &str) -> Response {
+    use compass_core::media_commands::{self, NoPlayer};
+    let refuse =
+        |message: String| Response::Error(ProtocolError::new(ErrorKind::Unsupported, message));
+    let failed = |message: &str, err: &dyn std::fmt::Display| {
+        tracing::warn!(%err, command = id, "media command failed");
+        Response::Error(ProtocolError::new(ErrorKind::Internal, message))
+    };
+    // Without media control, the media extension registers only the volume
+    // commands.
+    if media_commands::registered_commands(false)
+        .iter()
+        .any(|command| command == id)
+    {
+        let owned = id.to_owned();
+        let answer = tokio::task::spawn_blocking(move || run_volume_command(&owned)).await;
+        return match answer {
+            Ok(Ok(hud)) => {
+                show_hud(&hud).await;
+                Response::Ack
+            }
+            Ok(Err(message)) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
+            Err(err) => failed("Failed to adjust volume", &err),
+        };
+    }
+    let failure = match id {
+        "play-pause" => "Failed to toggle playback",
+        "next-track" => "Failed to skip to the next track",
+        "previous-track" => "Failed to skip to the previous track",
+        _ => {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no media command has that id",
+            ));
+        }
+    };
+    let control = match zbus::Connection::session().await {
+        Ok(connection) => compass_media::MediaControl::new(connection),
+        Err(err) => return failed(failure, &err),
+    };
+    let players = match control.players().await {
+        Ok(players) => players,
+        Err(err) => return failed(failure, &err),
+    };
+    let last = LAST_PLAYER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let Some(index) = compass_media::default_player(&players, last.as_deref()) else {
+        return refuse(media_commands::no_player_message(&NoPlayer::NothingRunning));
+    };
+    let found = &players[index];
+    let player = media_commands::MediaPlayer {
+        id: found.id.clone(),
+        identity: found.identity.clone(),
+        title: found.title.clone(),
+        artist: found.artist.clone(),
+        playing: found.status == compass_media::PlaybackStatus::Playing,
+        can_go_next: found.can_go_next,
+        can_go_previous: found.can_go_previous,
+    };
+    let (result, hud) = match id {
+        "play-pause" => (
+            control.play_pause(&player.id).await,
+            media_commands::play_pause_message(&player),
+        ),
+        "next-track" => {
+            if let Some(refusal) = media_commands::skip_refusal(&player, true) {
+                return refuse(refusal);
+            }
+            (control.next(&player.id).await, "Next Track".to_owned())
+        }
+        _ => {
+            if let Some(refusal) = media_commands::skip_refusal(&player, false) {
+                return refuse(refusal);
+            }
+            (
+                control.previous(&player.id).await,
+                "Previous Track".to_owned(),
+            )
+        }
+    };
+    if let Err(err) = result {
+        return failed(failure, &err);
+    }
+    *LAST_PLAYER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(player.id);
+    show_hud(&hud).await;
+    Response::Ack
+}
+
 async fn run_extension_command(
     state: &Arc<RwLock<EngineState>>,
     id: String,
@@ -801,6 +1059,8 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
+        Request::RunPowerCommand { id } => run_power_command(&id).await,
+        Request::RunMediaCommand { id } => run_media_command(&id).await,
         Request::RunExtensionCommand { id, arguments_json } => {
             run_extension_command(state, id, arguments_json).await
         }

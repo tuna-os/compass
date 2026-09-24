@@ -47,6 +47,30 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn run_power_command(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::RunPowerCommand { id }, "The power command")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn run_media_command(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::RunMediaCommand { id }, "The media command")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn run_extension_command(
         &self,
         id: String,

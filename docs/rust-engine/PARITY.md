@@ -84,9 +84,8 @@ that. The plan has been corrected.
 | `compass-power` | 11 | logind; one C++ bug deliberately not reproduced |
 | `compass-db` | 10 | the shared migration runner and the `vicinae` schema |
 | `compass-oauth-store` | 9 | the extension token store |
-| `compass-sqlcipher-sys` | 8 | SQLCipher and the vendored tokenizer; connection pragmas pinned to the C++ |
+| `compass-sqlcipher-sys` | 8 | `rusqlite` over SQLCipher, and the vendored tokenizer; connection pragmas pinned to the C++ |
 | `compass-testkit` | 8 | corpora — **757 desktop entries, 738 harvested from real hosts** |
-| `compass-notify` | 7 | desktop notifications over D-Bus |
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
@@ -146,7 +145,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/calculator-service` | `compass-local-storage` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/services/desktop-notification` | `compass-notify` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
@@ -1071,14 +1070,19 @@ Still C++-only: the DBus plumbing (the StatusNotifierWatcher registration, the `
 the property-change signals), which belongs to whoever owns the bus connection.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
-itself, built from the same C the C++ engine links (ADR-0014). `Database::open` does what
+itself (ADR-0014). SQLCipher is `rusqlite`'s `bundled-sqlcipher` build (`libsqlite3-sys` 0.38,
+SQLCipher 4.14.0 on SQLite 3.51.3, OpenSSL crypto on Linux as the C++ build uses) rather than the
+vendored 4.16.0, which only the C++ engine still compiles; both are SQLCipher 4 with its default
+cipher settings, so each reads the other's files. `fuzzy_trigram` is still the vendored C, compiled
+against `libsqlite3-sys`'s own headers. `compass_sqlcipher_sys::open` does what
 `ClipboardDatabase`'s constructor does and in the same order — open, key with raw bytes in
 SQLCipher's `x'...'` form, register `fuzzy_trigram`, apply the four pragmas — because that order is
-load-bearing. Tested against real encrypted files rather than SQL strings: the file has no
-`SQLite format 3` magic and does not contain its own payload in the clear, a wrong key is refused by
-`open`, the FTS table the clipboard schema declares can be created and queried, and a second
-connection to an existing encrypted file still has the tokenizer. Not yet ported: blobs, the
-transaction wrapper, and `sqlite3_changes` (deliberately — see `tryBubbleUpSelection` below).
+load-bearing, and hands back a `rusqlite::Connection`. Tested against real encrypted files rather
+than SQL strings: the file has no `SQLite format 3` magic and does not contain its own payload in
+the clear, a wrong key is refused by `open`, the FTS table the clipboard schema declares can be
+created and queried, and a second connection to an existing encrypted file still has the
+tokenizer. `Connection::changes` is available now but deliberately unused — see
+`tryBubbleUpSelection` below.
 
 **`src/services/clipboard` → `compass-clipboard`** — **`clipboard-db.cpp` (478 lines) is ported in
 full.** Every function `clipboard-db.hpp` declares has a Rust counterpart:
@@ -1095,8 +1099,8 @@ full.** Every function `clipboard-db.hpp` declares has a Rust counterpart:
 | `oldestEvictableTimestamp` | `write::oldest_evictable` |
 | `findSelection`, `findPreferredOffer` | `write::find_selection`, `find_preferred_offer` |
 
-It runs on `compass-sqlcipher-sys`, which builds `vendor/sqlcipher` and `vendor/fuzzy-trigram` from
-the same C the C++ engine links ([ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md)),
+It runs on `compass-sqlcipher-sys`: SQLCipher 4 through `rusqlite`, and `vendor/fuzzy-trigram`, the
+same tokenizer C the C++ engine links ([ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md)),
 so both engines read and write the same encrypted files with the same tokenizer.
 
 **Still C++-only, and the reason the row is 🟡:** `clipboard-service.cpp` — the Wayland selection
@@ -1234,7 +1238,7 @@ obvious move and turned out to be unnecessary.
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | -2 | `evictOlderThan` computes its cutoff with `unixepoch()` in **both** the `SELECT` that collects the offer ids to unlink from disk and the `DELETE` that removes the rows. Those are separate statements with separate readings of the clock (measured: inside `BEGIN`, `unixepoch('subsec')` advanced after 434 consecutive statements), so the `DELETE` set is a superset and anything crossing the threshold in between is deleted but never reported — its payload stays on disk forever. | Compute the cutoff once and bind it to both statements, which makes the two sets identical by construction. | `eviction_returns_every_offer_it_deletes` (fails when the second reading is reintroduced) |
-| -1 | `tryBubbleUpSelection` runs its `UPDATE`, discards whether it succeeded, and answers from `m_db.changes()` — a connection-wide counter holding the most recent *successful* statement's count. A failed or no-op update can therefore report success, and its caller (`clipboard-service.cpp:508`) then skips `insertSelection`, so the copied content never reaches the history. | `RETURNING id`: did *this* statement touch a row. `compass-sqlcipher-sys` deliberately does not expose `sqlite3_changes`. | `bubbling_up_something_absent_reports_false_even_after_a_successful_write` |
+| -1 | `tryBubbleUpSelection` runs its `UPDATE`, discards whether it succeeded, and answers from `m_db.changes()` — a connection-wide counter holding the most recent *successful* statement's count. A failed or no-op update can therefore report success, and its caller (`clipboard-service.cpp:508`) then skips `insertSelection`, so the copied content never reaches the history. | `RETURNING id`: did *this* statement touch a row. `bubble_up` deliberately does not call `Connection::changes`, the same connection-wide counter. | `bubbling_up_something_absent_reports_false_even_after_a_successful_write` |
 | 0 | `query` divides by `limit` to compute `totalPages` (`ceil(totalCount / limit)`), so a zero `limit` is a division by zero whose result is cast to `int`. It also interpolates `limit` and `offset` into the SQL text with `.arg()` rather than binding them. | Refuse a non-positive `limit`; bind both. `current_page`'s ceiling rounding *is* reproduced, oddity included — it is a display value the C++ UI already agrees with. | `a_zero_limit_is_refused_rather_than_dividing_by_it` |
 | 1 | `MigrationManager::runMigrations` catches every exception, logs it, rolls back and returns `void`; `ClipboardDatabase::runMigrations` returns `void` too. A failed migration is silent, and the next thing the user sees is every query failing against a schema that was never created. | `schema::run` returns a `Result`. | `an_edited_migration_is_refused`, `a_database_from_a_newer_build_is_refused` |
 | 2 | The `checksum` column exists to detect a migration edited after it was applied. `insertMigration` writes it and `loadDatabaseMigrations` reads it back into a struct field — and nothing ever compares the two. It is a stored value with no reader, so the detection it exists for never happens. | Compare it, and refuse on a mismatch. The expected hashes are also pinned in `schema.rs`'s tests, so editing a migration fails at development time rather than on a user's machine. | `an_edited_migration_is_refused`, `the_embedded_content_hashes_to_what_the_cpp_engine_recorded` |
@@ -1299,19 +1303,14 @@ from the reply which host it is talking to, so a Compass that updated the toast 
 Vicinae user never sees, and an extension author would tune their toasts against the wrong one. When
 the C++ grows a body, this test is the one that should fail.
 
-### `compass-core::slug` — two regex passes that reach the same string as one
+### `compass-core::slug` — the `slug` crate, which transliterates
 
-Qt's `slugify` replaces `[\s_]+` with the separator, which collapses a run of whitespace in that
-one pass, and then collapses runs of the separator in a later pass. The Rust port writes one
-separator per whitespace character and lets the later collapse do both jobs. It also drops the
-C++'s early return on an empty input, which cannot change the result because an empty string falls
-through every remaining step unchanged.
-
-This is recorded rather than silently done because it was found by a control that did not fire:
-mutating the whitespace-run logic changed nothing observable, because the collapse pass rescued it.
-A behaviour guarded twice is a behaviour whose guard cannot be tested, so the redundant guard went.
-`a_run_of_whitespace_makes_one_separator_not_many` still pins the property, and now fails when the
-single remaining rule is broken.
+`slugify` is the [`slug`](https://crates.io/crates/slug) crate rather than a port of the Qt
+function (AGENTS.md: crates over hand-rolled code). The pinned cases agree — accents fold
+(`Café au Lait` → `cafe-au-lait`), whitespace and underscore runs make one `-`, punctuation goes,
+ends are trimmed — with one difference: the crate **transliterates** non-Latin text
+(`日本語 ツール` → `ri-ben-yu-turu`) where the C++ strips it and leaves an empty string, which as an
+extension's directory name was a bug. The C++'s configurable separator is gone; nothing used it.
 
 ### `compass-core::boilerplate` — two commands with the same slug, and the first one wins
 
@@ -2026,6 +2025,15 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 |---|---|---|---|
 | 1 | `SystemdPowerManager::can` calls `CanPowerOff`/`CanSuspend`/`CanHibernate`/`CanReboot` and then answers `!reply.arguments().isEmpty()` — it never reads the reply. logind answers with a *string*: `"yes"`, `"no"`, `"challenge"` or `"na"`. All four are a non-empty argument list, so a machine that cannot hibernate is offered Hibernate, and the menu entry does nothing. | Read the string. `Capability::is_offerable` is true for `yes` and `challenge` (polkit will ask), false for `no`, `na` and anything this build does not recognise. | `logind_replies_are_read_rather_than_counted`, `the_capability_reply_is_read_and_not_merely_counted` (drives a real reply through a mock logind), and `the_cpp_still_has_the_bug_this_port_declines_to_copy`, which fails if the C++ is fixed |
 
+### Media commands — what the port does not have yet
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`). | The launcher has hidden by then and has no HUD, so the engine posts the same sentence as a transient desktop notification (1.5 s, `transient` hint). Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
+| 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players; Turn Volume Up/Down take an optional `step`. | Not yet: the default player is always used (last acted on, else playing, else first, as `defaultPlayer`), and the step is always ±5. | `the_default_player_is_the_last_then_the_playing_then_the_first` |
+| 3 | Volume goes through `pactl`. | The same `pactl` invocations, through `flatpak-spawn --host` inside the Flatpak, with the C++'s 3 s timeout. `libpulse-binding` was considered and not taken: a C build dependency and a threaded mainloop for five calls the ported `pactl` adapter already makes. | `a_volume_command_runs_pactl_with_the_cpp_arguments` |
+| 4 | Now Playing. | Not yet: it needs a view. | — |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the
@@ -2055,7 +2063,7 @@ verbatim and passes. What does not:
 |---|---|---|---|
 | 1 | ~~No coherence signal~~ — **resolved.** The original claim here was wrong: the C++ backtracker only ever compares `B[j]` against *zero*, never uses its magnitude, and uses `H`/`C` solely to choose the alignment. So `coherent = !boundary_inside \|\| !mid_word_run_start` is a pure function of (haystack, indices), which is exactly what nucleo returns. It is an **exact port**, not a heuristic — no thresholds exist to tune. | None | the ported coherence suite |
 | 2 | **One ordering flip** (upstream issue #946). For `"Spo"`, C++ gives `Spotify > Reload Script Directories > Sysprog`; we give `Spotify > Sysprog > Reload Script Directories`. nucleo prefers a short scatter inside one word starting at position 0; fzf's larger word-boundary bonuses pull the other way. Every other ordering case ports and passes. | Low | `diverges_spo_ordering` |
-| 3 | **Narrower diacritic folding.** nucleo folds precomposed accents (é, ñ, ü) but not Latin Extended-A stroked/ogonek letters (Ł, ź, đ, ż), so `"lodz"` does not match `"Łódź Express"`. fzf's table covers them. | Affects Polish, Czech and Croatian app names | `diverges_latin_extended_a_is_not_folded` |
+| 3 | ~~**Narrower diacritic folding.**~~ **Closed.** nucleo folds precomposed accents (é, ñ, ü) but not stroked letters (Ł, đ, ħ); the matcher now falls back to `deunicode` for single-letter Latin answers, so `"lodz"` matches `"Łódź Express"`. Other scripts are not romanised (`"a"` does not match `"α"`). | None | `latin_extended_a_is_folded` |
 | 4 | **Ties that discriminate nothing.** For `"clip"`, all of `Clipboard History`, `Clear Current Clipboard Data` and `Clear Clipboard History` score identically, because nucleo's score depends only on the matched region, not on haystack length or match position. The C++ ordering test passes there only because `stable_sort` preserves input order — so that case discriminates nothing in *either* implementation. | Real discrimination needs a length or match-position penalty layered on top of nucleo | `diverges_clip_ordering_is_a_three_way_tie` |
 | 5 | **Char, not byte, offsets** — a deliberate API change. `"Café Bar"`/`"bar"` reports `5..8` where C++ asserts bytes `6..9`. | None; byte offsets are recoverable | the range tests |
 

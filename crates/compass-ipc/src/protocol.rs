@@ -34,8 +34,8 @@ use serde::{Deserialize, Serialize};
 /// version 6, window switching; version 7, pasting, pinning and removing a
 /// clipboard entry, and running an installed extension's command; version 8,
 /// following and driving an extension's view; version 9, an extension view's
-/// toast.
-pub const PROTOCOL_VERSION: u16 = 9;
+/// toast; version 10, the power and media commands.
+pub const PROTOCOL_VERSION: u16 = 10;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +193,24 @@ pub enum Request {
     /// with [`Response::Ack`]; an id that names no entry is a bad request.
     ClipboardRemove {
         /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// Run a Power Management command. Answered with [`Response::Ack`] once
+    /// logind (or the desktop's session manager) accepted it; refused as
+    /// [`ErrorKind::Unsupported`] with the command's own "cannot" sentence
+    /// when the system reports it cannot, and as [`ErrorKind::Internal`] with
+    /// its "failed" sentence when the attempt fails.
+    RunPowerCommand {
+        /// The command's id in `compass_core::power_commands`, e.g. `reboot`.
+        id: String,
+    },
+    /// Run a media command (`play-pause`, `next-track`, `previous-track`) on
+    /// the default player. Answered with [`Response::Ack`] once the player
+    /// took it; refused as [`ErrorKind::Unsupported`] with the sentence to
+    /// show when no player is running or it cannot skip, and as
+    /// [`ErrorKind::Internal`] when the player fails.
+    RunMediaCommand {
+        /// The command's id in `compass_core::media_commands`.
         id: String,
     },
     /// Run an installed extension's command, by the entrypoint id a

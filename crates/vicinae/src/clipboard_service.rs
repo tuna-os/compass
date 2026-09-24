@@ -30,7 +30,7 @@ use compass_clipboard::kind::OfferKind;
 use compass_clipboard::store::{self, ListSettings};
 use compass_crypto::KEY_SIZE;
 use compass_ipc::{ClipboardEntry, ClipboardKind};
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::{Connection, named_params};
 use tokio::sync::RwLock;
 
 use crate::serve::EngineState;
@@ -199,10 +199,10 @@ impl SecretStore for Oo7Store {
 
 /// The open history.
 ///
-/// `Database` is used from blocking tasks, one at a time, so a plain `Mutex`
+/// The connection is used from blocking tasks, one at a time, so a plain `Mutex`
 /// is enough; callers on the async runtime go through `spawn_blocking`.
 pub struct ClipboardStore {
-    db: Mutex<Database>,
+    db: Mutex<Connection>,
     payload_dir: PathBuf,
     payload_key: [u8; KEY_SIZE],
 }
@@ -225,7 +225,7 @@ impl ClipboardStore {
     pub fn open(dir: &Path, master: &[u8; KEY_SIZE]) -> Result<Self, Error> {
         std::fs::create_dir_all(dir).map_err(|err| Error::Database(err.to_string()))?;
         let keys = compass_crypto::keys::derive_all(master);
-        let db = Database::open(&dir.join(DATABASE_FILE_NAME), &keys.database)
+        let db = compass_sqlcipher_sys::open(&dir.join(DATABASE_FILE_NAME), &keys.database)
             .map_err(|err| Error::Database(err.to_string()))?;
         compass_clipboard::schema::run(&db).map_err(|err| Error::Database(err.to_string()))?;
         Ok(Self {
@@ -235,7 +235,7 @@ impl ClipboardStore {
         })
     }
 
-    fn db(&self) -> std::sync::MutexGuard<'_, Database> {
+    fn db(&self) -> std::sync::MutexGuard<'_, Connection> {
         // A panic while holding the lock leaves the database itself intact
         // (every write is a transaction), so a poisoned lock is still usable.
         self.db
@@ -309,12 +309,11 @@ impl ClipboardStore {
         let hash = ingest::content_hash(&entry.data);
         {
             let db = self.db();
-            let mut stmt = db
-                .prepare("SELECT 1 FROM selection WHERE hash_md5 = :hash LIMIT 1")
+            let known = db
+                .prepare_cached("SELECT 1 FROM selection WHERE hash_md5 = :hash LIMIT 1")
+                .and_then(|mut stmt| stmt.exists(named_params! { ":hash": hash }))
                 .map_err(|err| Error::Store(err.to_string()))?;
-            stmt.bind_text(":hash", &hash)
-                .map_err(|err| Error::Store(err.to_string()))?;
-            if stmt.step().map_err(|err| Error::Store(err.to_string()))? {
+            if known {
                 return Ok(false);
             }
         }
@@ -325,23 +324,17 @@ impl ClipboardStore {
             return Ok(false);
         };
         let db = self.db();
-        let mut stmt = db
-            .prepare(
-                "UPDATE selection SET created_at = :created, updated_at = :updated, \
-                 pinned_at = :pinned WHERE id = :id",
-            )
-            .map_err(|err| Error::Store(err.to_string()))?;
-        let bound = stmt
-            .bind_int64(":created", entry.created_at)
-            .and_then(|()| stmt.bind_int64(":updated", entry.updated_at))
-            .and_then(|()| match entry.pinned_at {
-                Some(pinned) => stmt.bind_int64(":pinned", pinned),
-                None => Ok(()),
-            })
-            .and_then(|()| stmt.bind_text(":id", &selection_id));
-        bound.map_err(|err| Error::Store(err.to_string()))?;
-        stmt.step().map_err(|err| Error::Store(err.to_string()))?;
-        drop(stmt);
+        db.execute(
+            "UPDATE selection SET created_at = :created, updated_at = :updated, \
+             pinned_at = :pinned WHERE id = :id",
+            named_params! {
+                ":created": entry.created_at,
+                ":updated": entry.updated_at,
+                ":pinned": entry.pinned_at,
+                ":id": selection_id,
+            },
+        )
+        .map_err(|err| Error::Store(err.to_string()))?;
         if !entry.keywords.is_empty() {
             compass_clipboard::write::set_keywords(&db, &selection_id, &entry.keywords)
                 .map_err(|err| Error::Store(err.to_string()))?;

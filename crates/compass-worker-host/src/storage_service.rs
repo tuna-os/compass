@@ -114,7 +114,7 @@ impl tsapi::Service for StorageService<'_> {
 mod tests {
     use super::*;
     use compass_local_storage::{LocalStorage, namespace_for, schema};
-    use compass_sqlcipher_sys::Database;
+    use compass_sqlcipher_sys::rusqlite::Connection;
 
     fn call(method: &str, params: serde_json::Value) -> Call {
         Call {
@@ -137,9 +137,10 @@ mod tests {
         answer["result"].clone()
     }
 
-    fn open() -> (tempfile::TempDir, Database) {
+    fn open() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+        let db = compass_sqlcipher_sys::open(&dir.path().join("vicinae.db"), &[])
+            .expect("an unencrypted db");
         schema::run(&db).expect("the migrations apply");
         (dir, db)
     }
@@ -289,7 +290,7 @@ mod tests {
         // A row this build does not understand reaches the extension as a
         // rejected promise naming the problem, not as a dead host.
         let (_dir, db) = open();
-        db.execute(
+        db.execute_batch(
             "INSERT INTO storage_data_item (namespace_id, value_type, key, value) \
              VALUES ('x:data', 9, 'k', 'v')",
         )

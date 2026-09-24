@@ -1,6 +1,6 @@
 //! Connections opened at the same moment all open.
 //!
-//! `Database::open` switches the file to WAL and registers the tokenizer, and
+//! `open` switches the file to WAL and registers the tokenizer, and
 //! both take a lock. Without a busy timeout, a connection that arrives while
 //! another holds it fails at once with "database is locked" — which is how the
 //! file indexer's query workers, each opening a reader at startup behind an
@@ -8,8 +8,6 @@
 //! (`compass-db/tests/query_quality.rs`) running its cases in parallel.
 
 use std::sync::{Arc, Barrier};
-
-use compass_sqlcipher_sys::Database;
 
 #[test]
 fn many_connections_opened_at_once_all_open() {
@@ -23,7 +21,7 @@ fn many_connections_opened_at_once_all_open() {
                 let (path, barrier) = (Arc::clone(&path), Arc::clone(&barrier));
                 std::thread::spawn(move || {
                     barrier.wait();
-                    Database::open(&path, &[]).map(drop)
+                    compass_sqlcipher_sys::open(&path, &[]).map(drop)
                 })
             })
             .collect();

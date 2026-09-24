@@ -101,6 +101,8 @@ pub enum Message {
     Back,
     /// The window switcher's filter changed.
     WindowsQueryChanged(String),
+    /// The engine answered a power or media command.
+    BuiltinCommandDone(Result<(), String>),
     /// The emoji picker's filter changed.
     EmojiQueryChanged(String),
     /// An emoji row was clicked, by position in the shown list.

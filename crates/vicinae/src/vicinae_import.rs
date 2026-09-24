@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use compass_clipboard::kind::EncryptionType;
 use compass_crypto::KEY_SIZE;
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite;
 
 use crate::clipboard_service::{ClipboardStore, Error};
 
@@ -97,7 +97,8 @@ pub fn read_clipboard(
     }
     let keys = master.map(|master| compass_crypto::keys::derive_all(master));
     let database_key: &[u8] = keys.as_ref().map_or(&[], |keys| &keys.database);
-    let db = Database::open(&path, database_key).map_err(|err| database(&path, &err))?;
+    let db =
+        compass_sqlcipher_sys::open(&path, database_key).map_err(|err| database(&path, &err))?;
     let payload_dir = vicinae_dir.join(SOURCE_PAYLOAD_DIR);
 
     let mut stmt = db
@@ -106,9 +107,11 @@ pub fn read_clipboard(
              FROM selection ORDER BY updated_at ASC, rowid ASC",
         )
         .map_err(|err| database(&path, &err))?;
+    let mut rows = stmt.query([]).map_err(|err| database(&path, &err))?;
     let mut skipped = 0;
-    while stmt.step().map_err(|err| database(&path, &err))? {
-        let Some(id) = stmt.column_text(0) else {
+    while let Some(row) = rows.next().map_err(|err| database(&path, &err))? {
+        let columns = selection_columns(row).map_err(|err| database(&path, &err))?;
+        let Some(id) = columns.id else {
             skipped += 1;
             continue;
         };
@@ -131,14 +134,36 @@ pub fn read_clipboard(
         each(VicinaeEntry {
             data,
             mime_type: offer.mime_type,
-            source: stmt.column_text(1).filter(|source| !source.is_empty()),
-            created_at: to_millis(stmt.column_int64(2)),
-            updated_at: to_millis(stmt.column_int64(3)),
-            pinned_at: (!stmt.is_null(4)).then(|| to_millis(stmt.column_int64(4))),
-            keywords: stmt.column_text(5).unwrap_or_default(),
+            source: columns.source.filter(|source| !source.is_empty()),
+            created_at: to_millis(columns.created_at),
+            updated_at: to_millis(columns.updated_at),
+            pinned_at: columns.pinned_at.map(to_millis),
+            keywords: columns.keywords,
         });
     }
     Ok(skipped)
+}
+
+/// One `selection` row as the import reads it, NULLs read the way
+/// `QVariant` reads them: absent text, zero times.
+struct SelectionColumns {
+    id: Option<String>,
+    source: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    pinned_at: Option<i64>,
+    keywords: String,
+}
+
+fn selection_columns(row: &rusqlite::Row<'_>) -> rusqlite::Result<SelectionColumns> {
+    Ok(SelectionColumns {
+        id: row.get(0)?,
+        source: row.get(1)?,
+        created_at: row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+        updated_at: row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+        pinned_at: row.get(4)?,
+        keywords: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+    })
 }
 
 fn payload(
@@ -154,7 +179,7 @@ fn payload(
     }
 }
 
-fn database(path: &Path, err: &compass_sqlcipher_sys::Error) -> Error {
+fn database(path: &Path, err: &rusqlite::Error) -> Error {
     Error::Database(format!("{}: {err}", path.display()))
 }
 
@@ -222,7 +247,8 @@ mod tests {
     /// keywords)`.
     fn vicinae_history(dir: &Path, entries: &[(&str, i64, Option<i64>, &str)]) {
         let keys = compass_crypto::keys::derive_all(&VICINAE_MASTER);
-        let db = Database::open(&dir.join(SOURCE_DATABASE), &keys.database).expect("open");
+        let db =
+            compass_sqlcipher_sys::open(&dir.join(SOURCE_DATABASE), &keys.database).expect("open");
         compass_clipboard::schema::run(&db).expect("schema");
         let mut n = 0;
         for (text, updated, pinned, keywords) in entries {
@@ -245,19 +271,12 @@ mod tests {
             else {
                 panic!("fixture entry {text:?} was not inserted");
             };
-            let mut stmt = db
-                .prepare(
-                    "UPDATE selection SET created_at = :t, updated_at = :t, pinned_at = :p \
-                     WHERE id = :id",
-                )
-                .expect("prepare");
-            stmt.bind_int64(":t", *updated).expect("bind");
-            if let Some(pinned) = pinned {
-                stmt.bind_int64(":p", *pinned).expect("bind");
-            }
-            stmt.bind_text(":id", &selection_id).expect("bind");
-            stmt.step().expect("update");
-            drop(stmt);
+            db.execute(
+                "UPDATE selection SET created_at = :t, updated_at = :t, pinned_at = :p \
+                 WHERE id = :id",
+                rusqlite::named_params! { ":t": updated, ":p": pinned, ":id": selection_id },
+            )
+            .expect("update");
             if !keywords.is_empty() {
                 compass_clipboard::write::set_keywords(&db, &selection_id, keywords)
                     .expect("keywords");
