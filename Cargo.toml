@@ -28,6 +28,7 @@ compass-worker-host = { path = "crates/compass-worker-host" }
 compass-extension-api = { path = "crates/compass-extension-api" }
 compass-portals = { path = "crates/compass-portals" }
 compass-wayland = { path = "crates/compass-wayland" }
+compass-wayland-protocols = { path = "crates/compass-wayland-protocols" }
 compass-platform = { path = "crates/compass-platform" }
 compass-platform-linux = { path = "crates/compass-platform-linux" }
 compass-ui = { path = "crates/compass-ui" }
@@ -39,6 +40,12 @@ anyhow = "1"
 nucleo-matcher = "0.3.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The JSON Schema published for `vicinae.json` is generated from the config
+# types, not written by hand. See crates/compass-core/src/config.rs.
+schemars = "1.2"
+# The C++ engine's settings.json is JSONC (comments, trailing commas); the
+# config migration reads it with dprint's parser. See config_migration.rs.
+jsonc-parser = { version = "0.33", features = ["serde"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -88,7 +95,7 @@ landlock = "0.4"
 seccompiler = "0.5"
 libc = "0.2"
 # Safe wrappers for the syscalls the sandbox tests have to call on purpose.
-nix = { version = "0.29", features = ["ptrace"] }
+nix = { version = "0.29", features = ["ptrace", "socket", "resource"] }
 
 # dev
 insta = "1"
@@ -99,6 +106,15 @@ parking_lot = "0.12"
 criterion = { version = "0.5", features = ["async"] }
 roxmltree = "0.20"
 hex = "0.4"
+# The HTTP client (remote images in extension views). Blocking, which is all
+# an image fetch on a worker thread needs, and native-tls rather than rustls:
+# the system OpenSSL is already linked for SQLCipher, so TLS adds no crypto
+# stack, and it verifies against the system's roots, which is what a user
+# behind a corporate CA has configured. See docs/rust-engine/CRATE-AUDIT.md.
+# URL parsing: the OAuth redirect (`raycast://oauth?code=…&state=…`) and the
+# authorize URL's `state`. Already in the tree through ureq and zbus.
+url = "2.5"
+ureq = { version = "3.4", default-features = false, features = ["native-tls-no-default", "gzip"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -12,7 +12,8 @@
 //! module only wires it to the two things around it: the keyring, and the
 //! `ClipboardChanged` signal of the GNOME Shell extension. Without the
 //! extension there is nothing to record on GNOME (Mutter has no data-control
-//! protocol), and the store simply stays as it is.
+//! protocol), and the store simply stays as it is. On a wlroots compositor the
+//! selection is watched over data-control instead ([`crate::wlroots`]).
 //!
 //! # Why the key is behind a trait
 //!
@@ -452,7 +453,53 @@ pub async fn run(state: Arc<RwLock<EngineState>>) {
     tracing::info!("clipboard history open");
     state.write().await.set_clipboard(Arc::clone(&store));
     import_from_vicinae(Arc::clone(&store), dir, &keyring).await;
-    record_from_shell(store).await;
+    match crate::wlroots::detect().await {
+        Some(wlroots) if wlroots.capabilities.data_control => record_from_data_control(store).await,
+        _ => record_from_shell(store).await,
+    }
+}
+
+/// Follows the selection over `ext-data-control-v1` / `wlr-data-control` —
+/// the wlroots path, where there is no Shell extension and none is needed.
+///
+/// A selection a password manager marked (`x-kde-passwordManagerHint`, or
+/// our own `vicinae/concealed`) is not recorded at all.
+async fn record_from_data_control(store: Arc<ClipboardStore>) {
+    let (tx, mut changes) = tokio::sync::mpsc::unbounded_channel();
+    let watcher = tokio::task::spawn_blocking(move || compass_wayland::clipboard::watch(tx)).await;
+    match watcher {
+        Ok(Ok(watcher)) => tracing::info!(
+            protocol = watcher.protocol(),
+            "recording clipboard changes over data-control"
+        ),
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "clipboard changes will not be recorded");
+            return;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "the data-control task failed");
+            return;
+        }
+    }
+    while let Some(change) = changes.recv().await {
+        if change.concealed() {
+            tracing::debug!("a concealed selection was not recorded");
+            continue;
+        }
+        let Some(offer) = change.preferred().cloned() else {
+            continue;
+        };
+        let store = Arc::clone(&store);
+        let recorded =
+            tokio::task::spawn_blocking(move || store.record(&offer.data, &offer.mime_type, None))
+                .await;
+        match recorded {
+            Ok(Ok(decision)) => tracing::debug!(?decision, "clipboard change"),
+            Ok(Err(err)) => tracing::warn!(error = %err, "clipboard change not recorded"),
+            Err(err) => tracing::warn!(error = %err, "clipboard recording task failed"),
+        }
+    }
+    tracing::info!("the compositor stopped sending clipboard changes");
 }
 
 async fn open_from_environment() -> Result<(ClipboardStore, PathBuf, Oo7Store), Error> {

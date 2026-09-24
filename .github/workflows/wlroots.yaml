@@ -1,0 +1,93 @@
+# The wlroots track (PLAN.md Phase 5, Track B) against a real compositor.
+#
+# Reuses the Tier 2 spike's answer to "does a compositor come up headless in a
+# container?" — yes, and for wlroots it is simpler than for Mutter: Sway runs
+# with `WLR_BACKENDS=headless` and the pixman renderer, needs no D-Bus, no
+# logind and no GPU, and comes up in well under a second. So this runs on the
+# runner itself rather than in a Fedora container.
+#
+# Three rungs, cheapest first:
+#
+#   1. compass-wayland against Sway: toplevel list/activate/close, the
+#      data-control watcher and wl-clipboard-rs round trip, the xx-hotkey
+#      absence, the family decision.
+#   2. The engine against Sway: `ListWindows`/`ActivateWindow`/`CloseWindow`
+#      over the real socket, and GNOME-by-name still taking the GNOME path.
+#   3. The launcher on Sway: a layer surface on screen, NOT in Sway's window
+#      tree, hidden and re-shown by `vicinae toggle` — with the forced
+#      xdg_toplevel run as the control that proves the tree check can fail.
+#
+# `COMPASS_REQUIRE_COMPOSITOR=1` turns the tests' loud skip into a failure, so
+# a Sway that failed to install cannot turn this job into a green no-op.
+name: wlroots (headless Sway)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/wlroots.yaml
+      - scripts/wlroots/**
+      - crates/compass-wayland/**
+      - crates/compass-wayland-protocols/**
+      - crates/compass-ui/**
+      - crates/vicinae/**
+      - Cargo.lock
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sway:
+    name: "The wlroots track on headless Sway"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      COMPASS_REQUIRE_COMPOSITOR: "1"
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      # sway + swaymsg: the compositor and its tree. grim: screenshots for
+      # the on-screen gates. wtype: the typing gate. wl-clipboard: not used by
+      # the tests, which drive wl-clipboard-rs, but handy in the logs when one
+      # fails. libxkbcommon-dev: iced_layershell's build. mesa-vulkan-drivers: lavapipe, so wgpu has an
+      # adapter (it falls back to tiny-skia without one, which also passes).
+      - name: Install Sway and the build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            sway grim wtype wl-clipboard libxkbcommon-dev mesa-vulkan-drivers
+          sway --version
+
+      - name: Build
+        run: cargo build --locked -p vicinae
+
+      - name: "Rung 1: compass-wayland against Sway"
+        run: cargo test --locked -p compass-wayland --test wlroots_session -- --nocapture
+
+      - name: "Rung 2: the engine against Sway"
+        run: cargo test --locked -p vicinae --test wlroots_engine -- --nocapture
+
+      - name: "Rung 3: the launcher is a layer surface on Sway"
+        env:
+          COMPASS_WLROOTS_WORK: /tmp/compass-wlroots
+        run: scripts/wlroots/launcher-on-sway.sh target/debug/vicinae
+
+      - name: Keep the logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wlroots-sway
+          path: /tmp/compass-wlroots
+          if-no-files-found: ignore
+          retention-days: 7

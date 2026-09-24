@@ -64,6 +64,25 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// The URL schemes `vicinae <url>` takes as a deeplink, as the C++ URL
+/// handler's desktop entry registers them.
+pub const DEEPLINK_SCHEMES: [&str; 3] = ["vicinae", "raycast", "com.raycast"];
+
+/// The command line with a bare deeplink (`vicinae raycast://oauth?…`, as a
+/// desktop entry's `Exec=vicinae %u` runs it) turned into `vicinae deeplink
+/// <url>`; anything else unchanged.
+#[must_use]
+pub fn with_deeplink(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let is_deeplink = args.get(1).and_then(|arg| arg.to_str()).is_some_and(|arg| {
+        arg.split_once(':')
+            .is_some_and(|(scheme, _)| DEEPLINK_SCHEMES.contains(&scheme))
+    });
+    if is_deeplink {
+        args.insert(1, "deeplink".into());
+    }
+    args
+}
+
 impl Cli {
     /// The socket path this invocation should use.
     #[must_use]
@@ -149,6 +168,10 @@ pub enum Command {
     #[command(subcommand)]
     Ext(ExtCommand),
 
+    /// The `vicinae.json` configuration: where it is, its schema, and migration.
+    #[command(subcommand)]
+    Config(ConfigCommand),
+
     /// One-off experiments that answer a question the code cannot.
     ///
     /// Hidden: these are addressed to whoever is answering the question — CI,
@@ -156,6 +179,39 @@ pub enum Command {
     /// or folded into a real subsystem once its question has an answer.
     #[command(hide = true, subcommand)]
     Spike(Spike),
+
+    /// Hand a deeplink to the running engine.
+    ///
+    /// What the desktop runs for `raycast://`, `com.raycast:` and `vicinae://`
+    /// URLs, and what a bare `vicinae <url>` becomes. Today it carries an
+    /// OAuth provider's redirect (`raycast://oauth?code=…&state=…`) back to
+    /// the extension that asked; other deeplinks are refused by name.
+    Deeplink {
+        /// The URL, verbatim.
+        url: String,
+    },
+
+    /// Suite 1: run installed extensions headlessly and judge each first frame.
+    ///
+    /// Hidden: it is CI's, not a user's. Starts an engine of its own on a
+    /// private socket, with this process's environment, so the caller chooses
+    /// the extensions and the data directories. Exits non-zero when any
+    /// command fails. See `crates/vicinae/src/conformance.rs`.
+    #[command(hide = true)]
+    Conformance {
+        /// A JSON plan naming the commands and their inputs; without one, the
+        /// first command of every installed extension.
+        #[arg(long)]
+        plan: Option<std::path::PathBuf>,
+
+        /// Seconds each command has to draw a frame with something in it.
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Open the launcher window.
     ///
@@ -192,6 +248,44 @@ pub enum ThemeCommand {
     },
     /// Reset to System (OS native) theme.
     Reset,
+}
+
+/// Configuration subcommands.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum ConfigCommand {
+    /// Print where `vicinae.json` and the C++ engine's `settings.json` are.
+    Path,
+
+    /// Print the JSON Schema for `vicinae.json`.
+    ///
+    /// The same document is published at `packaging/schema/vicinae.schema.json`.
+    Schema,
+
+    /// Translate the C++ engine's `settings.json` into `vicinae.json`.
+    ///
+    /// Without `--write` this only prints the result and what was and was not
+    /// carried across. The C++ file is never modified.
+    Migrate {
+        /// The settings file to read. Defaults to the C++ engine's own.
+        #[arg(long, value_name = "PATH")]
+        from: Option<PathBuf>,
+
+        /// Where to write. Defaults to this engine's `vicinae.json`.
+        #[arg(long, value_name = "PATH")]
+        to: Option<PathBuf>,
+
+        /// Write the result instead of only printing it.
+        #[arg(long)]
+        write: bool,
+
+        /// Replace an existing `vicinae.json`, keeping it as `vicinae.json.bak`.
+        #[arg(long, requires = "write")]
+        force: bool,
+
+        /// Emit the migration report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Extension management subcommands.
@@ -262,6 +356,30 @@ mod tests {
     #[test]
     fn the_command_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn a_bare_deeplink_becomes_the_deeplink_command() {
+        let argv = |args: &[&str]| -> Vec<std::ffi::OsString> {
+            args.iter().map(std::ffi::OsString::from).collect()
+        };
+        for url in [
+            "raycast://oauth?code=c&state=s",
+            "com.raycast:/oauth?code=c&state=s",
+            "vicinae://extensions/x",
+        ] {
+            let parsed = Cli::try_parse_from(with_deeplink(argv(&["vicinae", url]))).expect(url);
+            assert_eq!(parsed.command, Command::Deeplink { url: url.into() });
+        }
+        assert_eq!(
+            with_deeplink(argv(&["vicinae", "toggle"])),
+            argv(&["vicinae", "toggle"])
+        );
+        assert_eq!(
+            with_deeplink(argv(&["vicinae", "https://example.com"])),
+            argv(&["vicinae", "https://example.com"]),
+            "a web URL is not ours to take"
+        );
     }
 
     #[test]

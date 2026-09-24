@@ -90,6 +90,16 @@ pub struct ExtensionPage {
     pub prefers_dark: bool,
     /// Each row's icon, by `(section, item)` like the list.
     pub icons: Vec<Vec<Option<RowIcon>>>,
+    /// Rows whose icon is a remote image, and its URL.
+    pub remote_rows: std::collections::BTreeMap<(usize, usize), String>,
+    /// Remote images fetched so far, by URL.
+    pub remote_art: std::collections::HashMap<String, RowIcon>,
+    /// Remote images already asked for, fetched or not, so a re-render does
+    /// not ask again.
+    pub requested: std::collections::BTreeSet<String>,
+    /// Each date field's text as typed, by field name, while it is not yet
+    /// a date; a field with no draft shows its value.
+    pub date_drafts: std::collections::BTreeMap<String, String>,
 }
 
 impl ExtensionPage {
@@ -117,6 +127,10 @@ impl ExtensionPage {
             assets: None,
             prefers_dark: false,
             icons: Vec::new(),
+            remote_rows: std::collections::BTreeMap::new(),
+            remote_art: std::collections::HashMap::new(),
+            requested: std::collections::BTreeSet::new(),
+            date_drafts: std::collections::BTreeMap::new(),
         }
     }
 
@@ -133,6 +147,7 @@ impl ExtensionPage {
                 self.form_values.clear();
                 self.form_edits.clear();
                 self.editors.clear();
+                self.date_drafts.clear();
             }
             self.depth = state.depth.max(1);
         }
@@ -146,9 +161,25 @@ impl ExtensionPage {
                         .iter()
                         .map(|s| s.items.iter().map(|c| self.cell_icon(&c.content)).collect())
                         .collect();
+                    self.remote_rows = rows_with(grid.sections.iter().map(|s| {
+                        s.items.iter().map(|c| match &c.content {
+                            compass_extension_api::view::GridContent::Image(image) => {
+                                self.remote_url(image)
+                            }
+                            compass_extension_api::view::GridContent::Color(_) => None,
+                        })
+                    }));
                     Box::new(View::List(grid_as_list(grid)))
                 }
                 other => {
+                    self.remote_rows = match &other {
+                        View::List(list) => rows_with(list.sections.iter().map(|s| {
+                            s.items
+                                .iter()
+                                .map(|item| item.icon.as_ref().and_then(|i| self.remote_url(i)))
+                        })),
+                        _ => std::collections::BTreeMap::new(),
+                    };
                     self.icons = match &other {
                         View::List(list) => list
                             .sections
@@ -200,7 +231,58 @@ impl ExtensionPage {
     /// The icon of the row at `(section, item)`.
     #[must_use]
     pub fn icon(&self, section: usize, item: usize) -> Option<&RowIcon> {
-        self.icons.get(section)?.get(item)?.as_ref()
+        self.icons
+            .get(section)?
+            .get(item)?
+            .as_ref()
+            .or_else(|| self.remote_art.get(self.remote_rows.get(&(section, item))?))
+    }
+
+    /// The remote images this view shows that nobody has asked for yet;
+    /// each is returned once.
+    pub fn wanted_images(&mut self) -> Vec<String> {
+        let wanted: Vec<String> = self
+            .remote_rows
+            .values()
+            .filter(|url| !self.requested.contains(*url))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self.requested.extend(wanted.iter().cloned());
+        wanted
+    }
+
+    /// A remote image arrived in the cache at `path`, or could not be fetched.
+    pub fn image_arrived(&mut self, url: String, fetched: Result<std::path::PathBuf, String>) {
+        match fetched.map(|path| crate::icons::classify(&path)) {
+            Ok(Some(art)) => {
+                self.remote_art.insert(
+                    url,
+                    RowIcon::Art {
+                        art,
+                        monochrome: false,
+                        tint: None,
+                    },
+                );
+            }
+            Ok(None) => tracing::debug!(%url, "a fetched image the launcher cannot draw"),
+            Err(reason) => tracing::debug!(%url, %reason, "an extension image was not fetched"),
+        }
+    }
+
+    /// The URL of `image` when it is a remote one, after the theme has
+    /// picked a side.
+    fn remote_url(&self, image: &compass_extension_api::view::Image) -> Option<String> {
+        use compass_extension_api::view::ImageSource;
+        let mut source = &image.source;
+        while let ImageSource::Themed { light, dark } = source {
+            source = if self.prefers_dark { dark } else { light };
+        }
+        match source {
+            ImageSource::Url(url) if crate::remote_image::is_remote(url) => Some(url.clone()),
+            _ => None,
+        }
     }
 
     fn cell_icon(&self, content: &compass_extension_api::view::GridContent) -> Option<RowIcon> {
@@ -213,8 +295,9 @@ impl ExtensionPage {
     }
 
     /// The file an `Image` is drawn from: a builtin icon, a file in the
-    /// extension's assets, or a `file://` URL. Remote URLs and file icons are
-    /// not fetched yet, and fall back to the row's initial.
+    /// extension's assets, or a `file://` URL. A remote URL is resolved
+    /// separately, once it has been fetched ([`Self::remote_url`]); a file
+    /// icon falls back to the row's initial.
     fn image_icon(&self, image: &compass_extension_api::view::Image) -> Option<RowIcon> {
         use compass_extension_api::view::ImageSource;
         let tint = image.tint.as_ref().and_then(color_of);
@@ -421,6 +504,47 @@ impl ExtensionPage {
         })
     }
 
+    /// Text typed into the date field `name`: kept as typed, and sent as
+    /// the field's value once it is a date (or as no date once it is empty).
+    pub fn edit_date(
+        &mut self,
+        name: &str,
+        typed: String,
+    ) -> Option<(HandlerId, Vec<serde_json::Value>)> {
+        use compass_extension_api::view::{FieldKind, FormItem};
+        let precision = self.form()?.items.iter().find_map(|item| match item {
+            FormItem::Field(field) if field.name == name => match field.kind {
+                FieldKind::DatePicker { precision, .. } => Some(precision),
+                _ => None,
+            },
+            _ => None,
+        })?;
+        let value = if typed.trim().is_empty() {
+            Some(serde_json::Value::Null)
+        } else {
+            crate::extension_fields::parse_date(&typed, precision).map(serde_json::Value::from)
+        };
+        self.date_drafts.insert(name.to_owned(), typed);
+        self.edit_field(name, value?)
+    }
+
+    /// What the date field `name` shows: the text being typed, else its
+    /// value in the typed format.
+    #[must_use]
+    pub fn date_shown(
+        &self,
+        name: &str,
+        precision: compass_extension_api::view::DatePrecision,
+    ) -> String {
+        self.date_drafts.get(name).cloned().unwrap_or_else(|| {
+            self.form_values
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .map(|value| crate::extension_fields::show_date(value, precision))
+                .unwrap_or_default()
+        })
+    }
+
     /// An edit in the text area `name`: applied to its editor, and when it
     /// changed the text, recorded like any other field's edit.
     pub fn edit_text_area(
@@ -556,6 +680,21 @@ fn grid_as_list(
             .collect(),
         ..ListView::default()
     }
+}
+
+/// The `(section, item)` of every row `urls` gives a URL for.
+fn rows_with<S, I>(urls: S) -> std::collections::BTreeMap<(usize, usize), String>
+where
+    S: Iterator<Item = I>,
+    I: Iterator<Item = Option<String>>,
+{
+    urls.enumerate()
+        .flat_map(|(s, items)| {
+            items
+                .enumerate()
+                .filter_map(move |(i, url)| Some(((s, i), url?)))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -772,7 +911,27 @@ mod tests {
             ),
             "a dark launcher takes the themed image's dark side"
         );
-        assert_eq!(page.icon(0, 2), None, "remote images are not fetched yet");
+        assert_eq!(
+            page.icon(0, 2),
+            None,
+            "a remote image is not there until fetched"
+        );
+        assert_eq!(page.wanted_images(), ["https://example.com/a.png"]);
+        assert!(page.wanted_images().is_empty(), "asked for once");
+        page.image_arrived(
+            "https://example.com/a.png".into(),
+            Ok(assets.path().join("logo.png")),
+        );
+        assert!(
+            matches!(
+                page.icon(0, 2),
+                Some(RowIcon::Art {
+                    art: crate::icons::IconArt::Raster(_),
+                    ..
+                })
+            ),
+            "once fetched, the row draws it"
+        );
 
         let cell = GridItem {
             id: compass_extension_api::id::NodeId::ROOT,

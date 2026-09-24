@@ -19,6 +19,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 zbus = { workspace = true }
+url.workspace = true
 
 [dev-dependencies]
 compass-local-storage = { path = "../compass-local-storage" }

@@ -48,17 +48,19 @@ pub const MAX_RESTART_ATTEMPTS: u32 = 5;
 pub const BASE_RESTART_DELAY: Duration = Duration::from_millis(1000);
 
 /// Where the helper is looked for: beside the current executable, then in
-/// `../libexec/vicinae`, the installed layout the C++ candidates cover.
+/// `../libexec/vicinae`, the installed layout the C++ candidates cover, then
+/// `../lib/vicinae`, where Arch puts a package's internal programs.
 #[must_use]
 pub fn helper_candidates(exe_dir: &Path, program: &str) -> Vec<PathBuf> {
     let mut name = program.to_owned();
     if cfg!(windows) {
         name.push_str(".exe");
     }
-    let mut out = Vec::with_capacity(2);
+    let mut out = Vec::with_capacity(3);
     out.push(exe_dir.join(&name));
     if let Some(parent) = exe_dir.parent() {
         out.push(parent.join("libexec").join("vicinae").join(&name));
+        out.push(parent.join("lib").join("vicinae").join(&name));
     }
     out
 }
@@ -694,6 +696,7 @@ mod tests {
             [
                 PathBuf::from("/app/bin/vicinae-file-indexer"),
                 PathBuf::from("/app/libexec/vicinae/vicinae-file-indexer"),
+                PathBuf::from("/app/lib/vicinae/vicinae-file-indexer"),
             ]
         );
         assert!(find_helper_program("vicinae-no-such-helper").is_none());

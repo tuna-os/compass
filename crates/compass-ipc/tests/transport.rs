@@ -106,7 +106,8 @@ async fn echo_handler(request: Request) -> Response {
         | Request::SetExtensionPreferences { .. }
         | Request::ExtensionAlertAnswer { .. }
         | Request::CloseExtension { .. }
-        | Request::OpenFile { .. } => Response::Ack,
+        | Request::OpenFile { .. }
+        | Request::OAuthRedirect { .. } => Response::Ack,
         Request::SearchFiles { .. } => Response::Files {
             heading: "Results".into(),
             files: vec![],

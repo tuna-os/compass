@@ -1064,6 +1064,13 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
 
         Request::ListWindows => {
+            // wlroots compositors list windows over Wayland; never on GNOME.
+            if crate::wlroots::detect().await.is_some() {
+                let state = state.read().await;
+                if let Some(response) = crate::window_service::wlroots_list(&state.index).await {
+                    return response;
+                }
+            }
             let (shell, index_state) = (state.read().await.shell.clone(), Arc::clone(state));
             let Some(shell) = shell else {
                 return Response::Error(crate::window_service::no_bus("Window switching"));
@@ -1091,6 +1098,9 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             } else {
                 "Switching to a window"
             };
+            if let Some(response) = crate::window_service::wlroots_act(id, close, what).await {
+                return response;
+            }
             let Some(shell) = state.read().await.shell.clone() else {
                 return Response::Error(crate::window_service::no_bus(what));
             };
@@ -1201,6 +1211,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             state.read().await.views.close(session);
             Response::Ack
         }
+        Request::OAuthRedirect { url } => match crate::extension_runner::oauth_redirect(&url) {
+            Ok(()) => Response::Ack,
+            Err(reason) => Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason)),
+        },
 
         Request::ClipboardSetPinned { .. } | Request::ClipboardRemove { .. } => {
             let Some(store) = state.read().await.clipboard.clone() else {

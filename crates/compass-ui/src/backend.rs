@@ -106,6 +106,17 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         let _ = session;
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
+
+    /// Asks the desktop's file chooser for what a form's file picker takes:
+    /// the absolute paths chosen, empty when the person cancelled. An error
+    /// is the sentence to show.
+    fn choose_files(
+        &self,
+        choice: crate::extension_fields::FileChoice,
+    ) -> BackendFuture<'_, Vec<String>> {
+        let _ = choice;
+        Box::pin(async { Err("Choosing files needs the desktop's file chooser".to_owned()) })
+    }
 }
 
 const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine";

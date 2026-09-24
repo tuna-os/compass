@@ -1,0 +1,8 @@
+{
+  "_comment": "Hand-written inputs merged into the plan by fetch.py, keyed by extension directory. `search` is typed into a list or grid that searches for itself, for a command whose first frame is empty until something is typed. Placeholders fill required preferences and arguments that are not given here (crates/vicinae/src/conformance.rs).",
+  "store.raycast.translate": {"search": "hello"},
+  "store.raycast.youtube": {"search": "linux"},
+  "store.vicinae.nerdfont-search": {"search": "arrow"},
+  "store.vicinae.iconify": {"search": "home"},
+  "store.vicinae.searxng": {"search": "linux"}
+}

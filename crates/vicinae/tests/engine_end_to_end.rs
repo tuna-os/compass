@@ -188,6 +188,9 @@ impl Daemon {
             // receive from a test.
             .env("XDG_CACHE_HOME", dirs.path().join(".cache"))
             .env("HOME", dirs.path())
+            // Nor its compositor: on a wlroots session the engine would answer
+            // window requests over Wayland (`tests/wlroots_engine.rs`).
+            .env_remove("WAYLAND_DISPLAY")
             .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1078,6 +1081,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "show", "title": "Show Greeting", "mode": "view"},
               {"name": "nav", "title": "Navigate", "mode": "view"},
               {"name": "ask", "title": "Ask First", "mode": "view"},
+              {"name": "auth", "title": "Sign In", "mode": "view"},
               {"name": "link", "title": "Open Link", "mode": "no-view"},
               {"name": "term", "title": "In Terminal", "mode": "no-view"},
               {"name": "tiles", "title": "Tiles", "mode": "view"},
@@ -1100,6 +1104,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
     // lets it write. Not the tempdir: that is under /tmp, which it may not.
     let out = root.join("data-home/vicinae/support/hello/greeting.txt");
     let answered = root.join("data-home/vicinae/support/hello/answered.txt");
+    let replaced = root.join("data-home/vicinae/support/hello/replaced.txt");
     std::fs::write(
         ext.join("ask.js"),
         format!(
@@ -1112,8 +1117,40 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                      const ok = await confirmAlert({{ title: 'Delete it?' }});
                      require('node:fs').writeFileSync({answered:?}, String(ok));
                    }} }}))
+               }}),
+               React.createElement(List.Item, {{ title: 'twice', actions:
+                 React.createElement(ActionPanel, null,
+                   React.createElement(Action, {{ title: 'Ask twice', onAction: async () => {{
+                     const first = confirmAlert({{ title: 'First?' }});
+                     confirmAlert({{ title: 'Second?' }});
+                     require('node:fs').writeFileSync({replaced:?}, String(await first));
+                   }} }}))
                }}));",
-            answered = answered.to_string_lossy()
+            answered = answered.to_string_lossy(),
+            replaced = replaced.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let authorized = root.join("data-home/vicinae/support/hello/authorized.txt");
+    std::fs::write(
+        ext.join("auth.js"),
+        format!(
+            "const React = require('react');
+             const {{ List, OAuth }} = require('@vicinae/api');
+             module.exports.default = function Auth() {{
+               React.useEffect(() => {{
+                 const client = new OAuth.PKCEClient({{
+                   redirectMethod: OAuth.RedirectMethod.Web,
+                   providerName: 'Example', description: 'Connect your Example account' }});
+                 client.authorizationRequest({{
+                   endpoint: 'https://example.com/authorize', clientId: 'id', scope: 'read' }})
+                   .then((request) => client.authorize(request))
+                   .then(({{ authorizationCode }}) => authorizationCode, (e) => 'refused:' + e.message)
+                   .then((out) => require('node:fs').writeFileSync({authorized:?}, out));
+               }}, []);
+               return React.createElement(List, null, React.createElement(List.Item, {{ title: 'waiting' }}));
+             }};",
+            authorized = authorized.to_string_lossy()
         ),
     )
     .unwrap();
@@ -1178,11 +1215,24 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
             "module.exports.default = async () => {{
                const {{ environment, getPreferenceValues }} = require('@vicinae/api');
                const {{ spawnSync }} = require('node:child_process');
+               const fs = require('node:fs');
                const status = (cmd, args) => {{
                  const r = spawnSync(cmd, args);
                  return r.error ? String(r.error.code) : r.status;
                }};
-               require('node:fs').writeFileSync({probed:?}, JSON.stringify({{
+               // A program the command writes itself, into the one place it
+               // may write, and then tries to run.
+               const dropped = environment.supportPath + '/dropped';
+               const original = ['/usr/bin/true', '/bin/true'].find((p) => fs.existsSync(p));
+               fs.copyFileSync(original, dropped);
+               fs.chmodSync(dropped, 0o755);
+               // Outside the JavaScript heap, which the heap cap cannot see.
+               let bigBuffer;
+               try {{ bigBuffer = Buffer.alloc(512 * 1024 * 1024).length; }}
+               catch (e) {{ bigBuffer = e.name; }}
+               fs.writeFileSync({probed:?}, JSON.stringify({{
+                 execDropped: status(dropped, []),
+                 bigBuffer,
                  assetsPath: environment.assetsPath,
                  supportPath: environment.supportPath,
                  isDevelopment: environment.isDevelopment,
@@ -1620,6 +1670,109 @@ fn an_alert_reaches_the_launcher_and_its_answer_reaches_the_extension() {
     );
 }
 
+/// Waits for `session` to show an alert titled `title`.
+fn wait_for_alert(daemon: &Daemon, session: u64, title: &str) {
+    use compass_ipc::{Request, Response};
+    let mut after = 0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        assert!(Instant::now() < deadline, "no alert {title:?} arrived");
+        let Response::ExtensionView { version, alert, .. } =
+            daemon.request(Request::ExtensionView { session, after })
+        else {
+            panic!("no view answer");
+        };
+        if alert.is_some_and(|alert| alert.title == title) {
+            return;
+        }
+        after = version;
+    }
+}
+
+#[test]
+fn a_replaced_alert_and_one_navigated_away_from_both_answer_no() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_path_buf();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:ask".into(),
+        arguments_json: None,
+    }) else {
+        panic!("no session");
+    };
+    let (view, _) = wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+    let View::List(list) = view else {
+        unreachable!()
+    };
+    let handler = |row: usize| {
+        list.sections[0].items[row]
+            .actions
+            .as_ref()
+            .expect("actions")
+            .actions()[0]
+            .handler
+            .0
+            .clone()
+    };
+    let support = root.join("data-home/vicinae/support/hello");
+
+    // A second alert while the first is open: the first is cancelled, and
+    // the extension is told so rather than left waiting.
+    daemon.request(Request::ExtensionEvent {
+        session,
+        handler: handler(1),
+        args_json: "[]".into(),
+    });
+    wait_for_alert(&daemon, session, "Second?");
+    let replaced = support.join("replaced.txt");
+    wait_for_content(&replaced);
+    assert_eq!(
+        std::fs::read_to_string(&replaced).ok().as_deref(),
+        Some("false"),
+        "the replaced alert's promise settled with no"
+    );
+    assert_eq!(
+        daemon.request(Request::ExtensionAlertAnswer {
+            session,
+            confirmed: false
+        }),
+        Response::Ack
+    );
+
+    // Leaving the view while an alert is open answers it no.
+    daemon.request(Request::ExtensionEvent {
+        session,
+        handler: handler(0),
+        args_json: "[]".into(),
+    });
+    wait_for_alert(&daemon, session, "Delete it?");
+    assert_eq!(
+        daemon.request(Request::ExtensionPop { session }),
+        Response::Ack
+    );
+    let answered = support.join("answered.txt");
+    wait_for_content(&answered);
+    assert_eq!(
+        std::fs::read_to_string(&answered).ok().as_deref(),
+        Some("false"),
+        "navigating away is a way out of the dialog, and it is not the confirm button"
+    );
+    daemon.request(Request::CloseExtension { session });
+}
+
 #[test]
 fn a_required_preference_without_a_keyring_is_refused_by_name() {
     use compass_ipc::{ErrorKind, Request, Response};
@@ -1988,6 +2141,18 @@ fn a_command_sees_its_own_paths_and_preferences_and_may_exec_but_not_unshare() {
     } else {
         eprintln!("unshare -U fails here even unconfined; the denial is not tested");
     }
+    // Suite 1's `fork` case (§8.2): running what it wrote itself is the
+    // escape, and it fails closed, while `true` from the system ran above.
+    assert_eq!(
+        seen["execDropped"], "EACCES",
+        "a program the command wrote into its support directory ran"
+    );
+    // The 512 MB case: a Buffer lives outside the heap cap, and the data
+    // limit refuses it as an error the command can catch rather than a crash.
+    assert_eq!(
+        seen["bigBuffer"], "RangeError",
+        "a 512 MiB Buffer was allocated inside the sandbox"
+    );
 }
 
 #[test]
@@ -2415,4 +2580,102 @@ fn search_files_without_indexing_says_the_index_is_unavailable() {
     };
     assert_eq!(err.kind, ErrorKind::Unsupported);
     assert!(err.message.contains("file indexer"), "{}", err.message);
+}
+
+#[test]
+fn an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it() {
+    use compass_extension_api::View;
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    // The browser is a script that writes down the URL it was given, which
+    // is how the test learns the state the extension generated.
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_path_buf();
+        let script = dir.join("browser.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$1\" > {:?}\n",
+                dir.join("opened.txt").to_string_lossy()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let applications = dir.join("data/applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(
+            applications.join("browser.desktop"),
+            format!(
+                "[Desktop Entry]\nType=Application\nName=Browser\nExec={} %u\n\
+                 MimeType=x-scheme-handler/https;\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:auth".into(),
+        arguments_json: None,
+    }) else {
+        panic!("no session");
+    };
+    wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+
+    let opened = root.join("opened.txt");
+    wait_for_content(&opened);
+    let url = std::fs::read_to_string(&opened).expect("the browser was opened");
+    assert!(
+        url.starts_with("https://example.com/authorize?"),
+        "the extension's own authorization URL, as built: {url}"
+    );
+    let state = compass_worker_host::oauth_service::query_value(&url, "state").expect("a state");
+
+    // A redirect for some other request is refused, and does not settle this one.
+    let Response::Error(err) = daemon.request(Request::OAuthRedirect {
+        url: "raycast://oauth?code=nope&state=someone-else".into(),
+    }) else {
+        panic!("a redirect nobody waits on was accepted");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+
+    let redirect = format!(
+        "raycast://oauth?package_name=Extension&code=the-code&state={}",
+        percent_encode(&state)
+    );
+    assert_eq!(
+        daemon.request(Request::OAuthRedirect { url: redirect }),
+        Response::Ack
+    );
+    let authorized = root.join("data-home/vicinae/support/hello/authorized.txt");
+    wait_for_content(&authorized);
+    assert_eq!(
+        std::fs::read_to_string(&authorized).ok().as_deref(),
+        Some("the-code"),
+        "the extension's authorize() resolved with the code from the redirect"
+    );
+    daemon.request(Request::CloseExtension { session });
+}
+
+/// Percent-encodes everything but the unreserved characters.
+fn percent_encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                char::from(b).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }

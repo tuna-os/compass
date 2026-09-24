@@ -39,46 +39,17 @@
 
     numenFor = pkgs: numen.packages.${pkgs.stdenv.hostPlatform.system}.numen.override {withRepl = false;};
 
-    # Crane-based Rust build
-    rustBuild = pkgs: let
-      craneLib = crane.mkLib pkgs;
-      # crane's cleanCargoSource only keeps .rs/.toml/Cargo.lock/.cargo/config and
-      # so strips the .xml D-Bus introspection files + dconf seed that are embedded
-      # via include_str! in compass-shell and vicinae; preserve them too.
-      includeStrFilter = path: type:
-        craneLib.filterCargoSources path type
-        || lib.hasSuffix ".xml" (builtins.baseNameOf path)
-        || lib.hasSuffix ".dconf" (builtins.baseNameOf path);
-      rustSrc = lib.cleanSourceWith {
-        src = lib.cleanSource self;
-        filter = includeStrFilter;
-      };
+    # The Rust engine (Linux only, ADR-0007), built with crane and installed
+    # the way the Flatpak installs it. See packaging/nix/compass.nix.
+    rustBuild = pkgs: vicinae: let
+      src = lib.cleanSource self;
     in
-      craneLib.buildPackage {
-        pname = "rust-vicinae";
-        version = "0.1.0";
-        src = rustSrc;
-        cargoBuildFlags = ["-p" "vicinae" "--locked" "--release"];
-        nativeBuildInputs = [pkgs.pkg-config];
-        # Linux-only engine (ADR-0007): wayland and friends are not available
-        # on darwin, so keep them out of the closure there. The package itself
-        # is marked Linux-only below.
-        buildInputs = with pkgs;
-          lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-            dbus
-            libxkbcommon
-            wayland
-            mesa
-            fontconfig
-            freetype
-            harfbuzz
-          ];
-        doCheck = false;
-        meta = {
-          description = "Vicinae Rust engine";
-          homepage = "https://github.com/tuna-os/compass";
-          license = lib.licenses.gpl3Plus;
-          platforms = lib.platforms.linux;
+      pkgs.callPackage ./packaging/nix/compass.nix {
+        craneLib = crane.mkLib pkgs;
+        inherit src;
+        extensionRuntime = pkgs.callPackage ./packaging/nix/extension-runtime.nix {
+          inherit src;
+          inherit (vicinae) apiDeps extensionManagerDeps;
         };
       };
   in {
@@ -105,9 +76,12 @@
             inherit (vicinae) meta;
           };
         }
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux rec {
+          compass = rustBuild pkgs vicinae;
+          rust-vicinae = compass;
+        }
         // {
           default = vicinae;
-          rust-vicinae = rustBuild pkgs;
           nix-update-script = pkgs.writeShellScriptBin "nix-update-script" ''
             OLD_API_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.apiDeps.hash)
             OLD_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.extensionManagerDeps.hash)

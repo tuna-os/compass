@@ -29,5 +29,21 @@ with the decision taken and why.
 
 Not replaceable, checked: crypto (already crates), keyring (`oo7`), XDG base dirs (`dirs` plus
 Flatpak-specific roots), the uinput keyboard (a protocol model), clipboard filtering, file walking
-(`ignore`), MIME detection (`mime_guess`), the calculator (`fend-core`). There is no HTTP client in
-the tree yet; the store work will add one (`ureq` or `reqwest`), and remote icons will use it.
+(`ignore`), MIME detection (`mime_guess`), the calculator (`fend-core`).
+
+The HTTP client is `ureq` 3 with native-tls (remote images in extension views): blocking is all a
+fetch on a worker thread needs, and native-tls verifies against the system's roots through the
+OpenSSL already linked for SQLCipher. URL parsing (the OAuth redirect) is `url`, already in the tree.
+`oauth2` was considered and not used: Raycast's PKCE client builds the request and exchanges the
+code in the extension, so the host never speaks OAuth itself.
+
+## Phase 5 Track B: the wlroots family (2026-09-24)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Launcher as a `wlr-layer-shell` surface | `iced_layershell` 0.19.1 (built against `iced_core`/`iced_runtime` **0.14**, so it runs our `LauncherApp` unchanged) | **Used**, in `compass-ui` under a `cfg(target_os = "linux")` target section, default features off (its only default, `mundy` theme detection, duplicates `crate::appearance`). Two costs, both recorded: its `layershellev` needs **`libxkbcommon` headers at build time** (`pkg-config xkbcommon`; the Flatpak SDK has them, Ubuntu CI installs `libxkbcommon-dev`); and its unconditional `iced_exdevtools` 0.19.1 fails to compile against `winit-core` **0.31.0-beta.3** (a new `NativeKeyCode` variant), which `^0.31.0-beta.2` admits — `Cargo.lock` pins `winit-core`/`winit-common` to `0.31.0-beta.2`. A plain `cargo update` would re-break it; drop the pin once `iced_exdevtools` matches exhaustively. |
+| Protocol bindings: foreign-toplevel, data-control (ext + wlr) | `wayland-protocols` 0.32 (`staging`), `wayland-protocols-wlr` 0.3 | **Used.** `compass-wayland` moved from `wayland-client` 0.30 to 0.31, the version winit, `iced_layershell` and `wl-clipboard-rs` already link, so the tree carries one Wayland stack for these rather than two. |
+| Window list / activate / close | none maintained: crates.io has taskbar applications and screenshot tools that each embed their own client, no library | **Hand-rolled on the protocol crates** (`compass_wayland::toplevel`, ~450 lines incl. tests): a registry bind, one `Dispatch` per interface, a snapshot behind a mutex. |
+| Set / read / clear the selection without focus | `wl-clipboard-rs` 0.9 (the library under `wl-copy`/`wl-paste`; ext **and** wlr data-control, chosen at runtime) | **Used** for set (`copy_multi`, served from its own thread), read and clear. |
+| *Watch* the selection (clipboard history) | `wl-clipboard-rs` cannot: each call is one connection, one operation. `wayland-clipboard-listener` 0.6 can, but picks ext **or** wlr data-control at **compile time** (Sway before 1.11 has only wlr, newer compositors increasingly only ext), panics on a dispatch error inside its `Iterator`, reads one MIME type per selection, and has ~700 recent downloads | **Hand-rolled the watcher only** (`compass_wayland::clipboard::watch`, ~200 lines): one bound device over whichever manager is advertised, each selection filtered by the existing port of the C++ offer filter (`compass_wayland::data_control`) and read with a per-type timeout. Everything that is not watching stays on `wl-clipboard-rs`. |
+| `xx-hotkey-v1` bindings | no crate carries this experimental protocol (it is upstream vicinae's own, #1936) | **Generated, not written**: `wayland-scanner` 0.31 — the generator `wayland-protocols` itself uses — over the checked-in XML, in the new `compass-wayland-protocols` crate. It is a separate crate only because generated interface tables contain `unsafe` and the workspace forbids it; that crate uses `deny` and allows it on the generated module alone. |

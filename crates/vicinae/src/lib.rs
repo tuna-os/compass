@@ -14,6 +14,8 @@
 pub mod appearance;
 pub mod cli;
 pub mod clipboard_service;
+pub mod config_cmd;
+pub mod conformance;
 pub mod doctor;
 pub mod engine;
 pub mod extension_apps;
@@ -33,6 +35,7 @@ mod ui_instance;
 pub mod vicinae_import;
 pub mod window;
 pub mod window_service;
+pub mod wlroots;
 
 use std::process::ExitCode;
 
@@ -53,7 +56,7 @@ pub const EXIT_FAILURE: u8 = 1;
 /// Usage errors exit 2 from inside `clap`; see [`cli::EXIT_CODE_HELP`].
 #[must_use]
 pub fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(cli::with_deeplink(std::env::args_os().collect()));
     init_tracing(cli.verbose);
 
     match run(cli) {
@@ -243,7 +246,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             .map(|d| d as std::sync::Arc<dyn compass_ui::backend::ClipboardBackend>);
         let windows = daemon.map(|d| d as std::sync::Arc<dyn compass_ui::backend::WindowBackend>);
 
-        compass_ui::run_resident(compass_ui::AppFlags {
+        let flags = compass_ui::AppFlags {
             theme: theme_choice,
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             backend,
@@ -264,8 +267,21 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             font_family,
             typography_link,
             ..compass_ui::AppFlags::default()
-        })
-        .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+        };
+
+        // The surface: a layer surface on the wlroots family, an
+        // `xdg_toplevel` everywhere else, and always on GNOME.
+        match launcher_surface() {
+            compass_wayland::SurfaceKind::LayerShell => {
+                tracing::info!("presenting the launcher as a wlr-layer-shell surface");
+                compass_ui::run_resident_layer_shell(flags)
+                    .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+            }
+            compass_wayland::SurfaceKind::XdgToplevel => {
+                compass_ui::run_resident(flags)
+                    .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
+            }
+        }
         return Ok(ExitCode::from(EXIT_OK));
     }
 
@@ -279,6 +295,25 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             .build()?
     };
     runtime.block_on(dispatch(cli))
+}
+
+/// Which surface the launcher window is, from the compositor's registry.
+///
+/// No compositor to ask (a probe that fails) is `xdg_toplevel`, which is what
+/// Iced would have tried anyway, so its own error reaches the user unchanged.
+fn launcher_surface() -> compass_wayland::SurfaceKind {
+    match compass_wayland::Session::detect() {
+        Ok(session) => compass_wayland::select_surface(
+            &session,
+            std::env::var(compass_wayland::layer_shell::OVERRIDE_ENV)
+                .ok()
+                .as_deref(),
+        ),
+        Err(err) => {
+            tracing::debug!(error = %err, "no compositor to probe for a layer shell");
+            compass_wayland::SurfaceKind::XdgToplevel
+        }
+    }
 }
 
 async fn dispatch(cli: Cli) -> Result<ExitCode> {
@@ -391,6 +426,36 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::from(EXIT_OK))
         }
 
+        Command::Deeplink { url } => {
+            // Only the OAuth redirect so far; every other deeplink the C++
+            // takes (extensions, themes, the store) is refused by name rather
+            // than silently dropped.
+            if compass_worker_host::oauth_service::Redirect::parse(&url).is_err() {
+                anyhow::bail!("Compass does not handle this deeplink yet: {url}");
+            }
+            ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
+            Ok(ExitCode::from(EXIT_OK))
+        }
+
+        Command::Conformance {
+            plan,
+            timeout,
+            json,
+        } => {
+            let report =
+                conformance::run(plan.as_deref(), std::time::Duration::from_secs(timeout)).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", report.render_human());
+            }
+            Ok(ExitCode::from(if report.passed == report.total {
+                EXIT_OK
+            } else {
+                EXIT_FAILURE
+            }))
+        }
+
         Command::Spike(Spike::Sandbox { json }) => {
             // Not gated on the engine either, and for a sharper reason than the
             // shortcut spike: this one confines the process it runs in, and
@@ -406,6 +471,8 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         }
 
         Command::Theme(theme_cmd) => handle_theme(theme_cmd).await,
+
+        Command::Config(config_cmd) => config_cmd::run(config_cmd),
 
         // Handled in `run`, before the runtime exists.
         Command::Ui | Command::Start { .. } => {

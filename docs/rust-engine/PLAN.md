@@ -511,6 +511,22 @@ belongs in the release notes next to the macOS/Windows narrowing.
 #1936 (necessary because `xdg-desktop-portal-wlr` ships **no** GlobalShortcuts backend). KDE is a
 third target after that.
 
+> **Track B status (2026-09-24).** Landed and verified on **headless Sway 1.9** (not a mock): the
+> launcher is an `iced_layershell` surface (`top` layer, centred, exclusive keyboard) chosen at
+> runtime when `zwlr_layer_shell_v1` is advertised and the desktop is not GNOME — GNOME is decided
+> by name first, so its path cannot move; window list/focus/close over
+> `zwlr_foreign_toplevel_manager_v1` (list-only fallback on `ext_foreign_toplevel_list_v1`)
+> answering the engine's existing `ListWindows`/`ActivateWindow`/`CloseWindow`; clipboard history
+> watched over `ext`/`wlr` data-control, and the extension `Clipboard` API set/read/cleared through
+> `wl-clipboard-rs`; the `xx-hotkey-v1` client (bindings generated from the C++ tree's XML), which
+> no released compositor carries yet, so the documented fallback — bind `vicinae toggle` in the
+> compositor, with a per-compositor hint in the log — is what users get today. Gated by
+> `.github/workflows/wlroots.yaml`: `compass-wayland` against Sway, the engine against Sway, and
+> the launcher on Sway (on screen, absent from Sway's window tree, toggles, takes typed text), each
+> gate with a control that fails. Not done: synthetic paste (copy only), `ext-workspace`,
+> focus-back via `xdg-activation` serials, the C++ `launcherWindow.layerShell.*` config keys, and
+> Hyprland/niri themselves (only Sway runs in CI). PARITY.md "wlroots" has the differences.
+
 *Track C — Rhai extension tier (§2.2).* Independent of both, once `compass-extension-api` exists:
 `compass-script` with a hardened engine (`Engine::new_raw()`, explicit package, no
 `FileModuleResolver`, the full set of `set_max_*` limits, `on_progress` budget termination); the
@@ -542,6 +558,13 @@ Flatpak already exists from Phase 0; this phase adds back AppImage, Arch, Nix an
 `vicinae.json` declarative config with a published JSON Schema plus migration from today's config.
 
 **Gate:** Suite 5 (§8.6) green across all outputs.
+
+**Status (2026-09-24):** built, gate not yet observed green. `vicinae.json`'s schema is generated
+by `schemars` into `packaging/schema/vicinae.schema.json` (drift test: `config_schema`), and
+`compass_core::config_migration` + `vicinae config migrate` carry the C++ `settings.json` across.
+AppImage, Arch (`compass-git`) and Nix (`.#compass`) share one install script with the Flatpak and
+one smoke (`scripts/packaging/smoke.sh`), run by `packaging.yaml` and `flatpak.yaml`. See
+`packaging/README.md`. The `/usr/bin/vicinae` collision with the C++ packages stays (§5).
 
 ### Phase 7 — Cutover (≈2 weeks)
 
@@ -1260,6 +1283,10 @@ that catches real portal behaviour, the GlobalShortcuts permission dialog, and
 `compass-testkit/src/wayland_mock.rs`, for the wlroots track: layer-shell anchors and margins across
 single/dual/mixed-DPI outputs, `ext-foreign-toplevel-list-v1` events, focus-loss dismissal, and
 correct degradation when a protocol is absent. Deferred until there is wlroots code to test.
+**Built instead as a real compositor** (2026-09-24): headless Sway per test, in
+`crates/compass-wayland/tests/support`, which proves the client against a compositor people run
+rather than against a mock written beside it. Multi-output and mixed-DPI layouts are not covered
+yet.
 
 ### 8.5 Suite 4 — Benchmarks and resource regression
 
@@ -2245,7 +2272,7 @@ reads as uniformly in-progress.
 |---|---|---|---|
 | **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**8,610 LOC, 170 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **44 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio, which §6 now names after this was reconciled — see §11.4a and #101. |
 | **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🔴 **44%** | `PARITY.md` holds **70 ✅, 21 ❌, 67 🟡** over the 158 cells of the two columns that measure this port — `Rust ✓` and `parity test ✓`, across 87 rows — plus 16 marked n/a. Counted by `scripts/ci/parity-score.py`, which also prints the other two columns. **The earlier 37% was wrong, and wrong in our favour.** It was taken over all four checkbox columns, which meant counting `C++ ✓` — 87 rows, every one of them ✅, because that column says the C++ exists, not that anything was ported. Those 87 free greens were three quarters of the "120 ✅" the figure was built on. It also counted `C++ deleted ✓`, which by this ledger's own rule cannot go green before Phase 8. Restating over the two columns that are Phase 5 work puts the real figure at 70 of 158. Nothing regressed to cause the drop from 37% to 35%; the earlier number was measuring the wrong thing. Ported rows have since carried the corrected figure back up past it, which was a coincidence of arithmetic and not a return to the old method: the corrected figure is 70 of 158 over two columns, the old one was 120 of 331 over four. Of the 70, only 13 rows are green in `Rust ✓` — the rest are rows with a passing parity test over a model that has no view yet. (Earlier revisions said 115 of 331 and 96 of 340 on the same inflated basis.) This remains the single largest number in the project. It was described here as "a breadth problem rather than a hard one: most rows are individual builtins", and that has stopped being true — the builtins are ported. `scripts/ci/parity-score.py` now reports what the remainder *is*, by reading the `Still C++-only:` sentences the notes carry, and at the time of writing it is: **view 12, backend 7, process 2, storage 1, network 1**. Twelve of the nineteen named gaps are drawing, seven are DBus, MPRIS or compositor providers. The view figure has gone *up* as rows landed, which is not a regression: each newly written note names what its row still lacks, and what these rows lack is drawing. One of the changes since is a correction rather than movement: a `Still C++-only:` sentence in the shortcut row had been edited into saying the opposite of what it opened with, and was being counted as a storage gap that no longer existed. None of that is transcription, and most of it cannot be verified in a container — the VM tier is what answers for the drawing, and it runs on this PR rather than only nightly. The number to watch is no longer the percentage on its own but that breakdown beside it: a ledger at 44% whose remainder is typing and one whose remainder is compositor integration are not the same project. |
-| **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **one output of several** | the Flatpak builds, is installed and is smoke-tested on every run. Every other packaging workflow — AppImage, Linux tarball, macOS dmg, Windows — is `workflow_dispatch` only, by the deliberate decision to narrow CI to what ships on the first target. |
+| **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **all Linux outputs defined, gate not yet observed** | the Flatpak builds, is installed and is smoke-tested on every run. The Rust engine's AppImage, Arch package and Nix package now exist and are built and smoke-tested by `packaging.yaml` (nightly + packaging changes), sharing the Flatpak's install layout and one smoke script; `vicinae.json` has a generated, drift-tested JSON Schema and a migration from `settings.json`. None of the three new jobs had run when this was written. The C++-engine AppImage, tarball, dmg and Windows workflows stay `workflow_dispatch` only. |
 | **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
 | **8 — Remove the Linux C++ engine** | — | ⚪ **not startable** | requires 7. Several tests are written to die with `src/` at this point and say so (`cpp_enum_values.rs`, `cpp_constants.rs`, the new pragma pin), which is the intended shape. |
 | **9 — macOS** | — | ⚪ **sequenced, not blocked** | ADR-0013 makes Linux-first a sequence rather than a scope limit. 102 `Q_OS_MAC` sites are inventoried in #78. |
@@ -2270,7 +2297,7 @@ Ordered by what blocks what, not by size.
 |---|---|
 | framing, manager protocol, tsapi envelope | done, pinned against the IDL and the generator |
 | worker lifecycle (spawn, request, read, shutdown) | done |
-| Landlock boundary + seccomp denylist + launcher | done; the cgroups v2 memory cap is not |
+| Landlock boundary + seccomp denylist + launcher | done, with §8.2's negative list: a program the extension wrote cannot be run (read no longer implies execute), raw and packet sockets answer `EPERM`, and `RLIMIT_DATA` (512 MiB) refuses a 512 MiB `Buffer` where no cgroup is reachable; each beside a positive control (`compass-sandbox/tests/boundary.rs`, `engine_end_to_end.rs`). The systemd scope's `MemoryMax` still applies only outside a Flatpak |
 | session routing (event → service → reply) | done |
 | `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
 | `Wallpaper/set`, `BrowserExtension` (both) | the adapters are done and pinned (`wallpaper_service`, `browser_service`) — 33 of 49. The wallpaper backends and the browser bridge are Phase 5/6 work |
@@ -2282,11 +2309,13 @@ Ordered by what blocks what, not by size.
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
 | `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
-| `UI/confirmAlert` | the adapter and deferred reply transport are implemented (`UiShellService::defer`, `Session::answer_deferred`, `Session::fail_deferred`); the launcher still needs to draw the dialog and settle it on confirmation, cancellation, replacement and navigation |
-| `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
-| `OAuth/authorize` | **not started**; needs a browser and an overlay |
+| `UI/confirmAlert` | done: drawn by the launcher, and settled on confirmation, cancellation, replacement (a second alert) and navigation (the launcher popping, or the extension pushing or popping) |
+| `EventCore/handlerActivated` | done: actions, search text and form fields fire it (`Views::activate`) |
+| `OAuth/authorize` | done without the overlay: the browser opens on the default https handler, a toast says so, and the `raycast://oauth` redirect comes back through `vicinae deeplink` (IPC v11) keyed by `state`; the token store is routed in the engine. 46 of 49 |
+| remote images, date/tag/file pickers | done: `ureq` into Compass's own image cache; a typed date field, tag toggles, and the FileChooser portal (PARITY "Extension views") |
 | running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
-| Suite 1 (the gate) | **not started** |
+| Suite 1 (the gate) | **the harness runs, and the gate is not met.** `vicinae conformance` runs installed extensions against an engine of its own and judges each command's first frame; `scripts/suite1/` pins the corpus (top 25 Raycast store extensions by installs that can run on Linux at all, plus all 95 Vicinae store extensions), fetches the stores' own bundles, and ratchets against `expected.json`; `.github/workflows/suite1.yaml` runs it on the host (gating on regressions) and inside the Flatpak (report-only until seen green). First measured run, in the dev container: **71 of 120 pass** — Raycast 11 of 25, Vicinae 60 of 95. Of the 49 failures, 7 wait on an OAuth sign-in a headless run cannot give, about 30 need a program, file, session or account the runner does not have (hyprctl, pactl, a system bus, a Firefox profile, API keys), 2 need host APIs Compass lacks (`getSelectedText`, `WindowManagement/getActiveWindow`), 1 is the sandbox refusing a downloaded binary (`speedtest`), 1 the heap cap (`dashboard-icons`), and 5 draw only an empty first frame. None of it has run inside the Flatpak yet |
+| the seam (the gate's third condition) | **done and in CI**: `scripts/ci/extension-api-seam.sh` checks `cargo tree -p compass-extension-api` (normal, build and dev edges) never reaches `compass-worker-host`, then copies the crate into a workspace where the host does not exist and runs `cargo test` there against the same `Cargo.lock` pins. Rust workflow job `extension-api-seam` |
 
 #### 11.4a Phase 4 specified a transport the worker does not speak — resolved
 

@@ -46,6 +46,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
+
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -164,6 +169,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
+
       - name: Read the MSRV out of Cargo.toml
         id: msrv
         run: |
@@ -192,6 +202,30 @@ jobs:
         run: |
           rustup run "${{ steps.msrv.outputs.version }}" \
             cargo build --release --locked -p vicinae
+
+  # PHASE 4'S SEAM. The gate (PLAN §6) asks that compass-extension-api compile
+  # and pass its tests with compass-worker-host removed from the dependency
+  # graph: the cheap mechanical proof that the Rhai tier can bind to the same
+  # view tree without the Node host coming along. The script checks the real
+  # graph, then builds and tests the crate in a workspace where the host does
+  # not exist at all.
+  extension-api-seam:
+    name: "Phase 4 seam: compass-extension-api without compass-worker-host"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: seam-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: seam-${{ runner.os }}-
+
+      - name: Build and test the crate alone
+        run: ./scripts/ci/extension-api-seam.sh
 
   crypto-parity:
     name: The two clipboard crypto implementations interoperate
@@ -312,6 +346,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
+
       # figura's parser uses std::ranges::to, a C++23 library feature that
       # GCC 13 — the image's default — does not have. The error it gives
       # ("expected primary-expression before ')'") does not say so.
@@ -410,6 +449,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
+
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -468,6 +512,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9

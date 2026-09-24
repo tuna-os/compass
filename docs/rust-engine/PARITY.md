@@ -2055,6 +2055,39 @@ differs:
 | 8 | Scan progress (`scanStatusChanged`) feeds a status indicator. | The client tracks scans, and nothing shows them. | — |
 | 9 | Recent files come from `$XDG_DATA_HOME/recently-used.xbel`. | The same — which inside the Flatpak is the sandbox's own data home, not the host's, so there the empty query falls through to "Recently Modified" from the index. | — |
 
+### The extension sandbox — what an extension may not do that the C++ let it
+
+The C++ runs extensions unconfined. Compass runs them behind `compass-sandbox-exec` (Landlock,
+seccomp, a heap cap and now a data limit), so every row here is a divergence by construction.
+The negative tests are §8.2's list; each has a positive control beside it.
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | An extension may run a program it wrote itself (Raycast's `speedtest` downloads its CLI into `supportPath` and runs it). | Execute is granted on the system trees (`/usr`, `/bin`, `/lib*`, `/app`), Node and the extension's installed directory, never on the directories it may write: running what it wrote fails with `EACCES`. The Landlock crate's "read" set includes `Execute`, which had made every readable path executable; read no longer implies execute. Suite 1's `speedtest` fails here, by design. | `a_program_the_worker_wrote_itself_cannot_be_run`, `a_command_sees_its_own_paths_and_preferences_and_may_exec_but_not_unshare` |
+| 2 | A raw socket is whatever the kernel allows the process. | `socket()` with `SOCK_RAW` or `SOCK_PACKET`, or in `AF_PACKET`, answers `EPERM` from the seccomp filter, root or not; an ordinary socket is unaffected. | `a_raw_socket_is_refused_while_an_ordinary_one_is_not` |
+| 3 | No memory limit; the worker asks V8 for 1000 MB of heap. | The heap is capped at 160 MiB (`--max-old-space-size`), and `RLIMIT_DATA` at 512 MiB, which bounds `Buffer`s and native allocations where no cgroup is reachable (a Flatpak): a 512 MiB `Buffer` is a `RangeError` the extension can catch. Measured over Suite 1 the worker's `VmData` peaks at 340 MiB. The heap cap costs one real extension: `dashboard-icons` runs out of heap loading its catalogue. | `an_allocation_past_the_data_limit_fails_and_the_process_carries_on`, `an_extension_that_allocates_past_the_heap_cap_is_stopped` |
+| 4 | Writes anywhere the user may. | Writes only its support and asset directories: `reminders` (Vicinae store) fails making `~/.local/share/vicinae-reminders`. | `an_installed_extension_command_is_found_and_a_no_view_one_runs` |
+| 5 | TLS trusts whatever `NODE_EXTRA_CA_CERTS` names. | The same, because the file it names (and `SSL_CERT_FILE`, `SSL_CERT_DIR`) is granted read; otherwise Node could not load a corporate CA from `$HOME`. | — |
+
+### Extension views — remote images, date, tag and file pickers, and dialogs
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Remote images go through a `QNetworkDiskCache` under the cache directory with `PreferCache`, up to 5 GB. | Fetched with `ureq` into `$XDG_CACHE_HOME/compass/images` (ADR-0017: Compass's own files), one file per URL by SHA-256, served from disk once fetched, oldest pruned past **256 MB**. Only PNG, JPEG and SVG are kept, recognised by their bytes; anything else keeps the row's initial. Markdown images in a `Detail` are not fetched yet. | `a_stored_image_is_found_again_and_a_different_url_is_not`, `the_bytes_decide_the_kind_not_the_url`, `pruning_removes_the_oldest_until_the_budget_holds`, `row_icons_resolve_assets_file_urls_themes_and_colour_cells` |
+| 2 | `Form.DatePicker` is a calendar. | A text field in `YYYY-MM-DD` (or `YYYY-MM-DD HH:MM`), sent as a local timestamp without a zone once it parses; half-typed or impossible dates are kept as typed and not sent. An extension's own value is shown by its first characters, so a `Z` value shows its UTC time. | `a_typed_date_becomes_a_local_timestamp_javascript_parses`, `half_a_date_or_an_impossible_one_is_not_sent` |
+| 3 | `Form.TagPicker` is a searchable token field. | Every option as a toggle, chosen ones marked; the value is the chosen values in the options' order. No search within the options. | `toggling_a_tag_keeps_the_options_order` |
+| 4 | `Form.FilePicker` opens a Qt file dialog. | The XDG FileChooser portal (`compass-portals`), which inside a Flatpak is also what grants the extension the file. A picker that takes directories and not files asks for a directory; one that takes both asks for files, since the portal offers one or the other. | — (portal; the VM tier) |
+| 5 | A second `confirmAlert` cancels the first; leaving the view cancels an open one. | The same: both answer the waiting promise `false`, whether the launcher pops the view or the extension pushes or pops one itself. | `a_replaced_alert_and_one_navigated_away_from_both_answer_no` |
+
+### `OAuth/authorize` — no overlay, and the redirect as a deeplink
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | An overlay names the provider and waits for "Open browser". | The browser opens at once, with the default `x-scheme-handler/https` application, and the view shows a toast ("Continue in your browser to connect …") until the redirect arrives; then "Connected to …" or the provider's refusal. | `an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it` |
+| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v11); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. Every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
+| 3 | An authorize URL without a `state` waits for ever. | Refused at once: nothing could match a redirect to it. | `a_url_without_a_state_is_refused_rather_than_waited_on` |
+| 4 | A redirect with `error=` leaves the request waiting. | The extension's `authorize()` rejects with `error_description` (else `error`). | `every_redirect_shape_raycast_uses_parses` |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the
@@ -2162,3 +2195,45 @@ as a regression: cross-word abbreviations that pick up a mid-word letter are rej
 `"Firefox Web Browser"/"ffb"`, `"Text Editor"/"txted"` and `"Power Statistics"/"pwrstat"` are all
 rejected — and the oracle confirms the C++ rejects all three too. The rule is working as designed;
 whether it is the *right* design is a separate product question.
+
+### wlroots (Phase 5 Track B) — Sway, Hyprland, niri, labwc, river
+
+Verified on headless Sway 1.9 (`.github/workflows/wlroots.yaml`); Hyprland and niri are expected
+to behave the same because every choice below is made from the advertised globals, but neither runs
+in CI.
+
+1. **Launcher surface.** A layer surface through `iced_layershell`, centred, `top` layer,
+   `exclusive` keyboard, namespace `vicinae` — the C++ `LayerShellConfig` defaults. The C++ keys
+   that change them (`launcherWindow.layerShell.enabled`/`.layer`/`.keyboardInteractivity`) are
+   **not ported**; `VICINAE_LAYER_SHELL=0` stands in for `enabled = false`. The C++ drops
+   exclusive focus while a file chooser opened from the launcher is up; the Rust launcher has no
+   such flow yet.
+2. **Which sessions get it.** The C++ asks only whether the compositor advertises the layer shell
+   (`Environment::isLayerShellSupported`). The Rust engine decides **GNOME by
+   `$XDG_CURRENT_DESKTOP` first** and only then looks at globals, so a future Mutter with a layer
+   shell stays on the tested GNOME path. Same outcome on every compositor today.
+3. **Window switching.** The C++ has per-compositor providers (Hyprland and niri over their IPC,
+   with workspaces) ahead of a generic Wayland one. The Rust engine has only the generic path:
+   `zwlr_foreign_toplevel_manager_v1` (list, focus state, activate, close) or, failing that,
+   `ext_foreign_toplevel_list_v1` (list only; activate/close are refused by name). So on wlroots:
+   no workspaces, no pid (the launcher's own window is recognised by `app_id`), no geometry, and
+   the Hyprland/niri IPC providers are not ported. Order is most-recently-activated first, with the
+   focused window last, as on GNOME.
+4. **Clipboard history.** Watched over `ext-data-control-v1`, else `zwlr_data_control_manager_v1`,
+   with the C++ offer filter (`compass_wayland::data_control`). The C++ stores every kept type of
+   a selection; the Rust store takes one per selection, so the **preferred** one is recorded
+   (image, then `text/uri-list`, UTF-8 text, plain text, HTML). A selection carrying
+   `x-kde-passwordManagerHint` or `vicinae/concealed` is **not recorded at all**. The primary
+   selection is not recorded. The source application is unknown (data-control does not say).
+5. **Paste.** The C++ injects Ctrl+V through its uinput input server. The Rust engine has **no
+   synthetic paste on wlroots**: `ClipboardPaste` is refused and the launcher copies instead, and
+   an extension's `Clipboard.paste` copies. Copy, read and clear work, over `wl-clipboard-rs`; an
+   HTML copy keeps its plain-text alternative, which the GNOME path cannot.
+6. **Global hotkey.** The C++ tries `xx-hotkey-v1` and then `vicinae-hotkey-v1`. The Rust engine
+   tries `xx-hotkey-v1` (fixed `Super+Space`), then the GlobalShortcuts portal, and otherwise logs
+   how to bind `vicinae toggle` in the running compositor's config. `vicinae-hotkey-v1` is not
+   ported, and the trigger's input serial is not yet passed to `xdg-activation`. No released
+   compositor carries `xx-hotkey-v1`, so the manual binding is what users have today.
+7. **Flatpak.** Nothing beyond `--socket=wayland` is needed, and nothing can add more: a compositor
+   that honours `wp_security_context_v1` may hide data-control and foreign-toplevel from a
+   sandboxed client, and the features above then degrade as if the compositor lacked them.

@@ -11,14 +11,18 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-ashpd.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-wayland-client = { version = "0.30", features = ["calloop"] }
-wayland-protocols = { version = "0.30", features = ["client", "staging"] }
-iced = { version = "0.14", features = ["wayland"] }
-iced_winit = { version = "0.14", features = ["wayland"] }
-winit = { version = "0.30", features = ["wayland"] }
+compass-wayland-protocols = { path = "../compass-wayland-protocols" }
+# 0.31 / 0.32 are what winit, iced_layershell and wl-clipboard-rs already use,
+# so the protocol code here shares one Wayland stack with the launcher rather
+# than pulling a second, older one in beside it.
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# Writing and reading the selection over wlr/ext data-control. It has no way to
+# *watch* the selection, so `clipboard::monitor` does that part itself.
+wl-clipboard-rs = "0.9"
 
 [dev-dependencies]
 tempfile.workspace = true

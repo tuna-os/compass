@@ -1,0 +1,68 @@
+# Maintainer: Compass contributors <https://github.com/tuna-os/compass>
+#
+# The Rust engine of Vicinae, built from git. Installs what the Flatpak ships,
+# through the same scripts/packaging/install-rust-engine.sh every non-Flatpak
+# output uses, with internal programs in /usr/lib/vicinae as Arch expects.
+#
+# COMPASS_GIT_URL / COMPASS_GIT_REF let CI build the checkout under test
+# instead of the published branch:
+#   COMPASS_GIT_URL=file:///src COMPASS_GIT_REF=commit=<sha> makepkg
+
+pkgname=compass-git
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='A fast, extensible command palette for Linux (the Rust engine of Vicinae)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/tuna-os/compass'
+license=('GPL-3.0-only')
+# wgpu and winit load the graphics stack and Wayland at run time rather than
+# linking them, so they are named here rather than discovered by makepkg.
+depends=('gcc-libs' 'glibc' 'openssl' 'nodejs' 'wayland' 'libxkbcommon' 'hicolor-icon-theme')
+makedepends=('git' 'cargo' 'cmake' 'npm')
+optdepends=(
+  'vulkan-icd-loader: Vulkan rendering'
+  'libglvnd: OpenGL rendering where Vulkan is unavailable'
+  'xdg-desktop-portal: the global hotkey through the GlobalShortcuts portal'
+)
+# Both engines install /usr/bin/vicinae until the Phase 7 dispatcher exists
+# (docs/rust-engine/PLAN.md section 5).
+provides=('vicinae')
+conflicts=('vicinae' 'vicinae-bin' 'vicinae-git')
+options=('!lto' '!debug')
+source=("compass::git+${COMPASS_GIT_URL:-https://github.com/tuna-os/compass.git}${COMPASS_GIT_REF:+#$COMPASS_GIT_REF}")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd compass
+  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd compass
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd compass
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p vicinae -p compass-sandbox --bins
+  # The extension runtime bundle: figura (C++23) generates the protocol, npm
+  # bundles it. The Flatpak builds it the same way, outside flatpak-builder.
+  ./scripts/build-extension-runtime.sh
+}
+
+check() {
+  cd compass
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --release -p compass-core --test config_schema --test config_migration
+}
+
+package() {
+  cd compass
+  DESTDIR="$pkgdir" PREFIX=/usr LIBEXECDIR=/usr/lib BIN_DIR=target/release REQUIRE_RUNTIME=1 \
+    ./scripts/packaging/install-rust-engine.sh
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

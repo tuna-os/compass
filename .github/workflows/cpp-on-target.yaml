@@ -775,6 +775,11 @@ jobs:
       # engine is built IN the container and this is not.
       #
       # The `ldd` guard below is what turns that reasoning into a check.
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
+
       - name: Build the Rust engine and the harness
         run: cargo build --locked --release -p vicinae -p compass-testkit --bin vicinae --bin parity
 

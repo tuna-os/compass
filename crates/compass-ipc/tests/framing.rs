@@ -107,6 +107,9 @@ fn all_requests() -> Vec<Request> {
             path: "/home/me/Documents/rapport é.pdf".into(),
             reveal: true,
         },
+        Request::OAuthRedirect {
+            url: "raycast://oauth?package_name=Extension&code=é&state=s".into(),
+        },
     ]
 }
 
@@ -327,6 +330,7 @@ fn request_variants_are_exhaustive() {
             | Request::CloseExtension { .. }
             | Request::SearchFiles { .. }
             | Request::OpenFile { .. }
+            | Request::OAuthRedirect { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

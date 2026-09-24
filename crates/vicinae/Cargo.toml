@@ -48,10 +48,12 @@ compass-clipboard.workspace = true
 compass-worker-host.workspace = true
 compass-extension-api = { path = "../compass-extension-api" }
 compass-local-storage = { path = "../compass-local-storage" }
+compass-oauth-store = { path = "../compass-oauth-store" }
 wait-timeout = "0.2"
 notify-rust = { version = "4.18", default-features = false, features = ["z-with-tokio"] }
 compass-sandbox = { path = "../compass-sandbox" }
 compass-shell.workspace = true
+compass-wayland.workspace = true
 compass-crypto.workspace = true
 compass-sqlcipher-sys.workspace = true
 getrandom.workspace = true
@@ -66,3 +68,6 @@ iced = { version = "0.14", features = ["tokio"] }
 iced_winit = "0.14"
 compass-testkit.workspace = true
 tempfile = "3"
+# The headless-Sway harness shared with compass-wayland (tests/wlroots_engine.rs).
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }

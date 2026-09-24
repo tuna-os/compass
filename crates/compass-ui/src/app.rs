@@ -1289,6 +1289,7 @@ impl LauncherApp {
         let mut streams = vec![
             iced::event::listen_with(keyboard_events),
             window::close_events().map(Message::Closed),
+            crate::surface::opened_events(),
         ];
         // Only while the first frame is still owed. Once it has been reported
         // this stream is dropped, so the per-frame message stops entirely
@@ -1364,10 +1365,10 @@ impl LauncherApp {
     }
 
     fn open_window(&mut self) -> Task<Message> {
-        let (id, opened) = window::open(self.window_config.clone());
+        let (id, opened) = crate::surface::open(self.window_config.clone());
         self.pending_window = Some(id);
         self.pending_hide = false;
-        opened.map(Message::Opened)
+        opened
     }
 
     /// Update the application state.
@@ -1609,6 +1610,8 @@ impl LauncherApp {
                     Task::none()
                 }
             }
+            // Taken by `iced_layershell` before `update`; see `crate::surface`.
+            Message::Layer(_) => Task::none(),
             Message::Opened(id) => {
                 if self.window.is_some_and(|current| current != id)
                     || self.pending_window.is_some_and(|pending| pending != id)
@@ -1883,12 +1886,14 @@ impl LauncherApp {
                         let ended = state.ended;
                         page.apply(state);
                         let after = page.version;
+                        let images = crate::remote_image::fetch_tasks(page.wanted_images());
                         if ended {
-                            Task::none()
+                            images
                         } else {
                             Task::batch([
                                 self.extension_poll(session, after),
                                 crate::scroll::reveal_root_selection(),
+                                images,
                             ])
                         }
                     }
@@ -1953,6 +1958,47 @@ impl LauncherApp {
                     None => Task::none(),
                 }
             }
+            Message::ExtensionImageFetched { url, result } => {
+                if let Page::Extension(page) = &mut self.page {
+                    page.image_arrived(url, result);
+                }
+                Task::none()
+            }
+            Message::ExtensionDateEdited(name, typed) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let session = page.session;
+                match page.edit_date(&name, typed) {
+                    Some((handler, args)) => self.extension_event(session, handler.0, args),
+                    None => Task::none(),
+                }
+            }
+            Message::ExtensionChooseFiles { name, choice } => {
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                Task::perform(
+                    async move {
+                        let result = backend.choose_files(choice).await;
+                        (name, result)
+                    },
+                    |(name, result)| Message::ExtensionFilesChosen { name, result },
+                )
+            }
+            Message::ExtensionFilesChosen { name, result } => match result {
+                Ok(paths) if paths.is_empty() => Task::none(),
+                Ok(paths) => self.update(Message::ExtensionFieldEdited(
+                    name,
+                    serde_json::Value::from(paths),
+                )),
+                Err(reason) => {
+                    if let Page::Extension(page) = &mut self.page {
+                        page.notice = Some(reason);
+                    }
+                    Task::none()
+                }
+            },
             Message::ExtensionLinkClicked(url) => {
                 // No URL opener in the launcher yet; the link is said, not lost.
                 tracing::info!(%url, "a link in an extension's view was clicked");
@@ -3536,14 +3582,32 @@ impl LauncherApp {
                     })
                     .into()
                 }
-                FieldKind::DatePicker { .. }
-                | FieldKind::TagPicker { .. }
-                | FieldKind::FilePicker { .. } => {
-                    iced::widget::text("Compass cannot edit this kind of field yet")
-                        .font(self.font())
-                        .size(12)
-                        .into()
-                }
+                FieldKind::DatePicker { precision, .. } => crate::extension_fields::date_field(
+                    &field.name,
+                    page.date_shown(&field.name, *precision),
+                    *precision,
+                    self.font(),
+                ),
+                FieldKind::TagPicker { options, .. } => crate::extension_fields::tag_field(
+                    &field.name,
+                    options,
+                    &crate::extension_fields::strings(value),
+                    self.font(),
+                ),
+                FieldKind::FilePicker {
+                    allow_multiple,
+                    allow_directories,
+                    allow_files,
+                } => crate::extension_fields::file_field(
+                    &field.name,
+                    &crate::extension_fields::strings(value),
+                    crate::extension_fields::FileChoice {
+                        multiple: *allow_multiple,
+                        directories: *allow_directories,
+                        files: *allow_files,
+                    },
+                    self.font(),
+                ),
             };
             entry = entry.push(input);
             if let Some(error) = &field.error {

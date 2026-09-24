@@ -37,6 +37,9 @@ use compass_worker_host::clipboard_service::{
 use compass_worker_host::extension_manager::{
     Capabilities, CommandEnv, LaunchType, LoadOptions, ManagerClient,
 };
+use compass_worker_host::oauth_service::{
+    AuthorizeRequest, AuthorizeService, Authorizer, OAuthService, Redirect,
+};
 use compass_worker_host::session::SessionEvents;
 use compass_worker_host::session::{Router, Session, Turn};
 use compass_worker_host::storage_service::StorageService;
@@ -136,14 +139,39 @@ impl Runtime {
     }
 }
 
+/// Beside the executable, in the directories the file indexer is looked for
+/// in (`../libexec/vicinae`, `../lib/vicinae`: the AppImage, Nix and Arch
+/// layouts), then the Flatpak's `/app/libexec`.
 fn installed_sandbox() -> Option<PathBuf> {
-    let beside_exe = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.join(SANDBOX_EXEC_NAME)));
-    beside_exe
+    let installed = std::env::current_exe().ok().and_then(|exe| {
+        Some(crate::indexer_client::helper_candidates(
+            exe.parent()?,
+            SANDBOX_EXEC_NAME,
+        ))
+    });
+    installed
         .into_iter()
+        .flatten()
         .chain([Path::new("/app/libexec").join(SANDBOX_EXEC_NAME)])
         .find(|path| path.is_file())
+}
+
+/// The files name resolution reads that live outside `etc` through a
+/// symlink. Under systemd-resolved `/etc/resolv.conf` points into
+/// `/run/systemd/resolve/`; granting `/etc` alone leaves the link unreadable,
+/// and every lookup an extension makes fails with `EAI_AGAIN`.
+fn resolver_targets(etc: &Path) -> Vec<PathBuf> {
+    [
+        "resolv.conf",
+        "hosts",
+        "nsswitch.conf",
+        "host.conf",
+        "gai.conf",
+    ]
+    .into_iter()
+    .filter_map(|name| std::fs::canonicalize(etc.join(name)).ok())
+    .filter(|target| !target.starts_with(etc))
+    .collect()
 }
 
 /// What the runtime may touch while it runs `command`.
@@ -170,17 +198,32 @@ pub fn policy(
     .map(PathBuf::from)
     .chain(parent(&runtime.node))
     .chain(parent(&runtime.bundle))
-    .chain([command.extension_dir.clone()]);
+    .chain([command.extension_dir.clone()])
+    .chain(resolver_targets(Path::new("/etc")))
+    // A certificate bundle the user pointed TLS at (a corporate CA, say):
+    // Node reads it at start, and without it every fetch fails.
+    .chain(
+        ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .map(PathBuf::from),
+    );
     let write = [
         support_dir(data_dir, command),
         assets_dir(data_dir, command),
     ];
-    let execute = ["/usr/bin", "/bin", "/app/bin"]
+    // The system's trees whole, since a program run from `/usr/bin` may run
+    // its own helpers from `/usr/lib` or `/usr/libexec` (git does). The
+    // extension's installed directory too, for the few that ship a binary.
+    // Never the directories it may write: a program it wrote there would be
+    // any program it liked.
+    let execute = ["/usr", "/bin", "/lib", "/lib64", "/app"]
         .into_iter()
         .map(PathBuf::from)
-        .chain([runtime.node.clone()]);
+        .chain([runtime.node.clone(), command.extension_dir.clone()]);
 
-    let mut policy = compass_sandbox::Policy::new();
+    let mut policy =
+        compass_sandbox::Policy::new().data_limit(compass_worker_host::cgroups::DATA_LIMIT_BYTES);
     for path in read.filter(|path| path.exists()) {
         policy = policy.read(path);
     }
@@ -425,6 +468,7 @@ pub fn start(
     let title = command.title.clone();
     let name = command.name.clone();
     let namespace = compass_local_storage::namespace_for(&command.extension_id);
+    let extension_id = command.extension_id.clone();
     let handle = tokio::runtime::Handle::try_current().ok();
     let started = view
         .as_ref()
@@ -436,6 +480,7 @@ pub fn start(
                 worker,
                 Served {
                     session_id,
+                    extension_id,
                     title,
                     name,
                     namespace,
@@ -502,6 +547,7 @@ pub enum Started {
 
 struct Served {
     session_id: String,
+    extension_id: String,
     title: String,
     name: String,
     namespace: String,
@@ -519,6 +565,7 @@ fn serve(
 ) {
     let Served {
         session_id,
+        extension_id,
         title,
         name,
         namespace,
@@ -553,6 +600,17 @@ fn serve(
     if let Some(service) = &applications {
         router = router.with(service);
     }
+    let tokens = database.as_ref().map(|db| {
+        OAuthService::new(
+            compass_oauth_store::TokenStore::new(db),
+            extension_id.as_str(),
+        )
+    });
+    if let Some(service) = &tokens {
+        router = router.with(service);
+    }
+    let authorize = AuthorizeService::new(EngineAuthorizer::default());
+    router = router.with(&authorize);
     let mut session = Session::new(worker, session_id.as_str(), router);
     if let Some(view) = &view {
         view.attach(session.events());
@@ -583,8 +641,35 @@ fn serve(
                     view.publish(compass_worker_host::view_model::to_view(&root), depth);
                 }
             }
+            Turn::Deferred { method, deferral } if method == "OAuth/authorize" => {
+                let request = authorize
+                    .authorizer()
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                let events = session.events();
+                let refused = match request {
+                    Some(request) => begin_authorization(
+                        &session_id,
+                        request,
+                        deferral.clone(),
+                        events,
+                        view.as_ref().map(|view| view.state.clone()),
+                        applications.as_ref().map(ApplicationService::apps),
+                    )
+                    .err(),
+                    None => Some("the authorization request was lost".to_owned()),
+                };
+                if let Some(reason) = refused
+                    && let Err(err) = session.fail_deferred(&deferral, &reason)
+                {
+                    tracing::warn!(command = title, error = %err, "could not refuse an authorization");
+                    break;
+                }
+            }
             Turn::Deferred { method, deferral } => {
-                // Only an alert defers. A view shows it and the launcher
+                // Otherwise only an alert defers. A view shows it and the launcher
                 // answers; a command with no view has nowhere to show it, and
                 // "no" is the answer a dismissed alert gives.
                 let alert = shell
@@ -607,9 +692,153 @@ fn serve(
         }
     }
     activity.stop();
+    OAUTH.abandon(&session_id);
     if let Some(view) = view {
         view.end(ended);
     }
+}
+
+/// How the toast a view shows while an OAuth sign-in waits on the browser
+/// begins; the provider's name follows.
+pub const SIGN_IN_TOAST: &str = "Continue in your browser to connect";
+
+/// Authorizations waiting on a browser, by the `state` their URL carries.
+///
+/// Process-wide, like the C++ `OAuthService`'s request map: the redirect
+/// arrives as a deeplink over IPC, with nothing but the `state` to say which
+/// extension's call it answers.
+static OAUTH: std::sync::LazyLock<OAuthRequests> = std::sync::LazyLock::new(OAuthRequests::default);
+
+#[derive(Default)]
+struct OAuthRequests(std::sync::Mutex<std::collections::HashMap<String, PendingAuthorization>>);
+
+struct PendingAuthorization {
+    session_id: String,
+    provider: String,
+    events: SessionEvents,
+    deferral: Deferral,
+    view: Option<tokio::sync::watch::Sender<ViewState>>,
+}
+
+impl OAuthRequests {
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, PendingAuthorization>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Forgets `session_id`'s authorizations: its worker is gone, so there is
+    /// no promise left to settle.
+    fn abandon(&self, session_id: &str) {
+        self.lock()
+            .retain(|_, pending| pending.session_id != session_id);
+    }
+}
+
+/// Takes the `OAuth/authorize` call the service defers, for the serving
+/// loop to begin.
+#[derive(Debug, Default)]
+struct EngineAuthorizer(std::sync::Mutex<Option<AuthorizeRequest>>);
+
+impl Authorizer for EngineAuthorizer {
+    fn authorize(&self, request: AuthorizeRequest, _deferral: &Deferral) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(request);
+    }
+}
+
+/// Opens `request`'s URL in the browser and waits for [`oauth_redirect`].
+/// While it waits, the view says where the person has to go.
+fn begin_authorization(
+    session_id: &str,
+    request: AuthorizeRequest,
+    deferral: Deferral,
+    events: SessionEvents,
+    view: Option<tokio::sync::watch::Sender<ViewState>>,
+    apps: Option<&crate::extension_apps::EngineApps>,
+) -> Result<(), String> {
+    use compass_worker_host::application_service::Apps as _;
+    let state = request
+        .state
+        .clone()
+        .ok_or("the authorization URL has no state parameter")?;
+    let apps = apps.ok_or("Compass cannot open a browser for this command")?;
+    let browser = apps
+        .default_opener(&request.url)
+        .ok_or("No web browser is installed to sign in with")?;
+    let provider = if request.provider.is_empty() {
+        "the provider".to_owned()
+    } else {
+        request.provider.clone()
+    };
+    if let Some(view) = &view {
+        view.send_modify(|state| {
+            state.version += 1;
+            state.toast = Some(compass_ipc::ExtensionToast {
+                title: format!("{SIGN_IN_TOAST} {provider}"),
+                message: request.description.clone(),
+                style: compass_ipc::ExtensionToastStyle::Animated,
+            });
+        });
+    }
+    OAUTH.lock().insert(
+        state,
+        PendingAuthorization {
+            session_id: session_id.to_owned(),
+            provider,
+            events,
+            deferral,
+            view,
+        },
+    );
+    apps.launch(&browser, &request.url);
+    Ok(())
+}
+
+/// Answers the authorization a provider's redirect names: `url` is the
+/// `raycast://oauth?code=…&state=…` deeplink the desktop handed `vicinae`.
+///
+/// # Errors
+///
+/// A sentence: not an OAuth redirect, no authorization waiting on its state,
+/// or the extension could not be told.
+pub fn oauth_redirect(url: &str) -> Result<(), String> {
+    let redirect = Redirect::parse(url)?;
+    let pending = OAUTH
+        .lock()
+        .remove(redirect.state())
+        .ok_or("No extension is waiting on that authorization; it may have been closed")?;
+    let (answered, toast) = match &redirect {
+        Redirect::Code { code, .. } => (
+            pending
+                .events
+                .answer(&pending.deferral, serde_json::json!({ "code": code })),
+            compass_ipc::ExtensionToast {
+                title: format!("Connected to {}", pending.provider),
+                message: String::new(),
+                style: compass_ipc::ExtensionToastStyle::Success,
+            },
+        ),
+        Redirect::Refused { reason, .. } => (
+            pending.events.fail(&pending.deferral, reason),
+            compass_ipc::ExtensionToast {
+                title: format!("{} did not connect", pending.provider),
+                message: reason.clone(),
+                style: compass_ipc::ExtensionToastStyle::Failure,
+            },
+        ),
+    };
+    if let Some(view) = &pending.view {
+        view.send_modify(|state| {
+            state.version += 1;
+            state.toast = Some(toast);
+        });
+    }
+    answered.map_err(|err| format!("The extension did not take the authorization: {err}"))
 }
 
 fn open_storage(storage: &Storage) -> Option<compass_sqlcipher_sys::rusqlite::Connection> {
@@ -976,22 +1205,31 @@ impl Views {
             .map_err(|err| format!("The extension did not take the answer: {err}"))
     }
 
-    /// Pops `session`'s top view, as Escape on a pushed view does.
+    /// Pops `session`'s top view, as Escape on a pushed view does. An alert
+    /// the view was showing is answered "no" first: leaving a view is one of
+    /// the ways out of a dialog that is not its confirm button.
     ///
     /// # Errors
     ///
     /// A sentence: the session is gone, or its worker is.
     pub fn pop(&self, session: u64) -> Result<(), String> {
-        let events = self
-            .lock()
-            .get(&session)
-            .map(|entry| Arc::clone(&entry.events))
-            .ok_or_else(|| "That extension view has closed".to_owned())?;
+        let (events, deferral, state) = {
+            let sessions = self.lock();
+            let entry = sessions
+                .get(&session)
+                .ok_or_else(|| "That extension view has closed".to_owned())?;
+            (
+                Arc::clone(&entry.events),
+                Arc::clone(&entry.deferral),
+                entry.state.clone(),
+            )
+        };
         let events = events
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .ok_or_else(|| "That extension view has not started yet".to_owned())?;
+        settle(&deferral, &state, Some(&events));
         events
             .view_popped()
             .map_err(|err| format!("The extension did not take it: {err}"))
@@ -1032,6 +1270,11 @@ impl ViewHandle {
         view: Result<compass_extension_api::View, compass_worker_host::view_model::Unsupported>,
         depth: u32,
     ) {
+        // The extension navigated (pushed or popped a view) while a dialog
+        // was open: that is a way out of the dialog, and it answers "no".
+        if self.state.borrow().depth != depth {
+            self.settle();
+        }
         self.state.send_modify(|state| {
             state.version += 1;
             state.depth = depth;
@@ -1045,8 +1288,12 @@ impl ViewHandle {
         });
     }
 
-    /// Shows `alert` and holds `deferral` until the launcher answers.
+    /// Shows `alert` and holds `deferral` until the launcher answers. An
+    /// alert already showing is answered "no" first, as `AlertModel` cancels
+    /// the one a second replaces: it is some promise the extension is still
+    /// waiting on.
     fn ask(&self, alert: compass_ipc::ExtensionAlert, deferral: Deferral) {
+        self.settle();
         *self
             .deferral
             .lock()
@@ -1055,6 +1302,16 @@ impl ViewHandle {
             state.version += 1;
             state.alert = Some(alert);
         });
+    }
+
+    /// Answers "no" to the alert this view is showing, if it is showing one.
+    fn settle(&self) {
+        let events = self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        settle(&self.deferral, &self.state, events.as_ref());
     }
 
     fn end(self, why: Option<String>) {
@@ -1069,7 +1326,32 @@ impl ViewHandle {
     }
 }
 
-/// The clipboard an extension reaches: the GNOME Shell extension's.
+/// Takes the alert `deferral` holds, if any, clears it from `state` and
+/// answers it "no" through `events`.
+fn settle(
+    deferral: &std::sync::Mutex<Option<Deferral>>,
+    state: &tokio::sync::watch::Sender<ViewState>,
+    events: Option<&SessionEvents>,
+) {
+    let Some(deferral) = deferral
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+    else {
+        return;
+    };
+    state.send_modify(|state| {
+        state.version += 1;
+        state.alert = None;
+    });
+    let answered = events.map(|events| events.answer(&deferral, serde_json::json!(false)));
+    if !matches!(answered, Some(Ok(()))) {
+        tracing::warn!("could not answer a dismissed dialog; the extension may wait on it");
+    }
+}
+
+/// The clipboard an extension reaches: the GNOME Shell extension's, or
+/// data-control on a wlroots compositor.
 struct ShellClipboard {
     shell: Option<Arc<compass_shell::ShellClient>>,
     handle: Option<tokio::runtime::Handle>,
@@ -1120,8 +1402,79 @@ impl ShellClipboard {
     }
 }
 
+/// The selection as data-control offers, for a wlroots compositor.
+///
+/// Richer than [`ShellClipboard::selection`]: data-control can offer several
+/// types at once, so HTML keeps its plain-text alternative and a concealed
+/// copy carries the marker the history watcher skips.
+fn data_control_offers(
+    content: Content,
+    concealed: bool,
+) -> Option<Vec<compass_wayland::data_control::Offer>> {
+    use compass_wayland::data_control::{CONCEALED_MIME_TYPE, Offer};
+    let offer = |mime: &str, data: Vec<u8>| Offer {
+        mime_type: mime.to_owned(),
+        data,
+    };
+    let mut offers = match content {
+        Content::NoData => return None,
+        Content::Text(text) => vec![offer("text/plain;charset=utf-8", text.into_bytes())],
+        Content::Html { html, text } => {
+            let mut offers = vec![offer("text/html", html.into_bytes())];
+            if let Some(text) = text {
+                offers.push(offer("text/plain;charset=utf-8", text.into_bytes()));
+            }
+            offers
+        }
+        Content::Urls(urls) => vec![offer("text/uri-list", urls.join("\r\n").into_bytes())],
+    };
+    if concealed {
+        offers.push(offer(CONCEALED_MIME_TYPE, Vec::new()));
+    }
+    Some(offers)
+}
+
+/// Whether this session's clipboard is reached over data-control.
+fn data_control() -> bool {
+    crate::wlroots::session().is_some_and(|wlroots| wlroots.capabilities.data_control)
+}
+
+fn data_control_set(what: &str, offers: Vec<compass_wayland::data_control::Offer>) {
+    if let Err(err) = compass_wayland::clipboard::set(offers) {
+        tracing::info!(what, error = %err, "clipboard call failed");
+    }
+}
+
+fn data_control_read() -> ReadContent {
+    let text = |mime: &str| {
+        compass_wayland::clipboard::read(mime)
+            .ok()
+            .flatten()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    };
+    ReadContent {
+        text: text("text/plain").unwrap_or_default(),
+        html: text("text/html"),
+        urls: text("text/uri-list")
+            .map(|list| {
+                list.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
 impl Clipboard for ShellClipboard {
-    fn copy(&self, content: Content, _options: CopyOptions) {
+    fn copy(&self, content: Content, options: CopyOptions) {
+        if data_control() {
+            if let Some(offers) = data_control_offers(content, options.concealed) {
+                data_control_set("copy", offers);
+            }
+            return;
+        }
         let Some(selection) = Self::selection(content) else {
             return;
         };
@@ -1131,6 +1484,14 @@ impl Clipboard for ShellClipboard {
     }
 
     fn paste(&self, content: Content) {
+        if data_control() {
+            // No synthetic keystroke on wlroots yet: the content is copied and
+            // the user pastes it. PARITY.md, "wlroots".
+            if let Some(offers) = data_control_offers(content, false) {
+                data_control_set("paste", offers);
+            }
+            return;
+        }
         let Some(selection) = Self::selection(content) else {
             return;
         };
@@ -1143,6 +1504,12 @@ impl Clipboard for ShellClipboard {
     }
 
     fn clear(&self) {
+        if data_control() {
+            if let Err(err) = compass_wayland::clipboard::clear() {
+                tracing::info!(error = %err, "clipboard clear failed");
+            }
+            return;
+        }
         self.run("clear", |shell| {
             Box::pin(async move {
                 shell
@@ -1153,6 +1520,9 @@ impl Clipboard for ShellClipboard {
     }
 
     fn read(&self) -> ReadContent {
+        if data_control() {
+            return data_control_read();
+        }
         self.run("read", |shell| {
             Box::pin(async move { shell.clipboard().await })
         })
@@ -1173,6 +1543,26 @@ mod tests {
             path: dir.join(STORAGE_DATABASE),
             key: [3; compass_crypto::KEY_SIZE],
         }
+    }
+
+    #[test]
+    fn a_resolver_file_linked_out_of_etc_is_granted_where_it_points() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let etc = root.path().join("etc");
+        let run = root.path().join("run/systemd/resolve");
+        std::fs::create_dir_all(&etc).expect("etc");
+        std::fs::create_dir_all(&run).expect("run");
+        std::fs::write(run.join("stub-resolv.conf"), "nameserver 127.0.0.53\n").expect("stub");
+        std::os::unix::fs::symlink(run.join("stub-resolv.conf"), etc.join("resolv.conf"))
+            .expect("link");
+        std::fs::write(etc.join("hosts"), "127.0.0.1 localhost\n").expect("hosts");
+
+        let targets = resolver_targets(&etc);
+        assert_eq!(
+            targets,
+            [std::fs::canonicalize(run.join("stub-resolv.conf")).expect("canonical")],
+            "only the linked-out file, not what /etc already covers"
+        );
     }
 
     #[test]

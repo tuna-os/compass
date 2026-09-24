@@ -125,6 +125,7 @@ fn describe(request: &Request) -> &'static str {
         Request::SetExtensionPreferences { .. } => "SetExtensionPreferences",
         Request::ExtensionAlertAnswer { .. } => "ExtensionAlertAnswer",
         Request::CloseExtension { .. } => "CloseExtension",
+        Request::OAuthRedirect { .. } => "OAuthRedirect",
     }
 }
 

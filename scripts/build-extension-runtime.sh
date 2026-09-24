@@ -68,9 +68,14 @@ mkdir -p "$mgr_dir/src/proto" "$api_dir/src/api/proto" "$api_dir/src/proto"
 # `npm ci` rather than `npm install`: it installs exactly what the lockfile
 # says and, unlike `install`, never rewrites it -- building the runtime must not
 # produce a diff.
-echo "installing node modules"
-(cd "$api_dir" && npm ci --no-audit --no-fund --silent)
-(cd "$mgr_dir" && npm ci --no-audit --no-fund --silent)
+#
+# SKIP_NPM_INSTALL=1 is for builds that install node_modules themselves,
+# offline: the Nix package does it with npmConfigHook.
+if [ "${SKIP_NPM_INSTALL:-0}" != 1 ]; then
+  echo "installing node modules"
+  (cd "$api_dir" && npm ci --no-audit --no-fund --silent)
+  (cd "$mgr_dir" && npm ci --no-audit --no-fund --silent)
+fi
 
 echo "bundling the runtime"
 (cd "$mgr_dir" && npm run build-only)

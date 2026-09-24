@@ -39,9 +39,10 @@ impl IconArt {
 
 /// Which widget a resolved file needs, by extension.
 ///
-/// **PNG and SVG only, and that is a decision rather than an oversight.** Those
-/// are what icon themes ship; the build enables exactly those two decoders
-/// (see `Cargo.toml`), so accepting a third format here would resolve a file
+/// **PNG, JPEG and SVG only, and that is a decision rather than an
+/// oversight.** PNG and SVG are what icon themes ship, and JPEG is what remote
+/// images (avatars, mostly) are; the build enables exactly those decoders
+/// (see `Cargo.toml`), so accepting another format here would resolve a file
 /// the renderer then cannot draw -- an empty box, which is worse than the
 /// initial the row falls back to. `.svgz` is gzipped SVG and Iced's `svg`
 /// widget does not decompress it, so it is a miss for the same reason.
@@ -50,7 +51,7 @@ pub fn classify(path: &Path) -> Option<IconArt> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
         "svg" => Some(IconArt::Vector(path.to_path_buf())),
-        "png" => Some(IconArt::Raster(path.to_path_buf())),
+        "png" | "jpg" | "jpeg" => Some(IconArt::Raster(path.to_path_buf())),
         _ => None,
     }
 }
@@ -193,7 +194,6 @@ mod tests {
         assert_eq!(classify(Path::new("/i/app")), None);
         // Formats the `image` crate can decode but this build ships no decoder
         // for. Accepting one would draw an empty box.
-        assert_eq!(classify(Path::new("/i/app.jpg")), None);
         assert_eq!(classify(Path::new("/i/app.webp")), None);
         assert_eq!(classify(Path::new("/i/app.xpm")), None);
     }

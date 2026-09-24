@@ -48,6 +48,7 @@ pub mod calculator_history;
 pub mod clipboard_history;
 pub mod commands;
 pub mod config;
+pub mod config_migration;
 pub mod contrast;
 pub mod create_extension;
 pub mod default_app;
