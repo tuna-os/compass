@@ -51,6 +51,8 @@ pub struct ExtensionPage {
     pub selected: usize,
     /// What went wrong with the last action, if anything.
     pub notice: Option<String>,
+    /// A confirmation the extension waits on; Enter and Escape answer it.
+    pub alert: Option<crate::backend::ExtensionPrompt>,
     /// How many views the extension has pushed; Escape pops above one.
     pub depth: u32,
     /// A detail's Markdown, parsed once per render rather than per frame.
@@ -72,6 +74,7 @@ impl ExtensionPage {
             shown: Vec::new(),
             selected: 0,
             notice: None,
+            alert: None,
             depth: 1,
             markdown: Vec::new(),
         }
@@ -80,6 +83,7 @@ impl ExtensionPage {
     /// Takes the engine's latest answer.
     pub fn apply(&mut self, state: crate::backend::ExtensionViewState) {
         self.version = state.version;
+        self.alert = state.alert;
         if state.view.is_some() {
             if state.depth != self.depth {
                 // A different screen: its search starts empty, as Raycast's does.
@@ -265,6 +269,7 @@ mod tests {
             problem: None,
             ended: false,
             depth: 1,
+            alert: None,
         }
     }
 
@@ -332,6 +337,7 @@ mod tests {
             problem: Some("Compass cannot draw the extension component <grid> yet".into()),
             ended: false,
             depth: 1,
+            alert: None,
         });
         assert!(matches!(&page.status, Status::Stopped(why) if why.contains("<grid>")));
 
@@ -342,6 +348,7 @@ mod tests {
             problem: None,
             ended: true,
             depth: 1,
+            alert: None,
         });
         assert_eq!(quiet.status, Status::Stopped("Quiet finished".into()));
     }

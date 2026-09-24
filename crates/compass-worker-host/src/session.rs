@@ -689,6 +689,25 @@ pub struct SessionEvents {
 }
 
 impl SessionEvents {
+    /// Settles a call a [`Turn::Deferred`] left owed (an alert, answered when
+    /// the person decides), from any thread.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's pipe is gone.
+    pub fn answer(
+        &self,
+        deferral: &tsapi::Deferral,
+        value: serde_json::Value,
+    ) -> Result<(), WorkerError> {
+        self.writer
+            .request(
+                crate::rpc::manager::MESSAGE_EXTENSION,
+                serde_json::json!({ "session_id": self.session_id, "payload": deferral.answer(value) }),
+            )
+            .map(drop)
+    }
+
     /// `UI/viewPoped`: the host popped the extension's top view (the person
     /// pressed Escape on a pushed view), so its navigation pops too and it
     /// renders the view beneath.

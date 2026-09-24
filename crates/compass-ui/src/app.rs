@@ -1911,6 +1911,26 @@ impl LauncherApp {
                 // one key undoes opening the wrong command.
                 let panel_key = self.panel.is_some()
                     || (modifiers.control() && key.as_ref() == Key::Character("b"));
+                // An alert takes Enter and Escape and nothing else: the
+                // extension is waiting on the answer.
+                if let Page::Extension(page) = &mut self.page
+                    && page.alert.is_some()
+                {
+                    let confirmed = match key.as_ref() {
+                        Key::Named(Named::Enter) => true,
+                        Key::Named(Named::Escape) => false,
+                        _ => return Task::none(),
+                    };
+                    page.alert = None;
+                    let (session, backend) = (page.session, self.backend.clone());
+                    let Some(backend) = backend else {
+                        return Task::none();
+                    };
+                    return Task::perform(
+                        async move { backend.extension_alert_answer(session, confirmed).await },
+                        Message::ExtensionEventSent,
+                    );
+                }
                 if !panel_key
                     && let Page::Extension(page) = &self.page
                     && let Some(handler) = extension_chord(key, modifiers)
@@ -2843,6 +2863,30 @@ impl LauncherApp {
         use crate::extension_page::Status;
         use compass_extension_api::View;
         let geometry = self.geometry;
+        if let Some(alert) = &page.alert {
+            let mut prompt = column![
+                iced::widget::text(alert.title.clone())
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..self.font()
+                    })
+                    .size(16)
+            ]
+            .spacing(8)
+            .padding(Padding::new(18.0));
+            if !alert.message.is_empty() {
+                prompt = prompt.push(iced::widget::text(alert.message.clone()).font(self.font()));
+            }
+            prompt = prompt.push(
+                iced::widget::text(format!(
+                    "Enter: {}    Esc: {}",
+                    alert.confirm_text, alert.cancel_text
+                ))
+                .font(self.font())
+                .size(12),
+            );
+            return prompt.into();
+        }
         match (&page.status, &page.view) {
             (Status::Loading, _) => return self.notice("Loading…"),
             (Status::Stopped(why), _) => return self.notice(why),
@@ -3451,6 +3495,9 @@ mod tests {
         closed: std::sync::Mutex<Vec<u64>>,
         /// The view stack depth the fake reports.
         depth: std::sync::Mutex<u32>,
+        /// An alert the fake's first view carries.
+        alert: Option<crate::backend::ExtensionPrompt>,
+        answers: std::sync::Mutex<Vec<bool>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -3502,6 +3549,7 @@ mod tests {
                     problem: None,
                     ended: after > 0,
                     depth: *self.depth.lock().unwrap(),
+                    alert: self.alert.clone(),
                 })
             })
         }
@@ -3514,6 +3562,17 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.events.lock().unwrap().push((handler, args));
+                Ok(())
+            })
+        }
+
+        fn extension_alert_answer(
+            &self,
+            _session: u64,
+            confirmed: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.answers.lock().unwrap().push(confirmed);
                 Ok(())
             })
         }
@@ -3801,6 +3860,7 @@ mod tests {
                 problem: None,
                 ended: false,
                 depth: 1,
+                alert: None,
             });
         }
         for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Escape))) {
@@ -3808,6 +3868,49 @@ mod tests {
         }
         assert!(matches!(app.page, Page::Root));
         assert_eq!(backend.closed.lock().unwrap().as_slice(), [7]);
+    }
+
+    #[test]
+    fn an_alert_is_shown_and_enter_or_escape_answers_it() {
+        for (key, confirmed) in [
+            (iced::keyboard::key::Named::Enter, true),
+            (iced::keyboard::key::Named::Escape, false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let backend = Arc::new(TestBackend {
+                keys: vec!["@someone/hello:write".to_owned()],
+                view: Some(greeting_list(true)),
+                alert: Some(crate::backend::ExtensionPrompt {
+                    title: "Delete the repository?".into(),
+                    message: "This cannot be undone.".into(),
+                    confirm_text: "Delete".into(),
+                    cancel_text: "Keep".into(),
+                }),
+                ..TestBackend::default()
+            });
+            let mut app = extension_app(dir.path(), backend.clone());
+            for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+                let _ = app.update(message);
+            }
+            let mut pending = task_messages(app.update(Message::LaunchSelected));
+            while let Some(message) = pending.pop() {
+                pending.extend(task_messages(app.update(message)));
+            }
+            {
+                let mut ui = iced_test::simulator(app.view());
+                assert!(ui.find("Delete the repository?").is_ok());
+                assert!(ui.find("Enter: Delete    Esc: Keep").is_ok());
+            }
+            for message in task_messages(app.update(pressed(key))) {
+                let _ = app.update(message);
+            }
+            assert_eq!(backend.answers.lock().unwrap().as_slice(), [confirmed]);
+            assert!(backend.events.lock().unwrap().is_empty(), "no action ran");
+            assert!(
+                matches!(&app.page, Page::Extension(page) if page.alert.is_none()),
+                "answered, and still in the view"
+            );
+        }
     }
 
     #[test]

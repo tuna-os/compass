@@ -46,6 +46,12 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// The person's answer to the view's [`ExtensionPrompt`].
+    fn extension_alert_answer(&self, session: u64, confirmed: bool) -> BackendFuture<'_, ()> {
+        let _ = (session, confirmed);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// Escape on a pushed view: the extension pops it.
     fn extension_pop(&self, session: u64) -> BackendFuture<'_, ()> {
         let _ = session;
@@ -83,6 +89,21 @@ pub struct ExtensionViewState {
     pub ended: bool,
     /// How many views the extension has pushed, the root one included.
     pub depth: u32,
+    /// A confirmation the extension waits on.
+    pub alert: Option<ExtensionPrompt>,
+}
+
+/// A confirmation an extension asked for, as the launcher shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExtensionPrompt {
+    /// The heading.
+    pub title: String,
+    /// The body; may be empty.
+    pub message: String,
+    /// What Enter does.
+    pub confirm_text: String,
+    /// What Escape does.
+    pub cancel_text: String,
 }
 
 /// One clipboard history row, as the UI draws it.

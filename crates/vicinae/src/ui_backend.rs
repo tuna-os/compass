@@ -77,8 +77,15 @@ impl ApplicationBackend for DaemonBackend {
                     problem,
                     ended,
                     depth,
+                    alert,
                 } => Ok(ExtensionViewState {
                     depth,
+                    alert: alert.map(|alert| compass_ui::backend::ExtensionPrompt {
+                        title: alert.title,
+                        message: alert.message,
+                        confirm_text: alert.confirm_text,
+                        cancel_text: alert.cancel_text,
+                    }),
                     version,
                     view: view_json
                         .map(|json| serde_json::from_str(&json).map(Box::new))
@@ -110,6 +117,21 @@ impl ApplicationBackend for DaemonBackend {
                         args_json,
                     },
                     "Running the action",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_alert_answer(&self, session: u64, confirmed: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExtensionAlertAnswer { session, confirmed },
+                    "Answering the extension",
                 )
                 .await?
             {

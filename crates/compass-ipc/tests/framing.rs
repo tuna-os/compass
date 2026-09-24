@@ -79,6 +79,10 @@ fn all_requests() -> Vec<Request> {
             args_json: "[\"é 🚀\", 3]".into(),
         },
         Request::ExtensionPop { session: 1 },
+        Request::ExtensionAlertAnswer {
+            session: 1,
+            confirmed: true,
+        },
         Request::CloseExtension { session: 1 },
     ]
 }
@@ -193,6 +197,12 @@ fn all_responses() -> Vec<Response> {
             problem: None,
             ended: false,
             depth: 2,
+            alert: Some(compass_ipc::ExtensionAlert {
+                title: "Delete é 🚀?".into(),
+                message: String::new(),
+                confirm_text: "Delete".into(),
+                cancel_text: "Cancel".into(),
+            }),
         },
         Response::ExtensionView {
             version: u64::MAX,
@@ -200,6 +210,7 @@ fn all_responses() -> Vec<Response> {
             problem: Some("Compass cannot draw the extension component <grid> yet".into()),
             ended: true,
             depth: 0,
+            alert: None,
         },
     ]
 }
@@ -231,6 +242,7 @@ fn request_variants_are_exhaustive() {
             | Request::ExtensionView { .. }
             | Request::ExtensionEvent { .. }
             | Request::ExtensionPop { .. }
+            | Request::ExtensionAlertAnswer { .. }
             | Request::CloseExtension { .. }
             | Request::WindowOutcome(_) => {}
         }

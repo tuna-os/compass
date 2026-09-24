@@ -101,6 +101,7 @@ async fn echo_handler(request: Request) -> Response {
         | Request::RunExtensionCommand { .. }
         | Request::ExtensionEvent { .. }
         | Request::ExtensionPop { .. }
+        | Request::ExtensionAlertAnswer { .. }
         | Request::CloseExtension { .. } => Response::Ack,
         Request::ExtensionView { after, .. } => Response::ExtensionView {
             version: after,
@@ -108,6 +109,7 @@ async fn echo_handler(request: Request) -> Response {
             problem: None,
             ended: false,
             depth: 0,
+            alert: None,
         },
         Request::ClipboardContent { .. } => Response::ClipboardContent {
             mime_type: "text/plain".into(),

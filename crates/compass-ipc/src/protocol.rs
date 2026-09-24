@@ -225,6 +225,14 @@ pub enum Request {
         /// Its arguments, as a JSON array.
         args_json: String,
     },
+    /// The person's answer to the view's [`ExtensionAlert`]. Answered with
+    /// [`Response::Ack`]; a session with no alert waiting is a bad request.
+    ExtensionAlertAnswer {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// Whether they confirmed.
+        confirmed: bool,
+    },
     /// Escape on a pushed view: pop it, and the extension renders the view
     /// beneath. Answered with [`Response::Ack`].
     ExtensionPop {
@@ -308,6 +316,9 @@ pub enum Response {
         ended: bool,
         /// How many views the extension has pushed, the root one included.
         depth: u32,
+        /// A confirmation the extension is waiting on, if any. Answer it with
+        /// [`Request::ExtensionAlertAnswer`].
+        alert: Option<ExtensionAlert>,
     },
 }
 
@@ -350,6 +361,20 @@ pub struct QueryHit {
     pub subtitle: Option<String>,
     /// Match score in `0..=100`, matching `compass-search`'s scale.
     pub score: u32,
+}
+
+/// A confirmation an extension asked for (`confirmAlert`), as the launcher
+/// shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionAlert {
+    /// The heading.
+    pub title: String,
+    /// The body; may be empty.
+    pub message: String,
+    /// The confirm button's text.
+    pub confirm_text: String,
+    /// The cancel button's text.
+    pub cancel_text: String,
 }
 
 /// One clipboard history entry, as a list row needs it.

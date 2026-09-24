@@ -458,6 +458,7 @@ fn serve(
         HeadlessShell {
             title: title.to_owned(),
             handle,
+            alert: std::sync::Mutex::new(None),
         },
         CommandInfo {
             name: name.to_owned(),
@@ -501,8 +502,19 @@ fn serve(
                 }
             }
             Turn::Deferred { method, deferral } => {
-                // Only an alert defers, and nothing can show one yet: "no" is
-                // the answer a dismissed alert gives.
+                // Only an alert defers. A view shows it and the launcher
+                // answers; a command with no view has nowhere to show it, and
+                // "no" is the answer a dismissed alert gives.
+                let alert = shell
+                    .shell()
+                    .alert
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                if let (Some(view), Some(alert)) = (&view, alert) {
+                    view.ask(alert, deferral);
+                    continue;
+                }
                 tracing::info!(command = title, %method, "answered a dialog with no");
                 if let Err(err) = session.answer_deferred(&deferral, serde_json::json!(false)) {
                     tracing::warn!(command = title, error = %err, "could not answer a dialog");
@@ -631,6 +643,9 @@ fn watch(pid: u32, activity: Arc<Activity>, handshake: Duration) {
 struct HeadlessShell {
     title: String,
     handle: Option<tokio::runtime::Handle>,
+    /// The alert `show_alert` was last given, for the serving loop to hand
+    /// the launcher when the call defers.
+    alert: std::sync::Mutex<Option<compass_ipc::ExtensionAlert>>,
 }
 
 impl HeadlessShell {
@@ -694,7 +709,18 @@ impl Shell for HeadlessShell {
         self.notify(&notification.title, &notification.body);
     }
 
-    fn show_alert(&self, _alert: &Alert, _deferral: &Deferral) {}
+    fn show_alert(&self, alert: &Alert, _deferral: &Deferral) {
+        *self
+            .alert
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(compass_ipc::ExtensionAlert {
+                title: alert.title.clone(),
+                message: alert.message.clone(),
+                confirm_text: alert.confirm_text.clone(),
+                cancel_text: alert.cancel_text.clone(),
+            });
+    }
 }
 
 /// Running view commands, as the launcher follows them.
@@ -713,6 +739,8 @@ struct ViewEntry {
     state: tokio::sync::watch::Sender<ViewState>,
     events: Arc<std::sync::Mutex<Option<SessionEvents>>>,
     pid: u32,
+    /// The call a shown alert holds open.
+    deferral: Arc<std::sync::Mutex<Option<Deferral>>>,
 }
 
 /// What a view session shows now.
@@ -730,6 +758,8 @@ pub struct ViewState {
     pub ended: bool,
     /// How many views the extension has pushed, the root one included.
     pub depth: u32,
+    /// A confirmation the extension waits on.
+    pub alert: Option<compass_ipc::ExtensionAlert>,
 }
 
 impl Views {
@@ -743,18 +773,21 @@ impl Views {
         let session = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let (state, _) = tokio::sync::watch::channel(ViewState::default());
         let events = Arc::new(std::sync::Mutex::new(None));
+        let deferral = Arc::new(std::sync::Mutex::new(None));
         self.lock().insert(
             session,
             ViewEntry {
                 state: state.clone(),
                 events: Arc::clone(&events),
                 pid,
+                deferral: Arc::clone(&deferral),
             },
         );
         ViewHandle {
             session,
             state,
             events,
+            deferral,
             views: Arc::clone(self),
         }
     }
@@ -796,6 +829,42 @@ impl Views {
             .map_err(|err| format!("The extension did not take it: {err}"))
     }
 
+    /// Answers the alert `session` is showing.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: no such session, no alert waiting, or the worker is gone.
+    pub fn answer_alert(&self, session: u64, confirmed: bool) -> Result<(), String> {
+        let (events, deferral, state) = {
+            let sessions = self.lock();
+            let entry = sessions
+                .get(&session)
+                .ok_or_else(|| "That extension view has closed".to_owned())?;
+            (
+                Arc::clone(&entry.events),
+                Arc::clone(&entry.deferral),
+                entry.state.clone(),
+            )
+        };
+        let deferral = deferral
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .ok_or_else(|| "That extension is not asking anything".to_owned())?;
+        state.send_modify(|state| {
+            state.version += 1;
+            state.alert = None;
+        });
+        let events = events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| "That extension view has not started yet".to_owned())?;
+        events
+            .answer(&deferral, serde_json::json!(confirmed))
+            .map_err(|err| format!("The extension did not take the answer: {err}"))
+    }
+
     /// Pops `session`'s top view, as Escape on a pushed view does.
     ///
     /// # Errors
@@ -835,6 +904,7 @@ struct ViewHandle {
     session: u64,
     state: tokio::sync::watch::Sender<ViewState>,
     events: Arc<std::sync::Mutex<Option<SessionEvents>>>,
+    deferral: Arc<std::sync::Mutex<Option<Deferral>>>,
     views: Arc<Views>,
 }
 
@@ -861,6 +931,18 @@ impl ViewHandle {
                 }
                 Err(unsupported) => state.problem = Some(unsupported.to_string()),
             }
+        });
+    }
+
+    /// Shows `alert` and holds `deferral` until the launcher answers.
+    fn ask(&self, alert: compass_ipc::ExtensionAlert, deferral: Deferral) {
+        *self
+            .deferral
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(deferral);
+        self.state.send_modify(|state| {
+            state.version += 1;
+            state.alert = Some(alert);
         });
     }
 

@@ -344,15 +344,19 @@ impl<S: Shell> UiShellService<S> {
             return None;
         }
         let deferral = tsapi::Deferral::for_call(call)?;
+        // The IDL's `confirmAlert(payload: ConfirmAlertPayload)` names its one
+        // argument, so the fields arrive under `payload`. Read flat too, as
+        // the tests and any hand-written client send it.
+        let params = call.params.get("payload").unwrap_or(&call.params);
 
         let string = |name: &str| {
-            call.params
+            params
                 .get(name)
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
         };
         let action_title = |name: &str, fallback: &str| {
-            call.params
+            params
                 .get(name)
                 .and_then(|action| action.get("title"))
                 .and_then(serde_json::Value::as_str)
@@ -361,8 +365,7 @@ impl<S: Shell> UiShellService<S> {
                 .to_owned()
         };
 
-        let icon = call
-            .params
+        let icon = params
             .get("icon")
             .filter(|icon| !icon.is_null())
             .and_then(|icon| icon.get("source").or(Some(icon)))
