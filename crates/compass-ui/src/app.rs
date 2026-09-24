@@ -1682,6 +1682,11 @@ impl LauncherApp {
                 }
                 self.activate_extension_action()
             }
+            Message::ExtensionLinkClicked(url) => {
+                // No URL opener in the launcher yet; the link is said, not lost.
+                tracing::info!(%url, "a link in an extension's view was clicked");
+                Task::none()
+            }
             Message::ExtensionEventSent(result) => {
                 if let (Err(reason), Page::Extension(page)) = (result, &mut self.page) {
                     page.notice = Some(reason);
@@ -2679,14 +2684,16 @@ impl LauncherApp {
         match (&page.status, &page.view) {
             (Status::Loading, _) => return self.notice("Loading…"),
             (Status::Stopped(why), _) => return self.notice(why),
-            (Status::Ready, Some(View::Detail(detail))) => {
-                let text = detail.markdown.clone().unwrap_or_default();
-                let body = scrollable(
-                    container(iced::widget::text(text).font(self.font()))
-                        .padding(Padding::new(14.0)),
+            (Status::Ready, Some(View::Detail(_))) => {
+                let theme = self.theme();
+                let markdown = iced::widget::markdown::view(
+                    &page.markdown,
+                    iced::widget::markdown::Settings::with_text_size(14, &theme),
                 )
-                .id(crate::scroll::ROOT_RESULTS)
-                .height(Length::Shrink);
+                .map(Message::ExtensionLinkClicked);
+                let body = scrollable(container(markdown).padding(Padding::new(14.0)))
+                    .id(crate::scroll::ROOT_RESULTS)
+                    .height(Length::Shrink);
                 return match &page.notice {
                     Some(notice) => column![body, self.notice(notice)].into(),
                     None => body.into(),
@@ -3493,6 +3500,32 @@ mod tests {
             backend.closed.lock().unwrap().as_slice(),
             [7],
             "leaving stops the command"
+        );
+    }
+
+    #[test]
+    fn a_detail_draws_its_markdown_rendered_not_as_source() {
+        let detail = compass_extension_api::View::Detail(compass_extension_api::view::Detail {
+            markdown: Some("# Release notes\n\nNow with **paste**.".into()),
+            ..compass_extension_api::view::Detail::default()
+        });
+        let (app, _backend, _dir) = open_extension_view(detail);
+        let Page::Extension(page) = &app.page else {
+            panic!("no extension view: {}", app.state_line());
+        };
+        use iced::widget::markdown::Item;
+        assert!(
+            matches!(
+                page.markdown.as_slice(),
+                [Item::Heading(..), Item::Paragraph(..)]
+            ),
+            "parsed once, when it arrived, into a heading and a paragraph: {:?}",
+            page.markdown
+        );
+        let mut ui = iced_test::simulator(app.view());
+        assert!(
+            ui.find("# Release notes").is_err(),
+            "not the Markdown source"
         );
     }
 

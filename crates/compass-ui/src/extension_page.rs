@@ -51,6 +51,8 @@ pub struct ExtensionPage {
     pub selected: usize,
     /// What went wrong with the last action, if anything.
     pub notice: Option<String>,
+    /// A detail's Markdown, parsed once per render rather than per frame.
+    pub markdown: Vec<iced::widget::markdown::Item>,
 }
 
 impl ExtensionPage {
@@ -68,6 +70,7 @@ impl ExtensionPage {
             shown: Vec::new(),
             selected: 0,
             notice: None,
+            markdown: Vec::new(),
         }
     }
 
@@ -76,6 +79,14 @@ impl ExtensionPage {
         self.version = state.version;
         if let Some(view) = state.view {
             let key = self.selected_item().and_then(|item| item.key.clone());
+            self.markdown = match view.as_ref() {
+                View::Detail(detail) => detail
+                    .markdown
+                    .as_deref()
+                    .map(|text| iced::widget::markdown::parse(text).collect())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
             self.view = Some(*view);
             self.status = Status::Ready;
             self.refilter();

@@ -76,6 +76,8 @@ pub enum Message {
     ExtensionQueryChanged(String),
     /// A row in an extension's list was clicked.
     ExtensionItemSelected(usize),
+    /// A link in an extension's Markdown was clicked.
+    ExtensionLinkClicked(String),
     /// An action or search event reached the extension, or did not.
     ExtensionEventSent(Result<(), String>),
     /// An entry was pinned, unpinned or removed, or could not be; the list
