@@ -88,6 +88,7 @@ pub async fn run<B: BusProbe, F: FsProbe>(inputs: &Inputs<'_, B, F>) -> Report {
         checks::shell_extension(env, bus).await,
         checks::flatpak(fs),
         checks::application_dirs(env, fs),
+        checks::screen_reader(bus).await,
     ];
 
     Report {
@@ -225,7 +226,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), count, "duplicate check names");
-        assert_eq!(count, 11);
+        assert_eq!(count, 12);
         assert!(
             report
                 .checks
