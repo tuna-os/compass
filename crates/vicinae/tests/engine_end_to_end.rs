@@ -1103,6 +1103,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
     // lets it write. Not the tempdir: that is under /tmp, which it may not.
     let out = root.join("data-home/vicinae/support/hello/greeting.txt");
     let answered = root.join("data-home/vicinae/support/hello/answered.txt");
+    let replaced = root.join("data-home/vicinae/support/hello/replaced.txt");
     std::fs::write(
         ext.join("ask.js"),
         format!(
@@ -1115,8 +1116,40 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                      const ok = await confirmAlert({{ title: 'Delete it?' }});
                      require('node:fs').writeFileSync({answered:?}, String(ok));
                    }} }}))
+               }}),
+               React.createElement(List.Item, {{ title: 'twice', actions:
+                 React.createElement(ActionPanel, null,
+                   React.createElement(Action, {{ title: 'Ask twice', onAction: async () => {{
+                     const first = confirmAlert({{ title: 'First?' }});
+                     confirmAlert({{ title: 'Second?' }});
+                     require('node:fs').writeFileSync({replaced:?}, String(await first));
+                   }} }}))
                }}));",
-            answered = answered.to_string_lossy()
+            answered = answered.to_string_lossy(),
+            replaced = replaced.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let authorized = root.join("data-home/vicinae/support/hello/authorized.txt");
+    std::fs::write(
+        ext.join("auth.js"),
+        format!(
+            "const React = require('react');
+             const {{ List, OAuth }} = require('@vicinae/api');
+             module.exports.default = function Auth() {{
+               React.useEffect(() => {{
+                 const client = new OAuth.PKCEClient({{
+                   redirectMethod: OAuth.RedirectMethod.Web,
+                   providerName: 'Example', description: 'Connect your Example account' }});
+                 client.authorizationRequest({{
+                   endpoint: 'https://example.com/authorize', clientId: 'id', scope: 'read' }})
+                   .then((request) => client.authorize(request))
+                   .then(({{ authorizationCode }}) => authorizationCode, (e) => 'refused:' + e.message)
+                   .then((out) => require('node:fs').writeFileSync({authorized:?}, out));
+               }}, []);
+               return React.createElement(List, null, React.createElement(List.Item, {{ title: 'waiting' }}));
+             }};",
+            authorized = authorized.to_string_lossy()
         ),
     )
     .unwrap();
@@ -1634,6 +1667,109 @@ fn an_alert_reaches_the_launcher_and_its_answer_reaches_the_extension() {
         daemon.request(Request::CloseExtension { session }),
         Response::Ack
     );
+}
+
+/// Waits for `session` to show an alert titled `title`.
+fn wait_for_alert(daemon: &Daemon, session: u64, title: &str) {
+    use compass_ipc::{Request, Response};
+    let mut after = 0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        assert!(Instant::now() < deadline, "no alert {title:?} arrived");
+        let Response::ExtensionView { version, alert, .. } =
+            daemon.request(Request::ExtensionView { session, after })
+        else {
+            panic!("no view answer");
+        };
+        if alert.is_some_and(|alert| alert.title == title) {
+            return;
+        }
+        after = version;
+    }
+}
+
+#[test]
+fn a_replaced_alert_and_one_navigated_away_from_both_answer_no() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_path_buf();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:ask".into(),
+        arguments_json: None,
+    }) else {
+        panic!("no session");
+    };
+    let (view, _) = wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+    let View::List(list) = view else {
+        unreachable!()
+    };
+    let handler = |row: usize| {
+        list.sections[0].items[row]
+            .actions
+            .as_ref()
+            .expect("actions")
+            .actions()[0]
+            .handler
+            .0
+            .clone()
+    };
+    let support = root.join("data-home/vicinae/support/hello");
+
+    // A second alert while the first is open: the first is cancelled, and
+    // the extension is told so rather than left waiting.
+    daemon.request(Request::ExtensionEvent {
+        session,
+        handler: handler(1),
+        args_json: "[]".into(),
+    });
+    wait_for_alert(&daemon, session, "Second?");
+    let replaced = support.join("replaced.txt");
+    wait_for_content(&replaced);
+    assert_eq!(
+        std::fs::read_to_string(&replaced).ok().as_deref(),
+        Some("false"),
+        "the replaced alert's promise settled with no"
+    );
+    assert_eq!(
+        daemon.request(Request::ExtensionAlertAnswer {
+            session,
+            confirmed: false
+        }),
+        Response::Ack
+    );
+
+    // Leaving the view while an alert is open answers it no.
+    daemon.request(Request::ExtensionEvent {
+        session,
+        handler: handler(0),
+        args_json: "[]".into(),
+    });
+    wait_for_alert(&daemon, session, "Delete it?");
+    assert_eq!(
+        daemon.request(Request::ExtensionPop { session }),
+        Response::Ack
+    );
+    let answered = support.join("answered.txt");
+    wait_for_content(&answered);
+    assert_eq!(
+        std::fs::read_to_string(&answered).ok().as_deref(),
+        Some("false"),
+        "navigating away is a way out of the dialog, and it is not the confirm button"
+    );
+    daemon.request(Request::CloseExtension { session });
 }
 
 #[test]

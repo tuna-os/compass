@@ -21,7 +21,8 @@ tracing.workspace = true
 # those two and nothing else, so a format we cannot decode falls back to the
 # row's initial rather than drawing an empty box.
 iced = { version = "0.14", features = ["wayland", "image-without-codecs", "svg", "tokio", "markdown"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+# JPEG too, for remote images: avatars are mostly JPEG. zune-jpeg, pure Rust.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 iced_winit = { version = "0.14", features = ["wayland"] }
 winit = { version = "0.30", features = ["wayland"] }
 compass-core.workspace = true
@@ -31,6 +32,9 @@ serde_json.workspace = true
 compass-xdg.workspace = true
 compass-platform.workspace = true
 serde = { workspace = true }
+ureq.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 
 # The layer-shell presentation for wlroots compositors (PLAN.md Phase 5 Track
 # B). Linux-only by target so the platform seam holds: macOS and Windows never

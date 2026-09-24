@@ -204,4 +204,30 @@ pub enum Message {
     /// text input takes the printable keys first; what reaches here is exactly
     /// the set the launcher itself has to interpret.
     Keyboard(iced::keyboard::Event),
+    /// A remote image an extension's view shows was fetched into the cache,
+    /// or could not be.
+    ExtensionImageFetched {
+        /// The image's URL.
+        url: String,
+        /// Where it is kept, or why it is not.
+        result: Result<std::path::PathBuf, String>,
+    },
+    /// The text in an extension form's date field changed: its name and
+    /// the text as typed.
+    ExtensionDateEdited(String, String),
+    /// A file picker's button: ask the desktop's file chooser.
+    ExtensionChooseFiles {
+        /// The field's name.
+        name: String,
+        /// What it may choose.
+        choice: crate::extension_fields::FileChoice,
+    },
+    /// The file chooser answered: the paths chosen (empty when cancelled),
+    /// or why it could not be shown.
+    ExtensionFilesChosen {
+        /// The field's name.
+        name: String,
+        /// The chosen paths.
+        result: Result<Vec<String>, String>,
+    },
 }

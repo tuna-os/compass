@@ -2069,6 +2069,16 @@ The negative tests are §8.2's list; each has a positive control beside it.
 | 4 | Writes anywhere the user may. | Writes only its support and asset directories: `reminders` (Vicinae store) fails making `~/.local/share/vicinae-reminders`. | `an_installed_extension_command_is_found_and_a_no_view_one_runs` |
 | 5 | TLS trusts whatever `NODE_EXTRA_CA_CERTS` names. | The same, because the file it names (and `SSL_CERT_FILE`, `SSL_CERT_DIR`) is granted read; otherwise Node could not load a corporate CA from `$HOME`. | — |
 
+### Extension views — remote images, date, tag and file pickers, and dialogs
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Remote images go through a `QNetworkDiskCache` under the cache directory with `PreferCache`, up to 5 GB. | Fetched with `ureq` into `$XDG_CACHE_HOME/compass/images` (ADR-0017: Compass's own files), one file per URL by SHA-256, served from disk once fetched, oldest pruned past **256 MB**. Only PNG, JPEG and SVG are kept, recognised by their bytes; anything else keeps the row's initial. Markdown images in a `Detail` are not fetched yet. | `a_stored_image_is_found_again_and_a_different_url_is_not`, `the_bytes_decide_the_kind_not_the_url`, `pruning_removes_the_oldest_until_the_budget_holds`, `row_icons_resolve_assets_file_urls_themes_and_colour_cells` |
+| 2 | `Form.DatePicker` is a calendar. | A text field in `YYYY-MM-DD` (or `YYYY-MM-DD HH:MM`), sent as a local timestamp without a zone once it parses; half-typed or impossible dates are kept as typed and not sent. An extension's own value is shown by its first characters, so a `Z` value shows its UTC time. | `a_typed_date_becomes_a_local_timestamp_javascript_parses`, `half_a_date_or_an_impossible_one_is_not_sent` |
+| 3 | `Form.TagPicker` is a searchable token field. | Every option as a toggle, chosen ones marked; the value is the chosen values in the options' order. No search within the options. | `toggling_a_tag_keeps_the_options_order` |
+| 4 | `Form.FilePicker` opens a Qt file dialog. | The XDG FileChooser portal (`compass-portals`), which inside a Flatpak is also what grants the extension the file. A picker that takes directories and not files asks for a directory; one that takes both asks for files, since the portal offers one or the other. | — (portal; the VM tier) |
+| 5 | A second `confirmAlert` cancels the first; leaving the view cancels an open one. | The same: both answer the waiting promise `false`, whether the launcher pops the view or the extension pushes or pops one itself. | `a_replaced_alert_and_one_navigated_away_from_both_answer_no` |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

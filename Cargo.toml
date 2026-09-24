@@ -106,6 +106,15 @@ parking_lot = "0.12"
 criterion = { version = "0.5", features = ["async"] }
 roxmltree = "0.20"
 hex = "0.4"
+# The HTTP client (remote images in extension views). Blocking, which is all
+# an image fetch on a worker thread needs, and native-tls rather than rustls:
+# the system OpenSSL is already linked for SQLCipher, so TLS adds no crypto
+# stack, and it verifies against the system's roots, which is what a user
+# behind a corporate CA has configured. See docs/rust-engine/CRATE-AUDIT.md.
+# URL parsing: the OAuth redirect (`raycast://oauth?code=…&state=…`) and the
+# authorize URL's `state`. Already in the tree through ureq and zbus.
+url = "2.5"
+ureq = { version = "3.4", default-features = false, features = ["native-tls-no-default", "gzip"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

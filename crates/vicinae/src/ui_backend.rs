@@ -277,6 +277,40 @@ impl ApplicationBackend for DaemonBackend {
             }
         })
     }
+
+    fn choose_files(
+        &self,
+        choice: compass_ui::extension_fields::FileChoice,
+    ) -> BackendFuture<'_, Vec<String>> {
+        Box::pin(async move {
+            // The portal, not a dialog of our own: inside a Flatpak it is also
+            // what grants the extension the file it names.
+            let portals =
+                compass_portals::Portals::connect(compass_portals::PortalConfig::default())
+                    .await
+                    .map_err(|err| format!("The file chooser is not available: {err}"))?;
+            let chooser = portals
+                .file_chooser()
+                .map_err(|err| format!("The file chooser is not available: {err}"))?;
+            // A picker that takes directories and not files asks for a
+            // directory; the portal cannot offer both in one dialog.
+            let request = if choice.directories && !choice.files {
+                compass_portals::FileChooserRequest::directory("Choose a folder")
+            } else {
+                compass_portals::FileChooserRequest::file("Choose a file")
+            }
+            .multiple(choice.multiple);
+            let outcome = chooser
+                .open(request)
+                .await
+                .map_err(|err| format!("The file chooser failed: {err}"))?;
+            Ok(outcome
+                .paths()
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect())
+        })
+    }
 }
 
 impl DaemonBackend {

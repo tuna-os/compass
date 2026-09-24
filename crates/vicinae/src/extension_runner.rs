@@ -997,22 +997,31 @@ impl Views {
             .map_err(|err| format!("The extension did not take the answer: {err}"))
     }
 
-    /// Pops `session`'s top view, as Escape on a pushed view does.
+    /// Pops `session`'s top view, as Escape on a pushed view does. An alert
+    /// the view was showing is answered "no" first: leaving a view is one of
+    /// the ways out of a dialog that is not its confirm button.
     ///
     /// # Errors
     ///
     /// A sentence: the session is gone, or its worker is.
     pub fn pop(&self, session: u64) -> Result<(), String> {
-        let events = self
-            .lock()
-            .get(&session)
-            .map(|entry| Arc::clone(&entry.events))
-            .ok_or_else(|| "That extension view has closed".to_owned())?;
+        let (events, deferral, state) = {
+            let sessions = self.lock();
+            let entry = sessions
+                .get(&session)
+                .ok_or_else(|| "That extension view has closed".to_owned())?;
+            (
+                Arc::clone(&entry.events),
+                Arc::clone(&entry.deferral),
+                entry.state.clone(),
+            )
+        };
         let events = events
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .ok_or_else(|| "That extension view has not started yet".to_owned())?;
+        settle(&deferral, &state, Some(&events));
         events
             .view_popped()
             .map_err(|err| format!("The extension did not take it: {err}"))
@@ -1053,6 +1062,11 @@ impl ViewHandle {
         view: Result<compass_extension_api::View, compass_worker_host::view_model::Unsupported>,
         depth: u32,
     ) {
+        // The extension navigated (pushed or popped a view) while a dialog
+        // was open: that is a way out of the dialog, and it answers "no".
+        if self.state.borrow().depth != depth {
+            self.settle();
+        }
         self.state.send_modify(|state| {
             state.version += 1;
             state.depth = depth;
@@ -1066,8 +1080,12 @@ impl ViewHandle {
         });
     }
 
-    /// Shows `alert` and holds `deferral` until the launcher answers.
+    /// Shows `alert` and holds `deferral` until the launcher answers. An
+    /// alert already showing is answered "no" first, as `AlertModel` cancels
+    /// the one a second replaces: it is some promise the extension is still
+    /// waiting on.
     fn ask(&self, alert: compass_ipc::ExtensionAlert, deferral: Deferral) {
+        self.settle();
         *self
             .deferral
             .lock()
@@ -1076,6 +1094,16 @@ impl ViewHandle {
             state.version += 1;
             state.alert = Some(alert);
         });
+    }
+
+    /// Answers "no" to the alert this view is showing, if it is showing one.
+    fn settle(&self) {
+        let events = self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        settle(&self.deferral, &self.state, events.as_ref());
     }
 
     fn end(self, why: Option<String>) {
@@ -1087,6 +1115,30 @@ impl ViewHandle {
             }
         });
         self.views.lock().remove(&self.session);
+    }
+}
+
+/// Takes the alert `deferral` holds, if any, clears it from `state` and
+/// answers it "no" through `events`.
+fn settle(
+    deferral: &std::sync::Mutex<Option<Deferral>>,
+    state: &tokio::sync::watch::Sender<ViewState>,
+    events: Option<&SessionEvents>,
+) {
+    let Some(deferral) = deferral
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+    else {
+        return;
+    };
+    state.send_modify(|state| {
+        state.version += 1;
+        state.alert = None;
+    });
+    let answered = events.map(|events| events.answer(&deferral, serde_json::json!(false)));
+    if !matches!(answered, Some(Ok(()))) {
+        tracing::warn!("could not answer a dismissed dialog; the extension may wait on it");
     }
 }
 
