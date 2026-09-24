@@ -7,7 +7,7 @@
 //! manager and the calculator history are all tables in it, and each of them
 //! has to apply the same list.
 
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::Connection;
 
 use crate::{Error, Migration};
 
@@ -39,7 +39,7 @@ pub const MIGRATIONS: &[Migration] = &[
 /// # Errors
 ///
 /// See [`crate::run`].
-pub fn run(db: &Database) -> Result<(), Error> {
+pub fn run(db: &Connection) -> Result<(), Error> {
     crate::run(db, MIGRATIONS)
 }
 
@@ -76,22 +76,23 @@ mod tests {
     #[test]
     fn the_storage_table_is_created_with_the_key_the_cpp_uses() {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+        let db = compass_sqlcipher_sys::open(&dir.path().join("vicinae.db"), &[])
+            .expect("an unencrypted db");
         run(&db).expect("the migrations apply");
 
         // The primary key is (namespace_id, key): two extensions may use the
         // same key, and `set` relies on the conflict target being exactly this.
-        db.execute(
+        db.execute_batch(
             "INSERT INTO storage_data_item (namespace_id, value_type, key, value) \
              VALUES ('a:data', 1, 'k', 'v')",
         )
         .expect("a first row");
-        db.execute(
+        db.execute_batch(
             "INSERT INTO storage_data_item (namespace_id, value_type, key, value) \
              VALUES ('b:data', 1, 'k', 'v')",
         )
         .expect("the same key in another namespace");
-        db.execute(
+        db.execute_batch(
             "INSERT INTO storage_data_item (namespace_id, value_type, key, value) \
              VALUES ('a:data', 1, 'k', 'w')",
         )

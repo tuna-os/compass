@@ -34,7 +34,7 @@
 //! format this port has to read, not a decision made here; changing it is a
 //! change to both engines at once and belongs in its own proposal.
 
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::{self, Connection, OptionalExtension as _, named_params};
 
 /// A stored token set.
 ///
@@ -65,13 +65,13 @@ pub struct TokenSet {
 pub enum Error {
     /// The database refused something.
     #[error(transparent)]
-    Database(#[from] compass_sqlcipher_sys::Error),
+    Database(#[from] rusqlite::Error),
 }
 
 /// The token store, over an already-migrated `vicinae` database.
 #[derive(Debug)]
 pub struct TokenStore<'a> {
-    db: &'a Database,
+    db: &'a Connection,
 }
 
 /// What the C++ binds for an absent provider id.
@@ -84,7 +84,7 @@ fn provider_or_empty(provider_id: Option<&str>) -> &str {
 impl<'a> TokenStore<'a> {
     /// Wraps `db`.
     #[must_use]
-    pub fn new(db: &'a Database) -> Self {
+    pub fn new(db: &'a Connection) -> Self {
         Self { db }
     }
 
@@ -99,7 +99,7 @@ impl<'a> TokenStore<'a> {
     ///
     /// [`Error::Database`] if the write fails.
     pub fn set(&self, set: &TokenSet, now: i64) -> Result<(), Error> {
-        let mut stmt = self.db.prepare(
+        let mut stmt = self.db.prepare_cached(
             "INSERT INTO oauth_token_set(extension_id, provider_id, access_token, refresh_token, \
              id_token, scope, expires_in, updated_at) \
              VALUES (:extension_id, :provider_id, :access_token, :refresh_token, :id_token, \
@@ -109,21 +109,16 @@ impl<'a> TokenStore<'a> {
              expires_in = :expires_in, updated_at = :updated_at",
         )?;
 
-        stmt.bind_text(":extension_id", &set.extension_id)?;
-        stmt.bind_text(
-            ":provider_id",
-            provider_or_empty(set.provider_id.as_deref()),
-        )?;
-        stmt.bind_text(":access_token", &set.access_token)?;
-        bind_optional_text(&mut stmt, ":refresh_token", set.refresh_token.as_deref())?;
-        bind_optional_text(&mut stmt, ":id_token", set.id_token.as_deref())?;
-        bind_optional_text(&mut stmt, ":scope", set.scope.as_deref())?;
-        match set.expires_in {
-            Some(seconds) => stmt.bind_int64(":expires_in", seconds)?,
-            None => stmt.bind_null(":expires_in")?,
-        }
-        stmt.bind_int64(":updated_at", now)?;
-        stmt.step()?;
+        stmt.execute(named_params! {
+            ":extension_id": set.extension_id,
+            ":provider_id": provider_or_empty(set.provider_id.as_deref()),
+            ":access_token": set.access_token,
+            ":refresh_token": set.refresh_token,
+            ":id_token": set.id_token,
+            ":scope": set.scope,
+            ":expires_in": set.expires_in,
+            ":updated_at": now,
+        })?;
         Ok(())
     }
 
@@ -137,28 +132,33 @@ impl<'a> TokenStore<'a> {
         extension_id: &str,
         provider_id: Option<&str>,
     ) -> Result<Option<TokenSet>, Error> {
-        let mut stmt = self.db.prepare(
-            "SELECT access_token, refresh_token, id_token, scope, expires_in, updated_at \
-             FROM oauth_token_set WHERE extension_id = :extension_id \
-             AND provider_id = :provider_id",
-        )?;
-        stmt.bind_text(":extension_id", extension_id)?;
-        stmt.bind_text(":provider_id", provider_or_empty(provider_id))?;
-
-        if !stmt.step()? {
-            return Ok(None);
-        }
-
-        Ok(Some(TokenSet {
-            extension_id: extension_id.to_owned(),
-            provider_id: provider_id.map(ToOwned::to_owned),
-            access_token: stmt.column_text(0).unwrap_or_default(),
-            refresh_token: optional_text(&stmt, 1),
-            id_token: optional_text(&stmt, 2),
-            scope: optional_text(&stmt, 3),
-            expires_in: (!stmt.is_null(4)).then(|| stmt.column_int64(4)),
-            updated_at: stmt.column_int64(5),
-        }))
+        let set = self
+            .db
+            .prepare_cached(
+                "SELECT access_token, refresh_token, id_token, scope, expires_in, updated_at \
+                 FROM oauth_token_set WHERE extension_id = :extension_id \
+                 AND provider_id = :provider_id",
+            )?
+            .query_row(
+                named_params! {
+                    ":extension_id": extension_id,
+                    ":provider_id": provider_or_empty(provider_id),
+                },
+                |row| {
+                    Ok(TokenSet {
+                        extension_id: extension_id.to_owned(),
+                        provider_id: provider_id.map(ToOwned::to_owned),
+                        access_token: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                        refresh_token: row.get(1)?,
+                        id_token: row.get(2)?,
+                        scope: row.get(3)?,
+                        expires_in: row.get(4)?,
+                        updated_at: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                    })
+                },
+            )
+            .optional()?;
+        Ok(set)
     }
 
     /// Removes one extension's token set for `provider_id`.
@@ -167,13 +167,15 @@ impl<'a> TokenStore<'a> {
     ///
     /// [`Error::Database`] if the delete fails.
     pub fn remove(&self, extension_id: &str, provider_id: Option<&str>) -> Result<(), Error> {
-        let mut stmt = self.db.prepare(
-            "DELETE FROM oauth_token_set WHERE extension_id = :extension_id \
-             AND provider_id = :provider_id",
-        )?;
-        stmt.bind_text(":extension_id", extension_id)?;
-        stmt.bind_text(":provider_id", provider_or_empty(provider_id))?;
-        stmt.step()?;
+        self.db
+            .prepare_cached(
+                "DELETE FROM oauth_token_set WHERE extension_id = :extension_id \
+                 AND provider_id = :provider_id",
+            )?
+            .execute(named_params! {
+                ":extension_id": extension_id,
+                ":provider_id": provider_or_empty(provider_id),
+            })?;
         Ok(())
     }
 
@@ -183,51 +185,38 @@ impl<'a> TokenStore<'a> {
     ///
     /// [`Error::Database`] if the query fails.
     pub fn list(&self) -> Result<Vec<TokenSet>, Error> {
-        let mut stmt = self.db.prepare(
+        let mut stmt = self.db.prepare_cached(
             "SELECT extension_id, provider_id, access_token, refresh_token, id_token, scope, \
              expires_in, updated_at FROM oauth_token_set",
         )?;
 
-        let mut out = Vec::new();
-        while stmt.step()? {
-            let provider = stmt.column_text(1).unwrap_or_default();
-            out.push(TokenSet {
-                extension_id: stmt.column_text(0).unwrap_or_default(),
-                provider_id: (!provider.is_empty()).then_some(provider),
-                access_token: stmt.column_text(2).unwrap_or_default(),
-                refresh_token: optional_text(&stmt, 3),
-                id_token: optional_text(&stmt, 4),
-                scope: optional_text(&stmt, 5),
-                expires_in: (!stmt.is_null(6)).then(|| stmt.column_int64(6)),
-                updated_at: stmt.column_int64(7),
-            });
-        }
+        let out = stmt
+            .query_map([], |row| {
+                let provider = row.get::<_, Option<String>>(1)?.unwrap_or_default();
+                Ok(TokenSet {
+                    extension_id: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                    provider_id: (!provider.is_empty()).then_some(provider),
+                    access_token: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    refresh_token: row.get(3)?,
+                    id_token: row.get(4)?,
+                    scope: row.get(5)?,
+                    expires_in: row.get(6)?,
+                    updated_at: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
+                })
+            })?
+            .collect::<Result<_, _>>()?;
         Ok(out)
     }
-}
-
-fn bind_optional_text(
-    stmt: &mut compass_sqlcipher_sys::Statement<'_>,
-    name: &str,
-    value: Option<&str>,
-) -> Result<(), compass_sqlcipher_sys::Error> {
-    match value {
-        Some(text) => stmt.bind_text(name, text),
-        None => stmt.bind_null(name),
-    }
-}
-
-fn optional_text(stmt: &compass_sqlcipher_sys::Statement<'_>, col: i32) -> Option<String> {
-    (!stmt.is_null(col)).then(|| stmt.column_text(col).unwrap_or_default())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn open() -> (tempfile::TempDir, Database) {
+    fn open() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+        let db = compass_sqlcipher_sys::open(&dir.path().join("vicinae.db"), &[])
+            .expect("an unencrypted db");
         compass_db::vicinae::run(&db).expect("the migrations apply");
         (dir, db)
     }
@@ -295,11 +284,12 @@ mod tests {
         let store = TokenStore::new(&db);
         store.set(&full("hn", None), 1).expect("write");
 
-        let mut stmt = db
-            .prepare("SELECT provider_id FROM oauth_token_set")
-            .expect("prepare");
-        assert!(stmt.step().expect("a row"));
-        assert_eq!(stmt.column_text(0).as_deref(), Some(""));
+        let provider: Option<String> = db
+            .query_row("SELECT provider_id FROM oauth_token_set", [], |row| {
+                row.get(0)
+            })
+            .expect("a row");
+        assert_eq!(provider.as_deref(), Some(""));
     }
 
     #[test]

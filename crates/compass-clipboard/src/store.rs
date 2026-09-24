@@ -17,7 +17,7 @@
 //! and without grouping a two-row selection would appear twice and be counted
 //! twice.
 
-use compass_sqlcipher_sys::{Database, Statement};
+use compass_sqlcipher_sys::rusqlite::{self, Connection, Row, ToSql};
 
 use crate::kind::{EncryptionType, OfferKind};
 use crate::search;
@@ -80,7 +80,7 @@ pub struct Page {
 pub enum Error {
     /// SQLite refused.
     #[error(transparent)]
-    Database(#[from] compass_sqlcipher_sys::Error),
+    Database(#[from] rusqlite::Error),
 
     /// A stored `kind` or `encryption_type` names no known variant.
     #[error(transparent)]
@@ -103,21 +103,31 @@ const COLUMNS: &str = "\
       s.id, o.mime_type, o.text_preview, s.pinned_at, o.content_hash_md5,
       s.updated_at, o.size, s.kind, o.url_host, o.encryption_type";
 
-fn read_row(stmt: &Statement<'_>) -> Result<(HistoryEntry, i64), Error> {
+/// A text column, empty when NULL.
+fn text(row: &Row<'_>, column: usize) -> rusqlite::Result<String> {
+    Ok(row.get::<_, Option<String>>(column)?.unwrap_or_default())
+}
+
+/// An integer column, zero when NULL, as `QVariant::toLongLong` reads it.
+fn int(row: &Row<'_>, column: usize) -> rusqlite::Result<i64> {
+    Ok(row.get::<_, Option<i64>>(column)?.unwrap_or(0))
+}
+
+fn read_row(row: &Row<'_>) -> Result<(HistoryEntry, i64), Error> {
     let entry = HistoryEntry {
-        id: stmt.column_text(0).unwrap_or_default(),
-        mime_type: stmt.column_text(1).unwrap_or_default(),
-        text_preview: stmt.column_text(2).unwrap_or_default(),
-        pinned_at: stmt.column_int64(3),
-        md5sum: stmt.column_text(4).unwrap_or_default(),
-        updated_at: stmt.column_int64(5),
-        size: stmt.column_int64(6),
-        kind: OfferKind::from_stored(stmt.column_int64(7))?,
-        url_host: stmt.column_text(8),
-        encryption: EncryptionType::from_stored(stmt.column_int64(9))?,
-        keywords: stmt.column_text(11).unwrap_or_default(),
+        id: text(row, 0)?,
+        mime_type: text(row, 1)?,
+        text_preview: text(row, 2)?,
+        pinned_at: int(row, 3)?,
+        md5sum: text(row, 4)?,
+        updated_at: int(row, 5)?,
+        size: int(row, 6)?,
+        kind: OfferKind::from_stored(int(row, 7)?)?,
+        url_host: row.get(8)?,
+        encryption: EncryptionType::from_stored(int(row, 9)?)?,
+        keywords: text(row, 11)?,
     };
-    Ok((entry, stmt.column_int64(10)))
+    Ok((entry, int(row, 10)?))
 }
 
 /// Read one page of history.
@@ -127,7 +137,7 @@ fn read_row(stmt: &Statement<'_>) -> Result<(HistoryEntry, i64), Error> {
 /// Returns [`Error::NonPositiveLimit`] for a `limit` of zero or less,
 /// [`Error::UnknownDiscriminant`] if a stored enum value names no variant, and
 /// [`Error::Database`] if SQLite refuses.
-pub fn query(db: &Database, limit: i64, offset: i64, opts: &ListSettings) -> Result<Page, Error> {
+pub fn query(db: &Connection, limit: i64, offset: i64, opts: &ListSettings) -> Result<Page, Error> {
     if limit <= 0 {
         return Err(Error::NonPositiveLimit(limit));
     }
@@ -142,22 +152,30 @@ pub fn query(db: &Database, limit: i64, offset: i64, opts: &ListSettings) -> Res
         unfiltered_sql()
     };
 
-    let mut stmt = db.prepare(&sql)?;
-    stmt.bind_int64(":limit", limit)?;
-    stmt.bind_int64(":offset", offset)?;
-    if let Some(kind) = opts.kind {
-        stmt.bind_int64(":kind", kind.to_stored())?;
+    let kind = opts.kind.map(OfferKind::to_stored);
+    let fts_query = plan.match_phrases.join(" AND ");
+    let term_names: Vec<String> = (0..plan.short_terms.len())
+        .map(|index| format!(":term{index}"))
+        .collect();
+
+    let mut params: Vec<(&str, &dyn ToSql)> = Vec::with_capacity(4 + term_names.len());
+    params.push((":limit", &limit));
+    params.push((":offset", &offset));
+    if let Some(kind) = &kind {
+        params.push((":kind", kind));
     }
     if !plan.match_phrases.is_empty() {
-        stmt.bind_text(":fts_query", &plan.match_phrases.join(" AND "))?;
+        params.push((":fts_query", &fts_query));
     }
-    for (index, term) in plan.short_terms.iter().enumerate() {
-        stmt.bind_text(&format!(":term{index}"), term)?;
+    for (name, term) in term_names.iter().zip(&plan.short_terms) {
+        params.push((name.as_str(), term));
     }
 
+    let mut stmt = db.prepare_cached(&sql)?;
+    let mut rows = stmt.query(params.as_slice())?;
     let mut page = Page::default();
-    while stmt.step()? {
-        let (entry, total) = read_row(&stmt)?;
+    while let Some(row) = rows.next()? {
+        let (entry, total) = read_row(row)?;
         page.total_count = total;
         page.data.push(entry);
     }

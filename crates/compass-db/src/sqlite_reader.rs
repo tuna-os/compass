@@ -2,11 +2,11 @@
 //!
 //! Implements the three read queries `FileIndexerDatabase` serves the query
 //! engine — strict candidates, skeleton candidates, vocabulary suggestions —
-//! over a [`Database`]. The SQL mirrors the C++ row for row: same tables,
+//! over a [`Connection`]. The SQL mirrors the C++ row for row: same tables,
 //! same match strings, same category filter, same skeleton rank order.
 //!
 //! One reader owns one connection on one thread, the way the C++ query pool
-//! gives each worker its own engine: `Database` is `Send` but not `Sync`, so
+//! gives each worker its own engine: `Connection` is `Send` but not `Sync`, so
 //! sharing an index across threads means one reader per thread, not one
 //! reader under a lock.
 //!
@@ -19,7 +19,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use compass_core::watch_events::DYNAMIC_WATCH_COUNT;
-use compass_sqlcipher_sys::{Database, Statement};
+use compass_sqlcipher_sys::rusqlite::{
+    self, Connection, OptionalExtension as _, Row, named_params,
+};
 
 use crate::db_writer::{ScanRecord, ScanStatus, ScanType};
 use crate::query_engine::{IndexedFileCategory, SearchCandidate, SearchOptions};
@@ -29,7 +31,7 @@ use crate::vocabulary::Vocabulary;
 
 /// One file-index database, open for reading.
 pub struct SqliteReader {
-    db: Database,
+    db: Connection,
     /// The vocabulary as last loaded, and the `data_version` it was loaded at.
     vocabulary: RefCell<Option<(i64, Vocabulary)>>,
 }
@@ -39,10 +41,10 @@ impl SqliteReader {
     ///
     /// # Errors
     ///
-    /// Returns [`compass_sqlcipher_sys::Error`] if the file cannot be opened.
-    pub fn open(path: &Path) -> Result<Self, compass_sqlcipher_sys::Error> {
+    /// Returns SQLite's error if the file cannot be opened.
+    pub fn open(path: &Path) -> rusqlite::Result<Self> {
         Ok(Self {
-            db: Database::open(path, &[])?,
+            db: compass_sqlcipher_sys::open(path, &[])?,
             vocabulary: RefCell::new(None),
         })
     }
@@ -52,10 +54,8 @@ impl SqliteReader {
     fn with_vocabulary<T>(&self, f: impl FnOnce(&Vocabulary) -> T) -> T {
         let version = self
             .db
-            .query_one_text("PRAGMA data_version")
-            .ok()
-            .flatten()
-            .and_then(|version| version.parse::<i64>().ok());
+            .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+            .ok();
         let mut cache = self.vocabulary.borrow_mut();
         let fresh = matches!((&*cache, version), (Some((cached, _)), Some(now)) if *cached == now);
         if !fresh {
@@ -73,12 +73,19 @@ impl SqliteReader {
                 return Vocabulary::default();
             }
         };
-        let mut words = Vec::new();
-        while let Ok(true) = stmt.step() {
-            if let Some(word) = stmt.column_text(0) {
-                words.push((word, stmt.column_int64(1)));
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?))
+        });
+        let words = match rows {
+            Ok(rows) => rows
+                .map_while(Result::ok)
+                .filter_map(|(word, rank)| Some((word?, rank)))
+                .collect(),
+            Err(error) => {
+                tracing::warn!(error = ?error, "reading the vocabulary");
+                Vec::new()
             }
-        }
+        };
         Vocabulary::new(words)
     }
 
@@ -92,44 +99,64 @@ impl SqliteReader {
         options: &SearchOptions,
     ) -> Vec<SearchCandidate> {
         let sql = candidate_sql(table, order_by_rank);
-        let mut stmt = match self.db.prepare(&sql) {
+        let mut stmt = match self.db.prepare_cached(&sql) {
             Ok(stmt) => stmt,
             Err(error) => {
                 tracing::warn!(error = ?error, table, "preparing the candidate query");
                 return Vec::new();
             }
         };
-        if let Err(error) = bind_search(&mut stmt, query, limit, options) {
-            tracing::warn!(error = ?error, table, "binding the candidate query");
-            return Vec::new();
-        }
+        let params = named_params! {
+            ":search": query,
+            ":limit": i64::try_from(limit).unwrap_or(i64::MAX),
+            ":category": options.category.map(|category| category as i64),
+        };
+        let mut rows = match stmt.query(params) {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(error = ?error, table, "binding the candidate query");
+                return Vec::new();
+            }
+        };
         let mut results = Vec::new();
         loop {
-            match stmt.step() {
-                Ok(true) => {}
-                Ok(false) => break,
+            let row = match rows.next() {
+                Ok(Some(row)) => row,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::warn!(error = ?error, table, "reading candidate rows");
+                    break;
+                }
+            };
+            match candidate(row) {
+                Ok(Some(found)) => results.push(found),
+                Ok(None) => {}
                 Err(error) => {
                     tracing::warn!(error = ?error, table, "reading candidate rows");
                     break;
                 }
             }
-            let Some(path) = stmt.column_text(0) else {
-                continue;
-            };
-            results.push(SearchCandidate {
-                path: PathBuf::from(path),
-                category: category_from_db(stmt.column_int64(1)),
-                mime_type: stmt.column_text(2),
-            });
         }
         results
     }
 }
 
+/// One candidate row: the path, its category, and its MIME name. A row with
+/// no path is skipped.
+fn candidate(row: &Row<'_>) -> rusqlite::Result<Option<SearchCandidate>> {
+    let Some(path) = row.get::<_, Option<String>>(0)? else {
+        return Ok(None);
+    };
+    Ok(Some(SearchCandidate {
+        path: PathBuf::from(path),
+        category: category_from_db(row.get(1)?),
+        mime_type: row.get(2)?,
+    }))
+}
+
 impl IndexReader for SqliteReader {
-    /// Always true: a constructed reader holds its connection, and
-    /// [`Database`] has no close. It exists so the engine treats every reader
-    /// uniformly.
+    /// Always true: a constructed reader holds its connection, and the reader
+    /// has no close. It exists so the engine treats every reader uniformly.
     fn is_open(&self) -> bool {
         true
     }
@@ -168,7 +195,7 @@ impl IndexReader for SqliteReader {
         };
         let mut stmt = match self
             .db
-            .prepare("SELECT path FROM indexed_file WHERE parent_id = :parent_id")
+            .prepare_cached("SELECT path FROM indexed_file WHERE parent_id = :parent_id")
         {
             Ok(stmt) => stmt,
             Err(error) => {
@@ -176,117 +203,108 @@ impl IndexReader for SqliteReader {
                 return HashSet::new();
             }
         };
-        if stmt.bind_int64(":parent_id", dir_id).is_err() {
-            tracing::warn!("binding the indexed directory");
-            return HashSet::new();
-        }
+        let rows = match stmt.query_map(named_params! { ":parent_id": dir_id }, |row| {
+            row.get::<_, Option<String>>(0)
+        }) {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(error = ?error, "binding the indexed directory");
+                return HashSet::new();
+            }
+        };
         let mut paths = HashSet::new();
-        loop {
-            match stmt.step() {
-                Ok(true) => {}
-                Ok(false) => break,
+        for row in rows {
+            match row {
+                Ok(Some(found)) => {
+                    paths.insert(PathBuf::from(found));
+                }
+                Ok(None) => {}
                 Err(error) => {
                     tracing::warn!(error = ?error, "reading indexed directory rows");
                     break;
                 }
-            }
-            if let Some(found) = stmt.column_text(0) {
-                paths.insert(PathBuf::from(found));
             }
         }
         paths
     }
 
     fn tracks_file(&self, path: &Path) -> bool {
-        let mut stmt = match self
-            .db
-            .prepare("SELECT COUNT(*) FROM indexed_file WHERE path = :path")
-        {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::warn!(error = ?error, "checking the tracked file");
-                return false;
-            }
-        };
-        if stmt.bind_text(":path", &path.to_string_lossy()).is_err() {
-            return false;
-        }
-        match stmt.step() {
-            Ok(true) => stmt.column_int64(0) != 0,
-            _ => false,
-        }
+        self.db
+            .prepare_cached("SELECT COUNT(*) FROM indexed_file WHERE path = :path")
+            .and_then(|mut stmt| {
+                stmt.query_row(named_params! { ":path": path.to_string_lossy() }, |row| {
+                    row.get::<_, i64>(0)
+                })
+            })
+            .inspect_err(|error| tracing::warn!(error = ?error, "checking the tracked file"))
+            .is_ok_and(|count| count != 0)
     }
 
     fn last_successful_scan(&self, path: &Path) -> Option<ScanRecord> {
-        let mut stmt = match self.db.prepare(
-            "SELECT id, status, created_at, entrypoint, type, finished_at, indexed_file_count \
-             FROM scan_history \
-             WHERE type in (:type1, :type2) \
-             AND status = :status \
-             AND entrypoint = :entrypoint \
-             ORDER BY created_at DESC LIMIT 1",
-        ) {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::warn!(error = ?error, "looking up the last successful scan");
-                return None;
-            }
-        };
-        if stmt.bind_int64(":type1", ScanType::Full as i64).is_err()
-            || stmt
-                .bind_int64(":type2", ScanType::Incremental as i64)
-                .is_err()
-            || stmt
-                .bind_int64(":status", ScanStatus::Succeeded as i64)
-                .is_err()
-            || stmt
-                .bind_text(":entrypoint", &path.to_string_lossy())
-                .is_err()
-        {
-            return None;
-        }
-        match stmt.step() {
-            Ok(true) => map_scan_record(&stmt),
-            _ => None,
-        }
+        self.db
+            .prepare_cached(
+                "SELECT id, status, created_at, entrypoint, type, finished_at, indexed_file_count \
+                 FROM scan_history \
+                 WHERE type in (:type1, :type2) \
+                 AND status = :status \
+                 AND entrypoint = :entrypoint \
+                 ORDER BY created_at DESC LIMIT 1",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_row(
+                    named_params! {
+                        ":type1": ScanType::Full as i64,
+                        ":type2": ScanType::Incremental as i64,
+                        ":status": ScanStatus::Succeeded as i64,
+                        ":entrypoint": path.to_string_lossy(),
+                    },
+                    map_scan_record,
+                )
+            })
+            .inspect_err(|error| {
+                if !matches!(error, rusqlite::Error::QueryReturnedNoRows) {
+                    tracing::warn!(error = ?error, "looking up the last successful scan");
+                }
+            })
+            .ok()
+            .flatten()
     }
 
     fn last_scan(&self, path: &Path, scan_type: ScanType) -> Option<ScanRecord> {
-        let mut stmt = match self.db.prepare(
-            "SELECT id, status, created_at, entrypoint, type, finished_at, indexed_file_count \
-             FROM scan_history \
-             WHERE type = :type \
-             AND entrypoint = :entrypoint \
-             ORDER BY created_at DESC LIMIT 1",
-        ) {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::warn!(error = ?error, "looking up the last scan");
-                return None;
-            }
-        };
-        if stmt.bind_int64(":type", scan_type as i64).is_err()
-            || stmt
-                .bind_text(":entrypoint", &path.to_string_lossy())
-                .is_err()
-        {
-            return None;
-        }
-        match stmt.step() {
-            Ok(true) => map_scan_record(&stmt),
-            _ => None,
-        }
+        self.db
+            .prepare_cached(
+                "SELECT id, status, created_at, entrypoint, type, finished_at, indexed_file_count \
+                 FROM scan_history \
+                 WHERE type = :type \
+                 AND entrypoint = :entrypoint \
+                 ORDER BY created_at DESC LIMIT 1",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_row(
+                    named_params! {
+                        ":type": scan_type as i64,
+                        ":entrypoint": path.to_string_lossy(),
+                    },
+                    map_scan_record,
+                )
+            })
+            .inspect_err(|error| {
+                if !matches!(error, rusqlite::Error::QueryReturnedNoRows) {
+                    tracing::warn!(error = ?error, "looking up the last scan");
+                }
+            })
+            .ok()
+            .flatten()
     }
 
     fn has_vocabulary(&self) -> bool {
-        let Ok(mut stmt) = self.db.prepare("SELECT 1 FROM vocabulary LIMIT 1") else {
-            return false;
-        };
-        matches!(stmt.step(), Ok(true))
+        self.db
+            .query_row("SELECT 1 FROM vocabulary LIMIT 1", [], |_| Ok(()))
+            .is_ok()
     }
 
     fn recent_directories(&self, limit: usize) -> Vec<PathBuf> {
-        let mut stmt = match self.db.prepare(
+        let mut stmt = match self.db.prepare_cached(
             "SELECT path FROM indexed_file WHERE type = 1 \
              ORDER BY last_modified_at DESC LIMIT :limit",
         ) {
@@ -296,34 +314,31 @@ impl IndexReader for SqliteReader {
                 return Vec::new();
             }
         };
-        if stmt
-            .bind_int64(":limit", i64::try_from(limit).unwrap_or(i64::MAX))
-            .is_err()
-        {
+        let Ok(rows) = stmt.query_map(
+            named_params! { ":limit": i64::try_from(limit).unwrap_or(i64::MAX) },
+            |row| row.get::<_, Option<String>>(0),
+        ) else {
             return Vec::new();
-        }
+        };
         // No caller keeps more than the watcher's dynamic set; the SQL LIMIT
         // caps the rows anyway, this only bounds the upfront allocation.
         let mut dirs = Vec::with_capacity(limit.min(DYNAMIC_WATCH_COUNT));
-        while matches!(stmt.step(), Ok(true)) {
-            if let Some(path) = stmt.column_text(0) {
-                dirs.push(PathBuf::from(path));
-            }
-        }
+        dirs.extend(rows.map_while(Result::ok).flatten().map(PathBuf::from));
         dirs
     }
 }
 
 /// The row id for `path`, when indexed.
-pub(crate) fn file_id(db: &Database, path: &Path) -> Option<i64> {
-    let mut stmt = db
-        .prepare("SELECT id FROM indexed_file WHERE path = :path")
-        .ok()?;
-    stmt.bind_text(":path", &path.to_string_lossy()).ok()?;
-    match stmt.step() {
-        Ok(true) => Some(stmt.column_int64(0)),
-        _ => None,
-    }
+pub(crate) fn file_id(db: &Connection, path: &Path) -> Option<i64> {
+    db.prepare_cached("SELECT id FROM indexed_file WHERE path = :path")
+        .and_then(|mut stmt| {
+            stmt.query_row(named_params! { ":path": path.to_string_lossy() }, |row| {
+                row.get(0)
+            })
+            .optional()
+        })
+        .ok()
+        .flatten()
 }
 
 /// The strict/skeleton candidate lookup over `table`, one of the two FTS
@@ -345,23 +360,6 @@ fn candidate_sql(table: &str, order_by_rank: bool) -> String {
             String::new()
         },
     )
-}
-
-/// Binds the candidate parameters: the match string, the row cap, and the
-/// optional category.
-fn bind_search(
-    stmt: &mut Statement<'_>,
-    query: &str,
-    limit: usize,
-    options: &SearchOptions,
-) -> Result<(), compass_sqlcipher_sys::Error> {
-    stmt.bind_text(":search", query)?;
-    stmt.bind_int64(":limit", i64::try_from(limit).unwrap_or(i64::MAX))?;
-    match options.category {
-        Some(category) => stmt.bind_int64(":category", category as i64)?,
-        None => stmt.bind_null(":category")?,
-    }
-    Ok(())
 }
 
 /// Reads a stored scan status. Unreachable values fall back to `Pending`:
@@ -386,18 +384,29 @@ pub(crate) fn scan_type_from_db(value: i64) -> ScanType {
     }
 }
 
+/// An integer column that reads as 0 when NULL, as the C++ `QVariant::toInt`
+/// reads it. `created_at`, `finished_at` and `indexed_file_count` are all
+/// nullable.
+pub(crate) fn int_or_zero(row: &Row<'_>, column: usize) -> rusqlite::Result<i64> {
+    Ok(row.get::<_, Option<i64>>(column)?.unwrap_or(0))
+}
+
 /// Reads a scan-history row in `mapScan` column order: id, status,
-/// created_at, entrypoint, type, finished_at, indexed_file_count.
-pub(crate) fn map_scan_record(stmt: &Statement<'_>) -> Option<ScanRecord> {
-    Some(ScanRecord {
-        id: i32::try_from(stmt.column_int64(0)).unwrap_or(i32::MAX),
-        status: status_from_db(stmt.column_int64(1)),
-        created_at: u64::try_from(stmt.column_int64(2)).unwrap_or(0),
-        finished_at: u64::try_from(stmt.column_int64(5)).unwrap_or(0),
-        indexed_file_count: stmt.column_int64(6),
-        path: PathBuf::from(stmt.column_text(3)?),
-        scan_type: scan_type_from_db(stmt.column_int64(4)),
-    })
+/// created_at, entrypoint, type, finished_at, indexed_file_count. `None` when
+/// the row has no entrypoint.
+pub(crate) fn map_scan_record(row: &Row<'_>) -> rusqlite::Result<Option<ScanRecord>> {
+    let Some(path) = row.get::<_, Option<String>>(3)? else {
+        return Ok(None);
+    };
+    Ok(Some(ScanRecord {
+        id: i32::try_from(int_or_zero(row, 0)?).unwrap_or(i32::MAX),
+        status: status_from_db(int_or_zero(row, 1)?),
+        created_at: u64::try_from(int_or_zero(row, 2)?).unwrap_or(0),
+        finished_at: u64::try_from(int_or_zero(row, 5)?).unwrap_or(0),
+        indexed_file_count: int_or_zero(row, 6)?,
+        path: PathBuf::from(path),
+        scan_type: scan_type_from_db(int_or_zero(row, 4)?),
+    }))
 }
 
 /// Reads the stored category number. Unknown values are `Other` on purpose:
@@ -479,7 +488,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let reader = SqliteReader::open(&dir.path().join("index.db")).expect("open");
         for statement in crate::sqlite_writer::WRITER_SCHEMA {
-            reader.db.execute(statement).expect("schema");
+            reader.db.execute_batch(statement).expect("schema");
         }
         for statement in [
             "INSERT INTO mime_type(name) VALUES ('text/plain')",
@@ -489,7 +498,7 @@ mod tests {
              VALUES ('/home/ada/photo.jpg', 'pht jpg', 2)",
             "INSERT INTO vocabulary(word, rank) VALUES ('report', 5)",
         ] {
-            reader.db.execute(statement).expect("seed");
+            reader.db.execute_batch(statement).expect("seed");
         }
         (dir, reader)
     }
@@ -550,9 +559,10 @@ mod tests {
                 .is_empty()
         );
         // A rebuild lands from the writer's connection, not this one.
-        let writer = Database::open(&dir.path().join("index.db"), &[]).expect("writer");
+        let writer =
+            compass_sqlcipher_sys::open(&dir.path().join("index.db"), &[]).expect("writer");
         writer
-            .execute("INSERT INTO vocabulary(word, rank) VALUES ('invoice', 2)")
+            .execute_batch("INSERT INTO vocabulary(word, rank) VALUES ('invoice', 2)")
             .expect("vocabulary write");
         let found = reader.vocabulary_suggestions("invioce", 20, false);
         assert_eq!(found.first().map(|s| s.word.as_str()), Some("invoice"));
@@ -577,7 +587,7 @@ mod tests {
             "INSERT INTO scan_history(entrypoint, type, status, created_at) \
              VALUES ('/home/ada/docs', 0, 4, 4000)",
         ] {
-            reader.db.execute(statement).expect("scan seed");
+            reader.db.execute_batch(statement).expect("scan seed");
         }
 
         let scan = reader
@@ -599,7 +609,7 @@ mod tests {
         let (_dir, reader) = live_seed();
         reader
             .db
-            .execute(
+            .execute_batch(
                 "INSERT INTO scan_history(entrypoint, type, status, created_at) \
                  VALUES ('/home/ada', 0, 3, 1000)",
             )
@@ -622,7 +632,7 @@ mod tests {
             "INSERT INTO scan_history(entrypoint, type, status, created_at) \
              VALUES ('/home/ada', 1, 4, 3000)",
         ] {
-            reader.db.execute(statement).expect("scan seed");
+            reader.db.execute_batch(statement).expect("scan seed");
         }
 
         // Failures count: the orchestrator restarts from those, not just
@@ -666,7 +676,7 @@ mod tests {
             "INSERT INTO indexed_file(path, skeleton_path, type, last_modified_at) \
              VALUES ('/home/ada/file.txt', 'fl txt', 0, 4000)",
         ] {
-            reader.db.execute(statement).expect("directory seed");
+            reader.db.execute_batch(statement).expect("directory seed");
         }
 
         // Files never qualify, however fresh — only type 1 rows do.
@@ -704,7 +714,7 @@ mod tests {
              VALUES ('/home/ada/docs/b.txt', 'b txt', \
              (SELECT id FROM indexed_file WHERE path = '/home/ada/docs'))",
         ] {
-            reader.db.execute(statement).expect("file seed");
+            reader.db.execute_batch(statement).expect("file seed");
         }
 
         let children = reader.list_indexed_directory_files(Path::new("/home/ada/docs"));

@@ -612,8 +612,8 @@ fn serve(
     }
 }
 
-fn open_storage(storage: &Storage) -> Option<compass_sqlcipher_sys::Database> {
-    let opened = compass_sqlcipher_sys::Database::open(&storage.path, &storage.key)
+fn open_storage(storage: &Storage) -> Option<compass_sqlcipher_sys::rusqlite::Connection> {
+    let opened = compass_sqlcipher_sys::open(&storage.path, &storage.key)
         .map_err(|err| err.to_string())
         .and_then(|db| {
             compass_db::vicinae::run(&db)

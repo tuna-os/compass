@@ -8,20 +8,20 @@
 use compass_clipboard::ingest::{self, Decision, IgnoreReason, Incoming};
 use compass_clipboard::kind::{EncryptionType, OfferKind};
 use compass_clipboard::{schema, store};
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::Connection;
 
 const KEY: &[u8] = &[0x44; 32];
 const CLIPBOARD_KEY: [u8; compass_crypto::KEY_SIZE] = [0x22; compass_crypto::KEY_SIZE];
 
 struct Home {
     _dir: tempfile::TempDir,
-    db: Database,
+    db: Connection,
     data_dir: std::path::PathBuf,
 }
 
 fn fresh() -> Home {
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let db = Database::open(&dir.path().join("clip.db"), KEY).expect("open");
+    let db = compass_sqlcipher_sys::open(&dir.path().join("clip.db"), KEY).expect("open");
     schema::run(&db).expect("migrations");
     // Deliberately *not* created: ingest owns `create_dir_all`.
     let data_dir = dir.path().join("payloads");

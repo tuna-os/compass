@@ -9,23 +9,23 @@ use compass_clipboard::kind::{EncryptionType, OfferKind};
 use compass_clipboard::schema;
 use compass_clipboard::store::{self, ListSettings};
 use compass_clipboard::write::{self, NewOffer, NewSelection};
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::{Connection, named_params};
 
 const KEY: &[u8] = &[0x44; 32];
 
 struct Db {
     _dir: tempfile::TempDir,
-    db: Database,
+    db: Connection,
 }
 
 fn fresh() -> Db {
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let db = Database::open(&dir.path().join("clip.db"), KEY).expect("open");
+    let db = compass_sqlcipher_sys::open(&dir.path().join("clip.db"), KEY).expect("open");
     schema::run(&db).expect("migrations");
     Db { _dir: dir, db }
 }
 
-fn add(db: &Database, id: &str, text: &str) {
+fn add(db: &Connection, id: &str, text: &str) {
     write::insert_selection(
         db,
         &NewSelection {
@@ -56,17 +56,14 @@ fn add(db: &Database, id: &str, text: &str) {
     write::index_content(db, id, text).expect("index");
 }
 
-fn age(db: &Database, id: &str, seconds_ago: i64) {
-    let mut stmt = db
+fn age(db: &Connection, id: &str, seconds_ago: i64) {
+    db.execute(
         // Milliseconds, like the store's own clock.
-        .prepare(
-            "UPDATE selection SET updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) \
-             - :ago * 1000 WHERE id = :id",
-        )
-        .expect("prepare");
-    stmt.bind_int64(":ago", seconds_ago).expect("bind");
-    stmt.bind_text(":id", id).expect("bind");
-    stmt.step().expect("age it");
+        "UPDATE selection SET updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) \
+         - :ago * 1000 WHERE id = :id",
+        named_params! { ":ago": seconds_ago, ":id": id },
+    )
+    .expect("age it");
 }
 
 #[test]
@@ -102,13 +99,13 @@ fn a_nullable_column_left_unset_reads_back_as_null() {
     assert_eq!(page.data[0].url_host, None);
 }
 
-fn updated_at(db: &Database, id: &str) -> i64 {
-    let mut stmt = db
-        .prepare("SELECT updated_at FROM selection WHERE id = :id")
-        .expect("prepare");
-    stmt.bind_text(":id", id).expect("bind");
-    assert!(stmt.step().expect("step"), "no such selection: {id}");
-    stmt.column_int64(0)
+fn updated_at(db: &Connection, id: &str) -> i64 {
+    db.query_row(
+        "SELECT updated_at FROM selection WHERE id = :id",
+        named_params! { ":id": id },
+        |row| row.get(0),
+    )
+    .unwrap_or_else(|err| panic!("no such selection: {id}: {err}"))
 }
 
 #[test]
@@ -227,13 +224,11 @@ fn eviction_returns_every_offer_it_deletes() {
     }
 
     // The property, stated directly: every row that disappeared was reported.
-    let mut stmt =
-        d.db.prepare("SELECT count(*) FROM data_offer")
-            .expect("prepare");
-    assert!(stmt.step().expect("step"));
+    let remaining: i64 =
+        d.db.query_row("SELECT count(*) FROM data_offer", [], |row| row.get(0))
+            .expect("count");
     assert_eq!(
-        stmt.column_int64(0),
-        3,
+        remaining, 3,
         "three offers remain, so exactly the three reported were deleted"
     );
 }
@@ -248,16 +243,10 @@ fn eviction_preserves_pinned_and_tagged_entries() {
     add(&d.db, "tagged", "text");
     age(&d.db, "tagged", 1000);
 
-    let mut stmt =
-        d.db.prepare("UPDATE selection SET pinned_at = 1 WHERE id = 'pinned'")
-            .expect("prepare");
-    stmt.step().expect("pin");
-    drop(stmt);
-    let mut stmt =
-        d.db.prepare("UPDATE selection SET keywords = 'keep' WHERE id = 'tagged'")
-            .expect("prepare");
-    stmt.step().expect("tag");
-    drop(stmt);
+    d.db.execute_batch("UPDATE selection SET pinned_at = 1 WHERE id = 'pinned'")
+        .expect("pin");
+    d.db.execute_batch("UPDATE selection SET keywords = 'keep' WHERE id = 'tagged'")
+        .expect("tag");
 
     let evicted = write::evict_older_than(&d.db, Duration::from_secs(10), true).expect("evict");
     assert_eq!(evicted, vec!["offer-old"]);
@@ -284,11 +273,8 @@ fn remove_all_can_spare_the_tagged() {
     let d = fresh();
     add(&d.db, "plain", "text");
     add(&d.db, "pinned", "text");
-    let mut stmt =
-        d.db.prepare("UPDATE selection SET pinned_at = 1 WHERE id = 'pinned'")
-            .expect("prepare");
-    stmt.step().expect("pin");
-    drop(stmt);
+    d.db.execute_batch("UPDATE selection SET pinned_at = 1 WHERE id = 'pinned'")
+        .expect("pin");
 
     let removed = write::remove_all(&d.db, true).expect("remove all");
     assert_eq!(removed, vec!["offer-plain"]);
@@ -471,11 +457,8 @@ fn finding_a_selection_distinguishes_absent_from_offerless() {
 
     // A selection whose offers are gone is Some with an empty list, which is a
     // different answer and the reason for the LEFT JOIN.
-    let mut stmt =
-        d.db.prepare("DELETE FROM data_offer WHERE selection_id = 'one'")
-            .expect("prepare");
-    stmt.step().expect("delete");
-    drop(stmt);
+    d.db.execute_batch("DELETE FROM data_offer WHERE selection_id = 'one'")
+        .expect("delete");
 
     let found = write::find_selection(&d.db, "one").expect("find").unwrap();
     assert!(found.offers.is_empty(), "the selection still exists");
@@ -565,12 +548,11 @@ fn a_recopied_entry_goes_on_top_even_when_the_clock_is_behind() {
     add(&d.db, "old", "old");
     add(&d.db, "new", "new");
     let ahead = updated_at(&d.db, "new") + 60_000;
-    let mut stmt =
-        d.db.prepare("UPDATE selection SET updated_at = :t WHERE id = 'new'")
-            .expect("prepare");
-    stmt.bind_int64(":t", ahead).expect("bind");
-    stmt.step().expect("move it ahead");
-    drop(stmt);
+    d.db.execute(
+        "UPDATE selection SET updated_at = :t WHERE id = 'new'",
+        named_params! { ":t": ahead },
+    )
+    .expect("move it ahead");
 
     assert!(write::bubble_up(&d.db, "old").expect("bubble"));
     assert!(

@@ -34,7 +34,7 @@ pub mod calculator;
 
 pub use compass_db::vicinae as schema;
 
-use compass_sqlcipher_sys::Database;
+use compass_sqlcipher_sys::rusqlite::{self, Connection, OptionalExtension as _, named_params};
 
 /// The `value_type` discriminant, as it is written in the column.
 ///
@@ -197,7 +197,7 @@ pub fn namespace_for(provider: &str) -> String {
 pub enum Error {
     /// The database refused something.
     #[error(transparent)]
-    Database(#[from] compass_sqlcipher_sys::Error),
+    Database(#[from] rusqlite::Error),
 
     /// A row carries a `value_type` this build does not know.
     #[error(
@@ -217,13 +217,13 @@ pub enum Error {
 /// The whole store, across every namespace.
 #[derive(Debug)]
 pub struct LocalStorage<'a> {
-    db: &'a Database,
+    db: &'a Connection,
 }
 
 impl<'a> LocalStorage<'a> {
     /// Wraps an already-migrated `vicinae` database.
     #[must_use]
-    pub fn new(db: &'a Database) -> Self {
+    pub fn new(db: &'a Connection) -> Self {
         Self { db }
     }
 
@@ -244,11 +244,12 @@ impl<'a> LocalStorage<'a> {
     pub fn namespaces(&self) -> Result<Vec<String>, Error> {
         let mut stmt = self
             .db
-            .prepare("SELECT DISTINCT(namespace_id) FROM storage_data_item")?;
-        let mut out = Vec::new();
-        while stmt.step()? {
-            out.push(stmt.column_text(0).unwrap_or_default());
-        }
+            .prepare_cached("SELECT DISTINCT(namespace_id) FROM storage_data_item")?;
+        let out = stmt
+            .query_map([], |row| {
+                Ok(row.get::<_, Option<String>>(0)?.unwrap_or_default())
+            })?
+            .collect::<Result<_, _>>()?;
         Ok(out)
     }
 }
@@ -274,18 +275,26 @@ impl Scoped<'_> {
     /// [`Error::Database`] if the query fails, [`Error::UnknownValueType`] if
     /// the row was written by a newer build.
     pub fn get(&self, key: &str) -> Result<Option<Value>, Error> {
-        let mut stmt = self.storage.db.prepare(
-            "SELECT value, value_type FROM storage_data_item \
-             WHERE namespace_id = :namespace_id AND key = :key",
-        )?;
-        stmt.bind_text(":namespace_id", &self.namespace)?;
-        stmt.bind_text(":key", key)?;
-
-        if !stmt.step()? {
+        let row = self
+            .storage
+            .db
+            .prepare_cached(
+                "SELECT value, value_type FROM storage_data_item \
+                 WHERE namespace_id = :namespace_id AND key = :key",
+            )?
+            .query_row(
+                named_params! { ":namespace_id": self.namespace, ":key": key },
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                        row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((text, raw)) = row else {
             return Ok(None);
-        }
-        let text = stmt.column_text(0).unwrap_or_default();
-        let raw = stmt.column_int64(1);
+        };
         let kind = ValueType::from_i64(raw).ok_or_else(|| Error::UnknownValueType {
             namespace: self.namespace.clone(),
             key: key.to_owned(),
@@ -300,44 +309,40 @@ impl Scoped<'_> {
     ///
     /// [`Error::Database`] if the write fails.
     pub fn set(&self, key: &str, value: &Value) -> Result<(), Error> {
-        let mut stmt = self.storage.db.prepare(
-            "INSERT INTO storage_data_item (namespace_id, key, value, value_type) \
-             VALUES (:namespace_id, :key, :value, :value_type) \
-             ON CONFLICT (namespace_id, key) DO UPDATE SET value = :value, \
-             value_type = :value_type",
-        )?;
-        stmt.bind_text(":namespace_id", &self.namespace)?;
-        stmt.bind_text(":key", key)?;
-        stmt.bind_text(":value", &value.text)?;
-        stmt.bind_int64(":value_type", value.kind as i64)?;
-        stmt.step()?;
+        self.storage
+            .db
+            .prepare_cached(
+                "INSERT INTO storage_data_item (namespace_id, key, value, value_type) \
+                 VALUES (:namespace_id, :key, :value, :value_type) \
+                 ON CONFLICT (namespace_id, key) DO UPDATE SET value = :value, \
+                 value_type = :value_type",
+            )?
+            .execute(named_params! {
+                ":namespace_id": self.namespace,
+                ":key": key,
+                ":value": value.text,
+                ":value_type": value.kind as i64,
+            })?;
         Ok(())
     }
 
     /// Removes `key`, answering whether it was there.
     ///
-    /// The C++ answers with `db.changes() != 0`. This crate's SQLite wrapper
-    /// does not expose `changes()`, so the answer is read before the delete,
-    /// inside one transaction — which makes it the same answer, not a
-    /// near-enough one.
+    /// Answered from the number of rows the delete changed, as the C++ answers
+    /// with `db.changes() != 0`.
     ///
     /// # Errors
     ///
     /// [`Error::Database`] if the delete fails.
     pub fn remove(&self, key: &str) -> Result<bool, Error> {
-        let tx = self.storage.db.transaction()?;
-        let existed = self.get(key)?.is_some();
-
-        let mut stmt = self.storage.db.prepare(
-            "DELETE FROM storage_data_item WHERE namespace_id = :namespace_id AND key = :key",
-        )?;
-        stmt.bind_text(":namespace_id", &self.namespace)?;
-        stmt.bind_text(":key", key)?;
-        stmt.step()?;
-        drop(stmt);
-
-        tx.commit()?;
-        Ok(existed)
+        let removed = self
+            .storage
+            .db
+            .prepare_cached(
+                "DELETE FROM storage_data_item WHERE namespace_id = :namespace_id AND key = :key",
+            )?
+            .execute(named_params! { ":namespace_id": self.namespace, ":key": key })?;
+        Ok(removed != 0)
     }
 
     /// Removes everything in this namespace, and nothing outside it.
@@ -346,12 +351,10 @@ impl Scoped<'_> {
     ///
     /// [`Error::Database`] if the delete fails.
     pub fn clear(&self) -> Result<(), Error> {
-        let mut stmt = self
-            .storage
+        self.storage
             .db
-            .prepare("DELETE FROM storage_data_item WHERE namespace_id = :namespace_id")?;
-        stmt.bind_text(":namespace_id", &self.namespace)?;
-        stmt.step()?;
+            .prepare_cached("DELETE FROM storage_data_item WHERE namespace_id = :namespace_id")?
+            .execute(named_params! { ":namespace_id": self.namespace })?;
         Ok(())
     }
 
@@ -362,16 +365,16 @@ impl Scoped<'_> {
     /// [`Error::Database`] if the query fails, [`Error::UnknownValueType`] if a
     /// row was written by a newer build.
     pub fn list(&self) -> Result<Vec<(String, Value)>, Error> {
-        let mut stmt = self.storage.db.prepare(
+        let mut stmt = self.storage.db.prepare_cached(
             "SELECT key, value, value_type FROM storage_data_item WHERE namespace_id = :namespace_id",
         )?;
-        stmt.bind_text(":namespace_id", &self.namespace)?;
+        let mut rows = stmt.query(named_params! { ":namespace_id": self.namespace })?;
 
         let mut out = Vec::new();
-        while stmt.step()? {
-            let key = stmt.column_text(0).unwrap_or_default();
-            let text = stmt.column_text(1).unwrap_or_default();
-            let raw = stmt.column_int64(2);
+        while let Some(row) = rows.next()? {
+            let key = row.get::<_, Option<String>>(0)?.unwrap_or_default();
+            let text = row.get::<_, Option<String>>(1)?.unwrap_or_default();
+            let raw = row.get::<_, Option<i64>>(2)?.unwrap_or(0);
             let kind = ValueType::from_i64(raw).ok_or_else(|| Error::UnknownValueType {
                 namespace: self.namespace.clone(),
                 key: key.clone(),
@@ -387,9 +390,10 @@ impl Scoped<'_> {
 mod tests {
     use super::*;
 
-    fn open() -> (tempfile::TempDir, Database) {
+    fn open() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let db = Database::open(&dir.path().join("vicinae.db"), &[]).expect("an unencrypted db");
+        let db = compass_sqlcipher_sys::open(&dir.path().join("vicinae.db"), &[])
+            .expect("an unencrypted db");
         schema::run(&db).expect("the migrations apply");
         (dir, db)
     }
@@ -481,7 +485,7 @@ mod tests {
     #[test]
     fn a_row_from_a_newer_build_is_refused_rather_than_guessed_at() {
         let (_dir, db) = open();
-        db.execute(
+        db.execute_batch(
             "INSERT INTO storage_data_item (namespace_id, value_type, key, value) \
              VALUES ('x:data', 9, 'k', 'v')",
         )

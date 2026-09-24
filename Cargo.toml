@@ -61,6 +61,13 @@ ignore = "0.4"
 # File-indexer MIME probing by extension, the way the C++ asks QMimeDatabase
 # with MatchExtension. See crates/compass-db/src/sqlite_writer.rs.
 mime_guess = "2"
+# SQLite for every Compass database, built as SQLCipher 4 so the encrypted
+# clipboard history and extension storage open. Default features are off: they
+# add a wasm backend and nothing else we use. Only compass-sqlcipher-sys names
+# this; callers use its re-export so the tokenizer registration cannot be
+# skipped by opening a connection some other way.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled-sqlcipher", "cache"] }
+libsqlite3-sys = { version = "0.38.2", default-features = false }
 
 # Clipboard-at-rest crypto. See crates/compass-crypto/src/lib.rs for why these
 # and not the `openssl` crate.
