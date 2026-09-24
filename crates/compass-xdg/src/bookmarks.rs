@@ -217,39 +217,20 @@ pub fn from_file_uri(uri: &str) -> Option<PathBuf> {
         return None;
     }
 
-    let encoded = &rest.as_bytes()[slash..];
-    let mut decoded = Vec::with_capacity(encoded.len());
-    let mut index = 0;
-
-    while index < encoded.len() {
-        if encoded[index] != b'%' {
-            decoded.push(encoded[index]);
-            index += 1;
-            continue;
-        }
-
-        if index + 2 >= encoded.len() {
+    let encoded = &rest[slash..];
+    // Strict, unlike `percent_decode_str`: a malformed escape or an encoded
+    // NUL is refused rather than passed through.
+    let bytes = encoded.as_bytes();
+    for (index, _) in encoded.match_indices('%') {
+        let hex = bytes.get(index + 1..index + 3)?;
+        if !hex.iter().all(u8::is_ascii_hexdigit) || hex == b"00" {
             return None;
         }
-        let high = hex_value(encoded[index + 1])?;
-        let low = hex_value(encoded[index + 2])?;
-        if high == 0 && low == 0 {
-            return None;
-        }
-        decoded.push((high << 4) | low);
-        index += 3;
     }
-
-    Some(PathBuf::from(String::from_utf8(decoded).ok()?))
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+    let decoded = percent_encoding::percent_decode_str(encoded)
+        .decode_utf8()
+        .ok()?;
+    Some(PathBuf::from(decoded.into_owned()))
 }
 
 /// `$XDG_DATA_HOME/recently-used.xbel`.

@@ -225,16 +225,7 @@ pub fn post_process(extensions: &mut Vec<Extension>, platform: &str) {
 /// alone so an ordinary request is unchanged.
 #[must_use]
 pub fn encode_path_value(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(byte as char);
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
+    percent_encoding::utf8_percent_encode(text, crate::uri::UNRESERVED).to_string()
 }
 
 /// The path that lists a page of the store.

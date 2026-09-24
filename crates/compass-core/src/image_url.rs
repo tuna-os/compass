@@ -397,40 +397,15 @@ impl ImageUrl {
     }
 }
 
-/// The characters a query value may carry unescaped.
-fn is_query_safe(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':')
-}
-
 /// Percent-encode a query component.
 fn encode_query_component(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if is_query_safe(byte) {
-            out.push(byte as char);
-        } else {
-            let _ = write!(out, "%{byte:02X}");
-        }
-    }
-    out
+    percent_encoding::utf8_percent_encode(text, crate::uri::QUERY_VALUE).to_string()
 }
 
-/// Undo [`encode_query_component`].
+/// Undo [`encode_query_component`], leniently: a malformed escape is kept as
+/// written and invalid UTF-8 is replaced.
 fn decode_query_component(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
-            if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                out.push(byte);
-                index += 3;
-                continue;
-            }
-        }
-        out.push(bytes[index]);
-        index += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    percent_encoding::percent_decode_str(text)
+        .decode_utf8_lossy()
+        .into_owned()
 }

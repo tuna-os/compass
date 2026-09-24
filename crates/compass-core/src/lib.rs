@@ -108,6 +108,7 @@ pub mod toast;
 pub mod tray;
 pub mod tray_host;
 pub mod update;
+pub mod uri;
 pub mod vocabulary;
 pub mod wallpaper;
 pub mod watch_events;

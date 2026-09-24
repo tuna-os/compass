@@ -865,6 +865,7 @@ dependencies = [
  "fend-core",
  "getrandom 0.3.4",
  "ignore",
+ "percent-encoding",
  "proptest",
  "serde",
  "serde_json",
@@ -1002,6 +1003,7 @@ version = "0.1.0"
 dependencies = [
  "ashpd 0.13.13",
  "futures-util",
+ "percent-encoding",
  "serde",
  "thiserror 2.0.20",
  "tokio",
@@ -1165,6 +1167,7 @@ name = "compass-xdg"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "percent-encoding",
  "proptest",
  "roxmltree",
  "tempfile",

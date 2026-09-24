@@ -15,6 +15,7 @@ license = "GPL-3.0-only"
 repository = "https://github.com/tuna-os/compass"
 
 [workspace.dependencies]
+percent-encoding = "2.3"
 fend-core = "1.5.8"
 compass-xdg = { path = "crates/compass-xdg" }
 compass-search = { path = "crates/compass-search" }
