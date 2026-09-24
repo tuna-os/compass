@@ -86,7 +86,6 @@ that. The plan has been corrected.
 | `compass-oauth-store` | 9 | the extension token store |
 | `compass-sqlcipher-sys` | 8 | SQLCipher and the vendored tokenizer; connection pragmas pinned to the C++ |
 | `compass-testkit` | 8 | corpora — **757 desktop entries, 738 harvested from real hosts** |
-| `compass-notify` | 7 | desktop notifications over D-Bus |
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
 | `compass-wayland` | 33 | activation and keyboard inhibit, and the clipboard offer filter |
@@ -146,7 +145,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/calculator-service` | `compass-local-storage` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/services/desktop-notification` | `compass-notify` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |

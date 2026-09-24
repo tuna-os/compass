@@ -744,15 +744,13 @@ impl HeadlessShell {
             );
             return;
         };
-        let notification = compass_notify::Notification::new(title, body);
-        let sent = handle.block_on(async {
-            let connection = zbus::Connection::session()
-                .await
-                .map_err(|err| err.to_string())?;
-            compass_notify::send(&connection, &notification)
-                .await
-                .map_err(|err| err.to_string())
-        });
+        let sent = handle.block_on(
+            notify_rust::Notification::new()
+                .appname("Vicinae")
+                .summary(title)
+                .body(body)
+                .show_async(),
+        );
         if let Err(err) = sent {
             tracing::info!(command = self.title, title, body, error = %err, "not notified");
         }
