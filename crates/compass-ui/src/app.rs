@@ -453,6 +453,8 @@ enum Page {
     Clipboard(crate::clipboard_page::ClipboardPage),
     /// The window switcher.
     Windows(crate::windows_page::WindowsPage),
+    /// An extension command's view.
+    Extension(Box<crate::extension_page::ExtensionPage>),
 }
 
 /// The launcher application state.
@@ -864,8 +866,15 @@ impl LauncherApp {
     fn conceal(&mut self) -> Task<Message> {
         self.cancel_search();
         self.panel = None;
+        let closing = self.close_extension_view();
         // A summon starts at the root, whatever view was open when it hid.
         self.page = Page::Root;
+        let hidden = self.hide_window();
+        Task::batch([closing, hidden])
+    }
+
+    /// Hides or exits after [`Self::conceal`] has reset the view.
+    fn hide_window(&mut self) -> Task<Message> {
         self.reopen_after_close = false;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
@@ -1598,9 +1607,85 @@ impl LauncherApp {
                 }
                 self.paste_selected_clipboard_entry()
             }
-            Message::ExtensionCommandStarted(Ok(())) => self.conceal(),
-            Message::ExtensionCommandStarted(Err(reason)) => {
-                self.error = Some(reason);
+            Message::ExtensionCommandStarted { title, result } => match result {
+                Ok(crate::backend::ExtensionStart::Ran) => self.conceal(),
+                Ok(crate::backend::ExtensionStart::View(session)) => {
+                    self.page = Page::Extension(Box::new(
+                        crate::extension_page::ExtensionPage::new(session, title),
+                    ));
+                    Task::batch([self.extension_poll(session, 0), focus_search()])
+                }
+                Err(reason) => {
+                    self.error = Some(reason);
+                    Task::none()
+                }
+            },
+            Message::ExtensionViewLoaded { session, result } => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                if page.session != session {
+                    return Task::none();
+                }
+                match result {
+                    Ok(state) => {
+                        let ended = state.ended;
+                        page.apply(state);
+                        let after = page.version;
+                        if ended {
+                            Task::none()
+                        } else {
+                            Task::batch([
+                                self.extension_poll(session, after),
+                                crate::scroll::reveal_root_selection(),
+                            ])
+                        }
+                    }
+                    Err(reason) => {
+                        page.status = crate::extension_page::Status::Stopped(reason);
+                        Task::none()
+                    }
+                }
+            }
+            Message::ExtensionQueryChanged(query) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                page.query = query;
+                let handler = page
+                    .extension_filters()
+                    .then(|| page.list().and_then(|list| list.search.on_change.clone()))
+                    .flatten();
+                match handler {
+                    // The extension filters: it gets the text and the echo
+                    // count, and renders a new list.
+                    Some(handler) => {
+                        page.query_events += 1;
+                        let args = vec![
+                            serde_json::Value::String(page.query.clone()),
+                            serde_json::Value::from(page.query_events),
+                        ];
+                        let session = page.session;
+                        self.extension_event(session, handler.0, args)
+                    }
+                    None => {
+                        page.refilter();
+                        crate::scroll::reveal_root_selection()
+                    }
+                }
+            }
+            Message::ExtensionItemSelected(position) => {
+                if let Page::Extension(page) = &mut self.page
+                    && position < page.shown.len()
+                {
+                    page.selected = position;
+                }
+                self.activate_extension_action()
+            }
+            Message::ExtensionEventSent(result) => {
+                if let (Err(reason), Page::Extension(page)) = (result, &mut self.page) {
+                    page.notice = Some(reason);
+                }
                 Task::none()
             }
             Message::ClipboardPasted(Ok(())) => self.conceal(),
@@ -1633,8 +1718,9 @@ impl LauncherApp {
                 }
             }
             Message::Back => {
+                let closing = self.close_extension_view();
                 self.page = Page::Root;
-                focus_search()
+                Task::batch([closing, focus_search()])
             }
             Message::WindowsQueryChanged(query) => {
                 if let Page::Windows(page) = &mut self.page {
@@ -1682,6 +1768,25 @@ impl LauncherApp {
                 // A command's view takes every key the root list would, and
                 // Escape goes back to the root rather than hiding the window:
                 // one key undoes opening the wrong command.
+                if let Page::Extension(page) = &mut self.page {
+                    let direction = match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) => return self.update(Message::Back),
+                        Key::Named(Named::Enter) => return self.activate_extension_action(),
+                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                    };
+                    if let Some(direction) = direction {
+                        page.selected = next_selection(
+                            page.shown.len(),
+                            page.selected,
+                            direction,
+                            self.wrap_navigation,
+                        );
+                        return crate::scroll::reveal_root_selection();
+                    }
+                    return Task::none();
+                }
                 if let Page::Windows(page) = &mut self.page {
                     if modifiers.control() && key.as_ref() == Key::Character("q") {
                         return self.close_selected_window();
@@ -1874,6 +1979,13 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::WindowsQueryChanged as OnInput),
             ),
+            Page::Extension(page) => (
+                page.list()
+                    .and_then(|list| list.search.placeholder.as_deref())
+                    .unwrap_or("Search…"),
+                &page.query,
+                Some(Message::ExtensionQueryChanged as OnInput),
+            ),
         };
         let input = text_input(placeholder, value)
             .id(SEARCH_INPUT)
@@ -1897,7 +2009,9 @@ impl LauncherApp {
                 ..container::Style::default()
             });
 
-        let body: Element<Message> = if let Page::Windows(page) = &self.page {
+        let body: Element<Message> = if let Page::Extension(page) = &self.page {
+            self.extension_body(page)
+        } else if let Page::Windows(page) = &self.page {
             self.windows_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
@@ -2494,10 +2608,143 @@ impl LauncherApp {
             return Task::none();
         };
         let id = command.id.clone();
+        let title = command.title.clone();
         Task::perform(
             async move { backend.run_extension_command(id).await },
-            Message::ExtensionCommandStarted,
+            move |result| Message::ExtensionCommandStarted {
+                title: title.clone(),
+                result,
+            },
         )
+    }
+
+    /// Asks the engine for `session`'s next state after `after`.
+    fn extension_poll(&self, session: u64, after: u64) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.extension_view(session, after).await },
+            move |result| Message::ExtensionViewLoaded { session, result },
+        )
+    }
+
+    fn extension_event(
+        &self,
+        session: u64,
+        handler: String,
+        args: Vec<serde_json::Value>,
+    ) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.extension_event(session, handler, args).await },
+            Message::ExtensionEventSent,
+        )
+    }
+
+    /// Enter in an extension's view: the first action on offer.
+    fn activate_extension_action(&mut self) -> Task<Message> {
+        let Page::Extension(page) = &self.page else {
+            return Task::none();
+        };
+        let Some(handler) = page.primary_action().cloned() else {
+            return Task::none();
+        };
+        self.extension_event(page.session, handler.0, Vec::new())
+    }
+
+    /// Stops the extension whose view is open, if one is.
+    fn close_extension_view(&self) -> Task<Message> {
+        let (Page::Extension(page), Some(backend)) = (&self.page, self.backend.clone()) else {
+            return Task::none();
+        };
+        let session = page.session;
+        Task::future(async move {
+            if let Err(error) = backend.close_extension(session).await {
+                tracing::warn!(%error, "could not close an extension view");
+            }
+        })
+        .discard()
+    }
+
+    fn extension_body<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+    ) -> Element<'a, Message> {
+        use crate::extension_page::Status;
+        use compass_extension_api::View;
+        let geometry = self.geometry;
+        match (&page.status, &page.view) {
+            (Status::Loading, _) => return self.notice("Loading…"),
+            (Status::Stopped(why), _) => return self.notice(why),
+            (Status::Ready, Some(View::Detail(detail))) => {
+                let text = detail.markdown.clone().unwrap_or_default();
+                let body = scrollable(
+                    container(iced::widget::text(text).font(self.font()))
+                        .padding(Padding::new(14.0)),
+                )
+                .id(crate::scroll::ROOT_RESULTS)
+                .height(Length::Shrink);
+                return match &page.notice {
+                    Some(notice) => column![body, self.notice(notice)].into(),
+                    None => body.into(),
+                };
+            }
+            (Status::Ready, Some(View::List(_))) => {}
+            (Status::Ready, _) => {
+                return self.notice("Compass cannot draw this extension view yet");
+            }
+        }
+        if page.shown.is_empty() {
+            let empty = page
+                .list()
+                .and_then(|list| list.empty_state.as_ref())
+                .map_or("No results", |empty| empty.title.as_str());
+            return self.notice(empty);
+        }
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
+        for (position, &(s, i)) in page.shown.iter().enumerate() {
+            let item = &sections[s].items[i];
+            let selected = position == page.selected;
+            let accessories: Vec<&str> = item
+                .accessories
+                .iter()
+                .filter_map(|a| a.text.as_deref().or(a.tag.as_deref()))
+                .collect();
+            let subtitle = match (&item.subtitle, accessories.is_empty()) {
+                (Some(subtitle), true) => Some(subtitle.clone()),
+                (Some(subtitle), false) => {
+                    Some(format!("{subtitle}  ·  {}", accessories.join("  ")))
+                }
+                (None, false) => Some(accessories.join("  ")),
+                (None, true) => None,
+            };
+            let row = self.list_row(
+                self.initial_badge(&item.title, selected),
+                item.title.clone(),
+                subtitle.filter(|_| self.subtitles),
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::ExtensionItemSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![rows, self.notice(notice)].into(),
+            None => rows.into(),
+        }
     }
 
     fn open_command(
@@ -3029,6 +3276,10 @@ mod tests {
         fail_history: bool,
         ran: std::sync::Mutex<Vec<String>>,
         refuse_runs: Option<String>,
+        /// Starts a view session instead of running to completion.
+        view: Option<compass_extension_api::View>,
+        events: std::sync::Mutex<Vec<(String, Vec<serde_json::Value>)>>,
+        closed: std::sync::Mutex<Vec<u64>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -3047,10 +3298,58 @@ mod tests {
             })
         }
 
-        fn run_extension_command(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+        fn run_extension_command(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ExtensionStart> {
             Box::pin(async move {
                 self.ran.lock().unwrap().push(id);
-                self.refuse_runs.clone().map_or(Ok(()), Err)
+                if let Some(reason) = self.refuse_runs.clone() {
+                    return Err(reason);
+                }
+                Ok(if self.view.is_some() {
+                    crate::backend::ExtensionStart::View(7)
+                } else {
+                    crate::backend::ExtensionStart::Ran
+                })
+            })
+        }
+
+        // The first poll gets the view; the next says the command ended, so a
+        // test's task loop stops rather than polling for ever.
+        fn extension_view(
+            &self,
+            _session: u64,
+            after: u64,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ExtensionViewState> {
+            Box::pin(async move {
+                Ok(crate::backend::ExtensionViewState {
+                    version: after + 1,
+                    view: (after == 0)
+                        .then(|| self.view.clone().map(Box::new))
+                        .flatten(),
+                    problem: None,
+                    ended: after > 0,
+                })
+            })
+        }
+
+        fn extension_event(
+            &self,
+            _session: u64,
+            handler: String,
+            args: Vec<serde_json::Value>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.events.lock().unwrap().push((handler, args));
+                Ok(())
+            })
+        }
+
+        fn close_extension(&self, session: u64) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.closed.lock().unwrap().push(session);
+                Ok(())
             })
         }
     }
@@ -3111,6 +3410,113 @@ mod tests {
             ["@someone/hello:write"]
         );
         assert!(app.error.is_none());
+    }
+
+    fn greeting_list(host_filtering: bool) -> compass_extension_api::View {
+        use compass_extension_api::action::{Action, ActionPanel};
+        use compass_extension_api::view::{ListItem, ListSection, ListView};
+        let item = |title: &str, handler: &str| {
+            ListItem::new(title)
+                .with_key(title)
+                .with_actions(ActionPanel::of([Action::new("Act", handler)]))
+        };
+        let mut list = ListView {
+            sections: vec![ListSection::untitled([
+                item("hello", "cb-hello"),
+                item("goodbye", "cb-goodbye"),
+            ])],
+            ..ListView::default()
+        };
+        list.search.host_filtering = host_filtering;
+        if !host_filtering {
+            list.search.on_change =
+                Some(compass_extension_api::action::HandlerId::new("cb-search"));
+        }
+        compass_extension_api::View::List(list)
+    }
+
+    fn open_extension_view(
+        view: compass_extension_api::View,
+    ) -> (LauncherApp, Arc<TestBackend>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(view),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        (app, backend, dir)
+    }
+
+    #[test]
+    fn a_view_command_draws_its_list_and_enter_runs_the_selected_rows_action() {
+        let (mut app, backend, _dir) = open_extension_view(greeting_list(true));
+        let Page::Extension(page) = &app.page else {
+            panic!("no extension view: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("hello").is_ok() && ui.find("goodbye").is_ok());
+        }
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Enter))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("cb-goodbye".to_owned(), vec![])]
+        );
+
+        for message in task_messages(app.update(Message::ExtensionQueryChanged("hel".into()))) {
+            let _ = app.update(message);
+        }
+        let Page::Extension(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.shown.len(), 1, "a host-filtered list is filtered here");
+
+        let back = app.update(pressed(iced::keyboard::key::Named::Escape));
+        for message in task_messages(back) {
+            let _ = app.update(message);
+        }
+        assert!(matches!(app.page, Page::Root));
+        assert_eq!(
+            backend.closed.lock().unwrap().as_slice(),
+            [7],
+            "leaving stops the command"
+        );
+    }
+
+    #[test]
+    fn a_list_that_filters_itself_gets_the_text_and_the_echo_count() {
+        let (mut app, backend, _dir) = open_extension_view(greeting_list(false));
+        for message in task_messages(app.update(Message::ExtensionQueryChanged("zz".into()))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [(
+                "cb-search".to_owned(),
+                vec![serde_json::json!("zz"), serde_json::json!(1)]
+            )]
+        );
+        let Page::Extension(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(
+            page.shown.len(),
+            2,
+            "what matches is the extension's to say"
+        );
     }
 
     #[test]

@@ -23,10 +23,58 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// Run an installed extension's command by its entrypoint id. `Ok` once
     /// the engine has started it; an error is a sentence saying why it could
     /// not, for the launcher to show.
-    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ()> {
+    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ExtensionStart> {
         let _ = id;
-        Box::pin(async { Err("Running extension commands needs the Compass engine".to_owned()) })
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
+
+    /// A view session's state once its version passes `after` (or a timeout,
+    /// with the same version).
+    fn extension_view(&self, session: u64, after: u64) -> BackendFuture<'_, ExtensionViewState> {
+        let _ = (session, after);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Runs one of a view's callbacks with `args`.
+    fn extension_event(
+        &self,
+        session: u64,
+        handler: String,
+        args: Vec<serde_json::Value>,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (session, handler, args);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// The person left the view: stop the command.
+    fn close_extension(&self, session: u64) -> BackendFuture<'_, ()> {
+        let _ = session;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+}
+
+const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine";
+
+/// How an extension command began.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtensionStart {
+    /// A no-view command, running on its own.
+    Ran,
+    /// A view command: follow this session.
+    View(u64),
+}
+
+/// What an extension view shows now.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExtensionViewState {
+    /// Bumped on every change.
+    pub version: u64,
+    /// The view, once rendered.
+    pub view: Option<Box<compass_extension_api::View>>,
+    /// Why it cannot be drawn, or why it ended.
+    pub problem: Option<String>,
+    /// Whether the command has ended.
+    pub ended: bool,
 }
 
 /// One clipboard history row, as the UI draws it.

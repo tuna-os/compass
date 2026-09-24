@@ -5,7 +5,7 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind, WindowBackend, WindowRow,
+    ClipboardRowKind, ExtensionStart, ExtensionViewState, WindowBackend, WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -47,10 +47,80 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
-    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ()> {
+    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ExtensionStart> {
         Box::pin(async move {
             match self
                 .ask(Request::RunExtensionCommand { id }, "Running the command")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(ExtensionStart::Ran),
+                compass_ipc::Response::ExtensionStarted { session } => {
+                    Ok(ExtensionStart::View(session))
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_view(&self, session: u64, after: u64) -> BackendFuture<'_, ExtensionViewState> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExtensionView { session, after },
+                    "Reading the view",
+                )
+                .await?
+            {
+                compass_ipc::Response::ExtensionView {
+                    version,
+                    view_json,
+                    problem,
+                    ended,
+                } => Ok(ExtensionViewState {
+                    version,
+                    view: view_json
+                        .map(|json| serde_json::from_str(&json).map(Box::new))
+                        .transpose()
+                        .map_err(|err| {
+                            format!("The engine sent a view this launcher cannot read: {err}")
+                        })?,
+                    problem,
+                    ended,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_event(
+        &self,
+        session: u64,
+        handler: String,
+        args: Vec<serde_json::Value>,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let args_json = serde_json::Value::Array(args).to_string();
+            match self
+                .ask(
+                    Request::ExtensionEvent {
+                        session,
+                        handler,
+                        args_json,
+                    },
+                    "Running the action",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn close_extension(&self, session: u64) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::CloseExtension { session }, "Closing the view")
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

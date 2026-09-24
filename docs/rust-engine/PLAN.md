@@ -2456,7 +2456,21 @@ their `no-view` commands. Until now the Phase 4 crates were tested libraries tha
   with the sandbox off.
 - The Flatpak ships Node (`org.freedesktop.Sdk.Extension.node22`), the bundle and the launcher.
   Its CI asserts all three inside the installed sandbox.
-- Still to come: the view renderer, preferences, arguments, and the cgroup memory cap.
+- **View commands draw** (`List` and `Detail`), in a first cut:
+  - The engine publishes each render as a typed `compass_extension_api::View`
+    (`compass_worker_host::view_model`). The launcher long-polls it (`ExtensionView`, IPC v8) and
+    draws it as a page.
+  - Enter runs the selected row's first action through `EventCore/handlerActivated`.
+  - A list the host filters is filtered fuzzily in the launcher. A list that filters itself gets
+    the text and the echo count (ADR-0009).
+  - Escape stops the command.
+  - Extensions' `Clipboard` API is the GNOME Shell extension's clipboard.
+- Still to come:
+  - the action panel for a view's other actions, and keyboard shortcuts;
+  - Markdown (a detail shows its text);
+  - icons, `Grid` and `Form`;
+  - navigation pushes and alerts;
+  - preferences, arguments, and the cgroup memory cap.
 
 **Needs the project owner:** nothing. ADR-0018 decided the Suite 0 gate (it keeps blocking), GNOME 51
 (reworded gate, #4 closed), team size (one person), rustcast (a seed), and the upstream report (none).
