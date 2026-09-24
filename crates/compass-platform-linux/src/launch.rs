@@ -153,6 +153,26 @@ async fn launch_exec(exec: Vec<String>) -> Result<LaunchMethod, LaunchError> {
     launch_direct(&exec).await.map(|()| LaunchMethod::Direct)
 }
 
+/// Runs a command line on the host: through `flatpak-spawn --host` inside a
+/// Flatpak, directly outside one. For an argv that is not an application
+/// launch (a terminal running an extension's command), so the portal step
+/// [`LinuxLauncher`] tries for applications does not apply.
+///
+/// # Errors
+///
+/// When `argv` is empty or the process cannot be started.
+pub async fn run_command(argv: &[String]) -> Result<LaunchMethod, LaunchError> {
+    if argv.is_empty() {
+        return Err(LaunchError::NoExec);
+    }
+    info!(?argv, "Running a command on the host");
+    if is_flatpak() {
+        launch_via_flatpak_spawn(argv).await?;
+        return Ok(LaunchMethod::FlatpakSpawn);
+    }
+    launch_direct(argv).await.map(|()| LaunchMethod::Direct)
+}
+
 /// Check if we're running inside a Flatpak.
 fn is_flatpak() -> bool {
     Path::new("/.flatpak-info").exists()

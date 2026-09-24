@@ -160,18 +160,25 @@ pub fn terminal_command(
     hold: bool,
 ) -> Vec<String> {
     let mut out = vec![terminal.to_owned()];
+    // Per the xdg-terminal-exec spec, a flag ending in `=` takes its value in
+    // the same argument (`--working-directory=/home`), as the C++ does.
+    let mut flag = |flag: &str, value: &str| {
+        if flag.ends_with('=') {
+            out.push(format!("{flag}{value}"));
+        } else {
+            out.push(flag.to_owned());
+            out.push(value.to_owned());
+        }
+    };
 
-    if let (Some(flag), Some(value)) = (&args.app_id, app_id) {
-        out.push(flag.clone());
-        out.push(value.to_owned());
+    if let (Some(name), Some(value)) = (&args.app_id, app_id) {
+        flag(name, value);
     }
-    if let (Some(flag), Some(value)) = (&args.title, title) {
-        out.push(flag.clone());
-        out.push(value.to_owned());
+    if let (Some(name), Some(value)) = (&args.title, title) {
+        flag(name, value);
     }
-    if let (Some(flag), Some(value)) = (&args.dir, dir) {
-        out.push(flag.clone());
-        out.push(value.to_owned());
+    if let (Some(name), Some(value)) = (&args.dir, dir) {
+        flag(name, value);
     }
     if hold && let Some(flag) = &args.hold {
         out.push(flag.clone());
@@ -181,4 +188,89 @@ pub fn terminal_command(
     }
     out.extend(command.iter().cloned());
     out
+}
+
+/// How an `xdg-terminals.list` line ranks its terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListState {
+    /// Chosen: the first one that is installed is the terminal.
+    Selected,
+    /// `+id`: kept out of the fallback's exclusions, not chosen.
+    Protected,
+    /// `-id`: never the fallback.
+    Excluded,
+}
+
+/// One `xdg-terminals.list` entry: a desktop-file id, an optional action,
+/// and its state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListEntry {
+    /// The desktop-file id, e.g. `org.gnome.Ptyxis.desktop`.
+    pub id: String,
+    /// The `:action`, if the line names one.
+    pub action: Option<String>,
+    /// Chosen, protected or excluded.
+    pub state: ListState,
+}
+
+/// The entries of one `xdg-terminals.list`, in order. Ports
+/// `parseXdgTerminalsList`: blank lines, comments and anything that does not
+/// name a `.desktop` are skipped.
+#[must_use]
+pub fn parse_terminals_list(text: &str) -> Vec<ListEntry> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && line.contains(".desktop"))
+        .map(|line| {
+            let (state, raw) = if let Some(raw) = line.strip_prefix('+') {
+                (ListState::Protected, raw)
+            } else if let Some(raw) = line.strip_prefix('-') {
+                (ListState::Excluded, raw)
+            } else {
+                (ListState::Selected, line)
+            };
+            let (id, action) = match raw.split_once(':') {
+                Some((id, action)) => (id, Some(action.to_owned())),
+                None => (raw, None),
+            };
+            ListEntry {
+                id: id.to_owned(),
+                action,
+                state,
+            }
+        })
+        .collect()
+}
+
+/// Where `xdg-terminals.list` files are read, first wins: each config
+/// directory's desktop-prefixed then plain list, then each data directory's
+/// `xdg-terminal-exec/` fallbacks. Ports `xdgTerminalsListPaths`.
+#[must_use]
+pub fn terminals_list_paths(
+    config_home: Option<&std::path::Path>,
+    config_dirs: &[std::path::PathBuf],
+    data_dirs: &[std::path::PathBuf],
+    desktops: &[String],
+) -> Vec<std::path::PathBuf> {
+    let desktops: Vec<String> = desktops.iter().map(|d| d.to_lowercase()).collect();
+    let mut paths = Vec::new();
+    for dir in config_home
+        .into_iter()
+        .chain(config_dirs.iter().map(std::path::PathBuf::as_path))
+    {
+        for desktop in &desktops {
+            paths.push(dir.join(format!("{desktop}-xdg-terminals.list")));
+        }
+        paths.push(dir.join("xdg-terminals.list"));
+    }
+    for dir in data_dirs {
+        for desktop in &desktops {
+            paths.push(
+                dir.join("xdg-terminal-exec")
+                    .join(format!("{desktop}-xdg-terminals.list")),
+            );
+        }
+        paths.push(dir.join("xdg-terminal-exec/xdg-terminals.list"));
+    }
+    paths
 }

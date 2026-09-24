@@ -1075,6 +1075,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "nav", "title": "Navigate", "mode": "view"},
               {"name": "ask", "title": "Ask First", "mode": "view"},
               {"name": "link", "title": "Open Link", "mode": "no-view"},
+              {"name": "term", "title": "In Terminal", "mode": "no-view"},
               {"name": "tiles", "title": "Tiles", "mode": "view"},
               {"name": "heap", "title": "Heap", "mode": "no-view"},
               {"name": "probe", "title": "Probe", "mode": "no-view",
@@ -1220,6 +1221,14 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                  React.createElement(Action, { title: 'Pick', onAction: () => {} }))
              }),
              React.createElement(Grid.Item, { title: 'red', content: { color: '#ff0000' } })));",
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("term.js"),
+        "const { runInTerminal } = require('@vicinae/api');
+         module.exports.default = async () => {
+           await runInTerminal(['htop', '-d', '5'], { title: 'Top' });
+         };",
     )
     .unwrap();
     std::fs::write(
@@ -1971,4 +1980,61 @@ fn a_command_sees_its_own_paths_and_preferences_and_may_exec_but_not_unshare() {
     } else {
         eprintln!("unshare -U fails here even unconfined; the denial is not tested");
     }
+}
+
+#[test]
+fn a_confined_command_runs_a_command_in_the_terminal() {
+    use compass_ipc::{Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut launched = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        launched = dir.join("terminal-argv.txt");
+        let script = dir.join("term.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s|' \"$@\" > {:?}\n",
+                launched.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let applications = dir.join("data/applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(
+            applications.join("term.desktop"),
+            format!(
+                "[Desktop Entry]\nType=Application\nName=Term\nExec={}\n\
+                 Categories=System;TerminalEmulator;\n\
+                 X-TerminalArgExec=--\nX-TerminalArgTitle=--title=\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    assert_eq!(
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:term".into(),
+            arguments_json: None,
+        }),
+        Response::Ack
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !launched.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&launched).expect("the terminal was launched"),
+        "--title=Top|--|htop|-d|5|"
+    );
 }

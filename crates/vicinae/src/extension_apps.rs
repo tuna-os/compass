@@ -16,7 +16,11 @@ use compass_xdg::mimeapps::{Lists, target_mime};
 #[derive(Debug)]
 pub struct EngineApps {
     apps: Vec<(Application, Arc<DesktopEntry>)>,
+    /// The ids of the applications in the `TerminalEmulator` category.
+    terminals: Vec<String>,
     lists: Lists,
+    /// The `xdg-terminals.list` files that exist, first wins.
+    terminal_lists: Vec<std::path::PathBuf>,
     runtime: tokio::runtime::Handle,
 }
 
@@ -29,6 +33,21 @@ impl EngineApps {
         lists: Lists,
         runtime: tokio::runtime::Handle,
     ) -> Self {
+        let terminals = index
+            .launchable_items()
+            .filter(|item| !item.is_action())
+            .filter(|item| item.categories().iter().any(|c| c == "TerminalEmulator"))
+            .map(|item| item.desktop_id().to_owned())
+            .collect();
+        let terminal_lists = compass_xdg::terminal::terminals_list_paths(
+            compass_xdg::xdg_dirs::config_home().as_deref(),
+            &compass_xdg::mimeapps::config_dirs(),
+            &compass_xdg::xdg_dirs::data_dirs(),
+            &compass_xdg::xdg_dirs::current_desktops(),
+        )
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
         let apps = index
             .launchable_items()
             .filter(|item| !item.is_action())
@@ -47,9 +66,88 @@ impl EngineApps {
             .collect();
         Self {
             apps,
+            terminals,
             lists,
+            terminal_lists,
             runtime,
         }
+    }
+
+    /// The terminal to run a command in, as `XdgAppDatabase::terminalEmulator`
+    /// chooses it: the first selected in the `xdg-terminals.list` files that
+    /// is installed, else the first terminal they do not exclude, else what
+    /// opens `x-scheme-handler/terminal`.
+    fn terminal(&self) -> Option<&(Application, Arc<DesktopEntry>)> {
+        use compass_xdg::terminal::{ListState, parse_terminals_list};
+        let is_terminal = |id: &str| self.terminals.iter().any(|t| t == id);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut selected = Vec::new();
+        let mut excluded = std::collections::BTreeSet::new();
+        for path in &self.terminal_lists {
+            let Ok(text) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            for entry in parse_terminals_list(&text) {
+                if !seen.insert(entry.id.clone()) {
+                    continue;
+                }
+                match entry.state {
+                    ListState::Selected => selected.push(entry.id),
+                    ListState::Excluded => {
+                        excluded.insert(entry.id);
+                    }
+                    ListState::Protected => {}
+                }
+            }
+        }
+        selected
+            .iter()
+            .find(|id| is_terminal(id))
+            .or_else(|| self.terminals.iter().find(|id| !excluded.contains(*id)))
+            .and_then(|id| self.find(id))
+            .or_else(|| {
+                let id = self
+                    .lists
+                    .default_for("x-scheme-handler/terminal", &self.usable())?;
+                self.find(&id)
+            })
+    }
+
+    /// The command line that runs `cmdline` in `terminal`: its own `Exec`,
+    /// then the flags it declares (`X-TerminalArg*`) or is known to take.
+    fn terminal_argv(
+        terminal: &DesktopEntry,
+        cmdline: &[String],
+        options: &TerminalOptions,
+    ) -> Option<Vec<String>> {
+        use compass_xdg::terminal::{declared_args, terminal_args, terminal_command};
+        let exec = terminal.expand_exec();
+        let program = std::path::Path::new(exec.first()?)
+            .file_name()?
+            .to_string_lossy()
+            .into_owned();
+        let declared = terminal
+            .path()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| {
+                let reader = compass_xdg::reader::Reader::parse(
+                    &text,
+                    compass_xdg::locale::Locale::default(),
+                );
+                let group = reader.group("Desktop Entry")?.clone();
+                declared_args(|key| group.raw(key).map(str::to_owned))
+            });
+        let args = terminal_args(declared, &program);
+        let tail = terminal_command(
+            "",
+            &args,
+            cmdline,
+            options.title.as_deref(),
+            options.working_directory.as_deref(),
+            options.app_id.as_deref(),
+            options.hold,
+        );
+        Some(exec.into_iter().chain(tail.into_iter().skip(1)).collect())
     }
 
     fn find(&self, id: &str) -> Option<&(Application, Arc<DesktopEntry>)> {
@@ -141,12 +239,26 @@ impl Apps for EngineApps {
         }
     }
 
-    fn run_in_terminal(&self, cmdline: &[String], _options: &TerminalOptions) -> bool {
-        tracing::warn!(
-            ?cmdline,
-            "an extension asked to run a command in a terminal, which Compass does not do yet"
-        );
-        false
+    fn run_in_terminal(&self, cmdline: &[String], options: &TerminalOptions) -> bool {
+        if cmdline.is_empty() {
+            return false;
+        }
+        // `options.app_id` is the new window's application id, passed to the
+        // terminal's own flag; it does not choose the terminal.
+        let Some((app, entry)) = self.terminal() else {
+            tracing::warn!("an extension asked for a terminal, and none is installed");
+            return false;
+        };
+        let Some(argv) = Self::terminal_argv(entry, cmdline, options) else {
+            return false;
+        };
+        let id = app.id.clone();
+        self.runtime.spawn(async move {
+            if let Err(error) = compass_platform_linux::run_command(&argv).await {
+                tracing::warn!(%error, terminal = %id, "an extension's terminal command did not start");
+            }
+        });
+        true
     }
 }
 
@@ -172,6 +284,59 @@ mod tests {
             .build()
             .unwrap();
         EngineApps::new(&index, Lists::load(&[]), runtime.handle().clone())
+    }
+
+    #[test]
+    fn a_command_runs_in_the_listed_terminal_with_the_flags_it_declares() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("xterm.desktop"),
+            "[Desktop Entry]\nType=Application\nName=XTerm\nExec=xterm\n\
+             Categories=System;TerminalEmulator;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("org.gnome.Ptyxis.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Ptyxis\nExec=ptyxis --new-window\n\
+             Categories=System;TerminalEmulator;\nX-TerminalArgExec=--\n\
+             X-TerminalArgDir=--working-directory=\nX-TerminalArgTitle=--title\n",
+        )
+        .unwrap();
+        let list = dir.path().join("xdg-terminals.list");
+        std::fs::write(&list, "-xterm.desktop\n").unwrap();
+        let index = compass_core::AppIndex::builder().dir(dir.path()).build();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let mut apps = EngineApps::new(&index, Lists::load(&[]), runtime.handle().clone());
+        apps.terminal_lists = vec![list];
+
+        let (terminal, entry) = apps.terminal().expect("a terminal");
+        assert_eq!(terminal.id, "org.gnome.Ptyxis.desktop", "xterm is excluded");
+        let argv = EngineApps::terminal_argv(
+            entry,
+            &["htop".to_owned(), "-d".to_owned(), "5".to_owned()],
+            &TerminalOptions {
+                hold: false,
+                app_id: None,
+                title: Some("Top".into()),
+                working_directory: Some("/home/u".into()),
+            },
+        );
+        assert_eq!(
+            argv.unwrap(),
+            [
+                "ptyxis",
+                "--new-window",
+                "--title",
+                "Top",
+                "--working-directory=/home/u",
+                "--",
+                "htop",
+                "-d",
+                "5"
+            ]
+        );
     }
 
     #[test]
