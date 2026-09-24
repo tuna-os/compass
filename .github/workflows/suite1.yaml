@@ -58,10 +58,11 @@ jobs:
       # gnome-keyring because preferences are stored under a key from the
       # login keyring, and the engine refuses a command whose required
       # preferences it has nowhere safe to keep.
-      - name: Install what the runtime build and the keyring need
+      - name: Install what the runtime build, the engine and the keyring need
+        # libxkbcommon-dev: the wlroots launcher surface (iced_layershell) links it.
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-14 gnome-keyring dbus
+          sudo apt-get install -y g++-14 gnome-keyring dbus libxkbcommon-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
