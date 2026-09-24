@@ -51,13 +51,17 @@ impl Default for WindowsPage {
 }
 
 impl WindowsPage {
-    /// Takes the engine's answer, leaving out windows owned by `own_pid`.
+    /// Takes the engine's answer, leaving out the launcher's own window: owned
+    /// by `own_pid`, or carrying [`crate::APP_ID`] as its class.
     pub fn apply(&mut self, result: Result<Vec<WindowRow>, String>, own_pid: u32) {
         match result {
             Ok(rows) => {
                 self.all = rows
                     .into_iter()
-                    .filter(|row| row.pid != Some(own_pid))
+                    .filter(|row| {
+                        row.pid != Some(own_pid)
+                            && !row.wm_class.eq_ignore_ascii_case(crate::APP_ID)
+                    })
                     .collect();
                 self.status = Status::Ready;
             }

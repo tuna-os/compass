@@ -262,6 +262,13 @@ pub struct AppFlags {
 
 impl Default for AppFlags {
     fn default() -> Self {
+        #[cfg(target_os = "linux")]
+        let platform_specific = window::settings::PlatformSpecific {
+            application_id: crate::APP_ID.to_owned(),
+            ..Default::default()
+        };
+        #[cfg(not(target_os = "linux"))]
+        let platform_specific = window::settings::PlatformSpecific::default();
         Self {
             theme: crate::theme::Theme::System,
             window_config: window::Settings {
@@ -273,6 +280,7 @@ impl Default for AppFlags {
                 resizable: false,
                 decorations: false,
                 transparent: true,
+                platform_specific,
                 ..Default::default()
             },
             keybinding: compass_core::keybinding::Scheme::default(),
@@ -4345,6 +4353,12 @@ mod tests {
                 window_row(7, "Downloads", "Files", 1),
                 window_row(8, "Compass", "Compass", own),
                 window_row(9, "notes.txt", "Text Editor", 2),
+                // Inside the Flatpak the Shell reports a host pid the
+                // launcher cannot see, so its window is known by app id.
+                crate::backend::WindowRow {
+                    wm_class: crate::APP_ID.to_owned(),
+                    ..window_row(10, "Compass", "Compass", 4_000_000)
+                },
             ],
             ..FakeWindows::default()
         });
