@@ -117,6 +117,7 @@ fn describe(request: &Request) -> &'static str {
         Request::RunExtensionCommand { .. } => "RunExtensionCommand",
         Request::ExtensionView { .. } => "ExtensionView",
         Request::ExtensionEvent { .. } => "ExtensionEvent",
+        Request::ExtensionPop { .. } => "ExtensionPop",
         Request::CloseExtension { .. } => "CloseExtension",
     }
 }

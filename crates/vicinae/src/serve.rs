@@ -343,6 +343,7 @@ async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u
         view_json: view.view,
         problem: view.problem,
         ended: view.ended,
+        depth: view.depth,
     }
 }
 
@@ -628,6 +629,19 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 Err(err) => Response::Error(ProtocolError::new(
                     ErrorKind::Internal,
                     format!("the extension event task failed: {err}"),
+                )),
+            }
+        }
+        Request::ExtensionPop { session } => {
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.pop(session)).await {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the extension pop task failed: {err}"),
                 )),
             }
         }

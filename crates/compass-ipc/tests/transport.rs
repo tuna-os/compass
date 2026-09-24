@@ -100,12 +100,14 @@ async fn echo_handler(request: Request) -> Response {
         | Request::ClipboardRemove { .. }
         | Request::RunExtensionCommand { .. }
         | Request::ExtensionEvent { .. }
+        | Request::ExtensionPop { .. }
         | Request::CloseExtension { .. } => Response::Ack,
         Request::ExtensionView { after, .. } => Response::ExtensionView {
             version: after,
             view_json: None,
             problem: None,
             ended: false,
+            depth: 0,
         },
         Request::ClipboardContent { .. } => Response::ClipboardContent {
             mime_type: "text/plain".into(),

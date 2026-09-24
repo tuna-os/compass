@@ -496,7 +496,8 @@ fn serve(
             }
             Turn::Answered { method } if method == "UI/render" => {
                 if let (Some(view), Some(root)) = (&view, ui.top()) {
-                    view.publish(compass_worker_host::view_model::to_view(&root));
+                    let depth = u32::try_from(ui.stack().len()).unwrap_or(u32::MAX);
+                    view.publish(compass_worker_host::view_model::to_view(&root), depth);
                 }
             }
             Turn::Deferred { method, deferral } => {
@@ -727,6 +728,8 @@ pub struct ViewState {
     pub problem: Option<String>,
     /// Whether the command has ended.
     pub ended: bool,
+    /// How many views the extension has pushed, the root one included.
+    pub depth: u32,
 }
 
 impl Views {
@@ -793,6 +796,27 @@ impl Views {
             .map_err(|err| format!("The extension did not take it: {err}"))
     }
 
+    /// Pops `session`'s top view, as Escape on a pushed view does.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: the session is gone, or its worker is.
+    pub fn pop(&self, session: u64) -> Result<(), String> {
+        let events = self
+            .lock()
+            .get(&session)
+            .map(|entry| Arc::clone(&entry.events))
+            .ok_or_else(|| "That extension view has closed".to_owned())?;
+        let events = events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| "That extension view has not started yet".to_owned())?;
+        events
+            .view_popped()
+            .map_err(|err| format!("The extension did not take it: {err}"))
+    }
+
     /// Ends `session`: its runtime is stopped. `false` when it was not running.
     pub fn close(&self, session: u64) -> bool {
         let Some(entry) = self.lock().remove(&session) else {
@@ -825,9 +849,11 @@ impl ViewHandle {
     fn publish(
         &self,
         view: Result<compass_extension_api::View, compass_worker_host::view_model::Unsupported>,
+        depth: u32,
     ) {
         self.state.send_modify(|state| {
             state.version += 1;
+            state.depth = depth;
             match view {
                 Ok(view) => {
                     state.view = serde_json::to_string(&view).ok();

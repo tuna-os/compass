@@ -46,6 +46,12 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// Escape on a pushed view: the extension pops it.
+    fn extension_pop(&self, session: u64) -> BackendFuture<'_, ()> {
+        let _ = session;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The person left the view: stop the command.
     fn close_extension(&self, session: u64) -> BackendFuture<'_, ()> {
         let _ = session;
@@ -75,6 +81,8 @@ pub struct ExtensionViewState {
     pub problem: Option<String>,
     /// Whether the command has ended.
     pub ended: bool,
+    /// How many views the extension has pushed, the root one included.
+    pub depth: u32,
 }
 
 /// One clipboard history row, as the UI draws it.

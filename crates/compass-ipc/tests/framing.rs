@@ -78,6 +78,7 @@ fn all_requests() -> Vec<Request> {
             handler: "cb-7".into(),
             args_json: "[\"é 🚀\", 3]".into(),
         },
+        Request::ExtensionPop { session: 1 },
         Request::CloseExtension { session: 1 },
     ]
 }
@@ -191,12 +192,14 @@ fn all_responses() -> Vec<Response> {
             view_json: Some("{\"kind\":\"list\"}".into()),
             problem: None,
             ended: false,
+            depth: 2,
         },
         Response::ExtensionView {
             version: u64::MAX,
             view_json: None,
             problem: Some("Compass cannot draw the extension component <grid> yet".into()),
             ended: true,
+            depth: 0,
         },
     ]
 }
@@ -227,6 +230,7 @@ fn request_variants_are_exhaustive() {
             | Request::RunExtensionCommand { .. }
             | Request::ExtensionView { .. }
             | Request::ExtensionEvent { .. }
+            | Request::ExtensionPop { .. }
             | Request::CloseExtension { .. }
             | Request::WindowOutcome(_) => {}
         }

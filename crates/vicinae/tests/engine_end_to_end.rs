@@ -1071,13 +1071,29 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
         r#"{"name": "hello", "title": "Hello", "author": "someone",
             "commands": [
               {"name": "write", "title": "Write Greeting", "mode": "no-view"},
-              {"name": "show", "title": "Show Greeting", "mode": "view"}
+              {"name": "show", "title": "Show Greeting", "mode": "view"},
+              {"name": "nav", "title": "Navigate", "mode": "view"}
             ]}"#,
     )
     .unwrap();
     // In the extension's support directory, one of the two places the sandbox
     // lets it write. Not the tempdir: that is under /tmp, which it may not.
     let out = root.join("data-home/vicinae/support/hello/greeting.txt");
+    std::fs::write(
+        ext.join("nav.js"),
+        "const React = require('react');
+         const { List, Detail, ActionPanel, Action, useNavigation } = require('@vicinae/api');
+         module.exports.default = function Root() {
+           const { push } = useNavigation();
+           return React.createElement(List, null,
+             React.createElement(List.Item, { title: 'go', actions:
+               React.createElement(ActionPanel, null,
+                 React.createElement(Action, { title: 'Push', onAction: () =>
+                   push(React.createElement(Detail, { markdown: 'pushed' })) }))
+             }));
+         };",
+    )
+    .unwrap();
     let acted = root.join("data-home/vicinae/support/hello/acted.txt");
     std::fs::write(
         ext.join("show.js"),
@@ -1202,6 +1218,7 @@ fn a_view_command_renders_and_its_action_runs() {
             view_json,
             problem,
             ended,
+            ..
         } = answer
         else {
             panic!("no view answer: {answer:?}");
@@ -1249,4 +1266,103 @@ fn a_view_command_renders_and_its_action_runs() {
         panic!("a closed session still answers");
     };
     assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+/// Polls `session` until `done` accepts its view, returning it and the depth.
+fn wait_for_view(
+    daemon: &Daemon,
+    session: u64,
+    done: impl Fn(&compass_extension_api::View, u32) -> bool,
+) -> (compass_extension_api::View, u32) {
+    use compass_ipc::{Request, Response};
+    let mut after = 0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        let answer = daemon.request(Request::ExtensionView { session, after });
+        let Response::ExtensionView {
+            version,
+            view_json,
+            problem,
+            ended,
+            depth,
+        } = answer
+        else {
+            panic!("no view answer: {answer:?}");
+        };
+        assert!(!ended && problem.is_none(), "ended: {problem:?}");
+        if let Some(view) = view_json.and_then(|json| serde_json::from_str(&json).ok())
+            && done(&view, depth)
+        {
+            return (view, depth);
+        }
+        after = version;
+    }
+    panic!("the view never got there");
+}
+
+#[test]
+fn a_pushed_view_shows_and_escape_pops_back_to_the_list() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:nav".into(),
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("no session: {started:?}");
+    };
+
+    let (root, depth) = wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+    assert_eq!(depth, 1);
+    let View::List(list) = root else {
+        unreachable!()
+    };
+    let push = list.sections[0].items[0]
+        .actions
+        .as_ref()
+        .expect("actions")
+        .actions()[0]
+        .handler
+        .0
+        .clone();
+
+    assert_eq!(
+        daemon.request(Request::ExtensionEvent {
+            session,
+            handler: push,
+            args_json: "[]".into(),
+        }),
+        Response::Ack
+    );
+    let (pushed, depth) =
+        wait_for_view(&daemon, session, |view, _| matches!(view, View::Detail(_)));
+    assert_eq!(depth, 2, "the pushed view is on top of the list");
+    let View::Detail(detail) = pushed else {
+        unreachable!()
+    };
+    assert_eq!(detail.markdown.as_deref(), Some("pushed"));
+
+    assert_eq!(
+        daemon.request(Request::ExtensionPop { session }),
+        Response::Ack
+    );
+    let (_, depth) = wait_for_view(&daemon, session, |view, depth| {
+        matches!(view, View::List(_)) && depth == 1
+    });
+    assert_eq!(depth, 1, "popped back to the list");
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
 }

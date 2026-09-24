@@ -1923,6 +1923,10 @@ impl LauncherApp {
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) if page.depth > 1 => {
+                            let session = page.session;
+                            return self.extension_pop(session);
+                        }
                         Key::Named(Named::Escape) => return self.update(Message::Back),
                         Key::Named(Named::Enter) => return self.activate_extension_action(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
@@ -2795,6 +2799,18 @@ impl LauncherApp {
         )
     }
 
+    /// Escape on a pushed extension view: the extension pops it and renders
+    /// the view beneath, which arrives like any other render.
+    fn extension_pop(&self, session: u64) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.extension_pop(session).await },
+            Message::ExtensionEventSent,
+        )
+    }
+
     /// Enter in an extension's view: the first action on offer.
     fn activate_extension_action(&mut self) -> Task<Message> {
         let Page::Extension(page) = &self.page else {
@@ -3433,6 +3449,8 @@ mod tests {
         view: Option<compass_extension_api::View>,
         events: std::sync::Mutex<Vec<(String, Vec<serde_json::Value>)>>,
         closed: std::sync::Mutex<Vec<u64>>,
+        /// The view stack depth the fake reports.
+        depth: std::sync::Mutex<u32>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -3483,6 +3501,7 @@ mod tests {
                         .flatten(),
                     problem: None,
                     ended: after > 0,
+                    depth: *self.depth.lock().unwrap(),
                 })
             })
         }
@@ -3495,6 +3514,13 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.events.lock().unwrap().push((handler, args));
+                Ok(())
+            })
+        }
+
+        fn extension_pop(&self, _session: u64) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.events.lock().unwrap().push(("pop".to_owned(), vec![]));
                 Ok(())
             })
         }
@@ -3734,6 +3760,54 @@ mod tests {
             .flat_map(|section| section.actions.iter().map(|a| a.shortcut.as_deref()))
             .collect();
         assert_eq!(shortcuts, [None, Some("Ctrl+Shift+C")]);
+    }
+
+    #[test]
+    fn escape_pops_a_pushed_view_and_only_the_root_view_closes_the_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(greeting_list(true)),
+            depth: std::sync::Mutex::new(2),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+
+        for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Escape))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("pop".to_owned(), vec![])]
+        );
+        assert!(
+            matches!(app.page, Page::Extension(_)),
+            "still in the extension"
+        );
+        assert!(backend.closed.lock().unwrap().is_empty());
+
+        // The extension re-renders its root view.
+        if let Page::Extension(page) = &mut app.page {
+            page.apply(crate::backend::ExtensionViewState {
+                version: 9,
+                view: Some(Box::new(greeting_list(true))),
+                problem: None,
+                ended: false,
+                depth: 1,
+            });
+        }
+        for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Escape))) {
+            let _ = app.update(message);
+        }
+        assert!(matches!(app.page, Page::Root));
+        assert_eq!(backend.closed.lock().unwrap().as_slice(), [7]);
     }
 
     #[test]

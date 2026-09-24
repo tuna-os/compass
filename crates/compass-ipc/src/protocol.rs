@@ -225,6 +225,12 @@ pub enum Request {
         /// Its arguments, as a JSON array.
         args_json: String,
     },
+    /// Escape on a pushed view: pop it, and the extension renders the view
+    /// beneath. Answered with [`Response::Ack`].
+    ExtensionPop {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+    },
     /// The person left the view: stop the command. Answered with
     /// [`Response::Ack`].
     CloseExtension {
@@ -300,6 +306,8 @@ pub enum Response {
         problem: Option<String>,
         /// Whether the command has ended.
         ended: bool,
+        /// How many views the extension has pushed, the root one included.
+        depth: u32,
     },
 }
 

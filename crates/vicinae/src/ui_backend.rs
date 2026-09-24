@@ -76,7 +76,9 @@ impl ApplicationBackend for DaemonBackend {
                     view_json,
                     problem,
                     ended,
+                    depth,
                 } => Ok(ExtensionViewState {
+                    depth,
                     version,
                     view: view_json
                         .map(|json| serde_json::from_str(&json).map(Box::new))
@@ -109,6 +111,18 @@ impl ApplicationBackend for DaemonBackend {
                     },
                     "Running the action",
                 )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_pop(&self, session: u64) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ExtensionPop { session }, "Going back")
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

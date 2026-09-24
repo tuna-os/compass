@@ -689,6 +689,23 @@ pub struct SessionEvents {
 }
 
 impl SessionEvents {
+    /// `UI/viewPoped`: the host popped the extension's top view (the person
+    /// pressed Escape on a pushed view), so its navigation pops too and it
+    /// renders the view beneath.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's pipe is gone.
+    pub fn view_popped(&self) -> Result<(), WorkerError> {
+        let payload = crate::tsapi::event("UI/viewPoped", serde_json::json!({}));
+        self.writer
+            .request(
+                crate::rpc::manager::MESSAGE_EXTENSION,
+                serde_json::json!({ "session_id": self.session_id, "payload": payload }),
+            )
+            .map(drop)
+    }
+
     /// `EventCore/handlerActivated`: the extension runs the callback `handler`
     /// names (an action's `onAction`, a list's `onSearchTextChange`) with
     /// `args`.

@@ -51,6 +51,8 @@ pub struct ExtensionPage {
     pub selected: usize,
     /// What went wrong with the last action, if anything.
     pub notice: Option<String>,
+    /// How many views the extension has pushed; Escape pops above one.
+    pub depth: u32,
     /// A detail's Markdown, parsed once per render rather than per frame.
     pub markdown: Vec<iced::widget::markdown::Item>,
 }
@@ -70,6 +72,7 @@ impl ExtensionPage {
             shown: Vec::new(),
             selected: 0,
             notice: None,
+            depth: 1,
             markdown: Vec::new(),
         }
     }
@@ -77,6 +80,14 @@ impl ExtensionPage {
     /// Takes the engine's latest answer.
     pub fn apply(&mut self, state: crate::backend::ExtensionViewState) {
         self.version = state.version;
+        if state.view.is_some() {
+            if state.depth != self.depth {
+                // A different screen: its search starts empty, as Raycast's does.
+                self.query.clear();
+                self.selected = 0;
+            }
+            self.depth = state.depth.max(1);
+        }
         if let Some(view) = state.view {
             let key = self.selected_item().and_then(|item| item.key.clone());
             self.markdown = match view.as_ref() {
@@ -253,6 +264,7 @@ mod tests {
             view: Some(Box::new(view)),
             problem: None,
             ended: false,
+            depth: 1,
         }
     }
 
@@ -319,6 +331,7 @@ mod tests {
             view: None,
             problem: Some("Compass cannot draw the extension component <grid> yet".into()),
             ended: false,
+            depth: 1,
         });
         assert!(matches!(&page.status, Status::Stopped(why) if why.contains("<grid>")));
 
@@ -328,6 +341,7 @@ mod tests {
             view: None,
             problem: None,
             ended: true,
+            depth: 1,
         });
         assert_eq!(quiet.status, Status::Stopped("Quiet finished".into()));
     }
