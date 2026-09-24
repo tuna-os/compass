@@ -58,6 +58,8 @@ pub enum Message {
     /// The engine armed a paste of the selected entry, or could not; on a
     /// refusal the entry is copied instead.
     ClipboardPasted(Result<(), String>),
+    /// The engine started an extension command, or said why it could not.
+    ExtensionCommandStarted(Result<(), String>),
     /// An entry was pinned, unpinned or removed, or could not be; the list
     /// reloads on success and says why on failure.
     ClipboardEntryChanged(Result<(), String>),

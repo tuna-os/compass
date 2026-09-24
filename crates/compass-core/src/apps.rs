@@ -302,6 +302,7 @@ pub struct AppIndexBuilder {
     locale: Option<Locale>,
     include_unlaunchable: bool,
     include_actions: bool,
+    extension_dirs: Vec<PathBuf>,
 }
 
 impl AppIndexBuilder {
@@ -324,6 +325,20 @@ impl AppIndexBuilder {
             .desktops(crate::xdg_dirs::current_desktops())
             .exec_search_path(crate::xdg_dirs::exec_search_path())
             .locale(Locale::system())
+            .extension_dirs(crate::manifest::registry::search_paths())
+    }
+
+    /// Where installed extensions are looked for, highest precedence first
+    /// ([`crate::manifest::registry::search_paths`] in a real install). Their
+    /// commands join the root after the builtin commands. None by default,
+    /// so an index built for a test reads only what it is given.
+    #[must_use]
+    pub fn extension_dirs(
+        mut self,
+        dirs: impl IntoIterator<Item = impl Into<PathBuf>>,
+    ) -> AppIndexBuilder {
+        self.extension_dirs = dirs.into_iter().map(Into::into).collect();
+        self
     }
 
     /// Sets the application directories, in precedence order (highest first).
@@ -463,12 +478,25 @@ impl AppIndexBuilder {
                 .iter()
                 .map(crate::commands::BuiltinCommand::root_item),
         );
+        let extensions = if self.extension_dirs.is_empty() {
+            Vec::new()
+        } else {
+            crate::extension_commands::ExtensionCommand::from_manifests(
+                &crate::manifest::registry::scan(&self.extension_dirs).extensions,
+            )
+        };
+        roots.extend(
+            extensions
+                .iter()
+                .map(crate::extension_commands::ExtensionCommand::root_item),
+        );
         AppIndex {
             roots,
             root_indices,
             items,
             by_key,
             skipped,
+            extensions,
         }
     }
 
@@ -644,6 +672,7 @@ pub struct AppIndex {
     items: Vec<AppItem>,
     by_key: HashMap<String, usize>,
     skipped: Vec<SkippedEntry>,
+    extensions: Vec<crate::extension_commands::ExtensionCommand>,
 }
 
 /// One row of a root search over applications and commands.
@@ -655,6 +684,13 @@ pub enum RootHit<'a> {
     Command {
         /// Which one.
         command: &'static crate::commands::BuiltinCommand,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
+    /// A command from an installed extension.
+    Extension {
+        /// Which one.
+        command: &'a crate::extension_commands::ExtensionCommand,
         /// Match score on the IPC scale, excluding frecency.
         match_score: u32,
     },
@@ -786,13 +822,33 @@ impl AppIndex {
                     entrypoint_id,
                     match_score,
                 })),
-                None => crate::commands::by_id(entrypoint_id).map(|command| RootHit::Command {
-                    command,
-                    match_score,
-                }),
+                None => crate::commands::by_id(entrypoint_id)
+                    .map(|command| RootHit::Command {
+                        command,
+                        match_score,
+                    })
+                    .or_else(|| {
+                        self.extension(entrypoint_id)
+                            .map(|command| RootHit::Extension {
+                                command,
+                                match_score,
+                            })
+                    }),
             }
         })
         .collect()
+    }
+
+    /// Installed extensions' commands, in the registry's precedence order.
+    #[must_use]
+    pub fn extensions(&self) -> &[crate::extension_commands::ExtensionCommand] {
+        &self.extensions
+    }
+
+    /// The installed extension command with this entrypoint id.
+    #[must_use]
+    pub fn extension(&self, id: &str) -> Option<&crate::extension_commands::ExtensionCommand> {
+        self.extensions.iter().find(|command| command.id == id)
     }
 
     /// Starts building an index. See [`AppIndexBuilder`].

@@ -19,6 +19,14 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
 
     /// Record an already successful launch; never execute the application again.
     fn record_launch(&self, key: String) -> BackendFuture<'_, ()>;
+
+    /// Run an installed extension's command by its entrypoint id. `Ok` once
+    /// the engine has started it; an error is a sentence saying why it could
+    /// not, for the launcher to show.
+    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ()> {
+        let _ = id;
+        Box::pin(async { Err("Running extension commands needs the Compass engine".to_owned()) })
+    }
 }
 
 /// One clipboard history row, as the UI draws it.

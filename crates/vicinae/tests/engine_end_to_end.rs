@@ -154,7 +154,18 @@ impl Daemon {
     }
 
     fn start_with_config(entries: &[(&str, &str)], config: &str) -> Daemon {
+        Self::start_prepared(entries, config, |_| Vec::new())
+    }
+
+    /// As [`Self::start_with_config`], with `prepare` given the tempdir root
+    /// before the engine starts, returning extra environment for it.
+    fn start_prepared(
+        entries: &[(&str, &str)],
+        config: &str,
+        prepare: impl FnOnce(&std::path::Path) -> Vec<(&'static str, std::ffi::OsString)>,
+    ) -> Daemon {
         let dirs = TempDir::new().expect("tempdir");
+        let extra_env = prepare(dirs.path());
         let data = dirs.path().join("data");
         write_apps(&data, entries);
         let config_dir = dirs.path().join("config/vicinae");
@@ -173,6 +184,7 @@ impl Daemon {
             .env("XDG_DATA_HOME", dirs.path().join("data-home"))
             .env("XDG_CONFIG_HOME", dirs.path().join("config"))
             .env("HOME", dirs.path())
+            .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -1047,4 +1059,96 @@ fn window_requests_without_a_session_bus_are_refused_by_name() {
         assert_eq!(err.kind, ErrorKind::Unsupported, "{request:?}");
         assert!(err.message.contains("session bus"), "{}", err.message);
     }
+}
+
+/// An installed extension with one no-view command that writes `out`, and one
+/// view command.
+fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
+    let ext = root.join("data-home/vicinae/extensions/hello");
+    std::fs::create_dir_all(&ext).unwrap();
+    std::fs::write(
+        ext.join("package.json"),
+        r#"{"name": "hello", "title": "Hello", "author": "someone",
+            "commands": [
+              {"name": "write", "title": "Write Greeting", "mode": "no-view"},
+              {"name": "show", "title": "Show Greeting", "mode": "view"}
+            ]}"#,
+    )
+    .unwrap();
+    let out = root.join("greeting.txt");
+    std::fs::write(
+        ext.join("write.js"),
+        format!(
+            "module.exports.default = async () => {{ require('node:fs').writeFileSync({:?}, 'hi'); }};",
+            out.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    out
+}
+
+fn extension_runtime() -> Option<std::path::PathBuf> {
+    let built = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../src/typescript/extension-manager/dist/runtime.js");
+    std::env::var_os("COMPASS_EXTENSION_RUNTIME")
+        .map(Into::into)
+        .or_else(|| built.is_file().then_some(built))
+}
+
+#[test]
+fn an_installed_extension_command_is_found_and_a_no_view_one_runs() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut out = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        out = install_extension(root);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "write greeting".into(),
+    }) else {
+        panic!("no results");
+    };
+    let hit = hits.first().expect("a hit");
+    assert_eq!(hit.id, "@someone/hello:write");
+    assert_eq!(hit.subtitle.as_deref(), Some("Hello"));
+
+    let started = daemon.request(Request::RunExtensionCommand { id: hit.id.clone() });
+    assert_eq!(started, Response::Ack, "{started:?}");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !out.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&out).ok().as_deref(),
+        Some("hi"),
+        "the command ran"
+    );
+
+    let Response::Error(err) = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:show".into(),
+    }) else {
+        panic!("a view command was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(
+        err.message.contains("cannot draw extension views"),
+        "{}",
+        err.message
+    );
+
+    let Response::Error(err) = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:nothing".into(),
+    }) else {
+        panic!("an unknown id was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
 }

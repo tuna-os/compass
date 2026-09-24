@@ -2433,6 +2433,24 @@ where it is.
    exists for good reasons, but decision 2 says to check.
 6. **Promote the VM tier to the merge queue** — unchanged from item 6 below.
 
+**Phase 4's first wired slice (#7):** installed extensions are in root search, and the engine runs
+their `no-view` commands. Until now the Phase 4 crates were tested libraries that nothing called.
+- `AppIndex::from_environment` scans the manifest registry. Each command is a root item with the
+  C++ id `@<author>/<extension>:<command>`, subtitled by its extension. A manifest-disabled command
+  is known but hidden.
+- `RunExtensionCommand` (IPC v7) starts the runtime bundle under Node (`crates/vicinae/src/extension_runner.rs`):
+  - local storage comes from Compass's own `compass-extension-storage.db`, keyed from the keyring;
+  - HUDs, failure toasts and notifications become desktop notifications;
+  - alerts are answered "no".
+- The runtime never says when a `no-view` command has finished, so a run ends after 10 s of quiet
+  or 5 minutes.
+- Refused, each with a sentence the launcher shows:
+  - a `view` command (no view renderer yet);
+  - a required preference without a default (no preference editor yet);
+  - a missing runtime or Node.
+- Still to come: the view renderer, preferences, the sandbox and cgroup cap around the runtime,
+  and shipping Node and the bundle in the Flatpak.
+
 **Needs the project owner:** nothing. ADR-0018 decided the Suite 0 gate (it keeps blocking), GNOME 51
 (reworded gate, #4 closed), team size (one person), rustcast (a seed), and the upstream report (none).
 
