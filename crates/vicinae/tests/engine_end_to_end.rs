@@ -1077,6 +1077,9 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "link", "title": "Open Link", "mode": "no-view"},
               {"name": "tiles", "title": "Tiles", "mode": "view"},
               {"name": "heap", "title": "Heap", "mode": "no-view"},
+              {"name": "probe", "title": "Probe", "mode": "no-view",
+               "preferences": [{"name": "limit", "title": "Limit", "type": "textfield",
+                                "required": false, "default": "20"}]},
               {"name": "issue", "title": "New Issue", "mode": "view"},
               {"name": "greet", "title": "Greet Someone", "mode": "no-view",
                "arguments": [{"name": "name", "type": "text", "placeholder": "Name",
@@ -1159,6 +1162,32 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                    defaultValue: false }}));
              }};",
             submitted = submitted.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let probed = root.join("data-home/vicinae/support/hello/probe.json");
+    std::fs::write(
+        ext.join("probe.js"),
+        format!(
+            "module.exports.default = async () => {{
+               const {{ environment, getPreferenceValues }} = require('@vicinae/api');
+               const {{ spawnSync }} = require('node:child_process');
+               const status = (cmd, args) => {{
+                 const r = spawnSync(cmd, args);
+                 return r.error ? String(r.error.code) : r.status;
+               }};
+               require('node:fs').writeFileSync({probed:?}, JSON.stringify({{
+                 assetsPath: environment.assetsPath,
+                 supportPath: environment.supportPath,
+                 isDevelopment: environment.isDevelopment,
+                 extensionName: environment.extensionName,
+                 commandName: environment.commandName,
+                 preferences: getPreferenceValues(),
+                 execTrue: status('true', []),
+                 execUnshare: status('unshare', ['-U', 'true']),
+               }}));
+             }};",
+            probed = probed.to_string_lossy()
         ),
     )
     .unwrap();
@@ -1869,4 +1898,77 @@ fn an_extension_that_allocates_past_the_heap_cap_is_stopped() {
         !survived.exists(),
         "an extension allocated 400 MiB of heap under a 160 MiB cap"
     );
+}
+
+/// Suite 1: what a command sees of its environment, and what the sandbox
+/// lets it run.
+#[test]
+fn a_command_sees_its_own_paths_and_preferences_and_may_exec_but_not_unshare() {
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_owned();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let probed = root.join("data-home/vicinae/support/hello/probe.json");
+    assert_eq!(
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:probe".into(),
+            arguments_json: None,
+        }),
+        Response::Ack
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !probed.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let seen: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&probed).expect("the command ran")).unwrap();
+    let data = root.join("data-home/vicinae");
+    assert_eq!(
+        seen["supportPath"],
+        data.join("support/hello").to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        seen["assetsPath"],
+        data.join("extensions/hello/assets")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(seen["isDevelopment"], false);
+    assert_eq!(
+        (&seen["extensionName"], &seen["commandName"]),
+        (&"hello".into(), &"probe".into())
+    );
+    assert_eq!(
+        seen["preferences"],
+        serde_json::json!({"limit": "20"}),
+        "a preference's default is resolved"
+    );
+    // Shelling out is allowed on purpose: `useExec` and every extension that
+    // wraps a CLI depend on it.
+    assert_eq!(seen["execTrue"], 0);
+    // `unshare` is on the denylist. The control: where this machine lets an
+    // unconfined process make a user namespace, the sandbox must not.
+    let outside = std::process::Command::new("unshare")
+        .args(["-U", "true"])
+        .status()
+        .is_ok_and(|status| status.success());
+    if outside {
+        assert_ne!(
+            seen["execUnshare"], 0,
+            "unshare -U works outside the sandbox and must not inside it"
+        );
+    } else {
+        eprintln!("unshare -U fails here even unconfined; the denial is not tested");
+    }
 }
