@@ -156,6 +156,24 @@ fn installed_sandbox() -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// The files name resolution reads that live outside `etc` through a
+/// symlink. Under systemd-resolved `/etc/resolv.conf` points into
+/// `/run/systemd/resolve/`; granting `/etc` alone leaves the link unreadable,
+/// and every lookup an extension makes fails with `EAI_AGAIN`.
+fn resolver_targets(etc: &Path) -> Vec<PathBuf> {
+    [
+        "resolv.conf",
+        "hosts",
+        "nsswitch.conf",
+        "host.conf",
+        "gai.conf",
+    ]
+    .into_iter()
+    .filter_map(|name| std::fs::canonicalize(etc.join(name)).ok())
+    .filter(|target| !target.starts_with(etc))
+    .collect()
+}
+
 /// What the runtime may touch while it runs `command`.
 ///
 /// Read: the system (Node's libraries, certificates, ICU data, `/proc`), Node,
@@ -181,6 +199,7 @@ pub fn policy(
     .chain(parent(&runtime.node))
     .chain(parent(&runtime.bundle))
     .chain([command.extension_dir.clone()])
+    .chain(resolver_targets(Path::new("/etc")))
     // A certificate bundle the user pointed TLS at (a corporate CA, say):
     // Node reads it at start, and without it every fetch fails.
     .chain(
@@ -1524,6 +1543,26 @@ mod tests {
             path: dir.join(STORAGE_DATABASE),
             key: [3; compass_crypto::KEY_SIZE],
         }
+    }
+
+    #[test]
+    fn a_resolver_file_linked_out_of_etc_is_granted_where_it_points() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let etc = root.path().join("etc");
+        let run = root.path().join("run/systemd/resolve");
+        std::fs::create_dir_all(&etc).expect("etc");
+        std::fs::create_dir_all(&run).expect("run");
+        std::fs::write(run.join("stub-resolv.conf"), "nameserver 127.0.0.53\n").expect("stub");
+        std::os::unix::fs::symlink(run.join("stub-resolv.conf"), etc.join("resolv.conf"))
+            .expect("link");
+        std::fs::write(etc.join("hosts"), "127.0.0.1 localhost\n").expect("hosts");
+
+        let targets = resolver_targets(&etc);
+        assert_eq!(
+            targets,
+            [std::fs::canonicalize(run.join("stub-resolv.conf")).expect("canonical")],
+            "only the linked-out file, not what /etc already covers"
+        );
     }
 
     #[test]
