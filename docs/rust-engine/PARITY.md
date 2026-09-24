@@ -2162,3 +2162,45 @@ as a regression: cross-word abbreviations that pick up a mid-word letter are rej
 `"Firefox Web Browser"/"ffb"`, `"Text Editor"/"txted"` and `"Power Statistics"/"pwrstat"` are all
 rejected — and the oracle confirms the C++ rejects all three too. The rule is working as designed;
 whether it is the *right* design is a separate product question.
+
+### wlroots (Phase 5 Track B) — Sway, Hyprland, niri, labwc, river
+
+Verified on headless Sway 1.9 (`.github/workflows/wlroots.yaml`); Hyprland and niri are expected
+to behave the same because every choice below is made from the advertised globals, but neither runs
+in CI.
+
+1. **Launcher surface.** A layer surface through `iced_layershell`, centred, `top` layer,
+   `exclusive` keyboard, namespace `vicinae` — the C++ `LayerShellConfig` defaults. The C++ keys
+   that change them (`launcherWindow.layerShell.enabled`/`.layer`/`.keyboardInteractivity`) are
+   **not ported**; `VICINAE_LAYER_SHELL=0` stands in for `enabled = false`. The C++ drops
+   exclusive focus while a file chooser opened from the launcher is up; the Rust launcher has no
+   such flow yet.
+2. **Which sessions get it.** The C++ asks only whether the compositor advertises the layer shell
+   (`Environment::isLayerShellSupported`). The Rust engine decides **GNOME by
+   `$XDG_CURRENT_DESKTOP` first** and only then looks at globals, so a future Mutter with a layer
+   shell stays on the tested GNOME path. Same outcome on every compositor today.
+3. **Window switching.** The C++ has per-compositor providers (Hyprland and niri over their IPC,
+   with workspaces) ahead of a generic Wayland one. The Rust engine has only the generic path:
+   `zwlr_foreign_toplevel_manager_v1` (list, focus state, activate, close) or, failing that,
+   `ext_foreign_toplevel_list_v1` (list only; activate/close are refused by name). So on wlroots:
+   no workspaces, no pid (the launcher's own window is recognised by `app_id`), no geometry, and
+   the Hyprland/niri IPC providers are not ported. Order is most-recently-activated first, with the
+   focused window last, as on GNOME.
+4. **Clipboard history.** Watched over `ext-data-control-v1`, else `zwlr_data_control_manager_v1`,
+   with the C++ offer filter (`compass_wayland::data_control`). The C++ stores every kept type of
+   a selection; the Rust store takes one per selection, so the **preferred** one is recorded
+   (image, then `text/uri-list`, UTF-8 text, plain text, HTML). A selection carrying
+   `x-kde-passwordManagerHint` or `vicinae/concealed` is **not recorded at all**. The primary
+   selection is not recorded. The source application is unknown (data-control does not say).
+5. **Paste.** The C++ injects Ctrl+V through its uinput input server. The Rust engine has **no
+   synthetic paste on wlroots**: `ClipboardPaste` is refused and the launcher copies instead, and
+   an extension's `Clipboard.paste` copies. Copy, read and clear work, over `wl-clipboard-rs`; an
+   HTML copy keeps its plain-text alternative, which the GNOME path cannot.
+6. **Global hotkey.** The C++ tries `xx-hotkey-v1` and then `vicinae-hotkey-v1`. The Rust engine
+   tries `xx-hotkey-v1` (fixed `Super+Space`), then the GlobalShortcuts portal, and otherwise logs
+   how to bind `vicinae toggle` in the running compositor's config. `vicinae-hotkey-v1` is not
+   ported, and the trigger's input serial is not yet passed to `xdg-activation`. No released
+   compositor carries `xx-hotkey-v1`, so the manual binding is what users have today.
+7. **Flatpak.** Nothing beyond `--socket=wayland` is needed, and nothing can add more: a compositor
+   that honours `wp_security_context_v1` may hide data-control and foreign-toplevel from a
+   sandboxed client, and the features above then degrade as if the compositor lacked them.

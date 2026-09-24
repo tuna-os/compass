@@ -511,6 +511,22 @@ belongs in the release notes next to the macOS/Windows narrowing.
 #1936 (necessary because `xdg-desktop-portal-wlr` ships **no** GlobalShortcuts backend). KDE is a
 third target after that.
 
+> **Track B status (2026-09-24).** Landed and verified on **headless Sway 1.9** (not a mock): the
+> launcher is an `iced_layershell` surface (`top` layer, centred, exclusive keyboard) chosen at
+> runtime when `zwlr_layer_shell_v1` is advertised and the desktop is not GNOME — GNOME is decided
+> by name first, so its path cannot move; window list/focus/close over
+> `zwlr_foreign_toplevel_manager_v1` (list-only fallback on `ext_foreign_toplevel_list_v1`)
+> answering the engine's existing `ListWindows`/`ActivateWindow`/`CloseWindow`; clipboard history
+> watched over `ext`/`wlr` data-control, and the extension `Clipboard` API set/read/cleared through
+> `wl-clipboard-rs`; the `xx-hotkey-v1` client (bindings generated from the C++ tree's XML), which
+> no released compositor carries yet, so the documented fallback — bind `vicinae toggle` in the
+> compositor, with a per-compositor hint in the log — is what users get today. Gated by
+> `.github/workflows/wlroots.yaml`: `compass-wayland` against Sway, the engine against Sway, and
+> the launcher on Sway (on screen, absent from Sway's window tree, toggles, takes typed text), each
+> gate with a control that fails. Not done: synthetic paste (copy only), `ext-workspace`,
+> focus-back via `xdg-activation` serials, the C++ `launcherWindow.layerShell.*` config keys, and
+> Hyprland/niri themselves (only Sway runs in CI). PARITY.md "wlroots" has the differences.
+
 *Track C — Rhai extension tier (§2.2).* Independent of both, once `compass-extension-api` exists:
 `compass-script` with a hardened engine (`Engine::new_raw()`, explicit package, no
 `FileModuleResolver`, the full set of `set_max_*` limits, `on_progress` budget termination); the
@@ -1267,6 +1283,10 @@ that catches real portal behaviour, the GlobalShortcuts permission dialog, and
 `compass-testkit/src/wayland_mock.rs`, for the wlroots track: layer-shell anchors and margins across
 single/dual/mixed-DPI outputs, `ext-foreign-toplevel-list-v1` events, focus-loss dismissal, and
 correct degradation when a protocol is absent. Deferred until there is wlroots code to test.
+**Built instead as a real compositor** (2026-09-24): headless Sway per test, in
+`crates/compass-wayland/tests/support`, which proves the client against a compositor people run
+rather than against a mock written beside it. Multi-output and mixed-DPI layouts are not covered
+yet.
 
 ### 8.5 Suite 4 — Benchmarks and resource regression
 

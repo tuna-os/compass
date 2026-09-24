@@ -46,6 +46,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
+
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -163,6 +168,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
       - name: Read the MSRV out of Cargo.toml
         id: msrv
@@ -312,6 +322,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
+
       # figura's parser uses std::ranges::to, a C++23 library feature that
       # GCC 13 — the image's default — does not have. The error it gives
       # ("expected primary-expression before ')'") does not say so.
@@ -410,6 +425,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
+
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -468,6 +488,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # `iced_layershell` (the wlroots launcher surface) builds
+      # smithay-client-toolkit with xkbcommon, found through pkg-config.
+      - name: Install the xkbcommon headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
