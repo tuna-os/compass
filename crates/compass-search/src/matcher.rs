@@ -72,6 +72,7 @@ pub struct Matcher {
     haystack_buf: Vec<char>,
     needle_buf: Vec<char>,
     needle_str: String,
+    haystack_str: String,
     indices_buf: Vec<u32>,
     boundary_buf: Vec<bool>,
 }
@@ -95,6 +96,7 @@ impl Matcher {
             haystack_buf: Vec::new(),
             needle_buf: Vec::new(),
             needle_str: String::new(),
+            haystack_str: String::new(),
             indices_buf: Vec::new(),
             boundary_buf: Vec::new(),
         }
@@ -119,11 +121,19 @@ impl Matcher {
     /// nucleo requires of needles when those config options are on.
     fn prepare_needle(out: &mut String, needle: &str) {
         out.clear();
-        out.extend(
-            needle
-                .chars()
-                .map(|c| chars::to_lower_case(chars::normalize(c))),
-        );
+        out.extend(needle.chars().map(|c| chars::to_lower_case(fold(c))));
+    }
+
+    /// The haystack nucleo should see: `haystack` itself, unless some char
+    /// folds further than nucleo's own table takes it, in which case a copy
+    /// folded char for char into `out`, so indices stay valid.
+    fn prepare_haystack<'a>(out: &'a mut String, haystack: &'a str) -> &'a str {
+        if haystack.is_ascii() || !haystack.chars().any(|c| fold(c) != chars::normalize(c)) {
+            return haystack;
+        }
+        out.clear();
+        out.extend(haystack.chars().map(fold));
+        out
     }
 
     /// Scores `needle` against `haystack` without computing indices.
@@ -193,11 +203,13 @@ impl Matcher {
             haystack_buf,
             needle_buf,
             needle_str,
+            haystack_str,
             ..
         } = self;
         Self::prepare_needle(needle_str, needle);
         let needle = Utf32Str::new(needle_str, needle_buf);
-        let haystack = Utf32Str::new(haystack, haystack_buf);
+        let folded = Self::prepare_haystack(haystack_str, haystack);
+        let haystack = Utf32Str::new(folded, haystack_buf);
         if let Utf32Str::Unicode(text) = haystack
             && needle.len() == 1
         {
@@ -220,12 +232,14 @@ impl Matcher {
             haystack_buf,
             needle_buf,
             needle_str,
+            haystack_str,
             boundary_buf,
             ..
         } = self;
         Self::prepare_needle(needle_str, needle);
         let needle_utf = Utf32Str::new(needle_str, needle_buf);
-        let haystack_utf = Utf32Str::new(haystack, haystack_buf);
+        let folded = Self::prepare_haystack(haystack_str, haystack);
+        let haystack_utf = Utf32Str::new(folded, haystack_buf);
         let mut indices = Vec::new();
         let score = fuzzy_indices(inner, haystack_utf, needle_utf, &mut indices)?;
         indices.sort_unstable();
@@ -259,17 +273,34 @@ impl Matcher {
             haystack_buf,
             needle_buf,
             needle_str,
+            haystack_str,
             indices_buf,
             boundary_buf,
         } = self;
         Self::prepare_needle(needle_str, needle);
         let needle_utf = Utf32Str::new(needle_str, needle_buf);
-        let haystack_utf = Utf32Str::new(haystack, haystack_buf);
+        let folded = Self::prepare_haystack(haystack_str, haystack);
+        let haystack_utf = Utf32Str::new(folded, haystack_buf);
         indices_buf.clear();
         let score = fuzzy_indices(inner, haystack_utf, needle_utf, indices_buf)?;
         indices_buf.sort_unstable();
         let coherent = is_coherent_with(haystack, indices_buf, boundary_buf);
         Some((u32::from(score), coherent))
+    }
+}
+
+/// nucleo's diacritic folding, plus `deunicode` for the Latin letters its
+/// table leaves alone (`Ł`, `đ`, `ħ`, ...). The fallback only takes a
+/// single-letter answer from the Latin blocks, so one char stays one char and
+/// other scripts keep matching as themselves.
+fn fold(c: char) -> char {
+    let normalized = chars::normalize(c);
+    if normalized.is_ascii() || !matches!(u32::from(normalized), 0xC0..=0x24F | 0x1E00..=0x1EFF) {
+        return normalized;
+    }
+    match deunicode::deunicode_char(normalized).map(str::as_bytes) {
+        Some(&[letter]) if letter.is_ascii_alphabetic() => char::from(letter),
+        _ => normalized,
     }
 }
 
@@ -304,7 +335,7 @@ fn single_unicode_match(
     };
     let mut best = None;
     for (index, &character) in haystack.iter().enumerate() {
-        if chars::to_lower_case(chars::normalize(character)) != target {
+        if chars::to_lower_case(fold(character)) != target {
             continue;
         }
         if let Some(score) = matcher.postfix_match(Utf32Str::Unicode(&haystack[..=index]), needle)

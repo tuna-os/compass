@@ -1047,6 +1047,7 @@ name = "compass-search"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "deunicode",
  "nucleo-matcher",
  "proptest",
  "rayon",
