@@ -16,6 +16,7 @@ pub mod cli;
 pub mod clipboard_service;
 pub mod config_cmd;
 pub mod conformance;
+pub mod dmenu;
 pub mod doctor;
 pub mod engine;
 pub mod extension_apps;
@@ -483,6 +484,22 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             unreachable!("the launcher is dispatched before the runtime")
         }
 
+        Command::Dmenu(args) => {
+            require_servable_engine(cli.engine)?;
+            let content = std::io::read_to_string(std::io::stdin())
+                .context("reading the dmenu entries from standard input")?;
+            let spec = crate::dmenu::spec(args, content);
+            match ipc::send(&socket, Request::Dmenu { spec }).await? {
+                Response::DmenuOutput { output } if output.is_empty() => {
+                    Ok(ExitCode::from(EXIT_FAILURE))
+                }
+                Response::DmenuOutput { output } => {
+                    println!("{output}");
+                    Ok(ExitCode::from(EXIT_OK))
+                }
+                other => bail!("unexpected answer from the engine: {other:?}"),
+            }
+        }
         Command::Toggle => window_command(&socket, cli.engine, Request::Toggle).await,
         Command::Show => window_command(&socket, cli.engine, Request::Show).await,
         Command::Hide => window_command(&socket, cli.engine, Request::Hide).await,

@@ -23,6 +23,7 @@ fn to_ui(command: WindowCommand) -> UiCommand {
         WindowCommand::Show => UiCommand::Show,
         WindowCommand::Hide => UiCommand::Hide,
         WindowCommand::Toggle => UiCommand::Toggle,
+        WindowCommand::Dmenu(token) => UiCommand::Dmenu(token),
     }
 }
 
@@ -225,6 +226,7 @@ mod tests {
                     UiCommand::Show => UiOutcome::Shown,
                     UiCommand::Hide => UiOutcome::Hidden,
                     UiCommand::Toggle => UiOutcome::Failed("toggled".to_owned()),
+                    UiCommand::Dmenu(_) => UiOutcome::Shown,
                 };
                 if outcomes_tx.send(outcome).is_err() {
                     return;
@@ -346,12 +348,14 @@ mod tests {
             WindowCommand::Show,
             WindowCommand::Hide,
             WindowCommand::Toggle,
+            WindowCommand::Dmenu(42),
         ] {
             let ui = to_ui(command);
             let back = match ui {
                 UiCommand::Show => WindowCommand::Show,
                 UiCommand::Hide => WindowCommand::Hide,
                 UiCommand::Toggle => WindowCommand::Toggle,
+                UiCommand::Dmenu(token) => WindowCommand::Dmenu(token),
             };
             assert_eq!(back, command, "{command:?} did not survive the round trip");
         }

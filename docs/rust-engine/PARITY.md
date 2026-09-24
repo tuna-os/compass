@@ -2174,6 +2174,23 @@ What differs:
 | 3 | Programs are scanned once per view in the background, with a loading state. | Scanned by the engine on each opening (a blocking task), the view showing "Looking for programs…" until then. | `run_terminal_program_lists_path_and_runs_directly_or_refuses` |
 | 4 | Inside the Flatpak, `PATH` is the host's through the portal's environment. | The engine's own `PATH` (the sandbox's inside the Flatpak); runs go through `flatpak-spawn --host`. | — |
 
+### dmenu — what the port does not have yet
+
+`vicinae dmenu` runs end to end with the C++ CLI's options: it reads stdin, the engine keeps the
+list under a token and pushes `WindowCommand::Dmenu(token)` to the resident window (IPC v11), which
+fetches the list, shows it (non-empty lines, fuzzy filter keeping input order among equals, a path
+shown by its name and folder, the `{count}` section heading, the placeholder and initial query), and
+answers the choice: the entry, its index with `--format index`, or the search text when nothing
+matches. Printing it exits 0; a dismissal (Escape, the window hiding, a newer list) exits 1 with
+nothing printed, as the C++ does. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | `--width`/`--height` resize the window for the list, and `--navigation-title` sets its title. | Carried to the window and not applied: the launcher window has one size and no navigation title yet. (A width under 500 still turns quick look and the footer off, as in the C++.) | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
+| 2 | Quick look previews a highlighted file (name, path, MIME type, image or text); `--no-metadata` hides its metadata; `--no-footer` hides the status bar. | No preview pane or footer yet; `--no-quick-look` only drops the folder subtitle. | `a_path_shows_its_name_and_folder` |
+| 3 | A path entry shows its file icon. | The initial badge, like every row without resolved art. | — |
+| 4 | Without a running launcher the C++ server starts showing its own window. | Refused like `vicinae show` is, when no window is attached. | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

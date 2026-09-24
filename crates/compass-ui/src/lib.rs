@@ -18,6 +18,7 @@ pub mod appearance;
 pub mod backend;
 pub mod clipboard_page;
 pub mod design;
+pub mod dmenu_page;
 pub mod emoji_page;
 pub mod extension_fields;
 pub mod extension_page;

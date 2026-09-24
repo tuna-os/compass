@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
-/// shortcuts, snippets, script commands and Run Terminal Program.
+/// shortcuts, snippets, script commands, Run Terminal Program and dmenu.
 pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
@@ -440,6 +440,28 @@ pub enum Request {
         /// Keep the terminal open once it exits.
         hold: bool,
     },
+    /// `vicinae dmenu`: show a list in the launcher and wait for the choice.
+    /// Answered with [`Response::DmenuOutput`] once the person chose (or
+    /// dismissed the list); refused as [`ErrorKind::Unsupported`] when no
+    /// launcher window is attached.
+    Dmenu {
+        /// What to show.
+        spec: DmenuSpec,
+    },
+    /// The window asks for the list behind a [`WindowCommand::Dmenu`].
+    /// Answered with [`Response::DmenuList`].
+    DmenuFetch {
+        /// From the pushed command.
+        token: u64,
+    },
+    /// The window's answer to a dmenu list: what to print, or `None` when
+    /// the list was dismissed. Answered with [`Response::Ack`].
+    DmenuChoose {
+        /// From the pushed command.
+        token: u64,
+        /// The chosen entry, its index, or the search text.
+        output: Option<String>,
+    },
 }
 
 /// What the engine answers.
@@ -570,6 +592,17 @@ pub enum Response {
         /// The run to follow, when the launcher shows its output.
         session: Option<u64>,
     },
+    /// Answer to [`Request::Dmenu`]: what to print; empty when the list was
+    /// dismissed.
+    DmenuOutput {
+        /// The chosen entry, its index, or the search text.
+        output: String,
+    },
+    /// Answer to [`Request::DmenuFetch`].
+    DmenuList {
+        /// What to show.
+        spec: DmenuSpec,
+    },
     /// Answer to [`Request::ListPrograms`].
     Programs {
         /// Every executable found, as absolute paths, in `PATH` order.
@@ -695,6 +728,41 @@ pub enum WindowCommand {
     Hide,
     /// Hide if visible, show if not.
     Toggle,
+    /// Show, with the dmenu list the engine holds under this token; the
+    /// window fetches it with [`Request::DmenuFetch`] and answers the choice
+    /// with [`Request::DmenuChoose`]. Answered, like `Show`, with
+    /// [`WindowOutcome::Shown`] once visible.
+    Dmenu(u64),
+}
+
+/// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and
+/// the C++ CLI's options.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DmenuSpec {
+    /// The entries, one per line; empty lines are dropped.
+    pub content: String,
+    /// `--navigation-title`.
+    pub navigation_title: Option<String>,
+    /// `--section-title`, where `{count}` is the number shown.
+    pub section_title: Option<String>,
+    /// `--format`: print the entry (`false`) or its index (`true`).
+    pub output_index: bool,
+    /// `--placeholder`.
+    pub placeholder: Option<String>,
+    /// `--query`, the initial search text.
+    pub query: Option<String>,
+    /// `--width`.
+    pub width: Option<u32>,
+    /// `--height`.
+    pub height: Option<u32>,
+    /// `--no-section`.
+    pub no_section: bool,
+    /// `--no-quick-look`.
+    pub no_quick_look: bool,
+    /// `--no-metadata`.
+    pub no_metadata: bool,
+    /// `--no-footer`.
+    pub no_footer: bool,
 }
 
 /// What an attached window reports back after acting on a [`WindowCommand`].

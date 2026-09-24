@@ -138,6 +138,19 @@ pub enum Message {
     SnippetsQueryChanged(String),
     /// A Manage Snippets row was clicked, by position.
     SnippetSelected(usize),
+    /// A dmenu list arrived for `token`, or why it could not be fetched.
+    DmenuLoaded {
+        /// Which list.
+        token: u64,
+        /// The list.
+        result: Result<crate::backend::DmenuList, String>,
+    },
+    /// The dmenu view's search text changed.
+    DmenuQueryChanged(String),
+    /// A dmenu entry was clicked, by position.
+    DmenuSelected(usize),
+    /// The dmenu choice reached the engine, or why it did not.
+    DmenuChosen(Result<(), String>),
     /// Run Terminal Program's programs arrived, or why they could not.
     ProgramsLoaded(Result<crate::backend::ProgramList, String>),
     /// Run Terminal Program's text changed.

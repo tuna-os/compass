@@ -58,7 +58,7 @@ pub use codec::{FrameCodec, LENGTH_PREFIX_LEN, MAX_FRAME_LEN};
 pub use error::{Error, Result};
 pub use path::{SocketPath, ensure_private_dir};
 pub use protocol::{
-    ClipboardEntry, ClipboardKind, DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert,
+    ClipboardEntry, ClipboardKind, DmenuSpec, DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert,
     ExtensionToast, ExtensionToastStyle, FileHit, PROTOCOL_VERSION, PreferenceField,
     PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope, Response,
     ResponseEnvelope, ScriptArgumentEntry, ScriptEntry, ShortcutEntry, SnippetEntry, WindowCommand,

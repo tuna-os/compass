@@ -5,8 +5,9 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind, ExtensionStart, ExtensionViewState, FileResults, FileRow, ProgramList,
-    ScriptOutputState, Shortcut, ShortcutDraft, Snippet, SnippetDraft, WindowBackend, WindowRow,
+    ClipboardRowKind, DmenuList, ExtensionStart, ExtensionViewState, FileResults, FileRow,
+    ProgramList, ScriptOutputState, Shortcut, ShortcutDraft, Snippet, SnippetDraft, WindowBackend,
+    WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -104,6 +105,42 @@ impl ApplicationBackend for DaemonBackend {
         Box::pin(async move {
             match self
                 .ask(Request::OpenFile { path, reveal }, "Opening the file")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
+        Box::pin(async move {
+            match self
+                .ask(Request::DmenuFetch { token }, "Fetching the dmenu list")
+                .await?
+            {
+                compass_ipc::Response::DmenuList { spec } => Ok(DmenuList {
+                    content: spec.content,
+                    navigation_title: spec.navigation_title,
+                    section_title: spec.section_title,
+                    output_index: spec.output_index,
+                    placeholder: spec.placeholder,
+                    query: spec.query,
+                    no_section: spec.no_section,
+                    no_quick_look: spec.no_quick_look,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn choose_dmenu(&self, token: u64, output: Option<String>) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::DmenuChoose { token, output },
+                    "Answering the dmenu list",
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

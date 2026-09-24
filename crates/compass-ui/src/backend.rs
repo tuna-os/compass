@@ -113,6 +113,19 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
     }
 
+    /// The `vicinae dmenu` list the engine holds under `token`.
+    fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
+        let _ = token;
+        Box::pin(async { Err("dmenu needs the Compass engine".to_owned()) })
+    }
+
+    /// Answers the dmenu list under `token`: what to print, or `None` when it
+    /// was dismissed.
+    fn choose_dmenu(&self, token: u64, output: Option<String>) -> BackendFuture<'_, ()> {
+        let _ = (token, output);
+        Box::pin(async { Err("dmenu needs the Compass engine".to_owned()) })
+    }
+
     /// The executables on `PATH`, the terminal they would run in, and the
     /// default action.
     fn list_programs(&self) -> BackendFuture<'_, ProgramList> {
@@ -228,6 +241,27 @@ const FILES_NEED_ENGINE: &str =
 
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
+
+/// A `vicinae dmenu` list and its options.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DmenuList {
+    /// The entries, one per line.
+    pub content: String,
+    /// `--navigation-title`.
+    pub navigation_title: Option<String>,
+    /// `--section-title`, with `{count}`.
+    pub section_title: Option<String>,
+    /// `--format index`.
+    pub output_index: bool,
+    /// `--placeholder`.
+    pub placeholder: Option<String>,
+    /// `--query`.
+    pub query: Option<String>,
+    /// `--no-section`.
+    pub no_section: bool,
+    /// `--no-quick-look`.
+    pub no_quick_look: bool,
+}
 
 const PROGRAMS_NEED_ENGINE: &str =
     "Run Terminal Program needs the Compass engine, and this window is running without one";

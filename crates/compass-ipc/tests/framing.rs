@@ -172,6 +172,34 @@ fn all_requests() -> Vec<Request> {
         Request::ScriptOutput { session: 3 },
         Request::StopScript { session: 3 },
         Request::ListPrograms,
+        Request::Dmenu {
+            spec: compass_ipc::DmenuSpec {
+                content: "alpha\n/home/me/β.txt\n\ngamma 🚀".into(),
+                navigation_title: Some("Pick".into()),
+                section_title: Some("Items ({count})".into()),
+                output_index: true,
+                placeholder: Some("Filter…".into()),
+                query: Some("al".into()),
+                width: Some(480),
+                height: None,
+                no_section: false,
+                no_quick_look: true,
+                no_metadata: false,
+                no_footer: true,
+            },
+        },
+        Request::Dmenu {
+            spec: compass_ipc::DmenuSpec::default(),
+        },
+        Request::DmenuFetch { token: 9 },
+        Request::DmenuChoose {
+            token: 9,
+            output: Some("β".into()),
+        },
+        Request::DmenuChoose {
+            token: 9,
+            output: None,
+        },
         Request::RunProgram {
             argv: vec!["htop".into(), "-d".into(), "é 5".into()],
             terminal: true,
@@ -238,6 +266,7 @@ fn all_responses() -> Vec<Response> {
         Response::Window(WindowCommand::Show),
         Response::Window(WindowCommand::Hide),
         Response::Window(WindowCommand::Toggle),
+        Response::Window(WindowCommand::Dmenu(u64::MAX)),
         Response::ClipboardHistory { entries: vec![] },
         Response::ClipboardHistory {
             entries: vec![
@@ -435,6 +464,18 @@ fn all_responses() -> Vec<Response> {
             terminal: Some("Ptyxis".into()),
             default_action: "run-in-terminal".into(),
         },
+        Response::DmenuOutput {
+            output: "gamma 🚀".into(),
+        },
+        Response::DmenuOutput {
+            output: String::new(),
+        },
+        Response::DmenuList {
+            spec: compass_ipc::DmenuSpec {
+                content: "a\nb".into(),
+                ..compass_ipc::DmenuSpec::default()
+            },
+        },
         Response::Programs {
             programs: vec![],
             terminal: None,
@@ -494,6 +535,9 @@ fn request_variants_are_exhaustive() {
             | Request::StopScript { .. }
             | Request::ListPrograms
             | Request::RunProgram { .. }
+            | Request::Dmenu { .. }
+            | Request::DmenuFetch { .. }
+            | Request::DmenuChoose { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -525,6 +569,8 @@ fn response_variants_are_exhaustive() {
             | Response::ScriptStarted { .. }
             | Response::ScriptOutput { .. }
             | Response::Programs { .. }
+            | Response::DmenuOutput { .. }
+            | Response::DmenuList { .. }
             | Response::Window(_) => {}
         }
     }

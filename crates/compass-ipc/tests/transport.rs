@@ -111,7 +111,14 @@ async fn echo_handler(request: Request) -> Response {
         | Request::OpenShortcut { .. }
         | Request::PasteSnippet { .. }
         | Request::StopScript { .. }
-        | Request::RunProgram { .. } => Response::Ack,
+        | Request::RunProgram { .. }
+        | Request::DmenuChoose { .. } => Response::Ack,
+        Request::Dmenu { .. } => Response::DmenuOutput {
+            output: String::new(),
+        },
+        Request::DmenuFetch { .. } => Response::DmenuList {
+            spec: compass_ipc::DmenuSpec::default(),
+        },
         Request::ListPrograms => Response::Programs {
             programs: vec![],
             terminal: None,

@@ -3230,3 +3230,113 @@ fn run_terminal_program_lists_path_and_runs_directly_or_refuses() {
     };
     assert_eq!(err.kind, ErrorKind::Unsupported);
 }
+
+/// Runs `vicinae dmenu` against `daemon` with `stdin`, returning its output.
+fn run_dmenu(daemon: &Daemon, args: &[&str], stdin: &str) -> std::process::Output {
+    use std::io::Write as _;
+    let mut child = Command::new(binary())
+        .arg("--socket")
+        .arg(&daemon.socket)
+        .arg("dmenu")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run vicinae dmenu");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("vicinae dmenu finished")
+}
+
+#[test]
+fn dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+
+    // No window yet: refused, and nothing printed.
+    let refused = run_dmenu(&daemon, &[], "a\nb\n");
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+
+    // A fake window that picks the second entry for an index list, and
+    // dismisses anything else.
+    let socket = daemon.socket.clone();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<compass_ipc::DmenuSpec>::new()));
+    let window = {
+        let seen = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async move {
+                let mut window = compass_ipc::WindowClient::attach(&socket)
+                    .await
+                    .expect("attach");
+                ready_tx.send(()).expect("ready");
+                for _ in 0..2 {
+                    let Some(compass_ipc::WindowCommand::Dmenu(token)) =
+                        window.next_command().await.expect("a command")
+                    else {
+                        panic!("expected a dmenu command");
+                    };
+                    window
+                        .reply(compass_ipc::WindowOutcome::Shown)
+                        .await
+                        .expect("reply");
+                    let mut client = compass_ipc::Client::connect(&socket).await.expect("client");
+                    let compass_ipc::Response::DmenuList { spec } = client
+                        .request(compass_ipc::Request::DmenuFetch { token })
+                        .await
+                        .expect("fetch")
+                    else {
+                        panic!("no dmenu list");
+                    };
+                    let output = spec.output_index.then(|| "1".to_owned());
+                    seen.lock().expect("lock").push(spec);
+                    let answered = client
+                        .request(compass_ipc::Request::DmenuChoose { token, output })
+                        .await
+                        .expect("choose");
+                    assert_eq!(answered, compass_ipc::Response::Ack);
+                }
+            });
+        })
+    };
+    ready_rx.recv_timeout(STARTUP_TIMEOUT).expect("attached");
+
+    let chosen = run_dmenu(
+        &daemon,
+        &["--format", "index", "-p", "Pick one", "-W", "300"],
+        "alpha\nbeta\n\ngamma\n",
+    );
+    assert!(
+        chosen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&chosen.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&chosen.stdout), "1\n");
+
+    let dismissed = run_dmenu(&daemon, &[], "alpha\n");
+    assert_eq!(
+        dismissed.status.code(),
+        Some(1),
+        "dismissed: exit 1, as the C++"
+    );
+    assert!(dismissed.stdout.is_empty());
+
+    window.join().expect("the fake window finished");
+    let seen = seen.lock().expect("lock");
+    assert_eq!(seen[0].content, "alpha\nbeta\n\ngamma\n");
+    assert_eq!(seen[0].placeholder.as_deref(), Some("Pick one"));
+    assert!(
+        seen[0].no_quick_look && seen[0].no_footer,
+        "a list narrower than 500 px drops quick look and the footer"
+    );
+    assert!(!seen[1].output_index);
+}

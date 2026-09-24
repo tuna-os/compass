@@ -25,6 +25,7 @@ use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
+mod dmenu;
 mod programs;
 mod scripts;
 mod shortcuts;
@@ -476,6 +477,8 @@ enum Page {
     ScriptOutput(crate::script_page::ScriptOutputPage),
     /// Run Terminal Program.
     Programs(crate::programs_page::ProgramsPage),
+    /// A `vicinae dmenu` list.
+    Dmenu(crate::dmenu_page::DmenuPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -1025,7 +1028,8 @@ impl LauncherApp {
     fn conceal(&mut self) -> Task<Message> {
         self.cancel_search();
         self.panel = None;
-        let closing = self.close_extension_view();
+        let dismissed = self.cancel_dmenu();
+        let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
         self.page = Page::Root;
         let hidden = self.hide_window();
@@ -1185,6 +1189,15 @@ impl LauncherApp {
                 line.push_str(&format!(" selected_title={title:?}"));
             }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::Dmenu(page) = &self.page {
+            line.push_str(&format!(
+                " page=dmenu dmenu_token={} dmenu_query={:?} dmenu_shown={} dmenu_selected={}",
+                page.token,
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
         }
         if let Page::Programs(page) = &self.page {
             line.push_str(&format!(
@@ -1399,8 +1412,19 @@ impl LauncherApp {
         // one reply. Set before any branch so every path answers exactly once.
         self.awaiting = true;
 
+        let dmenu = match command {
+            UiCommand::Dmenu(token) => self.start_dmenu(token),
+            _ => Task::none(),
+        };
+        let shown = self.obey_visibility(command);
+        Task::batch([dmenu, shown])
+    }
+
+    /// The visibility half of [`Self::obey`]: every command but `Hide`
+    /// shows the window, `Toggle` depending on where it is.
+    fn obey_visibility(&mut self, command: UiCommand) -> Task<Message> {
         let show = match command {
-            UiCommand::Show => true,
+            UiCommand::Show | UiCommand::Dmenu(_) => true,
             UiCommand::Hide => false,
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
@@ -1773,6 +1797,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_program_panel() {
                     return task;
+                } else if let Some(task) = self.open_dmenu_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1833,6 +1859,7 @@ impl LauncherApp {
                         .or_else(|| self.snippet_panel_action(&id))
                         .or_else(|| self.script_panel_action(&id))
                         .or_else(|| self.program_panel_action(&id))
+                        .or_else(|| self.dmenu_panel_action(&id))
                 {
                     return task;
                 }
@@ -2209,7 +2236,16 @@ impl LauncherApp {
             | Message::ProgramsQueryChanged(_)
             | Message::ProgramSelected(_)
             | Message::ProgramRan(_) => self.program_message(message),
+            Message::DmenuLoaded { .. }
+            | Message::DmenuQueryChanged(_)
+            | Message::DmenuSelected(_)
+            | Message::DmenuChosen(_) => self.dmenu_message(message),
             Message::Back => {
+                // Escape on a dmenu list dismisses it and the launcher, as the
+                // C++'s instant dismiss does.
+                if matches!(self.page, Page::Dmenu(_)) {
+                    return self.conceal();
+                }
                 if let Some(task) = self.back_from_shortcut_form() {
                     return task;
                 }
@@ -2443,6 +2479,9 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::Programs(_)) {
                     return self.programs_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Dmenu(_)) {
+                    return self.dmenu_page_key(key, modifiers);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2685,6 +2724,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::ProgramsQueryChanged as OnInput),
             ),
+            Page::Dmenu(page) => (
+                page.placeholder(),
+                &page.query,
+                Some(Message::DmenuQueryChanged as OnInput),
+            ),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2750,6 +2794,8 @@ impl LauncherApp {
             self.script_output_body(page)
         } else if let Page::Programs(page) = &self.page {
             self.programs_body(page)
+        } else if let Page::Dmenu(page) = &self.page {
+            self.dmenu_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -4748,6 +4794,8 @@ mod tests {
         script_runs: std::sync::Mutex<Vec<(String, Vec<String>)>>,
         /// The programs Run Terminal Program ran: `(argv, terminal, hold)`.
         programs_ran: std::sync::Mutex<Vec<(Vec<String>, bool, bool)>>,
+        /// The dmenu answers sent: `(token, output)`.
+        dmenu_answers: std::sync::Mutex<Vec<(u64, Option<String>)>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4805,6 +4853,31 @@ mod tests {
         fn open_file(&self, path: String, reveal: bool) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened.lock().unwrap().push((path, reveal));
+                Ok(())
+            })
+        }
+
+        fn fetch_dmenu(
+            &self,
+            token: u64,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::DmenuList> {
+            Box::pin(async move {
+                assert_eq!(token, 5);
+                Ok(crate::backend::DmenuList {
+                    content: "alpha\nbeta\n\ngamma\n".into(),
+                    section_title: Some("Pick ({count})".into()),
+                    ..crate::backend::DmenuList::default()
+                })
+            })
+        }
+
+        fn choose_dmenu(
+            &self,
+            token: u64,
+            output: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.dmenu_answers.lock().unwrap().push((token, output));
                 Ok(())
             })
         }
@@ -7338,6 +7411,58 @@ mod tests {
                 .is_some_and(|n| n.contains("need the Compass engine")),
             "{:?}",
             page.notice
+        );
+    }
+
+    // ---- dmenu ----
+
+    fn dmenu_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        // Already open, so the summon focuses it rather than opening one,
+        // which only a running event loop could answer.
+        app.window = Some(window::Id::unique());
+        let task = app.update(Message::Command(UiCommand::Dmenu(5)));
+        settle(&mut app, task);
+        (app, backend)
+    }
+
+    #[test]
+    fn a_pushed_dmenu_list_is_shown_filtered_and_answered_with_the_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = dmenu_app(dir.path());
+        let Page::Dmenu(page) = &app.page else {
+            panic!("no dmenu view: {}", app.state_line());
+        };
+        assert_eq!(page.entries, ["alpha", "beta", "gamma"]);
+        assert_eq!(page.heading().as_deref(), Some("Pick (3)"));
+
+        let _ = app.update(Message::DmenuQueryChanged("gama".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.dmenu_answers.lock().unwrap().as_slice(),
+            [(5, Some("gamma".to_owned()))]
+        );
+        assert!(
+            matches!(app.page, Page::Root),
+            "choosing hides the launcher"
+        );
+    }
+
+    #[test]
+    fn escape_dismisses_a_dmenu_list_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = dmenu_app(dir.path());
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.dmenu_answers.lock().unwrap().as_slice(),
+            [(5, None)],
+            "one dismissal, however the view went away"
         );
     }
 

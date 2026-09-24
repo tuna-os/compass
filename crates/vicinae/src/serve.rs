@@ -108,6 +108,8 @@ pub struct EngineState {
     script_runs: Arc<crate::scripts::Runs>,
     /// Run Terminal Program's `default-action` preference.
     run_program_default: String,
+    /// `vicinae dmenu` lists waiting on the launcher.
+    dmenus: Arc<crate::dmenu::Pending>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -192,6 +194,7 @@ impl EngineState {
             snippets,
             scripts,
             script_runs: Arc::default(),
+            dmenus: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -247,6 +250,7 @@ impl EngineState {
             scripts: crate::scripts::Scripts::default(),
             script_runs: Arc::default(),
             run_program_default: crate::programs::default_action(None),
+            dmenus: Arc::default(),
         }
     }
 
@@ -1727,6 +1731,39 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         Request::StopScript { session } => {
             state.read().await.script_runs.stop(session);
             Response::Ack
+        }
+        Request::Dmenu { spec } => {
+            let (slot, dmenus) = {
+                let state = state.read().await;
+                (state.window_slot(), Arc::clone(&state.dmenus))
+            };
+            let (token, chosen) = dmenus.open(spec);
+            match forward(&slot, WindowCommand::Dmenu(token), "show a dmenu list").await {
+                Response::Ack => Response::DmenuOutput {
+                    output: chosen.await.unwrap_or_default(),
+                },
+                refused => {
+                    dmenus.choose(token, None);
+                    refused
+                }
+            }
+        }
+        Request::DmenuFetch { token } => match state.read().await.dmenus.spec(token) {
+            Some(spec) => Response::DmenuList { spec },
+            None => Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no dmenu list has that token",
+            )),
+        },
+        Request::DmenuChoose { token, output } => {
+            if state.read().await.dmenus.choose(token, output) {
+                Response::Ack
+            } else {
+                Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no dmenu list has that token",
+                ))
+            }
         }
         Request::ListPrograms => {
             let default_action = state.read().await.run_program_default.clone();
