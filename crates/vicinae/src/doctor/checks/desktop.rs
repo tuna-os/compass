@@ -210,7 +210,8 @@ async fn absent_extension<B: BusProbe>(bus: &B) -> DoctorCheck {
             "GNOME Shell is running but the Compass extension is not installed: nothing exports \
              {EXTENSION_INTERFACE} at {EXTENSION_OBJECT_PATH} on {GNOME_SHELL_BUS_NAME}. On \
              GNOME 50/51 the extension is the only mechanism available for these, so \
-             {EXTENSION_DEGRADATION}"
+             {EXTENSION_DEGRADATION}. Install compass@tuna-os.github.io: \
+             extensions/gnome-shell/README.md in the Compass repository says how"
         ),
     )
 }
