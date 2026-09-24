@@ -1,7 +1,7 @@
 //! Builtin commands: root-list rows that open a view instead of launching an
 //! application.
 //!
-//! Each is a [`RootItem`](crate::root_items::RootItem) under the `commands`
+//! Each is a [`RootItem`] under the `commands`
 //! provider, appended to the application index's roots so that one search
 //! ranks both, with the same fuzzy scoring, typo tolerance and frecency, and
 //! so the user's aliases and disabled flags apply to them unchanged.
