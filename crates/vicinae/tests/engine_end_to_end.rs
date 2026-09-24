@@ -1078,6 +1078,22 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
     // In the extension's support directory, one of the two places the sandbox
     // lets it write. Not the tempdir: that is under /tmp, which it may not.
     let out = root.join("data-home/vicinae/support/hello/greeting.txt");
+    let acted = root.join("data-home/vicinae/support/hello/acted.txt");
+    std::fs::write(
+        ext.join("show.js"),
+        format!(
+            "const React = require('react');
+             const {{ List, ActionPanel, Action }} = require('@vicinae/api');
+             module.exports.default = () => React.createElement(List, {{ navigationTitle: 'Greetings' }},
+               React.createElement(List.Item, {{ title: 'hello', id: 'h', actions:
+                 React.createElement(ActionPanel, null,
+                   React.createElement(Action, {{ title: 'Act', onAction: () =>
+                     require('node:fs').writeFileSync({acted:?}, 'acted') }}))
+               }}));",
+            acted = acted.to_string_lossy()
+        ),
+    )
+    .unwrap();
     // Outside every path the sandbox grants: the data home itself, beside the
     // support directory the command may write.
     let escape = root.join("data-home/escape.txt");
@@ -1145,21 +1161,92 @@ fn an_installed_extension_command_is_found_and_a_no_view_one_runs() {
     );
 
     let Response::Error(err) = daemon.request(Request::RunExtensionCommand {
-        id: "@someone/hello:show".into(),
-    }) else {
-        panic!("a view command was not refused");
-    };
-    assert_eq!(err.kind, ErrorKind::Unsupported);
-    assert!(
-        err.message.contains("cannot draw extension views"),
-        "{}",
-        err.message
-    );
-
-    let Response::Error(err) = daemon.request(Request::RunExtensionCommand {
         id: "@someone/hello:nothing".into(),
     }) else {
         panic!("an unknown id was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+#[test]
+fn a_view_command_renders_and_its_action_runs() {
+    use compass_extension_api::View;
+    use compass_ipc::{ErrorKind, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_path_buf();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:show".into(),
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("the view command did not start a session: {started:?}");
+    };
+
+    let mut after = 0;
+    let view = loop {
+        let answer = daemon.request(Request::ExtensionView { session, after });
+        let Response::ExtensionView {
+            version,
+            view_json,
+            problem,
+            ended,
+        } = answer
+        else {
+            panic!("no view answer: {answer:?}");
+        };
+        assert!(!ended, "the command ended: {problem:?}");
+        assert_eq!(problem, None);
+        if let Some(json) = view_json {
+            break serde_json::from_str::<View>(&json).expect("a View");
+        }
+        after = version;
+    };
+    let View::List(list) = view else {
+        panic!("not a list: {view:?}");
+    };
+    assert_eq!(list.navigation_title.as_deref(), Some("Greetings"));
+    let item = &list.sections[0].items[0];
+    assert_eq!(item.title, "hello");
+    let action = item.actions.as_ref().expect("actions").actions()[0].clone();
+    assert_eq!(action.title, "Act");
+
+    let acted = root.join("data-home/vicinae/support/hello/acted.txt");
+    assert_eq!(
+        daemon.request(Request::ExtensionEvent {
+            session,
+            handler: action.handler.0.clone(),
+            args_json: "[]".into(),
+        }),
+        Response::Ack
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !acted.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&acted).ok().as_deref(),
+        Some("acted"),
+        "the action's onAction ran in the extension"
+    );
+
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+    let Response::Error(err) = daemon.request(Request::ExtensionView { session, after: 0 }) else {
+        panic!("a closed session still answers");
     };
     assert_eq!(err.kind, ErrorKind::BadRequest);
 }

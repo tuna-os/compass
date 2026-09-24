@@ -820,16 +820,57 @@ mod fig_methods {
 /// exactly the moment they are wanted.
 pub struct Worker {
     child: std::process::Child,
-    stdin: std::process::ChildStdin,
+    writer: WorkerWriter,
     reader: FrameReader<std::process::ChildStdout>,
-    next_id: u64,
+}
+
+/// The write half of a [`Worker`], which can be cloned onto another thread.
+///
+/// A worker is read by one thread that blocks until the next frame. A person
+/// acting on a view (choosing an action, typing a search) has to reach the
+/// worker meanwhile, so writes go through this: one pipe and one id counter
+/// shared behind a lock, so two writers never interleave a frame or reuse an
+/// id.
+#[derive(Clone)]
+pub struct WorkerWriter {
+    stdin: std::sync::Arc<std::sync::Mutex<std::process::ChildStdin>>,
+    next_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl std::fmt::Debug for WorkerWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkerWriter").finish_non_exhaustive()
+    }
+}
+
+impl WorkerWriter {
+    /// Sends a request, as [`Worker::request`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Worker::request`].
+    pub fn request(&self, method: &str, params: serde_json::Value) -> Result<u64, WorkerError> {
+        use std::io::Write as _;
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let body = serde_json::to_vec(&rpc::Request::new(id, method, params))?;
+        let framed = encode(&body)?;
+        let mut stdin = self
+            .stdin
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        stdin.write_all(&framed).map_err(WorkerError::Write)?;
+        stdin.flush().map_err(WorkerError::Write)?;
+        Ok(id)
+    }
 }
 
 impl std::fmt::Debug for Worker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Worker")
             .field("pid", &self.child.id())
-            .field("next_id", &self.next_id)
+            .field("writer", &self.writer)
             .finish_non_exhaustive()
     }
 }
@@ -884,9 +925,11 @@ impl Worker {
 
         Ok(Self {
             child,
-            stdin,
+            writer: WorkerWriter {
+                stdin: std::sync::Arc::new(std::sync::Mutex::new(stdin)),
+                next_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            },
             reader: FrameReader::new(stdout),
-            next_id: 1,
         })
     }
 
@@ -932,16 +975,13 @@ impl Worker {
     /// [`WorkerError::Write`] if the pipe is gone — which is how a worker that
     /// has died presents — or [`WorkerError::Frame`] if the payload is too big.
     pub fn request(&mut self, method: &str, params: serde_json::Value) -> Result<u64, WorkerError> {
-        let id = self.next_id;
-        self.next_id += 1;
+        self.writer.request(method, params)
+    }
 
-        let body = serde_json::to_vec(&rpc::Request::new(id, method, params))?;
-        let framed = encode(&body)?;
-
-        use std::io::Write as _;
-        self.stdin.write_all(&framed).map_err(WorkerError::Write)?;
-        self.stdin.flush().map_err(WorkerError::Write)?;
-        Ok(id)
+    /// A write half for another thread. See [`WorkerWriter`].
+    #[must_use]
+    pub fn writer(&self) -> WorkerWriter {
+        self.writer.clone()
     }
 
     /// Reads the next message from the worker, or `None` at a clean exit.
@@ -967,7 +1007,10 @@ impl Worker {
     ///
     /// [`WorkerError::Spawn`] if waiting fails.
     pub fn shutdown(mut self) -> Result<std::process::ExitStatus, WorkerError> {
-        drop(self.stdin);
+        // Only this handle's share: a `WorkerWriter` still held elsewhere keeps
+        // the pipe open, and `wait` then returns when the worker exits on its
+        // own or is killed.
+        drop(self.writer);
         self.child.wait().map_err(WorkerError::Spawn)
     }
 

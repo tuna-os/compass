@@ -93,6 +93,8 @@ pub struct EngineState {
     /// The GNOME Shell extension's client, once the session bus answered.
     /// `None` until then, and for good without a session bus.
     shell: Option<Arc<compass_shell::ShellClient>>,
+    /// Running extension view commands, which the launcher follows.
+    views: Arc<crate::extension_runner::Views>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -145,6 +147,7 @@ impl EngineState {
             window: WindowSlot::default(),
             clipboard: None,
             shell: None,
+            views: Arc::default(),
         }
     }
 
@@ -189,6 +192,7 @@ impl EngineState {
             window: WindowSlot::default(),
             clipboard: None,
             shell: None,
+            views: Arc::default(),
         }
     }
 
@@ -287,13 +291,17 @@ async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> 
             "Running extensions needs a data directory, and $XDG_DATA_HOME and $HOME are unset",
         ));
     };
-    let storage = extension_storage(&data_dir).await;
+    let host = crate::extension_runner::Host {
+        storage: extension_storage(&data_dir).await,
+        shell: state.read().await.shell.clone(),
+        views: Arc::clone(&state.read().await.views),
+    };
     let started = tokio::task::spawn_blocking(move || {
-        crate::extension_runner::start(&runtime, &command, &data_dir, storage)
+        crate::extension_runner::start(&runtime, &command, &data_dir, host)
     })
     .await;
     match started {
-        Ok(Ok(())) => {
+        Ok(Ok(started)) => {
             let recorded = tokio::task::spawn_blocking({
                 let state = Arc::clone(state);
                 move || state.blocking_write().frecency.record_launch(&id)
@@ -302,13 +310,39 @@ async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> 
             if !matches!(recorded, Ok(Ok(()))) {
                 tracing::warn!("could not record running an extension command");
             }
-            Response::Ack
+            match started {
+                crate::extension_runner::Started::Ran => Response::Ack,
+                crate::extension_runner::Started::View(session) => {
+                    Response::ExtensionStarted { session }
+                }
+            }
         }
         Ok(Err(reason)) => Response::Error(ProtocolError::new(ErrorKind::Internal, reason)),
         Err(err) => Response::Error(ProtocolError::new(
             ErrorKind::Internal,
             format!("the extension task failed: {err}"),
         )),
+    }
+}
+
+/// How long an `ExtensionView` is held open waiting for a change.
+const VIEW_POLL: std::time::Duration = std::time::Duration::from_secs(20);
+
+async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u64) -> Response {
+    let Some(mut watch) = state.read().await.views.watch(session) else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no extension view is running with that session",
+        ));
+    };
+    // A timeout is an answer too: the same version, so the launcher asks again.
+    let _ = tokio::time::timeout(VIEW_POLL, watch.wait_for(|view| view.version > after)).await;
+    let view = watch.borrow().clone();
+    Response::ExtensionView {
+        version: view.version,
+        view_json: view.view,
+        problem: view.problem,
+        ended: view.ended,
     }
 }
 
@@ -568,6 +602,39 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
 
         Request::RunExtensionCommand { id } => run_extension_command(state, id).await,
+        Request::ExtensionView { session, after } => extension_view(state, session, after).await,
+        Request::ExtensionEvent {
+            session,
+            handler,
+            args_json,
+        } => {
+            let args: Vec<serde_json::Value> = match serde_json::from_str(&args_json) {
+                Ok(args) => args,
+                Err(err) => {
+                    return Response::Error(ProtocolError::new(
+                        ErrorKind::BadRequest,
+                        format!("args_json is not a JSON array: {err}"),
+                    ));
+                }
+            };
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.activate(session, &handler, &args))
+                .await
+            {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the extension event task failed: {err}"),
+                )),
+            }
+        }
+        Request::CloseExtension { session } => {
+            state.read().await.views.close(session);
+            Response::Ack
+        }
 
         Request::ClipboardSetPinned { .. } | Request::ClipboardRemove { .. } => {
             let Some(store) = state.read().await.clipboard.clone() else {

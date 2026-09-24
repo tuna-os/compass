@@ -32,8 +32,9 @@ use serde::{Deserialize, Serialize};
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
 /// Version 4 adds clipboard history; version 5, fetching an entry's content;
 /// version 6, window switching; version 7, pasting, pinning and removing a
-/// clipboard entry, and running an installed extension's command.
-pub const PROTOCOL_VERSION: u16 = 7;
+/// clipboard entry, and running an installed extension's command; version 8,
+/// following and driving an extension's view.
+pub const PROTOCOL_VERSION: u16 = 8;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,6 +203,34 @@ pub enum Request {
         /// [`QueryHit::id`].
         id: String,
     },
+    /// What a view command's session shows, once it differs from `after`.
+    ///
+    /// Held open until the session's version passes `after` or a timeout,
+    /// then answered with [`Response::ExtensionView`] either way; the
+    /// launcher asks again with the version it got. A session that is not
+    /// running is a bad request.
+    ExtensionView {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// The last version the launcher has; zero for none.
+        after: u64,
+    },
+    /// Run one of the view's callbacks: an action's handler, the search bar's
+    /// change handler, the selection handler. Answered with [`Response::Ack`].
+    ExtensionEvent {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// The handler id the view carries.
+        handler: String,
+        /// Its arguments, as a JSON array.
+        args_json: String,
+    },
+    /// The person left the view: stop the command. Answered with
+    /// [`Response::Ack`].
+    CloseExtension {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+    },
 }
 
 /// What the engine answers.
@@ -255,6 +284,22 @@ pub enum Response {
     Windows {
         /// Every window the extension reports.
         windows: Vec<WindowInfo>,
+    },
+    /// A view command started: follow it with [`Request::ExtensionView`].
+    ExtensionStarted {
+        /// The session to follow.
+        session: u64,
+    },
+    /// Answer to [`Request::ExtensionView`].
+    ExtensionView {
+        /// The session's version now; equal to `after` on a timeout.
+        version: u64,
+        /// The view, as `compass_extension_api::View` JSON, once rendered.
+        view_json: Option<String>,
+        /// Why the view cannot be drawn, or why the command ended.
+        problem: Option<String>,
+        /// Whether the command has ended.
+        ended: bool,
     },
 }
 

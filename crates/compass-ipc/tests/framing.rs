@@ -65,6 +65,20 @@ fn all_requests() -> Vec<Request> {
         Request::RunExtensionCommand {
             id: "@raycast/github:search-repositories".into(),
         },
+        Request::ExtensionView {
+            session: 1,
+            after: 0,
+        },
+        Request::ExtensionView {
+            session: u64::MAX,
+            after: u64::MAX,
+        },
+        Request::ExtensionEvent {
+            session: 1,
+            handler: "cb-7".into(),
+            args_json: "[\"é 🚀\", 3]".into(),
+        },
+        Request::CloseExtension { session: 1 },
     ]
 }
 
@@ -171,6 +185,19 @@ fn all_responses() -> Vec<Response> {
                 can_close: false,
             }],
         },
+        Response::ExtensionStarted { session: 7 },
+        Response::ExtensionView {
+            version: 3,
+            view_json: Some("{\"kind\":\"list\"}".into()),
+            problem: None,
+            ended: false,
+        },
+        Response::ExtensionView {
+            version: u64::MAX,
+            view_json: None,
+            problem: Some("Compass cannot draw the extension component <grid> yet".into()),
+            ended: true,
+        },
     ]
 }
 
@@ -198,6 +225,9 @@ fn request_variants_are_exhaustive() {
             | Request::ClipboardSetPinned { .. }
             | Request::ClipboardRemove { .. }
             | Request::RunExtensionCommand { .. }
+            | Request::ExtensionView { .. }
+            | Request::ExtensionEvent { .. }
+            | Request::CloseExtension { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -217,6 +247,8 @@ fn response_variants_are_exhaustive() {
             | Response::ClipboardHistory { .. }
             | Response::ClipboardContent { .. }
             | Response::Windows { .. }
+            | Response::ExtensionStarted { .. }
+            | Response::ExtensionView { .. }
             | Response::Window(_) => {}
         }
     }

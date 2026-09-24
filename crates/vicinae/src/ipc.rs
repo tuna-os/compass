@@ -115,6 +115,9 @@ fn describe(request: &Request) -> &'static str {
         Request::ClipboardSetPinned { .. } => "ClipboardSetPinned",
         Request::ClipboardRemove { .. } => "ClipboardRemove",
         Request::RunExtensionCommand { .. } => "RunExtensionCommand",
+        Request::ExtensionView { .. } => "ExtensionView",
+        Request::ExtensionEvent { .. } => "ExtensionEvent",
+        Request::CloseExtension { .. } => "CloseExtension",
     }
 }
 

@@ -30,12 +30,17 @@ use compass_core::alert::Alert;
 use compass_core::extension_commands::ExtensionCommand;
 use compass_core::manifest::CommandMode;
 use compass_worker_host::Worker;
+use compass_worker_host::clipboard_service::{
+    Clipboard, ClipboardService, Content, CopyOptions, ReadContent,
+};
 use compass_worker_host::extension_manager::{
     Capabilities, CommandEnv, LaunchType, LoadOptions, ManagerClient,
 };
+use compass_worker_host::session::SessionEvents;
 use compass_worker_host::session::{Router, Session, Turn};
 use compass_worker_host::storage_service::StorageService;
 use compass_worker_host::tsapi::Deferral;
+use compass_worker_host::ui_service::UiService;
 use compass_worker_host::ui_shell_service::{
     CloseWindow, CommandInfo, Notification, Shell, ToastStyle, UiShellService,
 };
@@ -250,12 +255,6 @@ impl std::fmt::Debug for Storage {
 /// Why a command will not run, as a sentence; `None` when it can.
 #[must_use]
 pub fn refusal(command: &ExtensionCommand) -> Option<String> {
-    if command.mode == CommandMode::View {
-        return Some(format!(
-            "{} shows a view, and Compass cannot draw extension views yet",
-            command.title
-        ));
-    }
     if let Err(missing) = command.default_preferences() {
         return Some(format!(
             "{} needs {} set, and Compass cannot edit extension preferences yet",
@@ -281,8 +280,13 @@ pub fn start(
     runtime: &Runtime,
     command: &ExtensionCommand,
     data_dir: &Path,
-    storage: Option<Storage>,
-) -> Result<(), String> {
+    host: Host,
+) -> Result<Started, String> {
+    let Host {
+        storage,
+        shell,
+        views,
+    } = host;
     if let Some(reason) = refusal(command) {
         return Err(reason);
     }
@@ -318,7 +322,10 @@ pub fn start(
     watch(pid, Arc::clone(&activity), LOAD_TIMEOUT);
 
     let options = LoadOptions {
-        mode: compass_worker_host::extension_manager::CommandMode::NoView,
+        mode: match command.mode {
+            CommandMode::View => compass_worker_host::extension_manager::CommandMode::View,
+            CommandMode::NoView => compass_worker_host::extension_manager::CommandMode::NoView,
+        },
         env: CommandEnv::Production,
         vicinae_path: data_dir.to_string_lossy().into_owned(),
         entrypoint: command.entrypoint.to_string_lossy().into_owned(),
@@ -358,41 +365,89 @@ pub fn start(
         .ready(&session_id)
         .map_err(|err| format!("The extension runtime failed: {err}"))?;
     activity.touch();
-    activity.run_for(LIFETIME);
+    // A view lives until the person leaves it; only a no-view run is timed.
+    let view = (command.mode == CommandMode::View).then(|| views.open(pid));
+    if view.is_some() {
+        activity.run_forever();
+    } else {
+        activity.run_for(LIFETIME);
+    }
 
     let title = command.title.clone();
     let name = command.name.clone();
     let namespace = compass_local_storage::namespace_for(&command.extension_id);
     let handle = tokio::runtime::Handle::try_current().ok();
+    let started = view
+        .as_ref()
+        .map_or(Started::Ran, |view| Started::View(view.session));
     std::thread::Builder::new()
         .name(format!("extension {}", command.id))
         .spawn(move || {
             serve(
                 worker,
-                &session_id,
-                &title,
-                &name,
-                &namespace,
+                &Served {
+                    session_id,
+                    title,
+                    name,
+                    namespace,
+                },
                 storage,
+                ShellClipboard {
+                    shell,
+                    handle: handle.clone(),
+                },
                 handle,
                 &activity,
+                view,
             );
         })
         .map_err(|err| format!("could not start a thread for the command: {err}"))?;
-    Ok(())
+    Ok(started)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What one run needs from the engine beyond the command itself.
+#[derive(Debug, Default)]
+pub struct Host {
+    /// Local storage, or `None` without a keyring.
+    pub storage: Option<Storage>,
+    /// The GNOME Shell extension, which is the clipboard on GNOME.
+    pub shell: Option<Arc<compass_shell::ShellClient>>,
+    /// Where a view command's session is published.
+    pub views: Arc<Views>,
+}
+
+/// How a run began.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Started {
+    /// A no-view command, running on its own.
+    Ran,
+    /// A view command: the launcher follows this session in [`Views`].
+    View(u64),
+}
+
+struct Served {
+    session_id: String,
+    title: String,
+    name: String,
+    namespace: String,
+}
+
 fn serve(
     worker: Worker,
-    session_id: &str,
-    title: &str,
-    name: &str,
-    namespace: &str,
+    served: &Served,
     storage: Option<Storage>,
+    clipboard: ShellClipboard,
     handle: Option<tokio::runtime::Handle>,
     activity: &Activity,
+    view: Option<ViewHandle>,
 ) {
+    let Served {
+        session_id,
+        title,
+        name,
+        namespace,
+    } = served;
+    let title = title.as_str();
     let database = storage.and_then(|storage| open_storage(&storage));
     let local = database
         .as_ref()
@@ -409,17 +464,24 @@ fn serve(
             icon: String::new(),
         },
     );
-    let mut router = Router::new().with(&shell);
+    let clipboard = ClipboardService::new(clipboard);
+    let ui = UiService::new();
+    let mut router = Router::new().with(&shell).with(&clipboard).with(&ui);
     if let Some(service) = &storage_service {
         router = router.with(service);
     }
-    let mut session = Session::new(worker, session_id, router);
+    let mut session = Session::new(worker, session_id.as_str(), router);
+    if let Some(view) = &view {
+        view.attach(session.events());
+    }
+    let mut ended = None;
     loop {
         let turn = match session.pump_once() {
             Ok(turn) => turn,
             Err(err) => {
                 if !activity.stopped() {
                     tracing::warn!(command = title, error = %err, "extension session ended");
+                    ended = Some(format!("{title} stopped: {err}"));
                 }
                 break;
             }
@@ -429,7 +491,13 @@ fn serve(
             Turn::Closed => break,
             Turn::Crashed { reason } => {
                 tracing::warn!(command = title, %reason, "extension command crashed");
+                ended = Some(format!("{title} crashed: {reason}"));
                 break;
+            }
+            Turn::Answered { method } if method == "UI/render" => {
+                if let (Some(view), Some(root)) = (&view, ui.top()) {
+                    view.publish(compass_worker_host::view_model::to_view(&root));
+                }
             }
             Turn::Deferred { method, deferral } => {
                 // Only an alert defers, and nothing can show one yet: "no" is
@@ -444,6 +512,9 @@ fn serve(
         }
     }
     activity.stop();
+    if let Some(view) = view {
+        view.end(ended);
+    }
 }
 
 fn open_storage(storage: &Storage) -> Option<compass_sqlcipher_sys::Database> {
@@ -498,6 +569,12 @@ impl Activity {
         );
     }
 
+    /// A view's run: over only when stopped.
+    fn run_forever(&self) {
+        self.deadline.store(u64::MAX - 1, Ordering::Relaxed);
+        self.last.store(u64::MAX, Ordering::Relaxed);
+    }
+
     fn stop(&self) {
         self.stopped.store(true, Ordering::Relaxed);
     }
@@ -513,6 +590,9 @@ impl Activity {
         let deadline = self.deadline.load(Ordering::Relaxed);
         if deadline == u64::MAX {
             return now > u64::try_from(handshake.as_millis()).unwrap_or(u64::MAX);
+        }
+        if deadline == u64::MAX - 1 {
+            return false;
         }
         let idle = u64::try_from(IDLE.as_millis()).unwrap_or(u64::MAX);
         now > deadline || now.saturating_sub(self.last.load(Ordering::Relaxed)) > idle
@@ -614,4 +694,253 @@ impl Shell for HeadlessShell {
     }
 
     fn show_alert(&self, _alert: &Alert, _deferral: &Deferral) {}
+}
+
+/// Running view commands, as the launcher follows them.
+///
+/// Each session has a [`ViewState`] the launcher long-polls
+/// (`ExtensionView`), and a way to reach the extension (`ExtensionEvent`)
+/// while the serving thread blocks reading it.
+#[derive(Debug, Default)]
+pub struct Views {
+    next: std::sync::atomic::AtomicU64,
+    sessions: std::sync::Mutex<std::collections::HashMap<u64, ViewEntry>>,
+}
+
+#[derive(Debug)]
+struct ViewEntry {
+    state: tokio::sync::watch::Sender<ViewState>,
+    events: Arc<std::sync::Mutex<Option<SessionEvents>>>,
+    pid: u32,
+}
+
+/// What a view session shows now.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ViewState {
+    /// Bumped on every change.
+    pub version: u64,
+    /// The view, as `compass_extension_api::View` JSON; `None` before the
+    /// first render.
+    pub view: Option<String>,
+    /// Why it cannot be drawn (a component Compass does not support), or why
+    /// it ended.
+    pub problem: Option<String>,
+    /// Whether the command has ended.
+    pub ended: bool,
+}
+
+impl Views {
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<u64, ViewEntry>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn open(self: &Arc<Self>, pid: u32) -> ViewHandle {
+        let session = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        let (state, _) = tokio::sync::watch::channel(ViewState::default());
+        let events = Arc::new(std::sync::Mutex::new(None));
+        self.lock().insert(
+            session,
+            ViewEntry {
+                state: state.clone(),
+                events: Arc::clone(&events),
+                pid,
+            },
+        );
+        ViewHandle {
+            session,
+            state,
+            events,
+            views: Arc::clone(self),
+        }
+    }
+
+    /// Follows `session`'s state; `None` for a session that is not running.
+    #[must_use]
+    pub fn watch(&self, session: u64) -> Option<tokio::sync::watch::Receiver<ViewState>> {
+        self.lock()
+            .get(&session)
+            .map(|entry| entry.state.subscribe())
+    }
+
+    /// Sends `handler` with `args` to `session`'s extension.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: the session is gone, or its worker is.
+    pub fn activate(
+        &self,
+        session: u64,
+        handler: &str,
+        args: &[serde_json::Value],
+    ) -> Result<(), String> {
+        let events = self
+            .lock()
+            .get(&session)
+            .map(|entry| Arc::clone(&entry.events))
+            .ok_or_else(|| "That extension view has closed".to_owned())?;
+        let events = events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| "That extension view has not started yet".to_owned())?;
+        events
+            .handler_activated(
+                &compass_extension_api::action::HandlerId::new(handler),
+                args,
+            )
+            .map_err(|err| format!("The extension did not take it: {err}"))
+    }
+
+    /// Ends `session`: its runtime is stopped. `false` when it was not running.
+    pub fn close(&self, session: u64) -> bool {
+        let Some(entry) = self.lock().remove(&session) else {
+            return false;
+        };
+        let _ = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(entry.pid.to_string())
+            .status();
+        true
+    }
+}
+
+/// The serving thread's side of one view session.
+struct ViewHandle {
+    session: u64,
+    state: tokio::sync::watch::Sender<ViewState>,
+    events: Arc<std::sync::Mutex<Option<SessionEvents>>>,
+    views: Arc<Views>,
+}
+
+impl ViewHandle {
+    fn attach(&self, events: SessionEvents) {
+        *self
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(events);
+    }
+
+    fn publish(
+        &self,
+        view: Result<compass_extension_api::View, compass_worker_host::view_model::Unsupported>,
+    ) {
+        self.state.send_modify(|state| {
+            state.version += 1;
+            match view {
+                Ok(view) => {
+                    state.view = serde_json::to_string(&view).ok();
+                    state.problem = None;
+                }
+                Err(unsupported) => state.problem = Some(unsupported.to_string()),
+            }
+        });
+    }
+
+    fn end(self, why: Option<String>) {
+        self.state.send_modify(|state| {
+            state.version += 1;
+            state.ended = true;
+            if why.is_some() {
+                state.problem = why;
+            }
+        });
+        self.views.lock().remove(&self.session);
+    }
+}
+
+/// The clipboard an extension reaches: the GNOME Shell extension's.
+struct ShellClipboard {
+    shell: Option<Arc<compass_shell::ShellClient>>,
+    handle: Option<tokio::runtime::Handle>,
+}
+
+impl ShellClipboard {
+    fn run<T>(
+        &self,
+        what: &str,
+        call: impl FnOnce(
+            Arc<compass_shell::ShellClient>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = compass_shell::Result<T>> + Send>,
+        >,
+    ) -> Option<T> {
+        let (Some(shell), Some(handle)) = (&self.shell, &self.handle) else {
+            tracing::info!(
+                what,
+                "no GNOME Shell extension; the clipboard call did nothing"
+            );
+            return None;
+        };
+        match handle.block_on(call(Arc::clone(shell))) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                tracing::info!(what, error = %err, "clipboard call failed");
+                None
+            }
+        }
+    }
+
+    fn selection(content: Content) -> Option<compass_shell::ClipboardContent> {
+        match content {
+            Content::NoData => None,
+            Content::Text(text) => Some(compass_shell::ClipboardContent::text(text)),
+            Content::Html {
+                text: Some(text), ..
+            } => Some(compass_shell::ClipboardContent::text(text)),
+            Content::Html { html, text: None } => Some(compass_shell::ClipboardContent::binary(
+                html.into_bytes(),
+                "text/html",
+            )),
+            Content::Urls(urls) => Some(compass_shell::ClipboardContent::binary(
+                urls.join("\r\n").into_bytes(),
+                "text/uri-list",
+            )),
+        }
+    }
+}
+
+impl Clipboard for ShellClipboard {
+    fn copy(&self, content: Content, _options: CopyOptions) {
+        let Some(selection) = Self::selection(content) else {
+            return;
+        };
+        self.run("copy", move |shell| {
+            Box::pin(async move { shell.set_clipboard(&selection).await })
+        });
+    }
+
+    fn paste(&self, content: Content) {
+        let Some(selection) = Self::selection(content) else {
+            return;
+        };
+        self.run("paste", move |shell| {
+            Box::pin(async move {
+                shell.set_clipboard(&selection).await?;
+                shell.paste(&[]).await
+            })
+        });
+    }
+
+    fn clear(&self) {
+        self.run("clear", |shell| {
+            Box::pin(async move {
+                shell
+                    .set_clipboard(&compass_shell::ClipboardContent::text(""))
+                    .await
+            })
+        });
+    }
+
+    fn read(&self) -> ReadContent {
+        self.run("read", |shell| {
+            Box::pin(async move { shell.clipboard().await })
+        })
+        .map(|content| ReadContent {
+            text: content.as_text().unwrap_or_default().to_owned(),
+            ..ReadContent::default()
+        })
+        .unwrap_or_default()
+    }
 }

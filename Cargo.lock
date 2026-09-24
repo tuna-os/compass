@@ -5622,6 +5622,7 @@ dependencies = [
  "compass-core",
  "compass-crypto",
  "compass-db",
+ "compass-extension-api",
  "compass-ipc",
  "compass-local-storage",
  "compass-notify",
