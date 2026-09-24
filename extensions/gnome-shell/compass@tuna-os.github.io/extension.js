@@ -16,7 +16,7 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-const CONTRACT_VERSION = 2;
+const CONTRACT_VERSION = 3;
 const WINDOWS_PATH = '/org/gnome/Shell/Extensions/Vicinae/Windows';
 const CLIPBOARD_PATH = '/org/gnome/Shell/Extensions/Vicinae/Clipboard';
 
@@ -75,6 +75,12 @@ class WindowsService {
             const pid = window.get_pid();
             if (pid > 0)
                 entry.pid = new GLib.Variant('u', pid);
+            entry.fullscreen = new GLib.Variant('b', window.is_fullscreen());
+            const frame = window.get_frame_rect();
+            entry.x = new GLib.Variant('i', frame.x);
+            entry.y = new GLib.Variant('i', frame.y);
+            entry.width = new GLib.Variant('i', frame.width);
+            entry.height = new GLib.Variant('i', frame.height);
             return entry;
         });
     }
@@ -158,6 +164,12 @@ class ClipboardService {
     GetClipboardAsync(_params, invocation) {
         this._read((bytes, mime) => {
             invocation.return_value(new GLib.Variant('(ays)', [bytes, mime]));
+        });
+    }
+
+    GetPrimarySelectionAsync(_params, invocation) {
+        this._clipboard.get_text(St.ClipboardType.PRIMARY, (_clipboard, text) => {
+            invocation.return_value(new GLib.Variant('(s)', [text ?? '']));
         });
     }
 

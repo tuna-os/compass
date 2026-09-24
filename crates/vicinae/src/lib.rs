@@ -22,6 +22,7 @@ pub mod doctor;
 pub mod engine;
 pub mod extension_apps;
 pub mod extension_runner;
+pub mod extension_windows;
 pub mod file_search;
 pub mod fonts;
 pub mod hotkey;

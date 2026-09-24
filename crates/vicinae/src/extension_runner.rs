@@ -590,6 +590,19 @@ fn serve(
         apps,
     } = served;
     let title = title.as_str();
+    let windows = compass_worker_host::window_service::WindowService::new(
+        crate::extension_windows::EngineWindows::detect(
+            clipboard.shell.clone(),
+            clipboard.handle.clone(),
+            apps.as_ref()
+                .map(crate::extension_apps::EngineApps::window_classes)
+                .unwrap_or_default(),
+        ),
+    );
+    let selection = Selection {
+        shell: clipboard.shell.clone(),
+        handle: clipboard.handle.clone(),
+    };
     let database = storage.and_then(|storage| open_storage(&storage));
     let local = database
         .as_ref()
@@ -602,6 +615,7 @@ fn serve(
             handle,
             alert: std::sync::Mutex::new(None),
             view: view.as_ref().map(|view| view.state.clone()),
+            selection,
         },
         CommandInfo {
             name: name.to_owned(),
@@ -610,7 +624,11 @@ fn serve(
     );
     let clipboard = ClipboardService::new(clipboard);
     let ui = UiService::new();
-    let mut router = Router::new().with(&shell).with(&clipboard).with(&ui);
+    let mut router = Router::new()
+        .with(&shell)
+        .with(&clipboard)
+        .with(&ui)
+        .with(&windows);
     if let Some(service) = &storage_service {
         router = router.with(service);
     }
@@ -980,6 +998,43 @@ struct HeadlessShell {
     /// A view's state, where its toasts are shown; `None` for a no-view run,
     /// whose toasts become notifications.
     view: Option<tokio::sync::watch::Sender<ViewState>>,
+    /// Where `getSelectedText` reads from.
+    selection: Selection,
+}
+
+/// `getSelectedText`'s answer, verbatim from the C++, when nothing is
+/// selected or there is nowhere to read a selection from.
+pub const NO_SELECTED_TEXT: &str = "Unable to get selected text";
+
+/// The primary selection, as `LinuxSelectionService` reads it: over
+/// data-control on a wlroots compositor, and through the Shell extension on
+/// GNOME, where Mutter has no data-control and only a focused client may read
+/// the primary selection.
+struct Selection {
+    shell: Option<Arc<compass_shell::ShellClient>>,
+    handle: Option<tokio::runtime::Handle>,
+}
+
+impl Selection {
+    fn text(&self) -> Result<String, String> {
+        let text = if data_control() {
+            compass_wayland::clipboard::read_primary_text().unwrap_or_else(|err| {
+                tracing::info!(error = %err, "could not read the primary selection");
+                None
+            })
+        } else if let (Some(shell), Some(handle)) = (&self.shell, &self.handle) {
+            let shell = Arc::clone(shell);
+            handle
+                .block_on(async move { shell.primary_selection().await })
+                .unwrap_or_else(|err| {
+                    tracing::info!(error = %err, "could not read the primary selection");
+                    None
+                })
+        } else {
+            None
+        };
+        text.ok_or_else(|| NO_SELECTED_TEXT.to_owned())
+    }
 }
 
 impl HeadlessShell {
@@ -1060,7 +1115,7 @@ impl Shell for HeadlessShell {
     fn set_search_text(&self, _text: &str) {}
 
     fn selected_text(&self) -> Result<String, String> {
-        Err("Selected text is not available to extensions in Compass yet".to_owned())
+        self.selection.text()
     }
 
     fn send_notification(&self, notification: &Notification) {

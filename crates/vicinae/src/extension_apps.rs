@@ -85,6 +85,25 @@ impl EngineApps {
         true
     }
 
+    /// Every application with what `AppService::findByClass` matches a
+    /// window's class against, for the extension's window manager.
+    #[must_use]
+    pub fn window_classes(&self) -> Vec<(compass_core::app_windows::AppIdentity, Application)> {
+        self.apps
+            .iter()
+            .map(|(app, entry)| {
+                (
+                    compass_core::app_windows::AppIdentity {
+                        desktop_id: app.id.clone(),
+                        startup_wm_class: entry.startup_wm_class().map(str::to_owned),
+                        display_name: app.name.clone(),
+                    },
+                    app.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// The name of the terminal a command would run in, if one is
     /// installed.
     #[must_use]

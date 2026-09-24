@@ -1096,6 +1096,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "tiles", "title": "Tiles", "mode": "view"},
               {"name": "toaster", "title": "Toaster", "mode": "view"},
               {"name": "heap", "title": "Heap", "mode": "no-view"},
+              {"name": "machine", "title": "Machine", "mode": "view"},
               {"name": "probe", "title": "Probe", "mode": "no-view",
                "preferences": [{"name": "limit", "title": "Limit", "type": "textfield",
                                 "required": false, "default": "20"}]},
@@ -1289,6 +1290,28 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                React.createElement(ActionPanel, null,
                  React.createElement(Action, { title: 'Hide', onAction: () => toast.hide() }))
              }));
+         };",
+    )
+    .unwrap();
+    // Asks the host what a command can learn about the desktop, and shows the
+    // answers (or the rejections) in one line.
+    std::fs::write(
+        ext.join("machine.js"),
+        "const React = require('react');
+         const { Detail, getSelectedText, WindowManagement } = require('@vicinae/api');
+         const said = (p) => p.then((v) => JSON.stringify(v), (e) => 'error: ' + String(e));
+         module.exports.default = () => {
+           const [text, setText] = React.useState('');
+           React.useEffect(() => {
+             Promise.all([
+               said(getSelectedText()),
+               said(WindowManagement.getActiveWindow()),
+               said(WindowManagement.getWindows()),
+               said(WindowManagement.getScreens()),
+               said(WindowManagement.getActiveWorkspace()),
+             ]).then((answers) => setText(answers.join(' | ')));
+           }, []);
+           return React.createElement(Detail, { markdown: text || 'asking' });
          };",
     )
     .unwrap();
@@ -1527,6 +1550,52 @@ fn wait_for_view(
         after = version;
     }
     panic!("the view never got there");
+}
+
+#[test]
+fn without_a_desktop_the_selection_and_window_apis_answer_as_the_cpp_does() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:machine".into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("no session: {started:?}");
+    };
+    // No session bus and no Wayland display: no Shell extension, no
+    // compositor. Every call is answered, none of them "not implemented".
+    let (view, _) = wait_for_view(
+        &daemon,
+        session,
+        |view, _| matches!(view, View::Detail(detail) if detail.markdown.as_deref() != Some("asking")),
+    );
+    let View::Detail(detail) = view else {
+        unreachable!()
+    };
+    assert_eq!(
+        detail.markdown.as_deref(),
+        Some(
+            "error: Unable to get selected text | error: No active window | [] | [] \
+             | error: No active workspace"
+        )
+    );
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
 }
 
 #[test]

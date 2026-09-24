@@ -45,6 +45,24 @@ pub struct Window {
     pub workspace: Option<i32>,
     /// Whether the window advertises that it can be closed.
     pub can_close: bool,
+    /// Whether the window is full-screen (contract 3; `false` before).
+    pub fullscreen: bool,
+    /// Its frame, when the extension reports one (contract 3).
+    pub frame: Option<Frame>,
+}
+
+/// A window's frame in stage coordinates, as `Meta.Window.get_frame_rect`
+/// gives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct Frame {
+    /// Left edge.
+    pub x: i32,
+    /// Top edge.
+    pub y: i32,
+    /// Width.
+    pub width: i32,
+    /// Height.
+    pub height: i32,
 }
 
 /// A clipboard selection: one blob plus the mime type describing it.
@@ -171,6 +189,22 @@ impl Window {
             focused: as_bool(dict, window_key::FOCUSED)?.unwrap_or(false),
             workspace: as_i32(dict, window_key::WORKSPACE)?.filter(|w| *w >= 0),
             can_close: as_bool(dict, window_key::CAN_CLOSE)?.unwrap_or(true),
+            fullscreen: as_bool(dict, window_key::FULLSCREEN)?.unwrap_or(false),
+            // All four or none: a partial frame is not a frame.
+            frame: match (
+                as_i32(dict, window_key::X)?,
+                as_i32(dict, window_key::Y)?,
+                as_i32(dict, window_key::WIDTH)?,
+                as_i32(dict, window_key::HEIGHT)?,
+            ) {
+                (Some(x), Some(y), Some(width), Some(height)) => Some(Frame {
+                    x,
+                    y,
+                    width,
+                    height,
+                }),
+                _ => None,
+            },
         })
     }
 }
@@ -202,6 +236,30 @@ mod tests {
         assert!(!window.focused);
         assert_eq!(window.workspace, None);
         assert!(window.can_close, "can_close defaults to true");
+        assert!(!window.fullscreen);
+        assert_eq!(window.frame, None);
+    }
+
+    #[test]
+    fn a_frame_needs_all_four_edges() {
+        let mut dict = base();
+        for (key, value) in [("x", 10), ("y", 20), ("width", 800)] {
+            dict.insert(key.to_owned(), OwnedValue::from(value));
+        }
+        assert_eq!(Window::from_dict(&dict).expect("decodes").frame, None);
+        dict.insert("height".to_owned(), OwnedValue::from(600i32));
+        dict.insert("fullscreen".to_owned(), OwnedValue::from(true));
+        let window = Window::from_dict(&dict).expect("decodes");
+        assert_eq!(
+            window.frame,
+            Some(Frame {
+                x: 10,
+                y: 20,
+                width: 800,
+                height: 600
+            })
+        );
+        assert!(window.fullscreen);
     }
 
     #[test]

@@ -416,6 +416,18 @@ impl ShellClient {
             .await
     }
 
+    /// The primary selection's text — what the user last selected, in any
+    /// window — or `None` when nothing is selected or it is not text.
+    pub async fn primary_selection(&self) -> Result<Option<String>> {
+        self.require(false).await?;
+        let proxy = self.shared.clipboard_proxy().await?;
+        let text = self
+            .shared
+            .bounded("GetPrimarySelection", proxy.get_primary_selection())
+            .await?;
+        Ok((!text.is_empty()).then_some(text))
+    }
+
     /// Subscribe to `ClipboardChanged`.
     pub async fn clipboard_changes(&self) -> Result<ClipboardStream> {
         self.require(false).await?;

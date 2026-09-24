@@ -19,6 +19,10 @@
         returns to. The Shell is the only process on GNOME 50/51 that can
         inject a keystroke: there is no virtual-keyboard protocol, and
         /dev/uinput is unavailable on Bluefin.
+    3 - GetPrimarySelection(): the primary selection's text, which is what
+        an extension's getSelectedText() answers. Mutter implements no
+        data-control, and a Wayland client may only read the primary selection
+        while it has keyboard focus, which the engine never has.
 -->
 <node>
   <interface name="org.gnome.Shell.Extensions.Vicinae.Clipboard">
@@ -49,6 +53,12 @@
          finds a window is dropped. -->
     <method name="Paste">
       <arg type="as" name="shift_wm_classes" direction="in"/>
+    </method>
+
+    <!-- The primary selection (the text last selected, in any window) as
+         UTF-8 text; "" when there is none, or when it is not text. -->
+    <method name="GetPrimarySelection">
+      <arg type="s" name="text" direction="out"/>
     </method>
 
     <!-- Emitted on every selection change the extension observes. There is no

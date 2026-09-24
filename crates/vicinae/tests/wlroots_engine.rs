@@ -38,7 +38,18 @@ struct Engine {
 
 impl Engine {
     fn start(sway: &Sway, desktop: &str) -> Self {
+        Self::start_with(sway, desktop, |_| Vec::new())
+    }
+
+    /// [`Self::start`], after `prepare` has laid out the temporary tree and
+    /// named any extra environment.
+    fn start_with(
+        sway: &Sway,
+        desktop: &str,
+        prepare: impl FnOnce(&std::path::Path) -> Vec<(&'static str, std::ffi::OsString)>,
+    ) -> Self {
         let dirs = tempfile::tempdir().unwrap();
+        let extra = prepare(dirs.path());
         let socket = dirs.path().join("ipc.sock");
         let child = Command::new(binary())
             .arg("--socket")
@@ -52,6 +63,7 @@ impl Engine {
             .env("XDG_RUNTIME_DIR", sway.runtime_dir())
             .env("WAYLAND_DISPLAY", sway.display())
             .env("XDG_CURRENT_DESKTOP", desktop)
+            .envs(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -168,4 +180,132 @@ fn on_sway_a_gnome_desktop_name_keeps_the_gnome_path() {
         panic!("GNOME must not list windows over wlroots protocols");
     };
     assert!(err.message.contains("session bus"), "{}", err.message);
+}
+
+/// Child role: hold `COMPASS_WLR_TEXT` as the primary selection until killed.
+#[test]
+fn child_holds_a_primary_selection() {
+    if support::child_role().is_none() {
+        return;
+    }
+    let text = std::env::var("COMPASS_WLR_TEXT").unwrap();
+    let mut options = wl_clipboard_rs::copy::Options::new();
+    options.clipboard(wl_clipboard_rs::copy::ClipboardType::Primary);
+    options
+        .copy(
+            wl_clipboard_rs::copy::Source::Bytes(text.into_bytes().into_boxed_slice()),
+            wl_clipboard_rs::copy::MimeType::Text,
+        )
+        .expect("selecting");
+    println!("CHILD-OK");
+    std::thread::sleep(WAIT * 2);
+}
+
+fn extension_runtime() -> Option<PathBuf> {
+    let built = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../src/typescript/extension-manager/dist/runtime.js");
+    std::env::var_os("COMPASS_EXTENSION_RUNTIME")
+        .map(Into::into)
+        .or_else(|| built.is_file().then_some(built))
+}
+
+#[test]
+fn on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors() {
+    use std::io::BufRead;
+    let Some(sway) = Sway::start("on_sway_an_extension_reads_the_desktop") else {
+        return;
+    };
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let _window = TestWindow::open(&sway, "Alpha document", "test.Alpha");
+    let mut holder = sway.run_child(
+        "child_holds_a_primary_selection",
+        "select",
+        &[("COMPASS_WLR_TEXT", "selected words")],
+    );
+    let mut lines = std::io::BufReader::new(holder.stdout.take().unwrap()).lines();
+    assert!(
+        lines.any(|line| line.is_ok_and(|line| line.contains("CHILD-OK"))),
+        "the selection holder never started"
+    );
+
+    let engine = Engine::start_with(&sway, "sway", |root| {
+        let ext = root.join("data/vicinae/extensions/hello");
+        std::fs::create_dir_all(&ext).unwrap();
+        std::fs::write(
+            ext.join("package.json"),
+            r#"{"name": "hello", "title": "Hello", "author": "someone",
+                "commands": [{"name": "machine", "title": "Machine", "mode": "view"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            ext.join("machine.js"),
+            "const React = require('react');
+             const { Detail, getSelectedText, WindowManagement } = require('@vicinae/api');
+             const said = (p) => p.then((v) => JSON.stringify(v), (e) => 'error: ' + String(e));
+             module.exports.default = () => {
+               const [text, setText] = React.useState('');
+               React.useEffect(() => {
+                 Promise.all([
+                   said(getSelectedText()),
+                   said(WindowManagement.getActiveWindow()),
+                   said(WindowManagement.getScreens()),
+                 ]).then((answers) => setText(answers.join(' | ')));
+               }, []);
+               return React.createElement(Detail, { markdown: text || 'asking' });
+             };",
+        )
+        .unwrap();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+
+    let Response::ExtensionStarted { session } = engine.request(Request::RunExtensionCommand {
+        id: "@someone/hello:machine".into(),
+        arguments_json: None,
+    }) else {
+        panic!("the command did not start");
+    };
+    let mut markdown = String::new();
+    let mut after = 0;
+    let deadline = Instant::now() + WAIT;
+    while Instant::now() < deadline {
+        let Response::ExtensionView {
+            version,
+            view_json,
+            problem,
+            ..
+        } = engine.request(Request::ExtensionView { session, after })
+        else {
+            panic!("no view answer");
+        };
+        assert!(problem.is_none(), "{problem:?}");
+        after = version;
+        if let Some(compass_extension_api::View::Detail(detail)) =
+            view_json.and_then(|json| serde_json::from_str(&json).ok())
+            && let Some(text) = detail.markdown
+            && text != "asking"
+        {
+            markdown = text;
+            break;
+        }
+    }
+    let _ = holder.kill();
+    let _ = holder.wait();
+
+    let answers: Vec<&str> = markdown.split(" | ").collect();
+    assert_eq!(answers.len(), 3, "{markdown}");
+    assert_eq!(answers[0], "\"selected words\"");
+    let window: serde_json::Value = serde_json::from_str(answers[1]).expect(answers[1]);
+    assert_eq!(window["title"], "Alpha document");
+    assert_eq!(window["active"], true);
+    let screens: serde_json::Value = serde_json::from_str(answers[2]).expect(answers[2]);
+    assert_eq!(screens[0]["name"], "HEADLESS-1", "{screens}");
+    assert_eq!(screens[0]["physicalResolution"]["width"], 1280);
+    assert_eq!(screens[0]["active"], true);
 }

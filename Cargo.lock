@@ -6439,6 +6439,7 @@ dependencies = [
  "wait-timeout",
  "wayland-client",
  "wayland-protocols",
+ "wl-clipboard-rs",
  "zbus",
  "zip",
 ]

@@ -277,7 +277,7 @@ PY
         --method org.freedesktop.DBus.Properties.Get \
         org.gnome.Shell.Extensions.Vicinae.Windows Version
     }
-    contract_up() { case "$(contract_version 2>/dev/null)" in *"uint32 2>"*) return 0 ;; esac; return 1; }
+    contract_up() { case "$(contract_version 2>/dev/null)" in *"uint32 3>"*) return 0 ;; esac; return 1; }
 
     if ! as_user gnome-extensions enable "$uuid"; then
       echo "gnome-extensions could not enable $uuid" >&2

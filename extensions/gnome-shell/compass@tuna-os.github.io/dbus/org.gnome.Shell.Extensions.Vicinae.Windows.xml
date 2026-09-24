@@ -20,6 +20,9 @@
         and which returned windows as a JSON string rather than typed D-Bus.
     2 - unchanged. The two interfaces share one contract version, and
         Clipboard gained Paste.
+    3 - ListWindows gained the optional fullscreen, x, y, width and height
+        keys, for an extension's WindowManagement API; Clipboard gained
+        GetPrimarySelection.
 -->
 <node>
   <interface name="org.gnome.Shell.Extensions.Vicinae.Windows">
@@ -40,6 +43,9 @@
         focused            b  optional  defaults to false
         workspace          i  optional  absent, or < 0, means "unknown"
         can_close          b  optional  defaults to true
+        fullscreen         b  optional  defaults to false
+        x, y               i  optional  the frame's position in the stage
+        width, height      i  optional  the frame's size; all four or none
 
       Unknown keys MUST be ignored by the client, so the extension may add
       fields within a contract version. Removing or retyping a key above is a

@@ -79,3 +79,5 @@ zip.workspace = true
 # The headless-Sway harness shared with compass-wayland (tests/wlroots_engine.rs).
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
+# Holding a primary selection for the engine to read (tests/wlroots_engine.rs).
+wl-clipboard-rs = "0.9"

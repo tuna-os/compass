@@ -64,6 +64,9 @@ pub trait Clipboard {
     /// Ctrl+Shift+V for the listed `WM_CLASS`es.
     fn paste(&self, shift_wm_classes: &[&str]) -> zbus::Result<()>;
 
+    /// The primary selection as text; `""` when there is none.
+    fn get_primary_selection(&self) -> zbus::Result<String>;
+
     /// The selection changed.
     #[zbus(signal)]
     fn clipboard_changed(

@@ -108,6 +108,76 @@ fn a_change_to_the_window_set_is_announced() {
     assert!(eventually(WAIT, || toplevels.list().len() == 1));
 }
 
+#[test]
+fn the_headless_output_is_listed_with_its_name_and_mode() {
+    let Some(sway) = Sway::start("the_headless_output_is_listed") else {
+        return;
+    };
+    let outputs = compass_wayland::output::list_on(&sway.connect()).expect("the outputs");
+    assert_eq!(outputs.len(), 1, "{outputs:?}");
+    let output = &outputs[0];
+    assert_eq!(output.name, "HEADLESS-1");
+    assert_eq!((output.pixel_width, output.pixel_height), (1280, 800));
+    assert_eq!(
+        (output.x, output.y, output.width, output.height),
+        (0, 0, 1280, 800)
+    );
+}
+
+/// Child role: select `COMPASS_WLR_TEXT` (the primary selection), then read
+/// it back as an extension's `getSelectedText` would.
+#[test]
+fn child_selects_text() {
+    if child_role().is_none() {
+        return;
+    }
+    let text = std::env::var("COMPASS_WLR_TEXT").unwrap();
+    assert_eq!(
+        clipboard::read_primary_text().expect("nothing selected yet"),
+        None
+    );
+    let mut options = wl_clipboard_rs::copy::Options::new();
+    options.clipboard(wl_clipboard_rs::copy::ClipboardType::Primary);
+    options
+        .copy(
+            wl_clipboard_rs::copy::Source::Bytes(text.clone().into_bytes().into_boxed_slice()),
+            wl_clipboard_rs::copy::MimeType::Text,
+        )
+        .expect("selecting");
+    assert!(
+        eventually(WAIT, || clipboard::read_primary_text()
+            .ok()
+            .flatten()
+            .is_some_and(|read| read == text)),
+        "the selection never read back"
+    );
+    assert_eq!(
+        clipboard::read("text/plain").expect("the clipboard"),
+        None,
+        "selecting is not copying"
+    );
+    println!("CHILD-OK");
+}
+
+#[test]
+fn the_primary_selection_reads_back_and_is_not_the_clipboard() {
+    let Some(sway) = Sway::start("the_primary_selection_reads_back") else {
+        return;
+    };
+    let child = sway.run_child(
+        "child_selects_text",
+        "select",
+        &[("COMPASS_WLR_TEXT", "selected words")],
+    );
+    let output = child.wait_with_output().expect("the child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("CHILD-OK"),
+        "child failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Child role: put `COMPASS_WLR_TEXT` on the clipboard through
 /// [`clipboard::set`], read it back through [`clipboard::read`], and keep
 /// serving it long enough for the parent's watcher.
