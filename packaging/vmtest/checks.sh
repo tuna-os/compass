@@ -140,6 +140,23 @@ engine_ready() {
   compass_cli ping >/dev/null 2>&1 || [ -f "$ENGINE_DONE" ]
 }
 
+# The session's XDG_CURRENT_DESKTOP, read from gnome-shell's own environment.
+#
+# Without it doctor cannot tell it is on GNOME and answers
+# gnome.shell-extension with "not a GNOME session" -- an ok that proves
+# nothing, which is exactly how the gate first passed. Read rather than
+# hard-coded, so the gate stays honest if the image's session changes; GNOME
+# is the fallback because that is what this image is.
+session_desktop() {
+  local pid
+  pid="$(pgrep -u "$SESSION_USER" -x gnome-shell | head -1)"
+  if [ -n "$pid" ]; then
+    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+      | sed -n 's/^XDG_CURRENT_DESKTOP=//p' | head -1 | grep . && return 0
+  fi
+  echo GNOME
+}
+
 # The session's Wayland socket name. Read from the runtime directory rather than
 # assumed to be wayland-0: it is whatever the compositor bound, and guessing
 # would make session.type fail for a reason that has nothing to do with us.
@@ -188,6 +205,7 @@ case "${1:?usage: checks.sh <subcommand>}" in
       DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$u/bus" \
       WAYLAND_DISPLAY="$(wayland_display)" \
       XDG_SESSION_TYPE=wayland \
+      XDG_CURRENT_DESKTOP="$(session_desktop)" \
       flatpak run --installation="$INSTALLATION" "$APP" \
         --socket /tmp/compass-vmtest.sock doctor --json > "$REPORT"
     cat "$REPORT"
@@ -224,6 +242,13 @@ required = ['session.type', 'dbus.session', 'portal.desktop', 'gnome.shell-exten
 bad = [f"{n}={status.get(n, 'MISSING')}" for n in required if status.get(n) != 'ok']
 if bad:
     sys.exit('not ok in a real GNOME session: ' + ', '.join(bad))
+
+# `ok` alone is not enough for the extension: "not a GNOME session" is also
+# ok, and is what an environment doctor misreads looks like. Only "present"
+# proves the sandbox reached the extension's objects on org.gnome.Shell.
+detail = next(c.get('detail', '') for c in checks if c['name'] == 'gnome.shell-extension')
+if not detail.startswith('extension present'):
+    sys.exit('gnome.shell-extension is ok without finding the extension: ' + detail)
 print('\nall gated checks ok:', ', '.join(required))
 PY
     ;;
