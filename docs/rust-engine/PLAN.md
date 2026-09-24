@@ -2407,16 +2407,21 @@ where it is.
    (a) ~~`spellfix1` out~~ **done** — a plain `vocabulary` table and a `strsim` suggester
    (`compass_db::vocabulary`), passing the ported file-search quality suite (23/23, including the
    four cases that depend on typo correction); Compass's index moved to its own file,
-   `compass-file-index.db`, at schema v2, so the two engines stop purging each other's; (b) the hand-written SQLite wrapper
-   re-based on `rusqlite` + `bundled-sqlcipher`, keeping its API so ~400 call sites are
-   untouched. **`fuzzy_trigram` stays** — it carries short-term matching, skeleton tokens,
-   skip-grams and CJK segmentation that SQLite's `trigram` lacks — so one registration call remains
-   `unsafe`, confined to the storage crate. Replacing it is a separate, measured question
-   (`tantivy` for file search), not part of this item.
+   `compass-file-index.db`, at schema v2, so the two engines stop purging each other's.
+   (b) **Deferred, and re-ranked below items 3–4.** Re-basing the wrapper on `rusqlite` was
+   justified by removing the workspace's one `unsafe` opt-out, and that premise did not survive
+   (a): `fuzzy_trigram` stays, its registration needs the raw `sqlite3*` after keying, so the
+   crate keeps `unsafe` either way. What (b) would still buy is ~500 lines of FFI replaced by a
+   crate, at the price of linking our C tokenizer against `libsqlite3-sys`'s own SQLCipher (4.6.1,
+   against the vendored 4.16.0) — a real risk for a modest gain. Revisit if the wrapper grows or
+   a bug lands in it.
 3. **A Vicinae importer** for clipboard history, extension storage and OAuth tokens (decision 3),
    reading content tables only. Needed before cutover, not before item 2.
-4. **Summon-to-first-frame** — §8.5's SLA row still has no harness. The paint tier's
-   `Simulator` path can time layout-and-paint; the VM tier times the real thing.
+4. **Summon-to-first-frame — now recorded.** The launcher logs `summon_draw_ms`, from the
+   engine's `Show` to the new window's first redraw request, on the same terms as cold start's
+   `first_draw_ms` (a floor: the paint after the request is not in it). Tier 2's `session.sh`
+   reports it from real Mutter on GNOME 50 and 51 on every PR that touches `crates/**`. Recorded,
+   not gated (ADR-0010): the threshold comes from the numbers once there are some.
 5. **Re-evaluate `compass-xdg` against `freedesktop-desktop-entry`** — lowest priority; ours
    exists for good reasons, but decision 2 says to check.
 6. **Promote the VM tier to the merge queue** — unchanged from item 6 below.

@@ -2,6 +2,7 @@
 # Exercise the installed desktop entry's session command against real Mutter.
 # This is not a GNOME Shell app-grid or physical-keyboard test.
 set -euo pipefail
+: >/tmp/tier2-session.log
 
 readonly APP_ID=com.vicinae.Vicinae
 readonly socket="${XDG_RUNTIME_DIR:?}/tier2-session.sock"
@@ -46,8 +47,12 @@ for shutdown_mode in engine instance; do
   if [ "$shutdown_mode" = instance ]; then
     startup+=(--hidden)
   fi
-  flatpak --user run --instance-id-fd=3 "$APP_ID" --socket "$socket" "${startup[@]}" \
-    3>"$instance_file" >/tmp/tier2-session.log 2>&1 &
+  # RUST_LOG only widens what is logged: compass_ui::startup carries the
+  # summon figure reported at the end. It changes no behaviour under test.
+  flatpak --user run --instance-id-fd=3 \
+    --env=RUST_LOG=warn,compass_ui::startup=info \
+    "$APP_ID" --socket "$socket" "${startup[@]}" \
+    3>"$instance_file" >>/tmp/tier2-session.log 2>&1 &
   session_pid=$!
   deadline=$((SECONDS + timeout_s))
   ready=no
@@ -91,3 +96,16 @@ for shutdown_mode in engine instance; do
   fi
 done
 printf 'SESSION PASSED: startup, repeat activation, hide/show, engine shutdown, restart and instance shutdown\n'
+
+# SUMMON, RECORDED (§8.5, ADR-0010): each hidden-to-shown above logs how long
+# the window took from the engine's Show to its first redraw request, on real
+# Mutter. A floor on summon latency -- the paint after the request is not in
+# it -- and reported, not gated, until runs show what the number is.
+summons=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/tier2-session.log |
+  sed -n 's/.*summon_draw_ms=\([0-9]\+\).*/\1/p' | paste -sd' ' -)
+if [ -n "$summons" ]; then
+  printf 'summon to first frame requested (ms, each summon in order): %s\n' "$summons"
+else
+  printf 'summon figure NOT LOGGED: either the window process does not inherit\n'
+  printf 'RUST_LOG inside the sandbox, or its stderr is not in this log.\n'
+fi
