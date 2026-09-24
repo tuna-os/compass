@@ -20,6 +20,20 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Reads a field the API may send as `null`, as its default.
+///
+/// The stores send `null` for fields that are usually strings (a command's
+/// `subtitle`, a Raycast listing's `readme_url`); the C++ reads them through
+/// glaze, which leaves the default in place. A strict reader refused the
+/// whole listing over one such field.
+fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
 /// Where the Raycast API lives.
 pub const API_BASE_URL: &str = "https://backend.raycast.com/api/v1";
 
@@ -71,34 +85,34 @@ pub struct Icons {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Command {
     /// Its id.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub id: String,
     /// Its name.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub name: String,
     /// Its title.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub title: String,
     /// Its subtitle.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub subtitle: String,
     /// What it does.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub description: String,
     /// Extra search terms.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub keywords: Vec<String>,
     /// `view` or `no-view`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub mode: String,
     /// Whether it is off until enabled.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub disabled_by_default: bool,
     /// Whether it is marked beta.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub beta: bool,
     /// Its own icons.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub icons: Icons,
     /// Its extension's icons, copied in by [`post_process_extension`].
     ///
@@ -114,33 +128,136 @@ pub struct Command {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Extension {
     /// Its id, rewritten by [`post_process_extension`].
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub id: String,
     /// Its name, which the rewritten id is built from.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub name: String,
     /// The platforms it advertises. Absent means every platform.
     #[serde(default)]
     pub platforms: Option<Vec<String>>,
     /// Where its listing is.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub store_url: String,
     /// Where its bundle is.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub download_url: String,
     /// Its icons.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub icons: Icons,
     /// Its commands.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub commands: Vec<Command>,
+    /// Its title.
+    #[serde(default, deserialize_with = "nullable")]
+    pub title: String,
+    /// What it does.
+    #[serde(default, deserialize_with = "nullable")]
+    pub description: String,
+    /// Who wrote it.
+    #[serde(default, deserialize_with = "nullable")]
+    pub author: User,
+    /// Who else worked on it.
+    #[serde(default, deserialize_with = "nullable")]
+    pub contributors: Vec<User>,
+    /// How many times it has been installed.
+    #[serde(default, deserialize_with = "nullable")]
+    pub download_count: i64,
+    /// The commit its current build was made from.
+    #[serde(default, deserialize_with = "nullable")]
+    pub commit_sha: String,
+    /// How many screenshots its listing has.
+    #[serde(default, deserialize_with = "nullable")]
+    pub metadata_count: u32,
+    /// When it was last published, in seconds since the epoch.
+    #[serde(default, deserialize_with = "nullable")]
+    pub updated_at: i64,
+    /// Where its source is.
+    #[serde(default, deserialize_with = "nullable")]
+    pub source_url: String,
+    /// Where its README is.
+    #[serde(default, deserialize_with = "nullable")]
+    pub readme_url: String,
+    /// The directory its README's assets (and screenshots) are served from,
+    /// ending in a slash.
+    #[serde(default, deserialize_with = "nullable")]
+    pub readme_assets_path: String,
+    /// Its categories' names.
+    #[serde(default, deserialize_with = "nullable")]
+    pub categories: Vec<String>,
 }
+
+/// A Raycast store user: an extension's author or a contributor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct User {
+    /// Their display name.
+    #[serde(default, deserialize_with = "nullable")]
+    pub name: String,
+    /// Their handle, which an extension's URL is built from.
+    #[serde(default, deserialize_with = "nullable")]
+    pub handle: String,
+    /// Their avatar, when they have one.
+    #[serde(default)]
+    pub avatar: Option<String>,
+}
+
+impl Extension {
+    /// The screenshots' URLs: `metadata/<name>-<n>.png` under the README's
+    /// asset path, one per `metadata_count`. `RaycastExtension::screenshots`.
+    #[must_use]
+    pub fn screenshots(&self) -> Vec<String> {
+        (1..=self.metadata_count)
+            .map(|n| format!("{}metadata/{}-{n}.png", self.readme_assets_path, self.name))
+            .collect()
+    }
+
+    /// What identifies the build the store serves now: its commit.
+    #[must_use]
+    pub fn version_key(&self) -> String {
+        if self.commit_sha.is_empty() {
+            self.updated_at.to_string()
+        } else {
+            self.commit_sha.clone()
+        }
+    }
+
+    /// The icon to show under a dark or light theme: that side's, else the
+    /// other.
+    #[must_use]
+    pub fn themed_icon(&self, dark: bool) -> Option<&str> {
+        let (preferred, other) = if dark {
+            (&self.icons.dark, &self.icons.light)
+        } else {
+            (&self.icons.light, &self.icons.dark)
+        };
+        preferred.as_deref().or(other.as_deref())
+    }
+}
+
+/// The Raycast API's base URL: `COMPASS_RAYCAST_API_URL` when it is set and
+/// not empty, [`API_BASE_URL`] otherwise.
+///
+/// The C++ has no override; one exists here so tests can serve the store
+/// locally, as `VICINAE_API_URL` already lets them serve the Vicinae one.
+#[must_use]
+pub fn api_base_url(env_value: Option<&str>) -> String {
+    env_value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map_or_else(
+            || API_BASE_URL.to_owned(),
+            |value| value.trim_end_matches('/').to_owned(),
+        )
+}
+
+/// The environment variable [`api_base_url`] reads.
+pub const API_URL_ENV: &str = "COMPASS_RAYCAST_API_URL";
 
 /// A page of the listing, as the API returns it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ListApiResponse {
     /// The extensions on it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub data: Vec<Extension>,
 }
 
@@ -148,10 +265,10 @@ pub struct ListApiResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CompatInfo {
     /// Whether it works.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub status: String,
     /// How sure we are.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     pub confidence: String,
     /// Anything worth saying about it.
     #[serde(default)]

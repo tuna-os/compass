@@ -62,7 +62,7 @@ pub use protocol::{
     ExtensionToast, ExtensionToastStyle, FileHit, FontEntry, PROTOCOL_VERSION, PreferenceField,
     PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope, Response,
     ResponseEnvelope, RhaiScriptEntry, ScriptArgumentEntry, ScriptEntry, ShortcutEntry,
-    SnippetEntry, WindowCommand, WindowInfo, WindowOutcome,
+    SnippetEntry, StoreDetail, StoreEntry, StoreKind, WindowCommand, WindowInfo, WindowOutcome,
 };
 pub use transport::{
     Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,

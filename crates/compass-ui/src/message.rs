@@ -148,6 +148,32 @@ pub enum Message {
     },
     /// Opening the new extension's folder finished.
     CreatedFolderOpened(Result<(), String>),
+    /// A store's rows arrived for search `generation`, or why not.
+    StoreLoaded {
+        /// The search text's generation when it was asked for.
+        generation: u64,
+        /// The rows.
+        result: Result<crate::backend::StoreList, String>,
+    },
+    /// A store's search text changed.
+    StoreQueryChanged(String),
+    /// A store's search text has settled for generation `u64`.
+    StoreSearchDue(u64),
+    /// A store row was clicked, by position.
+    StoreSelected(usize),
+    /// A store extension's detail page arrived, or why not.
+    StoreDetailLoaded(Result<crate::backend::StoreDetail, String>),
+    /// An install finished: the id and title, or why not.
+    StoreInstalled(Result<(String, String), String>),
+    /// An uninstall of `id` finished.
+    StoreUninstalled {
+        /// The id.
+        id: String,
+        /// Whether it worked.
+        result: Result<(), String>,
+    },
+    /// Opening a store link finished.
+    StoreUrlOpened(Result<(), String>),
     /// Browse Fonts' families arrived, or why they could not be listed.
     FontsLoaded(Result<crate::backend::FontList, String>),
     /// Browse Fonts' search text changed.

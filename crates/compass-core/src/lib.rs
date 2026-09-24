@@ -105,6 +105,8 @@ pub mod snippet;
 pub mod snippet_expander;
 pub mod snippet_form;
 pub mod snippet_store;
+pub mod store_bundle;
+pub mod store_listing;
 pub mod system_run;
 pub mod telemetry;
 pub mod theme_picker;

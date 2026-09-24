@@ -120,6 +120,15 @@ async fn echo_handler(request: Request) -> Response {
         Request::DmenuFetch { .. } => Response::DmenuList {
             spec: compass_ipc::DmenuSpec::default(),
         },
+        Request::StoreBrowse { .. } => Response::StoreListing {
+            heading: String::new(),
+            entries: vec![],
+        },
+        Request::StoreExtension { .. } | Request::StoreInstall { .. } => Response::StoreInstalled {
+            id: String::new(),
+            title: String::new(),
+        },
+        Request::StoreUninstall { .. } | Request::OpenUrl { .. } => Response::Ack,
         Request::ListFonts => Response::Fonts {
             fonts: vec![],
             categories: vec![],

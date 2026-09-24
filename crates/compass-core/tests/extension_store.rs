@@ -232,3 +232,51 @@ fn a_response_missing_optional_fields_still_parses() {
     assert!(parsed.extensions[0].platforms.is_empty());
     assert_eq!(parsed.pagination.page, DEFAULT_PAGE);
 }
+
+#[test]
+fn filtering_ranks_the_title_above_the_description_and_keeps_order_when_empty() {
+    use compass_core::extension_store::{filter, find};
+    let mut clock = extension("clock");
+    clock.title = "Clock".to_owned();
+    clock.description = "Shows the time".to_owned();
+    clock.author.handle = "zoe".to_owned();
+    let mut timer = extension("timer");
+    timer.title = "Timer".to_owned();
+    timer.description = "A clock that counts down".to_owned();
+    let all = vec![timer.clone(), clock.clone()];
+
+    let names = |found: Vec<&Extension>| {
+        found
+            .into_iter()
+            .map(|e| e.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(filter(&all, "")), ["timer", "clock"]);
+    assert_eq!(names(filter(&all, "clock")), ["clock", "timer"]);
+    assert!(filter(&all, "zzzqqq").is_empty());
+    assert_eq!(
+        find(&all, "zoe", "clock").map(|e| &e.name),
+        Some(&clock.name)
+    );
+    assert!(find(&all, "someone-else", "clock").is_none());
+}
+
+#[test]
+fn the_version_key_is_the_checksum_else_the_publication_time() {
+    let mut ext = extension("clock");
+    ext.updated_at = Some("2026-07-02T11:50:22.441Z".to_owned());
+    assert_eq!(ext.version_key(), "2026-07-02T11:50:22.441Z");
+    ext.checksum = "abc".to_owned();
+    assert_eq!(ext.version_key(), "abc");
+}
+
+#[test]
+fn a_null_where_a_string_belongs_reads_as_empty() {
+    let json = r#"{"extensions": [{"id": "x", "name": "kill", "title": "Kill", "description": null,
+        "commands": [{"id": "c", "name": "kill", "title": "Kill Process", "subtitle": null,
+                      "description": "", "mode": "view", "icons": {"light": null, "dark": null}}]}],
+        "pagination": {"page": 1, "limit": 500}}"#;
+    let response: ListResponse = serde_json::from_str(json).expect("a null is not fatal");
+    assert_eq!(response.extensions[0].description, "");
+    assert_eq!(response.extensions[0].commands[0].subtitle, "");
+}

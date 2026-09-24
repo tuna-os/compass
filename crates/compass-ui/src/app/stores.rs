@@ -1,0 +1,631 @@
+//! The extension stores in the launcher: the list, the detail page, install,
+//! uninstall and the links.
+//!
+//! A child module of `app` so it can reach the launcher's state without
+//! widening it; the page state is in [`crate::store_page`].
+
+use iced::keyboard::{Key, Modifiers, key::Named};
+
+use super::{
+    Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
+    Task, chord_direction, column, container, focus_search, image, mouse_area, next_selection, row,
+    scrollable, text,
+};
+use crate::action_panel::Action;
+use crate::backend::Store;
+use crate::store_page::{self, Confirm, Status, StoreDetailPage, StorePage, actions};
+
+const NEEDS_ENGINE: &str = "The extension stores need the Compass engine";
+
+impl LauncherApp {
+    /// Whether the theme is dark, which decides an extension's icon.
+    fn store_prefers_dark(&self) -> bool {
+        let surface = self.palette().surface.to_iced();
+        0.299 * surface.r + 0.587 * surface.g + 0.114 * surface.b < 0.5
+    }
+
+    /// Opens a store's list, as it was left when a detail page was opened
+    /// over it, and asks for its rows again so what is installed is current.
+    pub(super) fn open_store(&mut self, store: Store) -> Task<Message> {
+        let page = self
+            .parked_store
+            .take()
+            .filter(|page| page.store == store)
+            .unwrap_or_else(|| StorePage::new(store));
+        let generation = page.generation;
+        self.page = Page::Store(page);
+        Task::batch([self.store_fetch(generation), focus_search()])
+    }
+
+    /// Asks for the rows for search `generation`, unless the text moved on.
+    fn store_fetch(&mut self, generation: u64) -> Task<Message> {
+        let Page::Store(page) = &mut self.page else {
+            return Task::none();
+        };
+        if page.generation != generation {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            page.apply(generation, Err(NEEDS_ENGINE.to_owned()));
+            return Task::none();
+        };
+        page.loading = true;
+        let (store, query) = (page.store, page.query.clone());
+        Task::perform(
+            async move { backend.store_browse(store, query).await },
+            move |result| Message::StoreLoaded { generation, result },
+        )
+    }
+
+    /// The fetch for the text now in the box, after the Raycast store's pause.
+    fn store_query_task(&mut self) -> Task<Message> {
+        let Page::Store(page) = &self.page else {
+            return Task::none();
+        };
+        let generation = page.generation;
+        match page.debounce() {
+            Some(delay) => Task::perform(
+                async move {
+                    tokio::time::sleep(delay).await;
+                    generation
+                },
+                Message::StoreSearchDue,
+            ),
+            None => self.store_fetch(generation),
+        }
+    }
+
+    /// Fetches the images the store page on screen shows and has not asked
+    /// for.
+    fn store_images(&mut self) -> Task<Message> {
+        let dark = self.store_prefers_dark();
+        let wanted = match &mut self.page {
+            Page::Store(page) => page.wanted_images(dark),
+            Page::StoreDetail(page) => page.wanted_images(dark),
+            _ => Vec::new(),
+        };
+        if wanted.is_empty() {
+            Task::none()
+        } else {
+            crate::remote_image::fetch_tasks(wanted)
+        }
+    }
+
+    /// Asks for the selected row's detail page.
+    fn open_selected_store_detail(&mut self) -> Task<Message> {
+        let Page::Store(page) = &mut self.page else {
+            return Task::none();
+        };
+        let Some(row) = page.selected_row() else {
+            return Task::none();
+        };
+        let Some(backend) = self.backend.clone() else {
+            page.notice = Some(NEEDS_ENGINE.to_owned());
+            return Task::none();
+        };
+        let (store, author, name) = (page.store, row.author.clone(), row.name.clone());
+        page.loading = true;
+        page.notice = None;
+        self.panel = None;
+        Task::perform(
+            async move { backend.store_extension(store, author, name).await },
+            Message::StoreDetailLoaded,
+        )
+    }
+
+    /// Installs, or updates, the extension on the detail page.
+    fn store_install(&mut self) -> Task<Message> {
+        let Page::StoreDetail(page) = &mut self.page else {
+            return Task::none();
+        };
+        if page.busy.is_some() {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            page.notice = Some(NEEDS_ENGINE.to_owned());
+            return Task::none();
+        };
+        let row = &page.detail.row;
+        let (store, author, name) = (page.store, row.author.clone(), row.name.clone());
+        page.busy = Some(store_page::DOWNLOADING.to_owned());
+        page.notice = None;
+        Task::perform(
+            async move { backend.store_install(store, author, name).await },
+            Message::StoreInstalled,
+        )
+    }
+
+    /// Uninstalls what the question on screen asked about.
+    fn store_uninstall(&mut self, id: String) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            self.store_notice(NEEDS_ENGINE.to_owned());
+            return Task::none();
+        };
+        match &mut self.page {
+            Page::Store(page) => page.confirm = None,
+            Page::StoreDetail(page) => {
+                page.confirm = false;
+                page.busy = Some("Uninstalling extension...".to_owned());
+            }
+            _ => {}
+        }
+        Task::perform(
+            {
+                let id = id.clone();
+                async move { backend.store_uninstall(id).await }
+            },
+            move |result| Message::StoreUninstalled {
+                id: id.clone(),
+                result,
+            },
+        )
+    }
+
+    /// Opens a link from the detail page.
+    fn store_open(&mut self, url: String) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            self.store_notice(NEEDS_ENGINE.to_owned());
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.open_url(url).await },
+            Message::StoreUrlOpened,
+        )
+    }
+
+    /// Says `message` under whichever store page is showing.
+    fn store_notice(&mut self, message: String) {
+        match &mut self.page {
+            Page::Store(page) => page.notice = Some(message),
+            Page::StoreDetail(page) => page.notice = Some(message),
+            _ => self.error = Some(message),
+        }
+    }
+
+    /// The action panel over a store row or a detail page.
+    pub(super) fn open_store_panel(&mut self) -> Option<Task<Message>> {
+        let actions = match &self.page {
+            Page::Store(page) => {
+                let row = page.selected_row()?;
+                // The C++ offers "Uninstall Extension" on every row, where it
+                // fails for one that is not installed; offered only where it
+                // can work.
+                let mut sections = vec![PanelSection {
+                    name: String::new(),
+                    actions: vec![
+                        Action::new("Show details")
+                            .with_id(actions::DETAILS)
+                            .with_shortcut("enter"),
+                    ],
+                }];
+                if row.installed {
+                    sections.push(PanelSection {
+                        name: String::new(),
+                        actions: vec![
+                            Action::new("Uninstall Extension").with_id(actions::UNINSTALL),
+                        ],
+                    });
+                }
+                sections
+            }
+            Page::StoreDetail(page) => vec![PanelSection {
+                name: String::new(),
+                actions: store_page::detail_actions(page)
+                    .into_iter()
+                    .map(|(id, title, shortcut)| {
+                        let action = Action::new(title).with_id(id);
+                        match shortcut {
+                            Some(shortcut) => action.with_shortcut(shortcut),
+                            None => action,
+                        }
+                    })
+                    .collect(),
+            }],
+            _ => return None,
+        };
+        self.panel = Some(PanelState::new(actions));
+        Some(iced::widget::operation::focus(super::PANEL_INPUT))
+    }
+
+    /// Runs a store panel action, if `id` is one.
+    pub(super) fn store_panel_action(&mut self, id: &str) -> Option<Task<Message>> {
+        if !matches!(self.page, Page::Store(_) | Page::StoreDetail(_)) {
+            return None;
+        }
+        self.panel = None;
+        let task = match (id, &mut self.page) {
+            (actions::DETAILS, Page::Store(_)) => self.open_selected_store_detail(),
+            (actions::UNINSTALL, Page::Store(page)) => {
+                if let Some(row) = page.selected_row() {
+                    page.confirm = Some(Confirm {
+                        id: row.id.clone(),
+                        title: row.title.clone(),
+                    });
+                }
+                Task::none()
+            }
+            (actions::INSTALL, Page::StoreDetail(_)) => self.store_install(),
+            (actions::UNINSTALL, Page::StoreDetail(page)) => {
+                page.confirm = true;
+                Task::none()
+            }
+            (actions::README, Page::StoreDetail(page)) => {
+                let url = page.detail.readme_url.clone()?;
+                self.store_open(url)
+            }
+            (actions::SOURCE, Page::StoreDetail(page)) => {
+                let url = page.detail.source_url.clone()?;
+                self.store_open(url)
+            }
+            (actions::WEBSITE, Page::StoreDetail(page)) => {
+                let url = page.detail.store_url.clone()?;
+                self.store_open(url)
+            }
+            (actions::REPORT, Page::StoreDetail(_)) => {
+                self.store_open(compass_core::store_listing::REPORT_ISSUE_URL.to_owned())
+            }
+            _ => return None,
+        };
+        Some(task)
+    }
+
+    /// The list's keys.
+    pub(super) fn store_page_key(&mut self, key: &Key, modifiers: Modifiers) -> Task<Message> {
+        let Page::Store(page) = &mut self.page else {
+            return Task::none();
+        };
+        if let Some(confirm) = page.confirm.clone() {
+            return match key.as_ref() {
+                Key::Named(Named::Enter) => self.store_uninstall(confirm.id),
+                Key::Named(Named::Escape) => {
+                    page.confirm = None;
+                    Task::none()
+                }
+                _ => Task::none(),
+            };
+        }
+        let direction = match key.as_ref() {
+            Key::Named(Named::ArrowDown) => Some(Direction::Down),
+            Key::Named(Named::ArrowUp) => Some(Direction::Up),
+            Key::Named(Named::Escape) => return self.update(Message::Back),
+            Key::Named(Named::Enter) => return self.open_selected_store_detail(),
+            _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+        };
+        if let Some(direction) = direction {
+            page.selected = next_selection(
+                page.rows.len(),
+                page.selected,
+                direction,
+                self.wrap_navigation,
+            );
+            return crate::scroll::reveal_root_selection();
+        }
+        Task::none()
+    }
+
+    /// The detail page's keys: Enter runs the first action, Escape goes back
+    /// to the list as it was.
+    pub(super) fn store_detail_key(&mut self, key: &Key) -> Task<Message> {
+        let Page::StoreDetail(page) = &mut self.page else {
+            return Task::none();
+        };
+        if page.confirm {
+            return match key.as_ref() {
+                Key::Named(Named::Enter) => {
+                    let id = page.detail.row.id.clone();
+                    self.store_uninstall(id)
+                }
+                Key::Named(Named::Escape) => {
+                    page.confirm = false;
+                    Task::none()
+                }
+                _ => Task::none(),
+            };
+        }
+        match key.as_ref() {
+            Key::Named(Named::Escape) => {
+                let store = page.store;
+                self.open_store(store)
+            }
+            Key::Named(Named::Enter) => {
+                let Some((id, _, _)) = store_page::detail_actions(page).into_iter().next() else {
+                    return Task::none();
+                };
+                self.store_panel_action(id).unwrap_or_else(Task::none)
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// Records an install or an uninstall everywhere it shows: the page on
+    /// screen, the list parked under a detail page, and root search.
+    fn store_changed(&mut self, id: &str, installed: bool) {
+        if let Page::Store(page) = &mut self.page {
+            page.mark(id, installed);
+        }
+        if let Page::StoreDetail(page) = &mut self.page
+            && page.detail.row.id == id
+        {
+            page.detail.row.installed = installed;
+            page.detail.row.update_available = false;
+        }
+        if let Some(parked) = &mut self.parked_store {
+            parked.mark(id, installed);
+        }
+        self.app_index.rescan_extensions();
+    }
+
+    /// Handles the store messages.
+    pub(super) fn store_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::StoreLoaded { generation, result } => {
+                if let Page::Store(page) = &mut self.page {
+                    page.apply(generation, result);
+                }
+                Task::batch([self.store_images(), crate::scroll::reveal_root_selection()])
+            }
+            Message::StoreQueryChanged(query) => {
+                if let Page::Store(page) = &mut self.page {
+                    page.set_query(query);
+                }
+                self.store_query_task()
+            }
+            Message::StoreSearchDue(generation) => self.store_fetch(generation),
+            Message::StoreSelected(position) => {
+                if let Page::Store(page) = &mut self.page
+                    && position < page.rows.len()
+                {
+                    page.selected = position;
+                    return self.open_selected_store_detail();
+                }
+                Task::none()
+            }
+            Message::StoreDetailLoaded(Ok(detail)) => {
+                let Page::Store(page) = &mut self.page else {
+                    return Task::none();
+                };
+                page.loading = false;
+                let store = page.store;
+                if let Page::Store(page) = std::mem::replace(
+                    &mut self.page,
+                    Page::StoreDetail(Box::new(StoreDetailPage::new(store, detail))),
+                ) {
+                    self.parked_store = Some(page);
+                }
+                Task::batch([self.store_images(), focus_search()])
+            }
+            Message::StoreDetailLoaded(Err(reason)) => {
+                if let Page::Store(page) = &mut self.page {
+                    page.loading = false;
+                    page.notice = Some(reason);
+                }
+                Task::none()
+            }
+            Message::StoreInstalled(result) => {
+                if let Page::StoreDetail(page) = &mut self.page {
+                    page.busy = None;
+                }
+                match result {
+                    Ok((id, _title)) => {
+                        self.store_changed(&id, true);
+                        self.store_notice(store_page::INSTALLED.to_owned());
+                    }
+                    Err(reason) => self.store_notice(reason),
+                }
+                Task::none()
+            }
+            Message::StoreUninstalled { id, result } => {
+                if let Page::StoreDetail(page) = &mut self.page {
+                    page.busy = None;
+                }
+                match result {
+                    Ok(()) => {
+                        self.store_changed(&id, false);
+                        self.store_notice(store_page::UNINSTALLED.to_owned());
+                    }
+                    Err(reason) => {
+                        self.store_notice(format!("Failed to uninstall extension: {reason}"));
+                    }
+                }
+                Task::none()
+            }
+            Message::StoreUrlOpened(Ok(())) => self.conceal(),
+            Message::StoreUrlOpened(Err(reason)) => {
+                self.store_notice(reason);
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// A store image arrived; answers whether a store page took it.
+    pub(super) fn store_image_arrived(
+        &mut self,
+        url: &str,
+        result: &Result<std::path::PathBuf, String>,
+    ) -> bool {
+        let images = match &mut self.page {
+            Page::Store(page) => &mut page.images,
+            Page::StoreDetail(page) => &mut page.images,
+            _ => return false,
+        };
+        images.arrived(url.to_owned(), result.clone());
+        true
+    }
+
+    /// A banner under a page: the uninstall question, work in progress, or
+    /// what the last action said.
+    fn store_banner(
+        &self,
+        confirm: Option<&str>,
+        busy: Option<&str>,
+        notice: Option<&str>,
+    ) -> Option<Element<'_, Message>> {
+        let palette = self.palette();
+        if let Some(title) = confirm {
+            return Some(
+                column![
+                    text(store_page::CONFIRM_TITLE)
+                        .font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..self.font()
+                        })
+                        .size(15),
+                    text(store_page::CONFIRM_MESSAGE).font(self.font()).size(13),
+                    text(format!("Enter: Uninstall {title}    Esc: cancel"))
+                        .font(self.font())
+                        .size(12)
+                        .color(palette.muted.to_iced()),
+                ]
+                .spacing(6)
+                .padding(Padding::new(14.0))
+                .into(),
+            );
+        }
+        let line = busy.or(notice)?;
+        Some(
+            container(
+                text(line.to_owned())
+                    .font(self.font())
+                    .size(13)
+                    .color(palette.muted.to_iced()),
+            )
+            .padding(Padding::new(8.0).left(14).right(14))
+            .into(),
+        )
+    }
+
+    /// The list's body: the heading, then each extension with its icon,
+    /// description and accessory.
+    pub(super) fn store_body<'a>(&'a self, page: &'a StorePage) -> Element<'a, Message> {
+        match &page.status {
+            Status::Loading => return self.notice("Loading extensions…"),
+            Status::Failed(reason) => return self.notice(reason),
+            Status::Ready => {}
+        }
+        let palette = self.palette();
+        let dark = self.store_prefers_dark();
+        let heading = if page.loading {
+            format!("{} …", page.heading)
+        } else {
+            page.heading.clone()
+        };
+        let mut list = column![
+            container(
+                text(heading)
+                    .font(self.font())
+                    .size(12)
+                    .color(palette.muted.to_iced())
+            )
+            .padding(Padding::new(4.0).left(10).right(10))
+        ]
+        .spacing(f32::from(self.geometry.row_spacing));
+        if page.rows.is_empty() {
+            list = list.push(self.notice("No extensions match"));
+        }
+        for (position, entry) in page.rows.iter().enumerate() {
+            let selected = position == page.selected;
+            let icon = store_page::icon_url(entry, dark)
+                .and_then(|url| page.images.art.get(url))
+                .map_or_else(
+                    || self.initial_badge(&entry.title, selected),
+                    |art| self.extension_icon(art, selected),
+                );
+            let item = self.list_row_with(
+                icon,
+                entry.title.clone(),
+                self.subtitles.then(|| entry.description.clone()),
+                Some(store_page::accessory(entry)),
+                selected,
+            );
+            let item: Element<Message> = mouse_area(item)
+                .on_press(Message::StoreSelected(position))
+                .into();
+            let item: Element<Message> = if selected {
+                container(item).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                item
+            };
+            list = list.push(item);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match self.store_banner(
+            page.confirm.as_ref().map(|confirm| confirm.title.as_str()),
+            None,
+            page.notice.as_deref(),
+        ) {
+            Some(banner) => column![rows, banner].into(),
+            None => rows.into(),
+        }
+    }
+
+    /// The detail page's body: the icon and navigation title, the Markdown,
+    /// then the screenshots that have arrived.
+    pub(super) fn store_detail_body<'a>(
+        &'a self,
+        page: &'a StoreDetailPage,
+    ) -> Element<'a, Message> {
+        let theme = self.theme();
+        let palette = self.palette();
+        let dark = self.store_prefers_dark();
+        let icon = store_page::icon_url(&page.detail.row, dark)
+            .and_then(|url| page.images.art.get(url))
+            .map_or_else(
+                || self.initial_badge(&page.detail.row.title, false),
+                |art| self.extension_icon(art, false),
+            );
+        let mut status = store_page::accessory(&page.detail.row);
+        if status.is_empty() {
+            status = page.detail.row.author_name.clone();
+        }
+        let header = row![
+            icon,
+            column![
+                text(page.title.clone())
+                    .font(self.font())
+                    .size(12)
+                    .color(palette.muted.to_iced()),
+                text(status)
+                    .font(self.font())
+                    .size(12)
+                    .color(palette.muted.to_iced()),
+            ]
+            .spacing(2)
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        let markdown = iced::widget::markdown::view(
+            &page.markdown,
+            iced::widget::markdown::Settings::with_text_size(14, &theme),
+        )
+        .map(Message::ExtensionLinkClicked);
+        let mut body = column![header, markdown].spacing(12);
+        for url in &page.detail.screenshots {
+            if let Some(crate::extension_page::RowIcon::Art { art, .. }) = page.images.art.get(url)
+            {
+                let shot: Element<Message> = match art {
+                    crate::icons::IconArt::Raster(path) => {
+                        image(path.clone()).width(Length::Fill).into()
+                    }
+                    crate::icons::IconArt::Vector(path) => {
+                        iced::widget::svg(path.clone()).width(Length::Fill).into()
+                    }
+                };
+                body = body.push(shot);
+            }
+        }
+        let content = scrollable(container(body).padding(Padding::new(14.0)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match self.store_banner(
+            page.confirm.then_some(page.detail.row.title.as_str()),
+            page.busy.as_deref(),
+            page.notice.as_deref(),
+        ) {
+            Some(banner) => column![banner, content].into(),
+            None => content.into(),
+        }
+    }
+}

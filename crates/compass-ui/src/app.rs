@@ -33,6 +33,7 @@ mod rhai;
 mod scripts;
 mod shortcuts;
 mod snippets;
+mod stores;
 mod themes;
 
 /// The search field's widget id.
@@ -493,6 +494,10 @@ enum Page {
     Fonts(crate::fonts_page::FontsPage),
     /// One font's specimen.
     FontPreview(crate::fonts_page::FontPreviewPage),
+    /// An extension store's list.
+    Store(crate::store_page::StorePage),
+    /// One store extension's detail page.
+    StoreDetail(Box<crate::store_page::StoreDetailPage>),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -756,6 +761,8 @@ pub struct LauncherApp {
     parked_snippets: Option<crate::snippets_page::SnippetsPage>,
     /// Browse Fonts as it was when a specimen was opened over it.
     parked_fonts: Option<crate::fonts_page::FontsPage>,
+    /// A store's list as it was when a detail page was opened over it.
+    parked_store: Option<crate::store_page::StorePage>,
     /// A compact or inline script run the root list is waiting on.
     following_script: Option<scripts::FollowedScript>,
 }
@@ -978,6 +985,7 @@ impl LauncherApp {
             parked_shortcuts: None,
             parked_snippets: None,
             parked_fonts: None,
+            parked_store: None,
             following_script: None,
         }
     }
@@ -1051,6 +1059,7 @@ impl LauncherApp {
             let _ = self.update(Message::ThemeCancel);
         }
         self.parked_fonts = None;
+        self.parked_store = None;
         let dismissed = self.cancel_dmenu();
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
@@ -1639,6 +1648,10 @@ impl LauncherApp {
                                         || self.app_index.script_by_entrypoint(key).is_some())
                                     && (!key.starts_with("rhai:")
                                         || self.app_index.rhai_script_by_entrypoint(key).is_some())
+                                    // An extension installed since this
+                                    // window last scanned, likewise.
+                                    && (!key.starts_with('@')
+                                        || self.app_index.extension(key).is_some())
                             })
                             .map(|key| {
                                 if let Some(command) = compass_core::commands::by_id(key) {
@@ -1857,6 +1870,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_font_panel() {
                     return task;
+                } else if let Some(task) = self.open_store_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1919,6 +1934,7 @@ impl LauncherApp {
                         .or_else(|| self.program_panel_action(&id))
                         .or_else(|| self.dmenu_panel_action(&id))
                         .or_else(|| self.font_panel_action(&id))
+                        .or_else(|| self.store_panel_action(&id))
                 {
                     return task;
                 }
@@ -2206,6 +2222,9 @@ impl LauncherApp {
                 }
             }
             Message::ExtensionImageFetched { url, result } => {
+                if self.store_image_arrived(&url, &result) {
+                    return Task::none();
+                }
                 if let Page::Extension(page) = &mut self.page {
                     page.image_arrived(url, result);
                 }
@@ -2247,9 +2266,18 @@ impl LauncherApp {
                 }
             },
             Message::ExtensionLinkClicked(url) => {
-                // No URL opener in the launcher yet; the link is said, not lost.
-                tracing::info!(%url, "a link in an extension's view was clicked");
-                Task::none()
+                // Web links open in the browser, through the engine; anything
+                // else is said, not lost.
+                match self.backend.clone() {
+                    Some(backend) if crate::remote_image::is_remote(&url) => Task::perform(
+                        async move { backend.open_url(url).await },
+                        Message::StoreUrlOpened,
+                    ),
+                    _ => {
+                        tracing::info!(%url, "a link in a view was clicked");
+                        Task::none()
+                    }
+                }
             }
             Message::ExtensionEventSent(result) => {
                 if let (Err(reason), Page::Extension(page)) = (result, &mut self.page) {
@@ -2322,6 +2350,14 @@ impl LauncherApp {
             | Message::FontsCategoryChanged(_)
             | Message::FontSelected(_)
             | Message::FontSpecimenLoaded { .. } => self.font_message(message),
+            Message::StoreLoaded { .. }
+            | Message::StoreQueryChanged(_)
+            | Message::StoreSearchDue(_)
+            | Message::StoreSelected(_)
+            | Message::StoreDetailLoaded(_)
+            | Message::StoreInstalled(_)
+            | Message::StoreUninstalled { .. }
+            | Message::StoreUrlOpened(_) => self.store_message(message),
             Message::Back => {
                 // Escape on a dmenu list dismisses it and the launcher, as the
                 // C++'s instant dismiss does.
@@ -2576,6 +2612,12 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::FontPreview(_)) {
                     return self.font_preview_key(key);
+                }
+                if !panel_key && matches!(self.page, Page::Store(_)) {
+                    return self.store_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::StoreDetail(_)) {
+                    return self.store_detail_key(key);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2835,6 +2877,12 @@ impl LauncherApp {
                 Some(Message::FontsQueryChanged as OnInput),
             ),
             Page::FontPreview(page) => ("", &page.name, None),
+            Page::Store(page) => (
+                page.store.placeholder(),
+                &page.query,
+                Some(Message::StoreQueryChanged as OnInput),
+            ),
+            Page::StoreDetail(page) => ("", &page.title, None),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2910,6 +2958,10 @@ impl LauncherApp {
             self.fonts_body(page)
         } else if let Page::FontPreview(page) = &self.page {
             self.font_preview_body(page)
+        } else if let Page::Store(page) = &self.page {
+            self.store_body(page)
+        } else if let Page::StoreDetail(page) = &self.page {
+            self.store_detail_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -3455,6 +3507,19 @@ impl LauncherApp {
         subtitle: Option<String>,
         selected: bool,
     ) -> Element<'a, Message> {
+        self.list_row_with(icon, title, subtitle, None, selected)
+    }
+
+    /// [`Self::list_row`] with a line of muted text at the right edge, as a
+    /// store row shows its download count and whether it is installed.
+    fn list_row_with<'a>(
+        &'a self,
+        icon: Element<'a, Message>,
+        title: String,
+        subtitle: Option<String>,
+        accessory: Option<String>,
+        selected: bool,
+    ) -> Element<'a, Message> {
         let geometry = self.geometry;
         let palette = self.palette();
         let title_color = if selected {
@@ -3483,31 +3548,40 @@ impl LauncherApp {
             );
         }
 
-        container(
-            row![icon, labels]
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .padding(Padding::new(0.0).left(12).right(12)),
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(f32::from(geometry.row_height)))
+        let line = match accessory.filter(|text| !text.is_empty()) {
+            Some(accessory) => row![
+                icon,
+                labels.width(Length::Fill),
+                text(accessory)
+                    .font(self.font())
+                    .size(f32::from(geometry.subtitle_size))
+                    .color(subtitle_color.to_iced())
+            ],
+            None => row![icon, labels],
+        }
+        .spacing(12)
         .align_y(Alignment::Center)
-        .style(move |_: &Theme| {
-            if selected {
-                container::Style {
-                    background: Some(palette.selection.to_iced().into()),
-                    border: Border {
-                        color: Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: f32::from(geometry.row_radius).into(),
-                    },
-                    ..container::Style::default()
+        .padding(Padding::new(0.0).left(12).right(12));
+        container(line)
+            .width(Length::Fill)
+            .height(Length::Fixed(f32::from(geometry.row_height)))
+            .align_y(Alignment::Center)
+            .style(move |_: &Theme| {
+                if selected {
+                    container::Style {
+                        background: Some(palette.selection.to_iced().into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: f32::from(geometry.row_radius).into(),
+                        },
+                        ..container::Style::default()
+                    }
+                } else {
+                    container::Style::default()
                 }
-            } else {
-                container::Style::default()
-            }
-        })
-        .into()
+            })
+            .into()
     }
 
     /// Draw the action panel.
@@ -4280,6 +4354,14 @@ impl LauncherApp {
             CommandKind::RunProgram => Task::batch([record, self.open_run_program()]),
             CommandKind::SetTheme => Task::batch([record, self.open_set_theme()]),
             CommandKind::CreateExtension => Task::batch([record, self.open_create_extension()]),
+            CommandKind::ExtensionStore => {
+                self.parked_store = None;
+                Task::batch([record, self.open_store(crate::backend::Store::Vicinae)])
+            }
+            CommandKind::RaycastStore => {
+                self.parked_store = None;
+                Task::batch([record, self.open_store(crate::backend::Store::Raycast)])
+            }
             CommandKind::BrowseFonts => {
                 self.parked_fonts = None;
                 Task::batch([record, self.open_browse_fonts()])
@@ -4940,6 +5022,15 @@ mod tests {
         themes_kept: std::sync::Mutex<Vec<String>>,
         /// The extensions created.
         created: std::sync::Mutex<Vec<crate::backend::ExtensionDraft>>,
+        /// The store's rows; an install marks one installed and writes its
+        /// manifest into `store_dir`, as the engine would.
+        store_rows: std::sync::Mutex<Vec<crate::backend::StoreRow>>,
+        /// Where installs land.
+        store_dir: Option<std::path::PathBuf>,
+        /// The store browses asked, in order.
+        store_queries: std::sync::Mutex<Vec<(crate::backend::Store, String)>>,
+        /// The URLs opened.
+        opened_urls: std::sync::Mutex<Vec<String>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -5057,6 +5148,111 @@ mod tests {
 
         fn font_specimen(&self, name: String) -> crate::backend::BackendFuture<'_, String> {
             Box::pin(async move { Ok(format!("# {name}\n\nThe quick brown fox\n\n---\n")) })
+        }
+
+        fn store_browse(
+            &self,
+            store: crate::backend::Store,
+            query: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::StoreList> {
+            Box::pin(async move {
+                self.store_queries
+                    .lock()
+                    .unwrap()
+                    .push((store, query.clone()));
+                let rows = self
+                    .store_rows
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|row| row.title.to_lowercase().contains(&query.to_lowercase()))
+                    .cloned()
+                    .collect();
+                Ok(crate::backend::StoreList {
+                    heading: if query.is_empty() {
+                        "Extensions"
+                    } else {
+                        "Results"
+                    }
+                    .into(),
+                    rows,
+                })
+            })
+        }
+
+        fn store_extension(
+            &self,
+            _store: crate::backend::Store,
+            _author: String,
+            name: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::StoreDetail> {
+            Box::pin(async move {
+                let row = self
+                    .store_rows
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row.name == name)
+                    .cloned()
+                    .ok_or("Extension not found")?;
+                Ok(crate::backend::StoreDetail {
+                    markdown: format!("# {}\n\n{}", row.title, row.description),
+                    row,
+                    readme_url: Some("https://example.com/README.md".into()),
+                    ..crate::backend::StoreDetail::default()
+                })
+            })
+        }
+
+        fn store_install(
+            &self,
+            _store: crate::backend::Store,
+            _author: String,
+            name: String,
+        ) -> crate::backend::BackendFuture<'_, (String, String)> {
+            Box::pin(async move {
+                let mut rows = self.store_rows.lock().unwrap();
+                let row = rows
+                    .iter_mut()
+                    .find(|row| row.name == name)
+                    .ok_or("Extension not found")?;
+                row.installed = true;
+                if let Some(dir) = &self.store_dir {
+                    let target = dir.join(&row.id);
+                    fs::create_dir_all(&target).unwrap();
+                    fs::write(
+                        target.join("package.json"),
+                        format!(
+                            r#"{{"name": "{name}", "title": "{}", "author": "zoe",
+                                "commands": [{{"name": "show", "title": "Show The Clock", "mode": "view"}}]}}"#,
+                            row.title
+                        ),
+                    )
+                    .unwrap();
+                }
+                Ok((row.id.clone(), row.title.clone()))
+            })
+        }
+
+        fn store_uninstall(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                for row in self.store_rows.lock().unwrap().iter_mut() {
+                    if row.id == id {
+                        row.installed = false;
+                    }
+                }
+                if let Some(dir) = &self.store_dir {
+                    let _ = fs::remove_dir_all(dir.join(&id));
+                }
+                Ok(())
+            })
+        }
+
+        fn open_url(&self, url: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened_urls.lock().unwrap().push(url);
+                Ok(())
+            })
         }
 
         fn choose_dmenu(
@@ -7742,6 +7938,164 @@ mod tests {
             ["JetBrains Mono"],
             "Copy font family"
         );
+    }
+
+    // ---- The extension stores ----
+
+    fn store_backend(dir: &std::path::Path) -> Arc<TestBackend> {
+        let row = |name: &str, title: &str| crate::backend::StoreRow {
+            id: format!("store.vicinae.{name}"),
+            name: name.into(),
+            author: "zoe".into(),
+            title: title.into(),
+            description: format!("{title} does things"),
+            downloads: "12".into(),
+            ..crate::backend::StoreRow::default()
+        };
+        Arc::new(TestBackend {
+            store_rows: std::sync::Mutex::new(vec![row("clock", "Clock"), row("timer", "Timer")]),
+            store_dir: Some(dir.to_path_buf()),
+            ..TestBackend::default()
+        })
+    }
+
+    #[test]
+    fn the_extension_store_installs_into_root_search_and_uninstalls_after_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let extensions = dir.path().join("extensions");
+        fs::create_dir_all(&extensions).unwrap();
+        let backend = store_backend(&extensions);
+        let mut app = LauncherApp::with_index(
+            AppIndex::builder()
+                .dir(dir.path())
+                .extension_dirs([extensions.clone()])
+                .build(),
+        );
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "extension store", "commands:store");
+        let Page::Store(page) = &app.page else {
+            panic!("not the store: {}", app.state_line());
+        };
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(page.heading, "Extensions");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Clock").is_ok(), "{}", app.state_line());
+            assert!(ui.find("↓ 12").is_ok(), "the accessory is drawn");
+        }
+
+        let task = app.update(Message::StoreQueryChanged("clo".into()));
+        settle(&mut app, task);
+        let Page::Store(page) = &app.page else {
+            panic!("left the store");
+        };
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.rows[0].title, "Clock");
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("no detail page: {}", app.state_line());
+        };
+        assert_eq!(detail.title, "Extension Store - Clock");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Extension Store - Clock").is_ok());
+        }
+
+        assert!(app.app_index.extensions().is_empty());
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page: {}", app.state_line());
+        };
+        assert!(detail.detail.row.installed, "Enter installs");
+        assert_eq!(detail.notice.as_deref(), Some("Extension installed"));
+        assert_eq!(
+            app.app_index
+                .extensions()
+                .iter()
+                .map(|command| command.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Show The Clock"],
+            "root search has the new command"
+        );
+
+        // Enter on an installed extension asks before uninstalling.
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(detail.confirm, "asked first");
+        assert!(backend.store_rows.lock().unwrap()[0].installed);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(!detail.detail.row.installed);
+        assert_eq!(detail.notice.as_deref(), Some("Extension uninstalled"));
+        assert!(
+            app.app_index.extensions().is_empty(),
+            "gone from root search"
+        );
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let titles: Vec<_> = app
+            .panel
+            .as_ref()
+            .expect("a panel")
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|action| action.title.clone()))
+            .collect();
+        assert_eq!(titles, ["Install extension", "Open README", "Report issue"]);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        assert_eq!(
+            *backend.opened_urls.lock().unwrap(),
+            ["https://example.com/README.md"]
+        );
+    }
+
+    #[test]
+    fn escape_from_a_store_detail_returns_to_the_same_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = store_backend(dir.path());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "raycast store", "commands:raycast-store");
+        // The Raycast store waits for typing to settle; the wait itself
+        // needs a runtime, so the test delivers its end.
+        let _debounce = app.update(Message::StoreQueryChanged("tim".into()));
+        let Page::Store(page) = &app.page else {
+            panic!("not the store");
+        };
+        let generation = page.generation;
+        let stale = app.update(Message::StoreSearchDue(generation - 1));
+        assert!(settle(&mut app, stale).is_empty());
+        let task = app.update(Message::StoreSearchDue(generation));
+        settle(&mut app, task);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::StoreDetail(_)));
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Store(page) = &app.page else {
+            panic!("not back at the list: {}", app.state_line());
+        };
+        assert_eq!(page.query, "tim", "the search is kept");
+        assert_eq!(page.rows[0].title, "Timer");
+        let asked = backend.store_queries.lock().unwrap().clone();
+        assert!(
+            asked
+                .iter()
+                .all(|(store, _)| *store == crate::backend::Store::Raycast)
+        );
+        assert_eq!(asked.last().map(|(_, q)| q.as_str()), Some("tim"));
     }
 
     // ---- Set Theme ----

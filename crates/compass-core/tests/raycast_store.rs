@@ -306,3 +306,18 @@ fn a_compat_sheet_parses_with_its_optional_fields_absent() {
     assert_eq!(info.notes, None);
     assert_eq!(info.has_equivalent, None);
 }
+
+#[test]
+fn a_listing_with_nulls_still_reads() {
+    let json = r#"{"data": [{"name": "hn", "title": "HN", "platforms": null, "readme_url": null,
+        "author": {"name": "Ray", "handle": "ray", "avatar": null}, "icons": {"light": "l", "dark": null},
+        "commit_sha": "abc", "metadata_count": 2, "readme_assets_path": "https://x/"}]}"#;
+    let response: compass_core::raycast_store::ListApiResponse =
+        serde_json::from_str(json).expect("nulls are not fatal");
+    let extension = &response.data[0];
+    assert_eq!(extension.readme_url, "");
+    assert_eq!(extension.platforms, None);
+    assert_eq!(extension.version_key(), "abc");
+    assert_eq!(extension.themed_icon(true), Some("l"));
+    assert_eq!(extension.screenshots().len(), 2);
+}

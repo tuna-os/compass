@@ -2247,6 +2247,40 @@ v14 (`ListRhaiScripts`, then the v8 `RunExtensionCommand` / `ExtensionView` / `E
 requests); a v13 launcher does not list them. A script's `paste` on a wlroots compositor copies
 and does not type, as an extension's paste does there ("wlroots" below).
 
+### Extension Store and Raycast Store — what the port does not have yet
+
+Both stores run end to end (IPC v14: `StoreBrowse`, `StoreExtension`, `StoreInstall`,
+`StoreUninstall`, `OpenUrl`). The engine fetches with `ureq` on the blocking pool:
+the Vicinae store's whole list (`/store/list?page=1&limit=500`, `postProcess` dropping other
+platforms and renaming to `store.vicinae.<name>`), filtered locally as the user types with the C++
+weights (title 1.0, author 0.5, description 0.3); the Raycast store's first page (cached for the
+session, as `m_cachedPages`) or its server-side search after the ported 200 ms pause, with the
+Linux compatibility sheet from `/raycast/get-compat` fetched once (a failure is an empty sheet and
+is retried next time, as the C++). Rows carry the ported download count (`1.1K`), whether the
+extension is installed, and on Linux its compatibility tier; the detail page carries the ported
+banner ("This extension works but has a few quirks." and the sheet's notes), the metadata, the
+command list, the README, and the Raycast screenshots. Install downloads the bundle, unpacks it
+through `compass_core::store_bundle` in the ported staging order, and the engine and the launcher
+both rescan the extension directories, so the new commands are in root search at once; uninstall
+removes the extension, its support directory and its local-storage and preference namespaces, and
+root search forgets it. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | `Unzipper` extracts whatever the entry names say. | An entry that leaves its directory (`../`, an absolute path, a drive prefix) or is a symbolic link refuses the whole archive before anything is written; the download (128 MiB), the entry count (20,000) and the unpacked total (512 MiB, counted as bytes are inflated, not taken from the headers) are capped; every entry is read to its end so its CRC-32 is checked. | `store_bundle::tests`, `the_vicinae_store_lists_installs_into_root_search_and_uninstalls` |
+| 2 | Install checks only that `package.json` exists. | It must also parse as an extension manifest, and the id built from the store's name must be one ordinary directory name (`store.vicinae../x` is refused). | `ids_that_would_leave_the_directory_are_refused` |
+| 3 | No update detection. | An install leaves `.compass-store.json` beside the manifest with the store's version key (the Vicinae store's `checksum`, the Raycast store's `commit_sha`); a row whose store key differs says "Update available", and the detail page offers "Update extension" (a reinstall) first. An extension installed by the C++ engine, by hand or by Suite 1's harness has no marker and is never called out of date: the bundles' own timestamps land seconds before the store's publication time, so guessing from file times would flag every fresh install. | `only_a_marked_install_with_a_different_build_is_out_of_date`, `the_raycast_store_badges_compatibility_and_notices_an_update` |
+| 4 | "Verify" is not attempted. | Nor is it possible beyond the CRC: neither store publishes a signature, and the Vicinae store's `checksum` matched no hash of the archive or of its `package.json` (SHA-256 and MD5 tried on a live bundle), so it is used only as a version key. | — |
+| 5 | The detail page links the README (`readmeUrl`); the Vicinae store shows no screenshots. | The README is fetched (a GitHub `tree/`/`blob/` page is rewritten to its `raw.githubusercontent.com` text, 512 KiB at most) and rendered below the details in the launcher's Markdown view; a failed fetch leaves it out. Its relative image links are not resolved, and Markdown images are not drawn. Raycast screenshots are fetched through the remote-image cache and drawn below. | `a_github_readme_page_is_fetched_as_raw_text`, `the_detail_names_everything_the_qml_view_shows` |
+| 6 | Rows show an author avatar, a download count, an installed check and a coloured compatibility dot. | One line of text at the row's right: "Installed" or "Update available", "↓ 1.1K", and the tier's name. No avatar. | `the_accessory_says_installed_or_out_of_date_and_the_tier` |
+| 7 | The first opening shows an intro page (`alwaysShowIntro`, `introCompleted` in command storage). | No intro: the store opens straight to its list. | — |
+| 8 | "Uninstall Extension" is on every row's panel, and fails for one that is not installed. | Offered only on an installed row. The confirmation is the C++'s ("Are you sure?" and its message), answered with Enter or Escape under the list rather than in a dialog. | `the_extension_store_installs_into_root_search_and_uninstalls_after_asking` |
+| 9 | A failed list fetch shows a toast and leaves the spinner running (`FAILED_FETCH_CLEARS_LOADING`). | The failure is said under the list (or in place of it, when nothing has loaded), and loading stops. | `a_failure_after_rows_keeps_them` |
+| 10 | The list is fetched with `PreferCache` and reused while Qt's disk cache keeps it. | The Vicinae list is kept in memory for ten minutes; the Raycast pages for the session, as the C++. | — |
+| 11 | The Raycast API is always `backend.raycast.com`. | `COMPASS_RAYCAST_API_URL` overrides it, as `VICINAE_API_URL` already overrides the Vicinae API, so tests serve both stores locally. | `raycast_store::api_base_url` |
+| 12 | Only the store builtins' links open (`openTarget`). | `OpenUrl` opens any `http(s)` link with the default browser (anything else is refused), and the launcher now uses it for links clicked in Markdown, including an extension view's, which were only logged before. | `only_web_urls_are_opened` |
+| 13 | Deep links (`vicinae://extensions/<author>/<name>` into a detail host) exist. | Not yet: the detail page is reached from the list. | — |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

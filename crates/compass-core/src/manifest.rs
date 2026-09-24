@@ -794,6 +794,23 @@ pub mod registry {
         )
     }
 
+    /// Where this user's extensions are installed:
+    /// `$XDG_DATA_HOME/vicinae/extensions`, the directory
+    /// `ExtensionRegistry::localExtensionDirectory` names and the first of
+    /// [`search_paths`]. `None` without a data home.
+    #[must_use]
+    pub fn local_directory() -> Option<PathBuf> {
+        compass_xdg::xdg_dirs::data_home()
+            .map(|home| home.join(DATA_DIR_NAME).join(EXTENSIONS_SUBDIR))
+    }
+
+    /// Where an extension's support files live: `$XDG_DATA_HOME/vicinae/support/<id>`.
+    #[must_use]
+    pub fn support_directory(id: &str) -> Option<PathBuf> {
+        compass_xdg::xdg_dirs::data_home()
+            .map(|home| home.join(DATA_DIR_NAME).join("support").join(id))
+    }
+
     /// What a scan found.
     #[derive(Debug, Default)]
     pub struct Scan {

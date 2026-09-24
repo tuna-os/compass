@@ -203,6 +203,26 @@ fn all_requests() -> Vec<Request> {
         Request::SetTheme {
             theme: "tokyo-night".into(),
         },
+        Request::StoreBrowse {
+            store: compass_ipc::StoreKind::Raycast,
+            query: "spotify & co".into(),
+        },
+        Request::StoreExtension {
+            store: compass_ipc::StoreKind::Vicinae,
+            author: "zoë".into(),
+            name: "clock".into(),
+        },
+        Request::StoreInstall {
+            store: compass_ipc::StoreKind::Vicinae,
+            author: "zoë".into(),
+            name: "clock".into(),
+        },
+        Request::StoreUninstall {
+            id: "store.vicinae.clock".into(),
+        },
+        Request::OpenUrl {
+            url: "https://example.com/?q=é".into(),
+        },
         Request::ListFonts,
         Request::FontSpecimen {
             name: "Noto Sans ไทย".into(),
@@ -226,6 +246,23 @@ fn all_requests() -> Vec<Request> {
 }
 
 /// Every `Response` variant.
+fn store_entry() -> compass_ipc::StoreEntry {
+    compass_ipc::StoreEntry {
+        id: "store.vicinae.clock".into(),
+        name: "clock".into(),
+        author: "zoe".into(),
+        author_name: "Zoë".into(),
+        title: "Clock".into(),
+        description: "Shows the time".into(),
+        icon_light: Some("https://example.com/light.png".into()),
+        icon_dark: None,
+        downloads: "1.1K".into(),
+        installed: true,
+        update_available: true,
+        compat: Some(1),
+    }
+}
+
 fn all_responses() -> Vec<Response> {
     vec![
         Response::Pong {
@@ -494,6 +531,24 @@ fn all_responses() -> Vec<Response> {
         Response::ExtensionCreated {
             path: "/home/me/code/my-extension".into(),
         },
+        Response::StoreListing {
+            heading: "Extensions".into(),
+            entries: vec![store_entry()],
+        },
+        Response::StoreExtension {
+            detail: compass_ipc::StoreDetail {
+                entry: store_entry(),
+                markdown: "# Clock\n\nShows the time".into(),
+                screenshots: vec!["https://example.com/1.png".into()],
+                readme_url: Some("https://example.com/README.md".into()),
+                source_url: None,
+                store_url: Some("https://www.raycast.com/zoe/clock".into()),
+            },
+        },
+        Response::StoreInstalled {
+            id: "store.vicinae.clock".into(),
+            title: "Clock".into(),
+        },
         Response::Fonts {
             fonts: vec![compass_ipc::FontEntry {
                 name: "Noto Sans Thai".into(),
@@ -584,6 +639,11 @@ fn request_variants_are_exhaustive() {
             | Request::ListFonts
             | Request::FontSpecimen { .. }
             | Request::ListRhaiScripts
+            | Request::StoreBrowse { .. }
+            | Request::StoreExtension { .. }
+            | Request::StoreInstall { .. }
+            | Request::StoreUninstall { .. }
+            | Request::OpenUrl { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -617,6 +677,9 @@ fn response_variants_are_exhaustive() {
             | Response::Programs { .. }
             | Response::ExtensionCreated { .. }
             | Response::Fonts { .. }
+            | Response::StoreListing { .. }
+            | Response::StoreExtension { .. }
+            | Response::StoreInstalled { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }

@@ -60,6 +60,10 @@ pub enum CommandKind {
     CreateExtension,
     /// Browse the installed fonts by script, and preview one.
     BrowseFonts,
+    /// Browse, install and uninstall extensions from the Vicinae store.
+    ExtensionStore,
+    /// Browse, install and uninstall extensions from the Raycast store.
+    RaycastStore,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -175,6 +179,22 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Browse and preview the installed fonts",
         keywords: &["fonts", "font", "typeface", "typography", "specimen"],
         icon: "text",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ExtensionStore,
+        entrypoint: "store",
+        title: "Extension Store",
+        subtitle: "Install extensions from the Vicinae store",
+        keywords: &["store", "extensions", "install", "vicinae", "plugins"],
+        icon: "cart",
+    },
+    BuiltinCommand {
+        kind: CommandKind::RaycastStore,
+        entrypoint: "raycast-store",
+        title: "Raycast Store",
+        subtitle: "Install compatible extensions from the Raycast store",
+        keywords: &["store", "extensions", "install", "raycast", "plugins"],
+        icon: "raycast",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

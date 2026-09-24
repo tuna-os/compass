@@ -328,6 +328,24 @@ pub fn load_preferences(
     }
 }
 
+/// Removes everything `extension_id` kept in local storage and its stored
+/// preference values; logged, never fatal, since the extension is already
+/// gone by the time this runs.
+pub fn clear_extension_data(storage: &Storage, extension_id: &str) {
+    let Some(db) = open_storage(storage) else {
+        return;
+    };
+    let local = compass_local_storage::LocalStorage::new(&db);
+    for namespace in [
+        compass_local_storage::namespace_for(extension_id),
+        preferences_namespace(extension_id),
+    ] {
+        if let Err(err) = local.scoped(&namespace).clear() {
+            tracing::warn!(%err, %namespace, "could not clear an uninstalled extension's data");
+        }
+    }
+}
+
 /// Keeps `values` for `extension_id`. A null or empty value removes the
 /// stored one, so clearing a field falls back to its default.
 ///

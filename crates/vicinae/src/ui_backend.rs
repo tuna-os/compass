@@ -12,6 +12,38 @@ use compass_ui::backend::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How long a store listing or detail page may take: it is fetched from the
+/// network, where two seconds is not enough.
+const STORE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long an install may take: a download of up to the bundle cap, then
+/// the unpack.
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
+
+const fn store_kind(store: compass_ui::backend::Store) -> compass_ipc::StoreKind {
+    match store {
+        compass_ui::backend::Store::Vicinae => compass_ipc::StoreKind::Vicinae,
+        compass_ui::backend::Store::Raycast => compass_ipc::StoreKind::Raycast,
+    }
+}
+
+fn store_row(entry: compass_ipc::StoreEntry) -> compass_ui::backend::StoreRow {
+    compass_ui::backend::StoreRow {
+        id: entry.id,
+        name: entry.name,
+        author: entry.author,
+        author_name: entry.author_name,
+        title: entry.title,
+        description: entry.description,
+        icon_light: entry.icon_light,
+        icon_dark: entry.icon_dark,
+        downloads: entry.downloads,
+        installed: entry.installed,
+        update_available: entry.update_available,
+        compat: entry.compat,
+    }
+}
+
 /// Uses the same engine/socket as the resident window link.
 #[derive(Debug)]
 pub struct DaemonBackend {
@@ -162,6 +194,112 @@ impl ApplicationBackend for DaemonBackend {
                         categories,
                     })
                 }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn store_browse(
+        &self,
+        store: compass_ui::backend::Store,
+        query: String,
+    ) -> BackendFuture<'_, compass_ui::backend::StoreList> {
+        Box::pin(async move {
+            let request = Request::StoreBrowse {
+                store: store_kind(store),
+                query,
+            };
+            match self
+                .ask_within(request, "Loading the store", STORE_TIMEOUT)
+                .await?
+            {
+                compass_ipc::Response::StoreListing { heading, entries } => {
+                    Ok(compass_ui::backend::StoreList {
+                        heading,
+                        rows: entries.into_iter().map(store_row).collect(),
+                    })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn store_extension(
+        &self,
+        store: compass_ui::backend::Store,
+        author: String,
+        name: String,
+    ) -> BackendFuture<'_, compass_ui::backend::StoreDetail> {
+        Box::pin(async move {
+            let request = Request::StoreExtension {
+                store: store_kind(store),
+                author,
+                name,
+            };
+            match self
+                .ask_within(request, "Loading the extension", STORE_TIMEOUT)
+                .await?
+            {
+                compass_ipc::Response::StoreExtension { detail } => {
+                    Ok(compass_ui::backend::StoreDetail {
+                        row: store_row(detail.entry),
+                        markdown: detail.markdown,
+                        screenshots: detail.screenshots,
+                        readme_url: detail.readme_url,
+                        source_url: detail.source_url,
+                        store_url: detail.store_url,
+                    })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn store_install(
+        &self,
+        store: compass_ui::backend::Store,
+        author: String,
+        name: String,
+    ) -> BackendFuture<'_, (String, String)> {
+        Box::pin(async move {
+            let request = Request::StoreInstall {
+                store: store_kind(store),
+                author,
+                name,
+            };
+            match self
+                .ask_within(request, "Installing the extension", INSTALL_TIMEOUT)
+                .await?
+            {
+                compass_ipc::Response::StoreInstalled { id, title } => Ok((id, title)),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn store_uninstall(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask_within(
+                    Request::StoreUninstall { id },
+                    "Uninstalling the extension",
+                    STORE_TIMEOUT,
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn open_url(&self, url: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::OpenUrl { url }, "Opening the link")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })
@@ -667,6 +805,16 @@ impl DaemonBackend {
     /// the window shows it to the user, who does not need to be told that it
     /// came over a socket.
     async fn ask(&self, request: Request, what: &str) -> Result<compass_ipc::Response, String> {
+        self.ask_within(request, what, REQUEST_TIMEOUT).await
+    }
+
+    /// [`Self::ask`], allowing `timeout` for the answer.
+    async fn ask_within(
+        &self,
+        request: Request,
+        what: &str,
+        timeout: Duration,
+    ) -> Result<compass_ipc::Response, String> {
         let exchange = async {
             let mut client = compass_ipc::Client::connect(self.socket.as_path())
                 .await
@@ -676,7 +824,7 @@ impl DaemonBackend {
                 .await
                 .map_err(|error| format!("Could not reach the engine: {error}"))
         };
-        match tokio::time::timeout(REQUEST_TIMEOUT, exchange).await {
+        match tokio::time::timeout(timeout, exchange).await {
             Err(_) => Err(format!("{what} timed out")),
             Ok(Err(message)) => Err(message),
             Ok(Ok(compass_ipc::Response::Error(error))) => Err(sentence(&error.message)),

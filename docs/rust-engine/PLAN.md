@@ -503,7 +503,9 @@ history, emoji, window switching, power, media and volume, Search Files, shortcu
 Shortcut, Manage Shortcuts, shortcuts in root search; IPC v13), and snippets (Create Snippet,
 Manage Snippets: copy, paste, edit; keyword expansion waits on the input server, which is not
 ported), script commands (scanned into root search, run in all five output modes), Run
-Terminal Program, `vicinae dmenu`, Set Theme, Create Extension, and Browse Fonts. What each still
+Terminal Program, `vicinae dmenu`, Set Theme, Create Extension, Browse Fonts, and the two store
+front-ends (Extension Store and Raycast Store: browse, search, detail with README and screenshots,
+install with zip-slip and size guards, uninstall, update detection; IPC v14). What each still
 lacks is in `PARITY.md`, one section per builtin.
 
 **Browser tab search and switching is not in this list.** It is out of scope for the port and
@@ -558,7 +560,7 @@ namespace per script) and `notify-rust`. Grants: packaged scripts get what they 
 own get it after a one-time consent prompt in the launcher, kept in
 `$XDG_CONFIG_HOME/compass/script-grants.json`. The user directory is created and watched; edits
 rebuild the script, re-render an open view, and update root search. The five examples install
-under `share/compass/scripts` in every package (`install-rust-engine.sh`). IPC v14 adds only
+under `share/compass/scripts` in every package (`install-rust-engine.sh`). Its share of IPC v14 is only
 `ListRhaiScripts`/`RhaiScripts`. Tested in-process against a `MemoryHost` (`tests/rhai_scripts.rs`)
 and against the real process (`engine_end_to_end.rs`). Not done: script icons in the root list
 (rows use the initial badge, as extension commands do), an action panel on a script's root row,

@@ -38,6 +38,7 @@ pub mod session;
 pub mod shortcuts;
 pub mod snippets;
 pub mod spike;
+pub mod stores;
 pub mod typography;
 pub mod ui_backend;
 mod ui_instance;

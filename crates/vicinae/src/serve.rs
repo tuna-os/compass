@@ -117,6 +117,8 @@ pub struct EngineState {
     /// The Shell extension's client for the scripts' clipboard, once
     /// connected.
     shell_slot: crate::rhai_host::ShellSlot,
+    /// The extension stores.
+    stores: Arc<crate::stores::Stores>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -228,6 +230,7 @@ impl EngineState {
             fonts: Arc::default(),
             rhai,
             shell_slot,
+            stores: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -287,6 +290,7 @@ impl EngineState {
             fonts: Arc::default(),
             rhai: Arc::default(),
             shell_slot: crate::rhai_host::ShellSlot::default(),
+            stores: Arc::default(),
         }
     }
 
@@ -524,6 +528,67 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
             "no application opens this kind of file",
         ))
     }
+}
+
+/// Uninstalls an extension, as `ExtensionRegistry::uninstall` does: its
+/// directory, its support directory and its stored data, then root search
+/// forgets its commands.
+async fn uninstall_extension(state: &Arc<RwLock<EngineState>>, id: String) -> Response {
+    let lookup = id.clone();
+    let Ok(Some(directory)) =
+        tokio::task::spawn_blocking(move || crate::stores::installed_directory(&lookup)).await
+    else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            format!("No extension is installed with the id {id}"),
+        ));
+    };
+    let Some(support) = compass_core::manifest::registry::support_directory(&id) else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "Uninstalling an extension needs a data directory",
+        ));
+    };
+    let removed = tokio::task::spawn_blocking(move || {
+        compass_core::store_bundle::uninstall(&directory, &support)
+    })
+    .await
+    .unwrap_or_else(|err| Err(format!("the uninstall task failed: {err}")));
+    if let Err(reason) = removed {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!("Failed to uninstall extension: {reason}"),
+        ));
+    }
+    clear_extension_storage(&id).await;
+    state.write().await.index.rescan_extensions();
+    tracing::info!(%id, "extension uninstalled");
+    Response::Ack
+}
+
+/// Clears what an extension kept in local storage, and its preference
+/// values, as `m_storage.clearNamespace(id)` does. Only when the storage
+/// database exists: an extension that never ran has nothing there, and
+/// opening the keyring to find that out would be a prompt for nothing.
+async fn clear_extension_storage(id: &str) {
+    let Some(data_dir) = compass_core::xdg_dirs::data_home().map(|home| home.join("vicinae"))
+    else {
+        return;
+    };
+    if !data_dir
+        .join(crate::extension_runner::STORAGE_DATABASE)
+        .is_file()
+    {
+        return;
+    }
+    let Some(storage) = extension_storage(&data_dir).await else {
+        return;
+    };
+    let id = id.to_owned();
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::extension_runner::clear_extension_data(&storage, &id);
+    })
+    .await;
 }
 
 /// Browse Fonts' families, read from the font database the first time they
@@ -1918,6 +1983,63 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 None => Response::Error(ProtocolError::new(
                     ErrorKind::BadRequest,
                     "no installed font family has that name",
+                )),
+            }
+        }
+        Request::StoreBrowse { store, query } => {
+            let stores = Arc::clone(&state.read().await.stores);
+            match stores.browse(store, &query).await {
+                Ok(listed) => Response::StoreListing {
+                    heading: listed.heading,
+                    entries: listed.entries,
+                },
+                Err(message) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
+            }
+        }
+        Request::StoreExtension {
+            store,
+            author,
+            name,
+        } => {
+            let stores = Arc::clone(&state.read().await.stores);
+            match stores.detail(store, &author, &name).await {
+                Ok(detail) => Response::StoreExtension { detail },
+                Err(message) => Response::Error(ProtocolError::new(ErrorKind::BadRequest, message)),
+            }
+        }
+        Request::StoreInstall {
+            store,
+            author,
+            name,
+        } => {
+            let stores = Arc::clone(&state.read().await.stores);
+            match stores.install(store, &author, &name).await {
+                Ok((id, title)) => {
+                    state.write().await.index.rescan_extensions();
+                    Response::StoreInstalled { id, title }
+                }
+                Err(message) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
+            }
+        }
+        Request::StoreUninstall { id } => uninstall_extension(state, id).await,
+        Request::OpenUrl { url } => {
+            use compass_worker_host::application_service::Apps;
+            if !crate::stores::is_openable_url(&url) {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "only http and https URLs are opened",
+                ));
+            }
+            let apps = engine_apps(state).await;
+            match crate::shortcuts::resolve_app(&apps, compass_core::shortcut::DEFAULT_APP_ID, &url)
+            {
+                Some(app) => {
+                    apps.launch(&app, &url);
+                    Response::Ack
+                }
+                None => Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    format!("No default app to open {url}"),
                 )),
             }
         }

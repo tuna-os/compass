@@ -501,6 +501,7 @@ impl AppIndexBuilder {
             scripts: Vec::new(),
             rhai_scripts: Vec::new(),
             root_config: crate::root_items::RootConfig::default(),
+            extension_dirs: self.extension_dirs,
         }
     }
 
@@ -685,6 +686,8 @@ pub struct AppIndex {
     rhai_scripts: Vec<crate::rhai_scripts::RhaiScriptItem>,
     /// The configuration last applied, kept for roots added later.
     root_config: crate::root_items::RootConfig,
+    /// Where installed extensions are looked for, kept for a rescan.
+    extension_dirs: Vec<PathBuf>,
 }
 
 /// One row of a root search over applications and commands.
@@ -1005,6 +1008,44 @@ impl AppIndex {
             root.merge_config(&self.root_config, false);
             self.roots.push(root);
         }
+    }
+
+    /// Scans the extension directories the index was built with again and
+    /// takes what is installed now, as `ExtensionRegistry::requestScan`
+    /// does after an install or an uninstall.
+    pub fn rescan_extensions(&mut self) {
+        let extensions = if self.extension_dirs.is_empty() {
+            Vec::new()
+        } else {
+            crate::extension_commands::ExtensionCommand::from_manifests(
+                &crate::manifest::registry::scan(&self.extension_dirs).extensions,
+            )
+        };
+        self.set_extensions(extensions);
+    }
+
+    /// Replaces the installed extensions' commands, applying the
+    /// configuration last given to [`AppIndex::apply_root_config`] to their
+    /// rows. Every other row keeps its position.
+    pub fn set_extensions(&mut self, extensions: Vec<crate::extension_commands::ExtensionCommand>) {
+        let old: std::collections::HashSet<&str> = self
+            .extensions
+            .iter()
+            .map(|command| command.id.as_str())
+            .collect();
+        let first_non_app = self.root_indices.len();
+        let mut position = 0;
+        self.roots.retain(|root| {
+            let keep = position < first_non_app || !old.contains(root.id.as_str());
+            position += 1;
+            keep
+        });
+        for command in &extensions {
+            let mut root = command.root_item();
+            root.merge_config(&self.root_config, false);
+            self.roots.push(root);
+        }
+        self.extensions = extensions;
     }
 
     /// The installed extension command with this entrypoint id.
