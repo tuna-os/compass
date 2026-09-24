@@ -203,6 +203,30 @@ jobs:
           rustup run "${{ steps.msrv.outputs.version }}" \
             cargo build --release --locked -p vicinae
 
+  # PHASE 4'S SEAM. The gate (PLAN §6) asks that compass-extension-api compile
+  # and pass its tests with compass-worker-host removed from the dependency
+  # graph: the cheap mechanical proof that the Rhai tier can bind to the same
+  # view tree without the Node host coming along. The script checks the real
+  # graph, then builds and tests the crate in a workspace where the host does
+  # not exist at all.
+  extension-api-seam:
+    name: "Phase 4 seam: compass-extension-api without compass-worker-host"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: seam-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: seam-${{ runner.os }}-
+
+      - name: Build and test the crate alone
+        run: ./scripts/ci/extension-api-seam.sh
+
   crypto-parity:
     name: The two clipboard crypto implementations interoperate
     runs-on: ubuntu-24.04
