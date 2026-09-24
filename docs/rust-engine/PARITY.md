@@ -1299,19 +1299,14 @@ from the reply which host it is talking to, so a Compass that updated the toast 
 Vicinae user never sees, and an extension author would tune their toasts against the wrong one. When
 the C++ grows a body, this test is the one that should fail.
 
-### `compass-core::slug` — two regex passes that reach the same string as one
+### `compass-core::slug` — the `slug` crate, which transliterates
 
-Qt's `slugify` replaces `[\s_]+` with the separator, which collapses a run of whitespace in that
-one pass, and then collapses runs of the separator in a later pass. The Rust port writes one
-separator per whitespace character and lets the later collapse do both jobs. It also drops the
-C++'s early return on an empty input, which cannot change the result because an empty string falls
-through every remaining step unchanged.
-
-This is recorded rather than silently done because it was found by a control that did not fire:
-mutating the whitespace-run logic changed nothing observable, because the collapse pass rescued it.
-A behaviour guarded twice is a behaviour whose guard cannot be tested, so the redundant guard went.
-`a_run_of_whitespace_makes_one_separator_not_many` still pins the property, and now fails when the
-single remaining rule is broken.
+`slugify` is the [`slug`](https://crates.io/crates/slug) crate rather than a port of the Qt
+function (AGENTS.md: crates over hand-rolled code). The pinned cases agree — accents fold
+(`Café au Lait` → `cafe-au-lait`), whitespace and underscore runs make one `-`, punctuation goes,
+ends are trimmed — with one difference: the crate **transliterates** non-Latin text
+(`日本語 ツール` → `ri-ben-yu-turu`) where the C++ strips it and leaves an empty string, which as an
+extension's directory name was a bug. The C++'s configurable separator is gone; nothing used it.
 
 ### `compass-core::boilerplate` — two commands with the same slug, and the first one wins
 

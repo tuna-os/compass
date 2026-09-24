@@ -869,6 +869,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "slug",
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
@@ -1494,6 +1495,12 @@ name = "data-url"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
+
+[[package]]
+name = "deunicode"
+version = "1.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "digest"
@@ -4900,6 +4907,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "slug"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "882a80f72ee45de3cc9a5afeb2da0331d58df69e4e7d8eeb5d3c7784ae67e724"
+dependencies = [
+ "deunicode",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5670,6 +5687,7 @@ dependencies = [
  "compass-platform",
  "compass-platform-linux",
  "compass-portals",
+ "compass-power",
  "compass-sandbox",
  "compass-shell",
  "compass-sqlcipher-sys",

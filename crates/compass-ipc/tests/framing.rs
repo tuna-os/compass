@@ -467,11 +467,9 @@ fn a_truncated_frame_never_yields_a_message() {
 
     assert_eq!(codec.decode(&mut buf).unwrap(), None);
     assert_eq!(codec.decode(&mut buf).unwrap(), None);
-    assert_eq!(
-        buf.len(),
-        truncated.len(),
-        "a partial frame must stay buffered"
-    );
+    // Nothing was lost while waiting: the missing byte completes the frame.
+    buf.put_u8(wire[wire.len() - 1]);
+    assert_eq!(codec.decode(&mut buf).unwrap(), Some(envelope));
 }
 
 #[test]
