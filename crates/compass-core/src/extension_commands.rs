@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use crate::manifest::{CommandMode, ExtensionManifest, Preference, Provenance};
+use crate::manifest::{CommandArgument, CommandMode, ExtensionManifest, Preference, Provenance};
 use crate::root_items::{RootItem, RootItemMeta, entrypoint_id};
 
 /// One command from an installed extension.
@@ -51,6 +51,8 @@ pub struct ExtensionCommand {
     pub is_raycast: bool,
     /// The extension's preferences, then the command's own.
     pub preferences: Vec<Preference>,
+    /// The arguments it is launched with, in the manifest's order.
+    pub arguments: Vec<CommandArgument>,
 }
 
 impl ExtensionCommand {
@@ -82,9 +84,88 @@ impl ExtensionCommand {
                         .chain(&command.preferences)
                         .cloned()
                         .collect(),
+                    arguments: command.arguments.clone(),
                 })
             })
             .collect()
+    }
+
+    /// The preference values a launch passes: what the user stored, else each
+    /// preference's default. A value stored for a name the manifest no longer
+    /// declares is dropped.
+    ///
+    /// # Errors
+    ///
+    /// The required preferences with neither, for the launcher to ask for.
+    pub fn preferences_with(
+        &self,
+        stored: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, Vec<&Preference>> {
+        let set = |preference: &Preference| {
+            stored
+                .get(&preference.name)
+                .filter(|value| !value.is_null() && value.as_str() != Some(""))
+                .or(preference.default.as_ref())
+                .cloned()
+        };
+        let missing: Vec<&Preference> = self
+            .preferences
+            .iter()
+            .filter(|preference| preference.required && set(preference).is_none())
+            .collect();
+        if !missing.is_empty() {
+            return Err(missing);
+        }
+        Ok(serde_json::Value::Object(
+            self.preferences
+                .iter()
+                .filter_map(|preference| {
+                    set(preference).map(|value| (preference.name.clone(), value))
+                })
+                .collect(),
+        ))
+    }
+
+    /// The argument values a launch passes, from what the launcher gave:
+    /// each declared argument's non-empty value. Anything not declared is
+    /// dropped. `Ok` for a command without arguments however it was called.
+    ///
+    /// # Errors
+    ///
+    /// `None` when the launcher gave nothing and the command declares
+    /// arguments, so the launcher should ask for them; otherwise the
+    /// required arguments left empty.
+    pub fn arguments_with(
+        &self,
+        given: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<serde_json::Value, Option<Vec<&CommandArgument>>> {
+        if self.arguments.is_empty() {
+            return Ok(serde_json::Value::Object(serde_json::Map::new()));
+        }
+        let Some(given) = given else {
+            return Err(None);
+        };
+        let value = |argument: &CommandArgument| {
+            given
+                .get(&argument.name)
+                .and_then(serde_json::Value::as_str)
+                .filter(|text| !text.is_empty())
+                .map(|text| serde_json::Value::String(text.to_owned()))
+        };
+        let missing: Vec<&CommandArgument> = self
+            .arguments
+            .iter()
+            .filter(|argument| argument.required && value(argument).is_none())
+            .collect();
+        if !missing.is_empty() {
+            return Err(Some(missing));
+        }
+        Ok(serde_json::Value::Object(
+            self.arguments
+                .iter()
+                .filter_map(|argument| value(argument).map(|v| (argument.name.clone(), v)))
+                .collect(),
+        ))
     }
 
     /// The preference values a launch passes when the user has set none:
@@ -134,5 +215,51 @@ impl ExtensionCommand {
                 ..RootItemMeta::default()
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(arguments: &str) -> ExtensionCommand {
+        let json: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"name": "x", "author": "a", "commands": [
+                {{"name": "c", "mode": "view", "arguments": {arguments}}}
+            ]}}"#
+        ))
+        .expect("json");
+        let manifest = ExtensionManifest::from_json(&json, std::path::Path::new("/ext/x"));
+        ExtensionCommand::from_manifests(&[manifest])
+            .pop()
+            .expect("a command")
+    }
+
+    #[test]
+    fn arguments_are_asked_for_until_given_and_required_ones_must_be_filled() {
+        let none = command("[]");
+        assert_eq!(none.arguments_with(None), Ok(serde_json::json!({})));
+
+        let search = command(
+            r#"[{"name": "query", "type": "text", "placeholder": "Query", "required": true},
+                {"name": "sort", "type": "dropdown", "data": [{"title": "Stars", "value": "stars"}]}]"#,
+        );
+        assert_eq!(search.arguments_with(None), Err(None), "ask for them");
+
+        let blank = serde_json::json!({"query": "", "sort": "stars"});
+        let missing = search
+            .arguments_with(blank.as_object())
+            .expect_err("query is required");
+        assert_eq!(
+            missing.map(|m| m.iter().map(|a| a.name.clone()).collect::<Vec<_>>()),
+            Some(vec!["query".to_owned()])
+        );
+
+        let given = serde_json::json!({"query": "compass", "sort": "", "extra": "x"});
+        assert_eq!(
+            search.arguments_with(given.as_object()),
+            Ok(serde_json::json!({"query": "compass"})),
+            "an empty optional one and an undeclared one are left out"
+        );
     }
 }

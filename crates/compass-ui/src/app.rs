@@ -453,6 +453,128 @@ enum Page {
     Clipboard(crate::clipboard_page::ClipboardPage),
     /// The window switcher.
     Windows(crate::windows_page::WindowsPage),
+    /// An extension command's view.
+    Extension(Box<crate::extension_page::ExtensionPage>),
+    /// The form an extension command's preferences are set in.
+    Preferences(Box<crate::preferences_page::PreferencesPage>),
+}
+
+/// A key press as an extension shortcut: its modifiers and the key's name
+/// as `jsx.d.ts` spells it. `None` for a press with no Control, Alt or Super,
+/// which is typing or navigation, never a shortcut.
+fn extension_chord(
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<(Vec<compass_extension_api::action::KeyModifier>, String)> {
+    use compass_extension_api::action::KeyModifier;
+    use iced::keyboard::{Key, key::Named};
+    if !(modifiers.control() || modifiers.alt() || modifiers.logo()) {
+        return None;
+    }
+    let name = match key {
+        Key::Character(c) => c.to_lowercase(),
+        Key::Named(named) => match named {
+            Named::Enter => "return",
+            Named::Delete => "delete",
+            Named::Backspace => "backspace",
+            Named::Tab => "tab",
+            Named::Space => "space",
+            Named::ArrowUp => "arrowUp",
+            Named::ArrowDown => "arrowDown",
+            Named::ArrowLeft => "arrowLeft",
+            Named::ArrowRight => "arrowRight",
+            Named::Home => "home",
+            Named::End => "end",
+            Named::PageUp => "pageUp",
+            Named::PageDown => "pageDown",
+            _ => return None,
+        }
+        .to_owned(),
+        Key::Unidentified => return None,
+    };
+    let mut mods = Vec::new();
+    if modifiers.control() {
+        mods.push(KeyModifier::Ctrl);
+    }
+    if modifiers.alt() {
+        mods.push(KeyModifier::Alt);
+    }
+    if modifiers.shift() {
+        mods.push(KeyModifier::Shift);
+    }
+    if modifiers.logo() {
+        mods.push(KeyModifier::Meta);
+    }
+    Some((mods, name))
+}
+
+/// How a shortcut reads in the action panel: `Ctrl+Shift+C`.
+fn shortcut_label(shortcut: &compass_extension_api::action::Shortcut) -> String {
+    use compass_extension_api::action::KeyModifier;
+    let mut parts: Vec<String> = shortcut
+        .modifiers
+        .iter()
+        .map(|modifier| {
+            match modifier {
+                KeyModifier::Ctrl | KeyModifier::Cmd => "Ctrl",
+                KeyModifier::Alt => "Alt",
+                KeyModifier::Shift => "Shift",
+                KeyModifier::Meta => "Super",
+            }
+            .to_owned()
+        })
+        .collect();
+    let key = shortcut.key.as_str();
+    parts.push(if key.chars().count() == 1 {
+        key.to_uppercase()
+    } else {
+        let mut chars = key.chars();
+        chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default()
+    });
+    parts.join("+")
+}
+
+/// Panel ids for an extension's actions: this prefix, then the handler.
+const EXTENSION_ACTION: &str = "ext:";
+
+/// An extension view's actions on offer, as panel sections. Submenus are
+/// flattened into their section for now.
+fn extension_panel_sections(page: &crate::extension_page::ExtensionPage) -> Vec<PanelSection> {
+    use compass_extension_api::action::ActionItem;
+    fn actions(items: &[ActionItem], out: &mut Vec<action_panel::Action>) {
+        for item in items {
+            match item {
+                ActionItem::Action(action) => {
+                    let row = action_panel::Action::new(action.title.clone())
+                        .with_id(format!("{EXTENSION_ACTION}{}", action.handler.0));
+                    out.push(match &action.shortcut {
+                        Some(shortcut) => row.with_shortcut(shortcut_label(shortcut)),
+                        None => row,
+                    });
+                }
+                ActionItem::Submenu(submenu) => actions(&submenu.items, out),
+            }
+        }
+    }
+    page.actions()
+        .map(|panel| {
+            panel
+                .sections
+                .iter()
+                .map(|section| {
+                    let mut list = Vec::new();
+                    actions(&section.items, &mut list);
+                    PanelSection {
+                        name: section.title.clone().unwrap_or_default(),
+                        actions: list,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The launcher application state.
@@ -864,8 +986,15 @@ impl LauncherApp {
     fn conceal(&mut self) -> Task<Message> {
         self.cancel_search();
         self.panel = None;
+        let closing = self.close_extension_view();
         // A summon starts at the root, whatever view was open when it hid.
         self.page = Page::Root;
+        let hidden = self.hide_window();
+        Task::batch([closing, hidden])
+    }
+
+    /// Hides or exits after [`Self::conceal`] has reset the view.
+    fn hide_window(&mut self) -> Task<Message> {
         self.reopen_after_close = false;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
@@ -1486,6 +1615,13 @@ impl LauncherApp {
                 if self.panel.is_some() {
                     self.panel = None;
                     return focus_search();
+                } else if let Page::Extension(page) = &self.page {
+                    let sections = extension_panel_sections(page);
+                    if sections.iter().any(|section| !section.actions.is_empty()) {
+                        self.panel = Some(PanelState::new(sections));
+                        return iced::widget::operation::focus(PANEL_INPUT);
+                    }
+                    return Task::none();
                 } else if let Some(item) = self.selected_item() {
                     // Only over a selected row. A panel of actions for nothing
                     // would be a panel whose every action fails.
@@ -1535,6 +1671,18 @@ impl LauncherApp {
                 let Some(action) = panel.selected_action() else {
                     return Task::none();
                 };
+                if let (Some(handler), Page::Extension(page)) = (
+                    action
+                        .id
+                        .as_deref()
+                        .and_then(|id| id.strip_prefix(EXTENSION_ACTION)),
+                    &self.page,
+                ) {
+                    let task =
+                        self.extension_event(page.session, handler.to_owned(), page.action_args());
+                    self.panel = None;
+                    return Task::batch([task, focus_search()]);
+                }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
@@ -1598,9 +1746,178 @@ impl LauncherApp {
                 }
                 self.paste_selected_clipboard_entry()
             }
-            Message::ExtensionCommandStarted(Ok(())) => self.conceal(),
-            Message::ExtensionCommandStarted(Err(reason)) => {
-                self.error = Some(reason);
+            Message::PreferenceEdited(index, value) => {
+                if let Page::Preferences(page) = &mut self.page
+                    && let Some(slot) = page.values.get_mut(index)
+                {
+                    *slot = value;
+                    page.notice = None;
+                }
+                Task::none()
+            }
+            Message::PreferencesSubmit => {
+                let Page::Preferences(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let values = match page.submission() {
+                    Ok(values) => values,
+                    Err(missing) => {
+                        page.notice = Some(format!("Fill in {}", missing.join(", ")));
+                        return Task::none();
+                    }
+                };
+                if page.purpose == crate::preferences_page::Purpose::Arguments {
+                    let id = page.command_id.clone();
+                    self.page = Page::Root;
+                    return match self.app_index.extensions().iter().position(|c| c.id == id) {
+                        Some(index) => self.run_extension_command_with(index, Some(values)),
+                        None => Task::none(),
+                    };
+                }
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                let id = page.command_id.clone();
+                Task::perform(
+                    async move { backend.set_extension_preferences(id, values).await },
+                    Message::PreferencesSaved,
+                )
+            }
+            Message::PreferencesSaved(result) => {
+                let Page::Preferences(page) = &mut self.page else {
+                    return Task::none();
+                };
+                if let Err(reason) = result {
+                    page.notice = Some(reason);
+                    return Task::none();
+                }
+                let id = page.command_id.clone();
+                self.page = Page::Root;
+                match self.app_index.extensions().iter().position(|c| c.id == id) {
+                    Some(index) => self.run_extension_command(index),
+                    None => Task::none(),
+                }
+            }
+            Message::ExtensionCommandStarted { id, title, result } => match result {
+                Ok(crate::backend::ExtensionStart::Ran) => self.conceal(),
+                Ok(crate::backend::ExtensionStart::NeedsPreferences { title, fields }) => {
+                    self.page =
+                        Page::Preferences(Box::new(crate::preferences_page::PreferencesPage::new(
+                            crate::preferences_page::Purpose::Preferences,
+                            id,
+                            title,
+                            fields,
+                        )));
+                    Task::none()
+                }
+                Ok(crate::backend::ExtensionStart::NeedsArguments { title, fields }) => {
+                    self.page =
+                        Page::Preferences(Box::new(crate::preferences_page::PreferencesPage::new(
+                            crate::preferences_page::Purpose::Arguments,
+                            id,
+                            title,
+                            fields,
+                        )));
+                    Task::none()
+                }
+                Ok(crate::backend::ExtensionStart::View(session)) => {
+                    let mut page = crate::extension_page::ExtensionPage::new(session, title);
+                    page.assets = self
+                        .app_index
+                        .extension(&id)
+                        .map(|command| command.extension_dir.join("assets"));
+                    let surface = self.palette().surface.to_iced();
+                    page.prefers_dark =
+                        0.299 * surface.r + 0.587 * surface.g + 0.114 * surface.b < 0.5;
+                    self.page = Page::Extension(Box::new(page));
+                    Task::batch([self.extension_poll(session, 0), focus_search()])
+                }
+                Err(reason) => {
+                    self.error = Some(reason);
+                    Task::none()
+                }
+            },
+            Message::ExtensionViewLoaded { session, result } => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                if page.session != session {
+                    return Task::none();
+                }
+                match result {
+                    Ok(state) => {
+                        let ended = state.ended;
+                        page.apply(state);
+                        let after = page.version;
+                        if ended {
+                            Task::none()
+                        } else {
+                            Task::batch([
+                                self.extension_poll(session, after),
+                                crate::scroll::reveal_root_selection(),
+                            ])
+                        }
+                    }
+                    Err(reason) => {
+                        page.status = crate::extension_page::Status::Stopped(reason);
+                        Task::none()
+                    }
+                }
+            }
+            Message::ExtensionQueryChanged(query) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                page.query = query;
+                let handler = page
+                    .extension_filters()
+                    .then(|| page.list().and_then(|list| list.search.on_change.clone()))
+                    .flatten();
+                match handler {
+                    // The extension filters: it gets the text and the echo
+                    // count, and renders a new list.
+                    Some(handler) => {
+                        page.query_events += 1;
+                        let args = vec![
+                            serde_json::Value::String(page.query.clone()),
+                            serde_json::Value::from(page.query_events),
+                        ];
+                        let session = page.session;
+                        self.extension_event(session, handler.0, args)
+                    }
+                    None => {
+                        page.refilter();
+                        crate::scroll::reveal_root_selection()
+                    }
+                }
+            }
+            Message::ExtensionItemSelected(position) => {
+                if let Page::Extension(page) = &mut self.page
+                    && position < page.shown.len()
+                {
+                    page.selected = position;
+                }
+                self.activate_extension_action()
+            }
+            Message::ExtensionFieldEdited(name, value) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let session = page.session;
+                match page.edit_field(&name, value) {
+                    Some((handler, args)) => self.extension_event(session, handler.0, args),
+                    None => Task::none(),
+                }
+            }
+            Message::ExtensionLinkClicked(url) => {
+                // No URL opener in the launcher yet; the link is said, not lost.
+                tracing::info!(%url, "a link in an extension's view was clicked");
+                Task::none()
+            }
+            Message::ExtensionEventSent(result) => {
+                if let (Err(reason), Page::Extension(page)) = (result, &mut self.page) {
+                    page.notice = Some(reason);
+                }
                 Task::none()
             }
             Message::ClipboardPasted(Ok(())) => self.conceal(),
@@ -1633,8 +1950,9 @@ impl LauncherApp {
                 }
             }
             Message::Back => {
+                let closing = self.close_extension_view();
                 self.page = Page::Root;
-                focus_search()
+                Task::batch([closing, focus_search()])
             }
             Message::WindowsQueryChanged(query) => {
                 if let Page::Windows(page) = &mut self.page {
@@ -1682,6 +2000,77 @@ impl LauncherApp {
                 // A command's view takes every key the root list would, and
                 // Escape goes back to the root rather than hiding the window:
                 // one key undoes opening the wrong command.
+                let panel_key = self.panel.is_some()
+                    || (modifiers.control() && key.as_ref() == Key::Character("b"));
+                if let Page::Preferences(_) = &self.page {
+                    return match key.as_ref() {
+                        Key::Named(Named::Enter) => self.update(Message::PreferencesSubmit),
+                        Key::Named(Named::Escape) => self.update(Message::Back),
+                        Key::Named(Named::Tab) if modifiers.shift() => {
+                            iced::widget::operation::focus_previous()
+                        }
+                        Key::Named(Named::Tab) => iced::widget::operation::focus_next(),
+                        _ => Task::none(),
+                    };
+                }
+                // An alert takes Enter and Escape and nothing else: the
+                // extension is waiting on the answer.
+                if let Page::Extension(page) = &mut self.page
+                    && page.alert.is_some()
+                {
+                    let confirmed = match key.as_ref() {
+                        Key::Named(Named::Enter) => true,
+                        Key::Named(Named::Escape) => false,
+                        _ => return Task::none(),
+                    };
+                    page.alert = None;
+                    let (session, backend) = (page.session, self.backend.clone());
+                    let Some(backend) = backend else {
+                        return Task::none();
+                    };
+                    return Task::perform(
+                        async move { backend.extension_alert_answer(session, confirmed).await },
+                        Message::ExtensionEventSent,
+                    );
+                }
+                if !panel_key
+                    && let Page::Extension(page) = &self.page
+                    && let Some(handler) = extension_chord(key, modifiers)
+                        .and_then(|(mods, name)| page.action_for(&mods, &name))
+                        .cloned()
+                {
+                    return self.extension_event(page.session, handler.0, page.action_args());
+                }
+                if !panel_key && let Page::Extension(page) = &mut self.page {
+                    if page.form().is_some() && key.as_ref() == Key::Named(Named::Tab) {
+                        return if modifiers.shift() {
+                            iced::widget::operation::focus_previous()
+                        } else {
+                            iced::widget::operation::focus_next()
+                        };
+                    }
+                    let direction = match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) if page.depth > 1 => {
+                            let session = page.session;
+                            return self.extension_pop(session);
+                        }
+                        Key::Named(Named::Escape) => return self.update(Message::Back),
+                        Key::Named(Named::Enter) => return self.activate_extension_action(),
+                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                    };
+                    if let Some(direction) = direction {
+                        page.selected = next_selection(
+                            page.shown.len(),
+                            page.selected,
+                            direction,
+                            self.wrap_navigation,
+                        );
+                        return crate::scroll::reveal_root_selection();
+                    }
+                    return Task::none();
+                }
                 if let Page::Windows(page) = &mut self.page {
                     if modifiers.control() && key.as_ref() == Key::Character("q") {
                         return self.close_selected_window();
@@ -1874,6 +2263,14 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::WindowsQueryChanged as OnInput),
             ),
+            Page::Preferences(page) => ("Configure", &page.title, None),
+            Page::Extension(page) => (
+                page.list()
+                    .and_then(|list| list.search.placeholder.as_deref())
+                    .unwrap_or("Search…"),
+                &page.query,
+                Some(Message::ExtensionQueryChanged as OnInput),
+            ),
         };
         let input = text_input(placeholder, value)
             .id(SEARCH_INPUT)
@@ -1897,7 +2294,11 @@ impl LauncherApp {
                 ..container::Style::default()
             });
 
-        let body: Element<Message> = if let Page::Windows(page) = &self.page {
+        let body: Element<Message> = if let Page::Preferences(page) = &self.page {
+            self.preferences_body(page)
+        } else if let Page::Extension(page) = &self.page {
+            self.extension_body(page)
+        } else if let Page::Windows(page) = &self.page {
             self.windows_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
@@ -2167,6 +2568,60 @@ impl LauncherApp {
             .then(|| item.comment().map(str::to_owned))
             .flatten();
         self.list_row(icon, item.name().to_owned(), subtitle, selected)
+    }
+
+    /// An extension row's icon: its art, a builtin tinted to read on the
+    /// theme, or a grid cell's colour.
+    fn extension_icon(
+        &self,
+        icon: &crate::extension_page::RowIcon,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        use crate::extension_page::RowIcon;
+        let geometry = self.geometry;
+        let size = Length::Fixed(f32::from(geometry.icon_size));
+        let palette = self.palette();
+        let text_color = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        }
+        .to_iced();
+        let art: Element<Message> = match icon {
+            RowIcon::Swatch(color) => {
+                let color = *color;
+                container(text(""))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(color.into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 6.0.into(),
+                        },
+                        ..container::Style::default()
+                    })
+                    .into()
+            }
+            RowIcon::Art {
+                art: crate::icons::IconArt::Raster(path),
+                ..
+            } => image(path).width(Length::Fill).height(Length::Fill).into(),
+            RowIcon::Art {
+                art: crate::icons::IconArt::Vector(path),
+                monochrome,
+                tint,
+            } => {
+                let color = tint.or(monochrome.then_some(text_color));
+                svg(path)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(move |_: &Theme, _| iced::widget::svg::Style { color })
+                    .into()
+            }
+        };
+        container(art).width(size).height(size).into()
     }
 
     /// The first letter of `title` in a tinted square, for a row with no art.
@@ -2482,6 +2937,15 @@ impl LauncherApp {
     /// Hands an extension command to the engine, which runs it; the launcher
     /// hides once it has started, and says why when it could not.
     fn run_extension_command(&mut self, index: usize) -> Task<Message> {
+        self.run_extension_command_with(index, None)
+    }
+
+    /// [`Self::run_extension_command`], with the arguments entered for it.
+    fn run_extension_command_with(
+        &mut self,
+        index: usize,
+        arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Task<Message> {
         self.panel = None;
         let Some(command) = self.app_index.extensions().get(index) else {
             return Task::none();
@@ -2494,10 +2958,403 @@ impl LauncherApp {
             return Task::none();
         };
         let id = command.id.clone();
+        let title = command.title.clone();
+        let started_id = id.clone();
         Task::perform(
-            async move { backend.run_extension_command(id).await },
-            Message::ExtensionCommandStarted,
+            async move { backend.run_extension_command(id, arguments).await },
+            move |result| Message::ExtensionCommandStarted {
+                id: started_id.clone(),
+                title: title.clone(),
+                result,
+            },
         )
+    }
+
+    /// Asks the engine for `session`'s next state after `after`.
+    fn extension_poll(&self, session: u64, after: u64) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.extension_view(session, after).await },
+            move |result| Message::ExtensionViewLoaded { session, result },
+        )
+    }
+
+    fn extension_event(
+        &self,
+        session: u64,
+        handler: String,
+        args: Vec<serde_json::Value>,
+    ) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.extension_event(session, handler, args).await },
+            Message::ExtensionEventSent,
+        )
+    }
+
+    /// Escape on a pushed extension view: the extension pops it and renders
+    /// the view beneath, which arrives like any other render.
+    fn extension_pop(&self, session: u64) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.extension_pop(session).await },
+            Message::ExtensionEventSent,
+        )
+    }
+
+    /// Enter in an extension's view: the first action on offer.
+    fn activate_extension_action(&mut self) -> Task<Message> {
+        let Page::Extension(page) = &self.page else {
+            return Task::none();
+        };
+        let Some(handler) = page.primary_action().cloned() else {
+            return Task::none();
+        };
+        self.extension_event(page.session, handler.0, page.action_args())
+    }
+
+    /// Stops the extension whose view is open, if one is.
+    fn close_extension_view(&self) -> Task<Message> {
+        let (Page::Extension(page), Some(backend)) = (&self.page, self.backend.clone()) else {
+            return Task::none();
+        };
+        let session = page.session;
+        Task::future(async move {
+            if let Err(error) = backend.close_extension(session).await {
+                tracing::warn!(%error, "could not close an extension view");
+            }
+        })
+        .discard()
+    }
+
+    fn preferences_body<'a>(
+        &'a self,
+        page: &'a crate::preferences_page::PreferencesPage,
+    ) -> Element<'a, Message> {
+        use crate::backend::PreferenceInputKind;
+        use crate::preferences_page::FieldValue;
+        let mut form = column![
+            iced::widget::text(match page.purpose {
+                crate::preferences_page::Purpose::Preferences => {
+                    format!("{} needs a few settings", page.title)
+                }
+                crate::preferences_page::Purpose::Arguments => page.title.clone(),
+            })
+            .font(self.font())
+            .size(14)
+        ]
+        .spacing(12)
+        .padding(Padding::new(16.0));
+        for (index, (field, value)) in page.fields.iter().zip(&page.values).enumerate() {
+            let label = if field.required {
+                format!("{} *", field.title)
+            } else {
+                field.title.clone()
+            };
+            let mut entry =
+                column![iced::widget::text(label).font(self.font()).size(13)].spacing(4);
+            let input: Element<Message> = match (&field.kind, value) {
+                (
+                    PreferenceInputKind::Text | PreferenceInputKind::Password,
+                    FieldValue::Text(text),
+                ) => text_input(&field.placeholder, text)
+                    .secure(matches!(field.kind, PreferenceInputKind::Password))
+                    .font(self.font())
+                    .on_input(move |text| Message::PreferenceEdited(index, FieldValue::Text(text)))
+                    .on_submit(Message::PreferencesSubmit)
+                    .padding(8)
+                    .into(),
+                (PreferenceInputKind::Checkbox { label }, FieldValue::Checked(checked)) => {
+                    iced::widget::checkbox(*checked)
+                        .label(label.clone())
+                        .on_toggle(move |checked| {
+                            Message::PreferenceEdited(index, FieldValue::Checked(checked))
+                        })
+                        .into()
+                }
+                (PreferenceInputKind::Dropdown { options }, FieldValue::Choice(choice)) => {
+                    let titles: Vec<String> =
+                        options.iter().map(|(title, _)| title.clone()).collect();
+                    let selected = choice.as_ref().and_then(|value| {
+                        options
+                            .iter()
+                            .find(|(_, v)| v == value)
+                            .map(|(title, _)| title.clone())
+                    });
+                    let options = options.clone();
+                    iced::widget::pick_list(titles, selected, move |title: String| {
+                        let value = options
+                            .iter()
+                            .find(|(t, _)| *t == title)
+                            .map(|(_, value)| value.clone());
+                        Message::PreferenceEdited(index, FieldValue::Choice(value))
+                    })
+                    .into()
+                }
+                (PreferenceInputKind::Unsupported { declared }, _) => {
+                    iced::widget::text(format!("Compass cannot edit {declared} preferences yet"))
+                        .font(self.font())
+                        .size(12)
+                        .into()
+                }
+                _ => iced::widget::text("").into(),
+            };
+            entry = entry.push(input);
+            if !field.description.is_empty() {
+                entry = entry.push(
+                    iced::widget::text(field.description.clone())
+                        .font(self.font())
+                        .size(11),
+                );
+            }
+            form = form.push(entry);
+        }
+        form = form.push(
+            iced::widget::text("Enter: save and run    Esc: back")
+                .font(self.font())
+                .size(12),
+        );
+        if let Some(notice) = &page.notice {
+            form = form.push(iced::widget::text(notice.clone()).font(self.font()));
+        }
+        scrollable(form)
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink)
+            .into()
+    }
+
+    /// An extension's form: its fields as the person has them, and how to
+    /// submit it.
+    fn extension_form<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+        form: &'a compass_extension_api::view::FormView,
+    ) -> Element<'a, Message> {
+        use compass_extension_api::view::{FieldKind, FormItem};
+        let mut body = column![].spacing(12).padding(Padding::new(16.0));
+        for item in &form.items {
+            let field = match item {
+                FormItem::Separator { .. } => {
+                    body = body.push(iced::widget::rule::horizontal(1));
+                    continue;
+                }
+                FormItem::Description { title, text, .. } => {
+                    let mut entry = column![].spacing(4);
+                    if let Some(title) = title {
+                        entry = entry
+                            .push(iced::widget::text(title.clone()).font(self.font()).size(13));
+                    }
+                    body = body.push(
+                        entry.push(iced::widget::text(text.clone()).font(self.font()).size(12)),
+                    );
+                    continue;
+                }
+                FormItem::Field(field) => field,
+            };
+            let name = field.name.clone();
+            let value = page.form_values.get(&field.name);
+            let text_value = value
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let mut entry = column![].spacing(4);
+            if let Some(title) = &field.title {
+                entry = entry.push(iced::widget::text(title.clone()).font(self.font()).size(13));
+            }
+            let input: Element<Message> = match &field.kind {
+                FieldKind::Text { placeholder }
+                | FieldKind::Password { placeholder }
+                | FieldKind::TextArea { placeholder, .. } => {
+                    text_input(placeholder.as_deref().unwrap_or_default(), text_value)
+                        .secure(matches!(field.kind, FieldKind::Password { .. }))
+                        .font(self.font())
+                        .on_input(move |text| {
+                            Message::ExtensionFieldEdited(name.clone(), text.into())
+                        })
+                        .padding(8)
+                        .into()
+                }
+                FieldKind::Checkbox { label } => iced::widget::checkbox(
+                    value.and_then(serde_json::Value::as_bool).unwrap_or(false),
+                )
+                .label(label.clone().unwrap_or_default())
+                .on_toggle(move |on| Message::ExtensionFieldEdited(name.clone(), on.into()))
+                .into(),
+                FieldKind::Dropdown(dropdown) => {
+                    let options: Vec<(String, String)> = dropdown
+                        .sections
+                        .iter()
+                        .flat_map(|section| &section.options)
+                        .map(|option| (option.title.clone(), option.value.clone()))
+                        .collect();
+                    let titles: Vec<String> = options.iter().map(|(t, _)| t.clone()).collect();
+                    let selected = options
+                        .iter()
+                        .find(|(_, v)| {
+                            Some(v.as_str()) == value.and_then(serde_json::Value::as_str)
+                        })
+                        .map(|(title, _)| title.clone());
+                    iced::widget::pick_list(titles, selected, move |title: String| {
+                        let chosen = options
+                            .iter()
+                            .find(|(t, _)| *t == title)
+                            .map(|(_, value)| value.clone())
+                            .unwrap_or_default();
+                        Message::ExtensionFieldEdited(name.clone(), chosen.into())
+                    })
+                    .into()
+                }
+                FieldKind::DatePicker { .. }
+                | FieldKind::TagPicker { .. }
+                | FieldKind::FilePicker { .. } => {
+                    iced::widget::text("Compass cannot edit this kind of field yet")
+                        .font(self.font())
+                        .size(12)
+                        .into()
+                }
+            };
+            entry = entry.push(input);
+            if let Some(error) = &field.error {
+                entry = entry.push(
+                    iced::widget::text(error.clone())
+                        .font(self.font())
+                        .size(11)
+                        .color(self.theme().palette().danger),
+                );
+            } else if let Some(info) = &field.info {
+                entry = entry.push(iced::widget::text(info.clone()).font(self.font()).size(11));
+            }
+            body = body.push(entry);
+        }
+        let submit = page
+            .actions()
+            .and_then(|panel| panel.actions().into_iter().next())
+            .map_or_else(
+                || "Esc: back".to_owned(),
+                |action| format!("Enter: {}    Esc: back", action.title),
+            );
+        body = body.push(iced::widget::text(submit).font(self.font()).size(12));
+        if let Some(notice) = &page.notice {
+            body = body.push(iced::widget::text(notice.clone()).font(self.font()));
+        }
+        scrollable(body)
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink)
+            .into()
+    }
+
+    fn extension_body<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+    ) -> Element<'a, Message> {
+        use crate::extension_page::Status;
+        use compass_extension_api::View;
+        let geometry = self.geometry;
+        if let Some(alert) = &page.alert {
+            let mut prompt = column![
+                iced::widget::text(alert.title.clone())
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..self.font()
+                    })
+                    .size(16)
+            ]
+            .spacing(8)
+            .padding(Padding::new(18.0));
+            if !alert.message.is_empty() {
+                prompt = prompt.push(iced::widget::text(alert.message.clone()).font(self.font()));
+            }
+            prompt = prompt.push(
+                iced::widget::text(format!(
+                    "Enter: {}    Esc: {}",
+                    alert.confirm_text, alert.cancel_text
+                ))
+                .font(self.font())
+                .size(12),
+            );
+            return prompt.into();
+        }
+        match (&page.status, &page.view) {
+            (Status::Loading, _) => return self.notice("Loading…"),
+            (Status::Stopped(why), _) => return self.notice(why),
+            (Status::Ready, Some(View::Detail(_))) => {
+                let theme = self.theme();
+                let markdown = iced::widget::markdown::view(
+                    &page.markdown,
+                    iced::widget::markdown::Settings::with_text_size(14, &theme),
+                )
+                .map(Message::ExtensionLinkClicked);
+                let body = scrollable(container(markdown).padding(Padding::new(14.0)))
+                    .id(crate::scroll::ROOT_RESULTS)
+                    .height(Length::Shrink);
+                return match &page.notice {
+                    Some(notice) => column![body, self.notice(notice)].into(),
+                    None => body.into(),
+                };
+            }
+            (Status::Ready, Some(View::Form(form))) => return self.extension_form(page, form),
+            (Status::Ready, Some(View::List(_))) => {}
+            (Status::Ready, _) => {
+                return self.notice("Compass cannot draw this extension view yet");
+            }
+        }
+        if page.shown.is_empty() {
+            let empty = page
+                .list()
+                .and_then(|list| list.empty_state.as_ref())
+                .map_or("No results", |empty| empty.title.as_str());
+            return self.notice(empty);
+        }
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
+        for (position, &(s, i)) in page.shown.iter().enumerate() {
+            let item = &sections[s].items[i];
+            let selected = position == page.selected;
+            let accessories: Vec<&str> = item
+                .accessories
+                .iter()
+                .filter_map(|a| a.text.as_deref().or(a.tag.as_deref()))
+                .collect();
+            let subtitle = match (&item.subtitle, accessories.is_empty()) {
+                (Some(subtitle), true) => Some(subtitle.clone()),
+                (Some(subtitle), false) => {
+                    Some(format!("{subtitle}  ·  {}", accessories.join("  ")))
+                }
+                (None, false) => Some(accessories.join("  ")),
+                (None, true) => None,
+            };
+            let icon = match page.icon(s, i) {
+                Some(icon) => self.extension_icon(icon, selected),
+                None => self.initial_badge(&item.title, selected),
+            };
+            let row = self.list_row(
+                icon,
+                item.title.clone(),
+                subtitle.filter(|_| self.subtitles),
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::ExtensionItemSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![rows, self.notice(notice)].into(),
+            None => rows.into(),
+        }
     }
 
     fn open_command(
@@ -3029,6 +3886,21 @@ mod tests {
         fail_history: bool,
         ran: std::sync::Mutex<Vec<String>>,
         refuse_runs: Option<String>,
+        /// Starts a view session instead of running to completion.
+        view: Option<compass_extension_api::View>,
+        events: std::sync::Mutex<Vec<(String, Vec<serde_json::Value>)>>,
+        closed: std::sync::Mutex<Vec<u64>>,
+        /// The view stack depth the fake reports.
+        depth: std::sync::Mutex<u32>,
+        /// An alert the fake's first view carries.
+        alert: Option<crate::backend::ExtensionPrompt>,
+        answers: std::sync::Mutex<Vec<bool>>,
+        /// Preferences the fake asks for until some are saved.
+        needs: Vec<crate::backend::PreferenceInput>,
+        saved: std::sync::Mutex<Vec<serde_json::Map<String, serde_json::Value>>>,
+        /// Arguments the fake asks for until a run carries some.
+        wants: Vec<crate::backend::PreferenceInput>,
+        given: std::sync::Mutex<Vec<Option<serde_json::Map<String, serde_json::Value>>>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -3047,10 +3919,104 @@ mod tests {
             })
         }
 
-        fn run_extension_command(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+        fn run_extension_command(
+            &self,
+            id: String,
+            arguments: Option<serde_json::Map<String, serde_json::Value>>,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ExtensionStart> {
             Box::pin(async move {
                 self.ran.lock().unwrap().push(id);
-                self.refuse_runs.clone().map_or(Ok(()), Err)
+                let asked = !self.wants.is_empty() && arguments.is_none();
+                self.given.lock().unwrap().push(arguments);
+                if let Some(reason) = self.refuse_runs.clone() {
+                    return Err(reason);
+                }
+                if !self.needs.is_empty() && self.saved.lock().unwrap().is_empty() {
+                    return Ok(crate::backend::ExtensionStart::NeedsPreferences {
+                        title: "Write Greeting".into(),
+                        fields: self.needs.clone(),
+                    });
+                }
+                if asked {
+                    return Ok(crate::backend::ExtensionStart::NeedsArguments {
+                        title: "Write Greeting".into(),
+                        fields: self.wants.clone(),
+                    });
+                }
+                Ok(if self.view.is_some() {
+                    crate::backend::ExtensionStart::View(7)
+                } else {
+                    crate::backend::ExtensionStart::Ran
+                })
+            })
+        }
+
+        // The first poll gets the view; the next says the command ended, so a
+        // test's task loop stops rather than polling for ever.
+        fn extension_view(
+            &self,
+            _session: u64,
+            after: u64,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ExtensionViewState> {
+            Box::pin(async move {
+                Ok(crate::backend::ExtensionViewState {
+                    version: after + 1,
+                    view: (after == 0)
+                        .then(|| self.view.clone().map(Box::new))
+                        .flatten(),
+                    problem: None,
+                    ended: after > 0,
+                    depth: *self.depth.lock().unwrap(),
+                    alert: self.alert.clone(),
+                })
+            })
+        }
+
+        fn extension_event(
+            &self,
+            _session: u64,
+            handler: String,
+            args: Vec<serde_json::Value>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.events.lock().unwrap().push((handler, args));
+                Ok(())
+            })
+        }
+
+        fn set_extension_preferences(
+            &self,
+            _id: String,
+            values: serde_json::Map<String, serde_json::Value>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.saved.lock().unwrap().push(values);
+                Ok(())
+            })
+        }
+
+        fn extension_alert_answer(
+            &self,
+            _session: u64,
+            confirmed: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.answers.lock().unwrap().push(confirmed);
+                Ok(())
+            })
+        }
+
+        fn extension_pop(&self, _session: u64) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.events.lock().unwrap().push(("pop".to_owned(), vec![]));
+                Ok(())
+            })
+        }
+
+        fn close_extension(&self, session: u64) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.closed.lock().unwrap().push(session);
+                Ok(())
             })
         }
     }
@@ -3111,6 +4077,500 @@ mod tests {
             ["@someone/hello:write"]
         );
         assert!(app.error.is_none());
+    }
+
+    fn greeting_list(host_filtering: bool) -> compass_extension_api::View {
+        use compass_extension_api::action::{Action, ActionPanel};
+        use compass_extension_api::view::{ListItem, ListSection, ListView};
+        let item = |title: &str, handler: &str| {
+            ListItem::new(title)
+                .with_key(title)
+                .with_actions(ActionPanel::of([Action::new("Act", handler)]))
+        };
+        let mut list = ListView {
+            sections: vec![ListSection::untitled([
+                item("hello", "cb-hello"),
+                item("goodbye", "cb-goodbye"),
+            ])],
+            ..ListView::default()
+        };
+        list.search.host_filtering = host_filtering;
+        if !host_filtering {
+            list.search.on_change =
+                Some(compass_extension_api::action::HandlerId::new("cb-search"));
+        }
+        compass_extension_api::View::List(list)
+    }
+
+    fn open_extension_view(
+        view: compass_extension_api::View,
+    ) -> (LauncherApp, Arc<TestBackend>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(view),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        (app, backend, dir)
+    }
+
+    #[test]
+    fn an_extension_form_is_filled_in_and_enter_submits_its_values() {
+        use compass_extension_api::action::{Action, ActionPanel, HandlerId};
+        use compass_extension_api::view::{FieldKind, FormField, FormItem, FormView};
+        let field = |name: &str, title: &str, kind: FieldKind| {
+            FormItem::Field(Box::new(FormField {
+                id: compass_extension_api::id::NodeId::ROOT,
+                name: name.into(),
+                title: Some(title.into()),
+                error: None,
+                info: None,
+                autofocus: false,
+                value: None,
+                echo: None,
+                on_change: Some(HandlerId::new(format!("change-{name}"))),
+                kind,
+            }))
+        };
+        let form = compass_extension_api::View::Form(FormView {
+            items: vec![
+                field("title", "Title", FieldKind::Text { placeholder: None }),
+                field(
+                    "urgent",
+                    "Urgent",
+                    FieldKind::Checkbox {
+                        label: Some("Page someone".into()),
+                    },
+                ),
+            ],
+            actions: Some(ActionPanel::of([Action::new("Create Issue", "submit")])),
+            ..FormView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(form);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Title").is_ok(), "{}", app.state_line());
+            assert!(ui.find("Enter: Create Issue    Esc: back").is_ok());
+        }
+        let mut pending = task_messages(app.update(Message::ExtensionFieldEdited(
+            "title".into(),
+            "Crash on paste".into(),
+        )));
+        pending.extend(task_messages(
+            app.update(Message::ExtensionFieldEdited("urgent".into(), true.into())),
+        ));
+        pending.extend(task_messages(
+            app.update(pressed(iced::keyboard::key::Named::Enter)),
+        ));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        let events = backend.events.lock().unwrap().clone();
+        assert!(events.contains(&(
+            "change-title".to_owned(),
+            vec!["Crash on paste".into(), 1.into()]
+        )));
+        assert!(events.contains(&(
+            "submit".to_owned(),
+            vec![serde_json::json!({"title": "Crash on paste", "urgent": true})]
+        )));
+    }
+
+    #[test]
+    fn a_view_command_draws_its_list_and_enter_runs_the_selected_rows_action() {
+        let (mut app, backend, _dir) = open_extension_view(greeting_list(true));
+        let Page::Extension(page) = &app.page else {
+            panic!("no extension view: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("hello").is_ok() && ui.find("goodbye").is_ok());
+        }
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Enter))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("cb-goodbye".to_owned(), vec![])]
+        );
+
+        for message in task_messages(app.update(Message::ExtensionQueryChanged("hel".into()))) {
+            let _ = app.update(message);
+        }
+        let Page::Extension(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.shown.len(), 1, "a host-filtered list is filtered here");
+
+        let back = app.update(pressed(iced::keyboard::key::Named::Escape));
+        for message in task_messages(back) {
+            let _ = app.update(message);
+        }
+        assert!(matches!(app.page, Page::Root));
+        assert_eq!(
+            backend.closed.lock().unwrap().as_slice(),
+            [7],
+            "leaving stops the command"
+        );
+    }
+
+    #[test]
+    fn ctrl_b_offers_every_action_of_the_row_and_runs_the_one_chosen() {
+        use compass_extension_api::action::{Action, ActionPanel};
+        use compass_extension_api::view::{ListItem, ListSection, ListView};
+        let view = compass_extension_api::View::List(ListView {
+            sections: vec![ListSection::untitled([ListItem::new("repo").with_actions(
+                ActionPanel::of([
+                    Action::new("Open in Browser", "cb-open"),
+                    Action::new("Copy URL", "cb-copy"),
+                ]),
+            )])],
+            ..ListView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(view);
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let panel = app
+            .panel
+            .as_ref()
+            .expect("the panel opens over an extension view");
+        let titles: Vec<&str> = panel
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|a| a.title.as_str()))
+            .collect();
+        assert_eq!(titles, ["Open in Browser", "Copy URL"]);
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Enter))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("cb-copy".to_owned(), vec![])]
+        );
+        assert!(app.panel.is_none(), "running an action closes the panel");
+        assert!(
+            matches!(app.page, Page::Extension(_)),
+            "and stays in the view"
+        );
+    }
+
+    #[test]
+    fn an_actions_shortcut_runs_it_and_the_panel_shows_the_chord() {
+        use compass_extension_api::action::{Action, ActionPanel, KeyModifier, Shortcut};
+        use compass_extension_api::view::{ListItem, ListSection, ListView};
+        let view = compass_extension_api::View::List(ListView {
+            sections: vec![ListSection::untitled([ListItem::new("repo").with_actions(
+                ActionPanel::of([
+                    Action::new("Open", "cb-open"),
+                    Action::new("Copy URL", "cb-copy")
+                        .with_shortcut(Shortcut::new([KeyModifier::Ctrl, KeyModifier::Shift], "c")),
+                ]),
+            )])],
+            ..ListView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(view);
+
+        for message in task_messages(app.update(chord("c", iced::keyboard::Modifiers::default()))) {
+            let _ = app.update(message);
+        }
+        assert!(
+            backend.events.lock().unwrap().is_empty(),
+            "typing c is not a shortcut"
+        );
+
+        let ctrl_shift = iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT;
+        for message in task_messages(app.update(chord("C", ctrl_shift))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("cb-copy".to_owned(), vec![])]
+        );
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let shortcuts: Vec<Option<&str>> = app
+            .panel
+            .as_ref()
+            .expect("the panel")
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|a| a.shortcut.as_deref()))
+            .collect();
+        assert_eq!(shortcuts, [None, Some("Ctrl+Shift+C")]);
+    }
+
+    #[test]
+    fn escape_pops_a_pushed_view_and_only_the_root_view_closes_the_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(greeting_list(true)),
+            depth: std::sync::Mutex::new(2),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+
+        for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Escape))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("pop".to_owned(), vec![])]
+        );
+        assert!(
+            matches!(app.page, Page::Extension(_)),
+            "still in the extension"
+        );
+        assert!(backend.closed.lock().unwrap().is_empty());
+
+        // The extension re-renders its root view.
+        if let Page::Extension(page) = &mut app.page {
+            page.apply(crate::backend::ExtensionViewState {
+                version: 9,
+                view: Some(Box::new(greeting_list(true))),
+                problem: None,
+                ended: false,
+                depth: 1,
+                alert: None,
+            });
+        }
+        for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Escape))) {
+            let _ = app.update(message);
+        }
+        assert!(matches!(app.page, Page::Root));
+        assert_eq!(backend.closed.lock().unwrap().as_slice(), [7]);
+    }
+
+    #[test]
+    fn an_alert_is_shown_and_enter_or_escape_answers_it() {
+        for (key, confirmed) in [
+            (iced::keyboard::key::Named::Enter, true),
+            (iced::keyboard::key::Named::Escape, false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let backend = Arc::new(TestBackend {
+                keys: vec!["@someone/hello:write".to_owned()],
+                view: Some(greeting_list(true)),
+                alert: Some(crate::backend::ExtensionPrompt {
+                    title: "Delete the repository?".into(),
+                    message: "This cannot be undone.".into(),
+                    confirm_text: "Delete".into(),
+                    cancel_text: "Keep".into(),
+                }),
+                ..TestBackend::default()
+            });
+            let mut app = extension_app(dir.path(), backend.clone());
+            for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+                let _ = app.update(message);
+            }
+            let mut pending = task_messages(app.update(Message::LaunchSelected));
+            while let Some(message) = pending.pop() {
+                pending.extend(task_messages(app.update(message)));
+            }
+            {
+                let mut ui = iced_test::simulator(app.view());
+                assert!(ui.find("Delete the repository?").is_ok());
+                assert!(ui.find("Enter: Delete    Esc: Keep").is_ok());
+            }
+            for message in task_messages(app.update(pressed(key))) {
+                let _ = app.update(message);
+            }
+            assert_eq!(backend.answers.lock().unwrap().as_slice(), [confirmed]);
+            assert!(backend.events.lock().unwrap().is_empty(), "no action ran");
+            assert!(
+                matches!(&app.page, Page::Extension(page) if page.alert.is_none()),
+                "answered, and still in the view"
+            );
+        }
+    }
+
+    #[test]
+    fn a_command_missing_a_preference_asks_for_it_then_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            needs: vec![crate::backend::PreferenceInput {
+                name: "token".into(),
+                title: "Token".into(),
+                description: "From your account settings".into(),
+                placeholder: String::new(),
+                required: true,
+                kind: crate::backend::PreferenceInputKind::Password,
+                value: None,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        for message in task_messages(app.update(Message::LaunchSelected)) {
+            let _ = app.update(message);
+        }
+        assert!(
+            matches!(app.page, Page::Preferences(_)),
+            "{}",
+            app.state_line()
+        );
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Token *").is_ok(), "required fields are marked");
+        }
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let Page::Preferences(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.notice.as_deref(), Some("Fill in Token"));
+        assert!(backend.saved.lock().unwrap().is_empty());
+
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("ghp_x".into()),
+        ));
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(
+            backend.saved.lock().unwrap().as_slice(),
+            [serde_json::json!({"token": "ghp_x"})
+                .as_object()
+                .unwrap()
+                .clone()]
+        );
+        assert_eq!(
+            backend.ran.lock().unwrap().as_slice(),
+            ["@someone/hello:write", "@someone/hello:write"],
+            "saved, then run again"
+        );
+        assert!(matches!(app.page, Page::Root), "and it ran");
+    }
+
+    #[test]
+    fn a_command_with_arguments_asks_for_them_and_runs_with_what_was_entered() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            wants: vec![crate::backend::PreferenceInput {
+                name: "name".into(),
+                title: "Name".into(),
+                description: String::new(),
+                placeholder: "Name".into(),
+                required: true,
+                kind: crate::backend::PreferenceInputKind::Text,
+                value: None,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        for message in task_messages(app.update(Message::LaunchSelected)) {
+            let _ = app.update(message);
+        }
+        assert!(
+            matches!(&app.page, Page::Preferences(page)
+                if page.purpose == crate::preferences_page::Purpose::Arguments),
+            "{}",
+            app.state_line()
+        );
+
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("Ada".into()),
+        ));
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert!(
+            backend.saved.lock().unwrap().is_empty(),
+            "arguments are this run's, never kept"
+        );
+        assert_eq!(
+            backend.given.lock().unwrap().as_slice(),
+            [
+                None,
+                Some(
+                    serde_json::json!({"name": "Ada"})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                )
+            ]
+        );
+        assert!(matches!(app.page, Page::Root), "and it ran");
+    }
+
+    #[test]
+    fn a_detail_draws_its_markdown_rendered_not_as_source() {
+        let detail = compass_extension_api::View::Detail(compass_extension_api::view::Detail {
+            markdown: Some("# Release notes\n\nNow with **paste**.".into()),
+            ..compass_extension_api::view::Detail::default()
+        });
+        let (app, _backend, _dir) = open_extension_view(detail);
+        let Page::Extension(page) = &app.page else {
+            panic!("no extension view: {}", app.state_line());
+        };
+        use iced::widget::markdown::Item;
+        assert!(
+            matches!(
+                page.markdown.as_slice(),
+                [Item::Heading(..), Item::Paragraph(..)]
+            ),
+            "parsed once, when it arrived, into a heading and a paragraph: {:?}",
+            page.markdown
+        );
+        let mut ui = iced_test::simulator(app.view());
+        assert!(
+            ui.find("# Release notes").is_err(),
+            "not the Markdown source"
+        );
+    }
+
+    #[test]
+    fn a_list_that_filters_itself_gets_the_text_and_the_echo_count() {
+        let (mut app, backend, _dir) = open_extension_view(greeting_list(false));
+        for message in task_messages(app.update(Message::ExtensionQueryChanged("zz".into()))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [(
+                "cb-search".to_owned(),
+                vec![serde_json::json!("zz"), serde_json::json!(1)]
+            )]
+        );
+        let Page::Extension(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(
+            page.shown.len(),
+            2,
+            "what matches is the extension's to say"
+        );
     }
 
     #[test]

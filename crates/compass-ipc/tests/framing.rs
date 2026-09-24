@@ -64,7 +64,31 @@ fn all_requests() -> Vec<Request> {
         Request::ClipboardRemove { id: "abc".into() },
         Request::RunExtensionCommand {
             id: "@raycast/github:search-repositories".into(),
+            arguments_json: Some(r#"{"query":"compass"}"#.into()),
         },
+        Request::ExtensionView {
+            session: 1,
+            after: 0,
+        },
+        Request::ExtensionView {
+            session: u64::MAX,
+            after: u64::MAX,
+        },
+        Request::ExtensionEvent {
+            session: 1,
+            handler: "cb-7".into(),
+            args_json: "[\"é 🚀\", 3]".into(),
+        },
+        Request::ExtensionPop { session: 1 },
+        Request::SetExtensionPreferences {
+            id: "@raycast/github:search".into(),
+            values_json: "{\"token\":\"é 🚀\"}".into(),
+        },
+        Request::ExtensionAlertAnswer {
+            session: 1,
+            confirmed: true,
+        },
+        Request::CloseExtension { session: 1 },
     ]
 }
 
@@ -171,6 +195,65 @@ fn all_responses() -> Vec<Response> {
                 can_close: false,
             }],
         },
+        Response::ExtensionStarted { session: 7 },
+        Response::ExtensionNeedsArguments {
+            title: "Search Repositories".into(),
+            fields: vec![compass_ipc::PreferenceField {
+                name: "query".into(),
+                title: "Query".into(),
+                description: String::new(),
+                placeholder: "Query".into(),
+                required: true,
+                kind: compass_ipc::PreferenceFieldKind::Text,
+                value_json: None,
+            }],
+        },
+        Response::ExtensionNeedsPreferences {
+            title: "Search Repositories".into(),
+            fields: vec![
+                compass_ipc::PreferenceField {
+                    name: "token".into(),
+                    title: "Token".into(),
+                    description: String::new(),
+                    placeholder: "ghp_…".into(),
+                    required: true,
+                    kind: compass_ipc::PreferenceFieldKind::Password,
+                    value_json: None,
+                },
+                compass_ipc::PreferenceField {
+                    name: "sort".into(),
+                    title: "Sort".into(),
+                    description: "Order".into(),
+                    placeholder: String::new(),
+                    required: false,
+                    kind: compass_ipc::PreferenceFieldKind::Dropdown {
+                        options: vec![("Stars".into(), "stars".into())],
+                    },
+                    value_json: Some("\"stars\"".into()),
+                },
+            ],
+        },
+        Response::ExtensionView {
+            version: 3,
+            view_json: Some("{\"kind\":\"list\"}".into()),
+            problem: None,
+            ended: false,
+            depth: 2,
+            alert: Some(compass_ipc::ExtensionAlert {
+                title: "Delete é 🚀?".into(),
+                message: String::new(),
+                confirm_text: "Delete".into(),
+                cancel_text: "Cancel".into(),
+            }),
+        },
+        Response::ExtensionView {
+            version: u64::MAX,
+            view_json: None,
+            problem: Some("Compass cannot draw the extension component <grid> yet".into()),
+            ended: true,
+            depth: 0,
+            alert: None,
+        },
     ]
 }
 
@@ -198,6 +281,12 @@ fn request_variants_are_exhaustive() {
             | Request::ClipboardSetPinned { .. }
             | Request::ClipboardRemove { .. }
             | Request::RunExtensionCommand { .. }
+            | Request::ExtensionView { .. }
+            | Request::ExtensionEvent { .. }
+            | Request::ExtensionPop { .. }
+            | Request::SetExtensionPreferences { .. }
+            | Request::ExtensionAlertAnswer { .. }
+            | Request::CloseExtension { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -217,6 +306,10 @@ fn response_variants_are_exhaustive() {
             | Response::ClipboardHistory { .. }
             | Response::ClipboardContent { .. }
             | Response::Windows { .. }
+            | Response::ExtensionStarted { .. }
+            | Response::ExtensionNeedsPreferences { .. }
+            | Response::ExtensionNeedsArguments { .. }
+            | Response::ExtensionView { .. }
             | Response::Window(_) => {}
         }
     }

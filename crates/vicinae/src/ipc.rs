@@ -115,6 +115,12 @@ fn describe(request: &Request) -> &'static str {
         Request::ClipboardSetPinned { .. } => "ClipboardSetPinned",
         Request::ClipboardRemove { .. } => "ClipboardRemove",
         Request::RunExtensionCommand { .. } => "RunExtensionCommand",
+        Request::ExtensionView { .. } => "ExtensionView",
+        Request::ExtensionEvent { .. } => "ExtensionEvent",
+        Request::ExtensionPop { .. } => "ExtensionPop",
+        Request::SetExtensionPreferences { .. } => "SetExtensionPreferences",
+        Request::ExtensionAlertAnswer { .. } => "ExtensionAlertAnswer",
+        Request::CloseExtension { .. } => "CloseExtension",
     }
 }
 

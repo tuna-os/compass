@@ -5,7 +5,7 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind, WindowBackend, WindowRow,
+    ClipboardRowKind, ExtensionStart, ExtensionViewState, WindowBackend, WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -47,10 +47,157 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
-    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ()> {
+    fn run_extension_command(
+        &self,
+        id: String,
+        arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> BackendFuture<'_, ExtensionStart> {
+        Box::pin(async move {
+            let arguments_json =
+                arguments.map(|arguments| serde_json::Value::Object(arguments).to_string());
+            match self
+                .ask(
+                    Request::RunExtensionCommand { id, arguments_json },
+                    "Running the command",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(ExtensionStart::Ran),
+                compass_ipc::Response::ExtensionStarted { session } => {
+                    Ok(ExtensionStart::View(session))
+                }
+                compass_ipc::Response::ExtensionNeedsPreferences { title, fields } => {
+                    Ok(ExtensionStart::NeedsPreferences {
+                        title,
+                        fields: fields.into_iter().map(preference_input).collect(),
+                    })
+                }
+                compass_ipc::Response::ExtensionNeedsArguments { title, fields } => {
+                    Ok(ExtensionStart::NeedsArguments {
+                        title,
+                        fields: fields.into_iter().map(preference_input).collect(),
+                    })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_view(&self, session: u64, after: u64) -> BackendFuture<'_, ExtensionViewState> {
         Box::pin(async move {
             match self
-                .ask(Request::RunExtensionCommand { id }, "Running the command")
+                .ask(
+                    Request::ExtensionView { session, after },
+                    "Reading the view",
+                )
+                .await?
+            {
+                compass_ipc::Response::ExtensionView {
+                    version,
+                    view_json,
+                    problem,
+                    ended,
+                    depth,
+                    alert,
+                } => Ok(ExtensionViewState {
+                    depth,
+                    alert: alert.map(|alert| compass_ui::backend::ExtensionPrompt {
+                        title: alert.title,
+                        message: alert.message,
+                        confirm_text: alert.confirm_text,
+                        cancel_text: alert.cancel_text,
+                    }),
+                    version,
+                    view: view_json
+                        .map(|json| serde_json::from_str(&json).map(Box::new))
+                        .transpose()
+                        .map_err(|err| {
+                            format!("The engine sent a view this launcher cannot read: {err}")
+                        })?,
+                    problem,
+                    ended,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_event(
+        &self,
+        session: u64,
+        handler: String,
+        args: Vec<serde_json::Value>,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let args_json = serde_json::Value::Array(args).to_string();
+            match self
+                .ask(
+                    Request::ExtensionEvent {
+                        session,
+                        handler,
+                        args_json,
+                    },
+                    "Running the action",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_extension_preferences(
+        &self,
+        id: String,
+        values: serde_json::Map<String, serde_json::Value>,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let values_json = serde_json::Value::Object(values).to_string();
+            match self
+                .ask(
+                    Request::SetExtensionPreferences { id, values_json },
+                    "Saving the preferences",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_alert_answer(&self, session: u64, confirmed: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExtensionAlertAnswer { session, confirmed },
+                    "Answering the extension",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_pop(&self, session: u64) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ExtensionPop { session }, "Going back")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn close_extension(&self, session: u64) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::CloseExtension { session }, "Closing the view")
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
@@ -219,6 +366,30 @@ fn row(entry: compass_ipc::ClipboardEntry) -> ClipboardRow {
         },
         pinned: entry.pinned,
         url_host: entry.url_host,
+    }
+}
+
+fn preference_input(field: compass_ipc::PreferenceField) -> compass_ui::backend::PreferenceInput {
+    use compass_ipc::PreferenceFieldKind;
+    use compass_ui::backend::PreferenceInputKind;
+    compass_ui::backend::PreferenceInput {
+        kind: match field.kind {
+            PreferenceFieldKind::Text => PreferenceInputKind::Text,
+            PreferenceFieldKind::Password => PreferenceInputKind::Password,
+            PreferenceFieldKind::Checkbox { label } => PreferenceInputKind::Checkbox { label },
+            PreferenceFieldKind::Dropdown { options } => PreferenceInputKind::Dropdown { options },
+            PreferenceFieldKind::Unsupported { declared } => {
+                PreferenceInputKind::Unsupported { declared }
+            }
+        },
+        value: field
+            .value_json
+            .and_then(|json| serde_json::from_str(&json).ok()),
+        name: field.name,
+        title: field.title,
+        description: field.description,
+        placeholder: field.placeholder,
+        required: field.required,
     }
 }
 

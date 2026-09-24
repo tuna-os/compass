@@ -32,8 +32,9 @@ use serde::{Deserialize, Serialize};
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
 /// Version 4 adds clipboard history; version 5, fetching an entry's content;
 /// version 6, window switching; version 7, pasting, pinning and removing a
-/// clipboard entry, and running an installed extension's command.
-pub const PROTOCOL_VERSION: u16 = 7;
+/// clipboard entry, and running an installed extension's command; version 8,
+/// following and driving an extension's view.
+pub const PROTOCOL_VERSION: u16 = 8;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +202,61 @@ pub enum Request {
     RunExtensionCommand {
         /// [`QueryHit::id`].
         id: String,
+        /// The command's argument values as a JSON object, or `None` when the
+        /// launcher has none to give: a command that declares arguments is
+        /// then answered with [`Response::ExtensionNeedsArguments`].
+        arguments_json: Option<String>,
+    },
+    /// What a view command's session shows, once it differs from `after`.
+    ///
+    /// Held open until the session's version passes `after` or a timeout,
+    /// then answered with [`Response::ExtensionView`] either way; the
+    /// launcher asks again with the version it got. A session that is not
+    /// running is a bad request.
+    ExtensionView {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// The last version the launcher has; zero for none.
+        after: u64,
+    },
+    /// Run one of the view's callbacks: an action's handler, the search bar's
+    /// change handler, the selection handler. Answered with [`Response::Ack`].
+    ExtensionEvent {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// The handler id the view carries.
+        handler: String,
+        /// Its arguments, as a JSON array.
+        args_json: String,
+    },
+    /// Keeps an extension's preference values, then answers [`Response::Ack`].
+    /// Sent after [`Response::ExtensionNeedsPreferences`], before running the
+    /// command again.
+    SetExtensionPreferences {
+        /// The command's [`QueryHit::id`]; the values are its extension's.
+        id: String,
+        /// The values, as a JSON object by preference name.
+        values_json: String,
+    },
+    /// The person's answer to the view's [`ExtensionAlert`]. Answered with
+    /// [`Response::Ack`]; a session with no alert waiting is a bad request.
+    ExtensionAlertAnswer {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// Whether they confirmed.
+        confirmed: bool,
+    },
+    /// Escape on a pushed view: pop it, and the extension renders the view
+    /// beneath. Answered with [`Response::Ack`].
+    ExtensionPop {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+    },
+    /// The person left the view: stop the command. Answered with
+    /// [`Response::Ack`].
+    CloseExtension {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
     },
 }
 
@@ -256,6 +312,45 @@ pub enum Response {
         /// Every window the extension reports.
         windows: Vec<WindowInfo>,
     },
+    /// A view command started: follow it with [`Request::ExtensionView`].
+    ExtensionStarted {
+        /// The session to follow.
+        session: u64,
+    },
+    /// Answer to [`Request::ExtensionView`].
+    ExtensionView {
+        /// The session's version now; equal to `after` on a timeout.
+        version: u64,
+        /// The view, as `compass_extension_api::View` JSON, once rendered.
+        view_json: Option<String>,
+        /// Why the view cannot be drawn, or why the command ended.
+        problem: Option<String>,
+        /// Whether the command has ended.
+        ended: bool,
+        /// How many views the extension has pushed, the root one included.
+        depth: u32,
+        /// A confirmation the extension is waiting on, if any. Answer it with
+        /// [`Request::ExtensionAlertAnswer`].
+        alert: Option<ExtensionAlert>,
+    },
+    /// Answer to [`Request::RunExtensionCommand`] when a required preference
+    /// has no value: the form to show. Answer with
+    /// [`Request::SetExtensionPreferences`], then run the command again.
+    ExtensionNeedsPreferences {
+        /// The command's title, for the form's heading.
+        title: String,
+        /// Every preference the command reads, required ones included.
+        fields: Vec<PreferenceField>,
+    },
+    /// Answer to [`Request::RunExtensionCommand`] when the command declares
+    /// arguments and was given none, or left a required one empty: the form
+    /// to show. Run the command again with what was entered.
+    ExtensionNeedsArguments {
+        /// The command's title, for the form's heading.
+        title: String,
+        /// Every argument, in the manifest's order.
+        fields: Vec<PreferenceField>,
+    },
 }
 
 /// What the engine asks an attached window to do.
@@ -297,6 +392,64 @@ pub struct QueryHit {
     pub subtitle: Option<String>,
     /// Match score in `0..=100`, matching `compass-search`'s scale.
     pub score: u32,
+}
+
+/// One preference as the launcher's form draws it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreferenceField {
+    /// The name the extension reads it by; the key in `values_json`.
+    pub name: String,
+    /// The label.
+    pub title: String,
+    /// The help text; may be empty.
+    pub description: String,
+    /// The placeholder; may be empty.
+    pub placeholder: String,
+    /// Whether the command cannot run without it.
+    pub required: bool,
+    /// What kind of input it takes.
+    pub kind: PreferenceFieldKind,
+    /// Its current value (stored, else the default), as JSON.
+    pub value_json: Option<String>,
+}
+
+/// What a [`PreferenceField`] takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreferenceFieldKind {
+    /// A line of text.
+    Text,
+    /// A line of text, not echoed.
+    Password,
+    /// A tick box, with its label.
+    Checkbox {
+        /// The text beside the box.
+        label: String,
+    },
+    /// One of a list, as `(title, value)`.
+    Dropdown {
+        /// The options.
+        options: Vec<(String, String)>,
+    },
+    /// A kind the form cannot edit yet (a file or application picker); shown
+    /// so the person sees why the command waits.
+    Unsupported {
+        /// What the manifest calls it.
+        declared: String,
+    },
+}
+
+/// A confirmation an extension asked for (`confirmAlert`), as the launcher
+/// shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionAlert {
+    /// The heading.
+    pub title: String,
+    /// The body; may be empty.
+    pub message: String,
+    /// The confirm button's text.
+    pub confirm_text: String,
+    /// The cancel button's text.
+    pub cancel_text: String,
 }
 
 /// One clipboard history entry, as a list row needs it.

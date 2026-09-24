@@ -58,9 +58,9 @@ pub use codec::{FrameCodec, LENGTH_PREFIX_LEN, MAX_FRAME_LEN};
 pub use error::{Error, Result};
 pub use path::{SocketPath, ensure_private_dir};
 pub use protocol::{
-    ClipboardEntry, ClipboardKind, DoctorCheck, DoctorStatus, ErrorKind, PROTOCOL_VERSION,
-    ProtocolError, QueryHit, Request, RequestEnvelope, Response, ResponseEnvelope, WindowCommand,
-    WindowInfo, WindowOutcome,
+    ClipboardEntry, ClipboardKind, DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert,
+    PROTOCOL_VERSION, PreferenceField, PreferenceFieldKind, ProtocolError, QueryHit, Request,
+    RequestEnvelope, Response, ResponseEnvelope, WindowCommand, WindowInfo, WindowOutcome,
 };
 pub use transport::{
     Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,

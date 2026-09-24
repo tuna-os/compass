@@ -47,9 +47,65 @@ pub fn file_name(name: &str) -> Option<String> {
     is_builtin(name).then(|| format!("{name}.svg"))
 }
 
+/// Where the icon files are: `$COMPASS_BUILTIN_ICONS`, else the first
+/// `vicinae/builtin-icons` under `$XDG_DATA_HOME` or `$XDG_DATA_DIRS` (the
+/// Flatpak installs them under `/app/share`).
+#[must_use]
+pub fn directory() -> Option<std::path::PathBuf> {
+    directory_in(
+        std::env::var_os("COMPASS_BUILTIN_ICONS").map(Into::into),
+        crate::xdg_dirs::data_home(),
+        std::env::var("XDG_DATA_DIRS").ok().as_deref(),
+    )
+}
+
+/// [`directory`], from its inputs.
+#[must_use]
+pub fn directory_in(
+    override_dir: Option<std::path::PathBuf>,
+    data_home: Option<std::path::PathBuf>,
+    data_dirs: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    if override_dir.is_some() {
+        return override_dir;
+    }
+    let data_dirs = data_dirs
+        .filter(|dirs| !dirs.is_empty())
+        .unwrap_or("/usr/local/share:/usr/share");
+    data_home
+        .into_iter()
+        .chain(data_dirs.split(':').map(std::path::PathBuf::from))
+        .map(|dir| dir.join("vicinae/builtin-icons"))
+        .find(|dir| dir.is_dir())
+}
+
+/// The file `name` is drawn from, when it is built in and installed.
+#[must_use]
+pub fn path(name: &str) -> Option<std::path::PathBuf> {
+    let path = directory()?.join(file_name(name)?);
+    path.is_file().then_some(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_icons_are_found_under_the_first_data_dir_that_has_them() {
+        let none = tempfile::tempdir().unwrap();
+        let app = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(app.path().join("vicinae/builtin-icons")).unwrap();
+        let dirs = format!("{}:{}", none.path().display(), app.path().display());
+        assert_eq!(
+            directory_in(None, None, Some(&dirs)),
+            Some(app.path().join("vicinae/builtin-icons")),
+            "the Flatpak's /app/share is one of $XDG_DATA_DIRS"
+        );
+        assert_eq!(
+            directory_in(Some("/icons".into()), None, Some(&dirs)),
+            Some(std::path::PathBuf::from("/icons"))
+        );
+    }
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 

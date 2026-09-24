@@ -461,6 +461,32 @@ fn confirm_alert_passes_the_payloads_text_to_the_shell() {
 }
 
 #[test]
+fn confirm_alert_reads_its_fields_under_payload_as_the_runtime_sends_them() {
+    // `confirmAlert(payload: ConfirmAlertPayload)` names its one argument, so
+    // the generated client sends {"payload": {...}}. The flat fixture above
+    // hid that this read nothing from a real extension: every alert came up
+    // with an empty title.
+    let stub = Stub::default();
+    let service = UiShellService::new(stub, CommandInfo::default());
+    let call = call_with_id(
+        "UI/confirmAlert",
+        7,
+        serde_json::json!({ "payload": {
+            "title": "Delete it?",
+            "description": "Are you sure?",
+            "primaryAction": { "title": "Confirm", "style": "Default" },
+            "dismissAction": { "title": "Cancel", "style": "Cancel" },
+            "rememberUserChoice": false,
+        }}),
+    );
+    UiShellService::defer(&service, &call).expect("taken");
+    let (alert, _) = shown_alert(service.shell());
+    assert_eq!(alert.title, "Delete it?");
+    assert_eq!(alert.message, "Are you sure?");
+    assert_eq!(alert.confirm_text, "Confirm");
+}
+
+#[test]
 fn the_primary_action_is_red_whatever_style_the_extension_asked_for() {
     // confirmAlert hardcodes SemanticColor::Red for the primary action and
     // Foreground for the dismiss one; the payload's `style` never reaches the

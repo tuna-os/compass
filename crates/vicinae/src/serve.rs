@@ -93,6 +93,8 @@ pub struct EngineState {
     /// The GNOME Shell extension's client, once the session bus answered.
     /// `None` until then, and for good without a session bus.
     shell: Option<Arc<compass_shell::ShellClient>>,
+    /// Running extension view commands, which the launcher follows.
+    views: Arc<crate::extension_runner::Views>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -145,6 +147,7 @@ impl EngineState {
             window: WindowSlot::default(),
             clipboard: None,
             shell: None,
+            views: Arc::default(),
         }
     }
 
@@ -189,6 +192,7 @@ impl EngineState {
             window: WindowSlot::default(),
             clipboard: None,
             shell: None,
+            views: Arc::default(),
         }
     }
 
@@ -266,16 +270,27 @@ impl EngineState {
     }
 }
 
-async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> Response {
+async fn run_extension_command(
+    state: &Arc<RwLock<EngineState>>,
+    id: String,
+    arguments_json: Option<String>,
+) -> Response {
     let Some(command) = state.read().await.index.extension(&id).cloned() else {
         return Response::Error(ProtocolError::new(
             ErrorKind::BadRequest,
             "no installed extension command has that id",
         ));
     };
-    if let Some(reason) = crate::extension_runner::refusal(&command) {
-        return Response::Error(ProtocolError::new(ErrorKind::Unsupported, reason));
-    }
+    let given = match arguments_json.as_deref().map(serde_json::from_str) {
+        None => None,
+        Some(Ok(serde_json::Value::Object(given))) => Some(given),
+        Some(_) => {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "the arguments are not a JSON object",
+            ));
+        }
+    };
     let runtime = match crate::extension_runner::Runtime::locate() {
         Ok(runtime) => runtime,
         Err(reason) => return Response::Error(ProtocolError::new(ErrorKind::Unsupported, reason)),
@@ -288,12 +303,64 @@ async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> 
         ));
     };
     let storage = extension_storage(&data_dir).await;
+    let stored = match storage.clone() {
+        Some(storage) => {
+            let extension = command.extension_id.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::extension_runner::load_preferences(&storage, &extension)
+            })
+            .await
+            .unwrap_or_default()
+        }
+        None => serde_json::Map::new(),
+    };
+    let preferences = match command.preferences_with(&stored) {
+        Ok(preferences) => preferences,
+        Err(missing) if storage.is_none() => {
+            let names: Vec<&str> = missing.iter().map(|p| p.title.as_str()).collect();
+            return Response::Error(ProtocolError::new(
+                ErrorKind::Unsupported,
+                format!(
+                    "{} needs {} set, and without a keyring Compass has nowhere safe to keep it",
+                    command.title,
+                    names.join(", ")
+                ),
+            ));
+        }
+        Err(_) => {
+            return Response::ExtensionNeedsPreferences {
+                title: command.title.clone(),
+                fields: preference_fields(&command, &stored),
+            };
+        }
+    };
+    let arguments = match command.arguments_with(given.as_ref()) {
+        Ok(arguments) => arguments,
+        Err(_) => {
+            return Response::ExtensionNeedsArguments {
+                title: command.title.clone(),
+                fields: argument_fields(&command, given.as_ref()),
+            };
+        }
+    };
+    let host = crate::extension_runner::Host {
+        storage,
+        shell: state.read().await.shell.clone(),
+        views: Arc::clone(&state.read().await.views),
+        preferences,
+        arguments,
+        apps: Some(crate::extension_apps::EngineApps::new(
+            &state.read().await.index,
+            compass_xdg::mimeapps::Lists::from_environment(),
+            tokio::runtime::Handle::current(),
+        )),
+    };
     let started = tokio::task::spawn_blocking(move || {
-        crate::extension_runner::start(&runtime, &command, &data_dir, storage)
+        crate::extension_runner::start(&runtime, &command, &data_dir, host)
     })
     .await;
     match started {
-        Ok(Ok(())) => {
+        Ok(Ok(started)) => {
             let recorded = tokio::task::spawn_blocking({
                 let state = Arc::clone(state);
                 move || state.blocking_write().frecency.record_launch(&id)
@@ -302,13 +369,179 @@ async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> 
             if !matches!(recorded, Ok(Ok(()))) {
                 tracing::warn!("could not record running an extension command");
             }
-            Response::Ack
+            match started {
+                crate::extension_runner::Started::Ran => Response::Ack,
+                crate::extension_runner::Started::View(session) => {
+                    Response::ExtensionStarted { session }
+                }
+            }
         }
         Ok(Err(reason)) => Response::Error(ProtocolError::new(ErrorKind::Internal, reason)),
         Err(err) => Response::Error(ProtocolError::new(
             ErrorKind::Internal,
             format!("the extension task failed: {err}"),
         )),
+    }
+}
+
+/// Every argument `command` takes, as the launcher's form draws it, with what
+/// was already entered.
+fn argument_fields(
+    command: &compass_core::extension_commands::ExtensionCommand,
+    given: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Vec<compass_ipc::PreferenceField> {
+    use compass_core::manifest::ArgumentType;
+    use compass_ipc::PreferenceFieldKind;
+    command
+        .arguments
+        .iter()
+        .map(|argument| compass_ipc::PreferenceField {
+            name: argument.name.clone(),
+            // Raycast labels an argument by its placeholder; it has no title.
+            title: if argument.placeholder.is_empty() {
+                argument.name.clone()
+            } else {
+                argument.placeholder.clone()
+            },
+            description: String::new(),
+            placeholder: argument.placeholder.clone(),
+            required: argument.required,
+            kind: match argument.argument_type {
+                ArgumentType::Text => PreferenceFieldKind::Text,
+                ArgumentType::Password => PreferenceFieldKind::Password,
+                ArgumentType::Dropdown => PreferenceFieldKind::Dropdown {
+                    options: argument
+                        .data
+                        .iter()
+                        .flatten()
+                        .map(|option| (option.title.clone(), option.value.clone()))
+                        .collect(),
+                },
+            },
+            value_json: given
+                .and_then(|given| given.get(&argument.name))
+                .map(ToString::to_string),
+        })
+        .collect()
+}
+
+/// Every preference `command` reads, as the launcher's form draws it.
+fn preference_fields(
+    command: &compass_core::extension_commands::ExtensionCommand,
+    stored: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<compass_ipc::PreferenceField> {
+    use compass_core::manifest::PreferenceKind;
+    use compass_ipc::PreferenceFieldKind;
+    command
+        .preferences
+        .iter()
+        .map(|preference| compass_ipc::PreferenceField {
+            name: preference.name.clone(),
+            title: preference.title.clone(),
+            description: preference.description.clone(),
+            placeholder: preference.placeholder.clone(),
+            required: preference.required,
+            kind: match &preference.kind {
+                PreferenceKind::TextField => PreferenceFieldKind::Text,
+                PreferenceKind::Password => PreferenceFieldKind::Password,
+                PreferenceKind::Checkbox { label } => PreferenceFieldKind::Checkbox {
+                    label: label.clone(),
+                },
+                PreferenceKind::Dropdown { options } => PreferenceFieldKind::Dropdown {
+                    options: options
+                        .iter()
+                        .map(|option| (option.title.clone(), option.value.clone()))
+                        .collect(),
+                },
+                PreferenceKind::AppPicker => PreferenceFieldKind::Unsupported {
+                    declared: "appPicker".to_owned(),
+                },
+                PreferenceKind::FilePicker { .. } => PreferenceFieldKind::Unsupported {
+                    declared: "file".to_owned(),
+                },
+                PreferenceKind::DirectoryPicker { .. } => PreferenceFieldKind::Unsupported {
+                    declared: "directory".to_owned(),
+                },
+                PreferenceKind::Unknown { declared } => PreferenceFieldKind::Unsupported {
+                    declared: declared.clone(),
+                },
+            },
+            value_json: stored
+                .get(&preference.name)
+                .or(preference.default.as_ref())
+                .map(ToString::to_string),
+        })
+        .collect()
+}
+
+async fn set_extension_preferences(
+    state: &Arc<RwLock<EngineState>>,
+    id: String,
+    values_json: String,
+) -> Response {
+    let Some(command) = state.read().await.index.extension(&id).cloned() else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no installed extension command has that id",
+        ));
+    };
+    let values: serde_json::Map<String, serde_json::Value> =
+        match serde_json::from_str(&values_json) {
+            Ok(values) => values,
+            Err(err) => {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("values_json is not a JSON object: {err}"),
+                ));
+            }
+        };
+    let Some(data_dir) = compass_core::xdg_dirs::data_home().map(|home| home.join("vicinae"))
+    else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "no data directory",
+        ));
+    };
+    let Some(storage) = extension_storage(&data_dir).await else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "without a keyring Compass has nowhere safe to keep extension preferences",
+        ));
+    };
+    let saved = tokio::task::spawn_blocking(move || {
+        crate::extension_runner::save_preferences(&storage, &command.extension_id, &values)
+    })
+    .await;
+    match saved {
+        Ok(Ok(())) => Response::Ack,
+        Ok(Err(reason)) => Response::Error(ProtocolError::new(ErrorKind::Internal, reason)),
+        Err(err) => Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!("the preferences task failed: {err}"),
+        )),
+    }
+}
+
+/// How long an `ExtensionView` is held open waiting for a change.
+const VIEW_POLL: std::time::Duration = std::time::Duration::from_secs(20);
+
+async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u64) -> Response {
+    let Some(mut watch) = state.read().await.views.watch(session) else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no extension view is running with that session",
+        ));
+    };
+    // A timeout is an answer too: the same version, so the launcher asks again.
+    let _ = tokio::time::timeout(VIEW_POLL, watch.wait_for(|view| view.version > after)).await;
+    let view = watch.borrow().clone();
+    Response::ExtensionView {
+        version: view.version,
+        view_json: view.view,
+        problem: view.problem,
+        ended: view.ended,
+        depth: view.depth,
+        alert: view.alert,
     }
 }
 
@@ -567,7 +800,72 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
-        Request::RunExtensionCommand { id } => run_extension_command(state, id).await,
+        Request::RunExtensionCommand { id, arguments_json } => {
+            run_extension_command(state, id, arguments_json).await
+        }
+        Request::ExtensionView { session, after } => extension_view(state, session, after).await,
+        Request::ExtensionEvent {
+            session,
+            handler,
+            args_json,
+        } => {
+            let args: Vec<serde_json::Value> = match serde_json::from_str(&args_json) {
+                Ok(args) => args,
+                Err(err) => {
+                    return Response::Error(ProtocolError::new(
+                        ErrorKind::BadRequest,
+                        format!("args_json is not a JSON array: {err}"),
+                    ));
+                }
+            };
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.activate(session, &handler, &args))
+                .await
+            {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the extension event task failed: {err}"),
+                )),
+            }
+        }
+        Request::ExtensionAlertAnswer { session, confirmed } => {
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.answer_alert(session, confirmed)).await
+            {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the alert answer task failed: {err}"),
+                )),
+            }
+        }
+        Request::SetExtensionPreferences { id, values_json } => {
+            set_extension_preferences(state, id, values_json).await
+        }
+        Request::ExtensionPop { session } => {
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.pop(session)).await {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the extension pop task failed: {err}"),
+                )),
+            }
+        }
+        Request::CloseExtension { session } => {
+            state.read().await.views.close(session);
+            Response::Ack
+        }
 
         Request::ClipboardSetPinned { .. } | Request::ClipboardRemove { .. } => {
             let Some(store) = state.read().await.clipboard.clone() else {

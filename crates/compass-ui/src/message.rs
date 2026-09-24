@@ -59,7 +59,37 @@ pub enum Message {
     /// refusal the entry is copied instead.
     ClipboardPasted(Result<(), String>),
     /// The engine started an extension command, or said why it could not.
-    ExtensionCommandStarted(Result<(), String>),
+    ExtensionCommandStarted {
+        /// The command's entrypoint id.
+        id: String,
+        /// The command's title, for its view until the view names itself.
+        title: String,
+        /// How it began, or why it could not.
+        result: Result<crate::backend::ExtensionStart, String>,
+    },
+    /// An extension view's latest state, for the session it asked about.
+    ExtensionViewLoaded {
+        /// Which session.
+        session: u64,
+        /// Its state, or why it could not be read.
+        result: Result<crate::backend::ExtensionViewState, String>,
+    },
+    /// The search text in an extension's view changed.
+    ExtensionQueryChanged(String),
+    /// A row in an extension's list was clicked.
+    ExtensionItemSelected(usize),
+    /// A preference field in the form changed.
+    PreferenceEdited(usize, crate::preferences_page::FieldValue),
+    /// The preference form was submitted (Enter).
+    PreferencesSubmit,
+    /// The preferences were kept, or not; on success the command runs.
+    PreferencesSaved(Result<(), String>),
+    /// A link in an extension's Markdown was clicked.
+    ExtensionLinkClicked(String),
+    /// The person changed a field of an extension's form: its name and value.
+    ExtensionFieldEdited(String, serde_json::Value),
+    /// An action or search event reached the extension, or did not.
+    ExtensionEventSent(Result<(), String>),
     /// An entry was pinned, unpinned or removed, or could not be; the list
     /// reloads on success and says why on failure.
     ClipboardEntryChanged(Result<(), String>),

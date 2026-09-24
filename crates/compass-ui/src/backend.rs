@@ -20,13 +20,163 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// Record an already successful launch; never execute the application again.
     fn record_launch(&self, key: String) -> BackendFuture<'_, ()>;
 
-    /// Run an installed extension's command by its entrypoint id. `Ok` once
-    /// the engine has started it; an error is a sentence saying why it could
-    /// not, for the launcher to show.
-    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ()> {
-        let _ = id;
-        Box::pin(async { Err("Running extension commands needs the Compass engine".to_owned()) })
+    /// Run an installed extension's command by its entrypoint id, with the
+    /// argument values entered for it, or `None` when none have been. `Ok`
+    /// once the engine has started it; an error is a sentence saying why it
+    /// could not, for the launcher to show.
+    fn run_extension_command(
+        &self,
+        id: String,
+        arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> BackendFuture<'_, ExtensionStart> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
+
+    /// A view session's state once its version passes `after` (or a timeout,
+    /// with the same version).
+    fn extension_view(&self, session: u64, after: u64) -> BackendFuture<'_, ExtensionViewState> {
+        let _ = (session, after);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Runs one of a view's callbacks with `args`.
+    fn extension_event(
+        &self,
+        session: u64,
+        handler: String,
+        args: Vec<serde_json::Value>,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (session, handler, args);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Keeps an extension's preference values, by the command's id.
+    fn set_extension_preferences(
+        &self,
+        id: String,
+        values: serde_json::Map<String, serde_json::Value>,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (id, values);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// The person's answer to the view's [`ExtensionPrompt`].
+    fn extension_alert_answer(&self, session: u64, confirmed: bool) -> BackendFuture<'_, ()> {
+        let _ = (session, confirmed);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Escape on a pushed view: the extension pops it.
+    fn extension_pop(&self, session: u64) -> BackendFuture<'_, ()> {
+        let _ = session;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// The person left the view: stop the command.
+    fn close_extension(&self, session: u64) -> BackendFuture<'_, ()> {
+        let _ = session;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+}
+
+const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine";
+
+/// How an extension command began.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExtensionStart {
+    /// A no-view command, running on its own.
+    Ran,
+    /// A view command: follow this session.
+    View(u64),
+    /// It did not start: a required preference has no value. The form.
+    NeedsPreferences {
+        /// The command's title.
+        title: String,
+        /// Every preference it reads.
+        fields: Vec<PreferenceInput>,
+    },
+    /// It did not start: it takes arguments, and has not been given them
+    /// (or a required one is empty). The form.
+    NeedsArguments {
+        /// The command's title.
+        title: String,
+        /// Every argument, with what was already entered.
+        fields: Vec<PreferenceInput>,
+    },
+}
+
+/// One preference in the form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreferenceInput {
+    /// The name the extension reads it by.
+    pub name: String,
+    /// The label.
+    pub title: String,
+    /// Help text; may be empty.
+    pub description: String,
+    /// Placeholder; may be empty.
+    pub placeholder: String,
+    /// Whether the command cannot run without it.
+    pub required: bool,
+    /// What it takes.
+    pub kind: PreferenceInputKind,
+    /// Its current value.
+    pub value: Option<serde_json::Value>,
+}
+
+/// What a [`PreferenceInput`] takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreferenceInputKind {
+    /// Text.
+    Text,
+    /// Text, hidden.
+    Password,
+    /// A tick box.
+    Checkbox {
+        /// Its label.
+        label: String,
+    },
+    /// One of a list, as `(title, value)`.
+    Dropdown {
+        /// The options.
+        options: Vec<(String, String)>,
+    },
+    /// A kind the form cannot edit yet.
+    Unsupported {
+        /// What the manifest calls it.
+        declared: String,
+    },
+}
+
+/// What an extension view shows now.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExtensionViewState {
+    /// Bumped on every change.
+    pub version: u64,
+    /// The view, once rendered.
+    pub view: Option<Box<compass_extension_api::View>>,
+    /// Why it cannot be drawn, or why it ended.
+    pub problem: Option<String>,
+    /// Whether the command has ended.
+    pub ended: bool,
+    /// How many views the extension has pushed, the root one included.
+    pub depth: u32,
+    /// A confirmation the extension waits on.
+    pub alert: Option<ExtensionPrompt>,
+}
+
+/// A confirmation an extension asked for, as the launcher shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExtensionPrompt {
+    /// The heading.
+    pub title: String,
+    /// The body; may be empty.
+    pub message: String,
+    /// What Enter does.
+    pub confirm_text: String,
+    /// What Escape does.
+    pub cancel_text: String,
 }
 
 /// One clipboard history row, as the UI draws it.

@@ -98,7 +98,20 @@ async fn echo_handler(request: Request) -> Response {
         | Request::ClipboardPaste { .. }
         | Request::ClipboardSetPinned { .. }
         | Request::ClipboardRemove { .. }
-        | Request::RunExtensionCommand { .. } => Response::Ack,
+        | Request::RunExtensionCommand { .. }
+        | Request::ExtensionEvent { .. }
+        | Request::ExtensionPop { .. }
+        | Request::SetExtensionPreferences { .. }
+        | Request::ExtensionAlertAnswer { .. }
+        | Request::CloseExtension { .. } => Response::Ack,
+        Request::ExtensionView { after, .. } => Response::ExtensionView {
+            version: after,
+            view_json: None,
+            problem: None,
+            ended: false,
+            depth: 0,
+            alert: None,
+        },
         Request::ClipboardContent { .. } => Response::ClipboardContent {
             mime_type: "text/plain".into(),
             data: vec![],

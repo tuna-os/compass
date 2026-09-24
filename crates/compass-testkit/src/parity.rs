@@ -30,7 +30,7 @@ struct ParityConfig {
     ///
     /// See [`main`]'s `--report-only`.
     report_only: bool,
-    /// Narrow the C++ side to one root provider; see [`Flavour::query_args`].
+    /// Narrow both engines to one root provider; see [`Flavour::query_args`].
     cpp_provider: Option<String>,
     /// Fail the run when a query of at least this many characters disagrees
     /// on its FIRST result. `None` gates nothing.
@@ -339,7 +339,16 @@ fn run_parity(config: &ParityConfig) -> Result<ParityReport> {
         &corpus,
         config.cpp_provider.clone(),
     )?;
-    let rust = RunningEngine::start(&config.rust_engine, "rust", Flavour::Rust, &corpus, None)?;
+    // The same narrowing on both sides: with `None` here the Rust root ranked
+    // its builtin "Switch Windows" first for "Windows" against a C++ side
+    // narrowed to applications, and the top-result gate called it a regression.
+    let rust = RunningEngine::start(
+        &config.rust_engine,
+        "rust",
+        Flavour::Rust,
+        &corpus,
+        config.cpp_provider.clone(),
+    )?;
 
     for query in &queries {
         report.total += 1;
