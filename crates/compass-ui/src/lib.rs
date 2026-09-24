@@ -20,6 +20,7 @@ pub mod clipboard_page;
 pub mod design;
 pub mod emoji_page;
 pub mod extension_page;
+pub mod files_page;
 pub mod icons;
 pub mod message;
 pub mod preferences_page;

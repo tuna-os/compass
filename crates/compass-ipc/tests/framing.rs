@@ -95,6 +95,18 @@ fn all_requests() -> Vec<Request> {
             confirmed: true,
         },
         Request::CloseExtension { session: 1 },
+        Request::SearchFiles {
+            query: "rapport é 🚀".into(),
+            category: Some("Documents".into()),
+        },
+        Request::SearchFiles {
+            query: String::new(),
+            category: None,
+        },
+        Request::OpenFile {
+            path: "/home/me/Documents/rapport é.pdf".into(),
+            reveal: true,
+        },
     ]
 }
 
@@ -266,6 +278,18 @@ fn all_responses() -> Vec<Response> {
             alert: None,
             toast: None,
         },
+        Response::Files {
+            heading: "Results".into(),
+            files: vec![compass_ipc::FileHit {
+                path: "/home/me/Documents/rapport é.pdf".into(),
+                name: "rapport é.pdf".into(),
+                category: "Documents".into(),
+            }],
+        },
+        Response::Files {
+            heading: "Recently Accessed".into(),
+            files: vec![],
+        },
     ]
 }
 
@@ -301,6 +325,8 @@ fn request_variants_are_exhaustive() {
             | Request::SetExtensionPreferences { .. }
             | Request::ExtensionAlertAnswer { .. }
             | Request::CloseExtension { .. }
+            | Request::SearchFiles { .. }
+            | Request::OpenFile { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -324,6 +350,7 @@ fn response_variants_are_exhaustive() {
             | Response::ExtensionNeedsPreferences { .. }
             | Response::ExtensionNeedsArguments { .. }
             | Response::ExtensionView { .. }
+            | Response::Files { .. }
             | Response::Window(_) => {}
         }
     }

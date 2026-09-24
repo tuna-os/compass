@@ -34,6 +34,20 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// Search Files: what `query` answers, with the list's heading. An error
+    /// is the sentence to show.
+    fn search_files(&self, query: String) -> BackendFuture<'_, FileResults> {
+        let _ = query;
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Open a file with its default application, or show it in the file
+    /// browser when `reveal`. An error is the sentence to show.
+    fn open_file(&self, path: String, reveal: bool) -> BackendFuture<'_, ()> {
+        let _ = (path, reveal);
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
     /// Run an installed extension's command by its entrypoint id, with the
     /// argument values entered for it, or `None` when none have been. `Ok`
     /// once the engine has started it; an error is a sentence saying why it
@@ -95,6 +109,29 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
 }
 
 const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine";
+
+const FILES_NEED_ENGINE: &str =
+    "Search Files needs the Compass engine, and this window is running without one";
+
+/// One file in Search Files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRow {
+    /// Absolute path.
+    pub path: String,
+    /// The last path component.
+    pub name: String,
+    /// Its category's filter key, e.g. `Documents`.
+    pub category: String,
+}
+
+/// What a Search Files query answered.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileResults {
+    /// What the list is, e.g. "Recently Accessed".
+    pub heading: String,
+    /// The files, in presentation order.
+    pub files: Vec<FileRow>,
+}
 
 /// How an extension command began.
 #[derive(Debug, Clone, PartialEq, Eq)]

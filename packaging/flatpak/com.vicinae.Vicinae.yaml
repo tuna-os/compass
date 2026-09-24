@@ -114,6 +114,12 @@ finish-args:
   # Bluefin puts CLI tooling in Homebrew, and users expect those to be findable.
   - --filesystem=/home/linuxbrew/.linuxbrew/share/applications:ro
 
+  # --- Search Files -------------------------------------------------------
+  # The file indexer (vicinae-file-indexer, spawned by the engine) scans and watches the
+  # directories in the file extension's "Search paths" preference, the home directory by
+  # default. Read-only: it never writes there; its index lives in the sandbox's own cache.
+  - --filesystem=home:ro
+
 modules:
   - name: vicinae
     buildsystem: simple
@@ -123,6 +129,8 @@ modules:
     build-commands:
       - cargo --offline build --release --locked -p vicinae -p compass-sandbox --bins
       - install -Dm755 target/release/vicinae /app/bin/vicinae
+      # Search Files' indexer; the engine looks for it beside its own executable.
+      - install -Dm755 target/release/vicinae-file-indexer /app/bin/vicinae-file-indexer
       # Confines the extension runtime (Landlock + seccomp) before it starts; the engine
       # refuses to run extensions without it. See crates/compass-sandbox.
       - install -Dm755 target/release/compass-sandbox-exec /app/libexec/compass-sandbox-exec

@@ -128,6 +128,7 @@ fn start() -> (Engine, u32) {
         .env("XDG_DATA_DIRS", dirs.path().join("data"))
         .env("XDG_DATA_HOME", dirs.path().join("data-home"))
         .env("XDG_CONFIG_HOME", dirs.path().join("config"))
+        .env("XDG_CACHE_HOME", dirs.path().join(".cache"))
         .env("HOME", dirs.path())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

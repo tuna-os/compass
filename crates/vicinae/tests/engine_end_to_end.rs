@@ -51,6 +51,7 @@ fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
         .env("XDG_DATA_HOME", dir.path().join("data"))
         .env("XDG_DATA_DIRS", dir.path().join("empty"))
         .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .env("XDG_CACHE_HOME", dir.path().join(".cache"))
         .env("HOME", dir.path())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -183,6 +184,9 @@ impl Daemon {
             // config, its launch history and its data all land in the tempdir.
             .env("XDG_DATA_HOME", dirs.path().join("data-home"))
             .env("XDG_CONFIG_HOME", dirs.path().join("config"))
+            // The file indexer's database, which a real cache home must never
+            // receive from a test.
+            .env("XDG_CACHE_HOME", dirs.path().join(".cache"))
             .env("HOME", dirs.path())
             .envs(extra_env)
             .stdout(Stdio::null())
@@ -2266,4 +2270,149 @@ exit 0
         (err.kind, err.message.as_str()),
         (ErrorKind::Internal, "Failed to set volume")
     );
+}
+
+/// Asks Search Files until `found` accepts the answer, or panics with the
+/// last one: the indexer scans in the background, so the first queries can
+/// come before the file is in the index — or before the helper has started.
+fn search_files_until(
+    daemon: &Daemon,
+    query: &str,
+    category: Option<&str>,
+    found: impl Fn(&str, &[compass_ipc::FileHit]) -> bool,
+) -> (String, Vec<compass_ipc::FileHit>) {
+    use compass_ipc::{Request, Response};
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let mut last = None;
+    while Instant::now() < deadline {
+        match daemon.request(Request::SearchFiles {
+            query: query.into(),
+            category: category.map(str::to_owned),
+        }) {
+            Response::Files { heading, files } => {
+                if found(&heading, &files) {
+                    return (heading, files);
+                }
+                last = Some(format!("{heading}: {files:?}"));
+            }
+            other => last = Some(format!("{other:?}")),
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("Search Files never answered {query:?} as expected; last answer: {last:?}");
+}
+
+#[test]
+fn search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query() {
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        let documents = root.join("Documents");
+        std::fs::create_dir_all(&documents).unwrap();
+        std::fs::write(documents.join("quarterly-report.pdf"), "%PDF").unwrap();
+        std::fs::write(documents.join("holiday.png"), "png").unwrap();
+        Vec::new()
+    });
+    let is_report = |files: &[compass_ipc::FileHit]| {
+        files
+            .first()
+            .is_some_and(|file| file.name == "quarterly-report.pdf")
+    };
+
+    let (heading, files) = search_files_until(&daemon, "quartely report", None, |_, files| {
+        is_report(files)
+    });
+    assert_eq!(heading, "Results");
+    assert!(files[0].path.ends_with("/Documents/quarterly-report.pdf"));
+    assert_eq!(files[0].category, "Documents");
+
+    // The category filter reaches the index: images only, so no report.
+    let (_, images) = search_files_until(&daemon, "holiday", Some("Images"), |_, files| {
+        files.iter().any(|file| file.name == "holiday.png")
+    });
+    assert!(images.iter().all(|file| file.category == "Images"));
+    let (_, none) = search_files_until(&daemon, "quarterly report", Some("Images"), |_, _| true);
+    assert!(
+        none.iter().all(|file| file.name != "quarterly-report.pdf"),
+        "{none:?}"
+    );
+}
+
+#[test]
+fn search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        let notes = root.join("notes.md");
+        std::fs::write(&notes, "# notes").unwrap();
+        let data_home = root.join("data-home");
+        std::fs::create_dir_all(&data_home).unwrap();
+        std::fs::write(
+            data_home.join("recently-used.xbel"),
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<xbel version="1.0" xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks">
+  <bookmark href="file://{}" added="2026-01-01T00:00:00Z" modified="2026-01-02T00:00:00Z" visited="2026-01-01T00:00:00Z"/>
+  <bookmark href="file:///nonexistent/gone.txt" added="2026-01-01T00:00:00Z" modified="2026-01-03T00:00:00Z" visited="2026-01-01T00:00:00Z"/>
+</xbel>
+"#,
+                notes.display()
+            ),
+        )
+        .unwrap();
+        Vec::new()
+    });
+
+    let Response::Files { heading, files } = daemon.request(Request::SearchFiles {
+        query: String::new(),
+        category: None,
+    }) else {
+        panic!("the empty query was not answered with files");
+    };
+    assert_eq!(heading, "Recently Accessed");
+    assert_eq!(
+        files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+        ["notes.md"],
+        "the missing file is skipped"
+    );
+
+    let Response::Files { heading, files } = daemon.request(Request::SearchFiles {
+        query: "~/notes.md".into(),
+        category: None,
+    }) else {
+        panic!("a typed path was not answered with files");
+    };
+    assert_eq!(heading, "Direct file path");
+    assert_eq!(files.len(), 1);
+    assert!(files[0].path.ends_with("/notes.md"), "{files:?}");
+
+    // Opening refuses a path that is not there, and a file no installed
+    // application opens -- the fixture tree has none that opens Markdown --
+    // rather than launching anything on the machine running the tests.
+    let Response::Error(err) = daemon.request(Request::OpenFile {
+        path: "/nonexistent/gone.txt".into(),
+        reveal: false,
+    }) else {
+        panic!("opening a missing file was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    let Response::Error(err) = daemon.request(Request::OpenFile {
+        path: files[0].path.clone(),
+        reveal: false,
+    }) else {
+        panic!("opening a file nothing opens was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+}
+
+#[test]
+fn search_files_without_indexing_says_the_index_is_unavailable() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let config = r#"{"providers": {"files": {"preferences": {"autoIndexing": false}}}}"#;
+    let daemon = Daemon::start_with_config(&[("a.desktop", &entry("Alpha", ""))], config);
+    let Response::Error(err) = daemon.request(Request::SearchFiles {
+        query: "report".into(),
+        category: None,
+    }) else {
+        panic!("an index search with indexing off was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(err.message.contains("file indexer"), "{}", err.message);
 }

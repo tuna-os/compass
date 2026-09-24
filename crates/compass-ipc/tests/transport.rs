@@ -105,7 +105,12 @@ async fn echo_handler(request: Request) -> Response {
         | Request::ExtensionPop { .. }
         | Request::SetExtensionPreferences { .. }
         | Request::ExtensionAlertAnswer { .. }
-        | Request::CloseExtension { .. } => Response::Ack,
+        | Request::CloseExtension { .. }
+        | Request::OpenFile { .. } => Response::Ack,
+        Request::SearchFiles { .. } => Response::Files {
+            heading: "Results".into(),
+            files: vec![],
+        },
         Request::ExtensionView { after, .. } => Response::ExtensionView {
             version: after,
             view_json: None,

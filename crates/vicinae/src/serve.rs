@@ -95,6 +95,8 @@ pub struct EngineState {
     shell: Option<Arc<compass_shell::ShellClient>>,
     /// Running extension view commands, which the launcher follows.
     views: Arc<crate::extension_runner::Views>,
+    /// Search Files, and the file indexer it supervises.
+    files: Arc<crate::file_search::FileSearch>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -139,6 +141,15 @@ impl EngineState {
 
         let frecency = Self::open_frecency();
 
+        // Started with the engine, as `FileExtension::initialized` starts
+        // it, so the index is warm by the time anyone searches it.
+        let files = crate::file_search::FileSearch::start(
+            compass_core::file_search::IndexingSettings::from_preferences(
+                config.provider_preferences(compass_core::file_search::PREFERENCES_PROVIDER_ID),
+                compass_core::xdg_dirs::home_dir().as_deref(),
+            ),
+        );
+
         Self {
             index,
             frecency,
@@ -148,6 +159,7 @@ impl EngineState {
             clipboard: None,
             shell: None,
             views: Arc::default(),
+            files: Arc::new(files),
         }
     }
 
@@ -193,6 +205,7 @@ impl EngineState {
             clipboard: None,
             shell: None,
             views: Arc::default(),
+            files: Arc::default(),
         }
     }
 
@@ -338,6 +351,40 @@ async fn run_power_command(id: &str) -> Response {
     match result {
         Ok(()) => Response::Ack,
         Err(err) => failed(&err),
+    }
+}
+
+/// How long a Search Files query may wait on the indexer: under the
+/// launcher's own request timeout, so it hears why rather than a timeout.
+const FILE_SEARCH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Opens a file with its default application, or shows it in the file
+/// browser, through the same application database extensions open with.
+async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool) -> Response {
+    use compass_worker_host::application_service::Apps;
+    let target = std::path::PathBuf::from(&path);
+    if !target.is_absolute() || !target.exists() {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no file exists at that path",
+        ));
+    }
+    let apps = crate::extension_apps::EngineApps::new(
+        &state.read().await.index,
+        compass_xdg::mimeapps::Lists::from_environment(),
+        tokio::runtime::Handle::current(),
+    );
+    if reveal {
+        apps.show_in_file_browser(&path, true);
+        return Response::Ack;
+    }
+    if apps.open_file(&target) {
+        Response::Ack
+    } else {
+        Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "no application opens this kind of file",
+        ))
     }
 }
 
@@ -1061,6 +1108,33 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id).await,
+
+        Request::SearchFiles { query, category } => {
+            let files = Arc::clone(&state.read().await.files);
+            let category = category
+                .as_deref()
+                .and_then(compass_core::file_search::category_for_key);
+            let search = tokio::task::spawn_blocking(move || files.search(&query, category));
+            match tokio::time::timeout(FILE_SEARCH_TIMEOUT, search).await {
+                Ok(Ok(Ok(found))) => Response::Files {
+                    heading: found.heading.to_owned(),
+                    files: found.files,
+                },
+                Ok(Ok(Err(message))) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Unsupported, message))
+                }
+                Ok(Err(err)) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("file search task failed: {err}"),
+                )),
+                Err(_) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    "the file indexer did not answer in time",
+                )),
+            }
+        }
+
+        Request::OpenFile { path, reveal } => open_file(state, path, reveal).await,
         Request::RunExtensionCommand { id, arguments_json } => {
             run_extension_command(state, id, arguments_json).await
         }

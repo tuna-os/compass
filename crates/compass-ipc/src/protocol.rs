@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 /// version 6, window switching; version 7, pasting, pinning and removing a
 /// clipboard entry, and running an installed extension's command; version 8,
 /// following and driving an extension's view; version 9, an extension view's
-/// toast; version 10, the power and media commands.
+/// toast; version 10, the power and media commands, and file search.
 pub const PROTOCOL_VERSION: u16 = 10;
 
 /// A client-to-server frame.
@@ -277,6 +277,30 @@ pub enum Request {
         /// From [`Response::ExtensionStarted`].
         session: u64,
     },
+    /// Search Files: recently accessed files for an empty query, the path
+    /// itself for a query naming one that exists, and the file index
+    /// otherwise. Answered with [`Response::Files`]; an index search while
+    /// the file indexer is not running is refused as
+    /// [`ErrorKind::Unsupported`].
+    SearchFiles {
+        /// Search text, exactly as typed.
+        query: String,
+        /// Only files of this category: a filter key such as `Images`, as
+        /// `compass_core::file_search::CATEGORY_FILTER_KEYS` spells it.
+        /// `None` (or `All`) filters nothing.
+        category: Option<String>,
+    },
+    /// Open one file with its default application, or show it in the file
+    /// browser. Answered with [`Response::Ack`] once the launch started; a
+    /// file with no application to open it is refused as
+    /// [`ErrorKind::Unsupported`], and a path that does not exist as
+    /// [`ErrorKind::BadRequest`].
+    OpenFile {
+        /// Absolute path, as [`FileHit::path`] carries it.
+        path: String,
+        /// Show the file in the file browser instead of opening it.
+        reveal: bool,
+    },
 }
 
 /// What the engine answers.
@@ -372,6 +396,25 @@ pub enum Response {
         /// Every argument, in the manifest's order.
         fields: Vec<PreferenceField>,
     },
+    /// Answer to [`Request::SearchFiles`].
+    Files {
+        /// What the list is: "Recently Accessed", "Direct file path",
+        /// "Recently Modified" or "Results".
+        heading: String,
+        /// The files, in presentation order.
+        files: Vec<FileHit>,
+    },
+}
+
+/// One file in a [`Response::Files`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileHit {
+    /// Absolute path.
+    pub path: String,
+    /// The last path component, for the row's title.
+    pub name: String,
+    /// Its category's filter key, e.g. `Documents` or `Directories`.
+    pub category: String,
 }
 
 /// What the engine asks an attached window to do.

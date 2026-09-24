@@ -107,6 +107,22 @@ pub enum Message {
     EmojiQueryChanged(String),
     /// An emoji row was clicked, by position in the shown list.
     EmojiSelected(usize),
+    /// Search Files' text changed.
+    FilesQueryChanged(String),
+    /// The debounce for Search Files query `generation` ran out; ask, unless
+    /// the text moved on meanwhile.
+    FilesDebounced(u64),
+    /// Search Files' answer to query `generation` arrived.
+    FilesLoaded {
+        /// The query it answers; a stale one is dropped.
+        generation: u64,
+        /// The heading and files, or why there are none.
+        result: Result<crate::backend::FileResults, String>,
+    },
+    /// A file row was clicked, by position.
+    FilesSelected(usize),
+    /// Opening a file (or showing it in the file browser) finished.
+    FileOpened(Result<(), String>),
     /// The open windows arrived, or why they could not be listed.
     WindowsLoaded(Result<Vec<crate::backend::WindowRow>, String>),
     /// A window row was clicked.
