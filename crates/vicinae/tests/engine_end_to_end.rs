@@ -1019,3 +1019,20 @@ fn builtin_commands_rank_in_the_root_and_their_use_is_remembered() {
         "the most-used row leads the empty query"
     );
 }
+
+#[test]
+fn window_requests_without_a_session_bus_are_refused_by_name() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    for request in [
+        Request::ListWindows,
+        Request::ActivateWindow { id: 1 },
+        Request::CloseWindow { id: 1 },
+    ] {
+        let Response::Error(err) = daemon.request(request.clone()) else {
+            panic!("{request:?} was not refused");
+        };
+        assert_eq!(err.kind, ErrorKind::Unsupported, "{request:?}");
+        assert!(err.message.contains("session bus"), "{}", err.message);
+    }
+}

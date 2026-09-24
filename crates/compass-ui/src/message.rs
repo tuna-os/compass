@@ -59,6 +59,16 @@ pub enum Message {
     ClipboardSelected(usize),
     /// Leave a command's view for the root list.
     Back,
+    /// The window switcher's filter changed.
+    WindowsQueryChanged(String),
+    /// The open windows arrived, or why they could not be listed.
+    WindowsLoaded(Result<Vec<crate::backend::WindowRow>, String>),
+    /// A window row was clicked.
+    WindowSelected(usize),
+    /// Switching to a window finished.
+    WindowActivated(Result<(), String>),
+    /// Closing a window finished; the list is reloaded either way.
+    ShellWindowClosed(Result<(), String>),
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must

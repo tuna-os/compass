@@ -21,6 +21,7 @@ mod scroll;
 pub mod settings;
 pub mod theme;
 pub mod typography;
+pub mod windows_page;
 
 pub use app::{AppFlags, Dismissal, LauncherApp, next_selection};
 pub use appearance::{AppearanceLink, AppearanceSender};

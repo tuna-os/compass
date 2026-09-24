@@ -48,6 +48,10 @@ fn all_requests() -> Vec<Request> {
         },
         Request::ClipboardContent { id: "abc".into() },
         Request::ClipboardContent { id: String::new() },
+        Request::ListWindows,
+        Request::ActivateWindow { id: 0 },
+        Request::ActivateWindow { id: u32::MAX },
+        Request::CloseWindow { id: 7 },
     ]
 }
 
@@ -140,6 +144,20 @@ fn all_responses() -> Vec<Response> {
             mime_type: "image/png".into(),
             data: vec![0, 255, 0x89, b'P', b'N', b'G'],
         },
+        Response::Windows { windows: vec![] },
+        Response::Windows {
+            windows: vec![compass_ipc::WindowInfo {
+                id: u32::MAX,
+                title: "Title é 🚀".into(),
+                wm_class: "org.gnome.Nautilus".into(),
+                app_name: Some("Files".into()),
+                app_icon: None,
+                pid: Some(1),
+                workspace: Some(-1),
+                focused: true,
+                can_close: false,
+            }],
+        },
     ]
 }
 
@@ -160,6 +178,9 @@ fn request_variants_are_exhaustive() {
             | Request::RecordLaunch { .. }
             | Request::ClipboardHistory { .. }
             | Request::ClipboardContent { .. }
+            | Request::ListWindows
+            | Request::ActivateWindow { .. }
+            | Request::CloseWindow { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -178,6 +199,7 @@ fn response_variants_are_exhaustive() {
             | Response::WindowAttached
             | Response::ClipboardHistory { .. }
             | Response::ClipboardContent { .. }
+            | Response::Windows { .. }
             | Response::Window(_) => {}
         }
     }

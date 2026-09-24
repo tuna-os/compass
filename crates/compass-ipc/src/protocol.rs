@@ -30,8 +30,9 @@ use serde::{Deserialize, Serialize};
 /// a human can act on, and it only does so if the number moves.
 ///
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
-/// Version 4 adds clipboard history; version 5, fetching an entry's content.
-pub const PROTOCOL_VERSION: u16 = 5;
+/// Version 4 adds clipboard history; version 5, fetching an entry's content;
+/// version 6, window switching.
+pub const PROTOCOL_VERSION: u16 = 6;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +149,22 @@ pub enum Request {
         /// [`ClipboardEntry::id`].
         id: String,
     },
+    /// The open windows, for the window switcher.
+    ///
+    /// Answered with [`Response::Windows`], or refused as
+    /// [`ErrorKind::Unsupported`] without the GNOME Shell extension, which is
+    /// the only way to list windows on GNOME.
+    ListWindows,
+    /// Focus and raise one window. Answered with [`Response::Ack`].
+    ActivateWindow {
+        /// [`WindowInfo::id`].
+        id: u32,
+    },
+    /// Ask one window to close. Answered with [`Response::Ack`].
+    CloseWindow {
+        /// [`WindowInfo::id`].
+        id: u32,
+    },
 }
 
 /// What the engine answers.
@@ -196,6 +213,11 @@ pub enum Response {
         mime_type: String,
         /// The content, exactly as it was copied.
         data: Vec<u8>,
+    },
+    /// Answer to [`Request::ListWindows`], most recently used first.
+    Windows {
+        /// Every window the extension reports.
+        windows: Vec<WindowInfo>,
     },
 }
 
@@ -261,6 +283,29 @@ pub struct ClipboardEntry {
     pub updated_at: i64,
     /// For links, the host, so a row can say where it points.
     pub url_host: Option<String>,
+}
+
+/// One open window, as the switcher shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowInfo {
+    /// Handle for [`Request::ActivateWindow`] and [`Request::CloseWindow`].
+    pub id: u32,
+    /// The window's title.
+    pub title: String,
+    /// Its `WM_CLASS`.
+    pub wm_class: String,
+    /// The application it belongs to, when the engine recognised one.
+    pub app_name: Option<String>,
+    /// That application's icon name.
+    pub app_icon: Option<String>,
+    /// The owning process, so a client can leave out its own windows.
+    pub pid: Option<u32>,
+    /// Workspace index, when known.
+    pub workspace: Option<i32>,
+    /// Whether it has focus right now.
+    pub focused: bool,
+    /// Whether it can be closed.
+    pub can_close: bool,
 }
 
 /// What kind of thing a [`ClipboardEntry`] holds.

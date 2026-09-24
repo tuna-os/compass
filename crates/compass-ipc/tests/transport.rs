@@ -92,6 +92,8 @@ async fn echo_handler(request: Request) -> Response {
             }
         }
         Request::ClipboardHistory { .. } => Response::ClipboardHistory { entries: vec![] },
+        Request::ListWindows => Response::Windows { windows: vec![] },
+        Request::ActivateWindow { .. } | Request::CloseWindow { .. } => Response::Ack,
         Request::ClipboardContent { .. } => Response::ClipboardContent {
             mime_type: "text/plain".into(),
             data: vec![],

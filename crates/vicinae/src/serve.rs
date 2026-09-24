@@ -90,6 +90,9 @@ pub struct EngineState {
     /// Clipboard history, once [`crate::clipboard_service::run`] has opened
     /// it. `None` until then, and for good when there is no keyring.
     clipboard: Option<Arc<crate::clipboard_service::ClipboardStore>>,
+    /// The GNOME Shell extension's client, once the session bus answered.
+    /// `None` until then, and for good without a session bus.
+    shell: Option<Arc<compass_shell::ShellClient>>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -141,6 +144,7 @@ impl EngineState {
             max_results,
             window: WindowSlot::default(),
             clipboard: None,
+            shell: None,
         }
     }
 
@@ -184,7 +188,13 @@ impl EngineState {
             max_results,
             window: WindowSlot::default(),
             clipboard: None,
+            shell: None,
         }
+    }
+
+    /// Makes the Shell extension's client available to requests.
+    pub fn set_shell(&mut self, shell: Arc<compass_shell::ShellClient>) {
+        self.shell = Some(shell);
     }
 
     /// Makes clipboard history available to requests.
@@ -437,6 +447,49 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
+        Request::ListWindows => {
+            let (shell, index_state) = (state.read().await.shell.clone(), Arc::clone(state));
+            let Some(shell) = shell else {
+                return Response::Error(crate::window_service::no_bus("Window switching"));
+            };
+            match shell.list_windows().await {
+                Ok(windows) => {
+                    let state = index_state.read().await;
+                    Response::Windows {
+                        windows: crate::window_service::rows(
+                            windows.into_iter().map(Into::into).collect(),
+                            &state.index,
+                        ),
+                    }
+                }
+                Err(err) => {
+                    Response::Error(crate::window_service::refusal(&err, "Window switching"))
+                }
+            }
+        }
+
+        Request::ActivateWindow { id } | Request::CloseWindow { id } => {
+            let close = matches!(request, Request::CloseWindow { .. });
+            let what = if close {
+                "Closing a window"
+            } else {
+                "Switching to a window"
+            };
+            let Some(shell) = state.read().await.shell.clone() else {
+                return Response::Error(crate::window_service::no_bus(what));
+            };
+            let id = compass_shell::WindowId(id);
+            let done = if close {
+                shell.close_window(id).await
+            } else {
+                shell.activate_window(id).await
+            };
+            match done {
+                Ok(()) => Response::Ack,
+                Err(err) => Response::Error(crate::window_service::refusal(&err, what)),
+            }
+        }
+
         // Handled by the serve loop, which owns the shutdown signal; reaching
         // here means the loop did not intercept it.
         Request::Shutdown => Response::ShuttingDown,
@@ -514,6 +567,20 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     // Detached for the same reason: a keyring that is slow or absent costs
     // clipboard history, never the socket.
     tokio::spawn(crate::clipboard_service::run(Arc::clone(&state)));
+
+    // The Shell extension, for window switching. Connecting only fails with
+    // no session bus at all; an absent extension is reported per request.
+    {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            match compass_shell::ShellClient::connect_session().await {
+                Ok(client) => state.write().await.set_shell(Arc::new(client)),
+                Err(err) => {
+                    tracing::warn!(error = %err, "no session bus; window switching unavailable")
+                }
+            }
+        });
+    }
 
     if hotkey {
         tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
