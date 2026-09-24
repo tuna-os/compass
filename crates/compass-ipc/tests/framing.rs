@@ -718,6 +718,30 @@ fn every_response_variant_round_trips() {
 }
 
 #[test]
+fn an_extension_view_of_several_mebibytes_is_carried() {
+    // Suite 1's dashboard-icons draws 4,473 grid items: more than four
+    // mebibytes of view, which the old one-mebibyte limit refused.
+    let view_json = format!("[{}]", "{\"title\":\"an icon\"},".repeat(300_000));
+    assert!(view_json.len() > 4 * 1024 * 1024);
+    let envelope = ResponseEnvelope::new(
+        1,
+        Response::ExtensionView {
+            version: 2,
+            view_json: Some(view_json),
+            problem: None,
+            ended: false,
+            depth: 1,
+            alert: None,
+            toast: None,
+        },
+    );
+    let mut codec = FrameCodec::<ResponseEnvelope>::new();
+    let mut buf = BytesMut::new();
+    codec.encode(&envelope, &mut buf).expect("encoded");
+    assert_eq!(codec.decode(&mut buf).expect("decoded"), Some(envelope));
+}
+
+#[test]
 fn all_variants_round_trip_back_to_back_in_one_stream() {
     let mut codec = FrameCodec::<RequestEnvelope>::new();
     let mut buf = BytesMut::new();
@@ -905,12 +929,12 @@ fn a_well_framed_but_nonsense_body_is_an_error_not_a_panic() {
 #[test]
 fn error_messages_are_legible() {
     let err = Error::FrameTooLarge {
-        len: 5_000_000,
+        len: 50_000_000,
         max: MAX_FRAME_LEN,
     };
     assert_eq!(
         err.to_string(),
-        "frame of 5000000 bytes exceeds the 1048576 byte limit"
+        "frame of 50000000 bytes exceeds the 33554432 byte limit"
     );
 
     let err = Error::VersionMismatch {

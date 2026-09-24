@@ -51,13 +51,21 @@ impl<'a> StorageService<'a> {
         }
 
         Some(match self.answer(call) {
-            Ok(result) => tsapi::reply(id, result),
+            Ok(Some(result)) => tsapi::reply(id, result),
+            Ok(None) => tsapi::reply_undefined(id),
             Err(error) => tsapi::reply_error(id, &error.to_string()),
         })
     }
 
-    /// The result value for a call already known to be ours.
-    fn answer(&self, call: &Call) -> Result<serde_json::Value, Error> {
+    /// The result value for a call already known to be ours; `None` for a
+    /// key that is not stored.
+    ///
+    /// Raycast's `LocalStorage.getItem` resolves `undefined` for a missing
+    /// key, and extensions test for exactly that: Google Search does
+    /// `if (stored === undefined) return []` and otherwise `JSON.parse`s it,
+    /// so a `null` becomes a `null` history and a crash. The C++ host answers
+    /// `null` (PARITY, "The extension host API").
+    fn answer(&self, call: &Call) -> Result<Option<serde_json::Value>, Error> {
         let key = || {
             call.params
                 .get("key")
@@ -67,36 +75,33 @@ impl<'a> StorageService<'a> {
         };
 
         match call.method.as_str() {
-            "Storage/get" => Ok(self
-                .scoped
-                .get(&key())?
-                .map_or(serde_json::Value::Null, |value| value.to_json())),
+            "Storage/get" => Ok(self.scoped.get(&key())?.map(|value| value.to_json())),
             "Storage/set" => {
                 let value = Value::from_json(call.params.get("value").unwrap_or(&NULL));
                 self.scoped.set(&key(), &value)?;
-                Ok(serde_json::Value::Null)
+                Ok(Some(serde_json::Value::Null))
             }
             "Storage/remove" => {
                 self.scoped.remove(&key())?;
-                Ok(serde_json::Value::Null)
+                Ok(Some(serde_json::Value::Null))
             }
             "Storage/clear" => {
                 self.scoped.clear()?;
-                Ok(serde_json::Value::Null)
+                Ok(Some(serde_json::Value::Null))
             }
             "Storage/list" => {
                 let mut out = serde_json::Map::new();
                 for (key, value) in self.scoped.list()? {
                     out.insert(key, value.to_json());
                 }
-                Ok(serde_json::Value::Object(out))
+                Ok(Some(serde_json::Value::Object(out)))
             }
             // Unreachable: `handle` checked the name. Answering an error rather
             // than panicking, because a panic here would take the host down
             // over an extension's message.
-            other => Ok(serde_json::Value::String(format!(
+            other => Ok(Some(serde_json::Value::String(format!(
                 "{other} is not a Storage method"
-            ))),
+            )))),
         }
     }
 }
@@ -184,17 +189,20 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_key_reads_as_null() {
+    fn a_missing_key_reads_as_undefined_not_null() {
         let (_dir, db) = open();
         let storage = LocalStorage::new(&db);
         let service = StorageService::new(storage.scoped("x:data"));
 
-        assert_eq!(
-            result_of(
-                &service,
-                &call("Storage/get", serde_json::json!({ "key": "nope" }))
-            ),
-            serde_json::Value::Null
+        let payload = service
+            .handle(&call("Storage/get", serde_json::json!({ "key": "nope" })))
+            .expect("answered");
+        let answer: serde_json::Value = serde_json::from_str(&payload).expect("a JSON reply");
+        assert_eq!(answer["id"], 1, "answered, so the caller's promise settles");
+        assert!(answer.get("error").is_none(), "{answer}");
+        assert!(
+            answer.get("result").is_none(),
+            "no `result` member, so the promise resolves `undefined`: {answer}"
         );
     }
 

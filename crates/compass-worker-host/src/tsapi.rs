@@ -78,6 +78,16 @@ pub fn reply(id: u64, result: serde_json::Value) -> String {
     serde_json::json!({ "jsonrpc": crate::rpc::VERSION, "id": id, "result": result }).to_string()
 }
 
+/// A successful answer with no `result` member, which the generated client
+/// resolves as `undefined` rather than `null`.
+///
+/// For the few calls whose Raycast counterpart resolves `undefined` and whose
+/// callers test for it (`LocalStorage.getItem` of a missing key).
+#[must_use]
+pub fn reply_undefined(id: u64) -> String {
+    serde_json::json!({ "jsonrpc": crate::rpc::VERSION, "id": id }).to_string()
+}
+
 /// A failed answer. `message` reaches the extension as the rejection value.
 #[must_use]
 pub fn reply_error(id: u64, message: &str) -> String {
