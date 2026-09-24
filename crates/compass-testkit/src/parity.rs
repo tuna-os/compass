@@ -234,29 +234,7 @@ fn main() -> Result<()> {
     // `--report-only` is about the whole-ranking diff being informational and
     // must not silence a gate that was explicitly asked for.
     if let Some(min_len) = config.gate_top_result {
-        let mut failures = Vec::new();
-        for detail in &report.details {
-            if detail.query.trim().chars().count() < min_len {
-                continue;
-            }
-            let (Some(cpp), Some(rust)) = (detail.cpp_results.first(), detail.rust_results.first())
-            else {
-                continue;
-            };
-            if cpp.id != rust.id {
-                failures.push((detail.query.as_str(), cpp, rust));
-            }
-        }
-
-        let compared = report
-            .details
-            .iter()
-            .filter(|detail| {
-                detail.query.trim().chars().count() >= min_len
-                    && !detail.cpp_results.is_empty()
-                    && !detail.rust_results.is_empty()
-            })
-            .count();
+        let (compared, failures) = top_result_gate(&report.details, min_len);
 
         println!("\nTop-result gate (queries of {min_len}+ characters):");
         println!("  Compared:          {compared}");
@@ -1002,6 +980,66 @@ const DECLARED_CPP_ONLY: &[(&str, &str)] = &[(
     "`Type=Directory` is not an application. The C++ `if`/`else` chain mapping `Type` has no      `else`, so an unrecognised type silently becomes `Application` and this menu-category file      is ranked as a launchable one — PARITY.md, `compass-xdg` divergence 5.",
 )];
 
+/// The ids on the C++ side that this engine deliberately does not rank.
+///
+/// Used by BOTH the whole-ranking comparison and the top-result gate. They had
+/// separate views of the C++ ranking at first, and the gate failed on its own
+/// first live run over `applications:type-directory` -- an item
+/// [`compare_results`] had already been taught to forgive. A filter applied in
+/// one of the two places that need it is not a filter.
+fn declared_cpp_only<'a>(cpp: &'a [SearchResultItem], rust: &[SearchResultItem]) -> Vec<&'a str> {
+    cpp.iter()
+        .map(|hit| hit.id.as_str())
+        .filter(|id| {
+            DECLARED_CPP_ONLY.iter().any(|(declared, _)| declared == id)
+                && !rust.iter().any(|hit| hit.id == *id)
+        })
+        .collect()
+}
+
+/// The C++ ranking as it is compared: declared divergences removed.
+fn cpp_ranking_for_comparison<'a>(
+    cpp: &'a [SearchResultItem],
+    rust: &[SearchResultItem],
+) -> Vec<&'a SearchResultItem> {
+    let declared = declared_cpp_only(cpp, rust);
+    cpp.iter()
+        .filter(|hit| !declared.contains(&hit.id.as_str()))
+        .collect()
+}
+
+/// The top-result gate: how many pairs it compared, and which disagreed.
+///
+/// A FUNCTION RATHER THAN A BLOCK INSIDE `main`, because the version that
+/// lived in `main` could not be tested -- and it shipped reading
+/// `cpp_results.first()` raw while [`compare_results`] was already filtering
+/// declared divergences. Mutating it back was invisible to every unit test,
+/// which is how the two views drifted apart in the first place.
+fn top_result_gate(
+    details: &[ParityDetail],
+    min_len: usize,
+) -> (usize, Vec<(&str, &SearchResultItem, &SearchResultItem)>) {
+    let mut compared = 0usize;
+    let mut failures = Vec::new();
+
+    for detail in details {
+        if detail.query.trim().chars().count() < min_len {
+            continue;
+        }
+        // THE SAME VIEW `compare_results` USES.
+        let cpp_ranking = cpp_ranking_for_comparison(&detail.cpp_results, &detail.rust_results);
+        let (Some(cpp), Some(rust)) = (cpp_ranking.first(), detail.rust_results.first()) else {
+            continue;
+        };
+        compared += 1;
+        if cpp.id != rust.id {
+            failures.push((detail.query.as_str(), *cpp, rust));
+        }
+    }
+
+    (compared, failures)
+}
+
 fn compare_results(
     cpp: &[SearchResultItem],
     rust: &[SearchResultItem],
@@ -1009,19 +1047,11 @@ fn compare_results(
     // Declared C++-only items are removed from the C++ side before the
     // comparison, so they neither hide a regression elsewhere in the ranking
     // nor report as one themselves.
-    let declared: Vec<&str> = cpp
-        .iter()
-        .map(|hit| hit.id.as_str())
-        .filter(|id| {
-            DECLARED_CPP_ONLY.iter().any(|(declared, _)| declared == id)
-                && !rust.iter().any(|hit| hit.id == *id)
-        })
-        .collect();
+    let declared = declared_cpp_only(cpp, rust);
 
-    let cpp_ids: Vec<&str> = cpp
-        .iter()
+    let cpp_ids: Vec<&str> = cpp_ranking_for_comparison(cpp, rust)
+        .into_iter()
         .map(|hit| hit.id.as_str())
-        .filter(|id| !declared.contains(id))
         .collect();
     let rust_ids: Vec<&str> = rust.iter().map(|hit| hit.id.as_str()).collect();
 
@@ -1309,6 +1339,105 @@ mod tests {
         assert!(
             reason.contains("Type=Directory"),
             "the reason must name the behaviour, not just the id: {reason}"
+        );
+    }
+
+    fn detail(
+        query: &str,
+        cpp: Vec<SearchResultItem>,
+        rust: Vec<SearchResultItem>,
+    ) -> ParityDetail {
+        let (status, divergence_reason) = compare_results(&cpp, &rust);
+        ParityDetail {
+            query: query.to_owned(),
+            status,
+            cpp_results: cpp,
+            rust_results: rust,
+            divergence_reason,
+        }
+    }
+
+    /// The gate forgives a declared divergence AT THE TOP of the C++ ranking.
+    ///
+    /// This is the case that failed on the gate's first live run: `Deve` and
+    /// `Development` both put `applications:type-directory` first on the C++
+    /// side, `compare_results` already forgave it, and the gate — reading
+    /// `cpp_results.first()` raw — did not.
+    #[test]
+    fn the_gate_forgives_a_declared_divergence_at_the_top_of_the_cpp_ranking() {
+        let details = vec![detail(
+            "Deve",
+            vec![
+                hit("applications:type-directory", 100.0),
+                hit("applications:host--devhelp", 59.0),
+            ],
+            vec![hit("applications:host--devhelp", 59.0)],
+        )];
+
+        let (compared, failures) = top_result_gate(&details, 4);
+        assert_eq!(compared, 1, "the pair must be compared, not skipped");
+        assert!(
+            failures.is_empty(),
+            "a declared divergence at the top is not a top-result failure: {failures:?}"
+        );
+    }
+
+    /// A REAL top-result difference still fails the gate.
+    #[test]
+    fn the_gate_fails_on_a_real_top_result_difference() {
+        let details = vec![detail(
+            "Mule",
+            vec![hit("applications:host--amule", 90.0)],
+            vec![hit("applications:host--alsa-modular-synth", 90.0)],
+        )];
+
+        let (compared, failures) = top_result_gate(&details, 4);
+        assert_eq!(compared, 1);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].0, "Mule");
+    }
+
+    /// Queries below the threshold are not compared at all.
+    #[test]
+    fn the_gate_ignores_queries_shorter_than_its_threshold() {
+        let details = vec![detail(
+            "Mu",
+            vec![hit("applications:host--amule", 90.0)],
+            vec![hit("applications:host--alsa-modular-synth", 90.0)],
+        )];
+
+        let (compared, failures) = top_result_gate(&details, 4);
+        assert_eq!(
+            compared, 0,
+            "a two-character query is below a 4-character gate"
+        );
+        assert!(failures.is_empty());
+    }
+
+    /// The GATE must see the same C++ ranking the comparison does.
+    ///
+    /// These were two views of the same data, and only one had been taught
+    /// about declared divergences. The gate failed on its own first live run
+    /// over `applications:type-directory` — an item `compare_results` was
+    /// already forgiving — because it read `cpp_results.first()` raw. A
+    /// filter applied in one of the two places that need it is not a filter.
+    #[test]
+    fn the_gate_reads_the_same_cpp_ranking_the_comparison_does() {
+        let cpp = vec![
+            hit("applications:type-directory", 100.0),
+            hit("applications:host--devhelp", 59.0),
+        ];
+        let rust = vec![hit("applications:host--devhelp", 59.0)];
+
+        let ranking = cpp_ranking_for_comparison(&cpp, &rust);
+        assert_eq!(
+            ranking.first().map(|hit| hit.id.as_str()),
+            Some("applications:host--devhelp"),
+            "the declared item must not be the top hit the gate compares"
+        );
+        assert_eq!(
+            compare_results(&cpp, &rust).0,
+            ParityStatus::KnownDivergence
         );
     }
 
