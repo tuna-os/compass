@@ -79,6 +79,9 @@ pub struct ExtensionPage {
     /// How many times the person has edited each field, for `onChange`'s
     /// echo count (ADR-0009).
     pub form_edits: std::collections::BTreeMap<String, u64>,
+    /// Each text area's editor, by field name: a multi-line field keeps its
+    /// cursor and selection here, and its text in `form_values`.
+    pub editors: std::collections::BTreeMap<String, iced::widget::text_editor::Content>,
     /// The extension's `assets` directory, which `Image` paths are relative to.
     pub assets: Option<std::path::PathBuf>,
     /// Whether the launcher is dark, for themed images.
@@ -107,6 +110,7 @@ impl ExtensionPage {
             markdown: Vec::new(),
             form_values: serde_json::Map::new(),
             form_edits: std::collections::BTreeMap::new(),
+            editors: std::collections::BTreeMap::new(),
             assets: None,
             prefers_dark: false,
             icons: Vec::new(),
@@ -124,6 +128,7 @@ impl ExtensionPage {
                 self.selected = 0;
                 self.form_values.clear();
                 self.form_edits.clear();
+                self.editors.clear();
             }
             self.depth = state.depth.max(1);
         }
@@ -374,9 +379,59 @@ impl ExtensionPage {
                 None => !self.form_values.contains_key(&field.name),
             };
             if take {
+                if matches!(
+                    field.kind,
+                    compass_extension_api::view::FieldKind::TextArea { .. }
+                ) {
+                    self.editors.insert(
+                        field.name.clone(),
+                        iced::widget::text_editor::Content::with_text(
+                            value.as_str().unwrap_or_default(),
+                        ),
+                    );
+                }
                 self.form_values.insert(field.name.clone(), value);
             }
         }
+        for item in &form.items {
+            if let FormItem::Field(field) = item
+                && matches!(
+                    field.kind,
+                    compass_extension_api::view::FieldKind::TextArea { .. }
+                )
+            {
+                self.editors.entry(field.name.clone()).or_default();
+            }
+        }
+    }
+
+    /// Whether the form has a multi-line field, where Enter is a newline and
+    /// submitting takes Ctrl+Enter.
+    #[must_use]
+    pub fn has_text_area(&self) -> bool {
+        self.form().is_some_and(|form| {
+            form.items.iter().any(|item| {
+                matches!(item, compass_extension_api::view::FormItem::Field(field)
+                    if matches!(field.kind, compass_extension_api::view::FieldKind::TextArea { .. }))
+            })
+        })
+    }
+
+    /// An edit in the text area `name`: applied to its editor, and when it
+    /// changed the text, recorded like any other field's edit.
+    pub fn edit_text_area(
+        &mut self,
+        name: &str,
+        action: iced::widget::text_editor::Action,
+    ) -> Option<(HandlerId, Vec<serde_json::Value>)> {
+        let editor = self.editors.entry(name.to_owned()).or_default();
+        let changed = action.is_edit();
+        editor.perform(action);
+        if !changed {
+            return None;
+        }
+        let text = editor.text();
+        self.edit_field(name, serde_json::Value::String(text))
     }
 
     /// The handler a chord runs: the action on offer whose shortcut is
@@ -737,6 +792,49 @@ mod tests {
         assert_eq!(
             page.icon(0, 0),
             Some(&RowIcon::Swatch(iced::Color::from_rgb8(0xff, 0, 0)))
+        );
+    }
+
+    #[test]
+    fn a_text_area_takes_lines_and_each_edit_is_sent_with_its_count() {
+        use compass_extension_api::view::{FieldKind, FieldValue, FormField, FormItem, FormView};
+        use iced::widget::text_editor::{Action as EditorAction, Edit};
+        let mut page = ExtensionPage::new(1, "Note");
+        page.apply(state(
+            1,
+            View::Form(FormView {
+                items: vec![FormItem::Field(Box::new(FormField {
+                    id: compass_extension_api::id::NodeId::ROOT,
+                    name: "body".into(),
+                    title: None,
+                    error: None,
+                    info: None,
+                    autofocus: false,
+                    value: Some(FieldValue::Text("hi".into())),
+                    echo: None,
+                    on_change: Some(HandlerId::new("cb-body")),
+                    kind: FieldKind::TextArea {
+                        placeholder: None,
+                        markdown: false,
+                    },
+                }))],
+                ..FormView::default()
+            }),
+        ));
+        assert!(page.has_text_area());
+        assert_eq!(page.editors["body"].text(), "hi");
+
+        page.edit_text_area(
+            "body",
+            EditorAction::Move(iced::widget::text_editor::Motion::DocumentEnd),
+        );
+        page.edit_text_area("body", EditorAction::Edit(Edit::Enter));
+        let sent = page.edit_text_area("body", EditorAction::Edit(Edit::Insert('x')));
+        assert_eq!(page.form_values["body"], "hi\nx");
+        assert_eq!(
+            sent.map(|(h, args)| (h.0, args)),
+            Some(("cb-body".into(), vec!["hi\nx".into(), 2.into()])),
+            "each edit is counted; moving the cursor is not an edit"
         );
     }
 

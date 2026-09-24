@@ -1909,6 +1909,16 @@ impl LauncherApp {
                     None => Task::none(),
                 }
             }
+            Message::ExtensionTextAreaEdited(name, action) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let session = page.session;
+                match page.edit_text_area(&name, action) {
+                    Some((handler, args)) => self.extension_event(session, handler.0, args),
+                    None => Task::none(),
+                }
+            }
             Message::ExtensionLinkClicked(url) => {
                 // No URL opener in the launcher yet; the link is said, not lost.
                 tracing::info!(%url, "a link in an extension's view was clicked");
@@ -2057,6 +2067,13 @@ impl LauncherApp {
                             return self.extension_pop(session);
                         }
                         Key::Named(Named::Escape) => return self.update(Message::Back),
+                        // A text area's Enter is a newline; its form submits
+                        // with Ctrl+Enter.
+                        Key::Named(Named::Enter)
+                            if page.has_text_area() && !modifiers.control() =>
+                        {
+                            return Task::none();
+                        }
                         Key::Named(Named::Enter) => return self.activate_extension_action(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                     };
@@ -3167,9 +3184,19 @@ impl LauncherApp {
                 entry = entry.push(iced::widget::text(title.clone()).font(self.font()).size(13));
             }
             let input: Element<Message> = match &field.kind {
-                FieldKind::Text { placeholder }
-                | FieldKind::Password { placeholder }
-                | FieldKind::TextArea { placeholder, .. } => {
+                FieldKind::TextArea { placeholder, .. } => match page.editors.get(&field.name) {
+                    Some(editor) => iced::widget::text_editor(editor)
+                        .placeholder(placeholder.as_deref().unwrap_or_default())
+                        .font(self.font())
+                        .height(Length::Fixed(96.0))
+                        .padding(8)
+                        .on_action(move |action| {
+                            Message::ExtensionTextAreaEdited(name.clone(), action)
+                        })
+                        .into(),
+                    None => iced::widget::text("").into(),
+                },
+                FieldKind::Text { placeholder } | FieldKind::Password { placeholder } => {
                     text_input(placeholder.as_deref().unwrap_or_default(), text_value)
                         .secure(matches!(field.kind, FieldKind::Password { .. }))
                         .font(self.font())
@@ -3236,7 +3263,14 @@ impl LauncherApp {
             .and_then(|panel| panel.actions().into_iter().next())
             .map_or_else(
                 || "Esc: back".to_owned(),
-                |action| format!("Enter: {}    Esc: back", action.title),
+                |action| {
+                    let submit = if page.has_text_area() {
+                        "Ctrl+Enter"
+                    } else {
+                        "Enter"
+                    };
+                    format!("{submit}: {}    Esc: back", action.title)
+                },
             );
         body = body.push(iced::widget::text(submit).font(self.font()).size(12));
         if let Some(notice) = &page.notice {
@@ -4120,6 +4154,63 @@ mod tests {
             pending.extend(task_messages(app.update(message)));
         }
         (app, backend, dir)
+    }
+
+    #[test]
+    fn in_a_form_with_a_text_area_enter_is_a_newline_and_ctrl_enter_submits() {
+        use compass_extension_api::action::{Action, ActionPanel};
+        use compass_extension_api::view::{FieldKind, FormField, FormItem, FormView};
+        let form = compass_extension_api::View::Form(FormView {
+            items: vec![FormItem::Field(Box::new(FormField {
+                id: compass_extension_api::id::NodeId::ROOT,
+                name: "body".into(),
+                title: Some("Body".into()),
+                error: None,
+                info: None,
+                autofocus: false,
+                value: None,
+                echo: None,
+                on_change: None,
+                kind: FieldKind::TextArea {
+                    placeholder: None,
+                    markdown: false,
+                },
+            }))],
+            actions: Some(ActionPanel::of([Action::new("Save", "submit")])),
+            ..FormView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(form);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Ctrl+Enter: Save    Esc: back").is_ok());
+        }
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert!(
+            backend.events.lock().unwrap().is_empty(),
+            "Enter in a text area is a newline, not a submit"
+        );
+        let ctrl_enter = Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        });
+        let mut pending = task_messages(app.update(ctrl_enter));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("submit".to_owned(), vec![serde_json::json!({})])]
+        );
     }
 
     #[test]
