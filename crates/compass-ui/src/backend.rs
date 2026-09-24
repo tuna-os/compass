@@ -113,6 +113,12 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
     }
 
+    /// Keeps a theme in the configuration, by its persisted name.
+    fn set_theme(&self, theme: String) -> BackendFuture<'_, ()> {
+        let _ = theme;
+        Box::pin(async { Err("Set Theme needs the Compass engine to keep the theme".to_owned()) })
+    }
+
     /// The `vicinae dmenu` list the engine holds under `token`.
     fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
         let _ = token;

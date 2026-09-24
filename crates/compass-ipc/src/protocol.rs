@@ -36,7 +36,8 @@ use serde::{Deserialize, Serialize};
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
-/// shortcuts, snippets, script commands, Run Terminal Program and dmenu.
+/// shortcuts, snippets, script commands, Run Terminal Program, dmenu and
+/// themes.
 pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
@@ -461,6 +462,14 @@ pub enum Request {
         token: u64,
         /// The chosen entry, its index, or the search text.
         output: Option<String>,
+    },
+    /// Keep a theme in the configuration (`launcher.appearance.theme`), as
+    /// `vicinae theme set` does. Answered with [`Response::Ack`]; an unknown
+    /// name is refused as [`ErrorKind::BadRequest`], and a configuration that
+    /// cannot be written as [`ErrorKind::Internal`].
+    SetTheme {
+        /// The theme's persisted name, e.g. `tokyo-night`.
+        theme: String,
     },
 }
 

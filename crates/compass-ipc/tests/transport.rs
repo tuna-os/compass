@@ -112,7 +112,8 @@ async fn echo_handler(request: Request) -> Response {
         | Request::PasteSnippet { .. }
         | Request::StopScript { .. }
         | Request::RunProgram { .. }
-        | Request::DmenuChoose { .. } => Response::Ack,
+        | Request::DmenuChoose { .. }
+        | Request::SetTheme { .. } => Response::Ack,
         Request::Dmenu { .. } => Response::DmenuOutput {
             output: String::new(),
         },

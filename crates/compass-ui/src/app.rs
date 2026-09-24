@@ -30,6 +30,7 @@ mod programs;
 mod scripts;
 mod shortcuts;
 mod snippets;
+mod themes;
 
 /// The search field's widget id.
 ///
@@ -479,6 +480,8 @@ enum Page {
     Programs(crate::programs_page::ProgramsPage),
     /// A `vicinae dmenu` list.
     Dmenu(crate::dmenu_page::DmenuPage),
+    /// Set Theme.
+    Themes(crate::themes_page::ThemesPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -1028,6 +1031,11 @@ impl LauncherApp {
     fn conceal(&mut self) -> Task<Message> {
         self.cancel_search();
         self.panel = None;
+        // Leaving Set Theme without choosing puts the theme back, as
+        // `beforePop` does.
+        if matches!(self.page, Page::Themes(_)) {
+            let _ = self.update(Message::ThemeCancel);
+        }
         let dismissed = self.cancel_dmenu();
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
@@ -1189,6 +1197,15 @@ impl LauncherApp {
                 line.push_str(&format!(" selected_title={title:?}"));
             }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::Themes(page) = &self.page {
+            line.push_str(&format!(
+                " page=themes themes_query={:?} themes_rows={} themes_selected={} theme={}",
+                page.query,
+                page.rows.len(),
+                page.selected,
+                self.theme_choice.name()
+            ));
         }
         if let Page::Dmenu(page) = &self.page {
             line.push_str(&format!(
@@ -2240,6 +2257,9 @@ impl LauncherApp {
             | Message::DmenuQueryChanged(_)
             | Message::DmenuSelected(_)
             | Message::DmenuChosen(_) => self.dmenu_message(message),
+            Message::ThemesQueryChanged(_) | Message::ThemeSelected(_) | Message::ThemeSaved(_) => {
+                self.theme_message(message)
+            }
             Message::Back => {
                 // Escape on a dmenu list dismisses it and the launcher, as the
                 // C++'s instant dismiss does.
@@ -2482,6 +2502,9 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::Dmenu(_)) {
                     return self.dmenu_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Themes(_)) {
+                    return self.themes_page_key(key, modifiers);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2729,6 +2752,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::DmenuQueryChanged as OnInput),
             ),
+            Page::Themes(page) => (
+                compass_core::theme_picker::PLACEHOLDER,
+                &page.query,
+                Some(Message::ThemesQueryChanged as OnInput),
+            ),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2796,6 +2824,8 @@ impl LauncherApp {
             self.programs_body(page)
         } else if let Page::Dmenu(page) = &self.page {
             self.dmenu_body(page)
+        } else if let Page::Themes(page) = &self.page {
+            self.themes_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -4152,6 +4182,7 @@ impl LauncherApp {
             ]),
             CommandKind::ManageSnippets => Task::batch([record, self.open_manage_snippets()]),
             CommandKind::RunProgram => Task::batch([record, self.open_run_program()]),
+            CommandKind::SetTheme => Task::batch([record, self.open_set_theme()]),
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
@@ -4796,6 +4827,8 @@ mod tests {
         programs_ran: std::sync::Mutex<Vec<(Vec<String>, bool, bool)>>,
         /// The dmenu answers sent: `(token, output)`.
         dmenu_answers: std::sync::Mutex<Vec<(u64, Option<String>)>>,
+        /// The themes kept.
+        themes_kept: std::sync::Mutex<Vec<String>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4868,6 +4901,13 @@ mod tests {
                     section_title: Some("Pick ({count})".into()),
                     ..crate::backend::DmenuList::default()
                 })
+            })
+        }
+
+        fn set_theme(&self, theme: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.themes_kept.lock().unwrap().push(theme);
+                Ok(())
             })
         }
 
@@ -7411,6 +7451,54 @@ mod tests {
                 .is_some_and(|n| n.contains("need the Compass engine")),
             "{:?}",
             page.notice
+        );
+    }
+
+    // ---- Set Theme ----
+
+    #[test]
+    fn set_theme_previews_as_the_selection_moves_and_escape_puts_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.theme_choice = crate::theme::Theme::Nord;
+        open_builtin(&mut app, "set theme", "commands:set-theme");
+        assert!(
+            app.state_line().contains("page=themes"),
+            "{}",
+            app.state_line()
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        assert_ne!(app.theme_choice, crate::theme::Theme::Nord, "previewed");
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Nord, "put back");
+        assert!(matches!(app.page, Page::Root));
+        assert!(backend.themes_kept.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_theme_keeps_the_chosen_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.theme_choice = crate::theme::Theme::System;
+        open_builtin(&mut app, "set theme", "commands:set-theme");
+        let _ = app.update(Message::ThemesQueryChanged("dracula".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(backend.themes_kept.lock().unwrap().as_slice(), ["dracula"]);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        assert_eq!(
+            app.theme_choice,
+            crate::theme::Theme::Dracula,
+            "a kept theme stays when the launcher hides"
         );
     }
 

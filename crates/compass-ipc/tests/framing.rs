@@ -200,6 +200,9 @@ fn all_requests() -> Vec<Request> {
             token: 9,
             output: None,
         },
+        Request::SetTheme {
+            theme: "tokyo-night".into(),
+        },
         Request::RunProgram {
             argv: vec!["htop".into(), "-d".into(), "é 5".into()],
             terminal: true,
@@ -538,6 +541,7 @@ fn request_variants_are_exhaustive() {
             | Request::Dmenu { .. }
             | Request::DmenuFetch { .. }
             | Request::DmenuChoose { .. }
+            | Request::SetTheme { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

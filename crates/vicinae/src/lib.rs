@@ -515,15 +515,7 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
                 .map(|t| {
                     serde_json::json!({
                         "name": t.name(),
-                        "description": match t {
-                            compass_ui::theme::Theme::System => "Follow OS (Adwaita)",
-                            compass_ui::theme::Theme::Catppuccin => "Catppuccin (Mocha/Latte)",
-                            compass_ui::theme::Theme::Dracula => "Dracula",
-                            compass_ui::theme::Theme::Nord => "Nord",
-                            compass_ui::theme::Theme::Gruvbox => "Gruvbox",
-                            compass_ui::theme::Theme::TokyoNight => "Tokyo Night",
-                            compass_ui::theme::Theme::Solarized => "Solarized",
-                        }
+                        "description": t.description(),
                     })
                 })
                 .collect();

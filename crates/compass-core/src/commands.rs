@@ -54,6 +54,8 @@ pub enum CommandKind {
     /// Run a program on `PATH`, or a typed command line, in a terminal or
     /// directly.
     RunProgram,
+    /// Browse the themes with a live preview, and keep one.
+    SetTheme,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -145,6 +147,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Run a program in a terminal window",
         keywords: &["shell command", "run program", "terminal", "execute"],
         icon: "terminal",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SetTheme,
+        entrypoint: "set-theme",
+        title: "Set Theme",
+        subtitle: "Browse the themes and pick one",
+        keywords: &["theme", "themes", "colors", "appearance", "dark", "light"],
+        icon: "brush",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

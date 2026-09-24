@@ -1765,6 +1765,35 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 ))
             }
         }
+        Request::SetTheme { theme } => {
+            let Some(parsed) = compass_ui::theme::Theme::from_name(&theme) else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("unknown theme {theme:?}"),
+                ));
+            };
+            let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                let mut config = Config::load().unwrap_or_default();
+                config
+                    .launcher_mut()
+                    .appearance_mut()
+                    .set_theme(Some(parsed.name().to_owned()));
+                config.save_to(compass_core::config::default_config_path()?)?;
+                Ok(())
+            })
+            .await;
+            match saved {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(error)) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("could not save the theme: {error}"),
+                )),
+                Err(error) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("saving the theme failed: {error}"),
+                )),
+            }
+        }
         Request::ListPrograms => {
             let default_action = state.read().await.run_program_default.clone();
             let apps = engine_apps(state).await;

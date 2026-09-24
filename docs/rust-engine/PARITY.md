@@ -2191,6 +2191,20 @@ nothing printed, as the C++ does. What differs:
 | 3 | A path entry shows its file icon. | The initial badge, like every row without resolved art. | — |
 | 4 | Without a running launcher the C++ server starts showing its own window. | Refused like `vicinae show` is, when no window is attached. | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
 
+### Set Theme — what the port does not have yet
+
+Set Theme runs end to end: the view lists the themes in the ported sections ("Current Theme", then
+"Available Themes", fuzzy over name and description), previews a theme as soon as its row is
+selected, and puts the configured one back when it is left, as `ThemeViewHost` does; Enter keeps
+the selected theme through the engine (`SetTheme`, IPC v11), which writes it to `vicinae.json` as
+`vicinae theme set` does. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | The themes are TOML files found in the theme directories, each with its own palette, icon and path. | Compass's curated themes (System, Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized), which is what the launcher can draw; user theme files are not read. | `the_configured_theme_is_its_own_section_and_the_filter_is_fuzzy` |
+| 2 | The action panel opens the theme file in the text editor, and copies its id or path; rows show the palette's colour dots. | Enter keeps the theme; no other actions or swatches yet. | `set_theme_keeps_the_chosen_theme` |
+| 3 | Choosing a theme applies it to every window at once through the theme service. | This window applies it at once; another launcher process picks it up from the configuration when it next reads it. | `set_theme_keeps_the_theme_in_the_configuration` |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

@@ -3231,6 +3231,36 @@ fn run_terminal_program_lists_path_and_runs_directly_or_refuses() {
     assert_eq!(err.kind, ErrorKind::Unsupported);
 }
 
+#[test]
+fn set_theme_keeps_the_theme_in_the_configuration() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let config_file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        config_file
+            .set(root.join("config/vicinae/vicinae.json"))
+            .unwrap();
+        Vec::new()
+    });
+    assert_eq!(
+        daemon.request(Request::SetTheme {
+            theme: "Tokyo-Night".into()
+        }),
+        Response::Ack
+    );
+    let saved = std::fs::read_to_string(config_file.get().unwrap()).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert!(
+        saved.to_string().contains("\"tokyo-night\""),
+        "the persisted spelling is written: {saved}"
+    );
+    let Response::Error(err) = daemon.request(Request::SetTheme {
+        theme: "no-such-theme".into(),
+    }) else {
+        panic!("an unknown theme was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
 /// Runs `vicinae dmenu` against `daemon` with `stdin`, returning its output.
 fn run_dmenu(daemon: &Daemon, args: &[&str], stdin: &str) -> std::process::Output {
     use std::io::Write as _;

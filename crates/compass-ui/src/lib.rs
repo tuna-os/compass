@@ -38,6 +38,7 @@ pub mod shortcuts_page;
 pub mod snippets_page;
 pub mod surface;
 pub mod theme;
+pub mod themes_page;
 pub mod typography;
 pub mod windows_page;
 

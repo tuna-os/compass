@@ -138,6 +138,12 @@ pub enum Message {
     SnippetsQueryChanged(String),
     /// A Manage Snippets row was clicked, by position.
     SnippetSelected(usize),
+    /// Set Theme's search text changed.
+    ThemesQueryChanged(String),
+    /// A Set Theme row was clicked, by position.
+    ThemeSelected(usize),
+    /// The chosen theme was kept, or why not.
+    ThemeSaved(Result<(), String>),
     /// A dmenu list arrived for `token`, or why it could not be fetched.
     DmenuLoaded {
         /// Which list.
