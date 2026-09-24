@@ -12,8 +12,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use compass_testkit::corpus::desktop_entries;
-
 #[derive(Debug, Serialize, Deserialize)]
 struct ParityConfig {
     /// Path to the C++ vicinae binary.
@@ -312,57 +310,106 @@ fn run_parity(config: &ParityConfig) -> Result<ParityReport> {
     Ok(report)
 }
 
-fn generate_test_queries(_corpus_dir: &Path) -> Result<Vec<String>> {
+/// The query set, derived from the corpus the caller named.
+///
+/// # This read the WRONG corpus, and the first real differential caught it
+///
+/// It took `_corpus_dir` and ignored it, reading `compass_testkit::corpus`
+/// instead — which resolves through `env!("CARGO_MANIFEST_DIR")`, the path the
+/// binary was COMPILED at. The parity job builds on the runner and runs in a
+/// container where that path does not exist, `WalkDir` over a missing root
+/// yields nothing without error, and the run silently fell from 1817 queries
+/// to the 10 hardcoded terms below:
+///
+/// ```text
+/// Results:
+///   Total queries:     10
+/// ```
+///
+/// A tenth of a percent of the intended coverage, reported as a completed
+/// run. Reading the directory the caller actually passed is both the fix and
+/// the only version that can work in a container.
+fn generate_test_queries(corpus_dir: &Path) -> Result<Vec<String>> {
     let mut queries = Vec::new();
 
-    // Add queries from the corpus
-    for entry in desktop_entries() {
-        if let Some(text) = entry.as_str() {
-            // Extract potential search terms from the desktop entry
-            for line in text.lines() {
-                if let Some(name) = line.strip_prefix("Name=") {
-                    let name = name.trim();
-                    if name.chars().count() > 2 {
-                        queries.push(name.to_owned());
+    let mut from_corpus = 0usize;
+    for entry in read_corpus_entries(corpus_dir)? {
+        from_corpus += 1;
+        for line in entry.lines() {
+            if let Some(name) = line.strip_prefix("Name=") {
+                let name = name.trim();
+                if name.chars().count() > 2 {
+                    queries.push(name.to_owned());
 
-                        // Prefixes by CHARACTER, not by byte. `name[..i]`
-                        // panics the moment a corpus entry is not ASCII --
-                        // "byte index 2 is not a char boundary; it is inside
-                        // 'é' of `Déjà Dup Backups`" -- and the checked-in
-                        // corpus has such entries, so the harness aborted
-                        // before it compared anything at all. Found by
-                        // running it, which nothing had done.
-                        for (count, (offset, _)) in name.char_indices().enumerate().skip(1) {
-                            if count > 4 {
-                                break;
-                            }
-                            queries.push(name[..offset].to_owned());
+                    // Prefixes by CHARACTER, not by byte. `name[..i]` panics
+                    // the moment a corpus entry is not ASCII -- "byte index 2
+                    // is not a char boundary; it is inside 'é' of `Déjà Dup
+                    // Backups`" -- and the checked-in corpus has such
+                    // entries, so the harness aborted before it compared
+                    // anything at all. Found by running it, which nothing
+                    // had done.
+                    for (count, (offset, _)) in name.char_indices().enumerate().skip(1) {
+                        if count > 4 {
+                            break;
                         }
+                        queries.push(name[..offset].to_owned());
                     }
                 }
             }
         }
     }
 
-    // Add some common search terms
-    queries.extend([
-        "firefox".to_owned(),
-        "chrome".to_owned(),
-        "terminal".to_owned(),
-        "editor".to_owned(),
-        "browser".to_owned(),
-        "calc".to_owned(),
-        "file".to_owned(),
-        "settings".to_owned(),
-        "system".to_owned(),
-        "app".to_owned(),
-    ]);
+    // A CORPUS THAT YIELDED NOTHING IS NOT A SMALL QUERY SET, IT IS A BROKEN
+    // RUN. Without this the ten terms below stand in for the whole corpus and
+    // the run reports a total that looks like a deliberate choice.
+    anyhow::ensure!(
+        from_corpus > 0,
+        "no .desktop entries under {} — the query set would be the {} fallback terms alone, \
+         which is a broken run reported as a small one",
+        corpus_dir.display(),
+        COMMON_TERMS.len()
+    );
+
+    // Common terms on top of the corpus-derived ones: short, generic, and the
+    // kind of thing a person actually types.
+    queries.extend(COMMON_TERMS.iter().map(|term| (*term).to_owned()));
 
     // Deduplicate and sort
     queries.sort();
     queries.dedup();
 
     Ok(queries)
+}
+
+/// Generic terms asked alongside the corpus-derived ones.
+const COMMON_TERMS: &[&str] = &[
+    "firefox", "chrome", "terminal", "editor", "browser", "calc", "file", "settings", "system",
+    "app",
+];
+
+/// Every `.desktop` file under `dir`, read as text.
+///
+/// Deliberately reads the directory rather than `compass_testkit::corpus`,
+/// whose root is baked in at compile time and does not survive the move into
+/// a container. See [`generate_test_queries`].
+fn read_corpus_entries(dir: &Path) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let listing = std::fs::read_dir(&dir)
+            .with_context(|| format!("reading the corpus at {}", dir.display()))?;
+        for entry in listing {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "desktop")
+                && let Ok(text) = std::fs::read_to_string(&path)
+            {
+                out.push(text);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The corpus, laid out where an XDG engine will actually look for it.
@@ -981,24 +1028,50 @@ mod tests {
     #[test]
     fn prefixes_are_taken_by_character_so_an_accented_name_does_not_abort_the_run() {
         let corpus = tempfile::tempdir().expect("tempdir");
+        // A name NOT in the checked-in corpus, on purpose. The first version
+        // of this test used "Déjà Dup Backups", which IS in the real corpus
+        // -- and since `generate_test_queries` was ignoring its argument and
+        // reading the compile-time corpus instead, the test passed without
+        // ever looking at this directory. It caught the byte-slicing bug by
+        // luck, through the other corpus.
         std::fs::write(
-            corpus.path().join("deja-dup.desktop"),
-            "[Desktop Entry]\nType=Application\nName=Déjà Dup Backups\nExec=/bin/true\n",
+            corpus.path().join("zzz.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Ünïcødé Zzz\nExec=/bin/true\n",
         )
         .expect("write");
 
         let queries = generate_test_queries(corpus.path()).expect("queries");
 
         assert!(
-            queries.iter().any(|q| q == "Déjà Dup Backups"),
-            "the full name must be queried"
+            queries.iter().any(|q| q == "Ünïcødé Zzz"),
+            "the full name must be queried, from THIS directory: {queries:?}"
         );
-        for prefix in ["D", "Dé", "Déj", "Déjà"] {
+        for prefix in ["Ü", "Ün", "Ünï", "Ünïc"] {
             assert!(
                 queries.iter().any(|q| q == prefix),
                 "the {prefix:?} prefix must be generated, split on characters"
             );
         }
+    }
+
+    /// CONTROL. A corpus that yielded no entries must be refused here too.
+    ///
+    /// The first real differential ran 10 queries instead of 1817 and said
+    /// so without complaint, because the generator was reading a
+    /// compile-time path that does not exist inside the container and the
+    /// ten fallback terms stood in for the whole corpus. A tenth of a
+    /// percent of the coverage, reported as a completed run.
+    #[test]
+    fn the_query_set_refuses_a_corpus_that_yielded_nothing() {
+        let empty = tempfile::tempdir().expect("tempdir");
+        std::fs::write(empty.path().join("README.md"), "not a desktop entry").expect("write");
+
+        let error = generate_test_queries(empty.path()).expect_err("an empty corpus must not pass");
+        let message = format!("{error}");
+        assert!(
+            message.contains("broken run reported as a small one"),
+            "the refusal must say why the fallback terms are not a query set: {message}"
+        );
     }
 
     /// CONTROL. An empty corpus must be refused, not run.
