@@ -457,6 +457,42 @@ enum Page {
     Extension(Box<crate::extension_page::ExtensionPage>),
 }
 
+/// Panel ids for an extension's actions: this prefix, then the handler.
+const EXTENSION_ACTION: &str = "ext:";
+
+/// An extension view's actions on offer, as panel sections. Submenus are
+/// flattened into their section for now.
+fn extension_panel_sections(page: &crate::extension_page::ExtensionPage) -> Vec<PanelSection> {
+    use compass_extension_api::action::ActionItem;
+    fn actions(items: &[ActionItem], out: &mut Vec<action_panel::Action>) {
+        for item in items {
+            match item {
+                ActionItem::Action(action) => out.push(
+                    action_panel::Action::new(action.title.clone())
+                        .with_id(format!("{EXTENSION_ACTION}{}", action.handler.0)),
+                ),
+                ActionItem::Submenu(submenu) => actions(&submenu.items, out),
+            }
+        }
+    }
+    page.actions()
+        .map(|panel| {
+            panel
+                .sections
+                .iter()
+                .map(|section| {
+                    let mut list = Vec::new();
+                    actions(&section.items, &mut list);
+                    PanelSection {
+                        name: section.title.clone().unwrap_or_default(),
+                        actions: list,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The launcher application state.
 pub struct LauncherApp {
     /// The application index.
@@ -1495,6 +1531,13 @@ impl LauncherApp {
                 if self.panel.is_some() {
                     self.panel = None;
                     return focus_search();
+                } else if let Page::Extension(page) = &self.page {
+                    let sections = extension_panel_sections(page);
+                    if sections.iter().any(|section| !section.actions.is_empty()) {
+                        self.panel = Some(PanelState::new(sections));
+                        return iced::widget::operation::focus(PANEL_INPUT);
+                    }
+                    return Task::none();
                 } else if let Some(item) = self.selected_item() {
                     // Only over a selected row. A panel of actions for nothing
                     // would be a panel whose every action fails.
@@ -1544,6 +1587,17 @@ impl LauncherApp {
                 let Some(action) = panel.selected_action() else {
                     return Task::none();
                 };
+                if let (Some(handler), Page::Extension(page)) = (
+                    action
+                        .id
+                        .as_deref()
+                        .and_then(|id| id.strip_prefix(EXTENSION_ACTION)),
+                    &self.page,
+                ) {
+                    let task = self.extension_event(page.session, handler.to_owned(), Vec::new());
+                    self.panel = None;
+                    return Task::batch([task, focus_search()]);
+                }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
@@ -1773,7 +1827,9 @@ impl LauncherApp {
                 // A command's view takes every key the root list would, and
                 // Escape goes back to the root rather than hiding the window:
                 // one key undoes opening the wrong command.
-                if let Page::Extension(page) = &mut self.page {
+                let panel_key = self.panel.is_some()
+                    || (modifiers.control() && key.as_ref() == Key::Character("b"));
+                if !panel_key && let Page::Extension(page) = &mut self.page {
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
@@ -3500,6 +3556,48 @@ mod tests {
             backend.closed.lock().unwrap().as_slice(),
             [7],
             "leaving stops the command"
+        );
+    }
+
+    #[test]
+    fn ctrl_b_offers_every_action_of_the_row_and_runs_the_one_chosen() {
+        use compass_extension_api::action::{Action, ActionPanel};
+        use compass_extension_api::view::{ListItem, ListSection, ListView};
+        let view = compass_extension_api::View::List(ListView {
+            sections: vec![ListSection::untitled([ListItem::new("repo").with_actions(
+                ActionPanel::of([
+                    Action::new("Open in Browser", "cb-open"),
+                    Action::new("Copy URL", "cb-copy"),
+                ]),
+            )])],
+            ..ListView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(view);
+
+        let _ = app.update(chord("b", iced::keyboard::Modifiers::CTRL));
+        let panel = app
+            .panel
+            .as_ref()
+            .expect("the panel opens over an extension view");
+        let titles: Vec<&str> = panel
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|a| a.title.as_str()))
+            .collect();
+        assert_eq!(titles, ["Open in Browser", "Copy URL"]);
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        for message in task_messages(app.update(pressed(iced::keyboard::key::Named::Enter))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.events.lock().unwrap().as_slice(),
+            [("cb-copy".to_owned(), vec![])]
+        );
+        assert!(app.panel.is_none(), "running an action closes the panel");
+        assert!(
+            matches!(app.page, Page::Extension(_)),
+            "and stays in the view"
         );
     }
 
