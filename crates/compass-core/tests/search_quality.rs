@@ -128,14 +128,12 @@ fn a_dropped_character_still_finds_it() {
     }
 }
 
-/// A TRANSPOSED or DOUBLED character finds NOTHING AT ALL, and should not.
-///
-/// # A real gap, and the reason this file exists
+/// A TRANSPOSED or DOUBLED character still finds the application.
 ///
 /// A subsequence matcher requires every query character to appear in order.
 /// A transposition breaks the order and an extra keystroke has no character
-/// to match, so both drop the application out of the results entirely —
-/// not ranked low, absent:
+/// to match, so before #204 both dropped the application out of the results
+/// entirely — not ranked low, absent:
 ///
 /// ```text
 ///   alacrtity   (transposed)  -> Alacritty: not ranked
@@ -143,23 +141,13 @@ fn a_dropped_character_still_finds_it() {
 ///   alacrity    (dropped t)   -> Alacritty: ranked, fine
 /// ```
 ///
-/// Typing a letter twice is an ordinary slip, and it currently makes the app
-/// you are looking at disappear.
+/// Root search now falls back to a one-edit distance (`compass_search::typo_distance`)
+/// for items the matcher did not reach, ranked after every real match.
 ///
-/// The file indexer already solves this — `src/file-indexer/tests/query-quality.cpp`
-/// asserts `inTop("budgte", "budget_2024.xlsx", 3)` and
-/// `inTop("mayonaise", "mayonnaise.flac", 3)`, backed by a spellfix fallback.
-/// App search has no equivalent.
-///
-/// IGNORED, NOT DELETED. The assertion is right and the engine does not meet
-/// it yet; deleting it would remove the only record that a person typing
-/// `alacrittyy` gets nothing. Tracked in #204.
-///
-/// NOTE this is exactly the kind of gap the Suite 0 differential cannot
-/// find: the C++ app search is a subsequence matcher too, so both engines
-/// agree — on being unhelpful.
+/// This is exactly the kind of gap the Suite 0 differential cannot find: the
+/// C++ app search is a subsequence matcher too, so both engines agreed — on
+/// being unhelpful. See ADR-0017.
 #[test]
-#[ignore = "app search has no typo fallback for transposed or doubled characters; see #204"]
 fn a_transposed_or_doubled_character_still_finds_it() {
     let index = index();
     for (typo, name) in [

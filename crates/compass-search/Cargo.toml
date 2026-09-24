@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 nucleo-matcher.workspace = true
 rayon = "1"
+strsim = "0.11"
 
 [[bench]]
 name = "ranking_experiments"

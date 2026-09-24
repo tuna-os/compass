@@ -1172,6 +1172,22 @@ the channel that matters.
 Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
 the behaviour changes, so a future fix is loud rather than silent.
 
+### `compass-core::root_items` — one slip no longer makes an app vanish (#204)
+
+**An improvement, kept on purpose (ADR-0017).** Both engines match root items as an ordered
+subsequence, so a transposed, doubled or substituted keystroke (`alacrtity`, `alacrittyy`,
+`blemder`) returned nothing from either. Compass now falls back to a one-edit
+optimal-string-alignment distance (`compass_search::typo_distance`, via `strsim`) for queries of five
+or more characters, over title, untranslated title and alias words, for items the matcher did not
+reach. Those hits are appended after every real match with a score of `EPSILON × (1 + frecency)`,
+so they add an answer but never displace one.
+
+Where C++ returns `[]` for such a query, Rust now returns the intended app. Suite 0's top-result
+gate skips queries where either side is empty, and typo hits only follow real matches, so the gate
+is unaffected. Pinned by `search_quality.rs::a_transposed_or_doubled_character_still_finds_it`
+(real corpus) and four `root_items.rs` tests, including that a typo hit never outranks a real match
+however often it has been opened.
+
 ### Suite 0's ranked-output path — two divergences that are **scope**, not behaviour
 
 Not bugs on either side. These are the two places where `vicinae query --json` (C++, added for

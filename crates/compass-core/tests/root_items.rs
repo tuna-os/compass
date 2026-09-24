@@ -1158,3 +1158,50 @@ mod from_applications {
         assert!(!item.meta.fallback);
     }
 }
+
+#[test]
+fn a_one_slip_query_finds_an_item_the_matcher_cannot_reach() {
+    // #204: "blneder" is not a subsequence of "Blender", so the matcher alone
+    // returns nothing for it.
+    let items = vec![item("blender", "Blender"), item("files", "Files")];
+    assert_eq!(
+        ids(&items, "blneder", &SearchOptions::default()),
+        ["blender"]
+    );
+    assert!(ids(&items, "blnedxr", &SearchOptions::default()).is_empty());
+}
+
+#[test]
+fn a_typo_hit_never_outranks_a_real_match() {
+    // However often the slipped-on item has been opened, an item the matcher
+    // really reached comes first.
+    let mut slipped = item("slipped", "Blender");
+    slipped.meta.visit_count = 1000;
+    slipped.meta.last_visited_at = Some(NOW as u64);
+    let mut real = item("real", "Modeller");
+    real.keywords = vec!["blneder".to_owned()];
+    let items = vec![slipped, real];
+    let scored = search(&items, "blneder", &SearchOptions::default(), NOW);
+    let order: Vec<_> = scored.iter().map(|s| s.item.id.as_str()).collect();
+    assert_eq!(order, ["real", "slipped"], "{scored:?}");
+    assert!(scored[0].score > scored[1].score, "{scored:?}");
+}
+
+#[test]
+fn the_typo_fallback_respects_the_same_filters_as_the_matcher() {
+    let mut disabled = item("blender", "Blender");
+    disabled.meta.enabled = false;
+    assert!(ids(&[disabled.clone()], "blneder", &SearchOptions::default()).is_empty());
+    let opts = SearchOptions {
+        include_disabled: true,
+        ..SearchOptions::default()
+    };
+    assert_eq!(ids(&[disabled], "blneder", &opts), ["blender"]);
+}
+
+#[test]
+fn a_short_query_gets_no_typo_fallback() {
+    // Four characters is one edit away from far too much of a real catalogue.
+    let items = vec![item("gimp", "GIMP")];
+    assert!(ids(&items, "gmip", &SearchOptions::default()).is_empty());
+}
