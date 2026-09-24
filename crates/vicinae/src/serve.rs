@@ -106,6 +106,8 @@ pub struct EngineState {
     scripts: crate::scripts::Scripts,
     /// Script runs the launcher follows.
     script_runs: Arc<crate::scripts::Runs>,
+    /// Run Terminal Program's `default-action` preference.
+    run_program_default: String,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -190,6 +192,10 @@ impl EngineState {
             snippets,
             scripts,
             script_runs: Arc::default(),
+            run_program_default: crate::programs::default_action(config.entrypoint_preferences(
+                compass_core::commands::COMMANDS_PROVIDER_ID,
+                crate::programs::ENTRYPOINT,
+            )),
         }
     }
 
@@ -240,6 +246,7 @@ impl EngineState {
             snippets: None,
             scripts: crate::scripts::Scripts::default(),
             script_runs: Arc::default(),
+            run_program_default: crate::programs::default_action(None),
         }
     }
 
@@ -443,6 +450,42 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
             ErrorKind::Unsupported,
             "no application opens this kind of file",
         ))
+    }
+}
+
+/// Runs a command line for Run Terminal Program, as `OpenInTerminalAction`
+/// and `OpenRawProgramAction` do.
+async fn run_program(
+    state: &Arc<RwLock<EngineState>>,
+    argv: Vec<String>,
+    terminal: bool,
+    hold: bool,
+) -> Response {
+    use compass_worker_host::application_service::{Apps, TerminalOptions};
+    if argv.is_empty() || crate::programs::program_path(&argv[0]).is_none() {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "Not a valid executable",
+        ));
+    }
+    if terminal {
+        let apps = engine_apps(state).await;
+        let options = TerminalOptions {
+            hold,
+            ..TerminalOptions::default()
+        };
+        return if apps.run_in_terminal(&argv, &options) {
+            Response::Ack
+        } else {
+            Response::Error(ProtocolError::new(
+                ErrorKind::Unsupported,
+                "No terminal emulator is installed",
+            ))
+        };
+    }
+    match compass_platform_linux::run_command(&argv).await {
+        Ok(_) => Response::Ack,
+        Err(error) => Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string())),
     }
 }
 
@@ -1685,6 +1728,23 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             state.read().await.script_runs.stop(session);
             Response::Ack
         }
+        Request::ListPrograms => {
+            let default_action = state.read().await.run_program_default.clone();
+            let apps = engine_apps(state).await;
+            let programs = tokio::task::spawn_blocking(crate::programs::scan)
+                .await
+                .unwrap_or_default();
+            Response::Programs {
+                programs,
+                terminal: apps.terminal_name(),
+                default_action,
+            }
+        }
+        Request::RunProgram {
+            argv,
+            terminal,
+            hold,
+        } => run_program(state, argv, terminal, hold).await,
         Request::ListSnippets => {
             let state = state.read().await;
             match &state.snippets {

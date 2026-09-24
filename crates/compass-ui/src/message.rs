@@ -138,6 +138,14 @@ pub enum Message {
     SnippetsQueryChanged(String),
     /// A Manage Snippets row was clicked, by position.
     SnippetSelected(usize),
+    /// Run Terminal Program's programs arrived, or why they could not.
+    ProgramsLoaded(Result<crate::backend::ProgramList, String>),
+    /// Run Terminal Program's text changed.
+    ProgramsQueryChanged(String),
+    /// A Run Terminal Program row was clicked, by position.
+    ProgramSelected(usize),
+    /// Running a program finished starting, or why it did not.
+    ProgramRan(Result<(), String>),
     /// The script commands arrived, or why they could not be listed.
     ScriptsLoaded(Result<Vec<compass_core::script_scan::ScriptItem>, String>),
     /// A script started: the run to follow, if any.

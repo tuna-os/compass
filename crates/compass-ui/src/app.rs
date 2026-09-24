@@ -25,6 +25,7 @@ use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
+mod programs;
 mod scripts;
 mod shortcuts;
 mod snippets;
@@ -473,6 +474,8 @@ enum Page {
     Snippets(crate::snippets_page::SnippetsPage),
     /// A script command's full output.
     ScriptOutput(crate::script_page::ScriptOutputPage),
+    /// Run Terminal Program.
+    Programs(crate::programs_page::ProgramsPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -1183,6 +1186,14 @@ impl LauncherApp {
             }
             None => line.push_str(" selected_title=none"),
         }
+        if let Page::Programs(page) = &self.page {
+            line.push_str(&format!(
+                " page=programs programs_query={:?} programs_rows={} programs_selected={}",
+                page.query,
+                page.rows.len(),
+                page.selected
+            ));
+        }
         if let Page::ScriptOutput(page) = &self.page {
             line.push_str(&format!(
                 " page=script_output script_session={} script_finished={} script_exit={:?}",
@@ -1760,6 +1771,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_script_panel() {
                     return task;
+                } else if let Some(task) = self.open_program_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1819,6 +1832,7 @@ impl LauncherApp {
                         .shortcut_panel_action(&id)
                         .or_else(|| self.snippet_panel_action(&id))
                         .or_else(|| self.script_panel_action(&id))
+                        .or_else(|| self.program_panel_action(&id))
                 {
                     return task;
                 }
@@ -2191,6 +2205,10 @@ impl LauncherApp {
             Message::ScriptsLoaded(_)
             | Message::ScriptStarted { .. }
             | Message::ScriptPolled { .. } => self.script_message(message),
+            Message::ProgramsLoaded(_)
+            | Message::ProgramsQueryChanged(_)
+            | Message::ProgramSelected(_)
+            | Message::ProgramRan(_) => self.program_message(message),
             Message::Back => {
                 if let Some(task) = self.back_from_shortcut_form() {
                     return task;
@@ -2422,6 +2440,9 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::ScriptOutput(_)) {
                     return self.script_output_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Programs(_)) {
+                    return self.programs_page_key(key, modifiers);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2659,6 +2680,11 @@ impl LauncherApp {
                 Some(Message::SnippetsQueryChanged as OnInput),
             ),
             Page::ScriptOutput(page) => ("", &page.title, None),
+            Page::Programs(page) => (
+                "Search for a program to execute...",
+                &page.query,
+                Some(Message::ProgramsQueryChanged as OnInput),
+            ),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2722,6 +2748,8 @@ impl LauncherApp {
             self.snippets_body(page)
         } else if let Page::ScriptOutput(page) = &self.page {
             self.script_output_body(page)
+        } else if let Page::Programs(page) = &self.page {
+            self.programs_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -4077,6 +4105,7 @@ impl LauncherApp {
                 self.open_snippet_form(compass_core::shortcut_form::Mode::Create),
             ]),
             CommandKind::ManageSnippets => Task::batch([record, self.open_manage_snippets()]),
+            CommandKind::RunProgram => Task::batch([record, self.open_run_program()]),
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
@@ -4717,6 +4746,8 @@ mod tests {
         scripts: Vec<compass_core::script_scan::ScriptItem>,
         /// The scripts run, with their arguments.
         script_runs: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// The programs Run Terminal Program ran: `(argv, terminal, hold)`.
+        programs_ran: std::sync::Mutex<Vec<(Vec<String>, bool, bool)>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4774,6 +4805,31 @@ mod tests {
         fn open_file(&self, path: String, reveal: bool) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened.lock().unwrap().push((path, reveal));
+                Ok(())
+            })
+        }
+
+        fn list_programs(&self) -> crate::backend::BackendFuture<'_, crate::backend::ProgramList> {
+            Box::pin(async {
+                Ok(crate::backend::ProgramList {
+                    programs: vec!["/usr/bin/htop".into(), "/usr/bin/top".into()],
+                    terminal: Some("Ptyxis".into()),
+                    default_action: "run-in-terminal".into(),
+                })
+            })
+        }
+
+        fn run_program(
+            &self,
+            argv: Vec<String>,
+            terminal: bool,
+            hold: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.programs_ran
+                    .lock()
+                    .unwrap()
+                    .push((argv, terminal, hold));
                 Ok(())
             })
         }
@@ -7283,6 +7339,35 @@ mod tests {
             "{:?}",
             page.notice
         );
+    }
+
+    // ---- Run Terminal Program ----
+
+    #[test]
+    fn run_terminal_program_runs_the_typed_command_line_in_a_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "run terminal program", "commands:run-program");
+        let Page::Programs(page) = &app.page else {
+            panic!("not on Run Terminal Program: {}", app.state_line());
+        };
+        assert_eq!(page.rows.len(), 2, "every program for the empty query");
+
+        let _ = app.update(Message::ProgramsQueryChanged("htop -d 5".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.programs_ran.lock().unwrap().as_slice(),
+            [(
+                vec!["htop".to_owned(), "-d".to_owned(), "5".to_owned()],
+                true,
+                false
+            )],
+            "run-in-terminal is the default: a terminal that closes"
+        );
+        assert!(matches!(app.page, Page::Root), "running hides the launcher");
     }
 
     // ---- Script commands ----

@@ -3171,3 +3171,62 @@ fn script_commands_are_scanned_searched_and_run_in_their_modes() {
     };
     assert_eq!(err.kind, ErrorKind::BadRequest);
 }
+
+#[test]
+fn run_terminal_program_lists_path_and_runs_directly_or_refuses() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let bin = TempDir::new().expect("tempdir");
+    let (_, log) = recording_app(bin.path(), "fake-tool", "");
+    let path = std::env::join_paths(std::iter::once(bin.path().to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .expect("PATH");
+    let config = r#"{"providers": {"commands": {"entrypoints": {"run-program":
+        {"preferences": {"default-action": "run"}}}}}}"#;
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], config, |_| {
+        vec![("PATH", path)]
+    });
+
+    let Response::Programs {
+        programs,
+        terminal,
+        default_action,
+    } = daemon.request(Request::ListPrograms)
+    else {
+        panic!("no program list");
+    };
+    let tool = bin.path().join("fake-tool").to_string_lossy().into_owned();
+    assert!(programs.contains(&tool), "{programs:?}");
+    assert_eq!(terminal, None, "the fixture installs no terminal");
+    assert_eq!(default_action, "run", "read from the command's preferences");
+
+    assert_eq!(
+        daemon.request(Request::RunProgram {
+            argv: vec!["fake-tool".into(), "--flag".into(), "two words".into()],
+            terminal: false,
+            hold: false,
+        }),
+        Response::Ack
+    );
+    assert_eq!(launched_with(&log), ["--flag", "two words"]);
+
+    let Response::Error(err) = daemon.request(Request::RunProgram {
+        argv: vec!["no-such-tool-anywhere".into()],
+        terminal: false,
+        hold: false,
+    }) else {
+        panic!("a missing program was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::BadRequest, "Not a valid executable")
+    );
+    let Response::Error(err) = daemon.request(Request::RunProgram {
+        argv: vec!["fake-tool".into()],
+        terminal: true,
+        hold: true,
+    }) else {
+        panic!("a terminal run with no terminal was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+}

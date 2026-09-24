@@ -85,6 +85,13 @@ impl EngineApps {
         true
     }
 
+    /// The name of the terminal a command would run in, if one is
+    /// installed.
+    #[must_use]
+    pub fn terminal_name(&self) -> Option<String> {
+        self.terminal().map(|(app, _)| app.name.clone())
+    }
+
     /// The terminal to run a command in, as `XdgAppDatabase::terminalEmulator`
     /// chooses it: the first selected in the `xdg-terminals.list` files that
     /// is installed, else the first terminal they do not exclude, else what

@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
-/// shortcuts, snippets and script commands.
+/// shortcuts, snippets, script commands and Run Terminal Program.
 pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
@@ -424,6 +424,22 @@ pub enum Request {
         /// From [`Response::ScriptStarted`].
         session: u64,
     },
+    /// Every executable in the `PATH` directories, and how Run Terminal
+    /// Program runs them. Answered with [`Response::Programs`].
+    ListPrograms,
+    /// Run a command line: in the terminal emulator (kept open when `hold`),
+    /// or directly. Answered with [`Response::Ack`] once started; a program
+    /// that is not found is refused as [`ErrorKind::BadRequest`] ("Not a
+    /// valid executable"), and a terminal run with no terminal installed as
+    /// [`ErrorKind::Unsupported`].
+    RunProgram {
+        /// The program and its arguments.
+        argv: Vec<String>,
+        /// Run it in a terminal.
+        terminal: bool,
+        /// Keep the terminal open once it exits.
+        hold: bool,
+    },
 }
 
 /// What the engine answers.
@@ -553,6 +569,17 @@ pub enum Response {
     ScriptStarted {
         /// The run to follow, when the launcher shows its output.
         session: Option<u64>,
+    },
+    /// Answer to [`Request::ListPrograms`].
+    Programs {
+        /// Every executable found, as absolute paths, in `PATH` order.
+        programs: Vec<String>,
+        /// The terminal emulator's name, for the actions' titles; `None`
+        /// when none is installed.
+        terminal: Option<String>,
+        /// The command's `default-action` preference: `run-in-terminal`,
+        /// `run-in-terminal-hold` or `run`.
+        default_action: String,
     },
     /// Answer to [`Request::ScriptOutput`].
     ScriptOutput {

@@ -2156,6 +2156,24 @@ in the terminal emulator with the header's options. What differs:
 | 8 | Links in full output are clickable. | Drawn as links; a click is logged, the launcher having no URL opener yet (as for extension views). | — |
 | 9 | The script's icon (emoji, file, `https`). | Rows use the initial badge, like every root row without resolved art. | — |
 
+### System: Run Terminal Program — what the port does not have yet
+
+Run Terminal Program runs end to end: the engine lists every entry of every `PATH` directory
+(`ListPrograms`, with the terminal's name and the command's `default-action` preference from
+`providers.commands.entrypoints.run-program.preferences`, default `run-in-terminal` as the C++
+declares), and runs a command line in the terminal emulator (held open or not) or directly
+(`RunProgram`, refusing "Not a valid executable"). The view parses the typed text with the desktop
+entry `Exec` parser, offers it as a command-line row when its first word is a program, lists the
+fuzzy-matching programs (100 at most), and orders the actions as `compass-core::system_run` pins.
+What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | The command takes an optional `command` argument in root search and runs it without opening the view. | The view always opens. | — |
+| 2 | Browse Apps, Set Default Browser and Set Default Terminal are also in the system extension. | Not yet. | — |
+| 3 | Programs are scanned once per view in the background, with a loading state. | Scanned by the engine on each opening (a blocking task), the view showing "Looking for programs…" until then. | `run_terminal_program_lists_path_and_runs_directly_or_refuses` |
+| 4 | Inside the Flatpak, `PATH` is the host's through the portal's environment. | The engine's own `PATH` (the sandbox's inside the Flatpak); runs go through `flatpak-spawn --host`. | — |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

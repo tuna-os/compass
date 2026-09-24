@@ -5,8 +5,8 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind, ExtensionStart, ExtensionViewState, FileResults, FileRow, ScriptOutputState,
-    Shortcut, ShortcutDraft, Snippet, SnippetDraft, WindowBackend, WindowRow,
+    ClipboardRowKind, ExtensionStart, ExtensionViewState, FileResults, FileRow, ProgramList,
+    ScriptOutputState, Shortcut, ShortcutDraft, Snippet, SnippetDraft, WindowBackend, WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -104,6 +104,42 @@ impl ApplicationBackend for DaemonBackend {
         Box::pin(async move {
             match self
                 .ask(Request::OpenFile { path, reveal }, "Opening the file")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_programs(&self) -> BackendFuture<'_, ProgramList> {
+        Box::pin(async move {
+            match self.ask(Request::ListPrograms, "Listing programs").await? {
+                compass_ipc::Response::Programs {
+                    programs,
+                    terminal,
+                    default_action,
+                } => Ok(ProgramList {
+                    programs,
+                    terminal,
+                    default_action,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn run_program(&self, argv: Vec<String>, terminal: bool, hold: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::RunProgram {
+                        argv,
+                        terminal,
+                        hold,
+                    },
+                    "Running the program",
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

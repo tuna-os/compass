@@ -171,6 +171,12 @@ fn all_requests() -> Vec<Request> {
         },
         Request::ScriptOutput { session: 3 },
         Request::StopScript { session: 3 },
+        Request::ListPrograms,
+        Request::RunProgram {
+            argv: vec!["htop".into(), "-d".into(), "é 5".into()],
+            terminal: true,
+            hold: false,
+        },
     ]
 }
 
@@ -424,6 +430,16 @@ fn all_responses() -> Vec<Response> {
             exit_code: Some(0),
             elapsed_ms: 1500,
         },
+        Response::Programs {
+            programs: vec!["/usr/bin/htop".into(), "/opt/bin/ünï".into()],
+            terminal: Some("Ptyxis".into()),
+            default_action: "run-in-terminal".into(),
+        },
+        Response::Programs {
+            programs: vec![],
+            terminal: None,
+            default_action: "run".into(),
+        },
     ]
 }
 
@@ -476,6 +492,8 @@ fn request_variants_are_exhaustive() {
             | Request::RunScript { .. }
             | Request::ScriptOutput { .. }
             | Request::StopScript { .. }
+            | Request::ListPrograms
+            | Request::RunProgram { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -506,6 +524,7 @@ fn response_variants_are_exhaustive() {
             | Response::Scripts { .. }
             | Response::ScriptStarted { .. }
             | Response::ScriptOutput { .. }
+            | Response::Programs { .. }
             | Response::Window(_) => {}
         }
     }

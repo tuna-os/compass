@@ -113,6 +113,19 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
     }
 
+    /// The executables on `PATH`, the terminal they would run in, and the
+    /// default action.
+    fn list_programs(&self) -> BackendFuture<'_, ProgramList> {
+        Box::pin(async { Err(PROGRAMS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Runs a command line, in a terminal (kept open when `hold`) or
+    /// directly.
+    fn run_program(&self, argv: Vec<String>, terminal: bool, hold: bool) -> BackendFuture<'_, ()> {
+        let _ = (argv, terminal, hold);
+        Box::pin(async { Err(PROGRAMS_NEED_ENGINE.to_owned()) })
+    }
+
     /// Every script command, scanned afresh.
     fn list_scripts(&self) -> BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
         Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
@@ -215,6 +228,20 @@ const FILES_NEED_ENGINE: &str =
 
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
+
+const PROGRAMS_NEED_ENGINE: &str =
+    "Run Terminal Program needs the Compass engine, and this window is running without one";
+
+/// What Run Terminal Program offers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProgramList {
+    /// Every executable, by path.
+    pub programs: Vec<String>,
+    /// The terminal's name, when one is installed.
+    pub terminal: Option<String>,
+    /// The `default-action` preference.
+    pub default_action: String,
+}
 
 const SCRIPTS_NEED_ENGINE: &str =
     "Script commands need the Compass engine, and this window is running without one";

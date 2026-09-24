@@ -51,6 +51,9 @@ pub enum CommandKind {
     CreateSnippet,
     /// List, copy, paste, edit and remove snippets.
     ManageSnippets,
+    /// Run a program on `PATH`, or a typed command line, in a terminal or
+    /// directly.
+    RunProgram,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -134,6 +137,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Copy, paste, edit and remove your snippets",
         keywords: &["snippets", "text", "templates", "paste", "search"],
         icon: "snippets",
+    },
+    BuiltinCommand {
+        kind: CommandKind::RunProgram,
+        entrypoint: "run-program",
+        title: "Run Terminal Program",
+        subtitle: "Run a program in a terminal window",
+        keywords: &["shell command", "run program", "terminal", "execute"],
+        icon: "terminal",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

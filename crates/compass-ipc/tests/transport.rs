@@ -110,7 +110,13 @@ async fn echo_handler(request: Request) -> Response {
         | Request::OAuthRedirect { .. }
         | Request::OpenShortcut { .. }
         | Request::PasteSnippet { .. }
-        | Request::StopScript { .. } => Response::Ack,
+        | Request::StopScript { .. }
+        | Request::RunProgram { .. } => Response::Ack,
+        Request::ListPrograms => Response::Programs {
+            programs: vec![],
+            terminal: None,
+            default_action: "run".into(),
+        },
         Request::ListScripts => Response::Scripts { scripts: vec![] },
         Request::RunScript { .. } => Response::ScriptStarted { session: None },
         Request::ScriptOutput { .. } => Response::ScriptOutput {

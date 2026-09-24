@@ -128,6 +128,8 @@ fn describe(request: &Request) -> &'static str {
         Request::RunScript { .. } => "RunScript",
         Request::ScriptOutput { .. } => "ScriptOutput",
         Request::StopScript { .. } => "StopScript",
+        Request::ListPrograms => "ListPrograms",
+        Request::RunProgram { .. } => "RunProgram",
         Request::ListSnippets => "ListSnippets",
         Request::SaveSnippet { .. } => "SaveSnippet",
         Request::RemoveSnippet { .. } => "RemoveSnippet",
