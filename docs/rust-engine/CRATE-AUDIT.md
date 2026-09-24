@@ -24,6 +24,7 @@ with the decision taken and why.
 | `compass-core/contrast.rs` | 268 | `palette` 0.7 | **Keep**; about 80 lines are replaceable, the contrast search and Qt-HSL rounding are not. |
 | `slug.rs` | 89 | `slug` 0.1 | **Replaced.** Same results on every pinned case, and it transliterates non-Latin titles where the C++ emptied them (PARITY `compass-core::slug`). |
 | `semver.rs` | 130 | `semver` | **Keep.** It is not semver: it takes any number of dotted integers (`1.2`, `2026.09.24`), which the crate refuses; the tag format decides. |
+| `compass-script` (Rhai tier, new) | ~2400 | `rhai`, `notify`, `toml`, `time`, `uuid`, `getrandom`, `percent-encoding` | **Crates throughout.** The script language, file watching, manifest parsing, date formatting, UUIDs and URL encoding are all crates; what is hand-written is the view mapping and the sandbox policy. `toml` is the 1.x line, which shares its parser with what the workspace already locks. |
 | interval parsers, `script_output.rs` | ~300 | `humantime`, `vte` | **Keep.** `parse_interval` is 25 lines for Raycast's one-unit manifest syntax (`30s`, `5m`); `humantime` would also accept `1h30m` and `5 minutes`, which Raycast rejects, and change the error text. The tokenizer finds links and SGR codes in one resumable pass; `vte` would replace only the escape half and handles malformed sequences differently from the C++ it ports. |
 
 Not replaceable, checked: crypto (already crates), keyring (`oo7`), XDG base dirs (`dirs` plus

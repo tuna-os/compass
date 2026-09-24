@@ -457,6 +457,8 @@ enum Page {
     Windows(crate::windows_page::WindowsPage),
     /// The emoji and symbol picker.
     Emoji(crate::emoji_page::EmojiPage),
+    /// Search Files.
+    Files(crate::files_page::FilesPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -1149,6 +1151,15 @@ impl LauncherApp {
             line.push_str(&format!(
                 " page=clipboard clipboard_query={:?} clipboard_rows={} clipboard_selected={}",
                 page.query,
+                page.rows.len(),
+                page.selected
+            ));
+        }
+        if let Page::Files(page) = &self.page {
+            line.push_str(&format!(
+                " page=files files_query={:?} files_heading={:?} files_rows={} files_selected={}",
+                page.query,
+                page.heading,
                 page.rows.len(),
                 page.selected
             ));
@@ -1993,6 +2004,34 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::FilesQueryChanged(query) => {
+                if let Page::Files(page) = &mut self.page {
+                    page.set_query(query);
+                }
+                self.files_query_task()
+            }
+            Message::FilesDebounced(generation) => self.files_search_task(generation),
+            Message::FilesLoaded { generation, result } => {
+                if let Page::Files(page) = &mut self.page {
+                    page.apply(generation, result);
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::FilesSelected(position) => {
+                if let Page::Files(page) = &mut self.page
+                    && position < page.rows.len()
+                {
+                    page.selected = position;
+                }
+                self.open_selected_file(false)
+            }
+            Message::FileOpened(Ok(())) => self.conceal(),
+            Message::FileOpened(Err(reason)) => {
+                if let Page::Files(page) = &mut self.page {
+                    page.notice = Some(reason);
+                }
+                Task::none()
+            }
             Message::EmojiQueryChanged(query) => {
                 if let Page::Emoji(page) = &mut self.page {
                     page.query = query;
@@ -2153,6 +2192,29 @@ impl LauncherApp {
                     if let Some(direction) = direction {
                         page.selected = next_selection(
                             page.shown.len(),
+                            page.selected,
+                            direction,
+                            self.wrap_navigation,
+                        );
+                        return crate::scroll::reveal_root_selection();
+                    }
+                    return Task::none();
+                }
+                if let Page::Files(page) = &mut self.page {
+                    let direction = match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) => return self.update(Message::Back),
+                        // Ctrl+Enter is `Keyboard::Shortcut::submit()`, which
+                        // the C++ binds to "Show in file browser".
+                        Key::Named(Named::Enter) => {
+                            return self.open_selected_file(modifiers.control());
+                        }
+                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                    };
+                    if let Some(direction) = direction {
+                        page.selected = next_selection(
+                            page.rows.len(),
                             page.selected,
                             direction,
                             self.wrap_navigation,
@@ -2358,6 +2420,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::WindowsQueryChanged as OnInput),
             ),
+            Page::Files(page) => (
+                "Search for files…",
+                &page.query,
+                Some(Message::FilesQueryChanged as OnInput),
+            ),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2413,6 +2480,8 @@ impl LauncherApp {
             self.emoji_body(page)
         } else if let Page::Windows(page) = &self.page {
             self.windows_body(page)
+        } else if let Page::Files(page) = &self.page {
+            self.files_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -2653,6 +2722,54 @@ impl LauncherApp {
             );
             let row: Element<Message> = mouse_area(row)
                 .on_press(Message::WindowSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![rows, self.notice(notice)].into(),
+            None => rows.into(),
+        }
+    }
+
+    /// Search Files' body: its state, or its heading and rows.
+    fn files_body<'a>(&'a self, page: &'a crate::files_page::FilesPage) -> Element<'a, Message> {
+        use crate::files_page::Status;
+        let geometry = self.geometry;
+        match &page.status {
+            Status::Loading => return self.notice("Searching files…"),
+            Status::Failed(reason) => return self.notice(reason),
+            Status::Ready if page.rows.is_empty() => return self.notice("No files found"),
+            Status::Ready => {}
+        }
+        let home =
+            compass_core::xdg_dirs::home_dir().map(|home| home.to_string_lossy().into_owned());
+        let heading = text(page.heading.clone())
+            .font(self.font())
+            .size(12)
+            .color(self.palette().muted.to_iced());
+        let mut list = column![container(heading).padding(Padding::new(4.0).left(10))]
+            .spacing(f32::from(geometry.row_spacing));
+        for (position, file) in page.rows.iter().enumerate() {
+            let selected = position == page.selected;
+            let subtitle = self
+                .subtitles
+                .then(|| crate::files_page::subtitle(file, home.as_deref()));
+            let row = self.list_row(
+                self.initial_badge(&file.category, selected),
+                file.name.clone(),
+                subtitle,
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::FilesSelected(position))
                 .into();
             let row: Element<Message> = if selected {
                 container(row).id(crate::scroll::ROOT_SELECTION).into()
@@ -3650,11 +3767,75 @@ impl LauncherApp {
                 self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
                 Task::batch([record, focus_search()])
             }
+            CommandKind::SearchFiles => {
+                self.page = Page::Files(crate::files_page::FilesPage::default());
+                Task::batch([record, self.files_query_task(), focus_search()])
+            }
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
             }
         }
+    }
+
+    /// Asks Search Files' query: at once, or once its debounce runs out.
+    fn files_query_task(&mut self) -> Task<Message> {
+        let Page::Files(page) = &self.page else {
+            return Task::none();
+        };
+        let generation = page.generation;
+        match crate::files_page::debounce_for(&page.query) {
+            Some(delay) => Task::perform(
+                async move {
+                    tokio::time::sleep(delay).await;
+                    generation
+                },
+                Message::FilesDebounced,
+            ),
+            None => self.files_search_task(generation),
+        }
+    }
+
+    /// Sends Search Files' query `generation`, unless the text moved on.
+    fn files_search_task(&mut self, generation: u64) -> Task<Message> {
+        let Page::Files(page) = &mut self.page else {
+            return Task::none();
+        };
+        if page.generation != generation {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            page.apply(
+                generation,
+                Err(
+                    "Search Files needs the Compass engine, and this window is running \
+                     without one"
+                        .to_owned(),
+                ),
+            );
+            return Task::none();
+        };
+        let query = page.query.clone();
+        Task::perform(
+            async move { backend.search_files(query).await },
+            move |result| Message::FilesLoaded { generation, result },
+        )
+    }
+
+    /// Opens the selected file with its default application, or shows it in
+    /// the file browser when `reveal`.
+    fn open_selected_file(&mut self, reveal: bool) -> Task<Message> {
+        let Page::Files(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(backend)) = (page.selected_row(), self.backend.clone()) else {
+            return Task::none();
+        };
+        let path = row.path.clone();
+        Task::perform(
+            async move { backend.open_file(path, reveal).await },
+            Message::FileOpened,
+        )
     }
 
     /// Asks for clipboard history matching the view's filter.
@@ -4187,6 +4368,12 @@ mod tests {
         /// Arguments the fake asks for until a run carries some.
         wants: Vec<crate::backend::PreferenceInput>,
         given: std::sync::Mutex<Vec<Option<serde_json::Map<String, serde_json::Value>>>>,
+        /// The files Search Files finds, by name.
+        files: Vec<crate::backend::FileRow>,
+        /// The Search Files queries asked, in order.
+        file_queries: std::sync::Mutex<Vec<String>>,
+        /// The files opened, and whether each was only revealed.
+        opened: std::sync::Mutex<Vec<(String, bool)>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4216,6 +4403,35 @@ mod tests {
             Box::pin(async move {
                 self.played.lock().unwrap().push(id);
                 Err("No media player is running".to_owned())
+            })
+        }
+
+        fn search_files(
+            &self,
+            query: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::FileResults> {
+            Box::pin(async move {
+                self.file_queries.lock().unwrap().push(query.clone());
+                Ok(crate::backend::FileResults {
+                    heading: if query.is_empty() {
+                        "Recently Accessed".to_owned()
+                    } else {
+                        "Results".to_owned()
+                    },
+                    files: self
+                        .files
+                        .iter()
+                        .filter(|file| file.name.contains(&query))
+                        .cloned()
+                        .collect(),
+                })
+            })
+        }
+
+        fn open_file(&self, path: String, reveal: bool) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened.lock().unwrap().push((path, reveal));
+                Ok(())
             })
         }
 
@@ -6109,6 +6325,150 @@ mod tests {
             app.selected,
             app.results.len() - 1,
             "and it stayed on the last row, because wrap_navigation is off by default"
+        );
+    }
+
+    // ---- Search Files ----
+
+    fn file_row(path: &str, category: &str) -> crate::backend::FileRow {
+        crate::backend::FileRow {
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap_or(path).into(),
+            category: category.into(),
+        }
+    }
+
+    fn files_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend {
+            files: vec![
+                file_row("/home/me/Documents/quarterly-report.pdf", "Documents"),
+                file_row("/home/me/notes.md", "Documents"),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        app.query = "search files".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Command(
+                compass_core::commands::by_id("commands:search-files").unwrap()
+            )),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        (app, backend)
+    }
+
+    fn files_page(app: &LauncherApp) -> &crate::files_page::FilesPage {
+        let Page::Files(page) = &app.page else {
+            panic!("not on Search Files: {}", app.state_line())
+        };
+        page
+    }
+
+    #[test]
+    fn search_files_lists_recent_files_then_searches_after_the_debounce() {
+        // The debounce sleeps on tokio's timer, which the iced executor
+        // provides in the launcher and this runtime provides here.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = files_app(dir.path());
+
+        let page = files_page(&app);
+        assert_eq!(page.heading, "Recently Accessed");
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["commands:search-files"]
+        );
+        assert!(
+            app.state_line().contains("page=files"),
+            "{}",
+            app.state_line()
+        );
+
+        // Two keystrokes inside one debounce: only the second is asked.
+        let first = app.update(Message::FilesQueryChanged("quart".into()));
+        let second = app.update(Message::FilesQueryChanged("quarterly".into()));
+        settle(&mut app, first);
+        settle(&mut app, second);
+        assert_eq!(
+            backend.file_queries.lock().unwrap().as_slice(),
+            ["", "quarterly"],
+            "the superseded keystroke never reached the engine"
+        );
+        let page = files_page(&app);
+        assert_eq!(page.heading, "Results");
+        assert_eq!(
+            page.selected_row().map(|row| row.name.as_str()),
+            Some("quarterly-report.pdf")
+        );
+
+        let back = app.update(pressed(iced::keyboard::key::Named::Escape));
+        drop(back);
+        assert!(matches!(app.page, Page::Root), "Escape goes back");
+    }
+
+    #[test]
+    fn enter_opens_the_file_and_ctrl_enter_shows_it_in_the_file_browser() {
+        let enter = |modifiers| {
+            Message::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            })
+        };
+        let dir = tempfile::tempdir().unwrap();
+
+        let (mut app, backend) = files_app(dir.path());
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(files_page(&app).selected, 1);
+        let task = app.update(enter(iced::keyboard::Modifiers::default()));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened.lock().unwrap().as_slice(),
+            [("/home/me/notes.md".to_owned(), false)]
+        );
+        assert!(matches!(app.page, Page::Root), "opening hides the launcher");
+
+        let (mut app, backend) = files_app(dir.path());
+        let task = app.update(enter(iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened.lock().unwrap().as_slice(),
+            [("/home/me/Documents/quarterly-report.pdf".to_owned(), true)]
+        );
+    }
+
+    #[test]
+    fn search_files_without_an_engine_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.query = "search files".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let page = files_page(&app);
+        assert!(
+            matches!(&page.status, crate::files_page::Status::Failed(reason)
+                if reason.contains("needs the Compass engine")),
+            "{:?}",
+            page.status
         );
     }
 

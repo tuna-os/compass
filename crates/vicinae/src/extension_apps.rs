@@ -73,6 +73,18 @@ impl EngineApps {
         }
     }
 
+    /// Opens `path` with the default application for its MIME type, as
+    /// Search Files' `OpenFileAction` opens it with the first curated
+    /// opener. `false` when no installed application opens that type.
+    pub fn open_file(&self, path: &std::path::Path) -> bool {
+        let mime = crate::file_search::mime_for(path);
+        let Some(opener) = self.default_opener(&mime) else {
+            return false;
+        };
+        self.launch(&opener, &path.to_string_lossy());
+        true
+    }
+
     /// The terminal to run a command in, as `XdgAppDatabase::terminalEmulator`
     /// chooses it: the first selected in the `xdg-terminals.list` files that
     /// is installed, else the first terminal they do not exclude, else what

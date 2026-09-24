@@ -117,6 +117,8 @@ fn describe(request: &Request) -> &'static str {
         Request::RunExtensionCommand { .. } => "RunExtensionCommand",
         Request::RunPowerCommand { .. } => "RunPowerCommand",
         Request::RunMediaCommand { .. } => "RunMediaCommand",
+        Request::SearchFiles { .. } => "SearchFiles",
+        Request::OpenFile { .. } => "OpenFile",
         Request::ExtensionView { .. } => "ExtensionView",
         Request::ExtensionEvent { .. } => "ExtensionEvent",
         Request::ExtensionPop { .. } => "ExtensionPop",

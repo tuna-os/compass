@@ -5,7 +5,8 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind, ExtensionStart, ExtensionViewState, WindowBackend, WindowRow,
+    ClipboardRowKind, ExtensionStart, ExtensionViewState, FileResults, FileRow, WindowBackend,
+    WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -63,6 +64,46 @@ impl ApplicationBackend for DaemonBackend {
         Box::pin(async move {
             match self
                 .ask(Request::RunMediaCommand { id }, "The media command")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn search_files(&self, query: String) -> BackendFuture<'_, FileResults> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::SearchFiles {
+                        query,
+                        category: None,
+                    },
+                    "File search",
+                )
+                .await?
+            {
+                compass_ipc::Response::Files { heading, files } => Ok(FileResults {
+                    heading,
+                    files: files
+                        .into_iter()
+                        .map(|file| FileRow {
+                            path: file.path,
+                            name: file.name,
+                            category: file.category,
+                        })
+                        .collect(),
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn open_file(&self, path: String, reveal: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::OpenFile { path, reveal }, "Opening the file")
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

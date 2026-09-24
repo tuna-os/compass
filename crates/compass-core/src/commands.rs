@@ -41,6 +41,8 @@ pub enum CommandKind {
     SwitchWindows,
     /// Find an emoji or symbol and copy it.
     SearchEmojis,
+    /// Search the file index and open a file.
+    SearchFiles,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -84,6 +86,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             "unicode",
         ],
         icon: "emoji",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SearchFiles,
+        entrypoint: "search-files",
+        title: "Search Files",
+        subtitle: "Search files on your system",
+        keywords: &["files", "file", "find", "documents", "folders", "open"],
+        icon: "magnifying-glass",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

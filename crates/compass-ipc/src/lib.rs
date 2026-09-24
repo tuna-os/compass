@@ -59,9 +59,9 @@ pub use error::{Error, Result};
 pub use path::{SocketPath, ensure_private_dir};
 pub use protocol::{
     ClipboardEntry, ClipboardKind, DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert,
-    ExtensionToast, ExtensionToastStyle, PROTOCOL_VERSION, PreferenceField, PreferenceFieldKind,
-    ProtocolError, QueryHit, Request, RequestEnvelope, Response, ResponseEnvelope, WindowCommand,
-    WindowInfo, WindowOutcome,
+    ExtensionToast, ExtensionToastStyle, FileHit, PROTOCOL_VERSION, PreferenceField,
+    PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope, Response,
+    ResponseEnvelope, WindowCommand, WindowInfo, WindowOutcome,
 };
 pub use transport::{
     Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,

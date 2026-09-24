@@ -1,0 +1,5 @@
+title = "Unit Converter"
+description = "Convert lengths, weights, volumes and temperatures"
+icon = "calculator"
+keywords = ["convert", "units", "km", "miles", "celsius", "fahrenheit"]
+capabilities = ["clipboard.write"]

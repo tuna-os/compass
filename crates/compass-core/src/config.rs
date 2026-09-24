@@ -605,6 +605,19 @@ impl Config {
         }
     }
 
+    /// A provider's `preferences` object, as `providers.<id>.preferences`
+    /// holds it; `None` when the file sets none, or sets something that is not
+    /// an object.
+    #[must_use]
+    pub fn provider_preferences(&self, provider: &str) -> Option<&serde_json::Map<String, Value>> {
+        self.providers
+            .as_ref()?
+            .get(provider)?
+            .unknown
+            .get("preferences")?
+            .as_object()
+    }
+
     /// The `launcher` section.
     #[must_use]
     pub fn launcher(&self) -> &LauncherConfig {

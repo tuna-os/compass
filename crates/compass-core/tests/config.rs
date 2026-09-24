@@ -547,3 +547,20 @@ fn theme_is_understood_and_system_is_the_default() {
     assert_eq!(both.launcher().appearance().preset(), "raycast");
     assert_eq!(both.launcher().appearance().color_scheme(), "system");
 }
+
+#[test]
+fn provider_preferences_are_read_from_the_provider_object() {
+    let config = parse(
+        r#"{"providers": {"files": {"preferences": {"autoIndexing": false}},
+            "broken": {"preferences": [1]}}}"#,
+    );
+    assert_eq!(
+        config
+            .provider_preferences("files")
+            .and_then(|p| p.get("autoIndexing")),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert!(config.provider_preferences("broken").is_none());
+    assert!(config.provider_preferences("missing").is_none());
+    assert!(parse("{}").provider_preferences("files").is_none());
+}
