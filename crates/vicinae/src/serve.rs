@@ -1211,6 +1211,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             state.read().await.views.close(session);
             Response::Ack
         }
+        Request::OAuthRedirect { url } => match crate::extension_runner::oauth_redirect(&url) {
+            Ok(()) => Response::Ack,
+            Err(reason) => Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason)),
+        },
 
         Request::ClipboardSetPinned { .. } | Request::ClipboardRemove { .. } => {
             let Some(store) = state.read().await.clipboard.clone() else {

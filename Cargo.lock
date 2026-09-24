@@ -1180,6 +1180,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "url",
  "zbus",
 ]
 
@@ -6289,6 +6290,7 @@ dependencies = [
  "compass-ipc",
  "compass-local-storage",
  "compass-media",
+ "compass-oauth-store",
  "compass-platform",
  "compass-platform-linux",
  "compass-portals",

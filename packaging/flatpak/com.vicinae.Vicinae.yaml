@@ -150,6 +150,11 @@ modules:
       # tree. A build without it still works and the engine says the runtime is missing; the
       # Flatpak workflow builds it first and asserts it arrived.
       - PREFIX=/app LIBEXECDIR=/app/libexec ./scripts/packaging/install-rust-engine.sh
+      # The raycast://, com.raycast: and vicinae:// handler: an OAuth provider redirects the
+      # browser to raycast://oauth?code=…, and this is what carries it back to the extension that
+      # asked (`vicinae deeplink`). Exported like any app desktop file; no permission needed.
+      - install -Dm644 packaging/flatpak/com.vicinae.Vicinae.UrlHandler.desktop
+        /app/share/applications/com.vicinae.Vicinae.UrlHandler.desktop
       # Node for the extension runtime: an SDK extension exists at build time only.
       - install -Dm755 /usr/lib/sdk/node22/bin/node /app/bin/node
     sources:

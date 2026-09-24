@@ -55,7 +55,7 @@ pub const EXIT_FAILURE: u8 = 1;
 /// Usage errors exit 2 from inside `clap`; see [`cli::EXIT_CODE_HELP`].
 #[must_use]
 pub fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(cli::with_deeplink(std::env::args_os().collect()));
     init_tracing(cli.verbose);
 
     match run(cli) {
@@ -422,6 +422,17 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             // Always zero. The report is the deliverable and every outcome in
             // it is a finding; a non-zero exit would make the harness treat
             // "GNOME said no" as a broken run.
+            Ok(ExitCode::from(EXIT_OK))
+        }
+
+        Command::Deeplink { url } => {
+            // Only the OAuth redirect so far; every other deeplink the C++
+            // takes (extensions, themes, the store) is refused by name rather
+            // than silently dropped.
+            if compass_worker_host::oauth_service::Redirect::parse(&url).is_err() {
+                anyhow::bail!("Compass does not handle this deeplink yet: {url}");
+            }
+            ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
             Ok(ExitCode::from(EXIT_OK))
         }
 

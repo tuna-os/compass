@@ -34,8 +34,9 @@ use serde::{Deserialize, Serialize};
 /// version 6, window switching; version 7, pasting, pinning and removing a
 /// clipboard entry, and running an installed extension's command; version 8,
 /// following and driving an extension's view; version 9, an extension view's
-/// toast; version 10, the power and media commands; version 11, file search.
-pub const PROTOCOL_VERSION: u16 = 11;
+/// toast; version 10, the power and media commands; version 11, file search;
+/// version 12, an OAuth provider's redirect back to the launcher.
+pub const PROTOCOL_VERSION: u16 = 12;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +301,16 @@ pub enum Request {
         path: String,
         /// Show the file in the file browser instead of opening it.
         reveal: bool,
+    },
+    /// An OAuth provider redirected back to the launcher: the
+    /// `raycast://oauth?code=…&state=…` deeplink (or its `com.raycast:` and
+    /// `vicinae:` spellings) the desktop handed `vicinae`. The engine answers
+    /// the extension's `OAuth/authorize` whose URL carried that `state`.
+    /// [`Response::Ack`] once it has; [`ErrorKind::BadRequest`] when the URL
+    /// is not an OAuth redirect or no authorization is waiting on its state.
+    OAuthRedirect {
+        /// The deeplink, verbatim.
+        url: String,
     },
 }
 

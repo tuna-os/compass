@@ -1,10 +1,10 @@
-//! The storage half of the `OAuth` extension API.
+//! The `OAuth` extension API.
 //!
-//! Ports the three methods of `ExtOAuthService`
-//! (`src/server/src/extension/api/oauth-service.hpp`) that are the token store
-//! and nothing else. `OAuth/authorize` is **not** here: it opens a browser and
-//! puts an overlay on screen, so it belongs with the UI rather than with a
-//! table, and it is not on the ledger.
+//! [`OAuthService`] ports the three methods of `ExtOAuthService`
+//! (`src/server/src/extension/api/oauth-service.hpp`) that are the token
+//! store. `OAuth/authorize` is [`AuthorizeService`]: it opens a browser and
+//! waits for a person, so it defers, behind an [`Authorizer`] the engine
+//! supplies.
 //!
 //! # The wire shape, read off the client
 //!
@@ -24,10 +24,8 @@ use compass_oauth_store::{TokenSet, TokenStore};
 
 use crate::tsapi::{self, Call};
 
-/// The methods this serves.
-///
-/// `OAuth/authorize` is deliberately absent — see the module docs. An
-/// extension calling it gets [`crate::tsapi::unimplemented`], which names it.
+/// The methods [`OAuthService`] serves; `OAuth/authorize` is
+/// [`AuthorizeService`]'s, in [`DEFERRED_METHODS`].
 pub const METHODS: &[&str] = &["OAuth/getTokens", "OAuth/setTokens", "OAuth/removeTokens"];
 
 /// Serves the token store for one extension.
@@ -180,6 +178,265 @@ impl tsapi::Service for OAuthService<'_> {
     }
 }
 
+/// The method that answers when a person has finished with a browser.
+pub const DEFERRED_METHODS: &[&str] = &["OAuth/authorize"];
+
+/// An `OAuth/authorize` call, read off `AuthorizeRequest` in the IDL.
+///
+/// The extension builds the whole authorization URL itself — PKCE verifier,
+/// challenge, redirect URI and all (`PKCEClient.authorizationRequest` in
+/// `src/typescript/api/src/api/oauth.ts`) — and exchanges the code for tokens
+/// itself too. The host's part is the middle: open the URL, wait for the
+/// provider to redirect back to `raycast://oauth?code=…&state=…`, and answer
+/// with the code. The `state` is what ties the redirect to this call, as
+/// `OAuthService::authorize(state)` keys it in the C++.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizeRequest {
+    /// The provider's authorization URL, to open in the browser.
+    pub url: String,
+    /// The URL's `state` parameter, or `None` when it has none — which the
+    /// host cannot wait on, since nothing would tie a redirect to it.
+    pub state: Option<String>,
+    /// The provider's name, e.g. "GitHub".
+    pub provider: String,
+    /// What connecting does, in the provider's words.
+    pub description: String,
+}
+
+impl AuthorizeRequest {
+    /// Reads the call's `payload`; `None` when it has no URL.
+    #[must_use]
+    pub fn from_call(call: &Call) -> Option<Self> {
+        let payload = call.params.get("payload")?;
+        let url = payload.get("url")?.as_str()?.to_owned();
+        let client = payload.get("client");
+        let text = |key: &str| {
+            client
+                .and_then(|client| client.get(key))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        Some(Self {
+            state: query_value(&url, "state"),
+            provider: text("name"),
+            description: text("description"),
+            url,
+        })
+    }
+}
+
+/// The value of `key` in `url`'s query, decoded.
+#[must_use]
+pub fn query_value(url: &str, key: &str) -> Option<String> {
+    url::Url::parse(url)
+        .ok()?
+        .query_pairs()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.into_owned())
+}
+
+/// What a provider's redirect back to the launcher said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Redirect {
+    /// The person approved: the code to exchange, for the request `state`.
+    Code {
+        /// Which request.
+        state: String,
+        /// The authorization code.
+        code: String,
+    },
+    /// The provider refused, or the person declined (RFC 6749 §4.1.2.1).
+    Refused {
+        /// Which request.
+        state: String,
+        /// `error_description`, else `error`.
+        reason: String,
+    },
+}
+
+impl Redirect {
+    /// Reads an `oauth` deeplink: `raycast://oauth?…`,
+    /// `com.raycast:/oauth?…` or `vicinae://oauth?…`.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: not an OAuth redirect, or one without a `state`, or one
+    /// with neither a code nor an error.
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        let url = url::Url::parse(raw).map_err(|err| format!("{raw} is not a URL: {err}"))?;
+        let is_oauth = url.host_str() == Some("oauth") || url.path().trim_matches('/') == "oauth";
+        if !matches!(url.scheme(), "raycast" | "com.raycast" | "vicinae") || !is_oauth {
+            return Err(format!("{raw} is not an OAuth redirect"));
+        }
+        let value = |key: &str| {
+            url.query_pairs()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.into_owned())
+                .filter(|value| !value.is_empty())
+        };
+        let state = value("state").ok_or("the OAuth redirect has no state")?;
+        if let Some(code) = value("code") {
+            return Ok(Self::Code { state, code });
+        }
+        match value("error_description").or_else(|| value("error")) {
+            Some(reason) => Ok(Self::Refused { state, reason }),
+            None => Err("the OAuth redirect has neither a code nor an error".to_owned()),
+        }
+    }
+
+    /// The request it answers.
+    #[must_use]
+    pub fn state(&self) -> &str {
+        match self {
+            Self::Code { state, .. } | Self::Refused { state, .. } => state,
+        }
+    }
+}
+
+/// Whatever shows the person where to go and waits for the redirect.
+pub trait Authorizer {
+    /// Opens `request` and holds `deferral` until the redirect answers it,
+    /// or the request is abandoned; either way the deferral must be settled.
+    fn authorize(&self, request: AuthorizeRequest, deferral: &tsapi::Deferral);
+}
+
+/// Serves `OAuth/authorize`: the call defers, and the [`Authorizer`] owns
+/// the answer.
+#[derive(Debug)]
+pub struct AuthorizeService<A> {
+    authorizer: A,
+}
+
+impl<A: Authorizer> AuthorizeService<A> {
+    /// Serves authorize calls through `authorizer`.
+    pub const fn new(authorizer: A) -> Self {
+        Self { authorizer }
+    }
+
+    /// The authorizer.
+    pub const fn authorizer(&self) -> &A {
+        &self.authorizer
+    }
+}
+
+impl<A: Authorizer> tsapi::Service for AuthorizeService<A> {
+    fn handle(&self, call: &Call) -> Option<String> {
+        if !DEFERRED_METHODS.contains(&call.method.as_str()) {
+            return None;
+        }
+        let id = call.id?;
+        // Refused now rather than deferred: an authorize with no URL, or one
+        // with no `state` to match a redirect to, would wait for ever.
+        match AuthorizeRequest::from_call(call) {
+            None => Some(tsapi::reply_error(id, "OAuth/authorize needs a URL")),
+            Some(request) if request.state.is_none() => Some(tsapi::reply_error(
+                id,
+                "The authorization URL has no state parameter, so Compass cannot match the \
+                 provider's redirect to it",
+            )),
+            Some(_) => None,
+        }
+    }
+
+    fn defer(&self, call: &Call) -> Option<tsapi::Deferral> {
+        if !DEFERRED_METHODS.contains(&call.method.as_str()) {
+            return None;
+        }
+        let request = AuthorizeRequest::from_call(call)?;
+        let deferral = tsapi::Deferral::for_call(call)?;
+        self.authorizer.authorize(request, &deferral);
+        Some(deferral)
+    }
+}
+
+#[cfg(test)]
+mod authorize_tests {
+    use super::*;
+    use tsapi::Service as _;
+
+    fn call(payload: serde_json::Value) -> Call {
+        serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0", "id": 4, "method": "OAuth/authorize",
+            "params": {"payload": payload},
+        }))
+        .expect("a call")
+    }
+
+    #[derive(Default)]
+    struct Recorded(std::sync::Mutex<Vec<(AuthorizeRequest, u64)>>);
+
+    impl Authorizer for &Recorded {
+        fn authorize(&self, request: AuthorizeRequest, deferral: &tsapi::Deferral) {
+            self.0.lock().unwrap().push((request, deferral.id));
+        }
+    }
+
+    #[test]
+    fn an_authorize_call_defers_with_the_provider_and_the_state_of_its_url() {
+        let recorded = Recorded::default();
+        let service = AuthorizeService::new(&recorded);
+        let call = call(serde_json::json!({
+            "client": {"name": "GitHub", "description": "Connect your account"},
+            "url": "https://github.com/login/oauth/authorize?client_id=x&state=eyJmbGF2b3Ii%3D&code_challenge=c",
+        }));
+        assert_eq!(service.handle(&call), None);
+        let deferral = service.defer(&call).expect("deferred");
+        assert_eq!(deferral.id, 4);
+        let seen = recorded.0.lock().unwrap();
+        let (request, id) = &seen[0];
+        assert_eq!(*id, 4);
+        assert_eq!(request.provider, "GitHub");
+        assert_eq!(request.description, "Connect your account");
+        assert_eq!(
+            request.state.as_deref(),
+            Some("eyJmbGF2b3Ii="),
+            "decoded, as the redirect will carry it"
+        );
+    }
+
+    #[test]
+    fn a_url_without_a_state_is_refused_rather_than_waited_on() {
+        let recorded = Recorded::default();
+        let service = AuthorizeService::new(&recorded);
+        let call = call(serde_json::json!({
+            "client": {"name": "X", "description": ""},
+            "url": "https://example.com/authorize?client_id=x",
+        }));
+        let answer = service.handle(&call).expect("answered now");
+        assert!(answer.contains("no state parameter"), "{answer}");
+        assert!(recorded.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn every_redirect_shape_raycast_uses_parses() {
+        for raw in [
+            "raycast://oauth?package_name=Extension&code=abc&state=s1",
+            "com.raycast:/oauth?package_name=Extension&code=abc&state=s1",
+            "vicinae://oauth?code=abc&state=s1",
+        ] {
+            assert_eq!(
+                Redirect::parse(raw),
+                Ok(Redirect::Code {
+                    state: "s1".into(),
+                    code: "abc".into()
+                }),
+                "{raw}"
+            );
+        }
+        assert_eq!(
+            Redirect::parse("raycast://oauth?state=s1&error=access_denied"),
+            Ok(Redirect::Refused {
+                state: "s1".into(),
+                reason: "access_denied".into()
+            })
+        );
+        assert!(Redirect::parse("raycast://extensions/x/y").is_err());
+        assert!(Redirect::parse("raycast://oauth?code=abc").is_err());
+        assert!(Redirect::parse("https://oauth?code=abc&state=s").is_err());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,18 +506,22 @@ mod tests {
     }
 
     #[test]
-    fn the_methods_are_on_the_ledger_and_authorize_is_not() {
-        for method in METHODS {
+    fn the_methods_are_on_the_ledger_and_the_store_does_not_take_authorize() {
+        for method in METHODS.iter().chain(DEFERRED_METHODS) {
             assert!(
                 tsapi::is_implemented(method),
                 "{method} is served here but is not on the tsapi ledger"
             );
         }
-        assert!(
-            !tsapi::is_implemented("OAuth/authorize"),
-            "authorize needs a browser and an overlay; claiming it would make an extension \
-             wait on a flow nothing runs"
-        );
+        // The store answers now; authorize waits on a person, so it is the
+        // authorizer's, and a store that claimed it would answer before the
+        // browser had even opened.
+        let (_dir, db) = open();
+        let call: Call = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "OAuth/authorize", "params": {}
+        }))
+        .unwrap();
+        assert_eq!(service(&db).handle(&call), None);
     }
 
     #[test]

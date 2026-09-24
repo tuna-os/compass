@@ -64,6 +64,25 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// The URL schemes `vicinae <url>` takes as a deeplink, as the C++ URL
+/// handler's desktop entry registers them.
+pub const DEEPLINK_SCHEMES: [&str; 3] = ["vicinae", "raycast", "com.raycast"];
+
+/// The command line with a bare deeplink (`vicinae raycast://oauth?…`, as a
+/// desktop entry's `Exec=vicinae %u` runs it) turned into `vicinae deeplink
+/// <url>`; anything else unchanged.
+#[must_use]
+pub fn with_deeplink(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let is_deeplink = args.get(1).and_then(|arg| arg.to_str()).is_some_and(|arg| {
+        arg.split_once(':')
+            .is_some_and(|(scheme, _)| DEEPLINK_SCHEMES.contains(&scheme))
+    });
+    if is_deeplink {
+        args.insert(1, "deeplink".into());
+    }
+    args
+}
+
 impl Cli {
     /// The socket path this invocation should use.
     #[must_use]
@@ -160,6 +179,17 @@ pub enum Command {
     /// or folded into a real subsystem once its question has an answer.
     #[command(hide = true, subcommand)]
     Spike(Spike),
+
+    /// Hand a deeplink to the running engine.
+    ///
+    /// What the desktop runs for `raycast://`, `com.raycast:` and `vicinae://`
+    /// URLs, and what a bare `vicinae <url>` becomes. Today it carries an
+    /// OAuth provider's redirect (`raycast://oauth?code=…&state=…`) back to
+    /// the extension that asked; other deeplinks are refused by name.
+    Deeplink {
+        /// The URL, verbatim.
+        url: String,
+    },
 
     /// Open the launcher window.
     ///
@@ -304,6 +334,30 @@ mod tests {
     #[test]
     fn the_command_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn a_bare_deeplink_becomes_the_deeplink_command() {
+        let argv = |args: &[&str]| -> Vec<std::ffi::OsString> {
+            args.iter().map(std::ffi::OsString::from).collect()
+        };
+        for url in [
+            "raycast://oauth?code=c&state=s",
+            "com.raycast:/oauth?code=c&state=s",
+            "vicinae://extensions/x",
+        ] {
+            let parsed = Cli::try_parse_from(with_deeplink(argv(&["vicinae", url]))).expect(url);
+            assert_eq!(parsed.command, Command::Deeplink { url: url.into() });
+        }
+        assert_eq!(
+            with_deeplink(argv(&["vicinae", "toggle"])),
+            argv(&["vicinae", "toggle"])
+        );
+        assert_eq!(
+            with_deeplink(argv(&["vicinae", "https://example.com"])),
+            argv(&["vicinae", "https://example.com"]),
+            "a web URL is not ours to take"
+        );
     }
 
     #[test]

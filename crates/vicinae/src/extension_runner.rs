@@ -37,6 +37,9 @@ use compass_worker_host::clipboard_service::{
 use compass_worker_host::extension_manager::{
     Capabilities, CommandEnv, LaunchType, LoadOptions, ManagerClient,
 };
+use compass_worker_host::oauth_service::{
+    AuthorizeRequest, AuthorizeService, Authorizer, OAuthService, Redirect,
+};
 use compass_worker_host::session::SessionEvents;
 use compass_worker_host::session::{Router, Session, Turn};
 use compass_worker_host::storage_service::StorageService;
@@ -446,6 +449,7 @@ pub fn start(
     let title = command.title.clone();
     let name = command.name.clone();
     let namespace = compass_local_storage::namespace_for(&command.extension_id);
+    let extension_id = command.extension_id.clone();
     let handle = tokio::runtime::Handle::try_current().ok();
     let started = view
         .as_ref()
@@ -457,6 +461,7 @@ pub fn start(
                 worker,
                 Served {
                     session_id,
+                    extension_id,
                     title,
                     name,
                     namespace,
@@ -523,6 +528,7 @@ pub enum Started {
 
 struct Served {
     session_id: String,
+    extension_id: String,
     title: String,
     name: String,
     namespace: String,
@@ -540,6 +546,7 @@ fn serve(
 ) {
     let Served {
         session_id,
+        extension_id,
         title,
         name,
         namespace,
@@ -574,6 +581,17 @@ fn serve(
     if let Some(service) = &applications {
         router = router.with(service);
     }
+    let tokens = database.as_ref().map(|db| {
+        OAuthService::new(
+            compass_oauth_store::TokenStore::new(db),
+            extension_id.as_str(),
+        )
+    });
+    if let Some(service) = &tokens {
+        router = router.with(service);
+    }
+    let authorize = AuthorizeService::new(EngineAuthorizer::default());
+    router = router.with(&authorize);
     let mut session = Session::new(worker, session_id.as_str(), router);
     if let Some(view) = &view {
         view.attach(session.events());
@@ -604,8 +622,35 @@ fn serve(
                     view.publish(compass_worker_host::view_model::to_view(&root), depth);
                 }
             }
+            Turn::Deferred { method, deferral } if method == "OAuth/authorize" => {
+                let request = authorize
+                    .authorizer()
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                let events = session.events();
+                let refused = match request {
+                    Some(request) => begin_authorization(
+                        &session_id,
+                        request,
+                        deferral.clone(),
+                        events,
+                        view.as_ref().map(|view| view.state.clone()),
+                        applications.as_ref().map(ApplicationService::apps),
+                    )
+                    .err(),
+                    None => Some("the authorization request was lost".to_owned()),
+                };
+                if let Some(reason) = refused
+                    && let Err(err) = session.fail_deferred(&deferral, &reason)
+                {
+                    tracing::warn!(command = title, error = %err, "could not refuse an authorization");
+                    break;
+                }
+            }
             Turn::Deferred { method, deferral } => {
-                // Only an alert defers. A view shows it and the launcher
+                // Otherwise only an alert defers. A view shows it and the launcher
                 // answers; a command with no view has nowhere to show it, and
                 // "no" is the answer a dismissed alert gives.
                 let alert = shell
@@ -628,9 +673,153 @@ fn serve(
         }
     }
     activity.stop();
+    OAUTH.abandon(&session_id);
     if let Some(view) = view {
         view.end(ended);
     }
+}
+
+/// How the toast a view shows while an OAuth sign-in waits on the browser
+/// begins; the provider's name follows.
+pub const SIGN_IN_TOAST: &str = "Continue in your browser to connect";
+
+/// Authorizations waiting on a browser, by the `state` their URL carries.
+///
+/// Process-wide, like the C++ `OAuthService`'s request map: the redirect
+/// arrives as a deeplink over IPC, with nothing but the `state` to say which
+/// extension's call it answers.
+static OAUTH: std::sync::LazyLock<OAuthRequests> = std::sync::LazyLock::new(OAuthRequests::default);
+
+#[derive(Default)]
+struct OAuthRequests(std::sync::Mutex<std::collections::HashMap<String, PendingAuthorization>>);
+
+struct PendingAuthorization {
+    session_id: String,
+    provider: String,
+    events: SessionEvents,
+    deferral: Deferral,
+    view: Option<tokio::sync::watch::Sender<ViewState>>,
+}
+
+impl OAuthRequests {
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, PendingAuthorization>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Forgets `session_id`'s authorizations: its worker is gone, so there is
+    /// no promise left to settle.
+    fn abandon(&self, session_id: &str) {
+        self.lock()
+            .retain(|_, pending| pending.session_id != session_id);
+    }
+}
+
+/// Takes the `OAuth/authorize` call the service defers, for the serving
+/// loop to begin.
+#[derive(Debug, Default)]
+struct EngineAuthorizer(std::sync::Mutex<Option<AuthorizeRequest>>);
+
+impl Authorizer for EngineAuthorizer {
+    fn authorize(&self, request: AuthorizeRequest, _deferral: &Deferral) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(request);
+    }
+}
+
+/// Opens `request`'s URL in the browser and waits for [`oauth_redirect`].
+/// While it waits, the view says where the person has to go.
+fn begin_authorization(
+    session_id: &str,
+    request: AuthorizeRequest,
+    deferral: Deferral,
+    events: SessionEvents,
+    view: Option<tokio::sync::watch::Sender<ViewState>>,
+    apps: Option<&crate::extension_apps::EngineApps>,
+) -> Result<(), String> {
+    use compass_worker_host::application_service::Apps as _;
+    let state = request
+        .state
+        .clone()
+        .ok_or("the authorization URL has no state parameter")?;
+    let apps = apps.ok_or("Compass cannot open a browser for this command")?;
+    let browser = apps
+        .default_opener(&request.url)
+        .ok_or("No web browser is installed to sign in with")?;
+    let provider = if request.provider.is_empty() {
+        "the provider".to_owned()
+    } else {
+        request.provider.clone()
+    };
+    if let Some(view) = &view {
+        view.send_modify(|state| {
+            state.version += 1;
+            state.toast = Some(compass_ipc::ExtensionToast {
+                title: format!("{SIGN_IN_TOAST} {provider}"),
+                message: request.description.clone(),
+                style: compass_ipc::ExtensionToastStyle::Animated,
+            });
+        });
+    }
+    OAUTH.lock().insert(
+        state,
+        PendingAuthorization {
+            session_id: session_id.to_owned(),
+            provider,
+            events,
+            deferral,
+            view,
+        },
+    );
+    apps.launch(&browser, &request.url);
+    Ok(())
+}
+
+/// Answers the authorization a provider's redirect names: `url` is the
+/// `raycast://oauth?code=…&state=…` deeplink the desktop handed `vicinae`.
+///
+/// # Errors
+///
+/// A sentence: not an OAuth redirect, no authorization waiting on its state,
+/// or the extension could not be told.
+pub fn oauth_redirect(url: &str) -> Result<(), String> {
+    let redirect = Redirect::parse(url)?;
+    let pending = OAUTH
+        .lock()
+        .remove(redirect.state())
+        .ok_or("No extension is waiting on that authorization; it may have been closed")?;
+    let (answered, toast) = match &redirect {
+        Redirect::Code { code, .. } => (
+            pending
+                .events
+                .answer(&pending.deferral, serde_json::json!({ "code": code })),
+            compass_ipc::ExtensionToast {
+                title: format!("Connected to {}", pending.provider),
+                message: String::new(),
+                style: compass_ipc::ExtensionToastStyle::Success,
+            },
+        ),
+        Redirect::Refused { reason, .. } => (
+            pending.events.fail(&pending.deferral, reason),
+            compass_ipc::ExtensionToast {
+                title: format!("{} did not connect", pending.provider),
+                message: reason.clone(),
+                style: compass_ipc::ExtensionToastStyle::Failure,
+            },
+        ),
+    };
+    if let Some(view) = &pending.view {
+        view.send_modify(|state| {
+            state.version += 1;
+            state.toast = Some(toast);
+        });
+    }
+    answered.map_err(|err| format!("The extension did not take the authorization: {err}"))
 }
 
 fn open_storage(storage: &Storage) -> Option<compass_sqlcipher_sys::rusqlite::Connection> {

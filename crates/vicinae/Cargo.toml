@@ -48,6 +48,7 @@ compass-clipboard.workspace = true
 compass-worker-host.workspace = true
 compass-extension-api = { path = "../compass-extension-api" }
 compass-local-storage = { path = "../compass-local-storage" }
+compass-oauth-store = { path = "../compass-oauth-store" }
 wait-timeout = "0.2"
 notify-rust = { version = "4.18", default-features = false, features = ["z-with-tokio"] }
 compass-sandbox = { path = "../compass-sandbox" }

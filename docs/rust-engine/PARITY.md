@@ -2079,6 +2079,15 @@ The negative tests are §8.2's list; each has a positive control beside it.
 | 4 | `Form.FilePicker` opens a Qt file dialog. | The XDG FileChooser portal (`compass-portals`), which inside a Flatpak is also what grants the extension the file. A picker that takes directories and not files asks for a directory; one that takes both asks for files, since the portal offers one or the other. | — (portal; the VM tier) |
 | 5 | A second `confirmAlert` cancels the first; leaving the view cancels an open one. | The same: both answer the waiting promise `false`, whether the launcher pops the view or the extension pushes or pops one itself. | `a_replaced_alert_and_one_navigated_away_from_both_answer_no` |
 
+### `OAuth/authorize` — no overlay, and the redirect as a deeplink
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | An overlay names the provider and waits for "Open browser". | The browser opens at once, with the default `x-scheme-handler/https` application, and the view shows a toast ("Continue in your browser to connect …") until the redirect arrives; then "Connected to …" or the provider's refusal. | `an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it` |
+| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v11); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. Every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
+| 3 | An authorize URL without a `state` waits for ever. | Refused at once: nothing could match a redirect to it. | `a_url_without_a_state_is_refused_rather_than_waited_on` |
+| 4 | A redirect with `error=` leaves the request waiting. | The extension's `authorize()` rejects with `error_description` (else `error`). | `every_redirect_shape_raycast_uses_parses` |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

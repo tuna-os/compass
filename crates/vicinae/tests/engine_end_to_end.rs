@@ -1081,6 +1081,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "show", "title": "Show Greeting", "mode": "view"},
               {"name": "nav", "title": "Navigate", "mode": "view"},
               {"name": "ask", "title": "Ask First", "mode": "view"},
+              {"name": "auth", "title": "Sign In", "mode": "view"},
               {"name": "link", "title": "Open Link", "mode": "no-view"},
               {"name": "term", "title": "In Terminal", "mode": "no-view"},
               {"name": "tiles", "title": "Tiles", "mode": "view"},
@@ -2579,4 +2580,102 @@ fn search_files_without_indexing_says_the_index_is_unavailable() {
     };
     assert_eq!(err.kind, ErrorKind::Unsupported);
     assert!(err.message.contains("file indexer"), "{}", err.message);
+}
+
+#[test]
+fn an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it() {
+    use compass_extension_api::View;
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    // The browser is a script that writes down the URL it was given, which
+    // is how the test learns the state the extension generated.
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_path_buf();
+        let script = dir.join("browser.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$1\" > {:?}\n",
+                dir.join("opened.txt").to_string_lossy()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let applications = dir.join("data/applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(
+            applications.join("browser.desktop"),
+            format!(
+                "[Desktop Entry]\nType=Application\nName=Browser\nExec={} %u\n\
+                 MimeType=x-scheme-handler/https;\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:auth".into(),
+        arguments_json: None,
+    }) else {
+        panic!("no session");
+    };
+    wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+
+    let opened = root.join("opened.txt");
+    wait_for_content(&opened);
+    let url = std::fs::read_to_string(&opened).expect("the browser was opened");
+    assert!(
+        url.starts_with("https://example.com/authorize?"),
+        "the extension's own authorization URL, as built: {url}"
+    );
+    let state = compass_worker_host::oauth_service::query_value(&url, "state").expect("a state");
+
+    // A redirect for some other request is refused, and does not settle this one.
+    let Response::Error(err) = daemon.request(Request::OAuthRedirect {
+        url: "raycast://oauth?code=nope&state=someone-else".into(),
+    }) else {
+        panic!("a redirect nobody waits on was accepted");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+
+    let redirect = format!(
+        "raycast://oauth?package_name=Extension&code=the-code&state={}",
+        percent_encode(&state)
+    );
+    assert_eq!(
+        daemon.request(Request::OAuthRedirect { url: redirect }),
+        Response::Ack
+    );
+    let authorized = root.join("data-home/vicinae/support/hello/authorized.txt");
+    wait_for_content(&authorized);
+    assert_eq!(
+        std::fs::read_to_string(&authorized).ok().as_deref(),
+        Some("the-code"),
+        "the extension's authorize() resolved with the code from the redirect"
+    );
+    daemon.request(Request::CloseExtension { session });
+}
+
+/// Percent-encodes everything but the unreserved characters.
+fn percent_encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                char::from(b).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }

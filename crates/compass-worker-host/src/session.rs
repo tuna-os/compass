@@ -709,6 +709,21 @@ impl SessionEvents {
             .map(drop)
     }
 
+    /// Fails a call a [`Turn::Deferred`] left owed, with `message` as the
+    /// rejection the extension's promise sees, from any thread.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's pipe is gone.
+    pub fn fail(&self, deferral: &tsapi::Deferral, message: &str) -> Result<(), WorkerError> {
+        self.writer
+            .request(
+                crate::rpc::manager::MESSAGE_EXTENSION,
+                serde_json::json!({ "session_id": self.session_id, "payload": deferral.fail(message) }),
+            )
+            .map(drop)
+    }
+
     /// `UI/viewPoped`: the host popped the extension's top view (the person
     /// pressed Escape on a pushed view), so its navigation pops too and it
     /// renders the view beneath.

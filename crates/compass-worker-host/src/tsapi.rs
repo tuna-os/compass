@@ -119,6 +119,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "OAuth/getTokens",
     "OAuth/setTokens",
     "OAuth/removeTokens",
+    "OAuth/authorize",
     "UI/render",
     "UI/showToast",
     "UI/updateToast",
@@ -393,6 +394,7 @@ mod tests {
             // so the ledger has to count it -- an extension cannot tell from
             // the wire whether its reply came back on the same turn.
             .chain(crate::ui_shell_service::DEFERRED_METHODS)
+            .chain(crate::oauth_service::DEFERRED_METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();
