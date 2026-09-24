@@ -308,6 +308,61 @@ design-shots: design-states ## Screenshot every design state, both appearances
 check-rust: check-format-rust lint-rust test-rust
 .PHONY: check-rust
 
+# THE TEST LADDER — cheapest first, each rung proving what the one below can't.
+#
+#   t0  logic     unit + integration, no display              seconds
+#   t1  paint     the launcher RENDERED, pixels checked        ~3 s / backend
+#   t2  session   real Mutter + portal in a container          ~92 s
+#   t3  target    real GNOME in a VM, screenshots diffed       ~30 min
+#
+# Climb only as far as the question needs. A failure at t3 should be pulled
+# down to the cheapest rung that reproduces it — see RENDER-HARNESSES.md for
+# which rung owns which question. `make test-fast` is the per-edit loop.
+.PHONY: test-fast test-t0 test-t1 test-t2 test-t3
+
+test-fast: test-t0 test-t1 ## t0 + t1: logic and paint, the per-edit loop
+
+test-t0: ## Ladder t0: unit and integration tests
+	@if command -v cargo-nextest >/dev/null 2>&1; then \
+		cargo nextest run --workspace --all-targets; \
+	else \
+		cargo test --workspace --all-targets; \
+	fi
+
+# Each backend is FORCED and CHECKED. Iced falls back from wgpu to tiny-skia
+# silently; without PAINT_EXPECT_BACKEND a "wgpu" run could pass on tiny-skia
+# and prove nothing about wgpu. wgpu needs an adapter — on a machine with no
+# GPU, `apt install mesa-vulkan-drivers` provides lavapipe.
+test-t1: ## Ladder t1: the paint tier, on wgpu (if an adapter exists) and tiny-skia
+	@if ls /usr/share/vulkan/icd.d/*.json >/dev/null 2>&1; then \
+		echo "== t1 paint: wgpu =="; \
+		ICED_TEST_BACKEND=wgpu PAINT_EXPECT_BACKEND=wgpu \
+			cargo test -p compass-ui --test paint; \
+	else \
+		echo "== t1 paint: wgpu SKIPPED — no Vulkan driver (apt install mesa-vulkan-drivers) =="; \
+	fi
+	@echo "== t1 paint: tiny-skia =="
+	@ICED_TEST_BACKEND=tiny-skia PAINT_EXPECT_BACKEND=tiny-skia \
+		cargo test -p compass-ui --test paint
+
+test-t2: ## Ladder t2: the launcher in a real Mutter session, in a container
+	@command -v podman >/dev/null 2>&1 || { \
+		echo "t2 needs podman. It boots real Mutter and xdg-desktop-portal-gnome"; \
+		echo "in a Fedora container — the tier that proves a window appears."; \
+		exit 1; }
+	scripts/tier2/headless-gnome-spike.sh scripts/tier2/prove-smoke.sh
+
+test-t3: ## Ladder t3: real GNOME in a VM — runs in CI, not locally
+	@echo "t3 boots Bluefin in QEMU through corral and diffs real screenshots."
+	@echo "It is too heavy to be a local target. Run it on your branch with:"
+	@echo ""
+	@echo "    gh workflow run vm-tier.yaml --ref \$$(git branch --show-current)"
+	@echo ""
+	@echo "It also runs nightly (03:00 UTC) and on every v* release tag."
+	@echo "Before reaching for it: can t1 or t2 reproduce the failure? They are"
+	@echo "seconds and a minute and a half; this is half an hour."
+
+
 FLATPAK_MANIFEST := packaging/flatpak/com.vicinae.Vicinae.yaml
 
 # Regenerate the offline dependency manifest Flathub builds require. Needs

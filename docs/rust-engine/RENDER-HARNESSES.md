@@ -19,6 +19,65 @@ was reading the pixels back and asserting something robust about them.
 Use the cheapest one that can answer your question, and **do not let a cheap
 one answer an expensive one's question**. That is the whole discipline here.
 
+## The ladder: one command per rung, cheapest first
+
+```sh
+make test-fast    # t0 + t1 — the per-edit loop
+make test-t0      # logic: unit + integration, no display          seconds
+make test-t1      # paint: the launcher rendered, pixels checked    ~3 s/backend
+make test-t2      # session: real Mutter + portal in a container    ~92 s
+make test-t3      # target: real GNOME in a VM (runs in CI)         ~30 min
+```
+
+Each rung proves something the one below it cannot, and costs roughly ten to
+a hundred times more. **Climb only as far as the question needs**, and when a
+rung fails, pull the failure *down* to the cheapest rung that reproduces it
+before debugging it there.
+
+| Question | Cheapest rung that answers it |
+|---|---|
+| Does the ranking / config / parser do the right thing? | **t0** |
+| Is the widget tree right — rows present, in order, selected? | **t0** (`iced_test` structure, the `insta` snapshots) |
+| Does the tree **paint** — selection filled, text visible, theme applied? | **t1** |
+| Does it paint the same on the GPU pipeline as on the CPU? | **t1** (both backends, each forced) |
+| Does a window actually appear under a real compositor? | **t2** |
+| Does the portal bind the shortcut; does Mutter place the window? | **t2** / **t3** |
+| Does it work on the real target, as a user installs it? | **t3** |
+
+The two the ladder was missing are the middle ones. Before the paint tier, a
+change that broke the selection fill passed every per-PR check and was caught,
+if at all, by the nightly VM run half an hour later.
+
+### A VM-tier assertion that did NOT port, and why
+
+The VM tier's central check is geometric: summon the launcher, diff the
+screenshots, and require a `card_width`-wide card centred in the window
+(`scripts/vmtest/launcher.sh`, `--expect-box`). The obvious move was to check
+the same thing on the paint tier in three seconds. **It does not port by pixels,
+and an attempt was removed rather than shipped.**
+
+The frame's background *is* the card's surface colour, in both appearances. The
+card's edge is marked only by a one-pixel border hairline and by a drop shadow
+cast downward — so the rows above the card are pure background, indistinguishable
+from card. Every pixel heuristic for "where is the card" either found the whole
+frame, or — worse — found a plausible-looking internal region: with the shadow
+padding deliberately removed, one version **still passed**. A check whose control
+fails silently is the exact false green these suites exist to prevent.
+
+The measured geometry itself is fully accounted for, which is worth recording
+because it briefly looked otherwise. `card_width` is 720 and the window is 768
+with 24 px of shadow padding, so the card spans logical 24→744. The painted
+surface interior measures **704.5** — which is `card_width − 2 × card_padding`,
+i.e. 720 − 2 × 8 = **704**, to half a pixel, on both backends and in both
+appearances. The first draft of this note called that a 15 px "unexplained
+discrepancy"; it was `card_padding`, and reading `design.rs` before writing it
+down is what caught it. The difficulty is purely in *locating* the card from
+pixels, not in what its size should be.
+
+The right way to move this check down the ladder is **layout bounds from the widget
+tree**, which are exact, confirmed by a paint check at the location layout reports —
+not a pixel search for an edge that the background colour hides.
+
 ## The paint tier — per PR, both backends
 
 ```sh
