@@ -2203,3 +2203,67 @@ fn a_media_command_says_why_it_did_nothing() {
         (ErrorKind::Unsupported, "No media player is running")
     );
 }
+
+#[test]
+fn a_volume_command_runs_pactl_with_the_cpp_arguments() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let bin = TempDir::new().expect("tempdir");
+    let log = bin.path().join("pactl.log");
+    let fake = bin.path().join("pactl");
+    std::fs::write(
+        &fake,
+        format!(
+            r#"#!/bin/sh
+echo "$*" >> '{log}'
+[ -e '{fail}' ] && exit 1
+case "$*" in
+  get-default-sink) echo sink0 ;;
+  "--format=json list sinks") echo '[{{"name":"sink0","mute":false,"volume":{{"mono":{{"value_percent":"45%"}}}}}}]' ;;
+esac
+exit 0
+"#,
+            log = log.display(),
+            fail = bin.path().join("fail").display(),
+        ),
+    )
+    .expect("fake pactl");
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let path = std::env::join_paths(std::iter::once(bin.path().to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .expect("PATH");
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        vec![("PATH", path)]
+    });
+    let run = |id: &str| daemon.request(Request::RunMediaCommand { id: id.to_owned() });
+
+    assert!(matches!(run("volume-50"), Response::Ack));
+    assert!(matches!(run("volume-up"), Response::Ack));
+    assert!(matches!(run("toggle-mute"), Response::Ack));
+    let calls = std::fs::read_to_string(&log).expect("pactl ran");
+    let calls: Vec<&str> = calls.lines().collect();
+    assert_eq!(
+        calls,
+        [
+            "set-sink-volume @DEFAULT_SINK@ 50%",
+            "set-sink-volume @DEFAULT_SINK@ +5%",
+            "get-default-sink",
+            "--format=json list sinks",
+            "set-sink-mute @DEFAULT_SINK@ toggle",
+            "get-default-sink",
+            "--format=json list sinks",
+            "get-default-sink",
+            "--format=json list sinks",
+        ]
+    );
+
+    std::fs::write(bin.path().join("fail"), "").expect("make pactl fail");
+    let Response::Error(err) = run("volume-0") else {
+        panic!("a failing pactl was not reported");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::Internal, "Failed to set volume")
+    );
+}

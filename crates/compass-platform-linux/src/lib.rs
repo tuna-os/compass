@@ -16,4 +16,4 @@ pub mod dir_watcher;
 pub mod keyboard;
 mod launch;
 
-pub use launch::{LinuxLauncher, run_command};
+pub use launch::{LinuxLauncher, host_command, run_command};

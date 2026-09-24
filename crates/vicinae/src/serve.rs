@@ -345,6 +345,94 @@ async fn run_power_command(id: &str) -> Response {
 /// none prefers while it is still running.
 static LAST_PLAYER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// `pactl` on the host, bounded by the C++'s timeout.
+struct HostPactl;
+
+impl compass_core::audio_control::Pactl for HostPactl {
+    fn run(&self, args: &[&str]) -> Option<String> {
+        use std::io::Read;
+        use wait_timeout::ChildExt;
+        let mut child = compass_platform_linux::host_command("pactl")
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let mut stdout = child.stdout.take()?;
+        // Read while waiting, so a long sink list cannot fill the pipe.
+        let reader = std::thread::spawn(move || {
+            let mut out = String::new();
+            stdout.read_to_string(&mut out).map(|_| out)
+        });
+        let timeout = std::time::Duration::from_millis(compass_core::audio_control::TIMEOUT_MS);
+        match child.wait_timeout(timeout).ok()? {
+            Some(status) if status.success() => reader.join().ok()?.ok(),
+            Some(_) => None,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                None
+            }
+        }
+    }
+}
+
+/// Runs a volume command through `pactl`, answering with the sentence the
+/// C++ puts in its HUD, or refusing with its toast.
+fn run_volume_command(id: &str) -> Result<String, &'static str> {
+    use compass_core::media_commands::{
+        VOLUME_DOWN_STEP, VOLUME_PRESETS, VOLUME_UP_STEP, mute_message, step_fraction,
+        volume_hud_text,
+    };
+    let audio = compass_core::audio_control::PactlAudioControl::new(HostPactl);
+    match id {
+        "volume-up" | "volume-down" => {
+            let step = if id == "volume-up" {
+                VOLUME_UP_STEP
+            } else {
+                VOLUME_DOWN_STEP
+            };
+            audio
+                .adjust_volume(step_fraction(step))
+                .map(volume_hud_text)
+                .ok_or("Failed to adjust volume")
+        }
+        "toggle-mute" => {
+            if !audio.toggle_mute() {
+                return Err("Failed to toggle mute");
+            }
+            Ok(mute_message(audio.is_muted(), audio.volume()))
+        }
+        _ => {
+            let percent = VOLUME_PRESETS
+                .iter()
+                .map(|(percent, _)| *percent)
+                .find(|percent| id.strip_prefix("volume-") == Some(&percent.to_string()))
+                .ok_or("Failed to set volume")?;
+            audio
+                .set_volume(step_fraction(percent))
+                .map(volume_hud_text)
+                .ok_or("Failed to set volume")
+        }
+    }
+}
+
+/// Shows what the C++ puts in its HUD, as a short transient notification:
+/// the launcher has already hidden.
+async fn show_hud(text: &str) {
+    let shown = notify_rust::Notification::new()
+        .appname("Vicinae")
+        .summary(text)
+        .hint(notify_rust::Hint::Transient(true))
+        .timeout(notify_rust::Timeout::Milliseconds(1500))
+        .show_async()
+        .await;
+    if let Err(err) = shown {
+        tracing::info!(%err, text, "HUD not shown");
+    }
+}
+
 /// Runs a media command on the default player over MPRIS. What the C++ shows
 /// in its HUD goes out as a short-lived notification, since the launcher has
 /// already hidden.
@@ -356,6 +444,23 @@ async fn run_media_command(id: &str) -> Response {
         tracing::warn!(%err, command = id, "media command failed");
         Response::Error(ProtocolError::new(ErrorKind::Internal, message))
     };
+    // Without media control, the media extension registers only the volume
+    // commands.
+    if media_commands::registered_commands(false)
+        .iter()
+        .any(|command| command == id)
+    {
+        let owned = id.to_owned();
+        let answer = tokio::task::spawn_blocking(move || run_volume_command(&owned)).await;
+        return match answer {
+            Ok(Ok(hud)) => {
+                show_hud(&hud).await;
+                Response::Ack
+            }
+            Ok(Err(message)) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
+            Err(err) => failed("Failed to adjust volume", &err),
+        };
+    }
     let failure = match id {
         "play-pause" => "Failed to toggle playback",
         "next-track" => "Failed to skip to the next track",
@@ -419,16 +524,7 @@ async fn run_media_command(id: &str) -> Response {
     *LAST_PLAYER
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(player.id);
-    let shown = notify_rust::Notification::new()
-        .appname("Vicinae")
-        .summary(&hud)
-        .hint(notify_rust::Hint::Transient(true))
-        .timeout(notify_rust::Timeout::Milliseconds(1500))
-        .show_async()
-        .await;
-    if let Err(err) = shown {
-        tracing::info!(%err, hud, "media HUD not shown");
-    }
+    show_hud(&hud).await;
     Response::Ack
 }
 

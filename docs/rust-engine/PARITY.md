@@ -2030,8 +2030,9 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`). | The launcher has hidden by then and has no HUD, so the engine posts the same sentence as a transient desktop notification (1.5 s, `transient` hint). Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
-| 2 | Each takes an optional `player` argument, fuzzy-matched over the running players. | Not yet: the default player is always used (last acted on, else playing, else first, as `defaultPlayer`). | `the_default_player_is_the_last_then_the_playing_then_the_first` |
-| 3 | Now Playing and the volume commands. | Not yet: Now Playing needs a view; volume needs an audio backend. | — |
+| 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players; Turn Volume Up/Down take an optional `step`. | Not yet: the default player is always used (last acted on, else playing, else first, as `defaultPlayer`), and the step is always ±5. | `the_default_player_is_the_last_then_the_playing_then_the_first` |
+| 3 | Volume goes through `pactl`. | The same `pactl` invocations, through `flatpak-spawn --host` inside the Flatpak, with the C++'s 3 s timeout. `libpulse-binding` was considered and not taken: a C build dependency and a threaded mainloop for five calls the ported `pactl` adapter already makes. | `a_volume_command_runs_pactl_with_the_cpp_arguments` |
+| 4 | Now Playing. | Not yet: it needs a view. | — |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 
