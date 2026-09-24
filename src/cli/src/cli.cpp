@@ -276,7 +276,7 @@ public:
 // Suite 0 is a DIFFERENTIAL harness, and until this existed there was no
 // command in this tree that printed a ranking -- `-q/--query` on `toggle` and
 // `open` sends a deeplink that opens the window with fallback text, and
-// `app ls --json` lists loaded commands rather than ranking them. So the
+// `ls --json` lists loaded commands rather than ranking them. So the
 // harness could only ever compare the Rust engine against itself.
 //
 // `--json` is the shape the harness reads. The plain output is one id per

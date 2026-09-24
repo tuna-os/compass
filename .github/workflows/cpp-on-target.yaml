@@ -529,15 +529,26 @@ jobs:
 
                     # DOES THE ENGINE HAVE ANY ROOT ITEMS AT ALL?
                     #
-                    # `app ls --json` goes through listCommands, which calls
+                    # `ls --json` goes through listCommands, which calls
                     # RootItemManager::allItems() -- the same collection
                     # rootQuery ranks over, without the search. If this is
                     # empty too, the providers never loaded and the question
                     # is registration, not ranking. If it has entries and the
                     # query does not, the filter is the culprit.
+                    #
+                    # `ls` is a TOP-LEVEL command. The previous run asked for
+                    # `app ls --json`, which CLI11 rejected, and the probe
+                    # answered nothing at all. So the output is checked for
+                    # being JSON now: a usage error must not read as "empty".
                     echo "--- root items the engine knows about ---"
-                    timeout 15 vicinae app ls --json > /src/spike-items.json 2>&1 || true
-                    head -c 600 /src/spike-items.json
+                    timeout 15 vicinae ls --json > /src/spike-items.json 2>&1 || true
+                    if head -c 1 /src/spike-items.json | grep -q '[[{]'; then
+                      echo "items: $(grep -c '\"id\"' /src/spike-items.json)"
+                      head -c 600 /src/spike-items.json
+                    else
+                      echo "PROBE DID NOT RUN -- this is not an empty index:"
+                      head -c 400 /src/spike-items.json
+                    fi
                     echo
 
                     echo "--- and once more, bounded, for the record ---"
