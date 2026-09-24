@@ -1039,7 +1039,10 @@ root = os.environ["ROOT"]
 hits = json.load(open("/tmp/flatpak-query.json"))
 for hit in hits[:5]:
     print(f"  {hit['score']:3} {hit['id']}  {hit['title']}")
-if any(hit["id"] in (f"{app_id}.desktop", app_id) for hit in hits):
+# The wire carries the ENTRYPOINT id (`applications:<desktop id>`, see
+# serve.rs app_hit), not the desktop file name. The bare forms are kept so a
+# run against an older engine reads the same.
+if any(hit["id"] in (f"applications:{app_id}", f"{app_id}.desktop", app_id) for hit in hits):
     print(f"  ok: the {root} Flatpak {app_id} is in the index")
     sys.exit(0)
 sys.exit(
