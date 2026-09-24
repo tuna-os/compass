@@ -2865,3 +2865,141 @@ fn shortcuts_are_imported_created_searched_opened_edited_and_removed() {
     };
     assert_eq!(err.kind, ErrorKind::BadRequest);
 }
+
+#[test]
+fn snippets_are_imported_created_expanded_edited_and_removed() {
+    use compass_ipc::{ErrorKind, Request, Response, SnippetEntry};
+    let vicinae_file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        let file = root.join("data-home/vicinae/snippets/snippets.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"[{"id":"snp-aaaaaaaaaaaa","name":"Signature","data":{"text":"Best,\nMe"},
+                "createdAt":1700000000,"expansion":{"keyword":";sig","apps":[],"word":true}}]"#,
+        )
+        .unwrap();
+        vicinae_file.set(file).unwrap();
+        Vec::new()
+    });
+    let list = |response: Response| -> Vec<SnippetEntry> {
+        match response {
+            Response::Snippets { snippets } => snippets,
+            other => panic!("not a snippet list: {other:?}"),
+        }
+    };
+    let refused = |response: Response| -> (ErrorKind, String) {
+        match response {
+            Response::Error(err) => (err.kind, err.message),
+            other => panic!("not refused: {other:?}"),
+        }
+    };
+
+    let imported = list(daemon.request(Request::ListSnippets));
+    assert_eq!(imported.len(), 1, "Vicinae's snippet came across");
+    assert_eq!(imported[0].keyword.as_deref(), Some(";sig"));
+    assert_eq!(imported[0].text.as_deref(), Some("Best,\nMe"));
+
+    let saved =
+        list(
+            daemon.request(Request::SaveSnippet {
+                id: None,
+                name: "Greeting".into(),
+                text:
+                    "Hello {name}, {date format=\"yyyy\"} {shell code=\"echo shell-ran\"}{cursor}"
+                        .into(),
+                keyword: Some(";hi".into()),
+                word: false,
+                apps: vec![],
+            }),
+        );
+    assert_eq!(saved.len(), 2);
+    let greeting = saved.iter().find(|s| s.name == "Greeting").unwrap().clone();
+    assert!(greeting.id.starts_with("snp-"));
+    assert!(!greeting.word);
+
+    let (kind, message) = refused(daemon.request(Request::SaveSnippet {
+        id: None,
+        name: "Other".into(),
+        text: "x".into(),
+        keyword: Some(";sig".into()),
+        word: true,
+        apps: vec![],
+    }));
+    assert_eq!(kind, ErrorKind::BadRequest);
+    assert_eq!(message, "keyword already assigned to \"Signature\"");
+    let (kind, message) = refused(daemon.request(Request::SaveSnippet {
+        id: None,
+        name: "x".into(),
+        text: "{cursor}{cursor}".into(),
+        keyword: Some("has space".into()),
+        word: true,
+        apps: vec![],
+    }));
+    assert_eq!(kind, ErrorKind::BadRequest);
+    assert!(
+        message.contains("2 chars min.")
+            && message.contains("Only one {cursor}")
+            && message.contains("printable ASCII"),
+        "{message}"
+    );
+
+    let Response::Text { text } = daemon.request(Request::ExpandSnippet {
+        id: greeting.id.clone(),
+        arguments: vec![("name".into(), "Zoë".into())],
+    }) else {
+        panic!("not expanded");
+    };
+    let year: i32 = text
+        .split(", ")
+        .nth(1)
+        .and_then(|rest| rest.get(..4))
+        .and_then(|year| year.parse().ok())
+        .unwrap_or_else(|| panic!("no year in {text:?}"));
+    assert!(year >= 2024, "{text}");
+    assert_eq!(text, format!("Hello Zoë, {year} shell-ran"));
+
+    // Pasting needs the Shell extension, and this engine has no session bus.
+    let (kind, _) = refused(daemon.request(Request::PasteSnippet {
+        id: greeting.id.clone(),
+        arguments: vec![],
+    }));
+    assert_eq!(kind, ErrorKind::Unsupported);
+
+    let edited = list(daemon.request(Request::SaveSnippet {
+        id: Some(greeting.id.clone()),
+        name: "Hello".into(),
+        text: "Hi".into(),
+        keyword: Some(";hi".into()),
+        word: true,
+        apps: vec![],
+    }));
+    let hello = edited.iter().find(|s| s.id == greeting.id).unwrap();
+    assert_eq!(hello.name, "Hello");
+    assert!(hello.updated_at.is_some());
+    assert_eq!(hello.created_at, greeting.created_at);
+
+    let remaining = list(daemon.request(Request::RemoveSnippet {
+        id: "snp-aaaaaaaaaaaa".into(),
+    }));
+    assert_eq!(remaining.len(), 1);
+    let (kind, _) = refused(daemon.request(Request::RemoveSnippet {
+        id: "snp-aaaaaaaaaaaa".into(),
+    }));
+    assert_eq!(kind, ErrorKind::BadRequest);
+
+    let vicinae = std::fs::read_to_string(vicinae_file.get().unwrap()).unwrap();
+    assert!(vicinae.contains("Signature"), "Vicinae's file is untouched");
+    let compass = std::fs::read_to_string(
+        vicinae_file
+            .get()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("compass-snippets.json"),
+    )
+    .unwrap();
+    assert!(compass.contains("\"name\":\"Hello\"") && !compass.contains("Signature"));
+}

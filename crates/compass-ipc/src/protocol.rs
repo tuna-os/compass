@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
-/// shortcuts.
+/// shortcuts and snippets.
 pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
@@ -356,6 +356,48 @@ pub enum Request {
         /// Values for its argument placeholders, in order.
         arguments: Vec<String>,
     },
+    /// Every stored snippet, answered with [`Response::Snippets`].
+    ListSnippets,
+    /// Create a text snippet (`id` is `None`) or update one. Answered with
+    /// [`Response::Snippets`], the list after the change; a form that does not
+    /// validate, or a keyword another snippet has, is refused as
+    /// [`ErrorKind::BadRequest`] with the reason.
+    SaveSnippet {
+        /// The snippet to update, or `None` for a new one.
+        id: Option<String>,
+        /// Its name, two characters at least.
+        name: String,
+        /// Its text, `{placeholders}` and all.
+        text: String,
+        /// The keyword that expands it as it is typed, if any.
+        keyword: Option<String>,
+        /// Whether the keyword waits for a word boundary.
+        word: bool,
+        /// The applications the keyword is limited to; empty for everywhere.
+        apps: Vec<String>,
+    },
+    /// Remove a snippet. Answered with [`Response::Snippets`].
+    RemoveSnippet {
+        /// Which one.
+        id: String,
+    },
+    /// Expand a snippet with its arguments, running its `{shell}`
+    /// placeholders. Answered with [`Response::Text`]; a file snippet
+    /// answers with its path.
+    ExpandSnippet {
+        /// Which one.
+        id: String,
+        /// `(name, value)` for its arguments.
+        arguments: Vec<(String, String)>,
+    },
+    /// Expand a snippet and paste it into the focused window. Answered with
+    /// [`Response::Ack`] once pasted.
+    PasteSnippet {
+        /// Which one.
+        id: String,
+        /// `(name, value)` for its arguments.
+        arguments: Vec<(String, String)>,
+    },
 }
 
 /// What the engine answers.
@@ -470,6 +512,35 @@ pub enum Response {
         /// The text.
         text: String,
     },
+    /// Every stored snippet, in the store's order: the answer to
+    /// [`Request::ListSnippets`], and to a change to the list.
+    Snippets {
+        /// The snippets.
+        snippets: Vec<SnippetEntry>,
+    },
+}
+
+/// One stored snippet, as `snippets.json` holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnippetEntry {
+    /// `snp-` and twelve hex characters.
+    pub id: String,
+    /// What the user called it.
+    pub name: String,
+    /// Its text, for a text snippet.
+    pub text: Option<String>,
+    /// Its file, for a file snippet.
+    pub file: Option<String>,
+    /// When it was created, in Unix seconds.
+    pub created_at: u64,
+    /// When it was last edited, in Unix seconds, if it was.
+    pub updated_at: Option<u64>,
+    /// The keyword that expands it, if it has one.
+    pub keyword: Option<String>,
+    /// Whether the keyword waits for a word boundary.
+    pub word: bool,
+    /// The applications the keyword is limited to.
+    pub apps: Vec<String>,
 }
 
 /// One stored shortcut (quicklink), as `shortcuts.json` holds it.

@@ -123,6 +123,21 @@ pub enum Message {
     FilesSelected(usize),
     /// Opening a file (or showing it in the file browser) finished.
     FileOpened(Result<(), String>),
+    /// An edit in a form's text area, by field position.
+    PreferenceTextEdited(usize, iced::widget::text_editor::Action),
+    /// The snippet list arrived (on opening Manage Snippets, or after a
+    /// change), or why it could not be read.
+    SnippetsLoaded(Result<Vec<crate::backend::Snippet>, String>),
+    /// A snippet was saved (the list after it), or why it was not.
+    SnippetSaved(Result<Vec<crate::backend::Snippet>, String>),
+    /// A snippet's expansion, to copy, or why it could not be expanded.
+    SnippetExpanded(Result<String, String>),
+    /// Pasting a snippet finished.
+    SnippetPasted(Result<(), String>),
+    /// Manage Snippets' filter changed.
+    SnippetsQueryChanged(String),
+    /// A Manage Snippets row was clicked, by position.
+    SnippetSelected(usize),
     /// The shortcut list arrived, or why it could not be read.
     ShortcutsLoaded(Result<Vec<crate::backend::Shortcut>, String>),
     /// A shortcut was saved (the list after it), or why it was not.

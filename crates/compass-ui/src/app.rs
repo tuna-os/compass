@@ -26,6 +26,7 @@ use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
 mod shortcuts;
+mod snippets;
 
 /// The search field's widget id.
 ///
@@ -465,6 +466,8 @@ enum Page {
     Files(crate::files_page::FilesPage),
     /// Manage Shortcuts.
     Shortcuts(crate::shortcuts_page::ShortcutsPage),
+    /// Manage Snippets.
+    Snippets(crate::snippets_page::SnippetsPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -724,6 +727,8 @@ pub struct LauncherApp {
     /// Manage Shortcuts as it was when a form was opened over it, so going
     /// back returns to the same filter and selection.
     parked_shortcuts: Option<crate::shortcuts_page::ShortcutsPage>,
+    /// Manage Snippets as it was when a form was opened over it.
+    parked_snippets: Option<crate::snippets_page::SnippetsPage>,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -942,6 +947,7 @@ impl LauncherApp {
             started_at: None,
             awaiting: false,
             parked_shortcuts: None,
+            parked_snippets: None,
         }
     }
 
@@ -1159,6 +1165,14 @@ impl LauncherApp {
                 line.push_str(&format!(" selected_title={title:?}"));
             }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::Snippets(page) = &self.page {
+            line.push_str(&format!(
+                " page=snippets snippets_query={:?} snippets_shown={} snippets_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
         }
         if let Page::Shortcuts(page) = &self.page {
             line.push_str(&format!(
@@ -1705,6 +1719,8 @@ impl LauncherApp {
                     return focus_search();
                 } else if let Some(task) = self.open_shortcut_panel() {
                     return task;
+                } else if let Some(task) = self.open_snippet_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1760,7 +1776,9 @@ impl LauncherApp {
                     .as_ref()
                     .and_then(PanelState::selected_action)
                     .and_then(|action| action.id.clone())
-                    && let Some(task) = self.shortcut_panel_action(&id)
+                    && let Some(task) = self
+                        .shortcut_panel_action(&id)
+                        .or_else(|| self.snippet_panel_action(&id))
                 {
                     return task;
                 }
@@ -1855,8 +1873,17 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::PreferenceTextEdited(index, action) => {
+                if let Page::Preferences(page) = &mut self.page {
+                    page.edit_text_area(index, action);
+                }
+                Task::none()
+            }
             Message::PreferencesSubmit => {
                 if let Some(task) = self.submit_shortcut_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_snippet_form() {
                     return task;
                 }
                 let Page::Preferences(page) = &mut self.page else {
@@ -2112,8 +2139,17 @@ impl LauncherApp {
             | Message::ShortcutExpanded(_)
             | Message::ShortcutsQueryChanged(_)
             | Message::ShortcutSelected(_) => self.shortcut_message(message),
+            Message::SnippetsLoaded(_)
+            | Message::SnippetSaved(_)
+            | Message::SnippetExpanded(_)
+            | Message::SnippetPasted(_)
+            | Message::SnippetsQueryChanged(_)
+            | Message::SnippetSelected(_) => self.snippet_message(message),
             Message::Back => {
                 if let Some(task) = self.back_from_shortcut_form() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_snippet_form() {
                     return task;
                 }
                 let closing = self.close_extension_view();
@@ -2227,8 +2263,15 @@ impl LauncherApp {
                         _ => Task::none(),
                     };
                 }
-                if let Page::Preferences(_) = &self.page {
+                if let Page::Preferences(page) = &self.page {
                     return match key.as_ref() {
+                        // A text area's Enter is a newline; the form submits
+                        // with Ctrl+Enter.
+                        Key::Named(Named::Enter)
+                            if page.has_text_area() && !modifiers.control() =>
+                        {
+                            Task::none()
+                        }
                         Key::Named(Named::Enter) => self.update(Message::PreferencesSubmit),
                         Key::Named(Named::Escape) => self.update(Message::Back),
                         Key::Named(Named::Tab) if modifiers.shift() => {
@@ -2327,6 +2370,9 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::Shortcuts(_)) {
                     return self.shortcuts_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Snippets(_)) {
+                    return self.snippets_page_key(key, modifiers);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2558,6 +2604,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::ShortcutsQueryChanged as OnInput),
             ),
+            Page::Snippets(page) => (
+                "Search for snippets...",
+                &page.query,
+                Some(Message::SnippetsQueryChanged as OnInput),
+            ),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2617,6 +2668,8 @@ impl LauncherApp {
             self.files_body(page)
         } else if let Page::Shortcuts(page) = &self.page {
             self.shortcuts_body(page)
+        } else if let Page::Snippets(page) = &self.page {
+            self.snippets_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -3510,7 +3563,9 @@ impl LauncherApp {
                 }
                 crate::preferences_page::Purpose::Arguments
                 | crate::preferences_page::Purpose::ShortcutArguments
-                | crate::preferences_page::Purpose::ShortcutForm { .. } => page.title.clone(),
+                | crate::preferences_page::Purpose::ShortcutForm { .. }
+                | crate::preferences_page::Purpose::SnippetArguments { .. }
+                | crate::preferences_page::Purpose::SnippetForm { .. } => page.title.clone(),
             })
             .font(self.font())
             .size(14)
@@ -3563,6 +3618,16 @@ impl LauncherApp {
                     })
                     .into()
                 }
+                (PreferenceInputKind::TextArea, _) => match page.editors.get(&index) {
+                    Some(editor) => iced::widget::text_editor(editor)
+                        .placeholder(field.placeholder.as_str())
+                        .font(self.font())
+                        .height(Length::Fixed(120.0))
+                        .padding(8)
+                        .on_action(move |action| Message::PreferenceTextEdited(index, action))
+                        .into(),
+                    None => iced::widget::text("").into(),
+                },
                 (PreferenceInputKind::Unsupported { declared }, _) => {
                     iced::widget::text(format!("Compass cannot edit {declared} preferences yet"))
                         .font(self.font())
@@ -3943,6 +4008,11 @@ impl LauncherApp {
                 self.open_shortcut_form(compass_core::shortcut_form::Mode::Create, None, false),
             ]),
             CommandKind::ManageShortcuts => Task::batch([record, self.open_manage_shortcuts()]),
+            CommandKind::CreateSnippet => Task::batch([
+                record,
+                self.open_snippet_form(compass_core::shortcut_form::Mode::Create),
+            ]),
+            CommandKind::ManageSnippets => Task::batch([record, self.open_manage_snippets()]),
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
@@ -4522,6 +4592,9 @@ mod tests {
         assert_eq!(recorded_launch(false), [None]);
     }
 
+    /// A snippet the fake expanded or pasted: `(id, arguments, pasted)`.
+    type SnippetUse = (String, Vec<(String, String)>, bool);
+
     #[derive(Debug, Default)]
     struct TestBackend {
         keys: Vec<String>,
@@ -4562,6 +4635,12 @@ mod tests {
         opened_shortcuts: std::sync::Mutex<Vec<(String, Vec<String>)>>,
         /// The shortcuts saved, as the form sent them.
         drafts: std::sync::Mutex<Vec<crate::backend::ShortcutDraft>>,
+        /// The snippet store.
+        snippets: std::sync::Mutex<Vec<crate::backend::Snippet>>,
+        /// The snippets saved, as the form sent them.
+        snippet_drafts: std::sync::Mutex<Vec<crate::backend::SnippetDraft>>,
+        /// The snippets expanded or pasted: `(id, arguments, pasted)`.
+        snippet_uses: std::sync::Mutex<Vec<SnippetUse>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4619,6 +4698,82 @@ mod tests {
         fn open_file(&self, path: String, reveal: bool) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened.lock().unwrap().push((path, reveal));
+                Ok(())
+            })
+        }
+
+        fn list_snippets(&self) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move { Ok(self.snippets.lock().unwrap().clone()) })
+        }
+
+        fn save_snippet(
+            &self,
+            draft: crate::backend::SnippetDraft,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move {
+                self.snippet_drafts.lock().unwrap().push(draft.clone());
+                let mut snippets = self.snippets.lock().unwrap();
+                let id = draft
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("snp-{}", snippets.len()));
+                let stored = crate::backend::Snippet {
+                    id: id.clone(),
+                    name: draft.name,
+                    data: compass_core::snippet_store::SnippetData::Text { text: draft.text },
+                    expansion: draft.keyword.map(|keyword| {
+                        compass_core::snippet_store::StoredExpansion {
+                            keyword,
+                            apps: draft.apps,
+                            word: draft.word,
+                        }
+                    }),
+                    ..crate::backend::Snippet::default()
+                };
+                match snippets.iter_mut().find(|s| s.id == id) {
+                    Some(existing) => *existing = stored,
+                    None => snippets.push(stored),
+                }
+                Ok(snippets.clone())
+            })
+        }
+
+        fn remove_snippet(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move {
+                let mut snippets = self.snippets.lock().unwrap();
+                snippets.retain(|s| s.id != id);
+                Ok(snippets.clone())
+            })
+        }
+
+        fn expand_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                self.snippet_uses
+                    .lock()
+                    .unwrap()
+                    .push((id.clone(), arguments.clone(), false));
+                let values: Vec<String> = arguments.into_iter().map(|(_, v)| v).collect();
+                Ok(format!("{id}:{}", values.join(",")))
+            })
+        }
+
+        fn paste_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.snippet_uses
+                    .lock()
+                    .unwrap()
+                    .push((id, arguments, true));
                 Ok(())
             })
         }
@@ -7004,6 +7159,229 @@ mod tests {
                 .is_some_and(|n| n.contains("need the Compass engine")),
             "{:?}",
             page.notice
+        );
+    }
+
+    // ---- Snippets ----
+
+    fn stored_snippet(
+        id: &str,
+        name: &str,
+        text: &str,
+        keyword: Option<&str>,
+    ) -> crate::backend::Snippet {
+        crate::backend::Snippet {
+            id: id.into(),
+            name: name.into(),
+            data: compass_core::snippet_store::SnippetData::Text { text: text.into() },
+            expansion: keyword.map(|keyword| compass_core::snippet_store::StoredExpansion {
+                keyword: keyword.into(),
+                apps: vec!["org.gnome.TextEditor.desktop".into()],
+                word: true,
+            }),
+            ..crate::backend::Snippet::default()
+        }
+    }
+
+    /// An app whose engine holds two snippets, with Manage Snippets open.
+    fn snippets_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend {
+            snippets: std::sync::Mutex::new(vec![
+                stored_snippet("snp-sig", "Signature", "Best,\nMe", Some(";sig")),
+                stored_snippet("snp-hi", "Greeting", "Hello {name}!", None),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+        assert!(
+            app.state_line().contains("page=snippets"),
+            "{}",
+            app.state_line()
+        );
+        (app, backend)
+    }
+
+    fn ctrl_enter() -> Message {
+        Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    #[test]
+    fn manage_snippets_copies_asking_for_arguments_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = snippets_app(dir.path());
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets");
+        };
+        assert_eq!(page.shown, [0, 1]);
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(
+            writes,
+            ["snp-sig:"],
+            "Enter copies, as the C++'s primary action"
+        );
+        assert!(
+            !matches!(app.page, Page::Snippets(_)),
+            "copying hides the launcher: {}",
+            app.state_line()
+        );
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+
+        let _ = app.update(Message::SnippetsQueryChanged("greting".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "name");
+        // Escape goes back to the list, as it was.
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!(
+                "Escape did not return to Manage Snippets: {}",
+                app.state_line()
+            );
+        };
+        assert_eq!(page.query, "greting");
+
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("paste".into()));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("Zoë".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.snippet_uses.lock().unwrap().last(),
+            Some(&(
+                "snp-hi".to_owned(),
+                vec![("name".to_owned(), "Zoë".to_owned())],
+                true
+            ))
+        );
+        assert!(matches!(app.page, Page::Root), "pasting hides the launcher");
+    }
+
+    #[test]
+    fn create_snippet_takes_several_lines_and_saves_with_ctrl_enter() {
+        use crate::preferences_page::FieldValue;
+        use iced::widget::text_editor::{Action, Edit};
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "create snippet", "commands:create-snippet");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Create Snippet");
+        let content = page
+            .fields
+            .iter()
+            .position(|f| f.name == "content")
+            .unwrap();
+
+        let _ = app.update(Message::PreferenceEdited(0, FieldValue::Text("Sig".into())));
+        let _ = app.update(Message::PreferenceTextEdited(
+            content,
+            Action::Edit(Edit::Paste(Arc::new("Best,\n{cursor}".to_owned()))),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            2,
+            FieldValue::Text(" ;sig ".into()),
+        ));
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            backend.snippet_drafts.lock().unwrap().is_empty(),
+            "Enter is a newline in the text area, not a submit"
+        );
+        let task = app.update(ctrl_enter());
+        settle(&mut app, task);
+        assert_eq!(
+            backend.snippet_drafts.lock().unwrap().as_slice(),
+            [crate::backend::SnippetDraft {
+                id: None,
+                name: "Sig".into(),
+                text: "Best,\n{cursor}".into(),
+                keyword: Some(";sig".into()),
+                word: true,
+                apps: vec![],
+            }]
+        );
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+    }
+
+    #[test]
+    fn editing_a_snippet_keeps_its_apps_and_returns_to_the_list() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = snippets_app(dir.path());
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no edit form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Edit \"Signature\"");
+        let task = app.update(ctrl_enter());
+        settle(&mut app, task);
+        let draft = backend
+            .snippet_drafts
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap();
+        assert_eq!(draft.id.as_deref(), Some("snp-sig"));
+        assert_eq!(draft.apps, ["org.gnome.TextEditor.desktop"]);
+        assert!(
+            matches!(app.page, Page::Snippets(_)),
+            "{}",
+            app.state_line()
+        );
+
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets");
+        };
+        assert_eq!(
+            page.all.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["snp-hi"]
+        );
+    }
+
+    #[test]
+    fn snippets_without_an_engine_say_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets");
+        };
+        assert!(
+            matches!(&page.status, crate::snippets_page::Status::Failed(reason)
+                if reason.contains("need the Compass engine")),
+            "{:?}",
+            page.status
         );
     }
 

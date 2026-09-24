@@ -136,6 +136,34 @@ fn all_requests() -> Vec<Request> {
             id: "sct-0123456789ab".into(),
             arguments: vec![],
         },
+        Request::ListSnippets,
+        Request::SaveSnippet {
+            id: None,
+            name: "Signature ✍".into(),
+            text: "Best,\n{cursor}".into(),
+            keyword: Some(";sig".into()),
+            word: true,
+            apps: vec!["org.gnome.TextEditor.desktop".into()],
+        },
+        Request::SaveSnippet {
+            id: Some("snp-0123456789ab".into()),
+            name: "Address".into(),
+            text: "1 Rue de l'Église".into(),
+            keyword: None,
+            word: false,
+            apps: vec![],
+        },
+        Request::RemoveSnippet {
+            id: "snp-0123456789ab".into(),
+        },
+        Request::ExpandSnippet {
+            id: "snp-0123456789ab".into(),
+            arguments: vec![("name".into(), "Zoë".into())],
+        },
+        Request::PasteSnippet {
+            id: "snp-0123456789ab".into(),
+            arguments: vec![],
+        },
     ]
 }
 
@@ -336,6 +364,33 @@ fn all_responses() -> Vec<Response> {
         Response::Text {
             text: "https://x.test/?q=é".into(),
         },
+        Response::Snippets {
+            snippets: vec![
+                compass_ipc::SnippetEntry {
+                    id: "snp-0123456789ab".into(),
+                    name: "Signature ✍".into(),
+                    text: Some("Best,\n{cursor}".into()),
+                    file: None,
+                    created_at: 1_700_000_000,
+                    updated_at: Some(1_700_000_001),
+                    keyword: Some(";sig".into()),
+                    word: true,
+                    apps: vec![],
+                },
+                compass_ipc::SnippetEntry {
+                    id: "snp-ba9876543210".into(),
+                    name: "Logo".into(),
+                    text: None,
+                    file: Some("/home/me/logo.png".into()),
+                    created_at: 1_700_000_000,
+                    updated_at: None,
+                    keyword: None,
+                    word: false,
+                    apps: vec!["gimp.desktop".into()],
+                },
+            ],
+        },
+        Response::Snippets { snippets: vec![] },
     ]
 }
 
@@ -379,6 +434,11 @@ fn request_variants_are_exhaustive() {
             | Request::RemoveShortcut { .. }
             | Request::OpenShortcut { .. }
             | Request::ExpandShortcut { .. }
+            | Request::ListSnippets
+            | Request::SaveSnippet { .. }
+            | Request::RemoveSnippet { .. }
+            | Request::ExpandSnippet { .. }
+            | Request::PasteSnippet { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -405,6 +465,7 @@ fn response_variants_are_exhaustive() {
             | Response::Files { .. }
             | Response::Shortcuts { .. }
             | Response::Text { .. }
+            | Response::Snippets { .. }
             | Response::Window(_) => {}
         }
     }

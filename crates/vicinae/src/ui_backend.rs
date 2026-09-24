@@ -6,7 +6,7 @@ use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
     ClipboardRowKind, ExtensionStart, ExtensionViewState, FileResults, FileRow, Shortcut,
-    ShortcutDraft, WindowBackend, WindowRow,
+    ShortcutDraft, Snippet, SnippetDraft, WindowBackend, WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -104,6 +104,69 @@ impl ApplicationBackend for DaemonBackend {
         Box::pin(async move {
             match self
                 .ask(Request::OpenFile { path, reveal }, "Opening the file")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_snippets(&self) -> BackendFuture<'_, Vec<Snippet>> {
+        Box::pin(
+            async move { snippets(self.ask(Request::ListSnippets, "Listing snippets").await?) },
+        )
+    }
+
+    fn save_snippet(&self, snippet: SnippetDraft) -> BackendFuture<'_, Vec<Snippet>> {
+        Box::pin(async move {
+            let request = Request::SaveSnippet {
+                id: snippet.id,
+                name: snippet.name,
+                text: snippet.text,
+                keyword: snippet.keyword,
+                word: snippet.word,
+                apps: snippet.apps,
+            };
+            snippets(self.ask(request, "Saving the snippet").await?)
+        })
+    }
+
+    fn remove_snippet(&self, id: String) -> BackendFuture<'_, Vec<Snippet>> {
+        Box::pin(async move {
+            snippets(
+                self.ask(Request::RemoveSnippet { id }, "Removing the snippet")
+                    .await?,
+            )
+        })
+    }
+
+    fn expand_snippet(
+        &self,
+        id: String,
+        arguments: Vec<(String, String)>,
+    ) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExpandSnippet { id, arguments },
+                    "Expanding the snippet",
+                )
+                .await?
+            {
+                compass_ipc::Response::Text { text } => Ok(text),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn paste_snippet(&self, id: String, arguments: Vec<(String, String)>) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::PasteSnippet { id, arguments },
+                    "Pasting the snippet",
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
@@ -394,6 +457,33 @@ impl DaemonBackend {
             Ok(Ok(compass_ipc::Response::Error(error))) => Err(sentence(&error.message)),
             Ok(Ok(response)) => Ok(response),
         }
+    }
+}
+
+/// The snippet list in an engine answer.
+fn snippets(response: compass_ipc::Response) -> Result<Vec<Snippet>, String> {
+    use compass_core::snippet_store::{SnippetData, StoredExpansion};
+    match response {
+        compass_ipc::Response::Snippets { snippets } => Ok(snippets
+            .into_iter()
+            .map(|entry| Snippet {
+                id: entry.id,
+                name: entry.name,
+                data: match (entry.text, entry.file) {
+                    (Some(text), _) => SnippetData::Text { text },
+                    (None, Some(file)) => SnippetData::File { file },
+                    (None, None) => SnippetData::default(),
+                },
+                created_at: entry.created_at,
+                updated_at: entry.updated_at,
+                expansion: entry.keyword.map(|keyword| StoredExpansion {
+                    keyword,
+                    apps: entry.apps,
+                    word: entry.word,
+                }),
+            })
+            .collect()),
+        other => Err(format!("Unexpected answer from the engine: {other:?}")),
     }
 }
 

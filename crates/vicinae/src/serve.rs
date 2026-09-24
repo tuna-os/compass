@@ -100,6 +100,8 @@ pub struct EngineState {
     /// Shortcuts (quicklinks). `None` without a data directory to keep them
     /// in, and in tests that build the state around an index.
     shortcuts: Option<compass_core::shortcut_service::ShortcutService>,
+    /// Snippets, `None` on the same terms as `shortcuts`.
+    snippets: Option<compass_core::snippet_store::SnippetStore>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -145,6 +147,7 @@ impl EngineState {
         let frecency = Self::open_frecency();
 
         let shortcuts = crate::shortcuts::data_dir().map(|dir| crate::shortcuts::open(&dir));
+        let snippets = crate::shortcuts::data_dir().map(|dir| crate::snippets::open(&dir));
         if let Some(shortcuts) = &shortcuts {
             index.set_shortcuts(shortcuts.shortcuts().to_vec());
         }
@@ -169,6 +172,7 @@ impl EngineState {
             views: Arc::default(),
             files: Arc::new(files),
             shortcuts,
+            snippets,
         }
     }
 
@@ -216,6 +220,7 @@ impl EngineState {
             views: Arc::default(),
             files: Arc::default(),
             shortcuts: None,
+            snippets: None,
         }
     }
 
@@ -408,6 +413,130 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
             "no application opens this kind of file",
         ))
     }
+}
+
+/// The snippet list as the wire carries it.
+fn snippets_response(snippets: &compass_core::snippet_store::SnippetStore) -> Response {
+    Response::Snippets {
+        snippets: snippets
+            .snippets()
+            .iter()
+            .map(crate::snippets::entry)
+            .collect(),
+    }
+}
+
+fn snippets_unavailable() -> Response {
+    Response::Error(ProtocolError::new(
+        ErrorKind::Unsupported,
+        "snippets are unavailable: there is no data directory to keep them in",
+    ))
+}
+
+/// Creates or updates a text snippet, as `SnippetFormViewHost::submit` does:
+/// the form's rules first, then the store's (a keyword belongs to one
+/// snippet), each refusal carrying the sentence the form would show.
+async fn save_snippet(
+    state: &Arc<RwLock<EngineState>>,
+    id: Option<String>,
+    name: String,
+    text: String,
+    keyword: Option<String>,
+    word: bool,
+    apps: Vec<String>,
+) -> Response {
+    use compass_core::snippet_form::{Submission, submit};
+    use compass_core::snippet_store::{Error, SnippetData, SnippetPayload, StoredExpansion};
+    let cursors = compass_core::shortcut::parse_link(&text)
+        .placeholders
+        .iter()
+        .filter(|placeholder| placeholder.id == compass_core::snippet_expander::CURSOR_ID)
+        .count();
+    let keyword = keyword.unwrap_or_default();
+    let (name, content, expansion) =
+        match submit(id.as_deref(), &name, &text, cursors, &keyword, word, &apps) {
+            Submission::Rejected { errors, toast } => {
+                let reason = [errors.name, errors.content, errors.keyword]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("{toast}: {reason}"),
+                ));
+            }
+            Submission::Save {
+                name,
+                content,
+                expansion,
+                ..
+            } => (name, content, expansion),
+        };
+    let payload = SnippetPayload {
+        name,
+        data: SnippetData::Text { text: content },
+        expansion: expansion.map(|expansion| StoredExpansion {
+            keyword: expansion.keyword,
+            apps: expansion.apps,
+            word: expansion.word,
+        }),
+    };
+    let mut state = state.write().await;
+    let Some(snippets) = state.snippets.as_mut() else {
+        return snippets_unavailable();
+    };
+    let now = crate::shortcuts::now();
+    let saved = match &id {
+        Some(id) => snippets.update(id, payload, now),
+        None => snippets.add(payload, now).map(|_| ()),
+    };
+    match saved {
+        Ok(()) => snippets_response(snippets),
+        Err(error @ (Error::KeywordTaken(_) | Error::NoSuchId | Error::LimitReached)) => {
+            Response::Error(ProtocolError::new(ErrorKind::BadRequest, error.to_string()))
+        }
+        Err(error) => Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string())),
+    }
+}
+
+/// A snippet's text expanded with `arguments` (a file snippet's path),
+/// reading the clipboard first when the text asks for it.
+async fn expand_snippet(
+    state: &Arc<RwLock<EngineState>>,
+    id: &str,
+    arguments: &[(String, String)],
+) -> Result<String, Response> {
+    let (snippet, shell) = {
+        let state = state.read().await;
+        let Some(snippets) = &state.snippets else {
+            return Err(snippets_unavailable());
+        };
+        let Some(snippet) = snippets.find_by_id(id) else {
+            return Err(Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no snippet has that id",
+            )));
+        };
+        (snippet.clone(), state.shell.clone())
+    };
+    let text = match &snippet.data {
+        compass_core::snippet_store::SnippetData::Text { text } => text,
+        compass_core::snippet_store::SnippetData::File { file } => return Ok(file.clone()),
+    };
+    let mut clipboard = None;
+    if crate::snippets::needs_clipboard(text) {
+        match shell {
+            Some(shell) => match shell.clipboard().await {
+                Ok(content) => clipboard = content.as_text().map(str::to_owned),
+                Err(error) => tracing::info!(%error, "could not read the clipboard for a snippet"),
+            },
+            None => tracing::info!("no GNOME Shell extension; {{clipboard}} expands to nothing"),
+        }
+    }
+    Ok(crate::snippets::expand(text, arguments, clipboard)
+        .await
+        .to_text())
 }
 
 /// The shortcut list as the wire carries it.
@@ -1388,6 +1517,66 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             shortcuts_response(shortcuts)
         }
         Request::OpenShortcut { id, arguments } => open_shortcut(state, &id, &arguments).await,
+        Request::ListSnippets => {
+            let state = state.read().await;
+            match &state.snippets {
+                Some(snippets) => snippets_response(snippets),
+                None => snippets_unavailable(),
+            }
+        }
+        Request::SaveSnippet {
+            id,
+            name,
+            text,
+            keyword,
+            word,
+            apps,
+        } => save_snippet(state, id, name, text, keyword, word, apps).await,
+        Request::RemoveSnippet { id } => {
+            let mut state = state.write().await;
+            let Some(snippets) = state.snippets.as_mut() else {
+                return snippets_unavailable();
+            };
+            match snippets.remove(&id) {
+                Ok(_) => snippets_response(snippets),
+                Err(error @ compass_core::snippet_store::Error::NoSuchSnippet) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, error.to_string()))
+                }
+                Err(error) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string()))
+                }
+            }
+        }
+        Request::ExpandSnippet { id, arguments } => {
+            match expand_snippet(state, &id, &arguments).await {
+                Ok(text) => Response::Text { text },
+                Err(response) => response,
+            }
+        }
+        Request::PasteSnippet { id, arguments } => {
+            const WHAT: &str = "Pasting";
+            let text = match expand_snippet(state, &id, &arguments).await {
+                Ok(text) => text,
+                Err(response) => return response,
+            };
+            let Some(shell) = state.read().await.shell.clone() else {
+                return Response::Error(crate::window_service::no_bus(WHAT));
+            };
+            let terminals = {
+                let state = state.read().await;
+                compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
+            };
+            let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
+            let content = compass_shell::ClipboardContent::text(text);
+            let pasted = match shell.set_clipboard(&content).await {
+                Ok(()) => shell.paste(&terminals).await,
+                Err(err) => Err(err),
+            };
+            match pasted {
+                Ok(()) => Response::Ack,
+                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
+            }
+        }
         Request::ExpandShortcut { id, arguments } => {
             match expand_shortcut(state, &id, &arguments).await {
                 Ok((_, expanded)) => Response::Text { text: expanded },

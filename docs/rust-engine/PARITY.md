@@ -321,8 +321,9 @@ ordinary value here; a singleton is how that file is reached, not what it does.
 `Expansion::validateKeyword`: a two-character minimum name, non-empty content with at most one
 `{cursor}`, and a keyword that is optional but, when given, must be printable ASCII with no spaces
 and at most 32 bytes. The two success toasts are not symmetrical ("Snippet updated" against
-"Snippet successfully created") and are copied as they are. Still C++-only: the QML form, the
-snippet store, and the manage-snippets list.
+"Snippet successfully created") and are copied as they are. The store is
+`compass-core::snippet_store` and Create Snippet / Manage Snippets run end to end (see "Snippets —
+what the port does not have yet"); keyword expansion as you type is still C++-only.
 
 **`src/builtins/shortcut` → `compass-core::shortcut_form`** — the quicklink form: what each mode
 prefills (`Copy of %1` only when duplicating, the quoted navigation titles), the reverts to
@@ -2108,6 +2109,28 @@ visits. What differs:
 | 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text. | Ranked like every other root item; no fallback rows yet. | — |
 | 9 | The migration from the pre-JSON SQLite `shortcut` table. | Not run: the one-shot import is from Vicinae's JSON file, which already holds a migrated list. | — |
 | 10 | A removal toast ("Removed link") and success toasts after saving. | The list updates in place; failures show in the view. | `manage_shortcuts_filters_edits_and_removes` |
+
+### Snippets — what the port does not have yet
+
+Create Snippet and Manage Snippets run end to end: the engine keeps snippets in
+`$XDG_DATA_HOME/vicinae/compass-snippets.json` (the first start without one copies Vicinae's
+`snippets/snippets.json`, which glaze writes in the same shape), answers
+`ListSnippets`/`SaveSnippet`/`RemoveSnippet`/`ExpandSnippet`/`PasteSnippet` (IPC v11), validates
+with the form's rules and the store's (a keyword belongs to one snippet), and expands with the
+ported expander: `{clipboard}` through the Shell extension, `{uuid}`, `{date format=…}` in Qt's
+syntax on the local clock (`jiff`), `{shell}` placeholders run concurrently under the 2 s limit,
+arguments by name. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Typing a keyword anywhere expands the snippet: `vicinae-snippet-server` reads `/dev/input` (libudev, xkbcommon), injects through uinput or the clipboard, with undo on backspace, per-app limits and the extension's delay/layout preferences. | **Not ported.** The trigger matcher (`compass-core::snippet`), the injection protocol (`compass-platform-linux::keyboard`) and the server's framing (`compass-core::input_server`) are, but no process reads the keyboard; keywords are stored and shown, and do nothing yet. | `compass-core::snippet` tests |
+| 2 | Arguments are completion fields beside the search text. | A form with one field per argument (named once, in order of first use); an empty optional one takes its default. | `manage_snippets_copies_asking_for_arguments_first` |
+| 3 | Copy to clipboard copies text as transient (not recorded in history), and a file snippet as the file. | The launcher writes the expanded text to the clipboard itself; a file snippet copies its path as text. No form creates file snippets (the C++ form does not either). | — |
+| 4 | — | Paste, which the C++ list does not offer: the expansion is put on the clipboard and pasted through the Shell extension, as clipboard history pastes. | `snippets_are_imported_created_expanded_edited_and_removed` |
+| 5 | The form edits the keyword's application list, and offers placeholder completions in the content field. | The list is kept as it was (a duplicate keeps it too); the content field's help text names the placeholders. | `editing_a_snippet_keeps_its_apps_and_returns_to_the_list` |
+| 6 | A detail pane shows the type, the dates, the keyword and its apps, and the expansion as arguments are typed (shell placeholders shown as `$(code)`). | Rows carry the keyword (or the text's first words) as their subtitle; no detail pane yet. | `the_subtitle_is_the_keyword_or_the_first_words` |
+| 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | Parsed with the quicklink parser, which has no escape: `\{` is a backslash and a placeholder. | — |
+| 8 | `{argument}` with no `name=` is collected as an argument with an empty name. | Left out of the form; it expands to nothing either way. | `arguments_are_named_once_and_reserved_ids_are_not_arguments` |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 

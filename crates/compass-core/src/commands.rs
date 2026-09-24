@@ -47,6 +47,10 @@ pub enum CommandKind {
     CreateShortcut,
     /// List, open, edit and remove quicklinks.
     ManageShortcuts,
+    /// The form a new snippet is made in.
+    CreateSnippet,
+    /// List, copy, paste, edit and remove snippets.
+    ManageSnippets,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -114,6 +118,22 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Open, edit and remove your shortcuts",
         keywords: &["shortcuts", "quicklinks", "links", "bookmarks"],
         icon: "bolt",
+    },
+    BuiltinCommand {
+        kind: CommandKind::CreateSnippet,
+        entrypoint: "create-snippet",
+        title: "Create Snippet",
+        subtitle: "Save text to paste or expand as you type",
+        keywords: &["snippet", "text", "template", "expansion", "new"],
+        icon: "snippets",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ManageSnippets,
+        entrypoint: "manage-snippets",
+        title: "Manage Snippets",
+        subtitle: "Copy, paste, edit and remove your snippets",
+        keywords: &["snippets", "text", "templates", "paste", "search"],
+        icon: "snippets",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

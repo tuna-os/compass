@@ -29,6 +29,7 @@ pub mod ipc;
 pub mod serve;
 pub mod session;
 pub mod shortcuts;
+pub mod snippets;
 pub mod spike;
 pub mod typography;
 pub mod ui_backend;

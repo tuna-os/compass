@@ -79,6 +79,40 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
     }
 
+    /// Every stored snippet, in the store's order.
+    fn list_snippets(&self) -> BackendFuture<'_, Vec<Snippet>> {
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Creates a snippet (`id` is `None`) or updates one, answering with the
+    /// list after the change. An error is the sentence to show.
+    fn save_snippet(&self, snippet: SnippetDraft) -> BackendFuture<'_, Vec<Snippet>> {
+        let _ = snippet;
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Removes a snippet, answering with the list after the change.
+    fn remove_snippet(&self, id: String) -> BackendFuture<'_, Vec<Snippet>> {
+        let _ = id;
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// A snippet expanded with its arguments, to copy.
+    fn expand_snippet(
+        &self,
+        id: String,
+        arguments: Vec<(String, String)>,
+    ) -> BackendFuture<'_, String> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Expands a snippet and pastes it into the focused window.
+    fn paste_snippet(&self, id: String, arguments: Vec<(String, String)>) -> BackendFuture<'_, ()> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
     /// Run an installed extension's command by its entrypoint id, with the
     /// argument values entered for it, or `None` when none have been. `Ok`
     /// once the engine has started it; an error is a sentence saying why it
@@ -157,6 +191,29 @@ const FILES_NEED_ENGINE: &str =
 
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
+
+const SNIPPETS_NEED_ENGINE: &str =
+    "Snippets need the Compass engine, and this window is running without one";
+
+/// A stored snippet, as the engine lists it.
+pub type Snippet = compass_core::snippet_store::SerializedSnippet;
+
+/// A text snippet to save.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnippetDraft {
+    /// The snippet to update, or `None` for a new one.
+    pub id: Option<String>,
+    /// Its name.
+    pub name: String,
+    /// Its text.
+    pub text: String,
+    /// Its keyword, if any.
+    pub keyword: Option<String>,
+    /// Whether the keyword waits for a word boundary.
+    pub word: bool,
+    /// The applications the keyword is limited to.
+    pub apps: Vec<String>,
+}
 
 /// A stored shortcut, as the engine lists it.
 pub type Shortcut = compass_core::shortcut_store::SerializedShortcut;
@@ -256,6 +313,8 @@ pub enum PreferenceInputKind {
         /// The options.
         options: Vec<(String, String)>,
     },
+    /// Several lines of text.
+    TextArea,
     /// A kind the form cannot edit yet.
     Unsupported {
         /// What the manifest calls it.

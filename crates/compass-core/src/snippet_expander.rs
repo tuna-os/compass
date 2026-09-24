@@ -272,3 +272,65 @@ pub fn expand_to_string(
 ) -> String {
     expand(parts, arguments, Options::default(), context).to_text()
 }
+
+/// The placeholders a snippet's text reserves, as `parseSnippetText` lists
+/// them; every other placeholder, and `argument`, is an argument.
+pub const RESERVED_IDS: &[&str] = &[UUID_ID, CLIPBOARD_ID, DATE_ID, CURSOR_ID, SHELL_ID];
+
+/// The arguments a snippet's text asks for, in order of first appearance and
+/// each name once: an argument is identified by its name and can be expanded
+/// in several places, as `PlaceholderString::parse` collects them.
+///
+/// `{argument}` with no `name=` names nothing the expander could fill, and is
+/// left out rather than asked for under an empty label.
+#[must_use]
+pub fn arguments(parts: &[UrlPart]) -> Vec<crate::shortcut::Argument> {
+    let mut found: Vec<crate::shortcut::Argument> = Vec::new();
+    for part in parts {
+        let UrlPart::Placeholder(placeholder) = part else {
+            continue;
+        };
+        let argument = if placeholder.id == ARGUMENT_ID {
+            let Some(name) = placeholder.args.get("name") else {
+                continue;
+            };
+            crate::shortcut::Argument {
+                name: name.clone(),
+                default_value: placeholder.args.get("default").cloned().unwrap_or_default(),
+            }
+        } else if RESERVED_IDS.contains(&placeholder.id.as_str()) {
+            continue;
+        } else {
+            crate::shortcut::Argument {
+                name: placeholder.id.clone(),
+                default_value: String::new(),
+            }
+        };
+        if !found.iter().any(|known| known.name == argument.name) {
+            found.push(argument);
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod argument_tests {
+    use super::*;
+
+    #[test]
+    fn arguments_are_named_once_and_reserved_ids_are_not_arguments() {
+        let parts = crate::shortcut::parse_link(
+            "Hi {name}, {argument name=\"topic\" default=\"news\"} {cursor}{clipboard} \
+             {name} {argument} {date format=yyyy}",
+        )
+        .parts;
+        let found = arguments(&parts);
+        assert_eq!(
+            found
+                .iter()
+                .map(|a| (a.name.as_str(), a.default_value.as_str()))
+                .collect::<Vec<_>>(),
+            [("name", ""), ("topic", "news")]
+        );
+    }
+}

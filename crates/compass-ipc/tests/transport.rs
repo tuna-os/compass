@@ -108,11 +108,15 @@ async fn echo_handler(request: Request) -> Response {
         | Request::CloseExtension { .. }
         | Request::OpenFile { .. }
         | Request::OAuthRedirect { .. }
-        | Request::OpenShortcut { .. } => Response::Ack,
+        | Request::OpenShortcut { .. }
+        | Request::PasteSnippet { .. } => Response::Ack,
+        Request::ListSnippets | Request::SaveSnippet { .. } | Request::RemoveSnippet { .. } => {
+            Response::Snippets { snippets: vec![] }
+        }
         Request::ListShortcuts | Request::SaveShortcut { .. } | Request::RemoveShortcut { .. } => {
             Response::Shortcuts { shortcuts: vec![] }
         }
-        Request::ExpandShortcut { .. } => Response::Text {
+        Request::ExpandShortcut { .. } | Request::ExpandSnippet { .. } => Response::Text {
             text: String::new(),
         },
         Request::SearchFiles { .. } => Response::Files {

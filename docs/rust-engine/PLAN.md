@@ -499,9 +499,10 @@ media control · power management · shortcuts · snippets · system · theme ·
 dmenu · store front-ends · window/workspace · developer tools.
 
 *Track A status:* running end to end (engine, IPC, launcher page, tests) — calculator, clipboard
-history, emoji, window switching, power, media and volume, Search Files, and shortcuts (Create
-Shortcut, Manage Shortcuts, shortcuts in root search; IPC v13). What each still lacks is in
-`PARITY.md`, one section per builtin.
+history, emoji, window switching, power, media and volume, Search Files, shortcuts (Create
+Shortcut, Manage Shortcuts, shortcuts in root search; IPC v13), and snippets (Create Snippet,
+Manage Snippets: copy, paste, edit; keyword expansion waits on the input server, which is not
+ported). What each still lacks is in `PARITY.md`, one section per builtin.
 
 **Browser tab search and switching is not in this list.** It is out of scope for the port and
 becomes an extension — see [ADR-0008](./adr/0008-browser-control-is-an-extension.md). It is a
