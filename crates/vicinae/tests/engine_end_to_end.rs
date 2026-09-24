@@ -1074,6 +1074,9 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "show", "title": "Show Greeting", "mode": "view"},
               {"name": "nav", "title": "Navigate", "mode": "view"},
               {"name": "ask", "title": "Ask First", "mode": "view"},
+              {"name": "greet", "title": "Greet Someone", "mode": "no-view",
+               "arguments": [{"name": "name", "type": "text", "placeholder": "Name",
+                              "required": true}]},
               {"name": "needs", "title": "Needs Token", "mode": "no-view",
                "preferences": [{"name": "token", "title": "API Token", "type": "password",
                                 "required": true}]}
@@ -1132,6 +1135,17 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
         ),
     )
     .unwrap();
+    let greeted = root.join("data-home/vicinae/support/hello/greeted.txt");
+    std::fs::write(
+        ext.join("greet.js"),
+        format!(
+            "module.exports.default = async (props) => {{
+               require('node:fs').writeFileSync({greeted:?}, 'hi ' + props.arguments.name);
+             }};",
+            greeted = greeted.to_string_lossy()
+        ),
+    )
+    .unwrap();
     // Outside every path the sandbox grants: the data home itself, beside the
     // support directory the command may write.
     let escape = root.join("data-home/escape.txt");
@@ -1186,7 +1200,10 @@ fn an_installed_extension_command_is_found_and_a_no_view_one_runs() {
     assert_eq!(hit.id, "@someone/hello:write");
     assert_eq!(hit.subtitle.as_deref(), Some("Hello"));
 
-    let started = daemon.request(Request::RunExtensionCommand { id: hit.id.clone() });
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: hit.id.clone(),
+        arguments_json: None,
+    });
     assert_eq!(started, Response::Ack, "{started:?}");
     let deadline = Instant::now() + Duration::from_secs(20);
     while !out.exists() && Instant::now() < deadline {
@@ -1200,6 +1217,7 @@ fn an_installed_extension_command_is_found_and_a_no_view_one_runs() {
 
     let Response::Error(err) = daemon.request(Request::RunExtensionCommand {
         id: "@someone/hello:nothing".into(),
+        arguments_json: None,
     }) else {
         panic!("an unknown id was not refused");
     };
@@ -1227,6 +1245,7 @@ fn a_view_command_renders_and_its_action_runs() {
 
     let started = daemon.request(Request::RunExtensionCommand {
         id: "@someone/hello:show".into(),
+        arguments_json: None,
     });
     let Response::ExtensionStarted { session } = started else {
         panic!("the view command did not start a session: {started:?}");
@@ -1341,6 +1360,7 @@ fn a_pushed_view_shows_and_escape_pops_back_to_the_list() {
     });
     let started = daemon.request(Request::RunExtensionCommand {
         id: "@someone/hello:nav".into(),
+        arguments_json: None,
     });
     let Response::ExtensionStarted { session } = started else {
         panic!("no session: {started:?}");
@@ -1410,6 +1430,7 @@ fn an_alert_reaches_the_launcher_and_its_answer_reaches_the_extension() {
     });
     let started = daemon.request(Request::RunExtensionCommand {
         id: "@someone/hello:ask".into(),
+        arguments_json: None,
     });
     let Response::ExtensionStarted { session } = started else {
         panic!("no session: {started:?}");
@@ -1489,6 +1510,7 @@ fn a_required_preference_without_a_keyring_is_refused_by_name() {
     });
     let answer = daemon.request(Request::RunExtensionCommand {
         id: "@someone/hello:needs".into(),
+        arguments_json: None,
     });
     let Response::Error(err) = answer else {
         panic!("not refused: {answer:?}");
@@ -1498,5 +1520,60 @@ fn a_required_preference_without_a_keyring_is_refused_by_name() {
         err.message.contains("API Token") && err.message.contains("keyring"),
         "{}",
         err.message
+    );
+}
+
+#[test]
+fn a_command_with_arguments_is_asked_for_them_then_runs_with_them() {
+    use compass_ipc::{PreferenceFieldKind, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut greeted = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        greeted = dir.join("data-home/vicinae/support/hello/greeted.txt");
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let run = |arguments_json: Option<&str>| {
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:greet".into(),
+            arguments_json: arguments_json.map(str::to_owned),
+        })
+    };
+
+    let Response::ExtensionNeedsArguments { title, fields } = run(None) else {
+        panic!("not asked for its arguments");
+    };
+    assert_eq!(title, "Greet Someone");
+    assert_eq!(fields.len(), 1);
+    assert_eq!(
+        (fields[0].name.as_str(), fields[0].title.as_str()),
+        ("name", "Name")
+    );
+    assert!(fields[0].required && fields[0].kind == PreferenceFieldKind::Text);
+
+    assert!(
+        matches!(
+            run(Some(r#"{"name": ""}"#)),
+            Response::ExtensionNeedsArguments { .. }
+        ),
+        "an empty required argument is asked for again"
+    );
+    assert!(!greeted.exists(), "and nothing ran");
+
+    assert_eq!(run(Some(r#"{"name": "Ada"}"#)), Response::Ack);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !greeted.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&greeted).expect("the command ran"),
+        "hi Ada"
     );
 }

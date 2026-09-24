@@ -20,11 +20,16 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// Record an already successful launch; never execute the application again.
     fn record_launch(&self, key: String) -> BackendFuture<'_, ()>;
 
-    /// Run an installed extension's command by its entrypoint id. `Ok` once
-    /// the engine has started it; an error is a sentence saying why it could
-    /// not, for the launcher to show.
-    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ExtensionStart> {
-        let _ = id;
+    /// Run an installed extension's command by its entrypoint id, with the
+    /// argument values entered for it, or `None` when none have been. `Ok`
+    /// once the engine has started it; an error is a sentence saying why it
+    /// could not, for the launcher to show.
+    fn run_extension_command(
+        &self,
+        id: String,
+        arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> BackendFuture<'_, ExtensionStart> {
+        let _ = (id, arguments);
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
@@ -89,6 +94,14 @@ pub enum ExtensionStart {
         /// The command's title.
         title: String,
         /// Every preference it reads.
+        fields: Vec<PreferenceInput>,
+    },
+    /// It did not start: it takes arguments, and has not been given them
+    /// (or a required one is empty). The form.
+    NeedsArguments {
+        /// The command's title.
+        title: String,
+        /// Every argument, with what was already entered.
         fields: Vec<PreferenceInput>,
     },
 }

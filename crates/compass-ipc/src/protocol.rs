@@ -202,6 +202,10 @@ pub enum Request {
     RunExtensionCommand {
         /// [`QueryHit::id`].
         id: String,
+        /// The command's argument values as a JSON object, or `None` when the
+        /// launcher has none to give: a command that declares arguments is
+        /// then answered with [`Response::ExtensionNeedsArguments`].
+        arguments_json: Option<String>,
     },
     /// What a view command's session shows, once it differs from `after`.
     ///
@@ -336,6 +340,15 @@ pub enum Response {
         /// The command's title, for the form's heading.
         title: String,
         /// Every preference the command reads, required ones included.
+        fields: Vec<PreferenceField>,
+    },
+    /// Answer to [`Request::RunExtensionCommand`] when the command declares
+    /// arguments and was given none, or left a required one empty: the form
+    /// to show. Run the command again with what was entered.
+    ExtensionNeedsArguments {
+        /// The command's title, for the form's heading.
+        title: String,
+        /// Every argument, in the manifest's order.
         fields: Vec<PreferenceField>,
     },
 }

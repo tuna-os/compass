@@ -47,10 +47,19 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
-    fn run_extension_command(&self, id: String) -> BackendFuture<'_, ExtensionStart> {
+    fn run_extension_command(
+        &self,
+        id: String,
+        arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> BackendFuture<'_, ExtensionStart> {
         Box::pin(async move {
+            let arguments_json =
+                arguments.map(|arguments| serde_json::Value::Object(arguments).to_string());
             match self
-                .ask(Request::RunExtensionCommand { id }, "Running the command")
+                .ask(
+                    Request::RunExtensionCommand { id, arguments_json },
+                    "Running the command",
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(ExtensionStart::Ran),
@@ -59,6 +68,12 @@ impl ApplicationBackend for DaemonBackend {
                 }
                 compass_ipc::Response::ExtensionNeedsPreferences { title, fields } => {
                     Ok(ExtensionStart::NeedsPreferences {
+                        title,
+                        fields: fields.into_iter().map(preference_input).collect(),
+                    })
+                }
+                compass_ipc::Response::ExtensionNeedsArguments { title, fields } => {
+                    Ok(ExtensionStart::NeedsArguments {
                         title,
                         fields: fields.into_iter().map(preference_input).collect(),
                     })

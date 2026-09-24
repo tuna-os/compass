@@ -64,6 +64,7 @@ fn all_requests() -> Vec<Request> {
         Request::ClipboardRemove { id: "abc".into() },
         Request::RunExtensionCommand {
             id: "@raycast/github:search-repositories".into(),
+            arguments_json: Some(r#"{"query":"compass"}"#.into()),
         },
         Request::ExtensionView {
             session: 1,
@@ -195,6 +196,18 @@ fn all_responses() -> Vec<Response> {
             }],
         },
         Response::ExtensionStarted { session: 7 },
+        Response::ExtensionNeedsArguments {
+            title: "Search Repositories".into(),
+            fields: vec![compass_ipc::PreferenceField {
+                name: "query".into(),
+                title: "Query".into(),
+                description: String::new(),
+                placeholder: "Query".into(),
+                required: true,
+                kind: compass_ipc::PreferenceFieldKind::Text,
+                value_json: None,
+            }],
+        },
         Response::ExtensionNeedsPreferences {
             title: "Search Repositories".into(),
             fields: vec![
@@ -295,6 +308,7 @@ fn response_variants_are_exhaustive() {
             | Response::Windows { .. }
             | Response::ExtensionStarted { .. }
             | Response::ExtensionNeedsPreferences { .. }
+            | Response::ExtensionNeedsArguments { .. }
             | Response::ExtensionView { .. }
             | Response::Window(_) => {}
         }

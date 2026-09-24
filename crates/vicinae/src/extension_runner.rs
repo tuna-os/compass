@@ -332,6 +332,7 @@ pub fn start(
         shell,
         views,
         preferences,
+        arguments,
     } = host;
 
     // The runtime creates these itself, but a sandbox can only grant a path
@@ -376,7 +377,7 @@ pub fn start(
         extension_id: command.extension_id.clone(),
         extension_name: command.extension_name.clone(),
         owner_or_author_name: command.author.clone(),
-        arguments: serde_json::json!({}),
+        arguments,
         preferences,
         launch_context: serde_json::Value::Null,
         launch_type: LaunchType::User,
@@ -458,6 +459,8 @@ pub struct Host {
     pub views: Arc<Views>,
     /// The preference values the command reads, already resolved.
     pub preferences: serde_json::Value,
+    /// The argument values it was launched with.
+    pub arguments: serde_json::Value,
 }
 
 /// How a run began.

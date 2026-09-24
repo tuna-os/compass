@@ -1765,6 +1765,14 @@ impl LauncherApp {
                         return Task::none();
                     }
                 };
+                if page.purpose == crate::preferences_page::Purpose::Arguments {
+                    let id = page.command_id.clone();
+                    self.page = Page::Root;
+                    return match self.app_index.extensions().iter().position(|c| c.id == id) {
+                        Some(index) => self.run_extension_command_with(index, Some(values)),
+                        None => Task::none(),
+                    };
+                }
                 let Some(backend) = self.backend.clone() else {
                     return Task::none();
                 };
@@ -1792,9 +1800,23 @@ impl LauncherApp {
             Message::ExtensionCommandStarted { id, title, result } => match result {
                 Ok(crate::backend::ExtensionStart::Ran) => self.conceal(),
                 Ok(crate::backend::ExtensionStart::NeedsPreferences { title, fields }) => {
-                    self.page = Page::Preferences(Box::new(
-                        crate::preferences_page::PreferencesPage::new(id, title, fields),
-                    ));
+                    self.page =
+                        Page::Preferences(Box::new(crate::preferences_page::PreferencesPage::new(
+                            crate::preferences_page::Purpose::Preferences,
+                            id,
+                            title,
+                            fields,
+                        )));
+                    Task::none()
+                }
+                Ok(crate::backend::ExtensionStart::NeedsArguments { title, fields }) => {
+                    self.page =
+                        Page::Preferences(Box::new(crate::preferences_page::PreferencesPage::new(
+                            crate::preferences_page::Purpose::Arguments,
+                            id,
+                            title,
+                            fields,
+                        )));
                     Task::none()
                 }
                 Ok(crate::backend::ExtensionStart::View(session)) => {
@@ -2837,6 +2859,15 @@ impl LauncherApp {
     /// Hands an extension command to the engine, which runs it; the launcher
     /// hides once it has started, and says why when it could not.
     fn run_extension_command(&mut self, index: usize) -> Task<Message> {
+        self.run_extension_command_with(index, None)
+    }
+
+    /// [`Self::run_extension_command`], with the arguments entered for it.
+    fn run_extension_command_with(
+        &mut self,
+        index: usize,
+        arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Task<Message> {
         self.panel = None;
         let Some(command) = self.app_index.extensions().get(index) else {
             return Task::none();
@@ -2852,7 +2883,7 @@ impl LauncherApp {
         let title = command.title.clone();
         let started_id = id.clone();
         Task::perform(
-            async move { backend.run_extension_command(id).await },
+            async move { backend.run_extension_command(id, arguments).await },
             move |result| Message::ExtensionCommandStarted {
                 id: started_id.clone(),
                 title: title.clone(),
@@ -2931,9 +2962,14 @@ impl LauncherApp {
         use crate::backend::PreferenceInputKind;
         use crate::preferences_page::FieldValue;
         let mut form = column![
-            iced::widget::text(format!("{} needs a few settings", page.title))
-                .font(self.font())
-                .size(14)
+            iced::widget::text(match page.purpose {
+                crate::preferences_page::Purpose::Preferences => {
+                    format!("{} needs a few settings", page.title)
+                }
+                crate::preferences_page::Purpose::Arguments => page.title.clone(),
+            })
+            .font(self.font())
+            .size(14)
         ]
         .spacing(12)
         .padding(Padding::new(16.0));
@@ -3660,6 +3696,9 @@ mod tests {
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
         saved: std::sync::Mutex<Vec<serde_json::Map<String, serde_json::Value>>>,
+        /// Arguments the fake asks for until a run carries some.
+        wants: Vec<crate::backend::PreferenceInput>,
+        given: std::sync::Mutex<Vec<Option<serde_json::Map<String, serde_json::Value>>>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -3681,9 +3720,12 @@ mod tests {
         fn run_extension_command(
             &self,
             id: String,
+            arguments: Option<serde_json::Map<String, serde_json::Value>>,
         ) -> crate::backend::BackendFuture<'_, crate::backend::ExtensionStart> {
             Box::pin(async move {
                 self.ran.lock().unwrap().push(id);
+                let asked = !self.wants.is_empty() && arguments.is_none();
+                self.given.lock().unwrap().push(arguments);
                 if let Some(reason) = self.refuse_runs.clone() {
                     return Err(reason);
                 }
@@ -3691,6 +3733,12 @@ mod tests {
                     return Ok(crate::backend::ExtensionStart::NeedsPreferences {
                         title: "Write Greeting".into(),
                         fields: self.needs.clone(),
+                    });
+                }
+                if asked {
+                    return Ok(crate::backend::ExtensionStart::NeedsArguments {
+                        title: "Write Greeting".into(),
+                        fields: self.wants.clone(),
                     });
                 }
                 Ok(if self.view.is_some() {
@@ -4151,6 +4199,63 @@ mod tests {
             backend.ran.lock().unwrap().as_slice(),
             ["@someone/hello:write", "@someone/hello:write"],
             "saved, then run again"
+        );
+        assert!(matches!(app.page, Page::Root), "and it ran");
+    }
+
+    #[test]
+    fn a_command_with_arguments_asks_for_them_and_runs_with_what_was_entered() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            wants: vec![crate::backend::PreferenceInput {
+                name: "name".into(),
+                title: "Name".into(),
+                description: String::new(),
+                placeholder: "Name".into(),
+                required: true,
+                kind: crate::backend::PreferenceInputKind::Text,
+                value: None,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        for message in task_messages(app.update(Message::LaunchSelected)) {
+            let _ = app.update(message);
+        }
+        assert!(
+            matches!(&app.page, Page::Preferences(page)
+                if page.purpose == crate::preferences_page::Purpose::Arguments),
+            "{}",
+            app.state_line()
+        );
+
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("Ada".into()),
+        ));
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert!(
+            backend.saved.lock().unwrap().is_empty(),
+            "arguments are this run's, never kept"
+        );
+        assert_eq!(
+            backend.given.lock().unwrap().as_slice(),
+            [
+                None,
+                Some(
+                    serde_json::json!({"name": "Ada"})
+                        .as_object()
+                        .unwrap()
+                        .clone()
+                )
+            ]
         );
         assert!(matches!(app.page, Page::Root), "and it ran");
     }

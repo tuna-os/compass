@@ -270,12 +270,26 @@ impl EngineState {
     }
 }
 
-async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> Response {
+async fn run_extension_command(
+    state: &Arc<RwLock<EngineState>>,
+    id: String,
+    arguments_json: Option<String>,
+) -> Response {
     let Some(command) = state.read().await.index.extension(&id).cloned() else {
         return Response::Error(ProtocolError::new(
             ErrorKind::BadRequest,
             "no installed extension command has that id",
         ));
+    };
+    let given = match arguments_json.as_deref().map(serde_json::from_str) {
+        None => None,
+        Some(Ok(serde_json::Value::Object(given))) => Some(given),
+        Some(_) => {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "the arguments are not a JSON object",
+            ));
+        }
     };
     let runtime = match crate::extension_runner::Runtime::locate() {
         Ok(runtime) => runtime,
@@ -320,11 +334,21 @@ async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> 
             };
         }
     };
+    let arguments = match command.arguments_with(given.as_ref()) {
+        Ok(arguments) => arguments,
+        Err(_) => {
+            return Response::ExtensionNeedsArguments {
+                title: command.title.clone(),
+                fields: argument_fields(&command, given.as_ref()),
+            };
+        }
+    };
     let host = crate::extension_runner::Host {
         storage,
         shell: state.read().await.shell.clone(),
         views: Arc::clone(&state.read().await.views),
         preferences,
+        arguments,
     };
     let started = tokio::task::spawn_blocking(move || {
         crate::extension_runner::start(&runtime, &command, &data_dir, host)
@@ -353,6 +377,47 @@ async fn run_extension_command(state: &Arc<RwLock<EngineState>>, id: String) -> 
             format!("the extension task failed: {err}"),
         )),
     }
+}
+
+/// Every argument `command` takes, as the launcher's form draws it, with what
+/// was already entered.
+fn argument_fields(
+    command: &compass_core::extension_commands::ExtensionCommand,
+    given: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Vec<compass_ipc::PreferenceField> {
+    use compass_core::manifest::ArgumentType;
+    use compass_ipc::PreferenceFieldKind;
+    command
+        .arguments
+        .iter()
+        .map(|argument| compass_ipc::PreferenceField {
+            name: argument.name.clone(),
+            // Raycast labels an argument by its placeholder; it has no title.
+            title: if argument.placeholder.is_empty() {
+                argument.name.clone()
+            } else {
+                argument.placeholder.clone()
+            },
+            description: String::new(),
+            placeholder: argument.placeholder.clone(),
+            required: argument.required,
+            kind: match argument.argument_type {
+                ArgumentType::Text => PreferenceFieldKind::Text,
+                ArgumentType::Password => PreferenceFieldKind::Password,
+                ArgumentType::Dropdown => PreferenceFieldKind::Dropdown {
+                    options: argument
+                        .data
+                        .iter()
+                        .flatten()
+                        .map(|option| (option.title.clone(), option.value.clone()))
+                        .collect(),
+                },
+            },
+            value_json: given
+                .and_then(|given| given.get(&argument.name))
+                .map(ToString::to_string),
+        })
+        .collect()
 }
 
 /// Every preference `command` reads, as the launcher's form draws it.
@@ -730,7 +795,9 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
-        Request::RunExtensionCommand { id } => run_extension_command(state, id).await,
+        Request::RunExtensionCommand { id, arguments_json } => {
+            run_extension_command(state, id, arguments_json).await
+        }
         Request::ExtensionView { session, after } => extension_view(state, session, after).await,
         Request::ExtensionEvent {
             session,

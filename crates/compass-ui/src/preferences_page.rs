@@ -19,9 +19,20 @@ pub enum FieldValue {
     Kept(Option<serde_json::Value>),
 }
 
+/// What the form's values are for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// Kept for every run.
+    Preferences,
+    /// This one run's arguments.
+    Arguments,
+}
+
 /// The form.
 #[derive(Debug, Clone)]
 pub struct PreferencesPage {
+    /// What submitting it does.
+    pub purpose: Purpose,
     /// The command to run once it is saved.
     pub command_id: String,
     /// The command's title.
@@ -37,7 +48,12 @@ pub struct PreferencesPage {
 impl PreferencesPage {
     /// A form over `fields`, filled with their current values.
     #[must_use]
-    pub fn new(command_id: String, title: String, fields: Vec<PreferenceInput>) -> Self {
+    pub fn new(
+        purpose: Purpose,
+        command_id: String,
+        title: String,
+        fields: Vec<PreferenceInput>,
+    ) -> Self {
         let values = fields
             .iter()
             .map(|field| match &field.kind {
@@ -65,6 +81,7 @@ impl PreferencesPage {
             })
             .collect();
         Self {
+            purpose,
             command_id,
             title,
             fields,
@@ -127,6 +144,7 @@ mod tests {
     #[test]
     fn required_fields_must_be_filled_and_the_rest_submit_as_typed() {
         let mut page = PreferencesPage::new(
+            Purpose::Preferences,
             "@a/b:c".into(),
             "C".into(),
             vec![
@@ -170,7 +188,12 @@ mod tests {
             },
         );
         private.value = Some(serde_json::json!(true));
-        let page = PreferencesPage::new("id".into(), "T".into(), vec![token, private]);
+        let page = PreferencesPage::new(
+            Purpose::Preferences,
+            "id".into(),
+            "T".into(),
+            vec![token, private],
+        );
         assert_eq!(
             page.values,
             [FieldValue::Text("saved".into()), FieldValue::Checked(true)]
