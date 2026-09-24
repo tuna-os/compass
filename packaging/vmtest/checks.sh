@@ -195,15 +195,18 @@ case "${1:?usage: checks.sh <subcommand>}" in
 
   # 4. The claims worth gating on.
   #
-  #    Only three, and each is a fact about the target platform that no other
-  #    tier can establish:
-  #      session.type    — a Wayland session exists and the sandbox can see it
-  #      dbus.session    — the session bus is reachable from inside the sandbox
-  #      portal.desktop  — xdg-desktop-portal answers there
+  #    Each is a fact about the target platform that no other tier can
+  #    establish:
+  #      session.type          — a Wayland session exists and the sandbox can see it
+  #      dbus.session          — the session bus is reachable from inside the sandbox
+  #      portal.desktop        — xdg-desktop-portal answers there
+  #      gnome.shell-extension — the extension `shell-extension` enabled speaks
+  #                              our contract, AS SEEN FROM INSIDE THE SANDBOX:
+  #                              the Flatpak's talk-name grant is what this proves,
+  #                              and a wrong one looks exactly like "not installed"
   #    Everything else is printed and gated on nothing. In particular
-  #    portal.global-shortcuts and gnome.shell-extension are evidence only: the
-  #    first is Spike A's subject and not yet expected to work, and this
-  #    repository ships no Shell extension for the second to find (ADR-0004).
+  #    portal.global-shortcuts is evidence only: it is Spike A's subject and not
+  #    yet expected to work.
   doctor-assert)
     REPORT="$REPORT" python3 - <<'PY'
 import json, os, sys
@@ -217,12 +220,67 @@ status = {c['name']: c['status'] for c in checks}
 for c in checks:
     print(f"  {c['status']:5} {c['name']}: {c.get('detail', '')}")
 
-required = ['session.type', 'dbus.session', 'portal.desktop']
+required = ['session.type', 'dbus.session', 'portal.desktop', 'gnome.shell-extension']
 bad = [f"{n}={status.get(n, 'MISSING')}" for n in required if status.get(n) != 'ok']
 if bad:
     sys.exit('not ok in a real GNOME session: ' + ', '.join(bad))
 print('\nall gated checks ok:', ', '.join(required))
 PY
+    ;;
+
+  # The Compass GNOME Shell extension: enabled the way a user enables one, then
+  # asked over the session bus, from outside the sandbox, whether it answers.
+  #
+  # Two claims, both gated. The Windows object reports contract v1 -- so Shell
+  # accepted the extension (a shell-version mismatch presents here as "never
+  # appeared", which is why `gnome-extensions info` is printed on failure) --
+  # and ListWindows returns a well-formed reply. The inside-the-sandbox half is
+  # doctor-assert's gnome.shell-extension, which runs after this.
+  shell-extension)
+    u="$(uid)"
+    uuid=compass@tuna-os.github.io
+    as_user() {
+      runuser -u "$SESSION_USER" -- env \
+        XDG_RUNTIME_DIR="/run/user/$u" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$u/bus" \
+        "$@"
+    }
+    contract_version() {
+      as_user gdbus call --session \
+        --dest org.gnome.Shell \
+        --object-path /org/gnome/Shell/Extensions/Vicinae/Windows \
+        --method org.freedesktop.DBus.Properties.Get \
+        org.gnome.Shell.Extensions.Vicinae.Windows Version
+    }
+    contract_up() { case "$(contract_version 2>/dev/null)" in *"uint32 1>"*) return 0 ;; esac; return 1; }
+
+    if ! as_user gnome-extensions enable "$uuid"; then
+      echo "gnome-extensions could not enable $uuid" >&2
+      as_user gnome-extensions list --details >&2 2>&1 || true
+      exit 1
+    fi
+    if ! wait_for "the Compass extension to export contract v1" 60 contract_up; then
+      echo "Version reads: $(contract_version 2>&1 || true)" >&2
+      as_user gnome-extensions info "$uuid" >&2 2>&1 || true
+      exit 1
+    fi
+    echo "extension up: $(contract_version)"
+
+    if ! windows="$(as_user gdbus call --session \
+      --dest org.gnome.Shell \
+      --object-path /org/gnome/Shell/Extensions/Vicinae/Windows \
+      --method org.gnome.Shell.Extensions.Vicinae.Windows.ListWindows 2>&1)"; then
+      echo "ListWindows failed: $windows" >&2
+      exit 1
+    fi
+    echo "ListWindows: $windows"
+    # An aa{sv}: gdbus prints `(@aa{sv} [],)` with nothing open (an empty array
+    # carries its type) and `([{'id': <uint32 …>, …}],)` otherwise. Anything
+    # else is a reply the engine could not decode.
+    case "$windows" in
+      "(@aa{sv} [],)" | "([{"*"}],)") ;;
+      *) echo "ListWindows returned something that is not an array of windows" >&2; exit 1 ;;
+    esac
     ;;
 
   # Spike B (#3): the same question on the target kernel. The Flatpak CI job

@@ -14,12 +14,15 @@ pub const GNOME_SHELL_BUS_NAME: &str = "org.gnome.Shell";
 /// Object path of GNOME Shell itself.
 pub const GNOME_SHELL_OBJECT_PATH: &str = "/org/gnome/Shell";
 
-/// Object path of the versioned Compass Shell-extension contract (PLAN §3.5.3).
-pub const EXTENSION_OBJECT_PATH: &str = "/org/gnome/Shell/Extensions/Vicinae";
+/// Object path doctor probes for the versioned Compass Shell-extension
+/// contract: the Windows object, whose `Version` every contract revision
+/// carries. Taken from `compass-shell` so doctor cannot probe a path the
+/// extension does not export.
+pub const EXTENSION_OBJECT_PATH: &str = compass_shell::WINDOWS_PATH;
 /// Interface name of that contract.
-pub const EXTENSION_INTERFACE: &str = "org.gnome.Shell.Extensions.Vicinae";
+pub const EXTENSION_INTERFACE: &str = compass_shell::WINDOWS_INTERFACE;
 /// Contract version this build speaks.
-pub const EXTENSION_CONTRACT_VERSION: u32 = 1;
+pub const EXTENSION_CONTRACT_VERSION: u32 = compass_shell::CONTRACT_VERSION;
 
 /// Interface name of the pre-existing, unversioned window-management contract
 /// that the C++ engine talks to (`src/server/.../gnome-window-manager.hpp`).
