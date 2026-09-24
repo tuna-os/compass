@@ -130,6 +130,7 @@ fn describe(request: &Request) -> &'static str {
         Request::StopScript { .. } => "StopScript",
         Request::ListPrograms => "ListPrograms",
         Request::SetTheme { .. } => "SetTheme",
+        Request::CreateExtension { .. } => "CreateExtension",
         Request::Dmenu { .. } => "Dmenu",
         Request::DmenuFetch { .. } => "DmenuFetch",
         Request::DmenuChoose { .. } => "DmenuChoose",

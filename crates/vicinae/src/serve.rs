@@ -1765,6 +1765,34 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 ))
             }
         }
+        Request::CreateExtension {
+            author,
+            title,
+            description,
+            location,
+            command_title,
+            command_description,
+            template,
+        } => {
+            let form = compass_core::create_extension::Form {
+                author,
+                title,
+                description,
+                location,
+                command_title,
+                command_description,
+                template_id: template,
+            };
+            match tokio::task::spawn_blocking(move || crate::developer::create_extension(&form))
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("creating the extension failed: {error}"),
+                )),
+            }
+        }
         Request::SetTheme { theme } => {
             let Some(parsed) = compass_ui::theme::Theme::from_name(&theme) else {
                 return Response::Error(ProtocolError::new(

@@ -2205,6 +2205,20 @@ the selected theme through the engine (`SetTheme`, IPC v11), which writes it to 
 | 2 | The action panel opens the theme file in the text editor, and copies its id or path; rows show the palette's colour dots. | Enter keeps the theme; no other actions or swatches yet. | `set_theme_keeps_the_chosen_theme` |
 | 3 | Choosing a theme applies it to every window at once through the theme service. | This window applies it at once; another launcher process picks it up from the configuration when it next reads it. | `set_theme_keeps_the_theme_in_the_configuration` |
 
+### Create Extension — what the port does not have yet
+
+Create Extension runs end to end: the launcher's form has the C++ fields (author, title,
+description, location, first command's title and description, command template), the engine
+validates them with the ported rules ("Min. 3 chars", "Min. 16 chars", "Must exist" after `~`
+expansion) and writes the ported boilerplate (`CreateExtension`, IPC v11), and a success page shows
+the C++'s Markdown with the path and the `npm` steps; Enter opens the new folder. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Field errors show beside each field. | The engine's refusal names the fields in one sentence under the form. | `a_valid_form_writes_the_boilerplate_and_an_invalid_one_says_why` |
+| 2 | The success view offers "Open in …" for every application that opens folders. | Enter opens the folder with the default one. | `create_extension_sends_the_form_and_shows_where_it_went` |
+| 3 | The API dependency is pinned to the build's git tag. | Pinned to `v` + the crate version (`^0.1.0` today), through the same `api_dependency_version` rule. | `create_extension_writes_the_boilerplate_under_home` |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

@@ -120,6 +120,9 @@ async fn echo_handler(request: Request) -> Response {
         Request::DmenuFetch { .. } => Response::DmenuList {
             spec: compass_ipc::DmenuSpec::default(),
         },
+        Request::CreateExtension { .. } => Response::ExtensionCreated {
+            path: String::new(),
+        },
         Request::ListPrograms => Response::Programs {
             programs: vec![],
             terminal: None,

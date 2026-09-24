@@ -16,6 +16,7 @@ pub mod cli;
 pub mod clipboard_service;
 pub mod config_cmd;
 pub mod conformance;
+pub mod developer;
 pub mod dmenu;
 pub mod doctor;
 pub mod engine;

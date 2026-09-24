@@ -25,6 +25,7 @@ use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
+mod developer;
 mod dmenu;
 mod programs;
 mod scripts;
@@ -482,6 +483,8 @@ enum Page {
     Dmenu(crate::dmenu_page::DmenuPage),
     /// Set Theme.
     Themes(crate::themes_page::ThemesPage),
+    /// The page after Create Extension.
+    Created(crate::developer_page::CreatedPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -1987,6 +1990,9 @@ impl LauncherApp {
                 if let Some(task) = self.submit_script_form() {
                     return task;
                 }
+                if let Some(task) = self.submit_create_extension() {
+                    return task;
+                }
                 let Page::Preferences(page) = &mut self.page else {
                     return Task::none();
                 };
@@ -2260,6 +2266,9 @@ impl LauncherApp {
             Message::ThemesQueryChanged(_) | Message::ThemeSelected(_) | Message::ThemeSaved(_) => {
                 self.theme_message(message)
             }
+            Message::ExtensionCreated { .. } | Message::CreatedFolderOpened(_) => {
+                self.developer_message(message)
+            }
             Message::Back => {
                 // Escape on a dmenu list dismisses it and the launcher, as the
                 // C++'s instant dismiss does.
@@ -2505,6 +2514,9 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::Themes(_)) {
                     return self.themes_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Created(_)) {
+                    return self.created_page_key(key);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2757,6 +2769,7 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::ThemesQueryChanged as OnInput),
             ),
+            Page::Created(page) => ("", &page.path, None),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2826,6 +2839,8 @@ impl LauncherApp {
             self.dmenu_body(page)
         } else if let Page::Themes(page) = &self.page {
             self.themes_body(page)
+        } else if let Page::Created(page) = &self.page {
+            self.created_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -3733,7 +3748,8 @@ impl LauncherApp {
                 | crate::preferences_page::Purpose::ShortcutForm { .. }
                 | crate::preferences_page::Purpose::SnippetArguments { .. }
                 | crate::preferences_page::Purpose::SnippetForm { .. }
-                | crate::preferences_page::Purpose::ScriptArguments => page.title.clone(),
+                | crate::preferences_page::Purpose::ScriptArguments
+                | crate::preferences_page::Purpose::CreateExtension => page.title.clone(),
             })
             .font(self.font())
             .size(14)
@@ -4183,6 +4199,7 @@ impl LauncherApp {
             CommandKind::ManageSnippets => Task::batch([record, self.open_manage_snippets()]),
             CommandKind::RunProgram => Task::batch([record, self.open_run_program()]),
             CommandKind::SetTheme => Task::batch([record, self.open_set_theme()]),
+            CommandKind::CreateExtension => Task::batch([record, self.open_create_extension()]),
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
@@ -4829,6 +4846,8 @@ mod tests {
         dmenu_answers: std::sync::Mutex<Vec<(u64, Option<String>)>>,
         /// The themes kept.
         themes_kept: std::sync::Mutex<Vec<String>>,
+        /// The extensions created.
+        created: std::sync::Mutex<Vec<crate::backend::ExtensionDraft>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4901,6 +4920,17 @@ mod tests {
                     section_title: Some("Pick ({count})".into()),
                     ..crate::backend::DmenuList::default()
                 })
+            })
+        }
+
+        fn create_extension(
+            &self,
+            draft: crate::backend::ExtensionDraft,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let path = format!("{}/{}", draft.location, draft.title.to_lowercase());
+                self.created.lock().unwrap().push(draft);
+                Ok(path)
             })
         }
 
@@ -7452,6 +7482,43 @@ mod tests {
             "{:?}",
             page.notice
         );
+    }
+
+    // ---- Create Extension ----
+
+    #[test]
+    fn create_extension_sends_the_form_and_shows_where_it_went() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "create extension", "commands:create-extension");
+        for (position, value) in [
+            "zoe",
+            "Hello",
+            "Says hello to the whole world",
+            "/home/me/code",
+            "Say Hello",
+            "Says hello",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let _ = app.update(Message::PreferenceEdited(
+                position,
+                FieldValue::Text(value.into()),
+            ));
+        }
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let created = backend.created.lock().unwrap().clone();
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].template, ":boilerplate/tmpl-list");
+        let Page::Created(page) = &app.page else {
+            panic!("no success page: {}", app.state_line());
+        };
+        assert_eq!(page.path, "/home/me/code/hello");
     }
 
     // ---- Set Theme ----

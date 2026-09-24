@@ -56,6 +56,8 @@ pub enum CommandKind {
     RunProgram,
     /// Browse the themes with a live preview, and keep one.
     SetTheme,
+    /// Generate a new extension's boilerplate from a form.
+    CreateExtension,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -155,6 +157,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Browse the themes and pick one",
         keywords: &["theme", "themes", "colors", "appearance", "dark", "light"],
         icon: "brush",
+    },
+    BuiltinCommand {
+        kind: CommandKind::CreateExtension,
+        entrypoint: "create-extension",
+        title: "Create Extension",
+        subtitle: "Start a new extension from a template",
+        keywords: &["developer", "extension", "boilerplate", "template", "new"],
+        icon: "hammer",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

@@ -203,6 +203,15 @@ fn all_requests() -> Vec<Request> {
         Request::SetTheme {
             theme: "tokyo-night".into(),
         },
+        Request::CreateExtension {
+            author: "zoë".into(),
+            title: "My Extension".into(),
+            description: "Does something useful, promise".into(),
+            location: "~/code".into(),
+            command_title: "Search".into(),
+            command_description: "Search things".into(),
+            template: ":boilerplate/tmpl-list".into(),
+        },
         Request::RunProgram {
             argv: vec!["htop".into(), "-d".into(), "é 5".into()],
             terminal: true,
@@ -467,6 +476,9 @@ fn all_responses() -> Vec<Response> {
             terminal: Some("Ptyxis".into()),
             default_action: "run-in-terminal".into(),
         },
+        Response::ExtensionCreated {
+            path: "/home/me/code/my-extension".into(),
+        },
         Response::DmenuOutput {
             output: "gamma 🚀".into(),
         },
@@ -542,6 +554,7 @@ fn request_variants_are_exhaustive() {
             | Request::DmenuFetch { .. }
             | Request::DmenuChoose { .. }
             | Request::SetTheme { .. }
+            | Request::CreateExtension { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -573,6 +586,7 @@ fn response_variants_are_exhaustive() {
             | Response::ScriptStarted { .. }
             | Response::ScriptOutput { .. }
             | Response::Programs { .. }
+            | Response::ExtensionCreated { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::Window(_) => {}

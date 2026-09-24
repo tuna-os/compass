@@ -5,9 +5,9 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind, DmenuList, ExtensionStart, ExtensionViewState, FileResults, FileRow,
-    ProgramList, ScriptOutputState, Shortcut, ShortcutDraft, Snippet, SnippetDraft, WindowBackend,
-    WindowRow,
+    ClipboardRowKind, DmenuList, ExtensionDraft, ExtensionStart, ExtensionViewState, FileResults,
+    FileRow, ProgramList, ScriptOutputState, Shortcut, ShortcutDraft, Snippet, SnippetDraft,
+    WindowBackend, WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -108,6 +108,24 @@ impl ApplicationBackend for DaemonBackend {
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn create_extension(&self, draft: ExtensionDraft) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            let request = Request::CreateExtension {
+                author: draft.author,
+                title: draft.title,
+                description: draft.description,
+                location: draft.location,
+                command_title: draft.command_title,
+                command_description: draft.command_description,
+                template: draft.template,
+            };
+            match self.ask(request, "Creating the extension").await? {
+                compass_ipc::Response::ExtensionCreated { path } => Ok(path),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })

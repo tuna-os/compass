@@ -54,6 +54,8 @@ pub enum Purpose {
     /// A script command's arguments, or its confirmation; `command_id` is
     /// the script's id.
     ScriptArguments,
+    /// The Create Extension form.
+    CreateExtension,
 }
 
 impl Purpose {
@@ -68,6 +70,7 @@ impl Purpose {
             Self::SnippetArguments { paste: true } => "Enter: paste    Esc: back",
             Self::SnippetForm { .. } => "Ctrl+Enter: save    Esc: back",
             Self::ScriptArguments => "Enter: run    Esc: cancel",
+            Self::CreateExtension => "Enter: create extension    Esc: back",
         }
     }
 }

@@ -3232,6 +3232,43 @@ fn run_terminal_program_lists_path_and_runs_directly_or_refuses() {
 }
 
 #[test]
+fn create_extension_writes_the_boilerplate_under_home() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let home = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        std::fs::create_dir_all(root.join("code")).unwrap();
+        home.set(root.to_path_buf()).unwrap();
+        Vec::new()
+    });
+    let request = |location: &str, author: &str| Request::CreateExtension {
+        author: author.into(),
+        title: "Hello World".into(),
+        description: "Says hello to the whole world".into(),
+        location: location.into(),
+        command_title: "Say Hello".into(),
+        command_description: "Says hello".into(),
+        template: ":boilerplate/tmpl-no-view".into(),
+    };
+    let Response::ExtensionCreated { path } = daemon.request(request("~/code", "zoe")) else {
+        panic!("not created");
+    };
+    let root = std::path::Path::new(&path);
+    assert!(root.starts_with(home.get().unwrap().join("code")), "{path}");
+    let manifest = std::fs::read_to_string(root.join("package.json")).unwrap();
+    assert!(manifest.contains("\"mode\": \"no-view\""), "{manifest}");
+
+    let Response::Error(err) = daemon.request(request("~/nowhere", "z")) else {
+        panic!("an invalid form was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    assert!(
+        err.message.contains("location: Must exist"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
 fn set_theme_keeps_the_theme_in_the_configuration() {
     use compass_ipc::{ErrorKind, Request, Response};
     let config_file = std::sync::OnceLock::new();

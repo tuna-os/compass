@@ -138,6 +138,16 @@ pub enum Message {
     SnippetsQueryChanged(String),
     /// A Manage Snippets row was clicked, by position.
     SnippetSelected(usize),
+    /// Create Extension finished, for the extension called `title`: where
+    /// it was written, or why not.
+    ExtensionCreated {
+        /// The extension's title.
+        title: String,
+        /// Its path, or the reason.
+        result: Result<String, String>,
+    },
+    /// Opening the new extension's folder finished.
+    CreatedFolderOpened(Result<(), String>),
     /// Set Theme's search text changed.
     ThemesQueryChanged(String),
     /// A Set Theme row was clicked, by position.

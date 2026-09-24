@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
-/// shortcuts, snippets, script commands, Run Terminal Program, dmenu and
-/// themes.
+/// shortcuts, snippets, script commands, Run Terminal Program, dmenu, themes
+/// and create-extension.
 pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
@@ -471,6 +471,27 @@ pub enum Request {
         /// The theme's persisted name, e.g. `tokyo-night`.
         theme: String,
     },
+    /// Generate a new extension's boilerplate, as the developer extension's
+    /// Create Extension form does. Answered with
+    /// [`Response::ExtensionCreated`]; a form that does not validate is
+    /// refused as [`ErrorKind::BadRequest`] naming the fields, and a failed
+    /// generation as [`ErrorKind::Internal`].
+    CreateExtension {
+        /// Who is writing it; three characters at least.
+        author: String,
+        /// The extension's title; three characters at least.
+        title: String,
+        /// What it does; sixteen characters at least.
+        description: String,
+        /// The directory to create it in, which must exist; `~` is expanded.
+        location: String,
+        /// The first command's title.
+        command_title: String,
+        /// The first command's description.
+        command_description: String,
+        /// The command template, e.g. `:boilerplate/tmpl-list`.
+        template: String,
+    },
 }
 
 /// What the engine answers.
@@ -600,6 +621,11 @@ pub enum Response {
     ScriptStarted {
         /// The run to follow, when the launcher shows its output.
         session: Option<u64>,
+    },
+    /// Answer to [`Request::CreateExtension`].
+    ExtensionCreated {
+        /// Where the extension was written.
+        path: String,
     },
     /// Answer to [`Request::Dmenu`]: what to print; empty when the list was
     /// dismissed.

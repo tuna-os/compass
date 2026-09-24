@@ -503,8 +503,8 @@ history, emoji, window switching, power, media and volume, Search Files, shortcu
 Shortcut, Manage Shortcuts, shortcuts in root search; IPC v13), and snippets (Create Snippet,
 Manage Snippets: copy, paste, edit; keyword expansion waits on the input server, which is not
 ported), script commands (scanned into root search, run in all five output modes), Run
-Terminal Program, `vicinae dmenu`, and Set Theme. What each still lacks is in `PARITY.md`, one
-section per builtin.
+Terminal Program, `vicinae dmenu`, Set Theme, and Create Extension. What each still lacks is in
+`PARITY.md`, one section per builtin.
 
 **Browser tab search and switching is not in this list.** It is out of scope for the port and
 becomes an extension — see [ADR-0008](./adr/0008-browser-control-is-an-extension.md). It is a

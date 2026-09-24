@@ -113,6 +113,13 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
     }
 
+    /// Generates a new extension's boilerplate: where it was written, or the
+    /// sentence saying why not.
+    fn create_extension(&self, draft: ExtensionDraft) -> BackendFuture<'_, String> {
+        let _ = draft;
+        Box::pin(async { Err("Create Extension needs the Compass engine".to_owned()) })
+    }
+
     /// Keeps a theme in the configuration, by its persisted name.
     fn set_theme(&self, theme: String) -> BackendFuture<'_, ()> {
         let _ = theme;
@@ -247,6 +254,25 @@ const FILES_NEED_ENGINE: &str =
 
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
+
+/// The Create Extension form's values.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExtensionDraft {
+    /// Who is writing it.
+    pub author: String,
+    /// The extension's title.
+    pub title: String,
+    /// What it does.
+    pub description: String,
+    /// The directory to create it in.
+    pub location: String,
+    /// The first command's title.
+    pub command_title: String,
+    /// The first command's description.
+    pub command_description: String,
+    /// The command template's resource id.
+    pub template: String,
+}
 
 /// A `vicinae dmenu` list and its options.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
