@@ -709,7 +709,25 @@ mod tests {
             restart_delay_from(Duration::from_millis(5), 3),
             Duration::from_millis(20)
         );
-        assert_eq!(restart_delay(u32::MAX), Duration::MAX);
+        // The shift is clamped at 30, so the backoff TOPS OUT rather than
+        // saturating to Duration::MAX: 1s << 30 is about 34 years, which is
+        // "never again" by any measure a supervisor cares about.
+        //
+        // This asserted Duration::MAX and had been failing on `main` since
+        // the merge of #200 — the expectation, not the clamp, was wrong.
+        assert_eq!(restart_delay(u32::MAX), Duration::from_secs(1 << 30));
+        assert_eq!(
+            restart_delay(u32::MAX),
+            restart_delay(31),
+            "every attempt past the clamp waits the same"
+        );
+
+        // The doc on `restart_delay` promises it saturates "instead of
+        // overflowing on absurd counts", and with the clamp at 30 that path
+        // is unreachable from a one-second base -- so nothing exercised it,
+        // and removing `saturating_mul` kept every assertion above green.
+        // A large base is the only way in.
+        assert_eq!(restart_delay_from(Duration::MAX, 2), Duration::MAX);
     }
 
     #[test]

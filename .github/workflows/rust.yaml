@@ -385,6 +385,120 @@ jobs:
   # nothing fails here instead of passing as an empty table. Its `--selftest`
   # proves the refusal, and runs first so a broken reporter is not mistaken for
   # a broken bench.
+  paint-tier:
+    name: "Paint tier: the launcher rendered, on wgpu and on tiny-skia"
+    runs-on: ubuntu-24.04
+    # Measured: ~3 s to render and check per backend. The budget is the
+    # compile, not the test.
+    timeout-minutes: 20
+
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: paint-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: paint-${{ runner.os }}-
+
+      # Lavapipe: Mesa's software Vulkan driver. It gives wgpu a real
+      # adapter on a runner with no GPU, so the GPU shader pipeline --
+      # the path a real desktop takes -- is exercised rather than skipped.
+      - name: Install a software Vulkan driver
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q mesa-vulkan-drivers
+          ls /usr/share/vulkan/icd.d/lvp_icd.json
+
+      # BOTH BACKENDS, EACH FORCED, EACH CHECKED.
+      #
+      # Iced tries wgpu first and falls back to tiny-skia without a word.
+      # Right for an application, wrong for a test: a job meant to prove
+      # wgpu could pass on tiny-skia and report nothing amiss.
+      #
+      #   ICED_TEST_BACKEND     forces the choice; wgpu with no adapter
+      #                         panics rather than falling back
+      #   PAINT_EXPECT_BACKEND  makes the suite confirm it got what it
+      #                         asked for, so a future change to Iced's
+      #                         fallback cannot reintroduce the swap
+      - name: Paint on wgpu (the GPU shader pipeline, via lavapipe)
+        env:
+          ICED_TEST_BACKEND: wgpu
+          PAINT_EXPECT_BACKEND: wgpu
+        run: cargo test --locked -p compass-ui --test paint -- --nocapture
+
+      - name: Paint on tiny-skia (the CPU rasteriser Iced falls back to)
+        env:
+          ICED_TEST_BACKEND: tiny-skia
+          PAINT_EXPECT_BACKEND: tiny-skia
+        run: cargo test --locked -p compass-ui --test paint -- --nocapture
+
+  suite0-selftest:
+    name: "Suite 0: the parity harness runs at all"
+    runs-on: ubuntu-24.04
+    # Measured: ~90 s to build the engine from a warm cache, ~70 s for 1817
+    # queries against two engines. The margin is for a cold cache.
+    timeout-minutes: 20
+
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: suite0-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: suite0-${{ runner.os }}-
+
+      - name: Build the engine the harness drives
+        run: cargo build --locked --release -p vicinae
+
+      # WHY A SELF-TEST AND NOT THE PARITY RUN ITSELF
+      #
+      # The real differential needs the C++ engine, which builds only on the
+      # Bluefin target (`cpp-on-target.yaml`, ~4 minutes) and is not present
+      # here. Until that job carries both binaries, this runs the Rust engine
+      # on BOTH sides.
+      #
+      # It cannot show the two engines agree -- an engine agrees with itself.
+      # It shows the HARNESS works end to end: staging the corpus where an XDG
+      # engine looks, starting two servers on isolated sockets, polling each
+      # until it ranks rather than sleeping, querying, parsing and comparing.
+      # None of which had ever been exercised: the first run of this harness
+      # panicked on the first accented name in the corpus, before comparing a
+      # single query.
+      #
+      # `--selftest` refuses a run in which nothing ranked, which is the only
+      # way self-parity can pass while measuring nothing.
+      - name: The harness must complete a run, and must have ranked something
+        run: |
+          set -o pipefail
+          cargo run --locked --release -p compass-testkit --bin parity -- \
+            --selftest \
+            --cpp target/release/vicinae \
+            --rust target/release/vicinae | tee "$GITHUB_STEP_SUMMARY"
+
   suite4-benches:
     name: "Suite 4: the SLA benches (informational)"
     runs-on: ubuntu-24.04

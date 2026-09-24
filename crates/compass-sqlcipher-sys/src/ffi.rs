@@ -30,6 +30,8 @@ pub struct Sqlite3Stmt {
 
 /// `SQLITE_OK`.
 pub const OK: c_int = 0;
+/// `SQLITE_BUSY`: another connection holds a lock this one needs.
+pub const BUSY: c_int = 5;
 /// `SQLITE_ROW`.
 pub const ROW: c_int = 100;
 /// `SQLITE_DONE`.

@@ -1186,7 +1186,13 @@ impl LauncherApp {
                         let positions: Option<Vec<_>> = keys
                             .iter()
                             .map(|key| {
-                                let position = self.app_index.position(key)?;
+                                // By ENTRYPOINT id: `QueryHit.id` is
+                                // `applications:foo`, not the launch key
+                                // `foo.desktop`, and `position` answers only
+                                // for the latter. Resolving with the wrong
+                                // one returns None for every hit and shows
+                                // "the application catalog changed".
+                                let position = self.app_index.position_by_entrypoint(key)?;
                                 (!self.app_index.items()[position].is_action()).then_some(position)
                             })
                             .collect();
@@ -2385,7 +2391,10 @@ mod tests {
     fn backend_order_is_used_and_old_queries_cannot_replace_new_results() {
         let dir = tempfile::tempdir().unwrap();
         let backend = Arc::new(TestBackend {
-            keys: vec!["beta.desktop".to_owned(), "alpha.desktop".to_owned()],
+            keys: vec![
+                "applications:beta".to_owned(),
+                "applications:alpha".to_owned(),
+            ],
             ..TestBackend::default()
         });
         let mut app = backend_app(dir.path(), backend);
@@ -2406,14 +2415,14 @@ mod tests {
         assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
         let _ = app.update(Message::SearchCompleted {
             generation: old_generation,
-            result: Ok(vec!["alpha.desktop".to_owned()]),
+            result: Ok(vec!["applications:alpha".to_owned()]),
         });
         assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
         let generation = app.search_generation;
         let _ = app.update(Message::QueryChanged(String::new()));
         let _ = app.update(Message::SearchCompleted {
             generation,
-            result: Ok(vec!["alpha.desktop".to_owned()]),
+            result: Ok(vec!["applications:alpha".to_owned()]),
         });
         assert!(app.results.is_empty());
     }
@@ -2424,7 +2433,7 @@ mod tests {
         let mut app = backend_app(dir.path(), Arc::new(TestBackend::default()));
         for result in [
             Err("offline".to_owned()),
-            Ok(vec!["missing.desktop".to_owned()]),
+            Ok(vec!["applications:missing".to_owned()]),
         ] {
             let _pending = app.update(Message::QueryChanged("Editor".to_owned()));
             let _ = app.update(Message::SearchCompleted {
@@ -2440,7 +2449,10 @@ mod tests {
     fn opening_or_clearing_an_attached_window_requests_initial_suggestions() {
         let dir = tempfile::tempdir().unwrap();
         let backend = Arc::new(TestBackend {
-            keys: vec!["beta.desktop".to_owned(), "alpha.desktop".to_owned()],
+            keys: vec![
+                "applications:beta".to_owned(),
+                "applications:alpha".to_owned(),
+            ],
             ..TestBackend::default()
         });
         let mut app = backend_app(dir.path(), backend);
@@ -2464,7 +2476,7 @@ mod tests {
     fn only_successful_launches_report_the_captured_key() {
         let dir = tempfile::tempdir().unwrap();
         let backend = Arc::new(TestBackend {
-            keys: vec!["beta.desktop".to_owned()],
+            keys: vec!["applications:beta".to_owned()],
             fail_history: true,
             ..TestBackend::default()
         });

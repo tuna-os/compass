@@ -196,7 +196,65 @@ pub(crate) fn search_with_frecency<'a>(
         b.score.total_cmp(&a.score)
     });
 
+    results.extend(typo_fallback(items, pattern, opts, &results, &frecency));
     results
+}
+
+/// Items one slip away from `pattern` that the matcher did not reach: fewest
+/// edits first, then by frecency, then the shorter title — the one the slip is
+/// most of. They come after every real match, so a typo
+/// can add an answer but never displace one (#204).
+fn typo_fallback<'a>(
+    items: &'a [RootItem],
+    pattern: &str,
+    opts: &SearchOptions,
+    matched: &[ScoredRootItem<'a>],
+    frecency: &impl Fn(usize, &RootItem) -> f64,
+) -> Vec<ScoredRootItem<'a>> {
+    if pattern.trim().chars().count() < compass_search::MIN_TYPO_QUERY_CHARS {
+        return Vec::new();
+    }
+    let already: std::collections::HashSet<usize> = matched.iter().map(|hit| hit.index).collect();
+    let mut slips: Vec<(usize, f64, ScoredRootItem<'a>)> = items
+        .iter()
+        .enumerate()
+        .filter(|(index, item)| {
+            !already.contains(index)
+                && (item.meta.enabled || opts.include_disabled)
+                && opts
+                    .provider_id
+                    .as_ref()
+                    .is_none_or(|id| *id == item.meta.provider_id)
+                && (item.meta.favorite_idx.is_none() || opts.include_favorites)
+        })
+        .filter_map(|(index, item)| {
+            let edits = [
+                Some(item.title.as_str()),
+                item.unlocalized_title.as_deref(),
+                item.meta.alias.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(|text| compass_search::typo_distance(text, pattern))
+            .min()?;
+            let boost = frecency(index, item);
+            // Nonzero, so it reads as a hit, but orders of magnitude below any
+            // real match — which clears the quality gate and scores in the tens
+            // — even for a caller that merges result lists by score.
+            let score = f64::EPSILON * (1.0 + boost);
+            Some((edits, boost, ScoredRootItem { item, score, index }))
+        })
+        .collect();
+    slips.sort_by(|a, b| {
+        a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)).then_with(|| {
+            a.2.item
+                .title
+                .chars()
+                .count()
+                .cmp(&b.2.item.title.chars().count())
+        })
+    });
+    slips.into_iter().map(|(_, _, hit)| hit).collect()
 }
 
 /// A provider of root items: the "Applications" list, an extension, and so on.

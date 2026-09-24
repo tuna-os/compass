@@ -16,6 +16,7 @@ mod query;
 mod rank;
 mod searchable;
 mod translit;
+mod typo;
 
 pub use coherence::is_coherent;
 pub use matcher::{MatchResult, Matcher};
@@ -31,3 +32,4 @@ pub use searchable::{
     score_weighted, score_weighted_with,
 };
 pub use translit::{TranslitScheme, needs_transliteration, transliterate, transliterate_char};
+pub use typo::{MAX_TYPO_EDITS, MIN_TYPO_QUERY_CHARS, typo_distance};
