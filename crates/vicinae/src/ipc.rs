@@ -111,6 +111,7 @@ fn describe(request: &Request) -> &'static str {
         Request::ListWindows => "ListWindows",
         Request::ActivateWindow { .. } => "ActivateWindow",
         Request::CloseWindow { .. } => "CloseWindow",
+        Request::ClipboardPaste { .. } => "ClipboardPaste",
     }
 }
 

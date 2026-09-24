@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
 /// Version 4 adds clipboard history; version 5, fetching an entry's content;
-/// version 6, window switching.
-pub const PROTOCOL_VERSION: u16 = 6;
+/// version 6, window switching; version 7, pasting a clipboard entry.
+pub const PROTOCOL_VERSION: u16 = 7;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +164,18 @@ pub enum Request {
     CloseWindow {
         /// [`WindowInfo::id`].
         id: u32,
+    },
+    /// Put one clipboard history entry on the clipboard and paste it into the
+    /// window focus moves to next.
+    ///
+    /// Send it while the launcher still has focus and hide the launcher once
+    /// it is answered with [`Response::Ack`]: the paste lands after the focus
+    /// change. Refused as [`ErrorKind::Unsupported`] without the GNOME Shell
+    /// extension, which is the only thing on GNOME that can press a key in
+    /// another window; the caller then copies instead.
+    ClipboardPaste {
+        /// [`ClipboardEntry::id`].
+        id: String,
     },
 }
 

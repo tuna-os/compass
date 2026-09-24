@@ -1,10 +1,11 @@
 # The Compass GNOME Shell extension
 
-GNOME gives applications no way to list other windows or watch the clipboard:
-Mutter implements no foreign-toplevel or data-control protocol, and
-`org.gnome.Shell.Introspect` is allowlisted to the portal backends. On GNOME
-50 and 51 this extension is therefore the only way Compass can switch windows
-or keep clipboard history. App search and launching do not need it.
+GNOME gives applications no way to list other windows, watch the clipboard or
+press a key in another window: Mutter implements no foreign-toplevel,
+data-control or virtual-keyboard protocol, and `org.gnome.Shell.Introspect` is
+allowlisted to the portal backends. On GNOME 50 and 51 this extension is
+therefore the only way Compass can switch windows, keep clipboard history or
+paste. App search and launching do not need it.
 
 It implements exactly the versioned contract in
 [`crates/compass-shell/dbus`](../../crates/compass-shell/dbus) and nothing
@@ -25,7 +26,7 @@ enable it:
 
 ```sh
 gnome-extensions enable compass@tuna-os.github.io
-vicinae doctor   # gnome.shell-extension should now report contract v1
+vicinae doctor   # gnome.shell-extension should now report contract v2
 ```
 
 ADR-0004 decides how users get it without this: extensions.gnome.org, and
@@ -38,4 +39,8 @@ baked into the Bluefin image.
 - **Clipboard**: reads and writes the clipboard, and emits `ClipboardChanged`
   on every clipboard owner change. Content a password manager marks with
   `x-kde-passwordManagerHint` is never emitted.
+- **Paste**: `Paste` waits up to 2 s for focus to leave the window that had it
+  (the launcher, which hides next). Once focus lands on another window, it
+  presses Ctrl+V there through a Clutter virtual keyboard, or Ctrl+Shift+V when
+  that window is one of the terminals the engine named.
 - It keeps no history and no state. Compass's engine does that.

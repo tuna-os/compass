@@ -1559,6 +1559,11 @@ impl LauncherApp {
                 {
                     page.selected = index;
                 }
+                self.paste_selected_clipboard_entry()
+            }
+            Message::ClipboardPasted(Ok(())) => self.conceal(),
+            Message::ClipboardPasted(Err(reason)) => {
+                tracing::debug!(%reason, "paste refused; copying instead");
                 self.copy_selected_clipboard_entry()
             }
             Message::ClipboardContentLoaded(result) => {
@@ -1655,7 +1660,7 @@ impl LauncherApp {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
                         Key::Named(Named::Escape) => return self.update(Message::Back),
-                        Key::Named(Named::Enter) => return self.copy_selected_clipboard_entry(),
+                        Key::Named(Named::Enter) => return self.paste_selected_clipboard_entry(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                     };
                     if let Some(direction) = direction {
@@ -2517,6 +2522,23 @@ impl LauncherApp {
     }
 
     /// Fetches the selected entry's content, to copy it.
+    /// Paste where the engine can, and copy where it cannot: the paste needs
+    /// the GNOME Shell extension, and without it the entry still goes on the
+    /// clipboard for the user's own Ctrl+V.
+    fn paste_selected_clipboard_entry(&mut self) -> Task<Message> {
+        let Page::Clipboard(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
+            return Task::none();
+        };
+        let id = row.id.clone();
+        Task::perform(
+            async move { clipboard.clipboard_paste(id).await },
+            Message::ClipboardPasted,
+        )
+    }
+
     fn copy_selected_clipboard_entry(&mut self) -> Task<Message> {
         let Page::Clipboard(page) = &self.page else {
             return Task::none();
@@ -3931,6 +3953,9 @@ mod tests {
         rows: Vec<crate::backend::ClipboardRow>,
         content: Option<crate::backend::ClipboardContent>,
         queries: std::sync::Mutex<Vec<String>>,
+        /// Whether the engine can paste (it has the Shell extension).
+        can_paste: bool,
+        pasted: std::sync::Mutex<Vec<String>>,
     }
 
     impl crate::backend::ClipboardBackend for FakeClipboard {
@@ -3955,6 +3980,16 @@ mod tests {
             _id: String,
         ) -> crate::backend::BackendFuture<'_, crate::backend::ClipboardContent> {
             Box::pin(async move { self.content.clone().ok_or_else(|| "gone".to_owned()) })
+        }
+
+        fn clipboard_paste(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if !self.can_paste {
+                    return Err("Pasting needs the Compass GNOME Shell extension".to_owned());
+                }
+                self.pasted.lock().unwrap().push(id);
+                Ok(())
+            })
         }
     }
 
@@ -4105,7 +4140,36 @@ mod tests {
     }
 
     #[test]
-    fn enter_copies_the_whole_entry_and_hides() {
+    fn enter_pastes_through_the_engine_and_hides_without_copying() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "newest"), clip_row("2", "older")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"older".to_vec(),
+            }),
+            can_paste: true,
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(clipboard.pasted.lock().unwrap().as_slice(), ["2"]);
+        assert!(
+            writes.is_empty(),
+            "the engine put it on the clipboard; the launcher must not race it"
+        );
+        assert!(
+            !app.showing_clipboard(),
+            "and the launcher got out of the way"
+        );
+    }
+
+    #[test]
+    fn enter_copies_the_whole_entry_and_hides_when_the_engine_cannot_paste() {
         let dir = tempfile::tempdir().unwrap();
         let whole = "the whole entry, not its preview ".repeat(10);
         let clipboard = Arc::new(FakeClipboard {

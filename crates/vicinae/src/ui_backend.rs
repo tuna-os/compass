@@ -113,6 +113,15 @@ impl ClipboardBackend for DaemonBackend {
             }
         })
     }
+
+    fn clipboard_paste(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self.ask(Request::ClipboardPaste { id }, "Pasting").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
 }
 
 impl WindowBackend for DaemonBackend {

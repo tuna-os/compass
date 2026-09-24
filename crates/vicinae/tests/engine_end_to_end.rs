@@ -1028,6 +1028,9 @@ fn window_requests_without_a_session_bus_are_refused_by_name() {
         Request::ListWindows,
         Request::ActivateWindow { id: 1 },
         Request::CloseWindow { id: 1 },
+        // Before the store is consulted: without a Shell there is nothing to
+        // paste into, whether or not the id names an entry.
+        Request::ClipboardPaste { id: "1".into() },
     ] {
         let Response::Error(err) = daemon.request(request.clone()) else {
             panic!("{request:?} was not refused");

@@ -155,10 +155,10 @@ impl DegradedFeature {
                  ext-data-control, so there is no protocol-level fallback."
             }
             Self::Paste => {
-                "Compass can put an item back on the clipboard for pasting only through the \
-                 extension. Note that contract v1 has no keystroke-synthesis method, so the \
-                 final Ctrl+V still has to come from the user; on Bluefin /dev/uinput is \
-                 unavailable, so wtype/dotool cannot supply it either."
+                "Compass cannot type the paste shortcut into another window, so choosing a \
+                 clipboard item copies it and the final Ctrl+V is left to you. GNOME has no \
+                 virtual-keyboard protocol and /dev/uinput is unavailable on Bluefin, so \
+                 wtype and dotool cannot supply it either."
             }
         }
     }

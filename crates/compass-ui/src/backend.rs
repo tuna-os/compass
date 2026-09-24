@@ -71,6 +71,11 @@ pub trait ClipboardBackend: std::fmt::Debug + Send + Sync {
 
     /// One entry's full content, for copying it back.
     fn clipboard_content(&self, id: String) -> BackendFuture<'_, ClipboardContent>;
+
+    /// Put one entry on the clipboard and paste it into the window focus
+    /// moves to next. Ask while the launcher is focused, then hide it. A
+    /// refusal (no GNOME Shell extension) means the caller copies instead.
+    fn clipboard_paste(&self, id: String) -> BackendFuture<'_, ()>;
 }
 
 /// One open window, as the switcher draws it.

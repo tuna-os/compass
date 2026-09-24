@@ -52,6 +52,7 @@ fn all_requests() -> Vec<Request> {
         Request::ActivateWindow { id: 0 },
         Request::ActivateWindow { id: u32::MAX },
         Request::CloseWindow { id: 7 },
+        Request::ClipboardPaste { id: "abc".into() },
     ]
 }
 
@@ -181,6 +182,7 @@ fn request_variants_are_exhaustive() {
             | Request::ListWindows
             | Request::ActivateWindow { .. }
             | Request::CloseWindow { .. }
+            | Request::ClipboardPaste { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

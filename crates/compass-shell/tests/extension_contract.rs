@@ -133,3 +133,16 @@ fn the_flatpak_may_talk_to_the_bus_name_the_contract_lives_on() {
         "the manifest must grant `{grant}`"
     );
 }
+
+#[test]
+fn the_vm_tier_waits_for_this_contract_version() {
+    let checks = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packaging/vmtest/checks.sh"),
+    )
+    .expect("checks.sh");
+    let wanted = format!("*\"uint32 {}>\"*", compass_shell::CONTRACT_VERSION);
+    assert!(
+        checks.contains(&wanted),
+        "checks.sh shell-extension must wait for `{wanted}`, the version this build speaks"
+    );
+}

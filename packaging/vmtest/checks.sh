@@ -231,7 +231,7 @@ PY
   # The Compass GNOME Shell extension: enabled the way a user enables one, then
   # asked over the session bus, from outside the sandbox, whether it answers.
   #
-  # Two claims, both gated. The Windows object reports contract v1 -- so Shell
+  # Two claims, both gated. The Windows object reports our contract version -- so Shell
   # accepted the extension (a shell-version mismatch presents here as "never
   # appeared", which is why `gnome-extensions info` is printed on failure) --
   # and ListWindows returns a well-formed reply. The inside-the-sandbox half is
@@ -252,14 +252,14 @@ PY
         --method org.freedesktop.DBus.Properties.Get \
         org.gnome.Shell.Extensions.Vicinae.Windows Version
     }
-    contract_up() { case "$(contract_version 2>/dev/null)" in *"uint32 1>"*) return 0 ;; esac; return 1; }
+    contract_up() { case "$(contract_version 2>/dev/null)" in *"uint32 2>"*) return 0 ;; esac; return 1; }
 
     if ! as_user gnome-extensions enable "$uuid"; then
       echo "gnome-extensions could not enable $uuid" >&2
       as_user gnome-extensions list --details >&2 2>&1 || true
       exit 1
     fi
-    if ! wait_for "the Compass extension to export contract v1" 60 contract_up; then
+    if ! wait_for "the Compass extension to export contract v2" 60 contract_up; then
       echo "Version reads: $(contract_version 2>&1 || true)" >&2
       as_user gnome-extensions info "$uuid" >&2 2>&1 || true
       exit 1

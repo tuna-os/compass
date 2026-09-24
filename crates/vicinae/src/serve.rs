@@ -490,6 +490,60 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
+        Request::ClipboardPaste { id } => {
+            const WHAT: &str = "Pasting";
+            let (shell, store) = {
+                let state = state.read().await;
+                (state.shell.clone(), state.clipboard.clone())
+            };
+            let Some(shell) = shell else {
+                return Response::Error(crate::window_service::no_bus(WHAT));
+            };
+            let Some(store) = store else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            let (mime_type, data) =
+                match tokio::task::spawn_blocking(move || store.content(&id)).await {
+                    Ok(Ok(Some(content))) => content,
+                    Ok(Ok(None)) => {
+                        return Response::Error(ProtocolError::new(
+                            ErrorKind::BadRequest,
+                            "no clipboard history entry has that id",
+                        ));
+                    }
+                    Ok(Err(err)) => {
+                        return Response::Error(ProtocolError::new(
+                            ErrorKind::Internal,
+                            err.to_string(),
+                        ));
+                    }
+                    Err(err) => {
+                        return Response::Error(ProtocolError::new(
+                            ErrorKind::Internal,
+                            format!("clipboard content task failed: {err}"),
+                        ));
+                    }
+                };
+            let terminals = {
+                let state = state.read().await;
+                compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
+            };
+            let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
+            let content = compass_shell::ClipboardContent::binary(data, mime_type);
+            let pasted = match shell.set_clipboard(&content).await {
+                Ok(()) => shell.paste(&terminals).await,
+                Err(err) => Err(err),
+            };
+            match pasted {
+                Ok(()) => Response::Ack,
+                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
+            }
+        }
+
         // Handled by the serve loop, which owns the shutdown signal; reaching
         // here means the loop did not intercept it.
         Request::Shutdown => Response::ShuttingDown,

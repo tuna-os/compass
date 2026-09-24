@@ -6,6 +6,7 @@
 // Deliberately small, so a GNOME release breaks this file rather than the
 // launcher. Anything not in the contract does not belong here.
 
+import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
@@ -15,7 +16,7 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-const CONTRACT_VERSION = 1;
+const CONTRACT_VERSION = 2;
 const WINDOWS_PATH = '/org/gnome/Shell/Extensions/Vicinae/Windows';
 const CLIPBOARD_PATH = '/org/gnome/Shell/Extensions/Vicinae/Clipboard';
 
@@ -31,6 +32,11 @@ const CLIPBOARD_MIME_PREFERENCE = [
     'UTF8_STRING',
     'text/plain',
 ];
+
+// Paste waits this long for focus to leave the launcher, then gives up, and
+// presses the shortcut this long after focus lands so the window is ready.
+const PASTE_FOCUS_TIMEOUT_MS = 2000;
+const PASTE_SETTLE_MS = 30;
 
 // Password managers mark secrets with this; the contract says such content
 // is never emitted.
@@ -139,6 +145,10 @@ class ClipboardService {
         this._clipboard = St.Clipboard.get_default();
         this._selection = global.display.get_selection();
         this._ownerChanged = 0;
+        this._pasteFocus = 0;
+        this._pasteTimeout = 0;
+        this._pasteSettle = 0;
+        this._keyboard = null;
     }
 
     get Version() {
@@ -154,6 +164,62 @@ class ClipboardService {
     SetClipboard(content, mimeType) {
         this._clipboard.set_content(
             St.ClipboardType.CLIPBOARD, mimeType, new GLib.Bytes(content));
+    }
+
+    // Arms a paste into whichever window focus moves to next, and returns.
+    // Called while the launcher is still focused; the launcher then hides.
+    Paste(shiftWmClasses) {
+        this._cancelPaste();
+        const from = global.display.focus_window;
+        const shift = new Set(shiftWmClasses);
+
+        this._pasteFocus = global.display.connect('notify::focus-window', () => {
+            const target = global.display.focus_window;
+            if (!target || target === from)
+                return;
+            this._cancelPaste();
+            this._pasteSettle = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PASTE_SETTLE_MS, () => {
+                this._pasteSettle = 0;
+                if (global.display.focus_window === target)
+                    this._pressPaste(shift.has((target.get_wm_class() ?? '').toLowerCase()));
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+        this._pasteTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PASTE_FOCUS_TIMEOUT_MS, () => {
+            this._pasteTimeout = 0;
+            this._cancelPaste();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _pressPaste(withShift) {
+        this._keyboard ??= Clutter.get_default_backend().get_default_seat()
+            .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        const modifiers = withShift
+            ? [Clutter.KEY_Control_L, Clutter.KEY_Shift_L]
+            : [Clutter.KEY_Control_L];
+        const time = GLib.get_monotonic_time();
+        for (const key of modifiers)
+            this._keyboard.notify_keyval(time, key, Clutter.KeyState.PRESSED);
+        this._keyboard.notify_keyval(time, Clutter.KEY_v, Clutter.KeyState.PRESSED);
+        this._keyboard.notify_keyval(time, Clutter.KEY_v, Clutter.KeyState.RELEASED);
+        for (const key of modifiers.reverse())
+            this._keyboard.notify_keyval(time, key, Clutter.KeyState.RELEASED);
+    }
+
+    _cancelPaste() {
+        if (this._pasteFocus) {
+            global.display.disconnect(this._pasteFocus);
+            this._pasteFocus = 0;
+        }
+        if (this._pasteTimeout) {
+            GLib.source_remove(this._pasteTimeout);
+            this._pasteTimeout = 0;
+        }
+        if (this._pasteSettle) {
+            GLib.source_remove(this._pasteSettle);
+            this._pasteSettle = 0;
+        }
     }
 
     // Reads the current selection in the preferred type: `(bytes, mime)`, or
@@ -193,6 +259,8 @@ class ClipboardService {
     }
 
     disable() {
+        this._cancelPaste();
+        this._keyboard = null;
         if (this._ownerChanged) {
             this._selection.disconnect(this._ownerChanged);
             this._ownerChanged = 0;

@@ -18,6 +18,8 @@
         GetActiveWorkspace() and the openwindow/closewindow/focuswindow/
         movewindow/statewindow/workspacechanged/monitorlayoutchanged signals,
         and which returned windows as a JSON string rather than typed D-Bus.
+    2 - unchanged. The two interfaces share one contract version, and
+        Clipboard gained Paste.
 -->
 <node>
   <interface name="org.gnome.Shell.Extensions.Vicinae.Windows">

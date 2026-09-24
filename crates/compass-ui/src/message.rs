@@ -55,6 +55,9 @@ pub enum Message {
     },
     /// The selected clipboard entry's content arrived, to be copied.
     ClipboardContentLoaded(Result<crate::backend::ClipboardContent, String>),
+    /// The engine armed a paste of the selected entry, or could not; on a
+    /// refusal the entry is copied instead.
+    ClipboardPasted(Result<(), String>),
     /// A clipboard row was clicked.
     ClipboardSelected(usize),
     /// Leave a command's view for the root list.

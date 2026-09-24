@@ -15,6 +15,10 @@
         ListenToClipboardChanges(), StopListening(), GetClipboardMimeTypes()
         and a separate text-only SetContent(s) alongside
         SetContentBinary(ay, s).
+    2 - Paste(as): synthesizes the paste shortcut into the window focus
+        returns to. The Shell is the only process on GNOME 50/51 that can
+        inject a keystroke: there is no virtual-keyboard protocol, and
+        /dev/uinput is unavailable on Bluefin.
 -->
 <node>
   <interface name="org.gnome.Shell.Extensions.Vicinae.Clipboard">
@@ -34,6 +38,17 @@
     <method name="SetClipboard">
       <arg type="ay" name="content" direction="in"/>
       <arg type="s" name="mime_type" direction="in"/>
+    </method>
+
+    <!-- Paste the current selection into the window that focus moves to
+         next. Call it while the launcher still has focus, then hide the
+         launcher: the extension waits (up to 2 s) for focus to land on a
+         different window and presses Ctrl+V there, or Ctrl+Shift+V when that
+         window's WM_CLASS, lowercased, is in shift_wm_classes (terminals,
+         which reserve Ctrl+V; the caller sends them lowercased). Returns as soon as the wait is armed; a paste that never
+         finds a window is dropped. -->
+    <method name="Paste">
+      <arg type="as" name="shift_wm_classes" direction="in"/>
     </method>
 
     <!-- Emitted on every selection change the extension observes. There is no
