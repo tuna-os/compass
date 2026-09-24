@@ -43,6 +43,8 @@ pub enum CommandKind {
     SearchEmojis,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
+    /// A media command, by its id in [`crate::media_commands`].
+    Media(&'static str),
 }
 
 /// Every builtin command, in the order an empty query lists them. The power
@@ -147,6 +149,30 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: power_commands::COMMANDS[7].keywords,
         icon: "rotate-clockwise",
     },
+    BuiltinCommand {
+        kind: CommandKind::Media("play-pause"),
+        entrypoint: "play-pause",
+        title: "Play / Pause",
+        subtitle: "Toggle playback of the active media player",
+        keywords: &["media", "music", "play", "pause", "resume"],
+        icon: "play",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Media("next-track"),
+        entrypoint: "next-track",
+        title: "Next Track",
+        subtitle: "Skip to the next track",
+        keywords: &["media", "music", "skip", "forward"],
+        icon: "forward",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Media("previous-track"),
+        entrypoint: "previous-track",
+        title: "Previous Track",
+        subtitle: "Skip to the previous track",
+        keywords: &["media", "music", "back", "rewind"],
+        icon: "rewind",
+    },
 ];
 
 impl BuiltinCommand {
@@ -196,6 +222,17 @@ mod tests {
             .collect();
         let catalogue: Vec<&str> = power_commands::COMMANDS.iter().map(|c| c.id).collect();
         assert_eq!(power, catalogue);
+    }
+
+    #[test]
+    fn the_media_commands_are_ones_the_media_extension_registers() {
+        let registered = crate::media_commands::registered_commands(true);
+        for command in BUILTIN_COMMANDS {
+            if let CommandKind::Media(id) = command.kind {
+                assert_eq!(id, command.entrypoint);
+                assert!(registered.iter().any(|r| r == id), "{id}");
+            }
+        }
     }
 
     #[test]

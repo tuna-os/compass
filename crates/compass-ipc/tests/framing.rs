@@ -65,6 +65,9 @@ fn all_requests() -> Vec<Request> {
         Request::RunPowerCommand {
             id: "reboot".into(),
         },
+        Request::RunMediaCommand {
+            id: "play-pause".into(),
+        },
         Request::RunExtensionCommand {
             id: "@raycast/github:search-repositories".into(),
             arguments_json: Some(r#"{"query":"compass"}"#.into()),
@@ -291,6 +294,7 @@ fn request_variants_are_exhaustive() {
             | Request::ClipboardRemove { .. }
             | Request::RunExtensionCommand { .. }
             | Request::RunPowerCommand { .. }
+            | Request::RunMediaCommand { .. }
             | Request::ExtensionView { .. }
             | Request::ExtensionEvent { .. }
             | Request::ExtensionPop { .. }

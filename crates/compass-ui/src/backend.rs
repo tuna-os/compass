@@ -27,6 +27,13 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// Run a media command by its id on the default player. An error is the
+    /// sentence to show.
+    fn run_media_command(&self, id: String) -> BackendFuture<'_, ()> {
+        let _ = id;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// Run an installed extension's command by its entrypoint id, with the
     /// argument values entered for it, or `None` when none have been. `Ok`
     /// once the engine has started it; an error is a sentence saying why it

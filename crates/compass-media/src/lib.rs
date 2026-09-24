@@ -87,6 +87,23 @@ pub struct MediaPlayer {
     pub can_go_previous: bool,
 }
 
+/// Which player a command that names none acts on: the one last acted on,
+/// while it is still running; else the first one playing; else the first.
+/// The C++'s `AbstractMediaControl::defaultPlayer`.
+#[must_use]
+pub fn default_player(players: &[MediaPlayer], last: Option<&str>) -> Option<usize> {
+    if players.is_empty() {
+        return None;
+    }
+    last.and_then(|last| players.iter().position(|p| p.id == last))
+        .or_else(|| {
+            players
+                .iter()
+                .position(|p| p.status == PlaybackStatus::Playing)
+        })
+        .or(Some(0))
+}
+
 /// Whether a bus name is a player's.
 #[must_use]
 pub fn is_player_name(service: &str) -> bool {
@@ -418,6 +435,25 @@ trait Player {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_default_player_is_the_last_then_the_playing_then_the_first() {
+        let player = |id: &str, status| super::MediaPlayer {
+            id: id.to_owned(),
+            status,
+            ..super::MediaPlayer::default()
+        };
+        let players = [
+            player("a", super::PlaybackStatus::Paused),
+            player("b", super::PlaybackStatus::Playing),
+            player("c", super::PlaybackStatus::Stopped),
+        ];
+        assert_eq!(super::default_player(&[], Some("a")), None);
+        assert_eq!(super::default_player(&players, Some("c")), Some(2));
+        assert_eq!(super::default_player(&players, Some("gone")), Some(1));
+        assert_eq!(super::default_player(&players, None), Some(1));
+        assert_eq!(super::default_player(&players[..1], None), Some(0));
+    }
+
     use super::*;
 
     fn value(text: &str) -> OwnedValue {

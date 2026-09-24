@@ -341,6 +341,97 @@ async fn run_power_command(id: &str) -> Response {
     }
 }
 
+/// The player a media command last acted on, which the next one that names
+/// none prefers while it is still running.
+static LAST_PLAYER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Runs a media command on the default player over MPRIS. What the C++ shows
+/// in its HUD goes out as a short-lived notification, since the launcher has
+/// already hidden.
+async fn run_media_command(id: &str) -> Response {
+    use compass_core::media_commands::{self, NoPlayer};
+    let refuse =
+        |message: String| Response::Error(ProtocolError::new(ErrorKind::Unsupported, message));
+    let failed = |message: &str, err: &dyn std::fmt::Display| {
+        tracing::warn!(%err, command = id, "media command failed");
+        Response::Error(ProtocolError::new(ErrorKind::Internal, message))
+    };
+    let failure = match id {
+        "play-pause" => "Failed to toggle playback",
+        "next-track" => "Failed to skip to the next track",
+        "previous-track" => "Failed to skip to the previous track",
+        _ => {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no media command has that id",
+            ));
+        }
+    };
+    let control = match zbus::Connection::session().await {
+        Ok(connection) => compass_media::MediaControl::new(connection),
+        Err(err) => return failed(failure, &err),
+    };
+    let players = match control.players().await {
+        Ok(players) => players,
+        Err(err) => return failed(failure, &err),
+    };
+    let last = LAST_PLAYER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let Some(index) = compass_media::default_player(&players, last.as_deref()) else {
+        return refuse(media_commands::no_player_message(&NoPlayer::NothingRunning));
+    };
+    let found = &players[index];
+    let player = media_commands::MediaPlayer {
+        id: found.id.clone(),
+        identity: found.identity.clone(),
+        title: found.title.clone(),
+        artist: found.artist.clone(),
+        playing: found.status == compass_media::PlaybackStatus::Playing,
+        can_go_next: found.can_go_next,
+        can_go_previous: found.can_go_previous,
+    };
+    let (result, hud) = match id {
+        "play-pause" => (
+            control.play_pause(&player.id).await,
+            media_commands::play_pause_message(&player),
+        ),
+        "next-track" => {
+            if let Some(refusal) = media_commands::skip_refusal(&player, true) {
+                return refuse(refusal);
+            }
+            (control.next(&player.id).await, "Next Track".to_owned())
+        }
+        _ => {
+            if let Some(refusal) = media_commands::skip_refusal(&player, false) {
+                return refuse(refusal);
+            }
+            (
+                control.previous(&player.id).await,
+                "Previous Track".to_owned(),
+            )
+        }
+    };
+    if let Err(err) = result {
+        return failed(failure, &err);
+    }
+    *LAST_PLAYER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(player.id);
+    let shown = notify_rust::Notification::new()
+        .appname("Vicinae")
+        .summary(&hud)
+        .hint(notify_rust::Hint::Transient(true))
+        .timeout(notify_rust::Timeout::Milliseconds(1500))
+        .show_async()
+        .await;
+    if let Err(err) = shown {
+        tracing::info!(%err, hud, "media HUD not shown");
+    }
+    Response::Ack
+}
+
 async fn run_extension_command(
     state: &Arc<RwLock<EngineState>>,
     id: String,
@@ -873,6 +964,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
+        Request::RunMediaCommand { id } => run_media_command(&id).await,
         Request::RunExtensionCommand { id, arguments_json } => {
             run_extension_command(state, id, arguments_json).await
         }

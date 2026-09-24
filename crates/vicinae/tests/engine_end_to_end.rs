@@ -2144,3 +2144,62 @@ fn a_power_command_answers_with_its_own_sentences_and_never_touches_this_machine
     };
     assert_eq!(err.kind, ErrorKind::BadRequest);
 }
+
+#[test]
+fn a_media_command_says_why_it_did_nothing() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::io::{BufRead, BufReader};
+    let play_pause = || Request::RunMediaCommand {
+        id: "play-pause".into(),
+    };
+
+    // No session bus at all: the player could not be reached.
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let Response::Error(err) = daemon.request(play_pause()) else {
+        panic!("play/pause with no session bus was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::Internal, "Failed to toggle playback")
+    );
+    let Response::Error(err) = daemon.request(Request::RunMediaCommand {
+        id: "rewind-time".into(),
+    }) else {
+        panic!("an unknown media command was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    drop(daemon);
+
+    // A bus with no player on it: the C++'s own sentence.
+    let mut bus = match Command::new("dbus-daemon")
+        .args(["--session", "--print-address", "--nofork"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(bus) => bus,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("SKIPPED the empty-bus half: no dbus-daemon on this machine");
+            return;
+        }
+        Err(err) => panic!("failed to spawn dbus-daemon: {err}"),
+    };
+    let mut address = String::new();
+    BufReader::new(bus.stdout.take().expect("piped stdout"))
+        .read_line(&mut address)
+        .expect("dbus-daemon prints its address");
+    let address = address.trim().to_owned();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())]
+    });
+    let answer = daemon.request(play_pause());
+    let _ = bus.kill();
+    let _ = bus.wait();
+    let Response::Error(err) = answer else {
+        panic!("play/pause with no player was not refused: {answer:?}");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::Unsupported, "No media player is running")
+    );
+}

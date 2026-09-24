@@ -2020,6 +2020,14 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 |---|---|---|---|
 | 1 | `SystemdPowerManager::can` calls `CanPowerOff`/`CanSuspend`/`CanHibernate`/`CanReboot` and then answers `!reply.arguments().isEmpty()` — it never reads the reply. logind answers with a *string*: `"yes"`, `"no"`, `"challenge"` or `"na"`. All four are a non-empty argument list, so a machine that cannot hibernate is offered Hibernate, and the menu entry does nothing. | Read the string. `Capability::is_offerable` is true for `yes` and `challenge` (polkit will ask), false for `no`, `na` and anything this build does not recognise. | `logind_replies_are_read_rather_than_counted`, `the_capability_reply_is_read_and_not_merely_counted` (drives a real reply through a mock logind), and `the_cpp_still_has_the_bug_this_port_declines_to_copy`, which fails if the C++ is fixed |
 
+### Media commands — what the port does not have yet
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`). | The launcher has hidden by then and has no HUD, so the engine posts the same sentence as a transient desktop notification (1.5 s, `transient` hint). Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
+| 2 | Each takes an optional `player` argument, fuzzy-matched over the running players. | Not yet: the default player is always used (last acted on, else playing, else first, as `defaultPlayer`). | `the_default_player_is_the_last_then_the_playing_then_the_first` |
+| 3 | Now Playing and the volume commands. | Not yet: Now Playing needs a view; volume needs an audio backend. | — |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

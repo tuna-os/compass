@@ -1987,7 +1987,7 @@ impl LauncherApp {
                 self.page = Page::Root;
                 Task::batch([closing, focus_search()])
             }
-            Message::PowerCommandDone(result) => {
+            Message::BuiltinCommandDone(result) => {
                 if let Err(reason) = result {
                     self.error = Some(reason);
                 }
@@ -2601,7 +2601,7 @@ impl LauncherApp {
         let id = power.id.to_owned();
         let run = Task::perform(
             async move { backend.run_power_command(id).await },
-            Message::PowerCommandDone,
+            Message::BuiltinCommandDone,
         );
         Task::batch([self.conceal(), run])
     }
@@ -3631,6 +3631,21 @@ impl LauncherApp {
                 }
                 Task::batch([record, self.run_power_command(power)])
             }
+            CommandKind::Media(id) => {
+                let Some(backend) = self.backend.clone() else {
+                    self.error = Some(format!(
+                        "{} needs the Compass engine, and this window is running without one",
+                        command.title
+                    ));
+                    return record;
+                };
+                let id = id.to_owned();
+                let run = Task::perform(
+                    async move { backend.run_media_command(id).await },
+                    Message::BuiltinCommandDone,
+                );
+                Task::batch([record, self.conceal(), run])
+            }
             CommandKind::SearchEmojis => {
                 self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
                 Task::batch([record, focus_search()])
@@ -4163,6 +4178,8 @@ mod tests {
         toast: Option<crate::backend::ExtensionToast>,
         /// The power commands asked for.
         powered: std::sync::Mutex<Vec<String>>,
+        /// The media commands asked for.
+        played: std::sync::Mutex<Vec<String>>,
         answers: std::sync::Mutex<Vec<bool>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
@@ -4192,6 +4209,13 @@ mod tests {
             Box::pin(async move {
                 self.powered.lock().unwrap().push(id);
                 Ok(())
+            })
+        }
+
+        fn run_media_command(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.played.lock().unwrap().push(id);
+                Err("No media player is running".to_owned())
             })
         }
 
@@ -5721,6 +5745,31 @@ mod tests {
             pending.extend(task_messages(app.update(message)));
         }
         assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+    }
+
+    #[test]
+    fn a_media_command_runs_at_once_and_shows_why_it_did_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:next-track".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("next track".into()))) {
+            let _ = app.update(message);
+        }
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "next-track"))
+            .expect("Next Track is in root search");
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert!(app.power_confirm.is_none(), "media commands do not ask");
+        assert_eq!(backend.played.lock().unwrap().as_slice(), ["next-track"]);
+        assert_eq!(app.error.as_deref(), Some("No media player is running"));
     }
 
     #[test]

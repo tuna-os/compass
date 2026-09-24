@@ -5752,6 +5752,7 @@ dependencies = [
  "compass-extension-api",
  "compass-ipc",
  "compass-local-storage",
+ "compass-media",
  "compass-platform",
  "compass-platform-linux",
  "compass-portals",
