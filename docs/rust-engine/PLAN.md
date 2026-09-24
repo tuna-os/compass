@@ -2465,12 +2465,26 @@ their `no-view` commands. Until now the Phase 4 crates were tested libraries tha
     the text and the echo count (ADR-0009).
   - Escape stops the command.
   - Extensions' `Clipboard` API is the GNOME Shell extension's clipboard.
+- **Since then (#211),** each proven against the real runtime in `engine_end_to_end.rs`:
+  - Ctrl+B opens a view's action panel, and actions' keyboard shortcuts run them;
+  - a `Detail` draws its Markdown;
+  - `push` shows the pushed view and Escape pops it; `confirmAlert` is shown and answered;
+  - required preferences are asked for in a form and kept encrypted in the extension store;
+    without a keyring the run is refused with the reason;
+  - command arguments are asked for and passed as `props.arguments`, never stored;
+  - `open()`, `Action.OpenInBrowser` and `getApplications()` are served by the engine, which
+    launches outside the sandbox;
+  - `Grid` renders typed and is searched and acted on as rows;
+  - `Form` fields are drawn and edited, echoes are counted so typing is never undone
+    (ADR-0009), and `SubmitForm` gets the values;
+  - memory: Node's `--max-old-space-size=160` caps every isolate (measured: it overrides the
+    runtime's 1000 MB worker limit), and the worker's pid goes into a user-systemd scope with
+    `MemoryMax=256M` where that manager is reachable. A command allocating 400 MiB is stopped.
 - Still to come:
-  - the action panel for a view's other actions, and keyboard shortcuts;
-  - Markdown (a detail shows its text);
-  - icons, `Grid` and `Form`;
-  - navigation pushes and alerts;
-  - preferences, arguments, and the cgroup memory cap.
+  - icons and image tiles (a grid is drawn as rows until then);
+  - multi-line text areas, and the date, tag and file pickers in forms;
+  - toasts drawn in the launcher rather than as desktop notifications;
+  - `runInTerminal`.
 
 **Needs the project owner:** nothing. ADR-0018 decided the Suite 0 gate (it keeps blocking), GNOME 51
 (reworded gate, #4 closed), team size (one person), rustcast (a seed), and the upstream report (none).
