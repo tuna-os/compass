@@ -1076,6 +1076,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "ask", "title": "Ask First", "mode": "view"},
               {"name": "link", "title": "Open Link", "mode": "no-view"},
               {"name": "tiles", "title": "Tiles", "mode": "view"},
+              {"name": "heap", "title": "Heap", "mode": "no-view"},
               {"name": "issue", "title": "New Issue", "mode": "view"},
               {"name": "greet", "title": "Greet Someone", "mode": "no-view",
                "arguments": [{"name": "name", "type": "text", "placeholder": "Name",
@@ -1158,6 +1159,24 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                    defaultValue: false }}));
              }};",
             submitted = submitted.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    // `heap_size_limit` would be the obvious probe, and it lies in a worker
+    // thread (it reports the process figure), so this allocates instead.
+    let heap = root.join("data-home/vicinae/support/hello/heap");
+    std::fs::write(
+        ext.join("heap.js"),
+        format!(
+            "module.exports.default = async () => {{
+               const fs = require('node:fs');
+               fs.writeFileSync({started:?}, 'started');
+               const keep = [];
+               for (let i = 0; i < 400; i++) keep.push(new Array(128 * 1024).fill(i + 0.5));
+               fs.writeFileSync({survived:?}, String(keep.length));
+             }};",
+            started = heap.with_extension("started").to_string_lossy(),
+            survived = heap.with_extension("survived").to_string_lossy()
         ),
     )
     .unwrap();
@@ -1809,4 +1828,45 @@ fn a_form_command_takes_edits_and_its_submit_gets_the_values() {
         })
     );
     daemon.request(Request::CloseExtension { session });
+}
+
+#[test]
+fn an_extension_that_allocates_past_the_heap_cap_is_stopped() {
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut heap = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        heap = dir.join("data-home/vicinae/support/hello/heap");
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    assert_eq!(
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:heap".into(),
+            arguments_json: None,
+        }),
+        Response::Ack
+    );
+    let (started, survived) = (
+        heap.with_extension("started"),
+        heap.with_extension("survived"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !started.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(started.exists(), "the command never ran");
+    // 400 MiB takes well under a second to allocate; give it five.
+    std::thread::sleep(Duration::from_secs(5));
+    assert!(
+        !survived.exists(),
+        "an extension allocated 400 MiB of heap under a 160 MiB cap"
+    );
 }

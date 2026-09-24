@@ -344,7 +344,10 @@ pub fn start(
             tracing::info!(dir = %dir.display(), %err, "could not prepare an extension directory");
         }
     }
-    let bundle = [runtime.bundle.to_string_lossy().into_owned()];
+    let bundle = [
+        compass_worker_host::cgroups::node_heap_flag(),
+        runtime.bundle.to_string_lossy().into_owned(),
+    ];
     let mut process = match &runtime.sandbox {
         Some(launcher) => {
             policy(runtime, command, data_dir).command(launcher, &runtime.node, &bundle)
@@ -360,6 +363,7 @@ pub fn start(
     let mut worker =
         spawned.map_err(|err| format!("The extension runtime would not start: {err}"))?;
     let pid = worker.pid();
+    confine_memory(pid, &command.extension_id);
 
     // The watchdog also bounds the handshake: a runtime that never answers
     // `load` is stopped, which ends the read below.
@@ -449,6 +453,25 @@ pub fn start(
         })
         .map_err(|err| format!("could not start a thread for the command: {err}"))?;
     Ok(started)
+}
+
+/// Caps the worker's memory on the user's systemd, where it is reachable.
+/// The heap flag already bounds the JavaScript side; this is the rest, and a
+/// host without it (a Flatpak, a container) still runs the command.
+fn confine_memory(pid: u32, extension_id: &str) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let scope = compass_worker_host::cgroups::scope_name(extension_id, pid);
+    handle.spawn(async move {
+        match compass_worker_host::cgroups::confine(pid, &scope).await {
+            Ok(()) => tracing::debug!(%scope, "extension worker memory capped"),
+            Err(err) => tracing::info!(
+                %err,
+                "no systemd user manager to cap the extension's memory; the heap cap still holds"
+            ),
+        }
+    });
 }
 
 /// What one run needs from the engine beyond the command itself.

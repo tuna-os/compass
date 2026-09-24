@@ -1,95 +1,102 @@
-//! cgroups v2 memory limit for extension workers.
+//! The memory an extension worker may use.
 //!
-//! Phase 4 confines each worker to 256 MB (268435456 bytes) via
-//! `memory.max` in its cgroup. Two mechanisms are supported, in order:
+//! Two caps, because neither alone holds everywhere:
 //!
-//! 1. **systemd `TransientUnit`** via `org.freedesktop.systemd1` — preferred
-//!    on a systemd host (and the only thing that works inside a Flatpak where
-//!    `/sys/fs/cgroup` is not writable). The host asks systemd to create a
-//!    transient scope with `MemoryMax` set, then moves the worker's pid into
-//!    it.
-//! 2. **Direct `memory.max` write** — fallback when systemd is not available
-//!    (tests, containers without systemd). The cgroup directory must already
-//!    exist.
-//!
-//! The helper is deliberately small so the host can call it after creating the
-//! cgroup directory but before moving the worker's pid into `cgroup.procs`.
+//! 1. **The JavaScript heap**, by Node's own `--max-old-space-size`
+//!    ([`node_heap_flag`]). The flag is process-wide and bounds every isolate,
+//!    the worker thread a command runs in included, whatever that worker's
+//!    own `resourceLimits` ask for (the runtime asks for 1000 MB; measured,
+//!    the flag wins). It needs nothing from the host, so it holds inside a
+//!    Flatpak too, and a runaway extension's worker fails with
+//!    `ERR_WORKER_OUT_OF_MEMORY` rather than taking the session with it.
+//! 2. **The whole process**, by a transient systemd scope on the *user*
+//!    manager holding the worker's pid with `MemoryMax` ([`confine`]). This
+//!    caps what the heap flag cannot see (buffers, native modules). The user
+//!    manager is the one an unprivileged engine may ask; the system manager
+//!    refuses. Inside a Flatpak the manager is not reachable, and the app's
+//!    own scope is what bounds it.
 
 use std::io;
-use std::path::Path;
 
+/// The most one worker may use, in all.
 pub const MEMORY_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 
-/// Write `MEMORY_LIMIT_BYTES` to `<cgroup>/memory.max`.
-///
-/// The cgroup directory must already exist (created by the host via
-/// `mkdir` under `/sys/fs/cgroup/compass/<extension-id>` or via systemd's
-/// `TransientUnit`). Failures are propagated so the host can decide to
-/// refuse the worker rather than run it unconfined.
-pub fn limit_memory(cgroup: &Path) -> io::Result<()> {
-    std::fs::write(cgroup.join("memory.max"), MEMORY_LIMIT_BYTES.to_string())
+/// Each JavaScript heap's cap, in MiB: below [`MEMORY_LIMIT_BYTES`], so V8
+/// gives up before the kernel has to.
+pub const HEAP_LIMIT_MIB: u64 = 160;
+
+const _: () = assert!(HEAP_LIMIT_MIB * 1024 * 1024 < MEMORY_LIMIT_BYTES);
+
+/// The Node flag that caps the heaps.
+#[must_use]
+pub fn node_heap_flag() -> String {
+    format!("--max-old-space-size={HEAP_LIMIT_MIB}")
 }
 
-/// Try systemd `TransientUnit` first, fallback to direct write.
-///
-/// On a systemd host this creates a transient scope
-/// `compass-extension-<id>.scope` with `MemoryMax` set via
-/// `org.freedesktop.systemd1.Manager.StartTransientUnit`. When systemd is
-/// not reachable (no bus, no permission, inside a test container) the
-/// direct `limit_memory` path is used. The `cgroup` path is still the
-/// filesystem location for the fallback; systemd's scope path is derived
-/// from `scope_name`.
-///
-/// Returns the mechanism that succeeded, so the host can log degradation.
-pub async fn limit_memory_via_systemd(
-    cgroup: &Path,
-    scope_name: &str,
-) -> io::Result<LimitMechanism> {
-    if let Ok(mechanism) = try_systemd_transient(scope_name).await {
-        return Ok(mechanism);
-    }
-    limit_memory(cgroup)?;
-    Ok(LimitMechanism::DirectWrite)
+/// The scope a worker for `extension` with `pid` runs in:
+/// `compass-extension-<extension>-<pid>.scope`, with anything systemd does not
+/// allow in a unit name replaced by `_`.
+#[must_use]
+pub fn scope_name(extension: &str, pid: u32) -> String {
+    let extension: String = extension
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '.' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("compass-extension-{extension}-{pid}.scope")
 }
 
-/// Which mechanism confined the worker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LimitMechanism {
-    /// systemd `TransientUnit` with `MemoryMax`.
-    SystemdTransient,
-    /// Direct `memory.max` write.
-    DirectWrite,
-}
-
-async fn try_systemd_transient(scope_name: &str) -> io::Result<LimitMechanism> {
-    let conn = zbus::Connection::system()
+/// Moves `pid` into a new scope `scope` on the user's systemd, capped at
+/// [`MEMORY_LIMIT_BYTES`]. The scope goes away with the process.
+///
+/// # Errors
+///
+/// When there is no session bus, the user manager is not on it (a Flatpak,
+/// a container), or it refuses the unit.
+pub async fn confine(pid: u32, scope: &str) -> io::Result<()> {
+    let connection = zbus::Connection::session()
         .await
         .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e))?;
     let proxy = zbus::Proxy::new(
-        &conn,
+        &connection,
         "org.freedesktop.systemd1",
         "/org/freedesktop/systemd1",
         "org.freedesktop.systemd1.Manager",
     )
     .await
     .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e))?;
-    let props: Vec<(String, zbus::zvariant::Value<'_>)> = vec![(
-        "MemoryMax".to_owned(),
-        zbus::zvariant::Value::new(MEMORY_LIMIT_BYTES),
-    )];
+    let properties: Vec<(&str, zbus::zvariant::Value<'_>)> = vec![
+        (
+            "Description",
+            zbus::zvariant::Value::from("A Compass extension"),
+        ),
+        ("PIDs", zbus::zvariant::Value::from(vec![pid])),
+        ("MemoryMax", zbus::zvariant::Value::from(MEMORY_LIMIT_BYTES)),
+        // Past the cap the scope is killed, not swapped into the ground.
+        ("MemorySwapMax", zbus::zvariant::Value::from(0_u64)),
+        (
+            "CollectMode",
+            zbus::zvariant::Value::from("inactive-or-failed"),
+        ),
+    ];
     let _: zbus::zvariant::OwnedObjectPath = proxy
         .call(
             "StartTransientUnit",
             &(
-                scope_name,
+                scope,
                 "fail",
-                props,
-                Vec::<(String, zbus::zvariant::Value<'_>)>::new(),
+                properties,
+                Vec::<(&str, Vec<(&str, zbus::zvariant::Value<'_>)>)>::new(),
             ),
         )
         .await
         .map_err(|e| io::Error::other(e.to_string()))?;
-    Ok(LimitMechanism::SystemdTransient)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -97,50 +104,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn limit_memory_writes_256mib() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        // Simulate a cgroup directory with a memory.max file.
-        let cgroup = dir.path().join("compass.test");
-        std::fs::create_dir_all(&cgroup).unwrap();
-        std::fs::write(cgroup.join("memory.max"), b"").unwrap();
-        limit_memory(&cgroup).unwrap();
-        let written = std::fs::read_to_string(cgroup.join("memory.max")).unwrap();
-        assert_eq!(written, MEMORY_LIMIT_BYTES.to_string());
-        assert_eq!(written, "268435456");
+    fn the_caps_are_256_mib_with_the_heap_below_it() {
+        // Raising the cap is a product decision with its own issue, not a
+        // one-line tweak.
+        assert_eq!(MEMORY_LIMIT_BYTES, 268_435_456);
+        assert_eq!(node_heap_flag(), "--max-old-space-size=160");
     }
 
     #[test]
-    fn limit_memory_fails_when_cgroup_missing() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let missing = dir.path().join("nope/memory.max");
-        let cgroup = dir.path().join("nope");
-        // No directory -> write fails.
-        assert!(limit_memory(&cgroup).is_err());
-        assert!(!missing.exists());
-    }
-
-    #[tokio::test]
-    async fn systemd_fallback_writes_directly_when_no_bus() {
-        // In a container without a system bus, limit_memory_via_systemd must
-        // fallback to direct write rather than fail the worker. The fallback
-        // is what keeps the host usable on non-systemd images and in tests.
-        let dir = tempfile::tempdir().expect("tempdir");
-        let cgroup = dir.path().join("compass.fallback");
-        std::fs::create_dir_all(&cgroup).unwrap();
-        std::fs::write(cgroup.join("memory.max"), b"").unwrap();
-        let mechanism = limit_memory_via_systemd(&cgroup, "compass-test-fallback.scope")
-            .await
-            .expect("fallback succeeds");
-        assert_eq!(mechanism, LimitMechanism::DirectWrite);
-        let written = std::fs::read_to_string(cgroup.join("memory.max")).unwrap();
-        assert_eq!(written, "268435456");
-    }
-
-    #[test]
-    fn memory_limit_is_256_mib_constant() {
-        // Typed guard: raising the cap is a deliberate product decision with
-        // its own issue, not a one-line tweak. The constant is the gate.
-        assert_eq!(MEMORY_LIMIT_BYTES, 256 * 1024 * 1024);
-        assert_eq!(MEMORY_LIMIT_BYTES, 268435456);
+    fn a_scope_name_is_a_valid_unit_name() {
+        assert_eq!(
+            scope_name("github", 42),
+            "compass-extension-github-42.scope"
+        );
+        assert_eq!(
+            scope_name("@me/my ext", 7),
+            "compass-extension-_me_my_ext-7.scope"
+        );
     }
 }
