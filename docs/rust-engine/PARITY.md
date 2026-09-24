@@ -2085,7 +2085,7 @@ The negative tests are §8.2's list; each has a positive control beside it.
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | An overlay names the provider and waits for "Open browser". | The browser opens at once, with the default `x-scheme-handler/https` application, and the view shows a toast ("Continue in your browser to connect …") until the redirect arrives; then "Connected to …" or the provider's refusal. | `an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it` |
-| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v11); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. Every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
+| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v12); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. Every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
 | 3 | An authorize URL without a `state` waits for ever. | Refused at once: nothing could match a redirect to it. | `a_url_without_a_state_is_refused_rather_than_waited_on` |
 | 4 | A redirect with `error=` leaves the request waiting. | The extension's `authorize()` rejects with `error_description` (else `error`). | `every_redirect_shape_raycast_uses_parses` |
 ### Shortcuts — what the port does not have yet
@@ -2115,7 +2115,7 @@ visits. What differs:
 Create Snippet and Manage Snippets run end to end: the engine keeps snippets in
 `$XDG_DATA_HOME/vicinae/compass-snippets.json` (the first start without one copies Vicinae's
 `snippets/snippets.json`, which glaze writes in the same shape), answers
-`ListSnippets`/`SaveSnippet`/`RemoveSnippet`/`ExpandSnippet`/`PasteSnippet` (IPC v11), validates
+`ListSnippets`/`SaveSnippet`/`RemoveSnippet`/`ExpandSnippet`/`PasteSnippet` (IPC v13), validates
 with the form's rules and the store's (a keyword belongs to one snippet), and expands with the
 ported expander: `{clipboard}` through the Shell extension, `{uuid}`, `{date format=…}` in Qt's
 syntax on the local clock (`jiff`), `{shell}` placeholders run concurrently under the 2 s limit,
@@ -2137,7 +2137,7 @@ arguments by name. What differs:
 Script commands run end to end: the engine scans `vicinae/scripts` under the data home and each
 data directory, after the `customDirs` in `providers.scripts.preferences`, lists them in root search
 (title, package name, keywords; `scripts:<id>`), rescans whenever the launcher lists them, re-reads
-a script before running it, and runs it in its mode (IPC v11 `ListScripts`, `RunScript`,
+a script before running it, and runs it in its mode (IPC v13 `ListScripts`, `RunScript`,
 `ScriptOutput`, `StopScript`): `fullOutput` streams stdout and stderr with `FORCE_COLOR=1` to a view
 that colours them with the ported tokenizer; `compact` and `inline` take the first stdout line
 within 10 s, an inline line becoming the script's subtitle (kept in
@@ -2177,7 +2177,7 @@ What differs:
 ### dmenu — what the port does not have yet
 
 `vicinae dmenu` runs end to end with the C++ CLI's options: it reads stdin, the engine keeps the
-list under a token and pushes `WindowCommand::Dmenu(token)` to the resident window (IPC v11), which
+list under a token and pushes `WindowCommand::Dmenu(token)` to the resident window (IPC v13), which
 fetches the list, shows it (non-empty lines, fuzzy filter keeping input order among equals, a path
 shown by its name and folder, the `{count}` section heading, the placeholder and initial query), and
 answers the choice: the entry, its index with `--format index`, or the search text when nothing
@@ -2196,7 +2196,7 @@ nothing printed, as the C++ does. What differs:
 Set Theme runs end to end: the view lists the themes in the ported sections ("Current Theme", then
 "Available Themes", fuzzy over name and description), previews a theme as soon as its row is
 selected, and puts the configured one back when it is left, as `ThemeViewHost` does; Enter keeps
-the selected theme through the engine (`SetTheme`, IPC v11), which writes it to `vicinae.json` as
+the selected theme through the engine (`SetTheme`, IPC v13), which writes it to `vicinae.json` as
 `vicinae theme set` does. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
@@ -2210,7 +2210,7 @@ the selected theme through the engine (`SetTheme`, IPC v11), which writes it to 
 Create Extension runs end to end: the launcher's form has the C++ fields (author, title,
 description, location, first command's title and description, command template), the engine
 validates them with the ported rules ("Min. 3 chars", "Min. 16 chars", "Must exist" after `~`
-expansion) and writes the ported boilerplate (`CreateExtension`, IPC v11), and a success page shows
+expansion) and writes the ported boilerplate (`CreateExtension`, IPC v13), and a success page shows
 the C++'s Markdown with the path and the `npm` steps; Enter opens the new folder. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
@@ -2223,7 +2223,7 @@ the C++'s Markdown with the path and the `npm` steps; Enter opens the new folder
 
 Browse Fonts runs end to end: the engine reads the installed families once (warmed five seconds
 after start, or on first use), folds the members of a typeface together and classifies each with
-the ported `font_service` rules (`ListFonts`, IPC v11). The launcher lists them under the ported
+the ported `font_service` rules (`ListFonts`, IPC v13). The launcher lists them under the ported
 heading ("All Fonts (n)", "<Category> (n)", "Results (n)"), with a category filter that offers only
 categories some font has. Each row draws its glyph in its own font. Enter opens the ported specimen
 (`FontSpecimen`), drawn in the family, and Escape returns to the list with its filter kept. The
