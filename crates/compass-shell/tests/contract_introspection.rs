@@ -150,7 +150,7 @@ fn the_contract_is_exactly_these_members() {
         introspect::parse(contract::CLIPBOARD_XML, CLIPBOARD_INTERFACE).expect("clipboard XML");
     assert_eq!(
         clipboard.methods.keys().collect::<Vec<_>>(),
-        ["GetClipboard", "SetClipboard"],
+        ["GetClipboard", "Paste", "SetClipboard"],
         "the clipboard contract gained or lost a method"
     );
     assert_eq!(
@@ -250,6 +250,14 @@ async fn every_contract_member_is_reached_through_the_proxy() {
     let read_back = client.clipboard().await.expect("GetClipboard");
     assert_eq!(read_back, written, "the clipboard did not round-trip");
 
+    // Clipboard.Paste
+    client.paste(&["org.gnome.Ptyxis"]).await.expect("Paste");
+    assert_eq!(
+        shell.pastes(),
+        [vec!["org.gnome.Ptyxis".to_owned()]],
+        "the mock did not see the paste, or its shift classes"
+    );
+
     // The two signals. `mock_bus.rs` asserts their payloads in detail; here the
     // point is only that the proxy's signal declarations decode what the mock
     // emits, which is the half of the contract a method call cannot reach.
@@ -279,7 +287,7 @@ async fn every_contract_member_is_reached_through_the_proxy() {
         introspect::parse(contract::WINDOWS_XML, WINDOWS_INTERFACE).expect("windows XML");
     let clipboard_iface =
         introspect::parse(contract::CLIPBOARD_XML, CLIPBOARD_INTERFACE).expect("clipboard XML");
-    const EXERCISED_METHODS: usize = 5; // List/Activate/Close + Get/SetClipboard
+    const EXERCISED_METHODS: usize = 6; // List/Activate/Close + Get/SetClipboard/Paste
     const EXERCISED_SIGNALS: usize = 2;
     assert_eq!(
         windows_iface.methods.len() + clipboard_iface.methods.len(),

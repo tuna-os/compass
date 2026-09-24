@@ -177,3 +177,33 @@ fn curating_openers_keeps_the_first_of_each_display_name() {
         "the first one wins"
     );
 }
+
+#[test]
+fn terminal_window_classes_are_the_terminals_normalised_identities() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(
+        dir.path(),
+        "org.gnome.Ptyxis.desktop",
+        "[Desktop Entry]\nType=Application\nName=Ptyxis\nExec=ptyxis\n\
+         Categories=System;TerminalEmulator;\n",
+    );
+    write(
+        dir.path(),
+        "kitty.desktop",
+        "[Desktop Entry]\nType=Application\nName=kitty\nExec=kitty\n\
+         StartupWMClass=Kitty\nCategories=System;TerminalEmulator;\n",
+    );
+    write(
+        dir.path(),
+        "firefox.desktop",
+        &entry("Firefox", Some("firefox"), None),
+    );
+    let index = builder().dir(dir.path()).build();
+
+    assert_eq!(
+        AppService::new(&index).terminal_window_classes(),
+        ["kitty", "org.gnome.ptyxis"],
+        "a terminal contributes its StartupWMClass and its desktop id, lowercased and without \
+         .desktop; a non-terminal contributes nothing"
+    );
+}

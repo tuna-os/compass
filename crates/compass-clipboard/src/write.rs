@@ -81,21 +81,46 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-/// Now, in whole seconds since the epoch.
+/// Now, in milliseconds since the epoch.
+///
+/// Milliseconds, not the C++ engine's whole seconds. Compass owns this store
+/// (ADR-0017), and at second granularity two copies made within the same
+/// second tie on `updated_at`, so history could show the older one on top.
+/// A Vicinae importer multiplies its seconds by 1000.
 ///
 /// Taken once per call and bound, rather than left to SQLite's `unixepoch()`.
 /// That is not a style preference: see [`evict_older_than`].
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     i64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs(),
+            .as_millis(),
     )
     .unwrap_or(i64::MAX)
 }
 
-/// Record a new selection. `created_at` and `updated_at` are both set to now.
+/// The `updated_at` for a copy happening now: never equal to or below one
+/// already stored.
+///
+/// A clock alone cannot order history. Two copies in the same millisecond tie,
+/// and re-copying an old entry the moment after something new must still put
+/// it on top; a tie-break by insertion order gets that second case wrong,
+/// because a bubbled-up entry keeps its old row. So each copy is stamped
+/// `max(now, newest + 1)`: strictly after everything before it, and equal to
+/// the wall clock whenever the clock is ahead (which is all but always).
+fn next_stamp(db: &Database) -> Result<i64> {
+    let mut stmt = db.prepare("SELECT MAX(updated_at) FROM selection")?;
+    let newest = if stmt.step()? && !stmt.is_null(0) {
+        Some(stmt.column_int64(0))
+    } else {
+        None
+    };
+    Ok(newest.map_or_else(now, |newest| now().max(newest.saturating_add(1))))
+}
+
+/// Record a new selection. `created_at` and `updated_at` are both set to now,
+/// or just after the newest entry if the clock has not moved past it.
 ///
 /// # Errors
 ///
@@ -112,7 +137,7 @@ pub fn insert_selection(db: &Database, selection: &NewSelection<'_>) -> Result<(
         Some(source) => stmt.bind_text(":source", source)?,
         None => stmt.bind_null(":source")?,
     }
-    stmt.bind_int64(":epoch", now())?;
+    stmt.bind_int64(":epoch", next_stamp(db)?)?;
     stmt.step()?;
     Ok(())
 }
@@ -206,7 +231,7 @@ pub fn bubble_up(db: &Database, id_or_hash: &str) -> Result<bool> {
          WHERE hash_md5 = :id OR id = :id RETURNING id",
     )?;
     stmt.bind_text(":id", id_or_hash)?;
-    stmt.bind_int64(":updated_at", now())?;
+    stmt.bind_int64(":updated_at", next_stamp(db)?)?;
     stmt.step().map_err(Error::Database)
 }
 
@@ -275,7 +300,7 @@ pub fn evict_older_than(
     const PRESERVE: &str = " AND pinned_at IS NULL AND keywords == ''";
 
     // One reading of the clock, used by both statements below.
-    let cutoff = now().saturating_sub(i64::try_from(age.as_secs()).unwrap_or(i64::MAX));
+    let cutoff = now().saturating_sub(i64::try_from(age.as_millis()).unwrap_or(i64::MAX));
 
     let tx = db.transaction()?;
 

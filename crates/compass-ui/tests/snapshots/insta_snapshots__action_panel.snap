@@ -1,0 +1,14 @@
+---
+source: crates/compass-ui/tests/insta_snapshots.rs
+expression: layout(&app)
+---
+on screen, in layout order:
+  Search…
+  Open
+  Application 00
+  COPY
+  Application 01
+  Copy name
+  Application 02
+not rendered:
+  No results

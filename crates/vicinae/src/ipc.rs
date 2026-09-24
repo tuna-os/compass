@@ -106,6 +106,21 @@ fn describe(request: &Request) -> &'static str {
         Request::AttachWindow => "AttachWindow",
         Request::WindowOutcome(_) => "WindowOutcome",
         Request::RecordLaunch { .. } => "RecordLaunch",
+        Request::ClipboardHistory { .. } => "ClipboardHistory",
+        Request::ClipboardContent { .. } => "ClipboardContent",
+        Request::ListWindows => "ListWindows",
+        Request::ActivateWindow { .. } => "ActivateWindow",
+        Request::CloseWindow { .. } => "CloseWindow",
+        Request::ClipboardPaste { .. } => "ClipboardPaste",
+        Request::ClipboardSetPinned { .. } => "ClipboardSetPinned",
+        Request::ClipboardRemove { .. } => "ClipboardRemove",
+        Request::RunExtensionCommand { .. } => "RunExtensionCommand",
+        Request::ExtensionView { .. } => "ExtensionView",
+        Request::ExtensionEvent { .. } => "ExtensionEvent",
+        Request::ExtensionPop { .. } => "ExtensionPop",
+        Request::SetExtensionPreferences { .. } => "SetExtensionPreferences",
+        Request::ExtensionAlertAnswer { .. } => "ExtensionAlertAnswer",
+        Request::CloseExtension { .. } => "CloseExtension",
     }
 }
 

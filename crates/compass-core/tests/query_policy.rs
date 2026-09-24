@@ -5,15 +5,15 @@
 
 use compass_core::query_policy::{
     CORRECTION_PENALTY, CorrectionChoice, CorrectionPlan, MAX_CORRECTION_DISTANCE,
-    MIN_CORRECTION_TERM_LENGTH, QueryWord, RANK_LOG_WEIGHT, SpellfixSuggestion,
-    TRUSTED_WORD_MIN_RANK, adjusted_suggestion_score, build_correction_plans, correction_weight,
+    MIN_CORRECTION_TERM_LENGTH, QueryWord, RANK_LOG_WEIGHT, TRUSTED_WORD_MIN_RANK,
+    VocabularySuggestion, adjusted_suggestion_score, build_correction_plans, correction_weight,
     pick_corrections, prepare_candidate_search_query, prepare_correction_search_query, same_family,
     split_query_words, stem,
 };
 
 /// A suggestion of `word` at `distance`.
-fn suggestion(word: &str, distance: i32) -> SpellfixSuggestion {
-    SpellfixSuggestion {
+fn suggestion(word: &str, distance: i32) -> VocabularySuggestion {
+    VocabularySuggestion {
         word: word.to_owned(),
         distance,
         score: 100,
@@ -117,13 +117,13 @@ fn a_plan_whose_terms_are_all_too_short_asks_nothing() {
 fn a_common_word_scores_worse_than_a_rare_one_with_the_same_score() {
     // A very common word is a bad correction even when the spelling index
     // likes it: it matches a great many files, none of them the one wanted.
-    let rare = SpellfixSuggestion {
+    let rare = VocabularySuggestion {
         word: "quixotic".to_owned(),
         distance: 1,
         score: 100,
         rank: 1,
     };
-    let common = SpellfixSuggestion {
+    let common = VocabularySuggestion {
         rank: 100_000,
         ..rare.clone()
     };
@@ -135,7 +135,7 @@ fn the_rank_discount_flattens_out() {
     // Logarithmic: the penalty grows quickly at first and then slowly, so a
     // merely common word is not treated like an impossibly common one.
     let at = |rank: i64| {
-        adjusted_suggestion_score(&SpellfixSuggestion {
+        adjusted_suggestion_score(&VocabularySuggestion {
             word: "w".to_owned(),
             distance: 1,
             score: 100,
@@ -195,7 +195,7 @@ fn words_are_family_by_prefix_or_by_stem() {
 #[test]
 fn a_word_the_corpus_knows_well_is_not_corrected() {
     // Correcting it would replace a search that works with several that do not.
-    let suggestions = vec![SpellfixSuggestion {
+    let suggestions = vec![VocabularySuggestion {
         word: "report".to_owned(),
         distance: 0,
         score: 100,
@@ -209,7 +209,7 @@ fn a_word_the_corpus_barely_knows_is_still_corrected() {
     // Rank below the threshold: appearing once is as likely to be somebody
     // else's typo as a real word.
     let suggestions = vec![
-        SpellfixSuggestion {
+        VocabularySuggestion {
             word: "reprot".to_owned(),
             distance: 0,
             score: 100,
@@ -229,7 +229,7 @@ fn known_word_trust_can_be_switched_off() {
     // the second suggestion here is one the prefix rule would not have thrown
     // away anyway.
     let suggestions = vec![
-        SpellfixSuggestion {
+        VocabularySuggestion {
             word: "report".to_owned(),
             distance: 0,
             score: 100,

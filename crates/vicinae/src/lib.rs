@@ -13,8 +13,11 @@
 
 pub mod appearance;
 pub mod cli;
+pub mod clipboard_service;
 pub mod doctor;
 pub mod engine;
+pub mod extension_apps;
+pub mod extension_runner;
 pub mod hotkey;
 pub mod indexer_client;
 pub mod indexer_service;
@@ -26,7 +29,9 @@ pub mod spike;
 pub mod typography;
 pub mod ui_backend;
 mod ui_instance;
+pub mod vicinae_import;
 pub mod window;
+pub mod window_service;
 
 use std::process::ExitCode;
 
@@ -224,15 +229,25 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // 250 ms budget as above so a wedged portal never blocks startup.
         let (font_family, typography_link) = typography::follow();
 
-        let backend = link.as_ref().map(|_| {
-            std::sync::Arc::new(ui_backend::DaemonBackend::new(cli.socket_path()))
-                as std::sync::Arc<dyn compass_ui::backend::ApplicationBackend>
-        });
+        // One adapter serves both: application search and clipboard history
+        // go to the same engine over the same socket.
+        let daemon = link
+            .as_ref()
+            .map(|_| std::sync::Arc::new(ui_backend::DaemonBackend::new(cli.socket_path())));
+        let backend = daemon
+            .clone()
+            .map(|d| d as std::sync::Arc<dyn compass_ui::backend::ApplicationBackend>);
+        let clipboard = daemon
+            .clone()
+            .map(|d| d as std::sync::Arc<dyn compass_ui::backend::ClipboardBackend>);
+        let windows = daemon.map(|d| d as std::sync::Arc<dyn compass_ui::backend::WindowBackend>);
 
         compass_ui::run_resident(compass_ui::AppFlags {
             theme: theme_choice,
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
             backend,
+            clipboard,
+            windows,
             root_config,
             link,
             exit_on_engine_disconnect: matches!(cli.command, Command::Start { .. }),
@@ -304,9 +319,17 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             }
         }
 
-        Command::Query { text, json } => {
+        Command::Query {
+            text,
+            json,
+            provider,
+        } => {
             require_servable_engine(cli.engine)?;
-            let hits = ipc::query(&socket, &text.join(" ")).await?;
+            let mut hits = ipc::query(&socket, &text.join(" ")).await?;
+            if let Some(provider) = provider {
+                let prefix = format!("{provider}:");
+                hits.retain(|hit| hit.id.starts_with(&prefix));
+            }
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&hits)?);

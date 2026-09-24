@@ -412,7 +412,7 @@ impl IndexDatabase for SqliteWriter {
         free_count.saturating_mul(100) >= page_count.saturating_mul(COMPACT_MIN_FREE_PERCENT)
     }
 
-    fn rebuild_spellfix_vocabulary(&mut self) {
+    fn rebuild_vocabulary(&mut self) {
         let mut counts: HashMap<String, i64> = HashMap::new();
         let mut stmt = match self.db.prepare("SELECT path FROM indexed_file") {
             Ok(stmt) => stmt,
@@ -445,20 +445,13 @@ impl IndexDatabase for SqliteWriter {
                 return;
             }
         };
-        if let Err(error) = self.db.execute("DROP TABLE IF EXISTS spellfix_vocab") {
-            tracing::error!(error = ?error, "dropping the spellfix vocabulary");
-            return;
-        }
-        if let Err(error) = self
-            .db
-            .execute("CREATE VIRTUAL TABLE spellfix_vocab USING spellfix1")
-        {
-            tracing::error!(error = ?error, "recreating the spellfix vocabulary");
+        if let Err(error) = self.db.execute("DELETE FROM vocabulary") {
+            tracing::error!(error = ?error, "clearing the vocabulary");
             return;
         }
         let mut insert = match self
             .db
-            .prepare("INSERT INTO spellfix_vocab(word, rank) VALUES (:word, :rank)")
+            .prepare("INSERT INTO vocabulary(word, rank) VALUES (:word, :rank)")
         {
             Ok(stmt) => stmt,
             Err(error) => {
@@ -721,14 +714,18 @@ pub static WRITER_SCHEMA: &[&str] = &[
     "CREATE TRIGGER IF NOT EXISTS skeleton_idx_ad AFTER DELETE ON indexed_file BEGIN \
      INSERT INTO skeleton_idx(skeleton_idx, rowid, skeleton_path) \
      VALUES('delete', old.id, old.skeleton_path); END",
-    "CREATE VIRTUAL TABLE IF NOT EXISTS spellfix_vocab USING spellfix1",
+    "CREATE TABLE IF NOT EXISTS vocabulary (word TEXT PRIMARY KEY, rank INTEGER NOT NULL) \
+     WITHOUT ROWID",
 ];
 
 /// The file-index schema version, stamped as `user_version`.
 ///
-/// Matches `SCHEMA_VERSION`: a database stamped otherwise is from a breaking
-/// change and gets purged, never migrated.
-pub const FILE_INDEX_SCHEMA_VERSION: i64 = 1;
+/// A database stamped otherwise is from a breaking change and gets purged,
+/// never migrated — it is a cache, rebuilt by rescanning. Version 2 replaced the
+/// `spellfix1` virtual table with a plain `vocabulary` table (ADR-0017), which
+/// is also why the file is no longer the C++ engine's: see
+/// `vicinae::indexer_service::DATABASE_FILE_NAME`.
+pub const FILE_INDEX_SCHEMA_VERSION: i64 = 2;
 
 /// Applies [`WRITER_SCHEMA`] and stamps [`FILE_INDEX_SCHEMA_VERSION`].
 ///
@@ -742,7 +739,9 @@ pub fn ensure_file_index_schema(db: &Database) -> Result<(), compass_sqlcipher_s
     for statement in WRITER_SCHEMA {
         db.execute(statement)?;
     }
-    db.execute("PRAGMA user_version = 1")
+    db.execute(&format!(
+        "PRAGMA user_version = {FILE_INDEX_SCHEMA_VERSION}"
+    ))
 }
 
 /// The stamped schema version of `db`, or 0 when it will not say.
@@ -989,8 +988,8 @@ mod tests {
         assert_eq!(photos.len(), 1);
         assert_eq!(photos[0].mime_type.as_deref(), Some("image/jpeg"));
 
-        writer.rebuild_spellfix_vocabulary();
-        let suggestions = reader.spellfix_suggestions("reprot", 20, true);
+        writer.rebuild_vocabulary();
+        let suggestions = reader.vocabulary_suggestions("reprot", 20, true);
         assert!(
             suggestions
                 .iter()

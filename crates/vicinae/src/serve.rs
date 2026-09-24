@@ -87,6 +87,14 @@ pub struct EngineState {
     max_results: usize,
     /// The attached launcher window, if one is.
     window: WindowSlot,
+    /// Clipboard history, once [`crate::clipboard_service::run`] has opened
+    /// it. `None` until then, and for good when there is no keyring.
+    clipboard: Option<Arc<crate::clipboard_service::ClipboardStore>>,
+    /// The GNOME Shell extension's client, once the session bus answered.
+    /// `None` until then, and for good without a session bus.
+    shell: Option<Arc<compass_shell::ShellClient>>,
+    /// Running extension view commands, which the launcher follows.
+    views: Arc<crate::extension_runner::Views>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -137,6 +145,9 @@ impl EngineState {
             socket,
             max_results,
             window: WindowSlot::default(),
+            clipboard: None,
+            shell: None,
+            views: Arc::default(),
         }
     }
 
@@ -179,7 +190,20 @@ impl EngineState {
             socket,
             max_results,
             window: WindowSlot::default(),
+            clipboard: None,
+            shell: None,
+            views: Arc::default(),
         }
+    }
+
+    /// Makes the Shell extension's client available to requests.
+    pub fn set_shell(&mut self, shell: Arc<compass_shell::ShellClient>) {
+        self.shell = Some(shell);
+    }
+
+    /// Makes clipboard history available to requests.
+    pub fn set_clipboard(&mut self, store: Arc<crate::clipboard_service::ClipboardStore>) {
+        self.clipboard = Some(store);
     }
 
     /// The slot holding the attached launcher window.
@@ -218,20 +242,349 @@ impl EngineState {
     #[must_use]
     pub fn query(&self, text: &str) -> Vec<QueryHit> {
         self.index
-            .search_root(text, Some(self.frecency.as_ref()))
+            .search_root_all(text, Some(self.frecency.as_ref()))
             .into_iter()
             .take(self.max_results)
-            .map(|ranked| QueryHit {
-                id: ranked.item.key().to_owned(),
-                title: ranked.item.display_name(),
-                subtitle: None,
-                // `match_score`, not `score`. `Ranked::score` is the combined
-                // value that includes the frecency boost and is not bounded,
-                // whereas the wire documents `0..=100` on compass-search's
-                // scale. See the ordering note on `query`.
-                score: ranked.match_score,
+            .map(|hit| match hit {
+                compass_core::RootHit::App(ranked) => app_hit(&ranked),
+                compass_core::RootHit::Command {
+                    command,
+                    match_score,
+                } => QueryHit {
+                    id: command.id(),
+                    title: command.title.to_owned(),
+                    subtitle: Some(command.subtitle.to_owned()),
+                    score: match_score,
+                },
+                compass_core::RootHit::Extension {
+                    command,
+                    match_score,
+                } => QueryHit {
+                    id: command.id.clone(),
+                    title: command.title.clone(),
+                    subtitle: Some(command.extension_title.clone()),
+                    score: match_score,
+                },
             })
             .collect()
+    }
+}
+
+async fn run_extension_command(
+    state: &Arc<RwLock<EngineState>>,
+    id: String,
+    arguments_json: Option<String>,
+) -> Response {
+    let Some(command) = state.read().await.index.extension(&id).cloned() else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no installed extension command has that id",
+        ));
+    };
+    let given = match arguments_json.as_deref().map(serde_json::from_str) {
+        None => None,
+        Some(Ok(serde_json::Value::Object(given))) => Some(given),
+        Some(_) => {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "the arguments are not a JSON object",
+            ));
+        }
+    };
+    let runtime = match crate::extension_runner::Runtime::locate() {
+        Ok(runtime) => runtime,
+        Err(reason) => return Response::Error(ProtocolError::new(ErrorKind::Unsupported, reason)),
+    };
+    let Some(data_dir) = compass_core::xdg_dirs::data_home().map(|home| home.join("vicinae"))
+    else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "Running extensions needs a data directory, and $XDG_DATA_HOME and $HOME are unset",
+        ));
+    };
+    let storage = extension_storage(&data_dir).await;
+    let stored = match storage.clone() {
+        Some(storage) => {
+            let extension = command.extension_id.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::extension_runner::load_preferences(&storage, &extension)
+            })
+            .await
+            .unwrap_or_default()
+        }
+        None => serde_json::Map::new(),
+    };
+    let preferences = match command.preferences_with(&stored) {
+        Ok(preferences) => preferences,
+        Err(missing) if storage.is_none() => {
+            let names: Vec<&str> = missing.iter().map(|p| p.title.as_str()).collect();
+            return Response::Error(ProtocolError::new(
+                ErrorKind::Unsupported,
+                format!(
+                    "{} needs {} set, and without a keyring Compass has nowhere safe to keep it",
+                    command.title,
+                    names.join(", ")
+                ),
+            ));
+        }
+        Err(_) => {
+            return Response::ExtensionNeedsPreferences {
+                title: command.title.clone(),
+                fields: preference_fields(&command, &stored),
+            };
+        }
+    };
+    let arguments = match command.arguments_with(given.as_ref()) {
+        Ok(arguments) => arguments,
+        Err(_) => {
+            return Response::ExtensionNeedsArguments {
+                title: command.title.clone(),
+                fields: argument_fields(&command, given.as_ref()),
+            };
+        }
+    };
+    let host = crate::extension_runner::Host {
+        storage,
+        shell: state.read().await.shell.clone(),
+        views: Arc::clone(&state.read().await.views),
+        preferences,
+        arguments,
+        apps: Some(crate::extension_apps::EngineApps::new(
+            &state.read().await.index,
+            compass_xdg::mimeapps::Lists::from_environment(),
+            tokio::runtime::Handle::current(),
+        )),
+    };
+    let started = tokio::task::spawn_blocking(move || {
+        crate::extension_runner::start(&runtime, &command, &data_dir, host)
+    })
+    .await;
+    match started {
+        Ok(Ok(started)) => {
+            let recorded = tokio::task::spawn_blocking({
+                let state = Arc::clone(state);
+                move || state.blocking_write().frecency.record_launch(&id)
+            })
+            .await;
+            if !matches!(recorded, Ok(Ok(()))) {
+                tracing::warn!("could not record running an extension command");
+            }
+            match started {
+                crate::extension_runner::Started::Ran => Response::Ack,
+                crate::extension_runner::Started::View(session) => {
+                    Response::ExtensionStarted { session }
+                }
+            }
+        }
+        Ok(Err(reason)) => Response::Error(ProtocolError::new(ErrorKind::Internal, reason)),
+        Err(err) => Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!("the extension task failed: {err}"),
+        )),
+    }
+}
+
+/// Every argument `command` takes, as the launcher's form draws it, with what
+/// was already entered.
+fn argument_fields(
+    command: &compass_core::extension_commands::ExtensionCommand,
+    given: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Vec<compass_ipc::PreferenceField> {
+    use compass_core::manifest::ArgumentType;
+    use compass_ipc::PreferenceFieldKind;
+    command
+        .arguments
+        .iter()
+        .map(|argument| compass_ipc::PreferenceField {
+            name: argument.name.clone(),
+            // Raycast labels an argument by its placeholder; it has no title.
+            title: if argument.placeholder.is_empty() {
+                argument.name.clone()
+            } else {
+                argument.placeholder.clone()
+            },
+            description: String::new(),
+            placeholder: argument.placeholder.clone(),
+            required: argument.required,
+            kind: match argument.argument_type {
+                ArgumentType::Text => PreferenceFieldKind::Text,
+                ArgumentType::Password => PreferenceFieldKind::Password,
+                ArgumentType::Dropdown => PreferenceFieldKind::Dropdown {
+                    options: argument
+                        .data
+                        .iter()
+                        .flatten()
+                        .map(|option| (option.title.clone(), option.value.clone()))
+                        .collect(),
+                },
+            },
+            value_json: given
+                .and_then(|given| given.get(&argument.name))
+                .map(ToString::to_string),
+        })
+        .collect()
+}
+
+/// Every preference `command` reads, as the launcher's form draws it.
+fn preference_fields(
+    command: &compass_core::extension_commands::ExtensionCommand,
+    stored: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<compass_ipc::PreferenceField> {
+    use compass_core::manifest::PreferenceKind;
+    use compass_ipc::PreferenceFieldKind;
+    command
+        .preferences
+        .iter()
+        .map(|preference| compass_ipc::PreferenceField {
+            name: preference.name.clone(),
+            title: preference.title.clone(),
+            description: preference.description.clone(),
+            placeholder: preference.placeholder.clone(),
+            required: preference.required,
+            kind: match &preference.kind {
+                PreferenceKind::TextField => PreferenceFieldKind::Text,
+                PreferenceKind::Password => PreferenceFieldKind::Password,
+                PreferenceKind::Checkbox { label } => PreferenceFieldKind::Checkbox {
+                    label: label.clone(),
+                },
+                PreferenceKind::Dropdown { options } => PreferenceFieldKind::Dropdown {
+                    options: options
+                        .iter()
+                        .map(|option| (option.title.clone(), option.value.clone()))
+                        .collect(),
+                },
+                PreferenceKind::AppPicker => PreferenceFieldKind::Unsupported {
+                    declared: "appPicker".to_owned(),
+                },
+                PreferenceKind::FilePicker { .. } => PreferenceFieldKind::Unsupported {
+                    declared: "file".to_owned(),
+                },
+                PreferenceKind::DirectoryPicker { .. } => PreferenceFieldKind::Unsupported {
+                    declared: "directory".to_owned(),
+                },
+                PreferenceKind::Unknown { declared } => PreferenceFieldKind::Unsupported {
+                    declared: declared.clone(),
+                },
+            },
+            value_json: stored
+                .get(&preference.name)
+                .or(preference.default.as_ref())
+                .map(ToString::to_string),
+        })
+        .collect()
+}
+
+async fn set_extension_preferences(
+    state: &Arc<RwLock<EngineState>>,
+    id: String,
+    values_json: String,
+) -> Response {
+    let Some(command) = state.read().await.index.extension(&id).cloned() else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no installed extension command has that id",
+        ));
+    };
+    let values: serde_json::Map<String, serde_json::Value> =
+        match serde_json::from_str(&values_json) {
+            Ok(values) => values,
+            Err(err) => {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("values_json is not a JSON object: {err}"),
+                ));
+            }
+        };
+    let Some(data_dir) = compass_core::xdg_dirs::data_home().map(|home| home.join("vicinae"))
+    else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "no data directory",
+        ));
+    };
+    let Some(storage) = extension_storage(&data_dir).await else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "without a keyring Compass has nowhere safe to keep extension preferences",
+        ));
+    };
+    let saved = tokio::task::spawn_blocking(move || {
+        crate::extension_runner::save_preferences(&storage, &command.extension_id, &values)
+    })
+    .await;
+    match saved {
+        Ok(Ok(())) => Response::Ack,
+        Ok(Err(reason)) => Response::Error(ProtocolError::new(ErrorKind::Internal, reason)),
+        Err(err) => Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!("the preferences task failed: {err}"),
+        )),
+    }
+}
+
+/// How long an `ExtensionView` is held open waiting for a change.
+const VIEW_POLL: std::time::Duration = std::time::Duration::from_secs(20);
+
+async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u64) -> Response {
+    let Some(mut watch) = state.read().await.views.watch(session) else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no extension view is running with that session",
+        ));
+    };
+    // A timeout is an answer too: the same version, so the launcher asks again.
+    let _ = tokio::time::timeout(VIEW_POLL, watch.wait_for(|view| view.version > after)).await;
+    let view = watch.borrow().clone();
+    Response::ExtensionView {
+        version: view.version,
+        view_json: view.view,
+        problem: view.problem,
+        ended: view.ended,
+        depth: view.depth,
+        alert: view.alert,
+    }
+}
+
+/// Extensions' local storage, keyed from Compass's own master key; `None`
+/// (and local storage answered "not implemented") without a keyring.
+async fn extension_storage(data_dir: &std::path::Path) -> Option<crate::extension_runner::Storage> {
+    let keyring = match crate::clipboard_service::Oo7Store::connect().await {
+        Ok(keyring) => keyring,
+        Err(err) => {
+            tracing::info!(error = %err, "no keyring; extension storage unavailable");
+            return None;
+        }
+    };
+    match crate::clipboard_service::master_key(&keyring).await {
+        Ok(master) => Some(crate::extension_runner::Storage {
+            path: data_dir.join(crate::extension_runner::STORAGE_DATABASE),
+            key: compass_crypto::keys::derive_all(&master).database,
+        }),
+        Err(err) => {
+            tracing::info!(error = %err, "no master key; extension storage unavailable");
+            None
+        }
+    }
+}
+
+fn app_hit(ranked: &compass_core::apps::ApplicationRootHit<'_>) -> QueryHit {
+    QueryHit {
+        // The ENTRYPOINT id, not the desktop key. The protocol
+        // documents this field as the "stable identifier of the
+        // underlying root item", and `AppIndex` already builds one
+        // (`app_root_item` -> `entrypoint_id(APPS_PROVIDER_ID, ...)`);
+        // this put `AppItem::key` there instead, so the wire carried
+        // `host--byobu.desktop` for the item every other part of the
+        // system — and the C++ engine — calls
+        // `applications:host--byobu`.
+        id: ranked.entrypoint_id.to_owned(),
+        title: ranked.item.display_name(),
+        subtitle: None,
+        // `match_score`, not `score`. `Ranked::score` is the combined
+        // value that includes the frecency boost and is not bounded,
+        // whereas the wire documents `0..=100` on compass-search's
+        // scale. See the ordering note on `query`.
+        score: ranked.match_score,
     }
 }
 
@@ -325,10 +678,11 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             // executor, and serialize updates through the daemon's store.
             tokio::task::spawn_blocking(move || {
                 let mut state = state.blocking_write();
-                if state.index.get(&key).is_none() {
+                if state.index.get(&key).is_none() && compass_core::commands::by_id(&key).is_none()
+                {
                     return Response::Error(ProtocolError::new(
                         ErrorKind::BadRequest,
-                        "launch key is not present in the application index",
+                        "launch key is neither an application nor a builtin command",
                     ));
                 }
                 match state.frecency.record_launch(&key) {
@@ -350,6 +704,251 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                     "launch history task failed",
                 ))
             })
+        }
+
+        Request::ClipboardHistory { query, limit } => {
+            if limit == 0 {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "a clipboard history request must ask for at least one entry",
+                ));
+            }
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            // SQLite is blocking I/O; keep it off the executor.
+            match tokio::task::spawn_blocking(move || store.history(&query, limit)).await {
+                Ok(Ok(entries)) => Response::ClipboardHistory { entries },
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard history task failed: {err}"),
+                )),
+            }
+        }
+
+        Request::ClipboardContent { id } => {
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            match tokio::task::spawn_blocking(move || store.content(&id)).await {
+                Ok(Ok(Some((mime_type, data)))) => Response::ClipboardContent { mime_type, data },
+                Ok(Ok(None)) => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no clipboard history entry has that id",
+                )),
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard content task failed: {err}"),
+                )),
+            }
+        }
+
+        Request::ListWindows => {
+            let (shell, index_state) = (state.read().await.shell.clone(), Arc::clone(state));
+            let Some(shell) = shell else {
+                return Response::Error(crate::window_service::no_bus("Window switching"));
+            };
+            match shell.list_windows().await {
+                Ok(windows) => {
+                    let state = index_state.read().await;
+                    Response::Windows {
+                        windows: crate::window_service::rows(
+                            windows.into_iter().map(Into::into).collect(),
+                            &state.index,
+                        ),
+                    }
+                }
+                Err(err) => {
+                    Response::Error(crate::window_service::refusal(&err, "Window switching"))
+                }
+            }
+        }
+
+        Request::ActivateWindow { id } | Request::CloseWindow { id } => {
+            let close = matches!(request, Request::CloseWindow { .. });
+            let what = if close {
+                "Closing a window"
+            } else {
+                "Switching to a window"
+            };
+            let Some(shell) = state.read().await.shell.clone() else {
+                return Response::Error(crate::window_service::no_bus(what));
+            };
+            let id = compass_shell::WindowId(id);
+            let done = if close {
+                shell.close_window(id).await
+            } else {
+                shell.activate_window(id).await
+            };
+            match done {
+                Ok(()) => Response::Ack,
+                Err(err) => Response::Error(crate::window_service::refusal(&err, what)),
+            }
+        }
+
+        Request::RunExtensionCommand { id, arguments_json } => {
+            run_extension_command(state, id, arguments_json).await
+        }
+        Request::ExtensionView { session, after } => extension_view(state, session, after).await,
+        Request::ExtensionEvent {
+            session,
+            handler,
+            args_json,
+        } => {
+            let args: Vec<serde_json::Value> = match serde_json::from_str(&args_json) {
+                Ok(args) => args,
+                Err(err) => {
+                    return Response::Error(ProtocolError::new(
+                        ErrorKind::BadRequest,
+                        format!("args_json is not a JSON array: {err}"),
+                    ));
+                }
+            };
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.activate(session, &handler, &args))
+                .await
+            {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the extension event task failed: {err}"),
+                )),
+            }
+        }
+        Request::ExtensionAlertAnswer { session, confirmed } => {
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.answer_alert(session, confirmed)).await
+            {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the alert answer task failed: {err}"),
+                )),
+            }
+        }
+        Request::SetExtensionPreferences { id, values_json } => {
+            set_extension_preferences(state, id, values_json).await
+        }
+        Request::ExtensionPop { session } => {
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.pop(session)).await {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the extension pop task failed: {err}"),
+                )),
+            }
+        }
+        Request::CloseExtension { session } => {
+            state.read().await.views.close(session);
+            Response::Ack
+        }
+
+        Request::ClipboardSetPinned { .. } | Request::ClipboardRemove { .. } => {
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            let changed = tokio::task::spawn_blocking(move || match request {
+                Request::ClipboardSetPinned { id, pinned } => store.set_pinned(&id, pinned),
+                Request::ClipboardRemove { id } => store.remove(&id),
+                _ => unreachable!("matched above"),
+            })
+            .await;
+            match changed {
+                Ok(Ok(true)) => Response::Ack,
+                Ok(Ok(false)) => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no clipboard history entry has that id",
+                )),
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard update task failed: {err}"),
+                )),
+            }
+        }
+
+        Request::ClipboardPaste { id } => {
+            const WHAT: &str = "Pasting";
+            let (shell, store) = {
+                let state = state.read().await;
+                (state.shell.clone(), state.clipboard.clone())
+            };
+            let Some(shell) = shell else {
+                return Response::Error(crate::window_service::no_bus(WHAT));
+            };
+            let Some(store) = store else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            let (mime_type, data) =
+                match tokio::task::spawn_blocking(move || store.content(&id)).await {
+                    Ok(Ok(Some(content))) => content,
+                    Ok(Ok(None)) => {
+                        return Response::Error(ProtocolError::new(
+                            ErrorKind::BadRequest,
+                            "no clipboard history entry has that id",
+                        ));
+                    }
+                    Ok(Err(err)) => {
+                        return Response::Error(ProtocolError::new(
+                            ErrorKind::Internal,
+                            err.to_string(),
+                        ));
+                    }
+                    Err(err) => {
+                        return Response::Error(ProtocolError::new(
+                            ErrorKind::Internal,
+                            format!("clipboard content task failed: {err}"),
+                        ));
+                    }
+                };
+            let terminals = {
+                let state = state.read().await;
+                compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
+            };
+            let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
+            let content = compass_shell::ClipboardContent::binary(data, mime_type);
+            let pasted = match shell.set_clipboard(&content).await {
+                Ok(()) => shell.paste(&terminals).await,
+                Err(err) => Err(err),
+            };
+            match pasted {
+                Ok(()) => Response::Ack,
+                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
+            }
         }
 
         // Handled by the serve loop, which owns the shutdown signal; reaching
@@ -426,6 +1025,24 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     // Detached: the hotkey is a convenience, the socket is the contract. A
     // portal that never answers must not keep the engine from listening, so
     // this is spawned rather than awaited or raced against the serve loop.
+    // Detached for the same reason: a keyring that is slow or absent costs
+    // clipboard history, never the socket.
+    tokio::spawn(crate::clipboard_service::run(Arc::clone(&state)));
+
+    // The Shell extension, for window switching. Connecting only fails with
+    // no session bus at all; an absent extension is reported per request.
+    {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            match compass_shell::ShellClient::connect_session().await {
+                Ok(client) => state.write().await.set_shell(Arc::new(client)),
+                Err(err) => {
+                    tracing::warn!(error = %err, "no session bus; window switching unavailable")
+                }
+            }
+        });
+    }
+
     if hotkey {
         tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
     } else {

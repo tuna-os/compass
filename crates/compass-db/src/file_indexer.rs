@@ -81,7 +81,7 @@ pub struct FileIndexer<D: IndexDatabase, R: IndexReader> {
 impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
     /// Builds the indexer around `writer`, opening read databases through
     /// `make_reader` — one for the query engine, one per dispatched scan.
-    /// `database_file_name` is the index file's name (`file-indexer.db` in
+    /// `database_file_name` is the index file's name (`compass-file-index.db` in
     /// production): its rows must never index themselves, so it and its
     /// write-ahead log join every scan's excluded basenames.
     pub fn new(
@@ -128,7 +128,7 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
                 }
                 if event.status == ScanStatus::Succeeded && event_inner.should_rebuild_vocabulary()
                 {
-                    event_inner.writer.rebuild_spellfix_vocabulary();
+                    event_inner.writer.rebuild_vocabulary();
                 }
                 if event.status == ScanStatus::Succeeded
                     && event.scan_type == ScanType::Full
@@ -370,8 +370,8 @@ impl<D: IndexDatabase, R: IndexReader> FileIndexer<D, R> {
             return;
         }
         // Typo corrections before the first scan of the session completes.
-        if !(self.inner.make_reader)().has_spellfix_vocabulary() {
-            self.inner.writer.rebuild_spellfix_vocabulary();
+        if !(self.inner.make_reader)().has_vocabulary() {
+            self.inner.writer.rebuild_vocabulary();
         }
 
         let mut needs_full_scan = false;
@@ -628,7 +628,7 @@ mod tests {
 
     use crate::db_writer::{FileEvent, IndexDatabase};
     use crate::query_engine::{SearchCandidate, SearchOptions};
-    use crate::query_policy::SpellfixSuggestion;
+    use crate::query_policy::VocabularySuggestion;
 
     /// A database recording events, deletes, errors and rebuilds, gating
     /// scan records behind a latch so tests can hold scans back on purpose.
@@ -699,7 +699,7 @@ mod tests {
             false
         }
 
-        fn rebuild_spellfix_vocabulary(&mut self) {
+        fn rebuild_vocabulary(&mut self) {
             *self.rebuilds.lock().unwrap_or_else(PoisonError::into_inner) += 1;
         }
 
@@ -761,12 +761,12 @@ mod tests {
             Vec::new()
         }
 
-        fn spellfix_suggestions(
+        fn vocabulary_suggestions(
             &self,
             _word: &str,
             _top: i32,
             _prefix: bool,
-        ) -> Vec<SpellfixSuggestion> {
+        ) -> Vec<VocabularySuggestion> {
             Vec::new()
         }
 
@@ -791,7 +791,7 @@ mod tests {
                 .cloned()
         }
 
-        fn has_spellfix_vocabulary(&self) -> bool {
+        fn has_vocabulary(&self) -> bool {
             self.has_spellfix
         }
 

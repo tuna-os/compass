@@ -132,6 +132,13 @@ pub enum Command {
         /// Emit the hits as JSON.
         #[arg(long)]
         json: bool,
+
+        /// Keep only hits from this provider, e.g. `applications` or
+        /// `commands`. The C++ CLI's flag of the same name, so the parity
+        /// harness can narrow both engines alike. Filters the engine's ranked
+        /// list, so it can return fewer than `launcher.max_results`.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
     },
 
     /// Theme management (#153).
@@ -301,7 +308,7 @@ mod tests {
         ])
         .expect("the parity harness's argv must parse");
 
-        let Command::Query { text, json } = cli.command else {
+        let Command::Query { text, json, .. } = cli.command else {
             panic!("expected the query command");
         };
         assert_eq!(text, vec!["firefox".to_owned()]);
@@ -408,7 +415,8 @@ mod tests {
     fn a_multi_word_query_is_joined_rather_than_rejected() {
         // `vicinae query text editor` is what a person types; requiring the
         // quotes would be a papercut on the most-used command.
-        let Command::Query { text, json } = parse(&["vicinae", "query", "text", "editor"]).command
+        let Command::Query { text, json, .. } =
+            parse(&["vicinae", "query", "text", "editor"]).command
         else {
             panic!("expected a query");
         };

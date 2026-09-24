@@ -185,6 +185,9 @@ jobs:
           # scripts/harvest-desktop-corpus.sh is the one definition of a
           # harvest, and it is the copy tier 1 shellchecks.
           cp scripts/harvest-desktop-corpus.sh packaging/vmtest/
+          # And the GNOME Shell extension, for the same reason: the image
+          # installs the in-tree copy, the one the contract test checks.
+          cp -r extensions/gnome-shell/compass@tuna-os.github.io packaging/vmtest/
           sudo podman build \
             -t localhost/bluefin-compass:ci \
             -f packaging/vmtest/Containerfile.compass \
@@ -220,6 +223,7 @@ jobs:
             --video \
             --check '/usr/libexec/compass-vmtest/checks.sh installed' \
             --check '/usr/libexec/compass-vmtest/checks.sh session' \
+            --check '/usr/libexec/compass-vmtest/checks.sh shell-extension' \
             --check '/usr/libexec/compass-vmtest/checks.sh doctor' \
             --check '/usr/libexec/compass-vmtest/checks.sh doctor-assert' \
             --check '/usr/libexec/compass-vmtest/checks.sh spike-b' \
@@ -276,8 +280,10 @@ jobs:
       # Copied rather than duplicated: scripts/harvest-desktop-corpus.sh is the
       # one definition of what a harvest is, and it is the copy tier 1
       # shellchecks.
-      - name: Stage the corpus harvester into the build context
-        run: cp scripts/harvest-desktop-corpus.sh packaging/vmtest/
+      - name: Stage the corpus harvester and the Shell extension into the build context
+        run: |
+          cp scripts/harvest-desktop-corpus.sh packaging/vmtest/
+          cp -r extensions/gnome-shell/compass@tuna-os.github.io packaging/vmtest/
 
       - name: Build the test image
         run: |
@@ -414,8 +420,10 @@ jobs:
       # Copied rather than duplicated: scripts/harvest-desktop-corpus.sh is the
       # one definition of what a harvest is, and it is the copy tier 1
       # shellchecks.
-      - name: Stage the corpus harvester into the build context
-        run: cp scripts/harvest-desktop-corpus.sh packaging/vmtest/
+      - name: Stage the corpus harvester and the Shell extension into the build context
+        run: |
+          cp scripts/harvest-desktop-corpus.sh packaging/vmtest/
+          cp -r extensions/gnome-shell/compass@tuna-os.github.io packaging/vmtest/
 
       - name: Build the test image
         run: |

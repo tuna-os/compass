@@ -402,6 +402,20 @@ impl ShellClient {
             .await
     }
 
+    /// Paste the current selection into the window focus moves to next.
+    ///
+    /// Call it while the launcher still has focus and hide the launcher once
+    /// it returns: the extension arms a wait for the focus change and presses
+    /// the paste shortcut there. `shift_wm_classes` are the windows (terminals)
+    /// that take Ctrl+Shift+V instead of Ctrl+V.
+    pub async fn paste(&self, shift_wm_classes: &[&str]) -> Result<()> {
+        self.require(false).await?;
+        let proxy = self.shared.clipboard_proxy().await?;
+        self.shared
+            .bounded("Paste", proxy.paste(shift_wm_classes))
+            .await
+    }
+
     /// Subscribe to `ClipboardChanged`.
     pub async fn clipboard_changes(&self) -> Result<ClipboardStream> {
         self.require(false).await?;

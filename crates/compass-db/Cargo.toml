@@ -14,6 +14,8 @@ compass-core.workspace = true
 compass-search.workspace = true
 compass-sqlcipher-sys = { path = "../compass-sqlcipher-sys" }
 md-5 = "0.11"
+strsim = "0.11"
+fst = { version = "0.4", features = ["levenshtein"] }
 mime_guess.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

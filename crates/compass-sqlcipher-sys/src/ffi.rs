@@ -30,6 +30,8 @@ pub struct Sqlite3Stmt {
 
 /// `SQLITE_OK`.
 pub const OK: c_int = 0;
+/// `SQLITE_BUSY`: another connection holds a lock this one needs.
+pub const BUSY: c_int = 5;
 /// `SQLITE_ROW`.
 pub const ROW: c_int = 100;
 /// `SQLITE_DONE`.
@@ -112,14 +114,6 @@ unsafe extern "C" {
     /// this crate passes null for both — see [`crate::Database::open`] for why
     /// it is called directly instead of through that mechanism.
     pub fn vicinaeFuzzyTrigramInit(
-        db: *mut Sqlite3,
-        errmsg: *mut *mut c_char,
-        api: *const c_void,
-    ) -> c_int;
-
-    /// `vendor/spellfix/register.c`: the `spellfix1` virtual table in the
-    /// same static-linkage form, registered right after the tokenizer.
-    pub fn vicinaeSpellfixInit(
         db: *mut Sqlite3,
         errmsg: *mut *mut c_char,
         api: *const c_void,

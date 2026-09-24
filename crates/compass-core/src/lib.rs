@@ -45,12 +45,14 @@ pub mod bug_report;
 pub mod builtin_icon;
 pub mod calculator_history;
 pub mod clipboard_history;
+pub mod commands;
 pub mod config;
 pub mod contrast;
 pub mod create_extension;
 pub mod default_app;
 pub mod emoji_grid;
 pub mod entry_filter;
+pub mod extension_commands;
 pub mod extension_install;
 pub mod extension_store;
 pub mod fetch_queue;
@@ -114,7 +116,7 @@ pub mod window_manager;
 pub mod window_switcher;
 pub mod xdg_dirs;
 
-pub use apps::{AppIndex, AppIndexBuilder, AppItem, SkipReason, SkippedEntry};
+pub use apps::{AppIndex, AppIndexBuilder, AppItem, RootHit, SkipReason, SkippedEntry};
 pub use config::{Config, ConfigError, ExtensionsConfig, LauncherConfig};
 pub use frecency::{
     Clock, FrecencyError, FrecencyRecord, FrecencyStore, JsonFrecencyStore, ManualClock,

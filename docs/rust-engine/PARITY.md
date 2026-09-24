@@ -1,5 +1,11 @@
 # Parity ledger
 
+> **Read under [ADR-0017](./adr/0017-a-new-launcher-not-a-reimplementation.md).** Compass is a new
+> launcher, not a reimplementation. The **parity test ✓** column below now means *tested*: an
+> absolute test that fails on a regression satisfies it, whether or not the C++ engine agrees. A
+> differential test still counts, as a tripwire. Divergences that improve on Vicinae are declared
+> here and kept.
+
 The definition of done for the Rust engine transformation (#2). Every row must be fully green
 before its C++ source is deleted, and **nothing leaves `src/` until it is**.
 
@@ -61,7 +67,7 @@ that. The plan has been corrected.
 | Crate | Tests | State |
 |---|---|---|
 | `compass-core` | 1,743 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction, the index reconciliation, the watch policy and script output styling |
-| `vicinae` | 184 | CLI, an 11-check `doctor`, and **the engine daemon** |
+| `vicinae` | 184 | CLI, a 12-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
 | `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
@@ -1166,6 +1172,35 @@ the channel that matters.
 Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
 the behaviour changes, so a future fix is loud rather than silent.
 
+### `compass-db` — typo correction without `spellfix1`, in its own file
+
+**Kept on purpose (ADR-0017).** The C++ file indexer asks SQLite's `spellfix1` extension for
+corrections; Compass keeps a plain `vocabulary(word, rank)` table and suggests in Rust
+(`compass_db::vocabulary::suggest`): optimal-string-alignment distance from `strsim`, reported at
+100 per edit so the ported correction policy's thresholds read unchanged. Spellfix's phonetic
+candidate hash and per-character-class substitution costs are not reproduced, so individual
+suggestion lists differ; the ported quality suite (`compass-db/tests/query_quality.rs`) passes
+23/23 either way, and its four correction-dependent cases fail when suggestions are stubbed out.
+
+Because the schema differs (v2), Compass's index lives in `compass-file-index.db` rather than
+`file-indexer.db`, in the same directory. It is a cache: the first scan fills it, nothing migrates.
+
+### `compass-core::root_items` — one slip no longer makes an app vanish (#204)
+
+**An improvement, kept on purpose (ADR-0017).** Both engines match root items as an ordered
+subsequence, so a transposed, doubled or substituted keystroke (`alacrtity`, `alacrittyy`,
+`blemder`) returned nothing from either. Compass now falls back to a one-edit
+optimal-string-alignment distance (`compass_search::typo_distance`, via `strsim`) for queries of five
+or more characters, over title, untranslated title and alias words, for items the matcher did not
+reach. Those hits are appended after every real match with a score of `EPSILON × (1 + frecency)`,
+so they add an answer but never displace one.
+
+Where C++ returns `[]` for such a query, Rust now returns the intended app. Suite 0's top-result
+gate skips queries where either side is empty, and typo hits only follow real matches, so the gate
+is unaffected. Pinned by `search_quality.rs::a_transposed_or_doubled_character_still_finds_it`
+(real corpus) and four `root_items.rs` tests, including that a typo hit never outranks a real match
+however often it has been opened.
+
 ### Suite 0's ranked-output path — two divergences that are **scope**, not behaviour
 
 Not bugs on either side. These are the two places where `vicinae query --json` (C++, added for
@@ -1176,7 +1211,7 @@ cite a rationale and be declared rather than discovered; this is that citation.
 | # | The two engines | Why it is not reconcilable | Pinned by |
 |---|---|---|---|
 | 1 | **The score is on two scales.** Rust puts `QueryHit.score` on the wire — the 0..=100 match score, with the frecency boost *deliberately* excluded, so hits are legitimately not in descending score order. C++ `rootQuery` emits what `RootItemManager::search` **orders by**, which `SearchableRootItem::fuzzyScore` returns as `score.score + FRECENCY_WEIGHT * frecency()`. | Reporting the other engine's number means recomputing it at a second site: on the C++ side that is `fzf::threadLocalMatcher().score_query` over the field weights (title 1.0, subtitle 0.5, alias 1.0, keywords 0.6), duplicated away from the one place that owns them. A second copy of a weighting is a divergence generator, not a fix. **The gate Phase 1 names is ranking, not scoring** — §8.1a already measures scores differing on 20.8% of queries while the ranking absorbs it. | `same_ranking_different_scores_is_a_known_divergence` — and, so the tolerance cannot quietly swallow a real regression, the same test asserts that a reordering sharing those scores is still a `Regression` |
-| 2 | **The two rank different sets.** Rust's `Session::query` ranks `index.launchable_items()` — applications. C++ `RootItemManager` ranks *root items*: applications plus commands, extension entrypoints and fallbacks. | Both are correct for their engine at this phase; the Rust engine has no command or extension providers yet, so there is nothing to include. `rootQuery` takes `providerId` (`--provider` on the CLI) so a caller narrows the C++ side to compare like with like. Deliberately **not** defaulted — a default would silently decide a parity question that belongs to whoever runs the comparison. | `each_engine_is_invoked_the_way_its_own_cli_parses` pins the argv that carries it |
+| 2 | **The two rank different sets.** The Rust root ranks applications and its own builtin commands (`commands:*`, from `compass_core::commands`). C++ `RootItemManager` ranks applications plus its commands, extension entrypoints and fallbacks, under different ids. | Both are correct for their engine. Each CLI takes `--provider` (C++ `rootQuery`'s `providerId`; Rust filters its ranked list by id prefix), and the harness passes the same provider to both, so like is compared with like. Deliberately **not** defaulted — a default would silently decide a parity question that belongs to whoever runs the comparison. | `each_engine_is_invoked_the_way_its_own_cli_parses` pins the argv that carries it |
 
 A third difference is mechanical rather than semantic and is recorded here because it looks like the
 others: the C++ engine takes **no `--socket` flag**. `vicinae::serverSocketName()` is
@@ -1193,6 +1228,7 @@ obvious move and turned out to be unnecessary.
 | 0 | `query` divides by `limit` to compute `totalPages` (`ceil(totalCount / limit)`), so a zero `limit` is a division by zero whose result is cast to `int`. It also interpolates `limit` and `offset` into the SQL text with `.arg()` rather than binding them. | Refuse a non-positive `limit`; bind both. `current_page`'s ceiling rounding *is* reproduced, oddity included — it is a display value the C++ UI already agrees with. | `a_zero_limit_is_refused_rather_than_dividing_by_it` |
 | 1 | `MigrationManager::runMigrations` catches every exception, logs it, rolls back and returns `void`; `ClipboardDatabase::runMigrations` returns `void` too. A failed migration is silent, and the next thing the user sees is every query failing against a schema that was never created. | `schema::run` returns a `Result`. | `an_edited_migration_is_refused`, `a_database_from_a_newer_build_is_refused` |
 | 2 | The `checksum` column exists to detect a migration edited after it was applied. `insertMigration` writes it and `loadDatabaseMigrations` reads it back into a struct field — and nothing ever compares the two. It is a stored value with no reader, so the detection it exists for never happens. | Compare it, and refuse on a mismatch. The expected hashes are also pinned in `schema.rs`'s tests, so editing a migration fails at development time rather than on a user's machine. | `an_edited_migration_is_refused`, `the_embedded_content_hashes_to_what_the_cpp_engine_recorded` |
+| 3 | `updated_at` is whole seconds (`QDateTime::currentSecsSinceEpoch()`) and the list orders by it alone, so two copies within one second tie and SQLite picks their order: copy A, then B, and A can be listed on top. Re-copying an older entry in the same second as a new one can leave it below. | Compass owns its store (ADR-0017), so stamps are milliseconds, and every copy is stamped `max(now, newest + 1)`, strictly after everything before it; the list breaks any remaining tie by insertion order. A Vicinae importer multiplies its seconds by 1000. | `copies_made_in_quick_succession_list_newest_first`, `a_recopied_entry_goes_on_top_even_when_the_clock_is_behind` (both fail when the fix is reverted) |
 
 ### `compass-xdg` — six C++ bugs deliberately **not** reproduced
 
@@ -1823,6 +1859,24 @@ nothing was scheduled.
 The timeout path is the same kind of thing and is pinned the same way: when focus never lands the
 paste is dropped and the clipboard is *not* restored, so what was copied is still there. A port that
 helpfully restored it would take away the only consolation prize the failure has.
+
+### Paste on GNOME — the focus wait moved into the Shell, and it is event-driven
+
+The C++ polls `focusedForeignWindow` every 5 ms for up to 5 s, waits another 30 ms and injects
+Ctrl+V (Ctrl+Shift+V for a terminal) through its input server. On GNOME 50/51 the Rust engine can do
+none of that: no virtual-keyboard protocol, no `/dev/uinput` on Bluefin, and no focus signal outside
+the Shell. So contract v2's `Clipboard.Paste(as)` does it inside the Shell. The extension waits on
+`notify::focus-window` for focus to leave the window that had it when it was called, then 30 ms, then
+presses the shortcut through a Clutter virtual keyboard.
+
+Three things differ on purpose:
+- the wait is 2 s, not 5 s, because it is a signal, not a poll that can miss;
+- "is this a terminal" is decided before focus moves. The engine sends every `TerminalEmulator`
+  application's normalised window classes, and the extension matches the window it lands on;
+- the clipboard is not restored afterwards.
+
+What is kept is the copy that happens anyway (above). The engine sets the clipboard before arming the
+paste, and a launcher whose engine cannot paste copies the entry itself.
 
 ### `compass-core::audio_control` — a volume that is not a number no longer takes the process down
 

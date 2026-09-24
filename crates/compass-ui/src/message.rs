@@ -44,6 +44,69 @@ pub enum Message {
     MoveSelection(Direction),
     /// Launch the selected result.
     LaunchSelected,
+    /// The clipboard history filter changed.
+    ClipboardQueryChanged(String),
+    /// Clipboard history rows arrived for request `generation`.
+    ClipboardLoaded {
+        /// The request they answer; a stale one is dropped.
+        generation: u64,
+        /// The rows, or why there are none.
+        result: Result<Vec<crate::backend::ClipboardRow>, String>,
+    },
+    /// The selected clipboard entry's content arrived, to be copied.
+    ClipboardContentLoaded(Result<crate::backend::ClipboardContent, String>),
+    /// The engine armed a paste of the selected entry, or could not; on a
+    /// refusal the entry is copied instead.
+    ClipboardPasted(Result<(), String>),
+    /// The engine started an extension command, or said why it could not.
+    ExtensionCommandStarted {
+        /// The command's entrypoint id.
+        id: String,
+        /// The command's title, for its view until the view names itself.
+        title: String,
+        /// How it began, or why it could not.
+        result: Result<crate::backend::ExtensionStart, String>,
+    },
+    /// An extension view's latest state, for the session it asked about.
+    ExtensionViewLoaded {
+        /// Which session.
+        session: u64,
+        /// Its state, or why it could not be read.
+        result: Result<crate::backend::ExtensionViewState, String>,
+    },
+    /// The search text in an extension's view changed.
+    ExtensionQueryChanged(String),
+    /// A row in an extension's list was clicked.
+    ExtensionItemSelected(usize),
+    /// A preference field in the form changed.
+    PreferenceEdited(usize, crate::preferences_page::FieldValue),
+    /// The preference form was submitted (Enter).
+    PreferencesSubmit,
+    /// The preferences were kept, or not; on success the command runs.
+    PreferencesSaved(Result<(), String>),
+    /// A link in an extension's Markdown was clicked.
+    ExtensionLinkClicked(String),
+    /// The person changed a field of an extension's form: its name and value.
+    ExtensionFieldEdited(String, serde_json::Value),
+    /// An action or search event reached the extension, or did not.
+    ExtensionEventSent(Result<(), String>),
+    /// An entry was pinned, unpinned or removed, or could not be; the list
+    /// reloads on success and says why on failure.
+    ClipboardEntryChanged(Result<(), String>),
+    /// A clipboard row was clicked.
+    ClipboardSelected(usize),
+    /// Leave a command's view for the root list.
+    Back,
+    /// The window switcher's filter changed.
+    WindowsQueryChanged(String),
+    /// The open windows arrived, or why they could not be listed.
+    WindowsLoaded(Result<Vec<crate::backend::WindowRow>, String>),
+    /// A window row was clicked.
+    WindowSelected(usize),
+    /// Switching to a window finished.
+    WindowActivated(Result<(), String>),
+    /// Closing a window finished; the list is reloaded either way.
+    ShellWindowClosed(Result<(), String>),
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must

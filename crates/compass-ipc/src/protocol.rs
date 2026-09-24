@@ -30,7 +30,11 @@ use serde::{Deserialize, Serialize};
 /// a human can act on, and it only does so if the number moves.
 ///
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
-pub const PROTOCOL_VERSION: u16 = 3;
+/// Version 4 adds clipboard history; version 5, fetching an entry's content;
+/// version 6, window switching; version 7, pasting, pinning and removing a
+/// clipboard entry, and running an installed extension's command; version 8,
+/// following and driving an extension's view.
+pub const PROTOCOL_VERSION: u16 = 8;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +131,133 @@ pub enum Request {
         /// Stable application/action key, as returned by the index.
         key: String,
     },
+    /// Search clipboard history, newest first with pinned entries on top.
+    ///
+    /// Answered with [`Response::ClipboardHistory`], or with an
+    /// [`ErrorKind::Unsupported`] error while the engine has no store — no
+    /// keyring, or the store would not open. An empty `query` lists.
+    ClipboardHistory {
+        /// Search text; empty for the whole history.
+        query: String,
+        /// Most entries to return. Zero is a bad request.
+        limit: u32,
+    },
+    /// The full content of one clipboard history entry, decrypted.
+    ///
+    /// Answered with [`Response::ClipboardContent`]; an id that names no entry
+    /// is a bad request. Separate from the list because a list row needs only
+    /// the preview, and content can be a whole image.
+    ClipboardContent {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// The open windows, for the window switcher.
+    ///
+    /// Answered with [`Response::Windows`], or refused as
+    /// [`ErrorKind::Unsupported`] without the GNOME Shell extension, which is
+    /// the only way to list windows on GNOME.
+    ListWindows,
+    /// Focus and raise one window. Answered with [`Response::Ack`].
+    ActivateWindow {
+        /// [`WindowInfo::id`].
+        id: u32,
+    },
+    /// Ask one window to close. Answered with [`Response::Ack`].
+    CloseWindow {
+        /// [`WindowInfo::id`].
+        id: u32,
+    },
+    /// Put one clipboard history entry on the clipboard and paste it into the
+    /// window focus moves to next.
+    ///
+    /// Send it while the launcher still has focus and hide the launcher once
+    /// it is answered with [`Response::Ack`]: the paste lands after the focus
+    /// change. Refused as [`ErrorKind::Unsupported`] without the GNOME Shell
+    /// extension, which is the only thing on GNOME that can press a key in
+    /// another window; the caller then copies instead.
+    ClipboardPaste {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// Pin or unpin one clipboard history entry. Pinned entries list first and
+    /// survive eviction. Answered with [`Response::Ack`]; an id that names no
+    /// entry is a bad request.
+    ClipboardSetPinned {
+        /// [`ClipboardEntry::id`].
+        id: String,
+        /// Pin when true, unpin when false.
+        pinned: bool,
+    },
+    /// Remove one clipboard history entry and its stored content. Answered
+    /// with [`Response::Ack`]; an id that names no entry is a bad request.
+    ClipboardRemove {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// Run an installed extension's command, by the entrypoint id a
+    /// [`QueryHit`] carries. Answered with [`Response::Ack`] once it has
+    /// started; refused as [`ErrorKind::Unsupported`], with the reason, when
+    /// this engine cannot run it (a view command, a preference it cannot
+    /// fill, no extension runtime).
+    RunExtensionCommand {
+        /// [`QueryHit::id`].
+        id: String,
+        /// The command's argument values as a JSON object, or `None` when the
+        /// launcher has none to give: a command that declares arguments is
+        /// then answered with [`Response::ExtensionNeedsArguments`].
+        arguments_json: Option<String>,
+    },
+    /// What a view command's session shows, once it differs from `after`.
+    ///
+    /// Held open until the session's version passes `after` or a timeout,
+    /// then answered with [`Response::ExtensionView`] either way; the
+    /// launcher asks again with the version it got. A session that is not
+    /// running is a bad request.
+    ExtensionView {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// The last version the launcher has; zero for none.
+        after: u64,
+    },
+    /// Run one of the view's callbacks: an action's handler, the search bar's
+    /// change handler, the selection handler. Answered with [`Response::Ack`].
+    ExtensionEvent {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// The handler id the view carries.
+        handler: String,
+        /// Its arguments, as a JSON array.
+        args_json: String,
+    },
+    /// Keeps an extension's preference values, then answers [`Response::Ack`].
+    /// Sent after [`Response::ExtensionNeedsPreferences`], before running the
+    /// command again.
+    SetExtensionPreferences {
+        /// The command's [`QueryHit::id`]; the values are its extension's.
+        id: String,
+        /// The values, as a JSON object by preference name.
+        values_json: String,
+    },
+    /// The person's answer to the view's [`ExtensionAlert`]. Answered with
+    /// [`Response::Ack`]; a session with no alert waiting is a bad request.
+    ExtensionAlertAnswer {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+        /// Whether they confirmed.
+        confirmed: bool,
+    },
+    /// Escape on a pushed view: pop it, and the extension renders the view
+    /// beneath. Answered with [`Response::Ack`].
+    ExtensionPop {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+    },
+    /// The person left the view: stop the command. Answered with
+    /// [`Response::Ack`].
+    CloseExtension {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
+    },
 }
 
 /// What the engine answers.
@@ -164,6 +295,62 @@ pub enum Response {
     /// allocated by the engine and echoed by the window in the matching
     /// [`Request::WindowOutcome`].
     Window(WindowCommand),
+    /// Entries for a [`Request::ClipboardHistory`], in presentation order.
+    ClipboardHistory {
+        /// Matching entries: pinned first, then most recently copied.
+        entries: Vec<ClipboardEntry>,
+    },
+    /// Content for a [`Request::ClipboardContent`].
+    ClipboardContent {
+        /// MIME type of the bytes.
+        mime_type: String,
+        /// The content, exactly as it was copied.
+        data: Vec<u8>,
+    },
+    /// Answer to [`Request::ListWindows`], most recently used first.
+    Windows {
+        /// Every window the extension reports.
+        windows: Vec<WindowInfo>,
+    },
+    /// A view command started: follow it with [`Request::ExtensionView`].
+    ExtensionStarted {
+        /// The session to follow.
+        session: u64,
+    },
+    /// Answer to [`Request::ExtensionView`].
+    ExtensionView {
+        /// The session's version now; equal to `after` on a timeout.
+        version: u64,
+        /// The view, as `compass_extension_api::View` JSON, once rendered.
+        view_json: Option<String>,
+        /// Why the view cannot be drawn, or why the command ended.
+        problem: Option<String>,
+        /// Whether the command has ended.
+        ended: bool,
+        /// How many views the extension has pushed, the root one included.
+        depth: u32,
+        /// A confirmation the extension is waiting on, if any. Answer it with
+        /// [`Request::ExtensionAlertAnswer`].
+        alert: Option<ExtensionAlert>,
+    },
+    /// Answer to [`Request::RunExtensionCommand`] when a required preference
+    /// has no value: the form to show. Answer with
+    /// [`Request::SetExtensionPreferences`], then run the command again.
+    ExtensionNeedsPreferences {
+        /// The command's title, for the form's heading.
+        title: String,
+        /// Every preference the command reads, required ones included.
+        fields: Vec<PreferenceField>,
+    },
+    /// Answer to [`Request::RunExtensionCommand`] when the command declares
+    /// arguments and was given none, or left a required one empty: the form
+    /// to show. Run the command again with what was entered.
+    ExtensionNeedsArguments {
+        /// The command's title, for the form's heading.
+        title: String,
+        /// Every argument, in the manifest's order.
+        fields: Vec<PreferenceField>,
+    },
 }
 
 /// What the engine asks an attached window to do.
@@ -205,6 +392,125 @@ pub struct QueryHit {
     pub subtitle: Option<String>,
     /// Match score in `0..=100`, matching `compass-search`'s scale.
     pub score: u32,
+}
+
+/// One preference as the launcher's form draws it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreferenceField {
+    /// The name the extension reads it by; the key in `values_json`.
+    pub name: String,
+    /// The label.
+    pub title: String,
+    /// The help text; may be empty.
+    pub description: String,
+    /// The placeholder; may be empty.
+    pub placeholder: String,
+    /// Whether the command cannot run without it.
+    pub required: bool,
+    /// What kind of input it takes.
+    pub kind: PreferenceFieldKind,
+    /// Its current value (stored, else the default), as JSON.
+    pub value_json: Option<String>,
+}
+
+/// What a [`PreferenceField`] takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreferenceFieldKind {
+    /// A line of text.
+    Text,
+    /// A line of text, not echoed.
+    Password,
+    /// A tick box, with its label.
+    Checkbox {
+        /// The text beside the box.
+        label: String,
+    },
+    /// One of a list, as `(title, value)`.
+    Dropdown {
+        /// The options.
+        options: Vec<(String, String)>,
+    },
+    /// A kind the form cannot edit yet (a file or application picker); shown
+    /// so the person sees why the command waits.
+    Unsupported {
+        /// What the manifest calls it.
+        declared: String,
+    },
+}
+
+/// A confirmation an extension asked for (`confirmAlert`), as the launcher
+/// shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionAlert {
+    /// The heading.
+    pub title: String,
+    /// The body; may be empty.
+    pub message: String,
+    /// The confirm button's text.
+    pub confirm_text: String,
+    /// The cancel button's text.
+    pub cancel_text: String,
+}
+
+/// One clipboard history entry, as a list row needs it.
+///
+/// The payload itself is not sent: rows show [`preview`](Self::preview), and
+/// copying an entry back is a separate request once there is one to make.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipboardEntry {
+    /// Stable id of the entry.
+    pub id: String,
+    /// Text shown in the row: the start of copied text, or a label such as
+    /// "Image" for content that has none.
+    pub preview: String,
+    /// MIME type of the preferred representation.
+    pub mime_type: String,
+    /// What kind of thing was copied.
+    pub kind: ClipboardKind,
+    /// Whether the entry is pinned to the top.
+    pub pinned: bool,
+    /// When it was last copied, in milliseconds since the Unix epoch.
+    pub updated_at: i64,
+    /// For links, the host, so a row can say where it points.
+    pub url_host: Option<String>,
+}
+
+/// One open window, as the switcher shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowInfo {
+    /// Handle for [`Request::ActivateWindow`] and [`Request::CloseWindow`].
+    pub id: u32,
+    /// The window's title.
+    pub title: String,
+    /// Its `WM_CLASS`.
+    pub wm_class: String,
+    /// The application it belongs to, when the engine recognised one.
+    pub app_name: Option<String>,
+    /// That application's icon name.
+    pub app_icon: Option<String>,
+    /// The owning process, so a client can leave out its own windows.
+    pub pid: Option<u32>,
+    /// Workspace index, when known.
+    pub workspace: Option<i32>,
+    /// Whether it has focus right now.
+    pub focused: bool,
+    /// Whether it can be closed.
+    pub can_close: bool,
+}
+
+/// What kind of thing a [`ClipboardEntry`] holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClipboardKind {
+    /// Plain text.
+    Text,
+    /// A URL.
+    Link,
+    /// An image.
+    Image,
+    /// One or more files.
+    File,
+    /// Anything the store kept but could not classify.
+    Unknown,
 }
 
 /// One diagnostic check performed by `vicinae doctor`.

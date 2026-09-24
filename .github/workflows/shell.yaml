@@ -124,6 +124,20 @@ jobs:
       - name: Parse the shell inside every Containerfile RUN
         run: python3 scripts/ci/check-containerfile-run.py
 
+      # The GNOME Shell extension cannot run here (gnome-shell needs logind),
+      # so this is the one check it gets before the VM tier: it must parse as
+      # an ES module, and its metadata must be JSON. That it implements the
+      # contract is compass-shell's `extension_contract` test.
+      - name: Parse the GNOME Shell extension
+        run: |
+          set -euo pipefail
+          ext=extensions/gnome-shell/compass@tuna-os.github.io
+          test -f "$ext/extension.js" || { echo "::error::the extension has moved"; exit 1; }
+          cp "$ext/extension.js" "$RUNNER_TEMP/extension.mjs"
+          node --check "$RUNNER_TEMP/extension.mjs"
+          python3 -c "import json, sys; json.load(open(sys.argv[1]))" "$ext/metadata.json"
+          echo "extension parses; metadata is JSON"
+
       - name: Compile the standalone Python
         run: |
           mapfile -t files < <(find packaging/vmtest scripts/vmtest scripts/flatpak scripts/ci scripts/bench \

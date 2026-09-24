@@ -60,6 +60,22 @@ on:
       - 'figura/**'
       - 'scripts/runners/**'
       - '.github/workflows/cpp-on-target.yaml'
+      # THE RUST HALF OF THE DIFFERENTIAL.
+      #
+      # The Suite 0 gate exists to catch a change in how this engine ranks,
+      # and until now it could not fire on one: the paths above are all C++,
+      # so a Rust ranking change never started this workflow and the gate ran
+      # only when someone dispatched it by hand. A gate that cannot trigger on
+      # the change it guards is not a gate.
+      #
+      # Narrow on purpose -- this costs ~12 minutes, so it is the code that
+      # decides a ranking and nothing else. A clipboard or portal change does
+      # not need the C++ engine built to answer for it.
+      - 'crates/compass-search/**'
+      - 'crates/compass-core/src/apps.rs'
+      - 'crates/compass-core/src/root_items.rs'
+      - 'crates/vicinae/src/serve.rs'
+      - 'crates/compass-testkit/**'
   workflow_dispatch:
 
   # Nightly, so the artifact this job publishes actually exists when something
@@ -173,12 +189,17 @@ jobs:
   build:
     name: The C++ engine builds on Bluefin
     needs: configure
-    # Not on pull requests. `configure` is the PR-affordable half — a minute
-    # against this job's twenty-plus — and running both on every C++ change
-    # would spend the budget that made restoring the trigger defensible.
-    # Nightly and `workflow_dispatch` still build, which is where the
-    # `vicinae-cpp-bluefin.tar.gz` Suite 0 needs comes from.
-    if: github.event_name != 'pull_request'
+    # ON PULL REQUESTS NOW, because the `parity` gate below needs the engine
+    # this job publishes. It was dispatch-and-nightly only, back when nothing
+    # on a PR consumed the artifact; that made the Suite 0 gate unable to fire
+    # on the very changes it guards.
+    #
+    # The cost is bounded by the trigger's paths rather than by skipping the
+    # job: ~4 minutes with a warm ccache, only on changes that touch the C++
+    # tree or the Rust code that decides a ranking.
+    #
+    # `parity-spike` stays dispatch-only — it is a diagnostic for a question
+    # already answered, not a check.
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -457,7 +478,7 @@ jobs:
                     # AND WITH THE CORPUS MOUNTED IT STILL RANKS NOTHING.
                     #
                     # Measured: 738 entries visible, engine answering `ping`
-                    # in 600ms, `query --json firefox` returning `[]`
+                    # in 600ms, `query --json chromium` returning `[]`
                     # immediately -- not a timeout, the 30s budget below was
                     # not spent. So the empty ranking is NOT about an empty
                     # container, which was the obvious explanation and is now
@@ -487,6 +508,32 @@ jobs:
                     # the same corpus Suite 0 diffs against.
                     echo "--- indexable entries visible to the engine ---"
                     ls /corpus/applications | wc -l
+
+                    # THE QUERY TERM MUST EXIST IN THE CORPUS.
+                    #
+                    # Every run so far asked for `firefox`. There is no
+                    # Firefox entry in this corpus -- it is a harvest of
+                    # 738 host entries and Firefox is not among them. So
+                    # `[]` may have been the CORRECT answer all along, and
+                    # the spike could not tell that from a broken query
+                    # path. Same defect as the probe above, one layer out:
+                    # an empty result meaning two different things.
+                    #
+                    # `chromium` is present as `Chromium Web Browser`, with
+                    # no NoDisplay, no Hidden and no OnlyShowIn, so
+                    # DesktopEntry::shouldBeShownInCurrentContext() keeps it
+                    # even with XDG_CURRENT_DESKTOP unset in this container.
+                    #
+                    # Checked here rather than assumed, because the corpus
+                    # can be re-harvested and this is the assumption that
+                    # makes every number below readable.
+                    echo "--- does the corpus contain what we are about to ask for? ---"
+                    matches=$(grep -lix "Name=Chromium Web Browser" /corpus/applications/*.desktop | wc -l)
+                    echo "entries named exactly \"Chromium Web Browser\": $matches"
+                    if [ "$matches" -eq 0 ]; then
+                      echo "::error::the corpus has no entry for the query term -- an empty ranking would prove nothing"
+                      exit 1
+                    fi
                     # BOUNDED, because the first corpus run hung here.
                     #
                     # The rung answered `ping`, then the query did not return.
@@ -509,7 +556,7 @@ jobs:
                     echo "--- polling the query until it ranks something (30s) ---"
                     ranked=""
                     for attempt in $(seq 1 60); do
-                      if timeout 5 vicinae query --json firefox > /src/spike-query.json 2>&1 \
+                      if timeout 5 vicinae query --json chromium > /src/spike-query.json 2>&1 \
                          && [ -s /src/spike-query.json ] \
                          && ! grep -qx "\[\]" /src/spike-query.json; then
                         echo "RANKED after $((attempt * 500))ms"
@@ -529,19 +576,32 @@ jobs:
 
                     # DOES THE ENGINE HAVE ANY ROOT ITEMS AT ALL?
                     #
-                    # `app ls --json` goes through listCommands, which calls
+                    # `cmd ls --json` goes through listCommands, which calls
                     # RootItemManager::allItems() -- the same collection
                     # rootQuery ranks over, without the search. If this is
                     # empty too, the providers never loaded and the question
                     # is registration, not ranking. If it has entries and the
                     # query does not, the filter is the culprit.
+                    #
+                    # `ls` lives under `cmd` (CommandCommand, cli.cpp:262-272),
+                    # NOT under `app` and NOT at the top level. Two runs got
+                    # this wrong -- `app ls --json` ("arguments were not
+                    # expected") and then `ls --json` ("a subcommand is
+                    # required") -- and the JSON guard below is the only
+                    # reason neither was read as an empty index.
                     echo "--- root items the engine knows about ---"
-                    timeout 15 vicinae app ls --json > /src/spike-items.json 2>&1 || true
-                    head -c 600 /src/spike-items.json
+                    timeout 15 vicinae cmd ls --json > /src/spike-items.json 2>&1 || true
+                    if head -c 1 /src/spike-items.json | grep -q '[[{]'; then
+                      echo "items: $(grep -c '\"id\"' /src/spike-items.json)"
+                      head -c 600 /src/spike-items.json
+                    else
+                      echo "PROBE DID NOT RUN -- this is not an empty index:"
+                      head -c 400 /src/spike-items.json
+                    fi
                     echo
 
                     echo "--- and once more, bounded, for the record ---"
-                    if timeout 30 vicinae query --json firefox > /src/spike-query.json 2>&1; then
+                    if timeout 30 vicinae query --json chromium > /src/spike-query.json 2>&1; then
                       cat /src/spike-query.json
                     else
                       status=$?
@@ -572,7 +632,7 @@ jobs:
                         echo "empty rankings, agree perfectly, and prove nothing."
                       fi
                       echo
-                      echo "Hits for \`firefox\` over the checked-in corpus:"
+                      echo "Hits for \`chromium\` over the checked-in corpus:"
                       echo '```json'
                       head -c 400 /src/spike-query.json
                       echo
@@ -677,3 +737,124 @@ jobs:
           path: spike-*.log
           if-no-files-found: ignore
           retention-days: 7
+
+  # THE REAL DIFFERENTIAL: both engines, one container, one corpus.
+  #
+  # Everything before this job established that it is possible. The spike
+  # proved the C++ engine serves AND ranks on the `offscreen` rung with no
+  # compositor and no session bus; `suite0-selftest` in `rust.yaml` proved the
+  # harness completes a run end to end. This is the two of them together,
+  # which is what §8.1 has been asking for since Phase 1 opened.
+  parity:
+    name: "Suite 0: the two engines, side by side"
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the C++ engine this workflow just built
+        uses: actions/download-artifact@v4
+        with:
+          name: vicinae-cpp-bluefin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: suite0-parity-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: suite0-parity-${{ runner.os }}-
+
+      # Built on the runner rather than in the container: the Bluefin image
+      # ships no Rust toolchain, and a glibc built against 2.39 runs on the
+      # container's newer one. The reverse would not, which is why the C++
+      # engine is built IN the container and this is not.
+      #
+      # The `ldd` guard below is what turns that reasoning into a check.
+      - name: Build the Rust engine and the harness
+        run: cargo build --locked --release -p vicinae -p compass-testkit --bin vicinae --bin parity
+
+      - name: Both engines, one corpus
+        run: |
+          set -o pipefail
+          timeout --signal=KILL 2100 podman run --rm \
+            -v "$PWD:/src:z" \
+            -w /src \
+            --shm-size=2g \
+            ghcr.io/ublue-os/bluefin:stable bash -euo pipefail -c '
+              ./scripts/runners/bluefin/install-deps.sh >/dev/null 2>&1
+              tar -C / -xzf /src/vicinae-bluefin.tar.gz
+
+              # A binary that cannot load is not a parity finding. Both sides
+              # are checked, because the Rust one crossed a distribution
+              # boundary to get here and the C++ one needs its Qt runtime.
+              for engine in /usr/bin/vicinae /src/target/release/vicinae; do
+                echo "--- $engine ---"
+                "$engine" --version 2>&1 | head -2 || "$engine" version 2>&1 | head -2 || true
+                if ldd "$engine" 2>&1 | grep "not found"; then
+                  echo "::error::$engine has unresolved libraries in this container"
+                  exit 1
+                fi
+              done
+
+              # --report-only, per ADR-0010: the first differential between two
+              # independently written engines will disagree somewhere and
+              # nobody knows where yet. Record the list, then gate on it once
+              # it is known. The harness still FAILS if it cannot run, if an
+              # engine will not start, or if nothing ranked.
+              # --report-only covers the WHOLE-RANKING diff, which stays
+              # informational: SUITE0-BASELINE.md measures 25% agreement at
+              # two characters and 99.5% at ten, and gating the short end
+              # would redden this job over tail order that is near-arbitrary
+              # on both sides.
+              #
+              # --gate-top-result 4 is the half that DOES gate, and its
+              # threshold comes from those measurements rather than from
+              # taste: 906 comparable queries, 0 disagreements once the one
+              # declared divergence (`Type=Directory`, PARITY.md compass-xdg
+              # 5) is accounted for. It fails the job if a query of four or
+              # more characters disagrees on the row a person launches, and
+              # it also fails if it compared nothing.
+              /src/target/release/parity \
+                --report-only \
+                --gate-top-result 4 \
+                --cpp-provider applications \
+                --cpp /usr/bin/vicinae \
+                --rust /src/target/release/vicinae \
+                --corpus /src/crates/compass-testkit/corpus/desktop-entries \
+                --output /src/parity-out 2>&1 | tee /src/parity-run.log
+            '
+          sudo chown -R "$(id -un)" parity-out parity-run.log 2>/dev/null || true
+
+      - name: What the two engines agreed and disagreed on
+        if: always()
+        run: |
+          {
+            echo "### Suite 0: the two engines, side by side"
+            echo
+            if [ -f parity-run.log ]; then
+              echo '```'
+              sed -n '/^Results:/,/^$/p' parity-run.log
+              echo '```'
+            else
+              echo 'The run produced no log, so it did not reach a comparison.'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The per-query diff, which is the input to setting the gate. Kept long
+      # because the series is the point: a divergence that appears once is
+      # noise, one that persists is a bug in one of the two engines.
+      - name: Keep the per-query report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            parity-out/parity-report.json
+            parity-run.log
+          if-no-files-found: warn
+          retention-days: 90

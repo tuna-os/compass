@@ -9,6 +9,12 @@ specification in [this gist](https://gist.github.com/hanthor/ba051ebc406ddb4b8f9
 (the spec is in the gist **comment**; the gist body is the earlier C++/Qt6 variant and is treated
 here as reference).
 
+**Direction, as of [ADR-0017](./adr/0017-a-new-launcher-not-a-reimplementation.md):** Compass is a
+new launcher in the spirit of Vicinae, not a byte-for-byte reimplementation of it and not a
+replacement to upstream. Wherever this plan says "parity", read it as *provenance and tripwire*:
+quality is asserted by tests that say what good looks like, the C++ engine is a reference, and
+off-the-shelf crates beat hand-rolled code unless nothing maintained does the job.
+
 Companion document: [`REFERENCES.md`](./REFERENCES.md) — prior art, verified crate versions, and
 the protocol-support evidence behind §3.
 
@@ -25,6 +31,7 @@ the protocol-support evidence behind §3.
 | Surface strategy | plain `xdg_toplevel` first (**GNOME has no layer-shell**); `wlr-layer-shell` added in Phase 5 | Easy |
 | Extension runtime | Keep `src/typescript/` (Raycast-compat SDK) **unchanged**; only its host is rewritten | Easy |
 | Third extension tier | **Rhai** scripts in-process, behind the same capability layer as the TS host (§2.2) | Easy — drop it if the seam doesn't materialise |
+| **Product posture** | **A new launcher in the spirit of Vicinae — quality asserted absolutely, crates first, user data imported rather than shared ([ADR-0017](./adr/0017-a-new-launcher-not-a-reimplementation.md))** | Medium — reversing it means re-adopting byte compatibility |
 | Crate prefix | `compass-*`, binary stays `vicinae` for CLI/config/socket compatibility | Trivial |
 | Licence | Compass is GPL-3.0, rustcast is MIT; MIT → GPL-3.0 is one-way compatible, so rustcast code may be incorporated with its copyright header plus a provenance note | N/A |
 
@@ -399,7 +406,8 @@ opens a window, fuzzy-matches installed apps, launches one, closes. Nothing else
 - `compass-platform`: launch via `flatpak-spawn --host` with an `OpenURI` fallback.
 - `compass-ui`: rustcast's shell wired to real results.
 
-**Gate:** Suite 0 parity (§8.1) green for app-search ranking on the 500-entry corpus; runs from a
+**Gate:** the app-search quality suite (`crates/compass-core/tests/search_quality.rs`) green on the
+real 757-entry corpus, and Suite 0 (§8.1) green at its CI gate as a tripwire (ADR-0017); runs from a
 Flatpak on Bluefin with GNOME 50 **and** 51; idle RSS < 30 MB; **works with no Shell extension
 installed** (§3.5.1).
 
@@ -427,10 +435,10 @@ degradation with the extension uninstalled.
   `vicinae --engine=cpp --json query`, §8.1a). Both were written against an imagined C++ CLI rather
   than the one in `src/cli`.
 
-  Worth noting even if someone built that command: **the diff would mostly prove nothing.** Nine of
-  `doctor`'s eleven checks — `dbus.session`, `session.type`, `xdg.runtime-dir`, `xdg.application-dirs`,
+  Worth noting even if someone built that command: **the diff would mostly prove nothing.** Ten of
+  `doctor`'s twelve checks — `dbus.session`, `session.type`, `xdg.runtime-dir`, `xdg.application-dirs`,
   `desktop.environment`, `flatpak.sandbox`, `portal.desktop`, `portal.global-shortcuts`,
-  `gnome.shell-extension` — are probes of the *environment*. Two processes on one machine observe the
+  `gnome.shell-extension`, `a11y.screen-reader` — are probes of the *environment*. Two processes on one machine observe the
   same environment by construction, so they would agree trivially, in the same way "same top result"
   would be trivially 100% over single-hit queries. Only `engine.selected` and `ipc.socket` describe
   the engine itself, and those map to the C++ `version` and `ping`.
@@ -511,7 +519,8 @@ discovery and hot reload; and first-party example scripts with authoring docs. T
 when the examples are good enough that someone can copy one and be productive — an empty tier is
 worse than no tier.
 
-**Gate:** parity ledger ≥ 95% green, with every ported group's Catch2 tests ported to Rust (§8.3).
+**Gate:** every feature area in the ledger has absolute tests — ported Catch2 cases count where they
+state intended behaviour, not where they pin a C++ quirk (§8.3, ADR-0017).
 For Track C: the Rhai sandbox negative tests (§8.2) all fail closed, and at least four first-party
 example scripts ship with docs.
 
@@ -1875,6 +1884,7 @@ The questions that were open when this plan was written have been decided and re
 | Fork posture, branding, platform scope, GNOME versions | Hard fork acknowledged; `vicinae` user-facing names kept; Linux-first with macOS/Windows on the C++ engine; GNOME 50 **and** 51 in CI | [0007](./adr/0007-fork-posture-and-platform-scope.md) |
 | **Does Qt ever actually leave?** | Yes — Linux-first becomes a *sequence*, not a scope limit; macOS and Windows get committed phases 9 and 10, and the platform seam is built before Phase 4 | [0013](./adr/0013-qt-leaves-the-repository.md) |
 | Does browser control belong in the core? | No — it becomes an extension and leaves the port's scope entirely | [0008](./adr/0008-browser-control-is-an-extension.md) |
+| **Port or new launcher?** | New launcher in Vicinae's spirit: absolute quality tests, C++ as tripwire, crates first; storage is Compass's own and Vicinae data is imported — supersedes ADR-0014 | [0017](./adr/0017-a-new-launcher-not-a-reimplementation.md) |
 
 ### Still genuinely open
 
@@ -1883,9 +1893,8 @@ The questions that were open when this plan was written have been decided and re
 2. **rustcast relationship** — one-time seed (what the plan assumes and what the crate split
    reflects), or an ongoing sync? The latter would constrain the crate boundaries in §2 and cost
    design freedom. Assumed one-time until someone says otherwise.
-3. **Whether to report the six C++ desktop-entry bugs upstream.** ADR-0007 says we should as a
-   courtesy; someone has to actually do it. See PARITY.md for the list, one of which is an unbounded
-   loop reachable from any malformed `.desktop` file on disk.
+3. ~~Whether to report the six C++ desktop-entry bugs upstream.~~ **No** (ADR-0018): a hard fork
+   does not report back. The bugs stay recorded as declared divergences in PARITY.md.
 
 ### Decided by doing, not by discussion
 
@@ -2095,8 +2104,8 @@ answerable today.
 | Gate criterion | State | Evidence |
 |---|---|---|
 | Suite 0 parity for app-search ranking on the **500-entry corpus** | 🟢 **corpus met; top-1 ranking parity met** | **757** entries, past the 500 the gate names. The engines pick the **same top result on 100% of queries** (920 of them contested), and the same top 3 on 97.2%. Scores differ on 20.8% — the declared nucleo-vs-fzf divergence — but the ranking absorbs it (§8.1a). Full-order parity is 84.4%. |
-| Runs from a Flatpak on Bluefin with **GNOME 50 and 51** | 🟡 **both GNOME versions met; "on Bluefin" met for 50 only, and 51 is blocked upstream** | **GNOME 50 and 51 are both covered**, by Suite 3b (`tier2.yaml`, #124): the shipped Flatpak bundle is installed and exercised against a real Mutter compositor on `fedora:44` (GNOME 50, 62 s) and `fedora:45` (GNOME 51, 70 s), per PR, with `prove-smoke.sh` as the control. **On Bluefin specifically**, the VM tier boots `ghcr.io/ublue-os/bluefin:stable` and runs it there on GNOME Shell 50.3. The earlier caveat — *"not checked: whether a non-stable Bluefin tag or a different Fedora base carries 51 today"* — **has now been checked, and none does.** All 441 named tags in `ghcr.io/ublue-os/bluefin` collapse to 44 stems; every Fedora-based one is Fedora 44: `stable` and `gts` are `44.20260915` and resolve to the *identical* config digest (`sha256:1708919d…`, the same image twice), `latest` and `44` are `latest-44.20260908.1`, `stable-daily` is `44.20260915`. The remaining stems (`lts*`, `stream*`, `10*`) are the CentOS Stream 10 line, not a newer Fedora. There is no `45` stem. So the criterion's *first* half is met and its *second* half is unsatisfiable until Bluefin builds on Fedora 45 — at which point `:stable` follows it and the VM tier tightens with no edit. Rewording proposed on #4. |
-| **Idle RSS < 30 MB** | 🟡 **measured, and the 135 MB was the wrong process** | the window idles at ~135 MB under llvmpipe and that was read as five times over budget. Most of it is wgpu's software renderer, which lives in that process's RSS in a VM and not on hardware. **The engine — the part that is actually resident, holds the index, serves IPC and draws nothing — idles at 6.2 MB**, measured on an ordinary container outside any VM. `launcher-rss` now reports both, labelled. Still reported rather than gated: a threshold set from a software-rendered number would be fiction. |
+| Runs from a Flatpak on Bluefin with **GNOME 50 and 51** | ✅ **met as reworded by ADR-0018**: GNOME 50 and 51 in Suite 3b, Bluefin at the version it ships in the VM tier | **GNOME 50 and 51 are both covered**, by Suite 3b (`tier2.yaml`, #124): the shipped Flatpak bundle is installed and exercised against a real Mutter compositor on `fedora:44` (GNOME 50, 62 s) and `fedora:45` (GNOME 51, 70 s), per PR, with `prove-smoke.sh` as the control. **On Bluefin specifically**, the VM tier boots `ghcr.io/ublue-os/bluefin:stable` and runs it there on GNOME Shell 50.3. The earlier caveat — *"not checked: whether a non-stable Bluefin tag or a different Fedora base carries 51 today"* — **has now been checked, and none does.** All 441 named tags in `ghcr.io/ublue-os/bluefin` collapse to 44 stems; every Fedora-based one is Fedora 44: `stable` and `gts` are `44.20260915` and resolve to the *identical* config digest (`sha256:1708919d…`, the same image twice), `latest` and `44` are `latest-44.20260908.1`, `stable-daily` is `44.20260915`. The remaining stems (`lts*`, `stream*`, `10*`) are the CentOS Stream 10 line, not a newer Fedora. There is no `45` stem. So the criterion's *first* half is met and its *second* half is unsatisfiable until Bluefin builds on Fedora 45 — at which point `:stable` follows it and the VM tier tightens with no edit. Rewording proposed on #4. |
+| **Idle RSS < 30 MB** | ✅ **engine met (6.2 MB, gated at 20); the resident window's hardware figure moved to #127 by ADR-0018** | the window idles at ~135 MB under llvmpipe and that was read as five times over budget. Most of it is wgpu's software renderer, which lives in that process's RSS in a VM and not on hardware. **The engine — the part that is actually resident, holds the index, serves IPC and draws nothing — idles at 6.2 MB**, measured on an ordinary container outside any VM. `launcher-rss` now reports both, labelled. Still reported rather than gated: a threshold set from a software-rendered number would be fiction. |
 | **Works with no Shell extension installed** | ✅ **met** | we ship none at all (ADR-0004), the VM has none, and `doctor` records `gnome.shell-extension` as evidence rather than gating on it. |
 
 **A correction to this section's own first draft.** It said the corpus was the
@@ -2368,6 +2377,118 @@ first, with the protocol pinned by tests, before anything is spawned.
 
 ## 12. Immediate next steps
 
+### 12.0 The order as of 2026-09-24 (ADR-0017)
+
+This list supersedes the ordering further down, which is kept as the record of how each item got
+where it is.
+
+**Landed in this round:**
+
+- **Suite 0 runs for real.** Both engines in one Bluefin container, 1817 queries, 99.0% top-result
+  agreement; gated in CI on the top result for queries of four or more characters, verified to fail
+  and pass on the real C++ engine ([`SUITE0-BASELINE.md`](./SUITE0-BASELINE.md)). Item 3 below is
+  therefore done. Under ADR-0017 this is a tripwire, not the spec.
+- **An absolute search-quality suite** over the real corpus (`search_quality.rs`). It found
+  [#204](https://github.com/tuna-os/compass/issues/204), which the differential structurally
+  cannot.
+- **The paint tier** (`crates/compass-ui/tests/paint.rs`): the real launcher view rendered to
+  pixels on wgpu (lavapipe on CI) and tiny-skia, with invariants tied to layout bounds. Verified on
+  a GitHub runner and by mutations the structural tests miss.
+- **A test ladder**: `make test-t0` … `test-t3`, cheapest first, described in
+  [`RENDER-HARNESSES.md`](./RENDER-HARNESSES.md).
+
+**Next, in order:**
+
+1. ~~**#204 — typo tolerance in app search.**~~ **Done:** a one-edit `strsim` fallback, ranked
+   after every real match; the formerly ignored `search_quality.rs` test is the acceptance
+   criterion and passes. The C++ engine has the same gap, which is the point of ADR-0017.
+2. **Storage onto `rusqlite`** (ADR-0017 decision 4), in steps that are each their own PR:
+   (a) ~~`spellfix1` out~~ **done** — a plain `vocabulary` table and a `strsim` suggester
+   (`compass_db::vocabulary`), passing the ported file-search quality suite (23/23, including the
+   four cases that depend on typo correction); Compass's index moved to its own file,
+   `compass-file-index.db`, at schema v2, so the two engines stop purging each other's.
+   (b) **Deferred, and re-ranked below items 3–4.** Re-basing the wrapper on `rusqlite` was
+   justified by removing the workspace's one `unsafe` opt-out, and that premise did not survive
+   (a): `fuzzy_trigram` stays, its registration needs the raw `sqlite3*` after keying, so the
+   crate keeps `unsafe` either way. What (b) would still buy is ~500 lines of FFI replaced by a
+   crate, at the price of linking our C tokenizer against `libsqlite3-sys`'s own SQLCipher (4.6.1,
+   against the vendored 4.16.0) — a real risk for a modest gain. Revisit if the wrapper grows or
+   a bug lands in it.
+3. **A Vicinae importer** for clipboard history, extension storage and OAuth tokens (decision 3),
+   reading content tables only. Needed before cutover, not before item 2.
+   **Clipboard history: done** (`crates/vicinae/src/vicinae_import.rs`). On the first engine
+   start that can read it, Vicinae's `clipboard.db` and `clipboard-data/` are read with Vicinae's
+   own keyring key. Entries go into Compass's store re-encrypted, with their times (seconds become
+   milliseconds), pins and keywords. Content Compass already has is left alone, and a marker makes
+   it one-shot. A locked or unkeyed database writes no marker, so the next start retries.
+   **Extension storage and OAuth tokens wait for Phase 4:** nothing in the engine opens them yet
+   (only `compass-worker-host`'s tests do), so there is no Compass-side store to import into
+   until the extension host owns one.
+4. **Summon-to-first-frame — now recorded.** The launcher logs `summon_draw_ms`, from the
+   engine's `Show` to the new window's first redraw request, on the same terms as cold start's
+   `first_draw_ms` (a floor: the paint after the request is not in it). Tier 2's `session.sh`
+   reports it from real Mutter on GNOME 50 and 51 on every PR that touches `crates/**`. Recorded,
+   not gated (ADR-0010): the threshold comes from the numbers once there are some.
+5. **Re-evaluate `compass-xdg` against `freedesktop-desktop-entry`** — lowest priority; ours
+   exists for good reasons, but decision 2 says to check.
+6. **Promote the VM tier to the merge queue** — unchanged from item 6 below.
+
+**Phase 4's first wired slice (#7):** installed extensions are in root search, and the engine runs
+their `no-view` commands. Until now the Phase 4 crates were tested libraries that nothing called.
+- `AppIndex::from_environment` scans the manifest registry. Each command is a root item with the
+  C++ id `@<author>/<extension>:<command>`, subtitled by its extension. A manifest-disabled command
+  is known but hidden.
+- `RunExtensionCommand` (IPC v7) starts the runtime bundle under Node (`crates/vicinae/src/extension_runner.rs`):
+  - local storage comes from Compass's own `compass-extension-storage.db`, keyed from the keyring;
+  - HUDs, failure toasts and notifications become desktop notifications;
+  - alerts are answered "no".
+- The runtime never says when a `no-view` command has finished, so a run ends after 10 s of quiet
+  or 5 minutes.
+- Refused, each with a sentence the launcher shows:
+  - a `view` command (no view renderer yet);
+  - a required preference without a default (no preference editor yet);
+  - a missing runtime or Node.
+- The runtime runs **confined**, behind `compass-sandbox-exec` (Landlock + seccomp, strict). It
+  may read the system, Node, the bundle and its own extension, and write only that extension's
+  support and asset directories. It gets a private `TMPDIR` rather than `/tmp`. The engine
+  refuses to run extensions without the launcher unless `COMPASS_EXTENSION_SANDBOX=off`. The
+  end-to-end test requires a write outside those directories to fail with `EACCES`, and fails
+  with the sandbox off.
+- The Flatpak ships Node (`org.freedesktop.Sdk.Extension.node22`), the bundle and the launcher.
+  Its CI asserts all three inside the installed sandbox.
+- **View commands draw** (`List` and `Detail`), in a first cut:
+  - The engine publishes each render as a typed `compass_extension_api::View`
+    (`compass_worker_host::view_model`). The launcher long-polls it (`ExtensionView`, IPC v8) and
+    draws it as a page.
+  - Enter runs the selected row's first action through `EventCore/handlerActivated`.
+  - A list the host filters is filtered fuzzily in the launcher. A list that filters itself gets
+    the text and the echo count (ADR-0009).
+  - Escape stops the command.
+  - Extensions' `Clipboard` API is the GNOME Shell extension's clipboard.
+- **Since then (#211),** each proven against the real runtime in `engine_end_to_end.rs`:
+  - Ctrl+B opens a view's action panel, and actions' keyboard shortcuts run them;
+  - a `Detail` draws its Markdown;
+  - `push` shows the pushed view and Escape pops it; `confirmAlert` is shown and answered;
+  - required preferences are asked for in a form and kept encrypted in the extension store;
+    without a keyring the run is refused with the reason;
+  - command arguments are asked for and passed as `props.arguments`, never stored;
+  - `open()`, `Action.OpenInBrowser` and `getApplications()` are served by the engine, which
+    launches outside the sandbox;
+  - `Grid` renders typed and is searched and acted on as rows;
+  - `Form` fields are drawn and edited, echoes are counted so typing is never undone
+    (ADR-0009), and `SubmitForm` gets the values;
+  - memory: Node's `--max-old-space-size=160` caps every isolate (measured: it overrides the
+    runtime's 1000 MB worker limit), and the worker's pid goes into a user-systemd scope with
+    `MemoryMax=256M` where that manager is reachable. A command allocating 400 MiB is stopped.
+- Still to come:
+  - icons and image tiles (a grid is drawn as rows until then);
+  - multi-line text areas, and the date, tag and file pickers in forms;
+  - toasts drawn in the launcher rather than as desktop notifications;
+  - `runInTerminal`.
+
+**Needs the project owner:** nothing. ADR-0018 decided the Suite 0 gate (it keeps blocking), GNOME 51
+(reworded gate, #4 closed), team size (one person), rustcast (a seed), and the upstream report (none).
+
 **Current implementation check:** `UI/confirmAlert` already has a deferred transport and
 adapter; it must not be reimplemented from the older “not started” entry. The application
 action panel now dispatches Open, Copy name and Copy path by stable action IDs, offers a focused
@@ -2494,7 +2615,7 @@ Ordered by what unblocks the most:
 2. ~~**Settle Spike A's consent question**~~ — done (§11.1, ADR-0010). Traced through all three
    components and pre-seeded; what remains is to read the first run that gets a binding, and in
    particular whether Super+Space survives GNOME's own claim on it.
-3. **Capture the C++ baseline on the target.** Today's parity suites compare the port against *our
+3. ~~**Capture the C++ baseline on the target.**~~ **Done — see 12.0 and `SUITE0-BASELINE.md`.** Today's parity suites compare the port against *our
    reading* of the C++ source; this compares it against the C++ behaviour on the real OS.
 
    The prerequisite — getting a Qt6 build into the VM — is now costed, and it is much cheaper than

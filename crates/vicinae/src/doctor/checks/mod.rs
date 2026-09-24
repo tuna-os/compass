@@ -22,16 +22,19 @@
 //! * [`portal`] — session bus reachability and the XDG desktop portal.
 //! * [`desktop`] — which desktop this is, and our GNOME Shell extension.
 //! * [`sandbox`] — Flatpak detection and the application directories.
+//! * [`a11y`] — whether a screen reader is on, given the launcher has no tree.
 //!
 //! Every check is re-exported here, so a caller says `checks::session_type`
 //! without knowing or caring which file it is in. `doctor::mod` assembles the
 //! report from those flat paths and is unchanged by this layout.
 
+pub mod a11y;
 pub mod desktop;
 pub mod portal;
 pub mod sandbox;
 pub mod session;
 
+pub use a11y::{A11Y_BUS_NAME, A11Y_OBJECT_PATH, A11Y_STATUS_INTERFACE, screen_reader};
 pub use desktop::{
     EXTENSION_CONTRACT_VERSION, EXTENSION_DEGRADATION, EXTENSION_INTERFACE, EXTENSION_OBJECT_PATH,
     GNOME_SHELL_BUS_NAME, GNOME_SHELL_OBJECT_PATH, LEGACY_WINDOWS_INTERFACE, desktop_environment,

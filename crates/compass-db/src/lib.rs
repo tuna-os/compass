@@ -56,6 +56,7 @@ pub mod scanner;
 pub mod sqlite_reader;
 pub mod sqlite_writer;
 pub mod vicinae;
+pub mod vocabulary;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

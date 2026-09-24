@@ -242,6 +242,16 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// A handle that sends this session's extension events from another
+    /// thread, while this one blocks in [`Self::pump_once`].
+    #[must_use]
+    pub fn events(&self) -> SessionEvents {
+        SessionEvents {
+            writer: self.worker.writer(),
+            session_id: self.session_id.clone(),
+        }
+    }
+
     /// Send the answer a [`Turn::Deferred`] left owed.
     ///
     /// # Errors
@@ -668,5 +678,71 @@ mod tests {
         let mut session = Session::new(worker, "s-1", Router::new());
 
         assert_eq!(session.pump_once().expect("one turn"), Turn::Closed);
+    }
+}
+
+/// Sends events to one session's extension. See [`Session::events`].
+#[derive(Debug, Clone)]
+pub struct SessionEvents {
+    writer: crate::WorkerWriter,
+    session_id: String,
+}
+
+impl SessionEvents {
+    /// Settles a call a [`Turn::Deferred`] left owed (an alert, answered when
+    /// the person decides), from any thread.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's pipe is gone.
+    pub fn answer(
+        &self,
+        deferral: &tsapi::Deferral,
+        value: serde_json::Value,
+    ) -> Result<(), WorkerError> {
+        self.writer
+            .request(
+                crate::rpc::manager::MESSAGE_EXTENSION,
+                serde_json::json!({ "session_id": self.session_id, "payload": deferral.answer(value) }),
+            )
+            .map(drop)
+    }
+
+    /// `UI/viewPoped`: the host popped the extension's top view (the person
+    /// pressed Escape on a pushed view), so its navigation pops too and it
+    /// renders the view beneath.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's pipe is gone.
+    pub fn view_popped(&self) -> Result<(), WorkerError> {
+        let payload = crate::tsapi::event("UI/viewPoped", serde_json::json!({}));
+        self.writer
+            .request(
+                crate::rpc::manager::MESSAGE_EXTENSION,
+                serde_json::json!({ "session_id": self.session_id, "payload": payload }),
+            )
+            .map(drop)
+    }
+
+    /// `EventCore/handlerActivated`: the extension runs the callback `handler`
+    /// names (an action's `onAction`, a list's `onSearchTextChange`) with
+    /// `args`.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError`] if the worker's pipe is gone.
+    pub fn handler_activated(
+        &self,
+        handler: &compass_extension_api::action::HandlerId,
+        args: &[serde_json::Value],
+    ) -> Result<(), WorkerError> {
+        let payload = crate::ui_service::handler_activated(handler, args);
+        self.writer
+            .request(
+                crate::rpc::manager::MESSAGE_EXTENSION,
+                serde_json::json!({ "session_id": self.session_id, "payload": payload }),
+            )
+            .map(drop)
     }
 }

@@ -15,6 +15,12 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+/// A session bus address with nothing behind it, for every engine this file
+/// starts. The engine opens clipboard history through the login keyring on
+/// the session bus; pointed at a real one, running these tests would create a
+/// Compass key in the developer's own keyring.
+const NO_SESSION_BUS: &str = "unix:path=/nonexistent/compass-test-no-session-bus";
+
 /// How long to wait for the daemon to bind before calling it a failure.
 ///
 /// Generous because CI runners are slow and a flaky timeout here would be
@@ -41,6 +47,7 @@ fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
         .arg("--socket")
         .arg(socket.as_path())
         .args(["serve", "--no-hotkey"])
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
         .env("XDG_DATA_HOME", dir.path().join("data"))
         .env("XDG_DATA_DIRS", dir.path().join("empty"))
         .env("XDG_CONFIG_HOME", dir.path().join("config"))
@@ -147,7 +154,18 @@ impl Daemon {
     }
 
     fn start_with_config(entries: &[(&str, &str)], config: &str) -> Daemon {
+        Self::start_prepared(entries, config, |_| Vec::new())
+    }
+
+    /// As [`Self::start_with_config`], with `prepare` given the tempdir root
+    /// before the engine starts, returning extra environment for it.
+    fn start_prepared(
+        entries: &[(&str, &str)],
+        config: &str,
+        prepare: impl FnOnce(&std::path::Path) -> Vec<(&'static str, std::ffi::OsString)>,
+    ) -> Daemon {
         let dirs = TempDir::new().expect("tempdir");
+        let extra_env = prepare(dirs.path());
         let data = dirs.path().join("data");
         write_apps(&data, entries);
         let config_dir = dirs.path().join("config/vicinae");
@@ -159,12 +177,14 @@ impl Daemon {
             .arg("--socket")
             .arg(&socket)
             .arg("serve")
+            .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
             .env("XDG_DATA_DIRS", &data)
             // Keep the daemon out of the invoking user's home entirely: its
             // config, its launch history and its data all land in the tempdir.
             .env("XDG_DATA_HOME", dirs.path().join("data-home"))
             .env("XDG_CONFIG_HOME", dirs.path().join("config"))
             .env("HOME", dirs.path())
+            .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -251,7 +271,9 @@ fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() 
         .iter()
         .map(|(id, body)| (*id, body.as_str()))
         .collect::<Vec<_>>();
-    for (enabled, expected) in [(true, vec!["beta.desktop"]), (false, vec![])] {
+    // `applications:beta`, not `beta.desktop` — the same `provider:entrypoint`
+    // form the config below addresses these entries by.
+    for (enabled, expected) in [(true, vec!["applications:beta"]), (false, vec![])] {
         let config = serde_json::json!({"providers": {"applications": {
             "enabled": enabled,
             "entrypoints": {
@@ -266,8 +288,13 @@ fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() 
             else {
                 panic!("expected query result");
             };
+            // Applications only: this is about their config. Builtin
+            // commands rank in the same list and have their own test.
             assert_eq!(
-                hits.iter().map(|hit| hit.id.as_str()).collect::<Vec<_>>(),
+                hits.iter()
+                    .map(|hit| hit.id.as_str())
+                    .filter(|id| id.starts_with("applications:"))
+                    .collect::<Vec<_>>(),
                 expected,
                 "{query}"
             );
@@ -325,7 +352,7 @@ fn reporting_a_launch_persists_history_and_changes_root_order() {
         hits
     };
     let before = query();
-    assert_eq!(before[0].id, "alpha.desktop");
+    assert_eq!(before[0].id, "applications:alpha");
     assert_eq!(
         daemon.request(Request::RecordLaunch {
             key: "beta.desktop".to_owned()
@@ -333,7 +360,7 @@ fn reporting_a_launch_persists_history_and_changes_root_order() {
         Response::Ack
     );
     let after = query();
-    assert_eq!(after[0].id, "beta.desktop");
+    assert_eq!(after[0].id, "applications:beta");
     assert_eq!(
         after[0].score, before[1].score,
         "wire score excludes history"
@@ -487,10 +514,13 @@ fn a_desktop_link_without_exec_is_returned_by_root_search() {
         "[Desktop Entry]\nType=Link\nName=Reference Manual\nURL=file:///usr/share/doc/manual.html\n",
     )]);
     for query in ["", "Reference"] {
-        let out = daemon.client(&["query", query, "--json"]);
+        let out = daemon.client(&["query", query, "--json", "--provider", "applications"]);
         let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(rows.as_array().unwrap().len(), 1);
-        assert_eq!(rows[0]["id"], "manual.desktop");
+        // The ENTRYPOINT id, which is what the protocol documents this field
+        // as and what the C++ engine answers. It read `manual.desktop` until
+        // Suite 0's first differential put the two engines side by side.
+        assert_eq!(rows[0]["id"], "applications:manual");
         assert_eq!(rows[0]["title"], "Reference Manual");
     }
 }
@@ -548,10 +578,16 @@ fn queries_use_root_provider_fields_and_do_not_return_desktop_actions() {
             "TryExec=compass-unresolved-sentinel\nComment=DescriptionSentinel\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=browser --private\n",
         ),
     )]);
-    let all: serde_json::Value =
-        serde_json::from_str(&daemon.client(&["query", "--json", ""])).unwrap();
+    let all: serde_json::Value = serde_json::from_str(&daemon.client(&[
+        "query",
+        "--json",
+        "--provider",
+        "applications",
+        "",
+    ]))
+    .unwrap();
     assert_eq!(all.as_array().unwrap().len(), 1);
-    assert_eq!(all[0]["id"], "browser.desktop");
+    assert_eq!(all[0]["id"], "applications:browser");
     for query in ["DescriptionSentinel", "Private"] {
         let hits: serde_json::Value =
             serde_json::from_str(&daemon.client(&["query", "--json", query])).unwrap();
@@ -637,6 +673,7 @@ fn a_second_engine_on_the_same_socket_refuses_to_start() {
         .arg("--socket")
         .arg(&daemon.socket)
         .arg("serve")
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
         .output()
         .expect("run a second engine");
 
@@ -919,4 +956,917 @@ fn a_window_that_dies_puts_the_engine_back_to_refusing() {
             "attempt {attempt}: the refusal should say how to fix it: {stderr}"
         );
     }
+}
+
+#[test]
+fn clipboard_history_without_a_keyring_is_refused_by_name() {
+    // Every engine here runs with no session bus, so no keyring: the history
+    // cannot be opened, and the request must say so rather than answer with
+    // an empty list a client would show as "nothing copied yet".
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    for request in [
+        compass_ipc::Request::ClipboardHistory {
+            query: String::new(),
+            limit: 10,
+        },
+        compass_ipc::Request::ClipboardSetPinned {
+            id: "1".into(),
+            pinned: true,
+        },
+        compass_ipc::Request::ClipboardRemove { id: "1".into() },
+    ] {
+        let response = daemon.request(request.clone());
+        let compass_ipc::Response::Error(err) = response else {
+            panic!("expected {request:?} to be refused, got {response:?}");
+        };
+        assert_eq!(err.kind, compass_ipc::ErrorKind::Unsupported, "{request:?}");
+        assert!(err.message.contains("keyring"), "{}", err.message);
+    }
+}
+
+#[test]
+fn a_clipboard_request_for_no_entries_is_a_bad_request() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let response = daemon.request(compass_ipc::Request::ClipboardHistory {
+        query: String::new(),
+        limit: 0,
+    });
+    let compass_ipc::Response::Error(err) = response else {
+        panic!("expected a refusal, got {response:?}");
+    };
+    assert_eq!(err.kind, compass_ipc::ErrorKind::BadRequest);
+}
+
+#[test]
+fn builtin_commands_rank_in_the_root_and_their_use_is_remembered() {
+    use compass_ipc::{Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "clipboard".into(),
+    }) else {
+        panic!("expected query results");
+    };
+    assert_eq!(
+        hits.first().map(|h| h.id.as_str()),
+        Some("commands:clipboard-history")
+    );
+    assert_eq!(hits[0].title, "Clipboard History");
+
+    // The provider flag narrows either way.
+    let commands: serde_json::Value =
+        serde_json::from_str(&daemon.client(&["query", "--json", "--provider", "commands", ""]))
+            .unwrap();
+    assert!(commands.as_array().unwrap().iter().all(|row| {
+        row["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("commands:"))
+    }));
+
+    // Opening it counts, like launching an application.
+    assert!(matches!(
+        daemon.request(Request::RecordLaunch {
+            key: "commands:clipboard-history".into()
+        }),
+        Response::Ack
+    ));
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: String::new(),
+    }) else {
+        panic!("expected query results");
+    };
+    assert_eq!(
+        hits.first().map(|h| h.id.as_str()),
+        Some("commands:clipboard-history"),
+        "the most-used row leads the empty query"
+    );
+}
+
+#[test]
+fn window_requests_without_a_session_bus_are_refused_by_name() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    for request in [
+        Request::ListWindows,
+        Request::ActivateWindow { id: 1 },
+        Request::CloseWindow { id: 1 },
+        // Before the store is consulted: without a Shell there is nothing to
+        // paste into, whether or not the id names an entry.
+        Request::ClipboardPaste { id: "1".into() },
+    ] {
+        let Response::Error(err) = daemon.request(request.clone()) else {
+            panic!("{request:?} was not refused");
+        };
+        assert_eq!(err.kind, ErrorKind::Unsupported, "{request:?}");
+        assert!(err.message.contains("session bus"), "{}", err.message);
+    }
+}
+
+/// An installed extension with one no-view command that writes `out`, and one
+/// view command.
+fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
+    let ext = root.join("data-home/vicinae/extensions/hello");
+    std::fs::create_dir_all(&ext).unwrap();
+    std::fs::write(
+        ext.join("package.json"),
+        r#"{"name": "hello", "title": "Hello", "author": "someone",
+            "commands": [
+              {"name": "write", "title": "Write Greeting", "mode": "no-view"},
+              {"name": "show", "title": "Show Greeting", "mode": "view"},
+              {"name": "nav", "title": "Navigate", "mode": "view"},
+              {"name": "ask", "title": "Ask First", "mode": "view"},
+              {"name": "link", "title": "Open Link", "mode": "no-view"},
+              {"name": "tiles", "title": "Tiles", "mode": "view"},
+              {"name": "heap", "title": "Heap", "mode": "no-view"},
+              {"name": "issue", "title": "New Issue", "mode": "view"},
+              {"name": "greet", "title": "Greet Someone", "mode": "no-view",
+               "arguments": [{"name": "name", "type": "text", "placeholder": "Name",
+                              "required": true}]},
+              {"name": "needs", "title": "Needs Token", "mode": "no-view",
+               "preferences": [{"name": "token", "title": "API Token", "type": "password",
+                                "required": true}]}
+            ]}"#,
+    )
+    .unwrap();
+    // In the extension's support directory, one of the two places the sandbox
+    // lets it write. Not the tempdir: that is under /tmp, which it may not.
+    let out = root.join("data-home/vicinae/support/hello/greeting.txt");
+    let answered = root.join("data-home/vicinae/support/hello/answered.txt");
+    std::fs::write(
+        ext.join("ask.js"),
+        format!(
+            "const React = require('react');
+             const {{ List, ActionPanel, Action, confirmAlert }} = require('@vicinae/api');
+             module.exports.default = () => React.createElement(List, null,
+               React.createElement(List.Item, {{ title: 'risky', actions:
+                 React.createElement(ActionPanel, null,
+                   React.createElement(Action, {{ title: 'Delete', onAction: async () => {{
+                     const ok = await confirmAlert({{ title: 'Delete it?' }});
+                     require('node:fs').writeFileSync({answered:?}, String(ok));
+                   }} }}))
+               }}));",
+            answered = answered.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("nav.js"),
+        "const React = require('react');
+         const { List, Detail, ActionPanel, Action, useNavigation } = require('@vicinae/api');
+         module.exports.default = function Root() {
+           const { push } = useNavigation();
+           return React.createElement(List, null,
+             React.createElement(List.Item, { title: 'go', actions:
+               React.createElement(ActionPanel, null,
+                 React.createElement(Action, { title: 'Push', onAction: () =>
+                   push(React.createElement(Detail, { markdown: 'pushed' })) }))
+             }));
+         };",
+    )
+    .unwrap();
+    let acted = root.join("data-home/vicinae/support/hello/acted.txt");
+    std::fs::write(
+        ext.join("show.js"),
+        format!(
+            "const React = require('react');
+             const {{ List, ActionPanel, Action }} = require('@vicinae/api');
+             module.exports.default = () => React.createElement(List, {{ navigationTitle: 'Greetings' }},
+               React.createElement(List.Item, {{ title: 'hello', id: 'h', actions:
+                 React.createElement(ActionPanel, null,
+                   React.createElement(Action, {{ title: 'Act', onAction: () =>
+                     require('node:fs').writeFileSync({acted:?}, 'acted') }}))
+               }}));",
+            acted = acted.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let submitted = root.join("data-home/vicinae/support/hello/submitted.json");
+    std::fs::write(
+        ext.join("issue.js"),
+        format!(
+            "const React = require('react');
+             const {{ Form, ActionPanel, Action }} = require('@vicinae/api');
+             module.exports.default = function Issue() {{
+               const [title, setTitle] = React.useState('');
+               return React.createElement(Form, {{ actions:
+                   React.createElement(ActionPanel, null,
+                     React.createElement(Action.SubmitForm, {{ title: 'Create', onSubmit: (values) =>
+                       require('node:fs').writeFileSync({submitted:?},
+                         JSON.stringify({{ values, title }})) }}))
+                 }},
+                 React.createElement(Form.TextField, {{ id: 'title', title: 'Title',
+                   value: title, onChange: setTitle }}),
+                 React.createElement(Form.Checkbox, {{ id: 'urgent', label: 'Urgent',
+                   defaultValue: false }}));
+             }};",
+            submitted = submitted.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    // `heap_size_limit` would be the obvious probe, and it lies in a worker
+    // thread (it reports the process figure), so this allocates instead.
+    let heap = root.join("data-home/vicinae/support/hello/heap");
+    std::fs::write(
+        ext.join("heap.js"),
+        format!(
+            "module.exports.default = async () => {{
+               const fs = require('node:fs');
+               fs.writeFileSync({started:?}, 'started');
+               const keep = [];
+               for (let i = 0; i < 400; i++) keep.push(new Array(128 * 1024).fill(i + 0.5));
+               fs.writeFileSync({survived:?}, String(keep.length));
+             }};",
+            started = heap.with_extension("started").to_string_lossy(),
+            survived = heap.with_extension("survived").to_string_lossy()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("tiles.js"),
+        "const React = require('react');
+         const { Grid, ActionPanel, Action } = require('@vicinae/api');
+         module.exports.default = () => React.createElement(Grid, { columns: 4 },
+           React.createElement(Grid.Section, { title: 'Weather' },
+             React.createElement(Grid.Item, { title: 'sun', content: 'sun-16', actions:
+               React.createElement(ActionPanel, null,
+                 React.createElement(Action, { title: 'Pick', onAction: () => {} }))
+             }),
+             React.createElement(Grid.Item, { title: 'red', content: { color: '#ff0000' } })));",
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("link.js"),
+        "const { open } = require('@vicinae/api');
+         module.exports.default = async () => { await open('https://example.com/a b'); };",
+    )
+    .unwrap();
+    let greeted = root.join("data-home/vicinae/support/hello/greeted.txt");
+    std::fs::write(
+        ext.join("greet.js"),
+        format!(
+            "module.exports.default = async (props) => {{
+               require('node:fs').writeFileSync({greeted:?}, 'hi ' + props.arguments.name);
+             }};",
+            greeted = greeted.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    // Outside every path the sandbox grants: the data home itself, beside the
+    // support directory the command may write.
+    let escape = root.join("data-home/escape.txt");
+    std::fs::write(
+        ext.join("write.js"),
+        format!(
+            "module.exports.default = async () => {{
+               const fs = require('node:fs');
+               let escaped = 'wrote';
+               try {{ fs.writeFileSync({escape:?}, 'x'); }} catch (e) {{ escaped = e.code; }}
+               fs.writeFileSync({out:?}, 'hi:' + escaped);
+             }};",
+            escape = escape.to_string_lossy(),
+            out = out.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    out
+}
+
+fn extension_runtime() -> Option<std::path::PathBuf> {
+    let built = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../src/typescript/extension-manager/dist/runtime.js");
+    std::env::var_os("COMPASS_EXTENSION_RUNTIME")
+        .map(Into::into)
+        .or_else(|| built.is_file().then_some(built))
+}
+
+#[test]
+fn an_installed_extension_command_is_found_and_a_no_view_one_runs() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut out = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        out = install_extension(root);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "write greeting".into(),
+    }) else {
+        panic!("no results");
+    };
+    let hit = hits.first().expect("a hit");
+    assert_eq!(hit.id, "@someone/hello:write");
+    assert_eq!(hit.subtitle.as_deref(), Some("Hello"));
+
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: hit.id.clone(),
+        arguments_json: None,
+    });
+    assert_eq!(started, Response::Ack, "{started:?}");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !out.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&out).ok().as_deref(),
+        Some("hi:EACCES"),
+        "the command ran, confined: a write outside its directories is refused"
+    );
+
+    let Response::Error(err) = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:nothing".into(),
+        arguments_json: None,
+    }) else {
+        panic!("an unknown id was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+#[test]
+fn a_view_command_renders_and_its_action_runs() {
+    use compass_extension_api::View;
+    use compass_ipc::{ErrorKind, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_path_buf();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:show".into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("the view command did not start a session: {started:?}");
+    };
+
+    let mut after = 0;
+    let view = loop {
+        let answer = daemon.request(Request::ExtensionView { session, after });
+        let Response::ExtensionView {
+            version,
+            view_json,
+            problem,
+            ended,
+            ..
+        } = answer
+        else {
+            panic!("no view answer: {answer:?}");
+        };
+        assert!(!ended, "the command ended: {problem:?}");
+        assert_eq!(problem, None);
+        if let Some(json) = view_json {
+            break serde_json::from_str::<View>(&json).expect("a View");
+        }
+        after = version;
+    };
+    let View::List(list) = view else {
+        panic!("not a list: {view:?}");
+    };
+    assert_eq!(list.navigation_title.as_deref(), Some("Greetings"));
+    let item = &list.sections[0].items[0];
+    assert_eq!(item.title, "hello");
+    let action = item.actions.as_ref().expect("actions").actions()[0].clone();
+    assert_eq!(action.title, "Act");
+
+    let acted = root.join("data-home/vicinae/support/hello/acted.txt");
+    assert_eq!(
+        daemon.request(Request::ExtensionEvent {
+            session,
+            handler: action.handler.0.clone(),
+            args_json: "[]".into(),
+        }),
+        Response::Ack
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !acted.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&acted).ok().as_deref(),
+        Some("acted"),
+        "the action's onAction ran in the extension"
+    );
+
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+    let Response::Error(err) = daemon.request(Request::ExtensionView { session, after: 0 }) else {
+        panic!("a closed session still answers");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+/// Polls `session` until `done` accepts its view, returning it and the depth.
+fn wait_for_view(
+    daemon: &Daemon,
+    session: u64,
+    done: impl Fn(&compass_extension_api::View, u32) -> bool,
+) -> (compass_extension_api::View, u32) {
+    use compass_ipc::{Request, Response};
+    let mut after = 0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        let answer = daemon.request(Request::ExtensionView { session, after });
+        let Response::ExtensionView {
+            version,
+            view_json,
+            problem,
+            ended,
+            depth,
+            ..
+        } = answer
+        else {
+            panic!("no view answer: {answer:?}");
+        };
+        assert!(!ended && problem.is_none(), "ended: {problem:?}");
+        if let Some(view) = view_json.and_then(|json| serde_json::from_str(&json).ok())
+            && done(&view, depth)
+        {
+            return (view, depth);
+        }
+        after = version;
+    }
+    panic!("the view never got there");
+}
+
+#[test]
+fn a_pushed_view_shows_and_escape_pops_back_to_the_list() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:nav".into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("no session: {started:?}");
+    };
+
+    let (root, depth) = wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+    assert_eq!(depth, 1);
+    let View::List(list) = root else {
+        unreachable!()
+    };
+    let push = list.sections[0].items[0]
+        .actions
+        .as_ref()
+        .expect("actions")
+        .actions()[0]
+        .handler
+        .0
+        .clone();
+
+    assert_eq!(
+        daemon.request(Request::ExtensionEvent {
+            session,
+            handler: push,
+            args_json: "[]".into(),
+        }),
+        Response::Ack
+    );
+    let (pushed, depth) =
+        wait_for_view(&daemon, session, |view, _| matches!(view, View::Detail(_)));
+    assert_eq!(depth, 2, "the pushed view is on top of the list");
+    let View::Detail(detail) = pushed else {
+        unreachable!()
+    };
+    assert_eq!(detail.markdown.as_deref(), Some("pushed"));
+
+    assert_eq!(
+        daemon.request(Request::ExtensionPop { session }),
+        Response::Ack
+    );
+    let (_, depth) = wait_for_view(&daemon, session, |view, depth| {
+        matches!(view, View::List(_)) && depth == 1
+    });
+    assert_eq!(depth, 1, "popped back to the list");
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+}
+
+#[test]
+fn an_alert_reaches_the_launcher_and_its_answer_reaches_the_extension() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        root = dir.to_path_buf();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:ask".into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("no session: {started:?}");
+    };
+    let (view, _) = wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+    let View::List(list) = view else {
+        unreachable!()
+    };
+    let delete = list.sections[0].items[0]
+        .actions
+        .as_ref()
+        .expect("actions")
+        .actions()[0]
+        .handler
+        .0
+        .clone();
+    assert_eq!(
+        daemon.request(Request::ExtensionEvent {
+            session,
+            handler: delete,
+            args_json: "[]".into(),
+        }),
+        Response::Ack
+    );
+
+    let mut after = 0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let alert = loop {
+        assert!(Instant::now() < deadline, "no alert arrived");
+        let Response::ExtensionView { version, alert, .. } =
+            daemon.request(Request::ExtensionView { session, after })
+        else {
+            panic!("no view answer");
+        };
+        if let Some(alert) = alert {
+            break alert;
+        }
+        after = version;
+    };
+    assert_eq!(alert.title, "Delete it?");
+
+    assert_eq!(
+        daemon.request(Request::ExtensionAlertAnswer {
+            session,
+            confirmed: true
+        }),
+        Response::Ack
+    );
+    let answered = root.join("data-home/vicinae/support/hello/answered.txt");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !answered.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&answered).ok().as_deref(),
+        Some("true"),
+        "the extension's confirmAlert resolved with the person's answer"
+    );
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+}
+
+#[test]
+fn a_required_preference_without_a_keyring_is_refused_by_name() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    // These engines run with no session bus, so no keyring: there is nowhere
+    // safe to keep the token, and the engine says so rather than asking.
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let answer = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:needs".into(),
+        arguments_json: None,
+    });
+    let Response::Error(err) = answer else {
+        panic!("not refused: {answer:?}");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(
+        err.message.contains("API Token") && err.message.contains("keyring"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn a_command_with_arguments_is_asked_for_them_then_runs_with_them() {
+    use compass_ipc::{PreferenceFieldKind, Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut greeted = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        greeted = dir.join("data-home/vicinae/support/hello/greeted.txt");
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let run = |arguments_json: Option<&str>| {
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:greet".into(),
+            arguments_json: arguments_json.map(str::to_owned),
+        })
+    };
+
+    let Response::ExtensionNeedsArguments { title, fields } = run(None) else {
+        panic!("not asked for its arguments");
+    };
+    assert_eq!(title, "Greet Someone");
+    assert_eq!(fields.len(), 1);
+    assert_eq!(
+        (fields[0].name.as_str(), fields[0].title.as_str()),
+        ("name", "Name")
+    );
+    assert!(fields[0].required && fields[0].kind == PreferenceFieldKind::Text);
+
+    assert!(
+        matches!(
+            run(Some(r#"{"name": ""}"#)),
+            Response::ExtensionNeedsArguments { .. }
+        ),
+        "an empty required argument is asked for again"
+    );
+    assert!(!greeted.exists(), "and nothing ran");
+
+    assert_eq!(run(Some(r#"{"name": "Ada"}"#)), Response::Ack);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !greeted.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&greeted).expect("the command ran"),
+        "hi Ada"
+    );
+}
+
+#[test]
+fn a_confined_command_opens_a_link_in_the_application_that_claims_its_scheme() {
+    use compass_ipc::{Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    // The opener is spawned by the engine, not the extension, so it may write
+    // where the sandbox would never let the extension.
+    let mut opened = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        opened = dir.join("opened.txt");
+        let script = dir.join("browser.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$1\" > {:?}\n",
+                opened.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let applications = dir.join("data/applications");
+        std::fs::create_dir_all(&applications).unwrap();
+        std::fs::write(
+            applications.join("browser.desktop"),
+            format!(
+                "[Desktop Entry]\nType=Application\nName=Browser\nExec={} %u\n\
+                 MimeType=x-scheme-handler/https;\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    assert_eq!(
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:link".into(),
+            arguments_json: None,
+        }),
+        Response::Ack
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !opened.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&opened).expect("the link was opened"),
+        "https://example.com/a b"
+    );
+}
+
+#[test]
+fn a_grid_command_renders_typed_cells() {
+    use compass_extension_api::View;
+    use compass_extension_api::view::{Color, GridContent};
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:tiles".into(),
+        arguments_json: None,
+    }) else {
+        panic!("the grid command did not start a view");
+    };
+    let (view, _) = wait_for_view(
+        &daemon,
+        session,
+        |view, _| matches!(view, View::Grid(grid) if !grid.sections.is_empty()),
+    );
+    let View::Grid(grid) = view else {
+        unreachable!()
+    };
+    assert_eq!(grid.columns, Some(4));
+    let section = &grid.sections[0];
+    assert_eq!(section.title.as_deref(), Some("Weather"));
+    let titles: Vec<&str> = section.items.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(titles, ["sun", "red"]);
+    assert!(section.items[0].actions.is_some());
+    assert_eq!(
+        section.items[1].content,
+        GridContent::Color(Color::Literal("#ff0000".into()))
+    );
+    daemon.request(Request::CloseExtension { session });
+}
+
+#[test]
+fn a_form_command_takes_edits_and_its_submit_gets_the_values() {
+    use compass_extension_api::View;
+    use compass_extension_api::view::{FieldValue, FormItem};
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut submitted = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        submitted = dir.join("data-home/vicinae/support/hello/submitted.json");
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:issue".into(),
+        arguments_json: None,
+    }) else {
+        panic!("the form command did not start a view");
+    };
+    let (view, _) = wait_for_view(
+        &daemon,
+        session,
+        |view, _| matches!(view, View::Form(form) if !form.items.is_empty()),
+    );
+    let View::Form(form) = view else {
+        unreachable!()
+    };
+    let FormItem::Field(title) = &form.items[0] else {
+        panic!("no title field");
+    };
+    let on_change = title.on_change.clone().expect("a controlled field");
+    let submit = form.actions.as_ref().expect("actions").actions()[0]
+        .handler
+        .clone();
+
+    // The person types; the extension's state takes it and echoes it back.
+    let answer = daemon.request(Request::ExtensionEvent {
+        session,
+        handler: on_change.0,
+        args_json: r#"["Crash on paste", 1]"#.into(),
+    });
+    assert_eq!(answer, Response::Ack);
+    let (echoed, _) = wait_for_view(&daemon, session, |view, _| match view {
+        View::Form(form) => matches!(&form.items[0],
+            FormItem::Field(f) if f.value == Some(FieldValue::Text("Crash on paste".into()))),
+        _ => false,
+    });
+    let View::Form(echoed) = echoed else {
+        unreachable!()
+    };
+    let FormItem::Field(title) = &echoed.items[0] else {
+        unreachable!()
+    };
+    assert_eq!(
+        title.echo.map(|seq| seq.raw()),
+        Some(1),
+        "an echo of edit 1"
+    );
+
+    daemon.request(Request::ExtensionEvent {
+        session,
+        handler: submit.0,
+        args_json: r#"[{"title": "Crash on paste", "urgent": true}]"#.into(),
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !submitted.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let got: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&submitted).expect("submitted")).unwrap();
+    assert_eq!(
+        got,
+        serde_json::json!({
+            "values": {"title": "Crash on paste", "urgent": true},
+            "title": "Crash on paste"
+        })
+    );
+    daemon.request(Request::CloseExtension { session });
+}
+
+#[test]
+fn an_extension_that_allocates_past_the_heap_cap_is_stopped() {
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut heap = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        heap = dir.join("data-home/vicinae/support/hello/heap");
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    assert_eq!(
+        daemon.request(Request::RunExtensionCommand {
+            id: "@someone/hello:heap".into(),
+            arguments_json: None,
+        }),
+        Response::Ack
+    );
+    let (started, survived) = (
+        heap.with_extension("started"),
+        heap.with_extension("survived"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !started.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(started.exists(), "the command never ran");
+    // 400 MiB takes well under a second to allocate; give it five.
+    std::thread::sleep(Duration::from_secs(5));
+    assert!(
+        !survived.exists(),
+        "an extension allocated 400 MiB of heap under a 160 MiB cap"
+    );
 }

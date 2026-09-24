@@ -6,13 +6,22 @@
 
 #![deny(missing_docs)]
 
+/// The launcher window's Wayland `app_id`: the basename of the desktop file
+/// the Flatpak installs, so the Shell ties the window to that entry. The
+/// window switcher also recognises its own window by it, because inside the
+/// Flatpak's pid namespace `std::process::id()` is not the pid the Shell sees.
+pub const APP_ID: &str = "com.vicinae.Vicinae";
+
 pub mod action_panel;
 pub mod app;
 pub mod appearance;
 pub mod backend;
+pub mod clipboard_page;
 pub mod design;
+pub mod extension_page;
 pub mod icons;
 pub mod message;
+pub mod preferences_page;
 pub mod preset;
 pub mod resident;
 pub mod root_list;
@@ -20,6 +29,7 @@ mod scroll;
 pub mod settings;
 pub mod theme;
 pub mod typography;
+pub mod windows_page;
 
 pub use app::{AppFlags, Dismissal, LauncherApp, next_selection};
 pub use appearance::{AppearanceLink, AppearanceSender};

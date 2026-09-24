@@ -60,6 +60,10 @@ pub trait Clipboard {
     /// Replace the current selection.
     fn set_clipboard(&self, content: &[u8], mime_type: &str) -> zbus::Result<()>;
 
+    /// Paste the selection into the window focus moves to next, with
+    /// Ctrl+Shift+V for the listed `WM_CLASS`es.
+    fn paste(&self, shift_wm_classes: &[&str]) -> zbus::Result<()>;
+
     /// The selection changed.
     #[zbus(signal)]
     fn clipboard_changed(

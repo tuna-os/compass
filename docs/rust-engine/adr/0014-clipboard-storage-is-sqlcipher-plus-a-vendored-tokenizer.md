@@ -1,6 +1,10 @@
 # ADR-0014: The clipboard store is SQLCipher plus a vendored FTS5 tokenizer, and the Rust engine must link both
 
-**Status:** Accepted · **Date:** 2026-09-17 · Relates to: PLAN.md §6 Phase 3, ADR-0013 (phases 9–10)
+**Status:** Superseded by [ADR-0017](./0017-a-new-launcher-not-a-reimplementation.md) · **Date:** 2026-09-17 · Relates to: PLAN.md §6 Phase 3, ADR-0013 (phases 9–10)
+
+> Superseded because its premise — that the Rust engine must open Vicinae's existing files in
+> place — no longer holds. Compass imports user data once instead (ADR-0017 decision 3). The
+> measurements below remain accurate and are what the importer relies on.
 
 ## Context
 

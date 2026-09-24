@@ -29,7 +29,9 @@ notify.workspace = true
 compass-portals.workspace = true
 futures-util.workspace = true
 compass-ui.workspace = true
+compass-platform.workspace = true
 compass-platform-linux.workspace = true
+compass-xdg.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -38,14 +40,24 @@ tokio = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 zbus.workspace = true
+oo7.workspace = true
+compass-clipboard.workspace = true
+compass-worker-host.workspace = true
+compass-extension-api = { path = "../compass-extension-api" }
+compass-local-storage = { path = "../compass-local-storage" }
+compass-notify = { path = "../compass-notify" }
+compass-sandbox = { path = "../compass-sandbox" }
+compass-shell.workspace = true
+compass-crypto.workspace = true
+compass-sqlcipher-sys.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
 landlock.workspace = true
 seccompiler.workspace = true
 libc.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
-compass-platform.workspace = true
-compass-xdg.workspace = true
 iced = { version = "0.14", features = ["tokio"] }
 iced_winit = "0.14"
 compass-testkit.workspace = true

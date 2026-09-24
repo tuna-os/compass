@@ -19,7 +19,7 @@
 /// An extension reporting any other value is reported as
 /// [`Availability::VersionMismatch`](crate::Availability::VersionMismatch) and
 /// its capability is not used.
-pub const CONTRACT_VERSION: u32 = 1;
+pub const CONTRACT_VERSION: u32 = 2;
 
 /// Well-known bus name the helper extension lives behind.
 ///

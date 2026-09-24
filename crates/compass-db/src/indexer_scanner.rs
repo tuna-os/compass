@@ -157,7 +157,7 @@ mod tests {
             false
         }
 
-        fn rebuild_spellfix_vocabulary(&mut self) {}
+        fn rebuild_vocabulary(&mut self) {}
 
         fn index_events(&mut self, events: &[FileEvent]) {
             self.events

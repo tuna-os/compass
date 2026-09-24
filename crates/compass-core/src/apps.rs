@@ -302,6 +302,7 @@ pub struct AppIndexBuilder {
     locale: Option<Locale>,
     include_unlaunchable: bool,
     include_actions: bool,
+    extension_dirs: Vec<PathBuf>,
 }
 
 impl AppIndexBuilder {
@@ -324,6 +325,20 @@ impl AppIndexBuilder {
             .desktops(crate::xdg_dirs::current_desktops())
             .exec_search_path(crate::xdg_dirs::exec_search_path())
             .locale(Locale::system())
+            .extension_dirs(crate::manifest::registry::search_paths())
+    }
+
+    /// Where installed extensions are looked for, highest precedence first
+    /// ([`crate::manifest::registry::search_paths`] in a real install). Their
+    /// commands join the root after the builtin commands. None by default,
+    /// so an index built for a test reads only what it is given.
+    #[must_use]
+    pub fn extension_dirs(
+        mut self,
+        dirs: impl IntoIterator<Item = impl Into<PathBuf>>,
+    ) -> AppIndexBuilder {
+        self.extension_dirs = dirs.into_iter().map(Into::into).collect();
+        self
     }
 
     /// Sets the application directories, in precedence order (highest first).
@@ -455,12 +470,33 @@ impl AppIndexBuilder {
                 app.entry().unlocalized_name(),
             ));
         }
+        // After every application, so `root_indices[i]` still names the item
+        // behind `roots[i]` for each application root; a command's position
+        // is past its end. See `crate::commands`.
+        roots.extend(
+            crate::commands::BUILTIN_COMMANDS
+                .iter()
+                .map(crate::commands::BuiltinCommand::root_item),
+        );
+        let extensions = if self.extension_dirs.is_empty() {
+            Vec::new()
+        } else {
+            crate::extension_commands::ExtensionCommand::from_manifests(
+                &crate::manifest::registry::scan(&self.extension_dirs).extensions,
+            )
+        };
+        roots.extend(
+            extensions
+                .iter()
+                .map(crate::extension_commands::ExtensionCommand::root_item),
+        );
         AppIndex {
             roots,
             root_indices,
             items,
             by_key,
             skipped,
+            extensions,
         }
     }
 
@@ -636,6 +672,28 @@ pub struct AppIndex {
     items: Vec<AppItem>,
     by_key: HashMap<String, usize>,
     skipped: Vec<SkippedEntry>,
+    extensions: Vec<crate::extension_commands::ExtensionCommand>,
+}
+
+/// One row of a root search over applications and commands.
+#[derive(Debug)]
+pub enum RootHit<'a> {
+    /// An application.
+    App(ApplicationRootHit<'a>),
+    /// A builtin command.
+    Command {
+        /// Which one.
+        command: &'static crate::commands::BuiltinCommand,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
+    /// A command from an installed extension.
+    Extension {
+        /// Which one.
+        command: &'a crate::extension_commands::ExtensionCommand,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
 }
 
 /// A root application match with its stable index into the application catalog.
@@ -647,6 +705,17 @@ pub struct ApplicationRootHit<'a> {
     pub index: usize,
     /// Match score on the IPC scale, excluding frecency (zero for empty input).
     pub match_score: u32,
+    /// The root item's `provider:entrypoint` id, e.g.
+    /// `applications:org.mozilla.firefox`.
+    ///
+    /// Carried because the caller could not reconstruct it: `AppItem::key` is
+    /// the desktop key (`org.mozilla.firefox.desktop`) and the entrypoint id
+    /// is what addresses the item across the protocol. `serve::query` put the
+    /// key on the wire, and Suite 0's first real differential caught it — the
+    /// C++ engine answers `applications:host--byobu` for the item this side
+    /// called `host--byobu.desktop`, so every ranked hit read as a
+    /// regression.
+    pub entrypoint_id: &'a str,
 }
 
 impl AppIndex {
@@ -678,6 +747,58 @@ impl AppIndex {
                 .and_then(|store| store.record(self.items[self.root_indices[index]].key()))
                 .map_or(0.0, |record| record.score_at(now))
         };
+        // Applications only: builtin commands share `roots` (see `build`) and
+        // are reached through `search_root_all`. The provider filter runs
+        // before frecency is asked for, so `frecency` never sees a command.
+        let options = crate::root_items::SearchOptions {
+            provider_id: Some(crate::root_items::APPS_PROVIDER_ID.to_owned()),
+            ..crate::root_items::SearchOptions::default()
+        };
+        crate::root_items::search_with_frecency(&self.roots, pattern, &options, frecency)
+            .into_iter()
+            .map(|hit| {
+                let index = self.root_indices[hit.index];
+                let item = &self.items[index];
+                let match_score = if pattern.trim().is_empty() {
+                    0
+                } else {
+                    (hit.score - compass_search::FRECENCY_WEIGHT * frecency(hit.index, hit.item))
+                        .round()
+                        .clamp(0.0, 100.0) as u32
+                };
+                ApplicationRootHit {
+                    item,
+                    index,
+                    entrypoint_id: &self.roots[hit.index].id,
+                    match_score,
+                }
+            })
+            .collect()
+    }
+
+    /// Search applications **and** builtin commands, ranked together.
+    ///
+    /// One scoring pass over both, so a command competes with applications on
+    /// the same fuzzy score, typo tolerance and frecency. A command's frecency
+    /// key is its `commands:<entrypoint>` id.
+    #[must_use]
+    pub fn search_root_all(
+        &self,
+        pattern: &str,
+        history: Option<&dyn crate::FrecencyStore>,
+    ) -> Vec<RootHit<'_>> {
+        let now = history.map_or(0, crate::FrecencyStore::now);
+        let key = |index: usize| -> &str {
+            match self.root_indices.get(index) {
+                Some(&item) => self.items[item].key(),
+                None => &self.roots[index].id,
+            }
+        };
+        let frecency = |index: usize, _: &crate::root_items::RootItem| {
+            history
+                .and_then(|store| store.record(key(index)))
+                .map_or(0.0, |record| record.score_at(now))
+        };
         crate::root_items::search_with_frecency(
             &self.roots,
             pattern,
@@ -685,9 +806,7 @@ impl AppIndex {
             frecency,
         )
         .into_iter()
-        .map(|hit| {
-            let index = self.root_indices[hit.index];
-            let item = &self.items[index];
+        .filter_map(|hit| {
             let match_score = if pattern.trim().is_empty() {
                 0
             } else {
@@ -695,13 +814,41 @@ impl AppIndex {
                     .round()
                     .clamp(0.0, 100.0) as u32
             };
-            ApplicationRootHit {
-                item,
-                index,
-                match_score,
+            let entrypoint_id = &self.roots[hit.index].id;
+            match self.root_indices.get(hit.index) {
+                Some(&index) => Some(RootHit::App(ApplicationRootHit {
+                    item: &self.items[index],
+                    index,
+                    entrypoint_id,
+                    match_score,
+                })),
+                None => crate::commands::by_id(entrypoint_id)
+                    .map(|command| RootHit::Command {
+                        command,
+                        match_score,
+                    })
+                    .or_else(|| {
+                        self.extension(entrypoint_id)
+                            .map(|command| RootHit::Extension {
+                                command,
+                                match_score,
+                            })
+                    }),
             }
         })
         .collect()
+    }
+
+    /// Installed extensions' commands, in the registry's precedence order.
+    #[must_use]
+    pub fn extensions(&self) -> &[crate::extension_commands::ExtensionCommand] {
+        &self.extensions
+    }
+
+    /// The installed extension command with this entrypoint id.
+    #[must_use]
+    pub fn extension(&self, id: &str) -> Option<&crate::extension_commands::ExtensionCommand> {
+        self.extensions.iter().find(|command| command.id == id)
     }
 
     /// Starts building an index. See [`AppIndexBuilder`].
@@ -744,6 +891,24 @@ impl AppIndex {
     #[must_use]
     pub fn position(&self, key: &str) -> Option<usize> {
         self.by_key.get(key).copied()
+    }
+
+    /// The position of the item a `provider:entrypoint` id names.
+    ///
+    /// The protocol identifies a hit by its ENTRYPOINT id
+    /// (`applications:org.mozilla.firefox`), which is not the launch key
+    /// (`org.mozilla.firefox.desktop`) — so a client that reads `QueryHit.id`
+    /// cannot look the item up with [`AppIndex::position`]. Both lookups
+    /// exist because both ids are real and neither is a formatting variant of
+    /// the other: `RecordLaunch` takes the key, `QueryHit` carries the
+    /// entrypoint id.
+    #[must_use]
+    pub fn position_by_entrypoint(&self, entrypoint_id: &str) -> Option<usize> {
+        let root = self
+            .roots
+            .iter()
+            .position(|root| root.id == entrypoint_id)?;
+        self.root_indices.get(root).copied()
     }
 
     /// Only the items that can actually be launched. See
