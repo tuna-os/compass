@@ -9,6 +9,12 @@ specification in [this gist](https://gist.github.com/hanthor/ba051ebc406ddb4b8f9
 (the spec is in the gist **comment**; the gist body is the earlier C++/Qt6 variant and is treated
 here as reference).
 
+**Direction, as of [ADR-0017](./adr/0017-a-new-launcher-not-a-reimplementation.md):** Compass is a
+new launcher in the spirit of Vicinae, not a byte-for-byte reimplementation of it and not a
+replacement to upstream. Wherever this plan says "parity", read it as *provenance and tripwire*:
+quality is asserted by tests that say what good looks like, the C++ engine is a reference, and
+off-the-shelf crates beat hand-rolled code unless nothing maintained does the job.
+
 Companion document: [`REFERENCES.md`](./REFERENCES.md) — prior art, verified crate versions, and
 the protocol-support evidence behind §3.
 
@@ -25,6 +31,7 @@ the protocol-support evidence behind §3.
 | Surface strategy | plain `xdg_toplevel` first (**GNOME has no layer-shell**); `wlr-layer-shell` added in Phase 5 | Easy |
 | Extension runtime | Keep `src/typescript/` (Raycast-compat SDK) **unchanged**; only its host is rewritten | Easy |
 | Third extension tier | **Rhai** scripts in-process, behind the same capability layer as the TS host (§2.2) | Easy — drop it if the seam doesn't materialise |
+| **Product posture** | **A new launcher in the spirit of Vicinae — quality asserted absolutely, crates first, user data imported rather than shared ([ADR-0017](./adr/0017-a-new-launcher-not-a-reimplementation.md))** | Medium — reversing it means re-adopting byte compatibility |
 | Crate prefix | `compass-*`, binary stays `vicinae` for CLI/config/socket compatibility | Trivial |
 | Licence | Compass is GPL-3.0, rustcast is MIT; MIT → GPL-3.0 is one-way compatible, so rustcast code may be incorporated with its copyright header plus a provenance note | N/A |
 
@@ -399,7 +406,8 @@ opens a window, fuzzy-matches installed apps, launches one, closes. Nothing else
 - `compass-platform`: launch via `flatpak-spawn --host` with an `OpenURI` fallback.
 - `compass-ui`: rustcast's shell wired to real results.
 
-**Gate:** Suite 0 parity (§8.1) green for app-search ranking on the 500-entry corpus; runs from a
+**Gate:** the app-search quality suite (`crates/compass-core/tests/search_quality.rs`) green on the
+real 757-entry corpus, and Suite 0 (§8.1) green at its CI gate as a tripwire (ADR-0017); runs from a
 Flatpak on Bluefin with GNOME 50 **and** 51; idle RSS < 30 MB; **works with no Shell extension
 installed** (§3.5.1).
 
@@ -511,7 +519,8 @@ discovery and hot reload; and first-party example scripts with authoring docs. T
 when the examples are good enough that someone can copy one and be productive — an empty tier is
 worse than no tier.
 
-**Gate:** parity ledger ≥ 95% green, with every ported group's Catch2 tests ported to Rust (§8.3).
+**Gate:** every feature area in the ledger has absolute tests — ported Catch2 cases count where they
+state intended behaviour, not where they pin a C++ quirk (§8.3, ADR-0017).
 For Track C: the Rhai sandbox negative tests (§8.2) all fail closed, and at least four first-party
 example scripts ship with docs.
 
@@ -1875,6 +1884,7 @@ The questions that were open when this plan was written have been decided and re
 | Fork posture, branding, platform scope, GNOME versions | Hard fork acknowledged; `vicinae` user-facing names kept; Linux-first with macOS/Windows on the C++ engine; GNOME 50 **and** 51 in CI | [0007](./adr/0007-fork-posture-and-platform-scope.md) |
 | **Does Qt ever actually leave?** | Yes — Linux-first becomes a *sequence*, not a scope limit; macOS and Windows get committed phases 9 and 10, and the platform seam is built before Phase 4 | [0013](./adr/0013-qt-leaves-the-repository.md) |
 | Does browser control belong in the core? | No — it becomes an extension and leaves the port's scope entirely | [0008](./adr/0008-browser-control-is-an-extension.md) |
+| **Port or new launcher?** | New launcher in Vicinae's spirit: absolute quality tests, C++ as tripwire, crates first; storage is Compass's own and Vicinae data is imported — supersedes ADR-0014 | [0017](./adr/0017-a-new-launcher-not-a-reimplementation.md) |
 
 ### Still genuinely open
 
@@ -2368,6 +2378,47 @@ first, with the protocol pinned by tests, before anything is spawned.
 
 ## 12. Immediate next steps
 
+### 12.0 The order as of 2026-09-24 (ADR-0017)
+
+This list supersedes the ordering further down, which is kept as the record of how each item got
+where it is.
+
+**Landed in this round:**
+
+- **Suite 0 runs for real.** Both engines in one Bluefin container, 1817 queries, 99.0% top-result
+  agreement; gated in CI on the top result for queries of four or more characters, verified to fail
+  and pass on the real C++ engine ([`SUITE0-BASELINE.md`](./SUITE0-BASELINE.md)). Item 3 below is
+  therefore done. Under ADR-0017 this is a tripwire, not the spec.
+- **An absolute search-quality suite** over the real corpus (`search_quality.rs`). It found
+  [#204](https://github.com/tuna-os/compass/issues/204), which the differential structurally
+  cannot.
+- **The paint tier** (`crates/compass-ui/tests/paint.rs`): the real launcher view rendered to
+  pixels on wgpu (lavapipe on CI) and tiny-skia, with invariants tied to layout bounds. Verified on
+  a GitHub runner and by mutations the structural tests miss.
+- **A test ladder**: `make test-t0` … `test-t3`, cheapest first, described in
+  [`RENDER-HARNESSES.md`](./RENDER-HARNESSES.md).
+
+**Next, in order:**
+
+1. **#204 — typo tolerance in app search.** One transposed or doubled keystroke drops the app
+   entirely. The ignored test in `search_quality.rs` is the acceptance criterion. A user-visible
+   quality win, and the cleanest demonstration of ADR-0017: the C++ engine has the same bug.
+2. **Storage onto `rusqlite`** (ADR-0017 decision 4). Replace `compass-sqlcipher-sys` in its four
+   callers, move the file index to SQLite's built-in `trigram` tokenizer, drop
+   `vendor/fuzzy-trigram` from the Rust build, and remove the workspace's one `unsafe` opt-out.
+   Existing storage tests are the safety net.
+3. **A Vicinae importer** for clipboard history, extension storage and OAuth tokens (decision 3),
+   reading content tables only. Needed before cutover, not before item 2.
+4. **Summon-to-first-frame** — §8.5's SLA row still has no harness. The paint tier's
+   `Simulator` path can time layout-and-paint; the VM tier times the real thing.
+5. **Re-evaluate `compass-xdg` against `freedesktop-desktop-entry`** — lowest priority; ours
+   exists for good reasons, but decision 2 says to check.
+6. **Promote the VM tier to the merge queue** — unchanged from item 6 below.
+
+**Needs the project owner:** loosening or re-scoping the Suite 0 merge gate under ADR-0017; GNOME 51
+in CI (#4 — every Bluefin tag is still Fedora 44); team size and the rustcast relationship (§10);
+filing the upstream bug report.
+
 **Current implementation check:** `UI/confirmAlert` already has a deferred transport and
 adapter; it must not be reimplemented from the older “not started” entry. The application
 action panel now dispatches Open, Copy name and Copy path by stable action IDs, offers a focused
@@ -2494,7 +2545,7 @@ Ordered by what unblocks the most:
 2. ~~**Settle Spike A's consent question**~~ — done (§11.1, ADR-0010). Traced through all three
    components and pre-seeded; what remains is to read the first run that gets a binding, and in
    particular whether Super+Space survives GNOME's own claim on it.
-3. **Capture the C++ baseline on the target.** Today's parity suites compare the port against *our
+3. ~~**Capture the C++ baseline on the target.**~~ **Done — see 12.0 and `SUITE0-BASELINE.md`.** Today's parity suites compare the port against *our
    reading* of the C++ source; this compares it against the C++ behaviour on the real OS.
 
    The prerequisite — getting a Qt6 build into the VM — is now costed, and it is much cheaper than

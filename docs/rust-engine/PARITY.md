@@ -1,5 +1,11 @@
 # Parity ledger
 
+> **Read under [ADR-0017](./adr/0017-a-new-launcher-not-a-reimplementation.md).** Compass is a new
+> launcher, not a reimplementation. The **parity test ✓** column below now means *tested*: an
+> absolute test that fails on a regression satisfies it, whether or not the C++ engine agrees. A
+> differential test still counts, as a tripwire. Divergences that improve on Vicinae are declared
+> here and kept.
+
 The definition of done for the Rust engine transformation (#2). Every row must be fully green
 before its C++ source is deleted, and **nothing leaves `src/` until it is**.
 
