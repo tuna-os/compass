@@ -124,22 +124,23 @@ geometry_field() {
 }
 card_w=$(geometry_field card_width)
 card_h=$(geometry_field card_max_height)
-shadow_pad=$(geometry_field SHADOW_PADDING)
+shadow_pad=$(sed -n 's/^pub const SHADOW_PADDING: u16 = \([0-9]\+\);.*/\1/p' "$design" | head -1)
 # The window is the card plus its drop-shadow padding on all sides (design.rs
 # SHADOW_PADDING=24, SHADOW_BLUR=32). The card's 720x560 plus 24px padding
 # becomes a 768x608 transparent window, centred, with the shadow inside the
 # padding. The containment box must track the WINDOW, not just the card, or
 # the 48px of padding fails the gate exactly as run 35568015733 did:
 #   changed region x 256..1023 (768w centred) not inside 260..1020 (720w centred)
-if [ -z "$shadow_pad" ]; then shadow_pad=0; fi
-win_w=$(( card_w + 2 * shadow_pad ))
-win_h=$(( card_h + 2 * shadow_pad ))
-for field in win_w win_h; do
+# No fallback to 0: run 36026959306 read nothing here, gated on the bare card,
+# and failed on the very 768px window the comment above describes.
+for field in card_w card_h shadow_pad; do
   if [ -z "${!field}" ]; then
     echo "launcher.sh: could not read the window geometry from $design" >&2
     exit 1
   fi
 done
+win_w=$(( card_w + 2 * shadow_pad ))
+win_h=$(( card_h + 2 * shadow_pad ))
 box_x0=$(( (screen_w - win_w) / 2 - margin ))
 box_x1=$(( box_x0 + win_w + 2 * margin ))
 # `if`, not `[ ... ] && ...`: under `set -e` a false test makes the whole list
