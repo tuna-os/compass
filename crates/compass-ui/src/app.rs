@@ -425,6 +425,13 @@ fn launch_task(
 /// What the search field sends as the user types.
 type OnInput = fn(String) -> Message;
 
+/// A change to one clipboard history entry, from its keyboard shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardChange {
+    TogglePin,
+    Remove,
+}
+
 /// One row of the root list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootRow {
@@ -1570,6 +1577,13 @@ impl LauncherApp {
                 self.paste_selected_clipboard_entry()
             }
             Message::ClipboardPasted(Ok(())) => self.conceal(),
+            Message::ClipboardEntryChanged(Ok(())) => self.clipboard_search_task(),
+            Message::ClipboardEntryChanged(Err(reason)) => {
+                if let Page::Clipboard(page) = &mut self.page {
+                    page.notice = Some(reason);
+                }
+                Task::none()
+            }
             Message::ClipboardPasted(Err(reason)) => {
                 tracing::debug!(%reason, "paste refused; copying instead");
                 self.copy_selected_clipboard_entry()
@@ -1664,6 +1678,21 @@ impl LauncherApp {
                     return Task::none();
                 }
                 if let Page::Clipboard(page) = &mut self.page {
+                    // The C++ defaults: `action.pin` is Ctrl+Shift+P and
+                    // `action.remove` is Ctrl+X.
+                    if let Key::Character(c) = key.as_ref()
+                        && modifiers.control()
+                        && !modifiers.alt()
+                        && !modifiers.logo()
+                    {
+                        if modifiers.shift() && c.eq_ignore_ascii_case("p") {
+                            return self
+                                .change_selected_clipboard_entry(ClipboardChange::TogglePin);
+                        }
+                        if !modifiers.shift() && c.eq_ignore_ascii_case("x") {
+                            return self.change_selected_clipboard_entry(ClipboardChange::Remove);
+                        }
+                    }
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
@@ -2530,6 +2559,25 @@ impl LauncherApp {
     }
 
     /// Fetches the selected entry's content, to copy it.
+    fn change_selected_clipboard_entry(&mut self, change: ClipboardChange) -> Task<Message> {
+        let Page::Clipboard(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
+            return Task::none();
+        };
+        let (id, pinned) = (row.id.clone(), row.pinned);
+        Task::perform(
+            async move {
+                match change {
+                    ClipboardChange::TogglePin => clipboard.clipboard_set_pinned(id, !pinned).await,
+                    ClipboardChange::Remove => clipboard.clipboard_remove(id).await,
+                }
+            },
+            Message::ClipboardEntryChanged,
+        )
+    }
+
     /// Paste where the engine can, and copy where it cannot: the paste needs
     /// the GNOME Shell extension, and without it the entry still goes on the
     /// clipboard for the user's own Ctrl+V.
@@ -3964,6 +4012,8 @@ mod tests {
         /// Whether the engine can paste (it has the Shell extension).
         can_paste: bool,
         pasted: std::sync::Mutex<Vec<String>>,
+        changes: std::sync::Mutex<Vec<String>>,
+        fail_changes: bool,
     }
 
     impl crate::backend::ClipboardBackend for FakeClipboard {
@@ -3988,6 +4038,30 @@ mod tests {
             _id: String,
         ) -> crate::backend::BackendFuture<'_, crate::backend::ClipboardContent> {
             Box::pin(async move { self.content.clone().ok_or_else(|| "gone".to_owned()) })
+        }
+
+        fn clipboard_set_pinned(
+            &self,
+            id: String,
+            pinned: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.changes
+                    .lock()
+                    .unwrap()
+                    .push(format!("pin {id} {pinned}"));
+                Ok(())
+            })
+        }
+
+        fn clipboard_remove(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.changes.lock().unwrap().push(format!("remove {id}"));
+                if self.fail_changes {
+                    return Err("That entry is already gone".to_owned());
+                }
+                Ok(())
+            })
         }
 
         fn clipboard_paste(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
@@ -4174,6 +4248,64 @@ mod tests {
             !app.showing_clipboard(),
             "and the launcher got out of the way"
         );
+    }
+
+    #[test]
+    fn ctrl_shift_p_toggles_the_pin_and_ctrl_x_removes_then_the_list_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let pinned = crate::backend::ClipboardRow {
+            pinned: true,
+            ..clip_row("2", "pinned one")
+        };
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "loose one"), pinned],
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+        let loads = clipboard.queries.lock().unwrap().len();
+
+        let ctrl = iced::keyboard::Modifiers::CTRL;
+        let ctrl_shift = iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT;
+        let task = app.update(chord("P", ctrl_shift));
+        settle(&mut app, task);
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(chord("P", ctrl_shift));
+        settle(&mut app, task);
+        let task = app.update(chord("x", ctrl));
+        settle(&mut app, task);
+
+        assert_eq!(
+            clipboard.changes.lock().unwrap().as_slice(),
+            ["pin 1 true", "pin 2 false", "remove 1"],
+            "the pin flips each entry's own state, and removal follows the reload's selection"
+        );
+        assert_eq!(
+            clipboard.queries.lock().unwrap().len(),
+            loads + 3,
+            "every change reloads the list"
+        );
+        assert!(app.showing_clipboard(), "and the view stays open");
+    }
+
+    #[test]
+    fn a_refused_change_says_why_and_keeps_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "only one")],
+            fail_changes: true,
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let task = app.update(chord("x", iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.notice.as_deref(), Some("That entry is already gone"));
+        assert_eq!(page.rows.len(), 1);
     }
 
     #[test]

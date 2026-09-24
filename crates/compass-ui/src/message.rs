@@ -58,6 +58,9 @@ pub enum Message {
     /// The engine armed a paste of the selected entry, or could not; on a
     /// refusal the entry is copied instead.
     ClipboardPasted(Result<(), String>),
+    /// An entry was pinned, unpinned or removed, or could not be; the list
+    /// reloads on success and says why on failure.
+    ClipboardEntryChanged(Result<(), String>),
     /// A clipboard row was clicked.
     ClipboardSelected(usize),
     /// Leave a command's view for the root list.

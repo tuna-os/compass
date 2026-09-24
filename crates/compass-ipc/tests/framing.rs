@@ -53,6 +53,15 @@ fn all_requests() -> Vec<Request> {
         Request::ActivateWindow { id: u32::MAX },
         Request::CloseWindow { id: 7 },
         Request::ClipboardPaste { id: "abc".into() },
+        Request::ClipboardSetPinned {
+            id: "abc".into(),
+            pinned: true,
+        },
+        Request::ClipboardSetPinned {
+            id: String::new(),
+            pinned: false,
+        },
+        Request::ClipboardRemove { id: "abc".into() },
     ]
 }
 
@@ -183,6 +192,8 @@ fn request_variants_are_exhaustive() {
             | Request::ActivateWindow { .. }
             | Request::CloseWindow { .. }
             | Request::ClipboardPaste { .. }
+            | Request::ClipboardSetPinned { .. }
+            | Request::ClipboardRemove { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

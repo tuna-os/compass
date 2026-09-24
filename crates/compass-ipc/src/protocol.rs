@@ -31,7 +31,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// Version 3 adds successful-launch reporting to the daemon-owned history.
 /// Version 4 adds clipboard history; version 5, fetching an entry's content;
-/// version 6, window switching; version 7, pasting a clipboard entry.
+/// version 6, window switching; version 7, pasting, pinning and removing a
+/// clipboard entry.
 pub const PROTOCOL_VERSION: u16 = 7;
 
 /// A client-to-server frame.
@@ -174,6 +175,21 @@ pub enum Request {
     /// extension, which is the only thing on GNOME that can press a key in
     /// another window; the caller then copies instead.
     ClipboardPaste {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// Pin or unpin one clipboard history entry. Pinned entries list first and
+    /// survive eviction. Answered with [`Response::Ack`]; an id that names no
+    /// entry is a bad request.
+    ClipboardSetPinned {
+        /// [`ClipboardEntry::id`].
+        id: String,
+        /// Pin when true, unpin when false.
+        pinned: bool,
+    },
+    /// Remove one clipboard history entry and its stored content. Answered
+    /// with [`Response::Ack`]; an id that names no entry is a bad request.
+    ClipboardRemove {
         /// [`ClipboardEntry::id`].
         id: String,
     },

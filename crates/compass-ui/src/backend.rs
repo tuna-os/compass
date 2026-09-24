@@ -76,6 +76,12 @@ pub trait ClipboardBackend: std::fmt::Debug + Send + Sync {
     /// moves to next. Ask while the launcher is focused, then hide it. A
     /// refusal (no GNOME Shell extension) means the caller copies instead.
     fn clipboard_paste(&self, id: String) -> BackendFuture<'_, ()>;
+
+    /// Pin or unpin one entry.
+    fn clipboard_set_pinned(&self, id: String, pinned: bool) -> BackendFuture<'_, ()>;
+
+    /// Remove one entry and its stored content.
+    fn clipboard_remove(&self, id: String) -> BackendFuture<'_, ()>;
 }
 
 /// One open window, as the switcher draws it.

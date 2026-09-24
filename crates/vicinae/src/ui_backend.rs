@@ -122,6 +122,31 @@ impl ClipboardBackend for DaemonBackend {
             }
         })
     }
+
+    fn clipboard_set_pinned(&self, id: String, pinned: bool) -> BackendFuture<'_, ()> {
+        let what = if pinned { "Pinning" } else { "Unpinning" };
+        Box::pin(async move {
+            match self
+                .ask(Request::ClipboardSetPinned { id, pinned }, what)
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn clipboard_remove(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ClipboardRemove { id }, "Removing the entry")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
 }
 
 impl WindowBackend for DaemonBackend {

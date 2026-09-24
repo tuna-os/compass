@@ -490,6 +490,36 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
+        Request::ClipboardSetPinned { .. } | Request::ClipboardRemove { .. } => {
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            let changed = tokio::task::spawn_blocking(move || match request {
+                Request::ClipboardSetPinned { id, pinned } => store.set_pinned(&id, pinned),
+                Request::ClipboardRemove { id } => store.remove(&id),
+                _ => unreachable!("matched above"),
+            })
+            .await;
+            match changed {
+                Ok(Ok(true)) => Response::Ack,
+                Ok(Ok(false)) => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no clipboard history entry has that id",
+                )),
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard update task failed: {err}"),
+                )),
+            }
+        }
+
         Request::ClipboardPaste { id } => {
             const WHAT: &str = "Pasting";
             let (shell, store) = {

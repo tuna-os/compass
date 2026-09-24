@@ -95,7 +95,9 @@ async fn echo_handler(request: Request) -> Response {
         Request::ListWindows => Response::Windows { windows: vec![] },
         Request::ActivateWindow { .. }
         | Request::CloseWindow { .. }
-        | Request::ClipboardPaste { .. } => Response::Ack,
+        | Request::ClipboardPaste { .. }
+        | Request::ClipboardSetPinned { .. }
+        | Request::ClipboardRemove { .. } => Response::Ack,
         Request::ClipboardContent { .. } => Response::ClipboardContent {
             mime_type: "text/plain".into(),
             data: vec![],

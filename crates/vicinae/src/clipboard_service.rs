@@ -270,6 +270,41 @@ impl ClipboardStore {
         Ok(Some((offer.mime_type, data)))
     }
 
+    /// Pins or unpins an entry; `false` when no entry has that id.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Store`] when the update fails.
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<bool, Error> {
+        compass_clipboard::write::set_pinned(&self.db(), id, pinned)
+            .map_err(|err| Error::Store(err.to_string()))
+    }
+
+    /// Removes an entry and unlinks its payloads; `false` when no entry has
+    /// that id.
+    ///
+    /// The rows go first, in one transaction. A payload that then fails to
+    /// unlink is logged and left: it is encrypted, and unreferenced once its
+    /// row is gone, where an unlink-first order could leave a row pointing at
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Store`] when the delete fails.
+    pub fn remove(&self, id: &str) -> Result<bool, Error> {
+        let removed = compass_clipboard::write::remove_selection(&self.db(), id)
+            .map_err(|err| Error::Store(err.to_string()))?;
+        for offer in &removed {
+            let path = ingest::payload_path(&self.payload_dir, offer);
+            if let Err(err) = std::fs::remove_file(&path)
+                && err.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(path = %path.display(), %err, "could not unlink a removed payload");
+            }
+        }
+        Ok(!removed.is_empty())
+    }
+
     /// Pinned entries first, then newest first; `query` filters, empty lists.
     ///
     /// # Errors
@@ -571,6 +606,60 @@ mod tests {
         assert_ne!(on_disk, long.as_bytes(), "encrypted at rest");
 
         assert!(store.content("no-such-entry").expect("lookup").is_none());
+    }
+
+    #[test]
+    fn pinning_lifts_an_entry_to_the_top_and_unpinning_lets_it_fall() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
+        store
+            .record(b"older", "text/plain", None)
+            .expect("recorded");
+        store
+            .record(b"newer", "text/plain", None)
+            .expect("recorded");
+        let older = store.history("older", 1).expect("listed").remove(0);
+
+        assert!(store.set_pinned(&older.id, true).expect("pinned"));
+        let top = store.history("", 2).expect("listed").remove(0);
+        assert_eq!((top.id.as_str(), top.pinned), (older.id.as_str(), true));
+
+        assert!(store.set_pinned(&older.id, false).expect("unpinned"));
+        let top = store.history("", 2).expect("listed").remove(0);
+        assert_eq!(top.preview, "newer");
+        assert!(!store.set_pinned("no-such-entry", true).expect("lookup"));
+    }
+
+    #[test]
+    fn removing_an_entry_deletes_its_row_and_its_payload() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
+        store
+            .record(b"secret", "text/plain", None)
+            .expect("recorded");
+        store.record(b"kept", "text/plain", None).expect("recorded");
+        let payloads = || {
+            std::fs::read_dir(dir.path().join(PAYLOAD_DIR_NAME))
+                .expect("payloads")
+                .count()
+        };
+        assert_eq!(payloads(), 2);
+        let gone = store.history("secret", 1).expect("listed").remove(0);
+
+        assert!(store.remove(&gone.id).expect("removed"));
+        let left: Vec<String> = store
+            .history("", 10)
+            .expect("listed")
+            .into_iter()
+            .map(|entry| entry.preview)
+            .collect();
+        assert_eq!(left, ["kept"]);
+        assert_eq!(payloads(), 1, "the removed entry's payload is unlinked");
+        assert!(store.content(&gone.id).expect("lookup").is_none());
+        assert!(
+            !store.remove(&gone.id).expect("second remove"),
+            "already gone"
+        );
     }
 
     #[test]
