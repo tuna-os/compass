@@ -52,6 +52,16 @@ Name=Suite 1 Browser
 Exec=$root/browser.sh %u
 MimeType=x-scheme-handler/http;x-scheme-handler/https;
 ENTRY
+# And a file manager, the same way: a desktop has one, and a command that asks
+# for the default `inode/directory` application at start (fuzzy-files) is
+# judged on what it draws rather than on the runner lacking Nautilus.
+cat > "$XDG_DATA_DIRS/applications/suite1-files.desktop" <<ENTRY
+[Desktop Entry]
+Type=Application
+Name=Suite 1 Files
+Exec=$root/browser.sh %u
+MimeType=inode/directory;
+ENTRY
 
 # The keyring asks for its password on stdin, and creates and unlocks a
 # login keyring in the fresh HOME with it. Not an empty one: a keyring with
