@@ -919,6 +919,14 @@ as it is, and any change — a nucleo bump, a scoring tweak, a corpus edit — h
 
 #### The score gap is almost invisible in ranking terms
 
+**2026-09-20 follow-up:** the single-character Unicode boundary correction
+documented in `PARITY.md` removes six Bear Factory score discrepancies. The
+current ratchet is 351 divergent queries / 1411 pairs (previously 352 / 1417).
+Top-1 remains 1684/1684, including all 920 contested queries; top-3 improves to
+1638 and full-order agreement to 1425. The historical measurements below describe
+the earlier capture. This small correction does not close end-to-end root ranking
+or authorize treating the lower-level scorer gate as a full-engine benchmark.
+
 Everything above measures **score equality**. Phase 1's gate does not: it names *ranking* parity,
 and a user sees an ordered list, not a number. Those turn out to be very different questions.
 
@@ -1605,10 +1613,21 @@ rubber-stamped and stop catching anything.
 
 ### 8.5b Suite 4b — head to head against the C++ engine
 
-Tracked as #117. **Every row in §8.5 is measured against a budget somebody wrote down. None is
-measured against the thing we are replacing.** For a strangler rewrite that is the wrong
-comparison: a 2.0 ms fuzzy-search SLA says nothing about whether a user will feel the port as an
-improvement or a regression, because the C++ engine is the only baseline they have.
+**Baseline clarification:** the requested baseline is the latest upstream release,
+now pinned to Vicinae v0.29.0 (`c3415a3ed56676d2960d90975ab319ae8a7aba6e`), not this
+fork's C++ artifact. That unmodified release has no root-query IPC endpoint.
+The new `compass-testkit` `head-to-head` binary measures persistent ping,
+instrumented queries when available, and process-tree RSS/PSS, retaining raw
+samples and explicit exclusions. See [HEAD-TO-HEAD.md](./HEAD-TO-HEAD.md) for its
+contract and the remaining comparable-workload requirements. The historical
+query/CLI claims below apply to our instrumented C++ fork, not pristine upstream.
+
+Tracked as #117. This began because §8.5 measured budgets, not the engine being replaced.
+The [first three upstream runs](./benchmarks/2026-09-20-upstream-v0.29.0/README.md) now
+measure warm ping: Rust's median was lower in all three. Search speed remains unmeasured
+against upstream, and the recorded memory readings are not feature-equivalent. A 2.0 ms
+fuzzy-search SLA still says nothing about whether users will feel the port as an improvement
+or regression; the C++ engine is their baseline.
 
 Suite 0 asks *"same results?"*. Suite 4b asks *"at least as fast, in no more memory?"* — same
 corpus, same harness shape, different question. It is the evidence the Phase 7 cutover needs, and
@@ -2245,7 +2264,7 @@ Ordered by what blocks what, not by size.
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
 | `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
-| `UI/confirmAlert` | **not started**; it answers whenever the *user* does, and the host has no way to hold a reply open across a dialog |
+| `UI/confirmAlert` | the adapter and deferred reply transport are implemented (`UiShellService::defer`, `Session::answer_deferred`, `Session::fail_deferred`); the launcher still needs to draw the dialog and settle it on confirmation, cancellation, replacement and navigation |
 | `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
 | `OAuth/authorize` | **not started**; needs a browser and an overlay |
 | running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
@@ -2348,6 +2367,28 @@ It is the bulk of the port, and the honest next move is Phase 4's first slice:
 first, with the protocol pinned by tests, before anything is spawned.
 
 ## 12. Immediate next steps
+
+**Current implementation check:** `UI/confirmAlert` already has a deferred transport and
+adapter; it must not be reimplemented from the older “not started” entry. The application
+action panel now dispatches Open, Copy name and Copy path by stable action IDs, offers a focused
+fuzzy filter, and routes Enter through one keyboard handler. Copy uses Iced's native clipboard
+task while leaving the launcher alive. Headless widget and task tests cover these paths;
+clipboard delivery and focus under GNOME still require desktop integration checks. This does
+not close the extension-rendering, builtin-view, platform or release gates below.
+
+Long native action panels now keep the filter outside a bounded scroller.
+Keyboard navigation reveals the selected widget using its measured layout
+bounds rather than estimated row heights. Headless Iced tests exercise wheel
+scrolling, full keyboard traversal, wraparound and filtering after scrolling.
+PR evidence includes real headless wgpu renders; those do not replace the
+GNOME/Flatpak integration checks.
+
+The application results list now uses the same measured-selection reveal
+operation and a bounded scroller, keeping the query fixed. Native regressions
+cover reaching the last result with the wheel and keyboard navigation/query
+resets across all appearance presets. Browser long-list states and actual
+headless wgpu captures accompany the change; target-session checks remain
+required before merging.
 
 Rewritten as items land; the previous version listed the VM tier and both spikes as the work to do,
 and all three now exist.

@@ -11,6 +11,7 @@ include = ["src/**/*.rs", "dbus/*.xml", "Cargo.toml"]
 workspace = true
 
 [dependencies]
+compass-core.workspace = true
 zbus.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }

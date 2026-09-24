@@ -65,6 +65,9 @@ function applyTokens() {
   const palette = appearances.find((a) => a.name === state.appearance);
   const screen = document.getElementById("screen");
   const root = document.documentElement.style;
+  for (const [name, value] of Object.entries(state.data.panelMetrics)) {
+    root.setProperty(`--panel-${name}`, `${value}px`);
+  }
 
   root.setProperty("--surface", palette.surface);
   root.setProperty("--field", palette.field);
@@ -140,12 +143,15 @@ function panelElement(panel) {
   const element = document.createElement("div");
   element.className = "panel";
 
-  if (panel.filter) {
-    const filter = document.createElement("div");
-    filter.className = "panel-filter";
-    filter.textContent = `filter: ${panel.filter}`;
-    element.append(filter);
-  }
+  const filter = document.createElement("input");
+  filter.className = "panel-filter";
+  filter.placeholder = "Search…";
+  filter.setAttribute("aria-label", "Search actions");
+  filter.value = panel.filter;
+  // Fixture rows were filtered by Rust. This input mirrors the native field's
+  // appearance, not its interactions; don't accept edits without reranking.
+  filter.readOnly = true;
+  element.append(filter);
 
   for (const row of panel.rows) {
     if (row.kind === "divider") {
@@ -174,6 +180,12 @@ function panelElement(panel) {
       item.append(shortcut);
     }
     element.append(item);
+  }
+  if (panel.rows.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No actions";
+    element.append(empty);
   }
   return element;
 }
@@ -204,7 +216,7 @@ function render() {
   }
   const caret = document.createElement("span");
   caret.className = "caret";
-  field.append(caret);
+  if (!current.panel) field.append(caret);
   card.append(field);
 
   const list = document.createElement("div");
@@ -226,8 +238,12 @@ function render() {
     }
   }
   card.append(list);
+  list.querySelector(".row.selected")?.scrollIntoView({ block: "nearest" });
 
-  if (current.panel) card.append(panelElement(current.panel));
+  if (current.panel) {
+    card.append(panelElement(current.panel));
+    card.querySelector(".panel-filter").focus({ preventScroll: true });
+  }
   card.dataset.state = current.name;
 }
 

@@ -20,7 +20,7 @@ use compass_search::{
 /// What the user and the launcher know about a root item.
 ///
 /// The field weights that [`RootItem`] feeds the matcher are the C++ ones:
-/// title 1.0, subtitle 0.5, alias 1.0, each keyword 0.6.
+/// title and unlocalized title 1.0, subtitle 0.5, alias 1.0, each keyword 0.6.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RootItemMeta {
     /// The provider that contributed the item ("apps", an extension id, ...).
@@ -48,6 +48,8 @@ pub struct RootItem {
     pub id: String,
     /// The primary label; weight 1.0.
     pub title: String,
+    /// The untranslated title, when different; the same weight as the title.
+    pub unlocalized_title: Option<String>,
     /// The secondary label; weight 0.5.
     pub subtitle: String,
     /// Extra search terms; weight 0.6 each.
@@ -110,7 +112,10 @@ impl RootItem {
     /// boost on top.
     #[must_use]
     pub fn fuzzy_score(&self, query: &Query, now: i64) -> f64 {
-        let boost = FRECENCY_WEIGHT * self.frecency(now);
+        self.fuzzy_score_with_boost(query, FRECENCY_WEIGHT * self.frecency(now))
+    }
+
+    fn fuzzy_score_with_boost(&self, query: &Query, boost: f64) -> f64 {
         if query.is_empty() {
             return 100.0 - FRECENCY_WEIGHT + boost;
         }
@@ -118,6 +123,7 @@ impl RootItem {
         let alias = self.meta.alias.as_deref().unwrap_or("");
         let mut fields = vec![
             WeightedField::new(&self.title, 1.0),
+            WeightedField::new(self.unlocalized_title.as_deref().unwrap_or(""), 1.0),
             WeightedField::new(&self.subtitle, 0.5),
             WeightedField::new(alias, 1.0),
         ];
@@ -144,6 +150,15 @@ pub fn search<'a>(
     opts: &SearchOptions,
     now: i64,
 ) -> Vec<ScoredRootItem<'a>> {
+    search_with_frecency(items, pattern, opts, |_, item| item.frecency(now))
+}
+
+pub(crate) fn search_with_frecency<'a>(
+    items: &'a [RootItem],
+    pattern: &str,
+    opts: &SearchOptions,
+    frecency: impl Fn(usize, &RootItem) -> f64,
+) -> Vec<ScoredRootItem<'a>> {
     let query = Query::new(pattern);
 
     let mut results: Vec<ScoredRootItem<'a>> = items
@@ -156,7 +171,8 @@ pub fn search<'a>(
         })
         .filter(|(_, item)| item.meta.favorite_idx.is_none() || opts.include_favorites)
         .filter_map(|(index, item)| {
-            let score = item.fuzzy_score(&query, now);
+            let score =
+                item.fuzzy_score_with_boost(&query, FRECENCY_WEIGHT * frecency(index, item));
             (score != 0.0).then_some(ScoredRootItem { item, score, index })
         })
         .collect();
@@ -584,7 +600,7 @@ pub fn app_entrypoint_id(desktop_id: &str) -> String {
 /// Three things are deliberate. The **subtitle is empty**: an application's
 /// comment is its description in the settings, not a second line in the
 /// launcher, and filling it would give every row a paragraph. The
-/// **unlocalized name joins the keywords**, so someone who knows an
+/// **unlocalized name retains title weight**, so someone who knows an
 /// application by its English name finds it on a localised desktop where the
 /// title is something else. And `enabled` starts true, because the root item
 /// manager's merge is what turns it off — an application is not disabled by
@@ -596,16 +612,14 @@ pub fn app_root_item(
     keywords: &[String],
     unlocalized_name: Option<&str>,
 ) -> RootItem {
-    let mut search_terms = keywords.to_vec();
-    if let Some(name) = unlocalized_name {
-        search_terms.push(name.to_owned());
-    }
-
     RootItem {
         id: entrypoint_id(APPS_PROVIDER_ID, &app_entrypoint_id(desktop_id)),
         title: display_name.to_owned(),
+        unlocalized_title: unlocalized_name
+            .filter(|name| *name != display_name)
+            .map(str::to_owned),
         subtitle: String::new(),
-        keywords: search_terms,
+        keywords: keywords.to_vec(),
         meta: RootItemMeta {
             provider_id: APPS_PROVIDER_ID.to_owned(),
             enabled: true,

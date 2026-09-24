@@ -541,6 +541,7 @@ mod reader_tests {
 /// `std::format("{}/{}", s.name, method.name)`.
 pub mod application_service;
 pub mod browser_service;
+pub mod cgroups;
 pub mod clipboard_service;
 pub mod command_service;
 pub mod extension_manager;
@@ -548,7 +549,9 @@ pub mod file_search_service;
 pub mod oauth_service;
 pub mod render;
 pub mod session;
+pub mod state_dir;
 pub mod storage_service;
+pub mod supervisor;
 pub mod tsapi;
 pub mod ui_service;
 pub mod ui_shell_service;
@@ -966,6 +969,38 @@ impl Worker {
         drop(self.stdin);
         self.child.wait().map_err(WorkerError::Spawn)
     }
+
+    /// Whether the worker has exited, without blocking.
+    ///
+    /// This is the health half the C++ gets from `QProcess::finished`: a
+    /// worker that is gone stops getting requests, and whatever was
+    /// outstanding is answered from [`Pending`](compass_extension_api::dispatch::Pending)
+    /// instead of timing out one by one. Reaps the child when it has exited,
+    /// so a later [`shutdown`](Self::shutdown) reports the same status
+    /// without waiting.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError::Spawn`] if the wait itself fails.
+    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>, WorkerError> {
+        self.child.try_wait().map_err(WorkerError::Spawn)
+    }
+
+    /// Kills the worker.
+    ///
+    /// The escalation when a stdin-close [`shutdown`](Self::shutdown) hangs:
+    /// the C++ asks `terminate` first and `kill` half a second later, but a
+    /// sandboxed worker shares no signal vocabulary with its host beyond
+    /// dying, so this host skips straight to the kill. Safe to call blindly:
+    /// like [`std::process::Child::kill`], killing a worker that already
+    /// exited succeeds rather than risking a signal to a recycled pid.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkerError::Spawn`] if the signal cannot be delivered.
+    pub fn kill(&mut self) -> Result<(), WorkerError> {
+        self.child.kill().map_err(WorkerError::Spawn)
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -1172,6 +1207,79 @@ mod worker_process {
             Err(WorkerError::Spawn(_)) => {}
             other => panic!("a missing binary must be a Spawn error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_live_worker_reports_no_exit_and_a_dead_one_reports_its_status() {
+        // `sleep` stays up long enough to be caught alive; `true` is gone
+        // before the first check. Both go through `try_wait`, the health
+        // half, rather than blocking in `wait`.
+        let mut sleeper = Worker::spawn({
+            let mut command = Command::new("sleep");
+            command.arg("30");
+            command
+        })
+        .expect("sleep is spawnable");
+        assert!(
+            sleeper
+                .try_wait()
+                .expect("checking a live worker")
+                .is_none(),
+            "a running worker has no exit status"
+        );
+        sleeper.kill().expect("a live worker can be killed");
+        let killed = sleeper.shutdown().expect("reaping a killed worker");
+        assert!(
+            !killed.success(),
+            "a killed worker did not exit cleanly: {killed:?}"
+        );
+
+        let mut quick = Worker::spawn(Command::new("true")).expect("true is spawnable");
+        let start = std::time::Instant::now();
+        let status = loop {
+            if let Some(status) = quick.try_wait().expect("checking an exited worker") {
+                break status;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "`true` should have exited long ago"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert!(status.success(), "`true` exits cleanly: {status:?}");
+    }
+
+    #[test]
+    fn killing_an_exited_worker_succeeds_without_signalling_anyone_else() {
+        // `Child::kill` refuses to signal a pid it already reaped, so a
+        // kill that loses the race with the exit still reports success —
+        // and, more importantly, never touches whatever reused the pid.
+        let mut quick = Worker::spawn(Command::new("true")).expect("true is spawnable");
+        let start = std::time::Instant::now();
+        loop {
+            if quick
+                .try_wait()
+                .expect("checking an exited worker")
+                .is_some_and(|status| status.success())
+            {
+                break;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "`true` should have exited long ago"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        quick
+            .kill()
+            .expect("killing an exited worker is a safe no-op");
+        assert!(
+            quick
+                .try_wait()
+                .expect("checking after the kill")
+                .is_some_and(|status| status.success()),
+            "the no-op kill changed nothing about the exit"
+        );
     }
 }
 

@@ -59,6 +59,16 @@ fn opened(app: &mut LauncherApp) -> iced::window::Id {
     id
 }
 
+fn requested_window(task: iced::Task<Message>) -> iced::window::Id {
+    use iced::futures::{StreamExt, executor::block_on};
+    use iced_winit::runtime::{Action, task, window};
+    let mut stream = task::into_stream(task).expect("window task");
+    match block_on(stream.next()).expect("open action") {
+        Action::Window(window::Action::Open(id, _, _)) => id,
+        other => panic!("expected window open, got {other:?}"),
+    }
+}
+
 /// Pretends the compositor confirmed a window is gone.
 ///
 /// Hiding is not instant and the launcher no longer pretends it is:
@@ -240,7 +250,8 @@ fn opening_in_answer_to_show_reports_shown_once_the_window_exists() {
 
     // `Show` on a hidden launcher cannot answer immediately -- the window does
     // not exist yet -- so the outcome has to wait for the window.
-    let _ = driven.app.update(Message::Command(UiCommand::Show));
+    let task = driven.app.update(Message::Command(UiCommand::Show));
+    let requested = requested_window(task);
     assert_eq!(
         reported(&mut driven.outcomes),
         vec![],
@@ -248,7 +259,7 @@ fn opening_in_answer_to_show_reports_shown_once_the_window_exists() {
     );
     assert!(driven.app.is_awaiting(), "the engine is still waiting");
 
-    opened(&mut driven.app);
+    let _ = driven.app.update(Message::Opened(requested));
 
     assert!(driven.app.is_visible());
     assert_eq!(reported(&mut driven.outcomes), vec![UiOutcome::Shown]);
@@ -281,8 +292,9 @@ fn every_report_answers_exactly_one_command() {
     // Now three real commands, each of which must produce exactly one.
     let _ = driven.app.update(Message::Command(UiCommand::Hide));
     closed(&mut driven.app, again);
-    let _ = driven.app.update(Message::Command(UiCommand::Show));
-    let shown = opened(&mut driven.app); // completes the Show
+    let task = driven.app.update(Message::Command(UiCommand::Show));
+    let shown = requested_window(task);
+    let _ = driven.app.update(Message::Opened(shown));
     let _ = driven.app.update(Message::Command(UiCommand::Hide));
     closed(&mut driven.app, shown);
 

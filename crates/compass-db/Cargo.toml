@@ -10,9 +10,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+compass-core.workspace = true
+compass-search.workspace = true
 compass-sqlcipher-sys = { path = "../compass-sqlcipher-sys" }
 md-5 = "0.11"
+mime_guess.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

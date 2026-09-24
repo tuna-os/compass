@@ -17,8 +17,8 @@
 //!
 //! # What is indexed
 //!
-//! * `Type=Application` entries only. `Link` and `Directory` entries are not launchable
-//!   applications and belong to other providers.
+//! * `Type=Application` and `Type=Link` entries. Links launch their URL through
+//!   the desktop's URI handler; Directory and unknown types are not launcher rows.
 //! * Entries passing [`DesktopEntry::should_show`] against the configured desktops, i.e. not
 //!   `Hidden`, not `NoDisplay`, and allowed by `OnlyShowIn`/`NotShowIn`.
 //! * Every `[Desktop Action …]` group of an included entry becomes its own [`AppItem`], because
@@ -69,7 +69,7 @@ pub enum SkipReason {
     Unreadable(String),
     /// The file is not a well-formed desktop entry.
     Malformed(String),
-    /// The entry is not `Type=Application`.
+    /// The entry is neither `Type=Application` nor `Type=Link`.
     NotAnApplication,
     /// `Hidden`, `NoDisplay`, or excluded by `OnlyShowIn`/`NotShowIn`.
     NotShown,
@@ -77,6 +77,8 @@ pub enum SkipReason {
     TryExecMissing(String),
     /// A `Type=Application` entry with no `Exec` key: there is nothing to launch.
     NoExec,
+    /// A `Type=Link` entry without a nonempty URL.
+    NoUrl,
 }
 
 impl std::fmt::Display for SkipReason {
@@ -87,10 +89,11 @@ impl std::fmt::Display for SkipReason {
             }
             SkipReason::Unreadable(err) => write!(f, "unreadable: {err}"),
             SkipReason::Malformed(err) => write!(f, "malformed: {err}"),
-            SkipReason::NotAnApplication => f.write_str("not Type=Application"),
+            SkipReason::NotAnApplication => f.write_str("not Type=Application or Type=Link"),
             SkipReason::NotShown => f.write_str("hidden in this environment"),
             SkipReason::TryExecMissing(exec) => write!(f, "TryExec {exec} did not resolve"),
             SkipReason::NoExec => f.write_str("no Exec key"),
+            SkipReason::NoUrl => f.write_str("no URL key"),
         }
     }
 }
@@ -430,7 +433,31 @@ impl AppIndexBuilder {
             }
         }
 
+        let mut root_indices: Vec<_> = items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, app)| (!app.is_action()).then_some(index))
+            .collect();
+        root_indices.sort_by_cached_key(|&index| items[index].name().to_lowercase());
+        let mut roots = Vec::with_capacity(root_indices.len());
+        for &index in &root_indices {
+            let app = &items[index];
+            let keywords: Vec<_> = app
+                .categories()
+                .iter()
+                .chain(app.keywords())
+                .cloned()
+                .collect();
+            roots.push(crate::root_items::app_root_item(
+                app.desktop_id(),
+                app.name(),
+                &keywords,
+                app.entry().unlocalized_name(),
+            ));
+        }
         AppIndex {
+            roots,
+            root_indices,
             items,
             by_key,
             skipped,
@@ -472,7 +499,8 @@ impl AppIndexBuilder {
             }
         };
 
-        if !entry.is_application() {
+        let is_link = matches!(entry.entry_type(), compass_xdg::EntryType::Link);
+        if !entry.is_application() && !is_link {
             skipped.push(SkippedEntry {
                 path: path.to_path_buf(),
                 reason: SkipReason::NotAnApplication,
@@ -488,7 +516,15 @@ impl AppIndexBuilder {
             return;
         }
 
-        if entry.exec().is_none() {
+        if is_link && entry.url().is_none_or(|url| url.trim().is_empty()) {
+            skipped.push(SkippedEntry {
+                path: path.to_path_buf(),
+                reason: SkipReason::NoUrl,
+            });
+            return;
+        }
+
+        if !is_link && entry.exec().is_none() {
             skipped.push(SkippedEntry {
                 path: path.to_path_buf(),
                 reason: SkipReason::NoExec,
@@ -527,7 +563,7 @@ impl AppIndexBuilder {
             },
         );
 
-        if !self.include_actions {
+        if !self.include_actions || is_link {
             return;
         }
 
@@ -595,12 +631,79 @@ fn is_executable_file(path: &Path) -> bool {
 /// A built, searchable index of applications and their actions.
 #[derive(Debug, Clone, Default)]
 pub struct AppIndex {
+    roots: Vec<crate::root_items::RootItem>,
+    root_indices: Vec<usize>,
     items: Vec<AppItem>,
     by_key: HashMap<String, usize>,
     skipped: Vec<SkippedEntry>,
 }
 
+/// A root application match with its stable index into the application catalog.
+#[derive(Debug)]
+pub struct ApplicationRootHit<'a> {
+    /// The owning application, never a desktop action.
+    pub item: &'a AppItem,
+    /// Position in `AppIndex::items`, for UI selection and launch dispatch.
+    pub index: usize,
+    /// Match score on the IPC scale, excluding frecency (zero for empty input).
+    pub match_score: u32,
+}
+
 impl AppIndex {
+    /// Applies user settings without changing catalog positions or launch keys.
+    pub fn apply_root_config(&mut self, config: &crate::root_items::RootConfig) {
+        for root in &mut self.roots {
+            // Application defaults have no alias or shortcut. Reset them so a
+            // removed setting cannot survive a subsequent configuration merge.
+            root.meta.alias = None;
+            root.meta.shortcut = None;
+            root.merge_config(config, false);
+        }
+    }
+
+    /// Search application root rows using the root manager's fields and ordering.
+    ///
+    /// Actions belong in the owning application's panel. An unresolved TryExec
+    /// does not hide a root row: a sandbox may not see an executable on the host.
+    /// The index still reports that diagnostic through `AppItem::launchable`.
+    #[must_use]
+    pub fn search_root(
+        &self,
+        pattern: &str,
+        history: Option<&dyn crate::FrecencyStore>,
+    ) -> Vec<ApplicationRootHit<'_>> {
+        let now = history.map_or(0, crate::FrecencyStore::now);
+        let frecency = |index: usize, _: &crate::root_items::RootItem| {
+            history
+                .and_then(|store| store.record(self.items[self.root_indices[index]].key()))
+                .map_or(0.0, |record| record.score_at(now))
+        };
+        crate::root_items::search_with_frecency(
+            &self.roots,
+            pattern,
+            &crate::root_items::SearchOptions::default(),
+            frecency,
+        )
+        .into_iter()
+        .map(|hit| {
+            let index = self.root_indices[hit.index];
+            let item = &self.items[index];
+            let match_score = if pattern.trim().is_empty() {
+                0
+            } else {
+                (hit.score - compass_search::FRECENCY_WEIGHT * frecency(hit.index, hit.item))
+                    .round()
+                    .clamp(0.0, 100.0) as u32
+            };
+            ApplicationRootHit {
+                item,
+                index,
+                match_score,
+            }
+        })
+        .collect()
+    }
+
     /// Starts building an index. See [`AppIndexBuilder`].
     #[must_use]
     pub fn builder() -> AppIndexBuilder {
@@ -635,6 +738,12 @@ impl AppIndex {
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&AppItem> {
         self.by_key.get(key).map(|&index| &self.items[index])
+    }
+
+    /// Catalog position of a stable key, valid until this index is replaced.
+    #[must_use]
+    pub fn position(&self, key: &str) -> Option<usize> {
+        self.by_key.get(key).copied()
     }
 
     /// Only the items that can actually be launched. See

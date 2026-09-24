@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-PATTERNS = ("packaging/vmtest/Containerfile*", "packaging/flatpak/Containerfile*")
+PATTERNS = ("packaging/vmtest/Containerfile*", "packaging/flatpak/Containerfile*", "scripts/bench/Containerfile*")
 
 
 def declared_defaults(text: str) -> dict[str, str]:

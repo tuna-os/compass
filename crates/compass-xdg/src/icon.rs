@@ -140,7 +140,7 @@ impl IconTheme {
                 // Find or create the directory entry for this section
                 let mut found = false;
                 for dir in &mut theme.directories {
-                    if dir.path.file_name().and_then(|s| s.to_str()) == Some(&current_section) {
+                    if dir.path.as_os_str() == current_section.as_str() {
                         match key {
                             "Size" => dir.size = value.parse().ok(),
                             "Type" => {
@@ -220,44 +220,61 @@ pub fn find_icon(
 ) -> Option<PathBuf> {
     let theme = theme_name.unwrap_or("hicolor");
     let search_dirs = icon_search_dirs(theme);
-
     let target_size = size.map(|s| (s as f32 * scale).round() as u32);
+    find_icon_in_dirs(icon_name, theme, target_size, &search_dirs)
+}
 
+fn find_icon_in_dirs(
+    icon_name: &str,
+    theme: &str,
+    target_size: Option<u32>,
+    search_dirs: &[PathBuf],
+) -> Option<PathBuf> {
     // Search in theme and its parents
     let mut visited = HashSet::new();
-    let mut themes_to_search = vec![theme.to_owned()];
+    let mut themes_to_search = vec!["hicolor".to_owned(), theme.to_owned()];
 
     while let Some(current_theme) = themes_to_search.pop() {
         if !visited.insert(current_theme.clone()) {
             continue;
         }
 
-        for base_dir in &search_dirs {
-            let theme_dir = base_dir.join(&current_theme);
-            if let Some(found) = find_icon_in_theme_dir(&theme_dir, icon_name, target_size, scale) {
-                return Some(found);
-            }
+        let Some(metadata) = load_theme(search_dirs, &current_theme) else {
+            continue;
+        };
+        if let Some(found) = find_icon_in_theme(
+            search_dirs,
+            &current_theme,
+            &metadata,
+            icon_name,
+            target_size,
+        ) {
+            return Some(found);
         }
 
         // Add parent themes
-        if let Some(parent_theme) = load_theme_inherits(&search_dirs, &current_theme) {
-            themes_to_search.extend(parent_theme);
-        }
+        themes_to_search.extend(metadata.inherits.into_iter().rev());
     }
 
     // Fallback: search all themes in the search directories
-    for base_dir in &search_dirs {
+    for base_dir in search_dirs {
         if let Ok(read_dir) = std::fs::read_dir(base_dir) {
             for entry in read_dir.flatten() {
                 let theme_name = entry.file_name();
                 let theme_name_str = theme_name.to_string_lossy();
-                if visited.contains(&*theme_name_str) {
+                if !visited.insert(theme_name_str.to_string()) {
                     continue;
                 }
-                let theme_dir = entry.path();
-                if let Some(found) =
-                    find_icon_in_theme_dir(&theme_dir, icon_name, target_size, scale)
-                {
+                let Some(metadata) = load_theme(search_dirs, &theme_name_str) else {
+                    continue;
+                };
+                if let Some(found) = find_icon_in_theme(
+                    search_dirs,
+                    &theme_name_str,
+                    &metadata,
+                    icon_name,
+                    target_size,
+                ) {
                     return Some(found);
                 }
             }
@@ -272,30 +289,32 @@ fn icon_search_dirs(_theme: &str) -> Vec<PathBuf> {
     icon_dirs()
 }
 
-/// Load the Inherits list from a theme's index.theme.
-fn load_theme_inherits(search_dirs: &[PathBuf], theme: &str) -> Option<Vec<String>> {
-    for base_dir in search_dirs {
-        let index_path = base_dir.join(theme).join("index.theme");
-        if let Some(theme_data) = IconTheme::from_file(&index_path)
-            && !theme_data.inherits.is_empty()
-        {
-            return Some(theme_data.inherits);
-        }
-    }
-    None
+/// The first index supplies metadata for this theme across every base directory.
+fn load_theme(search_dirs: &[PathBuf], theme: &str) -> Option<IconTheme> {
+    search_dirs
+        .iter()
+        .find_map(|base| IconTheme::from_file(&base.join(theme).join("index.theme")))
+}
+
+fn find_icon_in_theme(
+    search_dirs: &[PathBuf],
+    theme_name: &str,
+    theme: &IconTheme,
+    icon_name: &str,
+    target_size: Option<u32>,
+) -> Option<PathBuf> {
+    search_dirs.iter().find_map(|base| {
+        find_icon_in_theme_dir(&base.join(theme_name), theme, icon_name, target_size)
+    })
 }
 
 /// Search for an icon file within a theme directory.
 fn find_icon_in_theme_dir(
     theme_dir: &Path,
+    theme: &IconTheme,
     icon_name: &str,
     target_size: Option<u32>,
-    _scale: f32,
 ) -> Option<PathBuf> {
-    // Read index.theme to get directory structure
-    let index_path = theme_dir.join("index.theme");
-    let theme = IconTheme::from_file(&index_path)?;
-
     // Find matching directories
     let mut candidates = Vec::new();
 
@@ -406,6 +425,136 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    fn write_theme(base: &Path, name: &str, inherits: &str, directory: &str) {
+        let root = base.join(name);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("index.theme"),
+            format!(
+                "[Icon Theme]\nName={name}\nInherits={inherits}\nDirectories={directory}\n\
+                 [{directory}]\nSize=512\nType=Fixed\nContext=Applications\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_icon(base: &Path, theme: &str, directory: &str, name: &str) -> PathBuf {
+        let root = base.join(theme).join(directory);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join(format!("{name}.png"));
+        fs::write(&path, b"png").unwrap();
+        path
+    }
+
+    #[test]
+    fn local_overlay_uses_system_metadata_and_overrides_system_icon() {
+        let root = tempdir().unwrap();
+        let local = root.path().join("local");
+        let system = root.path().join("system");
+        write_theme(&system, "hicolor", "", "512x512/apps");
+        let expected = write_icon(&local, "hicolor", "512x512/apps", "antigravity-ide");
+        write_icon(&system, "hicolor", "512x512/apps", "antigravity-ide");
+        assert!(!local.join("hicolor/index.theme").exists());
+        assert_eq!(
+            find_icon_in_dirs("antigravity-ide", "hicolor", Some(32), &[local, system]),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn first_index_controls_directories_and_inheritance_across_roots() {
+        let root = tempdir().unwrap();
+        let local = root.path().join("local");
+        let system = root.path().join("system");
+        write_theme(&local, "custom", "preferred", "512x512/apps");
+        write_theme(&system, "custom", "other", "obsolete/apps");
+        let expected = write_icon(&system, "custom", "512x512/apps", "app");
+        let dirs = [local, system];
+        assert_eq!(
+            find_icon_in_dirs("app", "custom", Some(32), &dirs),
+            Some(expected)
+        );
+        let theme = load_theme(&dirs, "custom").unwrap();
+        assert_eq!(theme.inherits, ["preferred"]);
+        assert_eq!(theme.directories.len(), 1);
+        assert_eq!(theme.directories[0].path, PathBuf::from("512x512/apps"));
+    }
+
+    #[test]
+    fn inherited_and_fallback_themes_find_metadata_free_overlays() {
+        let root = tempdir().unwrap();
+        let local = root.path().join("local");
+        let system = root.path().join("system");
+        write_theme(&system, "custom", "parent", "512x512/apps");
+        write_theme(&system, "parent", "custom", "512x512/apps");
+        write_theme(&system, "hicolor", "", "512x512/apps");
+        let inherited = write_icon(&local, "parent", "512x512/apps", "inherited");
+        let fallback = write_icon(&local, "hicolor", "512x512/apps", "fallback");
+        let dirs = [local, system];
+        assert_eq!(
+            find_icon_in_dirs("inherited", "custom", Some(32), &dirs),
+            Some(inherited)
+        );
+        assert_eq!(
+            find_icon_in_dirs("fallback", "custom", Some(32), &dirs),
+            Some(fallback)
+        );
+        assert_eq!(
+            find_icon_in_dirs("missing", "custom", Some(32), &dirs),
+            None
+        );
+    }
+
+    #[test]
+    fn nested_directory_metadata_belongs_to_one_entry() {
+        let theme = IconTheme::parse(
+            "[Icon Theme]\nName=Test\nDirectories=32x32/apps,scalable/apps\n\
+             [32x32/apps]\nSize=32\nType=Fixed\nContext=Applications\n\
+             [scalable/apps]\nSize=48\nType=Scalable\nContext=Applications\n",
+        )
+        .unwrap();
+        assert_eq!(theme.directories.len(), 2);
+        assert_eq!(theme.directories[0].path, PathBuf::from("32x32/apps"));
+        assert_eq!(theme.directories[0].size, Some(32));
+        assert_eq!(theme.directories[0].icon_type, IconType::Fixed);
+        assert_eq!(
+            theme.directories[0].context.as_deref(),
+            Some("Applications")
+        );
+        assert_eq!(theme.directories[1].size, Some(48));
+        assert_eq!(theme.directories[1].icon_type, IconType::Scalable);
+        assert_eq!(
+            theme.directories[1].context.as_deref(),
+            Some("Applications")
+        );
+    }
+
+    #[test]
+    fn nested_fixed_directories_choose_the_closest_sufficient_size() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("index.theme"),
+            "[Icon Theme]\nName=Test\nDirectories=256x256/apps,48x48/apps\n\
+             [256x256/apps]\nSize=256\nType=Fixed\nContext=Applications\n\
+             [48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n",
+        )
+        .unwrap();
+        for size in [256, 48] {
+            let icons = dir.path().join(format!("{size}x{size}/apps"));
+            fs::create_dir_all(&icons).unwrap();
+            fs::write(icons.join("app.png"), b"png").unwrap();
+        }
+        assert_eq!(
+            find_icon_in_theme_dir(
+                dir.path(),
+                &IconTheme::from_file(&dir.path().join("index.theme")).unwrap(),
+                "app",
+                Some(32),
+            ),
+            Some(dir.path().join("48x48/apps/app.png"))
+        );
+    }
+
     #[test]
     fn icon_theme_parse() {
         let data = r#"
@@ -484,7 +633,12 @@ Type=Fixed
         .unwrap();
         fs::write(theme_dir.join("16x16").join("test-icon.png"), b"png").unwrap();
 
-        let found = find_icon_in_theme_dir(&theme_dir, "test-icon", Some(16), 1.0);
+        let found = find_icon_in_theme_dir(
+            &theme_dir,
+            &IconTheme::from_file(&theme_dir.join("index.theme")).unwrap(),
+            "test-icon",
+            Some(16),
+        );
         assert!(found.is_some());
         assert!(found.unwrap().to_string_lossy().contains("test-icon"));
     }

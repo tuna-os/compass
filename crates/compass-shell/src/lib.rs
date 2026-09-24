@@ -68,6 +68,7 @@ pub mod contract;
 pub mod error;
 pub mod model;
 pub mod proxy;
+pub mod switcher;
 
 pub use capability::{Availability, DegradedFeature, ShellCapabilities};
 pub use client::{

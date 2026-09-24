@@ -87,6 +87,8 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn sqlite3_finalize(stmt: *mut Sqlite3Stmt) -> c_int;
     pub fn sqlite3_step(stmt: *mut Sqlite3Stmt) -> c_int;
+    pub fn sqlite3_reset(stmt: *mut Sqlite3Stmt) -> c_int;
+    pub fn sqlite3_clear_bindings(stmt: *mut Sqlite3Stmt) -> c_int;
 
     pub fn sqlite3_bind_parameter_index(stmt: *mut Sqlite3Stmt, name: *const c_char) -> c_int;
     pub fn sqlite3_bind_text(
@@ -110,6 +112,14 @@ unsafe extern "C" {
     /// this crate passes null for both — see [`crate::Database::open`] for why
     /// it is called directly instead of through that mechanism.
     pub fn vicinaeFuzzyTrigramInit(
+        db: *mut Sqlite3,
+        errmsg: *mut *mut c_char,
+        api: *const c_void,
+    ) -> c_int;
+
+    /// `vendor/spellfix/register.c`: the `spellfix1` virtual table in the
+    /// same static-linkage form, registered right after the tokenizer.
+    pub fn vicinaeSpellfixInit(
         db: *mut Sqlite3,
         errmsg: *mut *mut c_char,
         api: *const c_void,

@@ -18,6 +18,30 @@ pub fn write(dir: &Path, name: &str, contents: &str) {
     std::fs::write(&path, contents).expect("write fixture");
 }
 
+/// Creates an empty directory at `dir/name`, with parents.
+pub fn mkdir(dir: &Path, name: &str) {
+    std::fs::create_dir_all(dir.join(name)).expect("create fixture directory");
+}
+
+/// Creates a symlink `dir/link` pointing at `dir/target`, on unix and Windows alike.
+pub fn symlink(dir: &Path, target: &str, link: &str) {
+    let target = dir.join(target);
+    let link = dir.join(link);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link).expect("create fixture symlink");
+    #[cfg(windows)]
+    if target.is_dir() {
+        std::os::windows::fs::symlink_dir(&target, &link).expect("create fixture symlink");
+    } else {
+        std::os::windows::fs::symlink_file(&target, &link).expect("create fixture symlink");
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        panic!("fixture symlinks are only supported on unix and Windows");
+    }
+}
+
 /// A builder pinned to a fixed locale and desktop so results do not depend on the machine running
 /// the tests.
 pub fn builder() -> AppIndexBuilder {

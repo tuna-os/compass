@@ -1,13 +1,82 @@
 //! `vicinae.json`: defaults, partial files, error messages, and forward compatibility.
 
 use compass_core::config::{
-    DEFAULT_AUTO_UPDATE, DEFAULT_CLOSE_ON_FOCUS_LOSS, DEFAULT_HOTKEY, DEFAULT_MAX_RESULTS,
+    DEFAULT_AUTO_UPDATE, DEFAULT_CLOSE_ON_FOCUS_LOSS, DEFAULT_COLOR_SCHEME, DEFAULT_HOTKEY,
+    DEFAULT_MAX_RESULTS,
 };
 use compass_core::{Config, ConfigError};
 use std::path::Path;
 
 fn parse(json: &str) -> Config {
     Config::parse(json, Path::new("/test/vicinae.json")).expect("valid config")
+}
+
+#[test]
+fn root_settings_use_upstream_ids_and_preserve_provider_preferences() {
+    let input = serde_json::json!({
+        "providers": {
+            "applications": {
+                "enabled": false,
+                "preferences": {"future": [1, 2]},
+                "entrypoints": {
+                    "org.example.Editor": {
+                        "enabled": true, "alias": "write", "shortcut": "ctrl+e",
+                        "preferences": {"mode": "custom"}, "future": 42
+                    }
+                }
+            },
+            "unknown.extension": {"custom": true}
+        },
+        "favorites": ["applications:org.example.Editor"],
+        "fallbacks": ["files:search"]
+    });
+    let mut config = parse(&input.to_string());
+    let root = config.root_config();
+    let provider = &root.providers["applications"];
+    assert_eq!(provider.enabled, Some(false));
+    let item = &provider.entrypoints["org.example.Editor"];
+    assert_eq!(item.enabled, Some(true));
+    assert_eq!(item.alias.as_deref(), Some("write"));
+    assert_eq!(item.shortcut.as_deref(), Some("ctrl+e"));
+    assert_eq!(root.favorites, ["applications:org.example.Editor"]);
+    assert_eq!(root.fallbacks, ["files:search"]);
+    assert_eq!(serde_json::to_value(&config).unwrap(), input);
+    config.launcher_mut().set_max_results(Some(7));
+    let output = serde_json::to_value(&config).unwrap();
+    assert_eq!(output["providers"], input["providers"]);
+}
+
+#[test]
+fn absent_root_settings_stay_absent_and_malformed_settings_are_rejected() {
+    assert_eq!(parse("{}").root_config(), Default::default());
+    assert_eq!(
+        serde_json::to_value(parse("{}")).unwrap(),
+        serde_json::json!({})
+    );
+    for value in [
+        serde_json::json!({"providers": {}}),
+        serde_json::json!({"providers": {"applications": {}}}),
+        serde_json::json!({"providers": {"applications": {"entrypoints": {}}}}),
+        serde_json::json!({"favorites": []}),
+        serde_json::json!({"fallbacks": []}),
+    ] {
+        assert_eq!(
+            serde_json::to_value(parse(&value.to_string())).unwrap(),
+            value
+        );
+    }
+    for value in [
+        r#"{"providers": []}"#,
+        r#"{"providers": {"applications": {"enabled": "false"}}}"#,
+        r#"{"providers": {"applications": {"entrypoints": {"x": {"alias": 3}}}}}"#,
+        r#"{"favorites": [42]}"#,
+        r#"{"fallbacks": false}"#,
+    ] {
+        assert!(
+            Config::parse(value, Path::new("config.json")).is_err(),
+            "{value}"
+        );
+    }
 }
 
 fn assert_all_defaults(config: &Config) {
@@ -19,6 +88,10 @@ fn assert_all_defaults(config: &Config) {
     assert_eq!(config.launcher().max_results(), DEFAULT_MAX_RESULTS);
     assert_eq!(config.extensions().auto_update(), DEFAULT_AUTO_UPDATE);
     assert!(config.extensions().installed().is_empty());
+    assert_eq!(
+        config.launcher().appearance().color_scheme(),
+        DEFAULT_COLOR_SCHEME
+    );
 }
 
 #[test]
@@ -187,6 +260,10 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
             "appearance.icons",
         ),
         (
+            r#"{"launcher":{"appearance":{"color_scheme":"dark"}}}"#,
+            "appearance.color_scheme",
+        ),
+        (
             r#"{"launcher":{"appearance":{"preset":"rofi"}}}"#,
             "appearance.preset",
         ),
@@ -216,7 +293,7 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
         "keybinding": "vim",
         "wrap_navigation": true,
         "quick_launch": false,
-        "appearance": { "preset": "rofi", "icons": true, "tint": true }
+        "appearance": { "color_scheme": "dark", "preset": "rofi", "icons": true, "tint": true }
       },
       "extensions": { "auto_update": false, "installed": ["com.example.clock"] }
     }"#;
@@ -421,4 +498,52 @@ fn tint_is_understood_and_not_merely_preserved() {
         "tint must default off: the Spotlight-simple default is what the VM tier's pixel \
          gates are calibrated against"
     );
+}
+
+#[test]
+fn color_scheme_is_understood_and_system_is_the_default() {
+    let config = parse(r#"{"launcher":{"appearance":{"color_scheme":"dark"}}}"#);
+    let appearance = config.launcher().appearance();
+
+    assert_eq!(appearance.color_scheme_override(), Some("dark"));
+    assert_eq!(appearance.color_scheme(), "dark");
+    assert!(!appearance.unknown_fields().contains_key("color_scheme"));
+
+    let mut restored = config.clone();
+    restored
+        .launcher_mut()
+        .appearance_mut()
+        .set_color_scheme(None);
+    assert_eq!(
+        restored.launcher().appearance().color_scheme(),
+        DEFAULT_COLOR_SCHEME
+    );
+}
+
+#[test]
+fn theme_is_understood_and_system_is_the_default() {
+    let config = parse(r#"{"launcher":{"appearance":{"theme":"dracula"}}}"#);
+    let appearance = config.launcher().appearance();
+
+    assert_eq!(appearance.theme_override(), Some("dracula"));
+    assert_eq!(appearance.theme(), "dracula");
+    assert!(!appearance.unknown_fields().contains_key("theme"));
+
+    // Unknown theme is treated as curated variant still persisted — parsing happens in compass-ui.
+    // Config layer only ensures round-trip and default.
+    let mut restored = config.clone();
+    restored.launcher_mut().appearance_mut().set_theme(None);
+    assert_eq!(
+        restored.launcher().appearance().theme(),
+        compass_core::config::DEFAULT_THEME
+    );
+    assert_eq!(restored.launcher().appearance().theme_override(), None);
+
+    // Theme and preset are independently selectable (#153).
+    let both = parse(
+        r#"{"launcher":{"appearance":{"theme":"nord","preset":"raycast","color_scheme":"system"}}}"#,
+    );
+    assert_eq!(both.launcher().appearance().theme(), "nord");
+    assert_eq!(both.launcher().appearance().preset(), "raycast");
+    assert_eq!(both.launcher().appearance().color_scheme(), "system");
 }

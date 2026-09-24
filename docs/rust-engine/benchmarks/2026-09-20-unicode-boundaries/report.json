@@ -1,0 +1,4742 @@
+{
+  "upstream": {
+    "commit": "c3415a3ed56676d2960d90975ab319ae8a7aba6e",
+    "release": "v0.29.0",
+    "instrumentation_sha256": "1555e2644bf50050f06bd655519c24787ce89255e0e5dcd01472cf51f9181834",
+    "server_sha256": "146e11f737f2a03a79281cf1be049645315b8a3d6eef4a1874e54d4d9bb9097e"
+  },
+  "rust": {
+    "commit": "884ae35dde62b18827417df2f4f47ff847641ab5",
+    "binary_sha256": "e48fc9a3d1c9860e0304d3feb6ecf00868c342d1f598694738d243dc0292e39f"
+  },
+  "workload": "Same isolated untimed capture.py workload as 2026-09-20-query-audit: 738 real desktop files, fresh XDG profiles, C.UTF-8, network disabled, Qt offscreen, Rust daemon only. Not a performance or rendering comparison.",
+  "queries": [
+    {
+      "query": "",
+      "cpp": [
+        {
+          "id": "host--0ad.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal-3dlut-maker.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--4Pane.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--net.86box.86Box.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--90-Second-Portraits.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--abbaye.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--abe.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.abisource.AbiWord.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--accerciser.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.accessibilityinspector.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--AcetoneISO.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--adanaxisgpl.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--Add64.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--admeshgui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--asc.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.aegisub.Aegisub.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--aerc.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.github.dahenson.agenda.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--agistudio.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--sol.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.akonadiconsole.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.akregator.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--Alacritty.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alchemyquest.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alex4.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alexvsbus.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alexandria.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--algobox.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alien-arena.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alienblaster.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alizams.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xfsm.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xgra.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--graal.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dreal.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xpat.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xvpn.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xsch.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.alligator.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Almanah.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alphabet-soup.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--alsamixergui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ams.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.amarok.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--amoebax.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--amsynth.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.amule.aMule.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--anagramarama.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--anarch-csfml.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--anarch-sdl2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--android-file-transfer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--angband.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--angband-x11.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--angband-launcher.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.angelfish.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--anjuta.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ansifilter.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.antimicrox.antimicrox.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--antlrworks.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ants.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ants-level-editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--de.wedesoft.anymeal.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--fedora-gapcmon.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--qapitrace.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--apricots.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--apx.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--aqualung.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--arandr.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ardour6.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ardour7.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ardour8.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ardour9.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.arianna.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.ark.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--armacycles-ad.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--arpage.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--arrows.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.artikulate.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--arx-libertatis.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--astroid.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--astromenace.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--asunder.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--asylum.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.vectorgraphics.asymptote.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--atari++.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.atlantik.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--atomes.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--atanks.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--atomix.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--atomorun.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--atril.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--attract-mode.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--audacious.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--audacity.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.audex.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Decibels.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.audiotube.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--auriferous.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.governikus.ausweisapp2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--autokey-gtk.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--autokey-qt.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bssh.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bvnc.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.openchemistry.Avogadro2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--avoision.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--awf-gtk2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--awf-gtk3.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--awf-gtk4.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--azote.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ballz.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--backintime-qt.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--backintime-qt-root.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bat.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bacula-tray-monitor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ballbuster.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ballerburg.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.github.baresip.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--barrage.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--barrier.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bastet.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bf-animation-editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bf-level-editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bf-model-editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--desc2img.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--beediff.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--berusky.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--berusky2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--info.bibletime.BibleTime.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--biloba.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--biniax.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.bino3d.bino.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bitcoin-qt.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bitmap.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.raggesilver.BlackBox.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.bleachbit.BleachBit.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--blender.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bless.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bletchmame.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.blinken.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--blivet-gui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--blobwars.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--BlockOutII.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.blogilo.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bluefish.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.ebonjaeger.bluejay.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--blueman-manager.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--boinc.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bolzplatz2006.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bombardier.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.bomber.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--booksorg.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.github.babluboy.bookworm.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--boomaga.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--boswars.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.usebottles.bottles.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.bovo.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--brasero.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--brewtarget.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bristol.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--brutalchess.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--btbuilder.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--btop.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--btrfs-assistant.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bubblemail.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--thunar-bulk-rename.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.freedesktop.Bustle.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--de.danielnoethen.butt.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--buttermanager.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bygfoot.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--byobu.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--bzflag.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.cxong.cdogs-sdl.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cairo-dock.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cairo-dock-cairo.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cact.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--calf.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--calibre-gui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calindori.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--callgit.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calligra.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calligra.sheets.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calligra.stage.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calligra.words.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Calls.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ar.xjuan.Cambalache.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--camorama.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dog.unix.cantata.Cantata.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.cantor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--CardManager.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--carla.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--carla-control.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.cataclysmdda.CataclysmDDA.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.xfce.Catfish.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cave9.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cbrpager.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--net.ap_i.ccdciel.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ccgo.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cdcollect.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.celluloid_player.Celluloid.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cellwriter.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--centerim.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.cervisia.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cfdg-fe.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cgnscalc.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cgnsnodes.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cgnsplot.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--unitconv.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cgnsview.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--sm.puri.Chatty.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.chatterino.chatterino.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Cheese.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--chemtool.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--chessx.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--chewing-editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--chirp.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--chkrootkit.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chocolate_doom.Doom.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chocolate_doom.Doom-Setup.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chocolate_doom.Heretic.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chocolate_doom.Heretic-Setup.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chocolate_doom.Hexen.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chocolate_doom.Hexen-Setup.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chocolate_doom.Strife.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chocolate_doom.Strife-Setup.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--choosier.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.choqok.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.chordpro.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--uk.org.level7.chroma.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--chromium-bsu.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--chromium-browser.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ckb-next.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--clamtk.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--clanbomber.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.github.rafostar.Clapper.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--classified-ads.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--claws-mail.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--clawsker.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.clementine_player.Clementine.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--clifm.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--clipit.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cm-rgb-gui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cmake-gui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cockatrice.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--oracle.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--coco-coq.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--codeblocks.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--info.colobot.Colobot.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.ColorProfileViewer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--pl.suve.colorful.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--colossus.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--discourse.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--compiz-start.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ccsm.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--conky.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.contourterminal.Contour.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--net.fasterland.converseen.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cool-retro-term.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cr3.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--COPASI.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.github.hluk.copyq.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.corectrl.CoreCtrl.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--corrida.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.corsixth.corsixth.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.system76.CosmicFiles.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.system76.CosmicPlayer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.system76.CosmicScreenshot.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.system76.CosmicStore.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.system76.CosmicMonitor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.system76.CosmicTerm.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.system76.CosmicEdit.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.github.geigi.cozy.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cpeditor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cppcheck-gui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.thetumultuousunicornofdarkness.cpu-x.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cqrlog.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--crack-attack.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--CriticalMass.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--crossfire-client.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Crosswords.Editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Crosswords.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.CrowTranslate.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--CRRCsim.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cryptobone2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--crystal-dock.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--crystal-stacker.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--crystal-stacker-theme-editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--CUBE.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--curblaster.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal-curve-viewer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cutecom.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cutter-re.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cylindrix.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.dfeet.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.dspy.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--danmaQ.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--darkplaces-quake.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.darktable.darktable.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dasher.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ddd.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--cz.nic.datovka.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--davegnukem.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dayplanner.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ca.desrt.dconf-editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--gddccontrol.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ddnet.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--deepin-calculator.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dde-calendar.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--deepin-draw.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--deepin-image-viewer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--deepin-picker.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--deepin-system-monitor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--deepin-terminal.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--deluge.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.deskflow.deskflow.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Devhelp.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dgae.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dia.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--app.drey.Dialect.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--diffpdf.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.mightycreak.Diffuse.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.tobagin.digger.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.digikam.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dillo.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--im.dino.Dino.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.cassidyjames.dippi.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.baobab.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.DiskUtility.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.buddiesofbudgie.DisplayConfig.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--distccmon-gnome.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--djvulibre-djview4.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dl_poly.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.mageia.dnfdragora.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.mageia.dnfdragora-updater.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dnssec-trigger-panel.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--documentation.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dd2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.dolphin.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--dolphin-emu.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.dosbox-staging.dosbox-staging.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--doublecmd.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--doublecmd-qt.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--doublecmd-qt6.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--doxywizard.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.dragonplayer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.github.maoschanz.drawing.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--net.sourceforge.dmidiplayer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--crawl-tiles.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.DejaDup.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--echomixer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--edfviewer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ebwxshell.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--elementsinfo.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--envy24control.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--external-cryptobone-admin.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Nautilus.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--firewall-config.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.flightgear.FlightGear.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--gamt.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--gcdmaster.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.denemo.Denemo.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--texmacs.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--GoldenCheetah.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--fr.handbrake.ghb.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--hdajackretask.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--hdspconf.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--hdspmixer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--hwmixvolume.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal-profile-info.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--input-remapper-gtk.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--calamares.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--iqmol.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calligra.karbon.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.akonadiimportwizard.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--KoboDeluxe.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.labplot.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--libreoffice-startcenter.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--linlogbook.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.macaulay2.macaulay2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--Maelstrom.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--Mars.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--mayavi2.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--mca2edf.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--mhgui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--MyPasswordSafe.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--io.github.firefly-cpp.niaaml_gui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Notes.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--openalchemist.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--ch.openboard.OpenBoard.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--openlp.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_Analyzer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_commandlineAdaptiveSubdivider.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_commandlineDecimater.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_commandlineSubdivider.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_DecimaterGui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_Dualizer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_mconvert.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_mkbalancedpm.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_ProgViewer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_QtViewer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_Smoothing.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_SubdividerGui.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--om_Synthesizer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--openstego.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--panini.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.freedesktop.MalcontentControl.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--peakidentifier.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.pencil2d.Pencil2D.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calligraplan.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calligraplanportfolio.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.calligraplanwork.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--tv.plex.PlexDesktop.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--tv.plex.PlexHTPC.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal-apply-profiles.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--PyMca.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--pymcabatch.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--pymcapostbatch.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--pymcaroitool.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--pysol.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.libretro.RetroArch.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--Ri-li.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--rygel-preferences.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--Saaghar.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal-scripting-client.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--servatrice.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.kde.showfoto.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.signal.Signal.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--Singular.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--Singular-manual.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--smdiag.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--SolarModel.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal-synthprofile.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.heliumos.bootc_gtk.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--system-update.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.gnome.Ptyxis.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal-testchart-editor.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--aiksaurus.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--thunar.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--thunar-settings.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--com.ultimaker.cura.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--vim.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--displaycal-vrml-to-x3d-converter.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--WPrefs.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xfhdlcchpar.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xfhdlcsd.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xfsmdiag.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--xfsmmixer.desktop",
+          "score": 94
+        },
+        {
+          "id": "host--org.zim_wiki.Zim.desktop",
+          "score": 94
+        }
+      ],
+      "rust": [
+        {
+          "id": "host--0ad.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal-3dlut-maker.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--4Pane.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--net.86box.86Box.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--90-Second-Portraits.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--abbaye.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--abe.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.abisource.AbiWord.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--accerciser.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.accessibilityinspector.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--AcetoneISO.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--adanaxisgpl.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--Add64.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--admeshgui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--asc.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.aegisub.Aegisub.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--aerc.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.github.dahenson.agenda.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--agistudio.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--sol.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.akonadiconsole.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.akregator.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--Alacritty.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alchemyquest.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alex4.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alexvsbus.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alexandria.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--algobox.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alien-arena.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alienblaster.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alizams.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xfsm.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xgra.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--graal.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dreal.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xpat.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xvpn.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xsch.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.alligator.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Almanah.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alphabet-soup.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--alsamixergui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ams.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.amarok.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--amoebax.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--amsynth.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.amule.aMule.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--anagramarama.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--anarch-csfml.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--anarch-sdl2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--android-file-transfer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--angband.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--angband-x11.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--angband-launcher.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.angelfish.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--anjuta.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ansifilter.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.antimicrox.antimicrox.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--antlrworks.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ants.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ants-level-editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--de.wedesoft.anymeal.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--fedora-gapcmon.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--qapitrace.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--apricots.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--apx.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--aqualung.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--arandr.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ardour6.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ardour7.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ardour8.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ardour9.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.arianna.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.ark.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--armacycles-ad.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--arpage.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--arrows.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.artikulate.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--arx-libertatis.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--astroid.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--astromenace.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--asunder.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--asylum.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.vectorgraphics.asymptote.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--atari++.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.atlantik.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--atomes.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--atanks.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--atomix.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--atomorun.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--atril.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--attract-mode.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--audacious.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--audacity.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.audex.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Decibels.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.audiotube.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--auriferous.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.governikus.ausweisapp2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--autokey-gtk.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--autokey-qt.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bssh.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bvnc.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.openchemistry.Avogadro2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--avoision.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--awf-gtk2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--awf-gtk3.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--awf-gtk4.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--azote.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ballz.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--backintime-qt.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--backintime-qt-root.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bat.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bacula-tray-monitor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ballbuster.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ballerburg.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.github.baresip.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--barrage.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--barrier.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bastet.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bf-animation-editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bf-level-editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bf-model-editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--desc2img.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--beediff.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--berusky.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--berusky2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--info.bibletime.BibleTime.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--biloba.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--biniax.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.bino3d.bino.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bitcoin-qt.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bitmap.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.raggesilver.BlackBox.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.bleachbit.BleachBit.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--blender.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bless.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bletchmame.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.blinken.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--blivet-gui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--blobwars.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--BlockOutII.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.blogilo.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bluefish.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.ebonjaeger.bluejay.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--blueman-manager.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--boinc.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bolzplatz2006.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bombardier.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.bomber.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--booksorg.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.github.babluboy.bookworm.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--boomaga.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--boswars.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.usebottles.bottles.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.bovo.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--brasero.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--brewtarget.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bristol.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--brutalchess.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--btbuilder.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--btop.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--btrfs-assistant.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bubblemail.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--thunar-bulk-rename.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.freedesktop.Bustle.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--de.danielnoethen.butt.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--buttermanager.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bygfoot.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--byobu.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--bzflag.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.cxong.cdogs-sdl.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cairo-dock.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cairo-dock-cairo.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cact.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--calf.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--calibre-gui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calindori.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--callgit.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calligra.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calligra.sheets.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calligra.stage.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calligra.words.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Calls.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ar.xjuan.Cambalache.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--camorama.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dog.unix.cantata.Cantata.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.cantor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--CardManager.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--carla.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--carla-control.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.cataclysmdda.CataclysmDDA.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.xfce.Catfish.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cave9.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cbrpager.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--net.ap_i.ccdciel.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ccgo.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cdcollect.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.celluloid_player.Celluloid.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cellwriter.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--centerim.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.cervisia.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cfdg-fe.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cgnscalc.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cgnsnodes.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cgnsplot.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--unitconv.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cgnsview.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--sm.puri.Chatty.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.chatterino.chatterino.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Cheese.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--chemtool.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--chessx.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--chewing-editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--chirp.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--chkrootkit.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chocolate_doom.Doom.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chocolate_doom.Doom-Setup.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chocolate_doom.Heretic.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chocolate_doom.Heretic-Setup.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chocolate_doom.Hexen.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chocolate_doom.Hexen-Setup.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chocolate_doom.Strife.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chocolate_doom.Strife-Setup.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--choosier.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.choqok.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.chordpro.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--uk.org.level7.chroma.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--chromium-bsu.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--chromium-browser.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ckb-next.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--clamtk.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--clanbomber.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.github.rafostar.Clapper.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--classified-ads.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--claws-mail.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--clawsker.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.clementine_player.Clementine.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--clifm.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--clipit.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cm-rgb-gui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cmake-gui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cockatrice.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--oracle.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--coco-coq.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--codeblocks.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--info.colobot.Colobot.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.ColorProfileViewer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--pl.suve.colorful.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--colossus.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--discourse.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--compiz-start.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ccsm.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--conky.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.contourterminal.Contour.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--net.fasterland.converseen.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cool-retro-term.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cr3.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--COPASI.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.github.hluk.copyq.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.corectrl.CoreCtrl.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--corrida.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.corsixth.corsixth.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.system76.CosmicFiles.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.system76.CosmicPlayer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.system76.CosmicScreenshot.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.system76.CosmicStore.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.system76.CosmicMonitor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.system76.CosmicTerm.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.system76.CosmicEdit.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.github.geigi.cozy.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cpeditor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cppcheck-gui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.thetumultuousunicornofdarkness.cpu-x.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cqrlog.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--crack-attack.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--CriticalMass.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--crossfire-client.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Crosswords.Editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Crosswords.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.CrowTranslate.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--CRRCsim.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cryptobone2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--crystal-dock.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--crystal-stacker.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--crystal-stacker-theme-editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--CUBE.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--curblaster.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal-curve-viewer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cutecom.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cutter-re.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cylindrix.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.dfeet.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.dspy.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--danmaQ.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--darkplaces-quake.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.darktable.darktable.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dasher.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ddd.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--cz.nic.datovka.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--davegnukem.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dayplanner.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ca.desrt.dconf-editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--gddccontrol.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ddnet.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--deepin-calculator.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dde-calendar.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--deepin-draw.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--deepin-image-viewer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--deepin-picker.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--deepin-system-monitor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--deepin-terminal.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--deluge.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.deskflow.deskflow.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Devhelp.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dgae.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dia.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--app.drey.Dialect.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--diffpdf.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.mightycreak.Diffuse.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.tobagin.digger.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.digikam.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dillo.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--im.dino.Dino.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.cassidyjames.dippi.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.baobab.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.DiskUtility.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.buddiesofbudgie.DisplayConfig.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--distccmon-gnome.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--djvulibre-djview4.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dl_poly.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.mageia.dnfdragora.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.mageia.dnfdragora-updater.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dnssec-trigger-panel.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--documentation.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dd2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.dolphin.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--dolphin-emu.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.dosbox-staging.dosbox-staging.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--doublecmd.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--doublecmd-qt.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--doublecmd-qt6.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--doxywizard.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.dragonplayer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.github.maoschanz.drawing.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--net.sourceforge.dmidiplayer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--crawl-tiles.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.DejaDup.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--echomixer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--edfviewer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ebwxshell.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--elementsinfo.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--envy24control.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--external-cryptobone-admin.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Nautilus.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--firewall-config.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.flightgear.FlightGear.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--gamt.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--gcdmaster.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.denemo.Denemo.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--texmacs.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--GoldenCheetah.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--fr.handbrake.ghb.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--hdajackretask.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--hdspconf.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--hdspmixer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--hwmixvolume.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal-profile-info.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--input-remapper-gtk.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--calamares.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--iqmol.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calligra.karbon.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.akonadiimportwizard.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--KoboDeluxe.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.labplot.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--libreoffice-startcenter.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--linlogbook.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.macaulay2.macaulay2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--Maelstrom.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--Mars.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--mayavi2.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--mca2edf.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--mhgui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--MyPasswordSafe.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--io.github.firefly-cpp.niaaml_gui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Notes.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--openalchemist.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--ch.openboard.OpenBoard.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--openlp.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_Analyzer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_commandlineAdaptiveSubdivider.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_commandlineDecimater.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_commandlineSubdivider.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_DecimaterGui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_Dualizer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_mconvert.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_mkbalancedpm.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_ProgViewer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_QtViewer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_Smoothing.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_SubdividerGui.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--om_Synthesizer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--openstego.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--panini.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.freedesktop.MalcontentControl.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--peakidentifier.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.pencil2d.Pencil2D.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calligraplan.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calligraplanportfolio.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.calligraplanwork.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--tv.plex.PlexDesktop.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--tv.plex.PlexHTPC.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal-apply-profiles.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--PyMca.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--pymcabatch.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--pymcapostbatch.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--pymcaroitool.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--pysol.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.libretro.RetroArch.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--Ri-li.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--rygel-preferences.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--Saaghar.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal-scripting-client.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--servatrice.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.kde.showfoto.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.signal.Signal.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--Singular.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--Singular-manual.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--smdiag.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--SolarModel.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal-synthprofile.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.heliumos.bootc_gtk.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--system-update.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.gnome.Ptyxis.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal-testchart-editor.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--aiksaurus.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--thunar.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--thunar-settings.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--com.ultimaker.cura.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--vim.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--displaycal-vrml-to-x3d-converter.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--WPrefs.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xfhdlcchpar.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xfhdlcsd.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xfsmdiag.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--xfsmmixer.desktop",
+          "score": 0
+        },
+        {
+          "id": "host--org.zim_wiki.Zim.desktop",
+          "score": 0
+        }
+      ]
+    },
+    {
+      "query": "chrom",
+      "cpp": [
+        {
+          "id": "host--uk.org.level7.chroma.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--chromium-bsu.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--chromium-browser.desktop",
+          "score": 100
+        }
+      ],
+      "rust": [
+        {
+          "id": "host--uk.org.level7.chroma.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--chromium-bsu.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--chromium-browser.desktop",
+          "score": 100
+        }
+      ]
+    },
+    {
+      "query": "terminal",
+      "cpp": [
+        {
+          "id": "host--byobu.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--com.system76.CosmicTerm.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--deepin-terminal.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--org.gnome.Ptyxis.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--Alacritty.desktop",
+          "score": 59
+        },
+        {
+          "id": "host--com.raggesilver.BlackBox.desktop",
+          "score": 59
+        },
+        {
+          "id": "host--org.contourterminal.Contour.desktop",
+          "score": 59
+        },
+        {
+          "id": "host--cool-retro-term.desktop",
+          "score": 59
+        }
+      ],
+      "rust": [
+        {
+          "id": "host--byobu.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--com.system76.CosmicTerm.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--deepin-terminal.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--org.gnome.Ptyxis.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--Alacritty.desktop",
+          "score": 59
+        },
+        {
+          "id": "host--com.raggesilver.BlackBox.desktop",
+          "score": 59
+        },
+        {
+          "id": "host--org.contourterminal.Contour.desktop",
+          "score": 59
+        },
+        {
+          "id": "host--cool-retro-term.desktop",
+          "score": 59
+        }
+      ]
+    },
+    {
+      "query": "calculator",
+      "cpp": [
+        {
+          "id": "host--deepin-calculator.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--com.cassidyjames.dippi.desktop",
+          "score": 60
+        }
+      ],
+      "rust": [
+        {
+          "id": "host--deepin-calculator.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--com.cassidyjames.dippi.desktop",
+          "score": 60
+        }
+      ]
+    },
+    {
+      "query": "code",
+      "cpp": [
+        {
+          "id": "host--codeblocks.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--om_commandlineDecimater.desktop",
+          "score": 85
+        },
+        {
+          "id": "host--doublecmd.desktop",
+          "score": 80
+        },
+        {
+          "id": "host--doublecmd-qt.desktop",
+          "score": 80
+        },
+        {
+          "id": "host--doublecmd-qt6.desktop",
+          "score": 80
+        },
+        {
+          "id": "host--cgnsnodes.desktop",
+          "score": 75
+        },
+        {
+          "id": "host--om_commandlineAdaptiveSubdivider.desktop",
+          "score": 72
+        },
+        {
+          "id": "host--om_commandlineSubdivider.desktop",
+          "score": 72
+        },
+        {
+          "id": "host--bluefish.desktop",
+          "score": 59
+        },
+        {
+          "id": "host--com.raggesilver.BlackBox.desktop",
+          "score": 42
+        },
+        {
+          "id": "host--cool-retro-term.desktop",
+          "score": 42
+        },
+        {
+          "id": "host--deepin-terminal.desktop",
+          "score": 42
+        },
+        {
+          "id": "host--org.gnome.Ptyxis.desktop",
+          "score": 42
+        },
+        {
+          "id": "host--fr.handbrake.ghb.desktop",
+          "score": 39
+        },
+        {
+          "id": "host--ardour6.desktop",
+          "score": 35
+        },
+        {
+          "id": "host--ardour7.desktop",
+          "score": 35
+        },
+        {
+          "id": "host--ardour8.desktop",
+          "score": 35
+        },
+        {
+          "id": "host--ardour9.desktop",
+          "score": 35
+        },
+        {
+          "id": "host--org.gnome.Cheese.desktop",
+          "score": 35
+        }
+      ],
+      "rust": [
+        {
+          "id": "host--codeblocks.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--om_commandlineDecimater.desktop",
+          "score": 81
+        },
+        {
+          "id": "host--doublecmd.desktop",
+          "score": 80
+        },
+        {
+          "id": "host--doublecmd-qt.desktop",
+          "score": 80
+        },
+        {
+          "id": "host--doublecmd-qt6.desktop",
+          "score": 80
+        },
+        {
+          "id": "host--cgnsnodes.desktop",
+          "score": 75
+        },
+        {
+          "id": "host--om_commandlineAdaptiveSubdivider.desktop",
+          "score": 72
+        },
+        {
+          "id": "host--om_commandlineSubdivider.desktop",
+          "score": 72
+        },
+        {
+          "id": "host--bluefish.desktop",
+          "score": 59
+        },
+        {
+          "id": "host--com.raggesilver.BlackBox.desktop",
+          "score": 42
+        },
+        {
+          "id": "host--cool-retro-term.desktop",
+          "score": 42
+        },
+        {
+          "id": "host--deepin-terminal.desktop",
+          "score": 42
+        },
+        {
+          "id": "host--org.gnome.Ptyxis.desktop",
+          "score": 42
+        },
+        {
+          "id": "host--fr.handbrake.ghb.desktop",
+          "score": 39
+        },
+        {
+          "id": "host--ardour6.desktop",
+          "score": 35
+        },
+        {
+          "id": "host--ardour7.desktop",
+          "score": 35
+        },
+        {
+          "id": "host--ardour8.desktop",
+          "score": 35
+        },
+        {
+          "id": "host--ardour9.desktop",
+          "score": 35
+        },
+        {
+          "id": "host--org.gnome.Cheese.desktop",
+          "score": 35
+        }
+      ]
+    },
+    {
+      "query": "é",
+      "cpp": [
+        {
+          "id": "host--graal.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--ants-level-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bf-animation-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bf-level-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bf-model-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bless.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bluefish.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--chewing-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--com.system76.CosmicEdit.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--cpeditor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--org.gnome.Crosswords.Editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--crystal-stacker-theme-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--ca.desrt.dconf-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--dia.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--dolphin-emu.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--echomixer.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--edfviewer.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--ebwxshell.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--elementsinfo.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--envy24control.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--external-cryptobone-admin.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--pysol.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--displaycal-testchart-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--0ad.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--net.86box.86Box.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--aerc.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--algobox.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xfsm.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xgra.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--dreal.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xpat.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xvpn.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xsch.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.amule.aMule.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.artikulate.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--astroid.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--atari++.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--atomes.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--attract-mode.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--audacity.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.governikus.ausweisapp2.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.openchemistry.Avogadro2.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--info.bibletime.BibleTime.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--blender.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--bletchmame.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.blinken.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.github.babluboy.bookworm.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.usebottles.bottles.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--brewtarget.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--bubblemail.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--calf.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--calibre-gui.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.calindori.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.cantor.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--chemtool.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--claws-mail.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--clifm.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--info.colobot.Colobot.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--corrida.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--cutter-re.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.gnome.DiskUtility.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.dolphin.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.dosbox-staging.dosbox-staging.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--doublecmd.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--doublecmd-qt.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--doublecmd-qt6.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.gnome.Nautilus.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.denemo.Denemo.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--texmacs.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--GoldenCheetah.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--fr.handbrake.ghb.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--iqmol.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.labplot.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.macaulay2.macaulay2.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--mayavi2.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--mca2edf.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--ch.openboard.OpenBoard.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--peakidentifier.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--PyMca.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--pymcabatch.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--pymcapostbatch.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--pymcaroitool.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.libretro.RetroArch.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--Ri-li.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--Singular.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--SolarModel.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--thunar.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--vim.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.zim_wiki.Zim.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--camorama.desktop",
+          "score": 52
+        },
+        {
+          "id": "host--org.aegisub.Aegisub.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--Alacritty.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--ardour6.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--ardour7.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--ardour8.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--ardour9.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--com.raggesilver.BlackBox.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--de.danielnoethen.butt.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--carla.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--carla-control.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--org.contourterminal.Contour.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--cool-retro-term.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--com.system76.CosmicTerm.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--deepin-terminal.desktop",
+          "score": 50
+        },
+        {
+          "id": "host--org.gnome.Ptyxis.desktop",
+          "score": 50
+        }
+      ],
+      "rust": [
+        {
+          "id": "host--graal.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--ants-level-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bf-animation-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bf-level-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bf-model-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bless.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--bluefish.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--chewing-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--com.system76.CosmicEdit.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--cpeditor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--org.gnome.Crosswords.Editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--crystal-stacker-theme-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--ca.desrt.dconf-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--dia.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--dolphin-emu.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--echomixer.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--edfviewer.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--ebwxshell.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--elementsinfo.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--envy24control.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--external-cryptobone-admin.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--pysol.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--displaycal-testchart-editor.desktop",
+          "score": 100
+        },
+        {
+          "id": "host--0ad.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--net.86box.86Box.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--aerc.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--algobox.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xfsm.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xgra.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--dreal.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xpat.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xvpn.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--xsch.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.amule.aMule.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.artikulate.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--astroid.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--atari++.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--atomes.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--attract-mode.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--audacity.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.governikus.ausweisapp2.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.openchemistry.Avogadro2.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--info.bibletime.BibleTime.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--blender.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--bletchmame.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.blinken.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.github.babluboy.bookworm.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.usebottles.bottles.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--brewtarget.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--bubblemail.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--calf.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--calibre-gui.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.calindori.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.cantor.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--chemtool.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--claws-mail.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--clifm.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--info.colobot.Colobot.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--corrida.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--cutter-re.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.gnome.DiskUtility.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.dolphin.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.dosbox-staging.dosbox-staging.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--doublecmd.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--doublecmd-qt.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--doublecmd-qt6.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.gnome.Nautilus.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.denemo.Denemo.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--texmacs.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--GoldenCheetah.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--fr.handbrake.ghb.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--iqmol.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.kde.labplot.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.macaulay2.macaulay2.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--mayavi2.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--mca2edf.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--ch.openboard.OpenBoard.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--peakidentifier.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--PyMca.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--pymcabatch.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--pymcapostbatch.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--pymcaroitool.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--com.libretro.RetroArch.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--Ri-li.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--Singular.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--SolarModel.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--thunar.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--vim.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--org.zim_wiki.Zim.desktop",
+          "score": 58
+        },
+        {
+          "id": "host--camorama.desktop",
+          "score": 52
+        },
+        {
+          "id": "host--org.aegisub.Aegisub.desktop",
+          "score": 44
+        },
+        {
+          "id": "host--cool-retro-term.desktop",
+          "score": 44
+        },
+        {
+          "id": "host--com.system76.CosmicTerm.desktop",
+          "score": 44
+        },
+        {
+          "id": "host--deepin-terminal.desktop",
+          "score": 44
+        },
+        {
+          "id": "host--org.gnome.Ptyxis.desktop",
+          "score": 44
+        },
+        {
+          "id": "host--Alacritty.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--ardour6.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--ardour7.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--ardour8.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--ardour9.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--com.raggesilver.BlackBox.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--de.danielnoethen.butt.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--carla.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--carla-control.desktop",
+          "score": 41
+        },
+        {
+          "id": "host--org.contourterminal.Contour.desktop",
+          "score": 41
+        }
+      ]
+    },
+    {
+      "query": "zzzznonexistent",
+      "cpp": [],
+      "rust": []
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+name: Head-to-head upstream benchmark
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '31 3 * * 1'
+  pull_request:
+    paths:
+      - 'justfile'
+      - 'scripts/bench/**'
+      - '.github/workflows/head-to-head.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'justfile'
+      - 'scripts/bench/**'
+      - '.github/workflows/head-to-head.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: head-to-head-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@just
+      - name: Runner prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y podman
+      - name: Exercise orchestration failure paths
+        run: just bench-check
+      - name: Run the same entrypoint as a developer
+        run: just bench-head-to-head
+      - name: Publish summary
+        if: success()
+        run: |
+          find target/head-to-head -name summary.md -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve measurements and failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-head-to-head-${{ github.sha }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            target/head-to-head/run-*/*.json
+            target/head-to-head/run-*/*.md
+            target/head-to-head/run-*/*.log
+            target/head-to-head/run-*/*.txt

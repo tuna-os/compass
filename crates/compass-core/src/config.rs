@@ -11,7 +11,7 @@
 //!     "keybinding": "default",
 //!     "wrap_navigation": false,
 //!     "quick_launch": true,
-//!     "appearance": { "preset": "gnome", "icons": false }
+//!     "appearance": { "color_scheme": "system", "preset": "gnome", "icons": false }
 //!   },
 //!   "extensions": {
 //!     "auto_update": true,
@@ -71,14 +71,28 @@ pub const DEFAULT_QUICK_LAUNCH: bool = true;
 /// default appearance is unchanged by the presets existing.
 pub const DEFAULT_PRESET: &str = "gnome";
 
+/// Default for `launcher.appearance.color_scheme`.
+///
+/// System follows the desktop's native light/dark preference. The string is
+/// deliberately kept in `compass-core` rather than parsed here: the UI owns
+/// the palette, while the config crate owns only the durable schema.
+pub const DEFAULT_COLOR_SCHEME: &str = "system";
+
+/// Default for `launcher.appearance.theme`.
+///
+/// `system` follows the OS native appearance; other values name a curated
+/// palette from the #153 assortment (catppuccin, dracula, nord, gruvbox,
+/// tokyo-night, solarized).
+pub const DEFAULT_THEME: &str = "system";
+
 /// Default for `launcher.appearance.icons`.
 ///
-/// Off, per #85. The default look is Spotlight-simple, and icons are what make
-/// it busier. The row already reserves the space -- an unresolved or disabled
+/// On for recognizable application results. The row already reserves the space
+/// -- an unresolved or disabled
 /// icon draws the application's initial in a tinted square of the same size --
 /// so turning this on changes what is in the slot, not the launcher's
 /// footprint.
-pub const DEFAULT_ICONS: bool = false;
+pub const DEFAULT_ICONS: bool = true;
 
 /// Whether the launcher background is translucent when nothing says otherwise.
 ///
@@ -98,6 +112,28 @@ pub const DEFAULT_AUTO_UPDATE: bool = true;
 
 /// Path of the config file relative to `$XDG_CONFIG_HOME`.
 pub const CONFIG_RELATIVE_PATH: &str = "vicinae/vicinae.json";
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct RootEntrypointSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shortcut: Option<String>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct RootProviderSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entrypoints: Option<BTreeMap<String, RootEntrypointSettings>>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
 
 /// Everything that can go wrong loading or saving a [`Config`].
 #[derive(Debug, thiserror::Error)]
@@ -170,9 +206,13 @@ pub struct LauncherConfig {
     unknown: BTreeMap<String, Value>,
 }
 
-/// The `launcher.appearance` section: what a row looks like, not what it does.
+/// The `launcher.appearance` section: colour mode and row presentation, not behavior.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AppearanceConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color_scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,6 +226,46 @@ pub struct AppearanceConfig {
 }
 
 impl AppearanceConfig {
+    /// The configured colour scheme, or [`DEFAULT_COLOR_SCHEME`].
+    #[must_use]
+    pub fn color_scheme(&self) -> &str {
+        self.color_scheme.as_deref().unwrap_or(DEFAULT_COLOR_SCHEME)
+    }
+
+    /// The explicit `launcher.appearance.color_scheme`, if one was written.
+    #[must_use]
+    pub fn color_scheme_override(&self) -> Option<&str> {
+        self.color_scheme.as_deref()
+    }
+
+    /// Sets `launcher.appearance.color_scheme`. `None` restores the System default.
+    pub fn set_color_scheme(&mut self, value: Option<String>) -> &mut Self {
+        self.color_scheme = value;
+        self
+    }
+
+    /// The configured theme, or [`DEFAULT_THEME`].
+    ///
+    /// `system` follows the desktop; any other value names a curated palette
+    /// from the #153 assortment. Kept as a string here so `compass-ui` owns
+    /// the palette table.
+    #[must_use]
+    pub fn theme(&self) -> &str {
+        self.theme.as_deref().unwrap_or(DEFAULT_THEME)
+    }
+
+    /// The explicit `launcher.appearance.theme`, if one was written.
+    #[must_use]
+    pub fn theme_override(&self) -> Option<&str> {
+        self.theme.as_deref()
+    }
+
+    /// Sets `launcher.appearance.theme`. `None` restores System.
+    pub fn set_theme(&mut self, value: Option<String>) -> &mut Self {
+        self.theme = value;
+        self
+    }
+
     /// The named preset supplying the defaults for this section (#84).
     ///
     /// Defaults to [`DEFAULT_PRESET`]. Returned as written rather than parsed
@@ -266,12 +346,19 @@ impl AppearanceConfig {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         let Self {
+            color_scheme,
+            theme,
             preset,
             icons,
             tint,
             unknown,
         } = self;
-        preset.is_none() && icons.is_none() && tint.is_none() && unknown.is_empty()
+        color_scheme.is_none()
+            && theme.is_none()
+            && preset.is_none()
+            && icons.is_none()
+            && tint.is_none()
+            && unknown.is_empty()
     }
 }
 
@@ -465,6 +552,12 @@ pub struct Config {
     launcher: LauncherConfig,
     #[serde(default, skip_serializing_if = "ExtensionsConfig::is_empty")]
     extensions: ExtensionsConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    providers: Option<BTreeMap<String, RootProviderSettings>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    favorites: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fallbacks: Option<Vec<String>>,
 
     /// Top level keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -472,6 +565,46 @@ pub struct Config {
 }
 
 impl Config {
+    /// Root-manager settings using upstream's `provider:entrypoint` identities.
+    /// Unknown provider and entrypoint fields remain in the serialized config.
+    #[must_use]
+    pub fn root_config(&self) -> crate::root_items::RootConfig {
+        use crate::root_items::{ItemConfig, ProviderConfig, RootConfig};
+
+        RootConfig {
+            providers: self
+                .providers
+                .iter()
+                .flatten()
+                .map(|(id, provider)| {
+                    (
+                        id.clone(),
+                        ProviderConfig {
+                            enabled: provider.enabled,
+                            entrypoints: provider
+                                .entrypoints
+                                .iter()
+                                .flatten()
+                                .map(|(id, item)| {
+                                    (
+                                        id.clone(),
+                                        ItemConfig {
+                                            enabled: item.enabled,
+                                            alias: item.alias.clone(),
+                                            shortcut: item.shortcut.clone(),
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+            favorites: self.favorites.clone().unwrap_or_default(),
+            fallbacks: self.fallbacks.clone().unwrap_or_default(),
+        }
+    }
+
     /// The `launcher` section.
     #[must_use]
     pub fn launcher(&self) -> &LauncherConfig {

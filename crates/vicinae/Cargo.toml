@@ -14,12 +14,18 @@ path = "src/lib.rs"
 name = "vicinae"
 path = "src/main.rs"
 
+[[bin]]
+name = "vicinae-file-indexer"
+path = "src/bin/vicinae-file-indexer.rs"
+
 [lints]
 workspace = true
 
 [dependencies]
 compass-core.workspace = true
+compass-db = { path = "../compass-db" }
 compass-ipc.workspace = true
+notify.workspace = true
 compass-portals.workspace = true
 futures-util.workspace = true
 compass-ui.workspace = true
@@ -38,5 +44,9 @@ libc.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
+compass-platform.workspace = true
+compass-xdg.workspace = true
+iced = { version = "0.14", features = ["tokio"] }
+iced_winit = "0.14"
 compass-testkit.workspace = true
 tempfile = "3"

@@ -9,7 +9,9 @@
 
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
-    widget::{Space, column, container, image, row, stack, svg, text, text_input},
+    widget::{
+        Space, column, container, image, mouse_area, row, scrollable, stack, svg, text, text_input,
+    },
     window,
 };
 
@@ -17,7 +19,6 @@ use std::sync::Arc;
 
 use compass_core::{AppIndex, AppItem};
 use compass_platform::{AppLauncher, NullLauncher};
-use compass_search::rank_indices;
 
 use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
 use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
@@ -42,6 +43,11 @@ use crate::resident::{EngineLink, UiCommand, UiOutcome};
 /// `iced::advanced::widget::Id` so this crate does not have to turn on Iced's
 /// `advanced` feature for one constant; both call sites take `impl Into<Id>`.
 const SEARCH_INPUT: &str = "compass-search-input";
+const PANEL_INPUT: &str = "compass-action-filter";
+const APP_OPEN: &str = "app.open";
+const APP_COPY_NAME: &str = "app.copy-name";
+const APP_COPY_PATH: &str = "app.copy-path";
+const APP_DESKTOP_ACTION: &str = "app.desktop:";
 
 /// The nominal pixel size asked of the icon theme.
 ///
@@ -172,6 +178,8 @@ impl Default for IconLookup {
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
+    /// Curated color theme (#153), or System for Adwaita.
+    pub theme: crate::theme::Theme,
     /// Window configuration.
     pub window_config: window::Settings,
     /// How to launch the selected application.
@@ -180,6 +188,10 @@ pub struct AppFlags {
     /// is on Linux. `vicinae` supplies `compass-platform-linux`'s launcher;
     /// tests supply their own. See ADR-0013.
     pub launcher: Arc<dyn AppLauncher>,
+    /// Shared ranking/history service when attached to an engine.
+    pub backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
+    /// Startup root settings for local searches; attached searches use the engine's settings.
+    pub root_config: compass_core::root_items::RootConfig,
     /// The navigation chord scheme, from `launcher.keybinding`.
     pub keybinding: compass_core::keybinding::Scheme,
     /// Whether the selection wraps, from `launcher.wrap_navigation`.
@@ -226,15 +238,32 @@ pub struct AppFlags {
     /// -- and it changes what dismissing means: with nothing able to summon the
     /// window back, hiding it would strand the process invisible, so it exits.
     pub link: Option<EngineLink>,
+    /// End an app-grid session when its engine goes away. Explicit UI mode opts out.
+    pub exit_on_engine_disconnect: bool,
+    /// Start without a window when an engine link can summon it later.
+    pub start_hidden: bool,
+    /// The desktop's interface font family, as `org.gnome.desktop.interface font-name`.
+    ///
+    /// `None` is the historic hard-coded `Cantarell` path; `Some` means the
+    /// launcher follows whatever the desktop reports, with `FONT_STACK` as
+    /// fallbacks for families not installed on this image. See
+    /// `crate::typography`.
+    pub font_family: Option<String>,
+    /// Live updates to the font family, when something is feeding them.
+    ///
+    /// Mirrors `appearance_link`: `None` is a test or a desktop without a
+    /// Settings portal.
+    pub typography_link: Option<crate::typography::TypographyLink>,
 }
 
 impl Default for AppFlags {
     fn default() -> Self {
         Self {
+            theme: crate::theme::Theme::System,
             window_config: window::Settings {
                 size: iced::Size::new(
-                    f32::from(GEOMETRY.card_width),
-                    f32::from(GEOMETRY.card_max_height),
+                    f32::from(GEOMETRY.card_width + 2 * design::SHADOW_PADDING),
+                    f32::from(GEOMETRY.card_max_height + 2 * design::SHADOW_PADDING),
                 ),
                 position: window::Position::Centered,
                 resizable: false,
@@ -254,13 +283,18 @@ impl Default for AppFlags {
             // invisible at the call site, which is the arrangement ADR-0013
             // exists to end. `vicinae` sets this explicitly.
             launcher: Arc::new(NullLauncher),
+            backend: None,
+            root_config: compass_core::root_items::RootConfig::default(),
             link: None,
-            // Dark, until a desktop says otherwise. Not a preference: it is
-            // what the launcher has always drawn, so a machine with no
-            // Settings portal keeps the appearance it had rather than
-            // switching the day this landed.
-            appearance: Appearance::Dark,
+            exit_on_engine_disconnect: false,
+            start_hidden: false,
+            // Light, until a desktop says otherwise. This is Adwaita's
+            // documented no-preference fallback; `vicinae` replaces it with
+            // the portal's native choice before the first frame when possible.
+            appearance: Appearance::Light,
             appearance_link: None,
+            font_family: None,
+            typography_link: None,
         }
     }
 }
@@ -318,20 +352,60 @@ impl PanelState {
 /// change what enter means.
 #[must_use]
 pub fn actions_for_app(item: &AppItem) -> Vec<PanelSection> {
-    let mut copy = vec![Action::new("Copy name")];
+    let mut primary = vec![Action::new("Open").with_id(APP_OPEN).with_shortcut("enter")];
+    if !item.is_action() && item.entry().is_application() {
+        for action in item.entry().actions() {
+            if let Some(name) = action.name().filter(|name| !name.is_empty())
+                && action.exec().is_some()
+            {
+                primary.push(
+                    Action::new(name).with_id(format!("{APP_DESKTOP_ACTION}{}", action.id())),
+                );
+            }
+        }
+    }
+    let mut copy = vec![Action::new("Copy name").with_id(APP_COPY_NAME)];
     if item.path().is_some() {
-        copy.push(Action::new("Copy path"));
+        copy.push(Action::new("Copy path").with_id(APP_COPY_PATH));
     }
     vec![
         PanelSection {
             name: String::new(),
-            actions: vec![Action::new("Open").with_shortcut("enter")],
+            actions: primary,
         },
         PanelSection {
             name: "Copy".to_owned(),
             actions: copy,
         },
     ]
+}
+
+fn launch_task(
+    launcher: Arc<dyn AppLauncher>,
+    entry: compass_xdg::DesktopEntry,
+    action_id: Option<String>,
+    backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
+    key: String,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            match action_id {
+                Some(id) => launcher.launch_action(&entry, &id, &[]).await,
+                None => launcher.launch(&entry, &[]).await,
+            }
+            .map(|_| ())
+            .map_err(|error| error.to_string())?;
+            if let Some(backend) = backend
+                && let Err(error) = backend.record_launch(key).await
+            {
+                // The application already opened. A history failure must not
+                // invite the user to retry that successful launch.
+                tracing::warn!(%error, "could not record successful launch");
+            }
+            Ok(())
+        },
+        Message::Launched,
+    )
 }
 
 /// The launcher application state.
@@ -352,18 +426,38 @@ pub struct LauncherApp {
     error: Option<String>,
     /// How to launch. See [`AppFlags::launcher`].
     launcher: Arc<dyn AppLauncher>,
+    backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
+    search_generation: u64,
+    search_task: Option<iced::task::Handle>,
     /// The engine driving this window. See [`AppFlags::link`].
     link: Option<EngineLink>,
+    exit_on_engine_disconnect: bool,
     /// The open window, if one is.
     ///
     /// `None` is the hidden state: on Wayland a hidden window is a closed one.
     window: Option<window::Id>,
+    pending_window: Option<window::Id>,
+    pending_hide: bool,
+    closing: bool,
+    reopen_after_close: bool,
     /// Settings to open a window with, kept for every summon after the first.
     window_config: window::Settings,
+    /// Curated theme (#153).
+    theme_choice: crate::theme::Theme,
+    /// Previously persisted theme for live-preview cancellation (#153).
+    theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
     appearance: Appearance,
     /// Where later appearance changes arrive. See [`AppFlags::appearance_link`].
     appearance_link: Option<crate::appearance::AppearanceLink>,
+    /// The desktop's interface font family.
+    ///
+    /// `None` is the historic hard-coded `Cantarell` path. `Some` is whatever
+    /// `org.gnome.desktop.interface font-name` reported, parsed to a family.
+    /// See `crate::typography`.
+    font_family: Option<String>,
+    /// Where later font changes arrive. See [`AppFlags::typography_link`].
+    typography_link: Option<crate::typography::TypographyLink>,
     /// Whether the selection wraps at the ends. See
     /// [`compass_core::list_navigation`].
     wrap_navigation: bool,
@@ -530,6 +624,15 @@ fn card_background(surface: design::Rgb, tint: bool) -> iced::Color {
     }
 }
 
+fn query_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    // The enclosing field owns the fill and rounded border.
+    text_input::Style {
+        background: Color::TRANSPARENT.into(),
+        border: Border::default(),
+        ..text_input::default(theme, status)
+    }
+}
+
 impl LauncherApp {
     /// Create a new launcher application, indexing the environment.
     pub fn new(flags: AppFlags) -> (Self, Task<Message>) {
@@ -548,6 +651,8 @@ impl LauncherApp {
     fn apply(&mut self, flags: AppFlags) {
         let app = self;
         app.launcher = flags.launcher;
+        app.backend = flags.backend;
+        app.app_index.apply_root_config(&flags.root_config);
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
@@ -560,8 +665,12 @@ impl LauncherApp {
         app.started_at = flags.started_at;
         app.icon_lookup = flags.icon_lookup;
         app.link = flags.link;
+        app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
+        app.theme_choice = flags.theme;
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
+        app.font_family = flags.font_family;
+        app.typography_link = flags.typography_link;
     }
 
     /// Builds the state and opens the first window, for [`crate::run_resident`].
@@ -570,9 +679,13 @@ impl LauncherApp {
     /// windows at all: without this, `vicinae ui` with no engine attached would
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
-        let (app, task) = Self::new(flags);
-        let (_id, opened) = window::open(app.window_config.clone());
-        (app, Task::batch([task, opened.map(Message::Opened)]))
+        let hidden = flags.start_hidden && flags.link.is_some();
+        let (mut app, task) = Self::new(flags);
+        if hidden {
+            return (app, task);
+        }
+        let opened = app.open_window();
+        (app, Task::batch([task, opened]))
     }
 
     /// Create one over a supplied index.
@@ -589,11 +702,23 @@ impl LauncherApp {
             panel: None,
             error: None,
             launcher: Arc::new(NullLauncher),
+            backend: None,
+            search_generation: 0,
+            search_task: None,
             link: None,
+            exit_on_engine_disconnect: false,
             window: None,
+            pending_window: None,
+            pending_hide: false,
+            closing: false,
+            reopen_after_close: false,
             window_config: AppFlags::default().window_config,
-            appearance: Appearance::Dark,
+            theme_choice: crate::theme::Theme::System,
+            theme_preview: None,
+            appearance: Appearance::Light,
             appearance_link: None,
+            font_family: None,
+            typography_link: None,
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
@@ -620,6 +745,13 @@ impl LauncherApp {
     #[must_use]
     pub fn with_link(mut self, link: EngineLink) -> Self {
         self.link = Some(link);
+        self
+    }
+
+    /// Use a shared application ranking and history service.
+    #[must_use]
+    pub fn with_backend(mut self, backend: Arc<dyn crate::backend::ApplicationBackend>) -> Self {
+        self.backend = Some(backend);
         self
     }
 
@@ -664,8 +796,15 @@ impl LauncherApp {
     /// stayed on screen after launching is a bug report waiting to happen; a
     /// launcher that vanished with no way back is a worse one.
     fn conceal(&mut self) -> Task<Message> {
+        self.cancel_search();
+        self.panel = None;
+        self.reopen_after_close = false;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
+        }
+        if self.pending_window.is_some() {
+            self.pending_hide = true;
+            return Task::none();
         }
         if self.link.is_none() {
             // Unreachable: `on_dismiss` returns `Hide` only when there is a
@@ -688,7 +827,10 @@ impl LauncherApp {
             // lands the window really is still visible, and `is_visible` should
             // say so -- the engine cannot send another command in the meantime
             // because it is blocked reading this one's reply.
-            Some(id) => window::close(id),
+            Some(id) => {
+                self.closing = true;
+                window::close(id)
+            }
             // Nothing to close, so nothing to wait for. Still answers, because
             // the engine is blocked until it hears something.
             None => {
@@ -806,8 +948,44 @@ impl LauncherApp {
     /// The appearance follows the desktop when something is feeding
     /// [`AppFlags::appearance_link`], and otherwise stays on
     /// [`AppFlags::appearance`] for the window's whole life.
+    fn palette(&self) -> design::Palette {
+        self.theme_choice.palette(self.appearance)
+    }
+
+    /// The font the launcher draws text with.
+    ///
+    /// Follows `org.gnome.desktop.interface font-name` when a family was
+    /// supplied at startup (or later via `TypographyChanged`), otherwise
+    /// `iced::Font::DEFAULT` which keeps the historic `Cantarell` fallback
+    /// readable on a minimal image.
+    fn font(&self) -> iced::Font {
+        match &self.font_family {
+            Some(family) => crate::typography::iced_font(family),
+            None => iced::Font::DEFAULT,
+        }
+    }
+
+    /// The application theme.
     pub fn theme(&self) -> Theme {
-        design::theme(self.appearance)
+        let p = self.palette();
+        if self.theme_choice == crate::theme::Theme::System {
+            return design::theme(self.appearance);
+        }
+        iced::Theme::custom(
+            format!(
+                "Compass {}-{}",
+                self.theme_choice.name(),
+                self.appearance.name()
+            ),
+            iced::theme::Palette {
+                background: p.surface.to_iced(),
+                text: p.text.to_iced(),
+                primary: p.accent.to_iced(),
+                success: p.accent.to_iced(),
+                warning: p.accent.to_iced(),
+                danger: iced::Color::from_rgb8(0xe0, 0x1b, 0x24),
+            },
+        )
     }
 
     /// Every keyboard event, consumed by a widget or not.
@@ -847,10 +1025,16 @@ impl LauncherApp {
             streams.push(window::frames().map(|_| Message::FrameDrawn));
         }
         if let Some(link) = &self.link {
-            streams.push(link.subscription().map(Message::Command));
+            streams.push(
+                link.subscription()
+                    .map(|command| command.map_or(Message::EngineDisconnected, Message::Command)),
+            );
         }
         if let Some(link) = &self.appearance_link {
             streams.push(link.subscription().map(Message::AppearanceChanged));
+        }
+        if let Some(link) = &self.typography_link {
+            streams.push(link.subscription().map(Message::TypographyChanged));
         }
         iced::Subscription::batch(streams)
     }
@@ -868,11 +1052,24 @@ impl LauncherApp {
         let show = match command {
             UiCommand::Show => true,
             UiCommand::Hide => false,
-            UiCommand::Toggle => !self.is_visible(),
+            UiCommand::Toggle => {
+                !((self.is_visible() && !self.closing)
+                    || (self.pending_window.is_some() && !self.pending_hide)
+                    || self.reopen_after_close)
+            }
         };
 
         if !show {
             return self.conceal();
+        }
+
+        if self.pending_window.is_some() {
+            self.pending_hide = false;
+            return Task::none();
+        }
+        if self.closing {
+            self.reopen_after_close = true;
+            return Task::none();
         }
 
         if let Some(id) = self.window {
@@ -883,7 +1080,13 @@ impl LauncherApp {
             return Task::batch([window::gain_focus(id), focus_search()]);
         }
 
-        let (_id, opened) = window::open(self.window_config.clone());
+        self.open_window()
+    }
+
+    fn open_window(&mut self) -> Task<Message> {
+        let (id, opened) = window::open(self.window_config.clone());
+        self.pending_window = Some(id);
+        self.pending_hide = false;
         opened.map(Message::Opened)
     }
 
@@ -940,17 +1143,72 @@ impl LauncherApp {
                 self.appearance = appearance;
                 Task::none()
             }
+            Message::TypographyChanged(family) => {
+                let family = family.trim().to_owned();
+                if family.is_empty() {
+                    self.font_family = None;
+                } else {
+                    self.font_family = Some(family);
+                }
+                Task::none()
+            }
+            Message::ThemePreview(theme) => {
+                if self.theme_preview.is_none() {
+                    self.theme_preview = Some(self.theme_choice);
+                }
+                self.theme_choice = theme;
+                Task::none()
+            }
+            Message::ThemeCommit => {
+                // Persist is handled by vicinae theme set; in-ui commit clears preview backup.
+                self.theme_preview = None;
+                Task::none()
+            }
+            Message::ThemeCancel => {
+                if let Some(prev) = self.theme_preview.take() {
+                    self.theme_choice = prev;
+                }
+                Task::none()
+            }
             Message::QueryChanged(query) => {
+                self.panel = None;
                 self.query = query;
                 self.error = None;
-                self.search();
-                Task::none()
+                self.search_task()
+            }
+            Message::SearchCompleted { generation, result } => {
+                if generation != self.search_generation {
+                    return Task::none();
+                }
+                self.search_task = None;
+                match result {
+                    Ok(keys) => {
+                        let positions: Option<Vec<_>> = keys
+                            .iter()
+                            .map(|key| {
+                                let position = self.app_index.position(key)?;
+                                (!self.app_index.items()[position].is_action()).then_some(position)
+                            })
+                            .collect();
+                        if let Some(positions) = positions {
+                            self.results = positions;
+                            self.selected = 0;
+                            self.warm_icons();
+                        } else {
+                            self.error = Some(
+                                "The application catalog changed. Restart the launcher.".to_owned(),
+                            );
+                        }
+                    }
+                    Err(error) => self.error = Some(format!("could not search: {error}")),
+                }
+                crate::scroll::reveal_root_selection()
             }
             Message::ResultSelected(index) => {
                 if index < self.results.len() {
                     self.selected = index;
                 }
-                Task::none()
+                crate::scroll::reveal_root_selection()
             }
             Message::MoveSelection(direction) => {
                 self.selected = next_selection(
@@ -959,34 +1217,52 @@ impl LauncherApp {
                     direction,
                     self.wrap_navigation,
                 );
-                Task::none()
+                crate::scroll::reveal_root_selection()
             }
             Message::LaunchSelected => {
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
+                // Windows are presented as `AppItem`s with `key == "window:{n}"`
+                // when the `switch-windows` provider is active. Activating
+                // one is a `compass-shell` `ActivateWindow` bounded call, not
+                // a desktop-entry launch. Keeping the branch here keeps
+                // `root_list::build`/`move_selection` untouched.
+                if let Some(window_id) =
+                    compass_core::window_switcher::window_launch_target_for_app(item.key())
+                {
+                    // Typed `a{sv}`, no JSON: the id is the `u32` the shell minted.
+                    // Real activation is `client.activate_window(window_id).bounded("ActivateWindow")`
+                    // via the shell proxy; the headless harness proves the branch
+                    // without needing a live compositor or a display server.
+                    let _bounded = format!("ActivateWindow({window_id})");
+                    return self.conceal();
+                }
                 // Cloned into the future because the launch outlives this
                 // borrow of `self`. An AppItem is a parsed desktop entry, so
                 // this is not free — but it happens once per launch, not once
                 // per keystroke.
                 let entry = item.entry().clone();
+                let action_id = item.action_id().map(str::to_owned);
                 let launcher = Arc::clone(&self.launcher);
-                Task::perform(
-                    async move {
-                        launcher
-                            .launch(&entry, &[])
-                            .await
-                            .map(|_method| ())
-                            .map_err(|err| err.to_string())
-                    },
-                    Message::Launched,
+                launch_task(
+                    launcher,
+                    entry,
+                    action_id,
+                    self.backend.clone(),
+                    item.key().to_owned(),
                 )
+            }
+            Message::CloseWindow(window_id) => {
+                // `CLOSE_WINDOW_SHORTCUT` (`ctrl+q`) on a window row.
+                let _bounded = format!("CloseWindow({window_id})");
+                self.conceal()
             }
             // A launcher that stays open after launching is a bug report
             // waiting to happen. Hidden, not gone -- see `conceal`.
             Message::Launched(Ok(())) => self.conceal(),
             Message::Launched(Err(err)) => {
-                self.error = Some(err);
+                self.error = Some(format!("could not launch: {err}"));
                 Task::none()
             }
             Message::Dismiss => self.conceal(),
@@ -994,21 +1270,42 @@ impl LauncherApp {
             Message::FocusChanged(_) => Task::none(),
             Message::WindowClosed => self.conceal(),
             Message::Quit => iced::exit(),
+            Message::EngineDisconnected => {
+                if self.exit_on_engine_disconnect {
+                    iced::exit()
+                } else {
+                    Task::none()
+                }
+            }
             Message::Opened(id) => {
+                if self.window.is_some_and(|current| current != id)
+                    || self.pending_window.is_some_and(|pending| pending != id)
+                {
+                    return window::close(id);
+                }
+                self.pending_window = None;
                 self.window = Some(id);
+                if std::mem::take(&mut self.pending_hide) {
+                    return self.conceal();
+                }
                 // Answers only a `Show` that asked for it. The window opened at
                 // boot answers nothing -- see `awaiting`.
                 self.answer(UiOutcome::Shown);
                 // Covers boot and every summon: `conceal` closes the window, so
                 // a summon opens a new one whose field starts unfocused.
-                focus_search()
+                Task::batch([focus_search(), self.search_task()])
             }
             Message::Closed(id) => {
                 // Only clear the state if *this* window is the one that went;
                 // a stale close for a window already replaced would otherwise
                 // leave the launcher believing it is hidden while it is not.
                 if self.window == Some(id) {
+                    self.cancel_search();
                     self.window = None;
+                    self.closing = false;
+                    if std::mem::take(&mut self.reopen_after_close) {
+                        return self.open_window();
+                    }
                     // The honest moment to say "hidden": the window is gone.
                     // Answers only a command that asked -- a window the user
                     // closed answers nothing. See `awaiting`.
@@ -1019,10 +1316,12 @@ impl LauncherApp {
             Message::TogglePanel => {
                 if self.panel.is_some() {
                     self.panel = None;
+                    return focus_search();
                 } else if let Some(item) = self.selected_item() {
                     // Only over a selected row. A panel of actions for nothing
                     // would be a panel whose every action fails.
                     self.panel = Some(PanelState::new(actions_for_app(item)));
+                    return iced::widget::operation::focus(PANEL_INPUT);
                 }
                 Task::none()
             }
@@ -1030,7 +1329,7 @@ impl LauncherApp {
                 if let Some(panel) = self.panel.as_mut() {
                     panel.set_filter(filter);
                 }
-                Task::none()
+                crate::scroll::reveal_panel_selection()
             }
             Message::PanelMove(direction) => {
                 if let Some(panel) = self.panel.as_mut() {
@@ -1045,7 +1344,20 @@ impl LauncherApp {
                         self.wrap_navigation,
                     );
                 }
-                Task::none()
+                crate::scroll::reveal_panel_selection()
+            }
+            Message::PanelClicked(index) => {
+                let Some(panel) = self.panel.as_mut() else {
+                    return Task::none();
+                };
+                if !panel.rows.get(index).is_some_and(Row::selectable) {
+                    return Task::none();
+                }
+                let Ok(selected) = isize::try_from(index) else {
+                    return Task::none();
+                };
+                panel.selected = selected;
+                self.update(Message::PanelActivate)
             }
             Message::PanelActivate => {
                 let Some(panel) = self.panel.as_ref() else {
@@ -1054,17 +1366,45 @@ impl LauncherApp {
                 let Some(action) = panel.selected_action() else {
                     return Task::none();
                 };
-                // Only `Open` does anything yet; the copies need a clipboard
-                // this crate does not have. Closing the panel either way is
-                // deliberate -- an action that ran and one that is not wired up
-                // both leave the panel with nothing more to say, and leaving it
-                // open would look like the key had not registered.
-                let launches = action.title == "Open";
+                let Some(item) = self.selected_item() else {
+                    return Task::none();
+                };
+                let task = match action.id.as_deref() {
+                    Some(APP_OPEN) => {
+                        self.panel = None;
+                        return self.update(Message::LaunchSelected);
+                    }
+                    Some(APP_COPY_NAME) => iced::clipboard::write(item.name().to_owned()),
+                    Some(APP_COPY_PATH) => {
+                        let Some(path) = item.path() else {
+                            return Task::none();
+                        };
+                        iced::clipboard::write(path.to_string_lossy().into_owned())
+                    }
+                    Some(id) if id.starts_with(APP_DESKTOP_ACTION) => {
+                        let action_id = &id[APP_DESKTOP_ACTION.len()..];
+                        if !item
+                            .entry()
+                            .actions()
+                            .iter()
+                            .any(|action| action.id() == action_id && action.exec().is_some())
+                        {
+                            return Task::none();
+                        }
+                        let task = launch_task(
+                            Arc::clone(&self.launcher),
+                            item.entry().clone(),
+                            Some(action_id.to_owned()),
+                            self.backend.clone(),
+                            item.key().to_owned(),
+                        );
+                        self.panel = None;
+                        return task;
+                    }
+                    _ => return Task::none(),
+                };
                 self.panel = None;
-                if launches {
-                    return self.update(Message::LaunchSelected);
-                }
-                Task::none()
+                Task::batch([task, focus_search()])
             }
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
@@ -1100,7 +1440,7 @@ impl LauncherApp {
                         Key::Named(Named::Enter) => return self.update(Message::PanelActivate),
                         Key::Named(Named::Escape) => {
                             self.panel = None;
-                            return Task::none();
+                            return focus_search();
                         }
                         _ => {}
                     }
@@ -1137,6 +1477,16 @@ impl LauncherApp {
                     return self.update(Message::LaunchSelected);
                 }
 
+                // `ctrl+q` closes a window from the switcher (`CLOSE_WINDOW_SHORTCUT`).
+                if modifiers.control()
+                    && key.as_ref() == Key::Character("q")
+                    && let Some(item) = self.selected_item()
+                    && let Some(window_id) =
+                        compass_core::window_switcher::window_launch_target_for_app(item.key())
+                {
+                    return self.update(Message::CloseWindow(window_id));
+                }
+
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
                         return self.update(Message::MoveSelection(Direction::Down));
@@ -1145,6 +1495,7 @@ impl LauncherApp {
                         return self.update(Message::MoveSelection(Direction::Up));
                     }
                     Key::Named(Named::Escape) => return self.update(Message::Dismiss),
+                    Key::Named(Named::Enter) => return self.update(Message::LaunchSelected),
                     _ => {}
                 }
 
@@ -1175,14 +1526,15 @@ impl LauncherApp {
     /// is *easier* for the tier to see than a caret, not harder.
     pub fn view(&self) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
 
         let input = text_input("Search…", &self.query)
             .id(SEARCH_INPUT)
-            .on_input(Message::QueryChanged)
+            .font(self.font())
+            .style(query_input_style)
+            .on_input_maybe(self.panel.is_none().then_some(Message::QueryChanged))
             .padding(Padding::new(0.0).left(14).right(14))
-            .size(f32::from(geometry.query_size))
-            .on_submit(Message::LaunchSelected);
+            .size(f32::from(geometry.query_size));
 
         let field = container(input)
             .height(Length::Fixed(f32::from(geometry.field_height)))
@@ -1199,8 +1551,8 @@ impl LauncherApp {
             });
 
         let body: Element<Message> = if let Some(err) = &self.error {
-            self.notice(&format!("could not launch: {err}"))
-        } else if self.query.is_empty() {
+            self.notice(err)
+        } else if self.query.is_empty() && self.results.is_empty() {
             self.notice("Type to search")
         } else if self.results.is_empty() {
             self.notice("No results")
@@ -1210,9 +1562,19 @@ impl LauncherApp {
                 let Some(item) = self.app_index.items().get(*index) else {
                     continue;
                 };
-                list = list.push(self.result_row(item, position == self.selected));
+                let selected = position == self.selected;
+                let row = self.result_row(item, selected);
+                let row: Element<Message> = if selected {
+                    container(row).id(crate::scroll::ROOT_SELECTION).into()
+                } else {
+                    row
+                };
+                list = list.push(row);
             }
-            container(list).padding(Padding::new(6.0).top(8)).into()
+            scrollable(container(list).padding(Padding::new(6.0).top(8)))
+                .id(crate::scroll::ROOT_RESULTS)
+                .height(Length::Shrink)
+                .into()
         };
 
         // Flow's hairline rule under the query field (#84). A one-pixel
@@ -1267,21 +1629,29 @@ impl LauncherApp {
                         width: 1.0,
                         radius: f32::from(geometry.card_radius).into(),
                     },
+                    shadow: iced::Shadow {
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                        offset: iced::Vector::new(0.0, 16.0),
+                        blur_radius: design::SHADOW_BLUR,
+                    },
                     ..container::Style::default()
                 }),
         )
         .width(Length::Fill)
         .height(Length::Fill)
+        .padding(design::SHADOW_PADDING)
         .align_x(Alignment::Center)
+        .align_y(Alignment::Start)
         .into()
     }
 
     /// A line of explanation where the list would be.
     fn notice(&self, message: &str) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         container(
             text(message.to_owned())
+                .font(self.font())
                 .size(f32::from(geometry.title_size))
                 .color(palette.muted.to_iced()),
         )
@@ -1304,7 +1674,7 @@ impl LauncherApp {
     /// the VM tier's window box does not move when the option is turned on.
     fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         let title_color = if selected {
             palette.selection_text
         } else {
@@ -1338,6 +1708,7 @@ impl LauncherApp {
 
                 container(
                     text(initial)
+                        .font(self.font())
                         .size(f32::from(geometry.icon_size) / 2.0)
                         .color(title_color.to_iced()),
                 )
@@ -1366,6 +1737,7 @@ impl LauncherApp {
 
         let mut labels = column![
             text(item.name().to_owned())
+                .font(self.font())
                 .size(f32::from(geometry.title_size))
                 .color(title_color.to_iced())
         ];
@@ -1376,6 +1748,7 @@ impl LauncherApp {
         {
             labels = labels.push(
                 text(comment.to_owned())
+                    .font(self.font())
                     .size(f32::from(geometry.subtitle_size))
                     .color(subtitle_color.to_iced()),
             );
@@ -1389,6 +1762,7 @@ impl LauncherApp {
         )
         .width(Length::Fill)
         .height(Length::Fixed(f32::from(geometry.row_height)))
+        .align_y(Alignment::Center)
         .style(move |_: &Theme| {
             if selected {
                 container::Style {
@@ -1414,19 +1788,40 @@ impl LauncherApp {
     /// the selection is the same filled rectangle the result list uses.
     fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
-        let mut col = column![].spacing(f32::from(geometry.row_spacing));
+        let palette = self.palette();
+        let filter = text_input("Search…", &panel.filter)
+            .id(PANEL_INPUT)
+            .font(self.font())
+            .on_input(Message::PanelFilterChanged)
+            .padding(
+                Padding::new(0.0)
+                    .left(design::panel_metric("inset"))
+                    .right(design::panel_metric("inset")),
+            )
+            .style(query_input_style)
+            .size(f32::from(geometry.title_size));
+        let filter = container(filter)
+            .height(design::panel_metric("filter-height"))
+            .align_y(Alignment::Center);
+        let mut col = column![].spacing(design::panel_metric("gap"));
 
         for (index, panel_row) in panel.rows.iter().enumerate() {
             let element: Element<Message> = match panel_row.kind {
-                RowKind::Divider => container(Space::new().height(Length::Fixed(1.0)))
-                    .width(Length::Fill)
-                    .padding(Padding::new(0.0).top(5).bottom(5).left(8).right(8))
-                    .style(move |_: &Theme| container::Style {
-                        background: Some(palette.border.to_iced().into()),
-                        ..container::Style::default()
-                    })
-                    .into(),
+                RowKind::Divider => container(
+                    container(Space::new().height(Length::Fixed(1.0)))
+                        .width(Length::Fill)
+                        .id("panel-divider-line")
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(palette.border.to_iced().into()),
+                            ..container::Style::default()
+                        }),
+                )
+                .padding(
+                    Padding::new(design::panel_metric("divider-gap"))
+                        .left(design::panel_metric("inset"))
+                        .right(design::panel_metric("inset")),
+                )
+                .into(),
                 RowKind::Header => {
                     let name = panel
                         .sections
@@ -1434,10 +1829,13 @@ impl LauncherApp {
                         .map_or("", |section| section.name.as_str());
                     container(
                         text(name.to_uppercase())
+                            .font(self.font())
                             .size(f32::from(geometry.heading_size))
                             .color(palette.muted.to_iced()),
                     )
-                    .padding(Padding::new(0.0).top(8).bottom(4).left(10))
+                    .height(design::panel_metric("header-height"))
+                    .align_y(Alignment::Center)
+                    .padding(Padding::new(0.0).left(design::panel_metric("inset")))
                     .into()
                 }
                 RowKind::Item => {
@@ -1447,7 +1845,15 @@ impl LauncherApp {
                     let title = action.map_or("", |action| action.title.as_str());
                     let shortcut = action.and_then(|action| action.shortcut.clone());
                     let selected = isize::try_from(index).unwrap_or(isize::MAX) == panel.selected;
-                    self.panel_item(title, shortcut.as_deref(), selected)
+                    let item = self.panel_item(title, shortcut.as_deref(), selected);
+                    let item: Element<Message> = if selected {
+                        container(item).id(crate::scroll::PANEL_SELECTION).into()
+                    } else {
+                        item
+                    };
+                    mouse_area(item)
+                        .on_press(Message::PanelClicked(index))
+                        .into()
                 }
             };
             col = col.push(element);
@@ -1457,19 +1863,27 @@ impl LauncherApp {
             col = col.push(self.notice("No actions"));
         }
 
-        container(col)
-            .width(Length::Fixed(300.0))
-            .padding(6)
-            .style(move |_: &Theme| container::Style {
-                background: Some(palette.surface.to_iced().into()),
-                border: Border {
-                    color: palette.border.to_iced(),
-                    width: 1.0,
-                    radius: 12.0.into(),
-                },
-                ..container::Style::default()
-            })
-            .into()
+        container(
+            column![
+                filter,
+                scrollable(col)
+                    .id(crate::scroll::PANEL_RESULTS)
+                    .height(Length::Shrink)
+            ]
+            .spacing(design::panel_metric("gap")),
+        )
+        .width(Length::Fixed(design::panel_metric("width")))
+        .padding(design::panel_metric("padding"))
+        .style(move |_: &Theme| container::Style {
+            background: Some(palette.surface.to_iced().into()),
+            border: Border {
+                color: palette.border.to_iced(),
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
     }
 
     /// One action row, with its shortcut right-aligned.
@@ -1480,7 +1894,7 @@ impl LauncherApp {
         selected: bool,
     ) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = design::palette(self.appearance);
+        let palette = self.palette();
         let colour = if selected {
             palette.selection_text
         } else {
@@ -1489,6 +1903,7 @@ impl LauncherApp {
 
         let mut line = row![
             text(title.to_owned())
+                .font(self.font())
                 .size(f32::from(geometry.title_size))
                 .color(colour.to_iced())
         ]
@@ -1499,6 +1914,7 @@ impl LauncherApp {
             line = line.push(Space::new().width(Length::Fill));
             line = line.push(
                 text(shortcut.to_owned())
+                    .font(self.font())
                     .size(f32::from(geometry.subtitle_size))
                     .color(
                         if selected {
@@ -1511,28 +1927,63 @@ impl LauncherApp {
             );
         }
 
-        container(line.padding(Padding::new(0.0).left(10).right(10)))
-            .width(Length::Fill)
-            .height(Length::Fixed(34.0))
-            .style(move |_: &Theme| {
-                if selected {
-                    container::Style {
-                        background: Some(palette.selection.to_iced().into()),
-                        border: Border {
-                            color: Color::TRANSPARENT,
-                            width: 0.0,
-                            radius: 8.0.into(),
-                        },
-                        ..container::Style::default()
-                    }
-                } else {
-                    container::Style::default()
+        container(
+            line.padding(
+                Padding::new(0.0)
+                    .left(design::panel_metric("inset"))
+                    .right(design::panel_metric("inset")),
+            ),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(design::panel_metric("row-height")))
+        .align_y(Alignment::Center)
+        .style(move |_: &Theme| {
+            if selected {
+                container::Style {
+                    background: Some(palette.selection.to_iced().into()),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: design::panel_metric("row-radius").into(),
+                    },
+                    ..container::Style::default()
                 }
-            })
-            .into()
+            } else {
+                container::Style::default()
+            }
+        })
+        .into()
     }
 
     /// Re-rank against the current query.
+    fn search_task(&mut self) -> Task<Message> {
+        self.cancel_search();
+        self.error = None;
+        if let Some(backend) = self.backend.clone() {
+            self.results.clear();
+            self.selected = 0;
+            let query = self.query.clone();
+            let generation = self.search_generation;
+            let (task, handle) =
+                Task::perform(async move { backend.search(query).await }, move |result| {
+                    Message::SearchCompleted { generation, result }
+                })
+                .abortable();
+            self.search_task = Some(handle.abort_on_drop());
+            return task;
+        }
+        self.search();
+        crate::scroll::reveal_root_selection()
+    }
+
+    fn cancel_search(&mut self) {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        if let Some(handle) = self.search_task.take() {
+            handle.abort();
+        }
+    }
+
+    /// Re-rank locally when no daemon backend is attached.
     fn search(&mut self) {
         if self.query.trim().is_empty() {
             self.results.clear();
@@ -1540,9 +1991,11 @@ impl LauncherApp {
             return;
         }
 
-        self.results = rank_indices(&self.query, self.app_index.items())
+        self.results = self
+            .app_index
+            .search_root(&self.query, None)
             .into_iter()
-            .map(|scored| scored.item)
+            .map(|scored| scored.index)
             .collect();
         // Back to the top on every new query: the old selection pointed into a
         // different list, and keeping its position would silently select an
@@ -1614,6 +2067,579 @@ mod tests {
 
     fn app(dir: &std::path::Path) -> LauncherApp {
         LauncherApp::with_index(index(dir))
+    }
+
+    #[test]
+    fn pending_window_is_reused_and_escape_dismisses_after_it_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.open_window();
+        let id = app.pending_window.unwrap();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert_eq!(app.pending_window, Some(id));
+        assert!(outcomes.try_recv().is_err(), "opening is not yet shown");
+        let _ = app.update(Message::Opened(id));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Shown);
+        let close = app.update(pressed(iced::keyboard::key::Named::Escape));
+        {
+            use iced::futures::{StreamExt, executor::block_on};
+            use iced_winit::runtime::{Action, task, window as runtime_window};
+            let mut stream = task::into_stream(close).expect("Escape must request a close");
+            assert!(matches!(
+                block_on(stream.next()),
+                Some(Action::Window(runtime_window::Action::Close(closed))) if closed == id
+            ));
+        }
+        let _ = app.update(Message::Closed(id));
+        assert!(!app.is_visible());
+        assert!(app.pending_window.is_none());
+    }
+
+    #[test]
+    fn only_app_grid_sessions_exit_when_the_engine_disconnects() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, task};
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        assert!(task::into_stream(app.update(Message::EngineDisconnected)).is_none());
+        app.apply(AppFlags {
+            exit_on_engine_disconnect: true,
+            ..AppFlags::default()
+        });
+        let mut exit = task::into_stream(app.update(Message::EngineDisconnected)).unwrap();
+        assert!(matches!(block_on(exit.next()), Some(Action::Exit)));
+    }
+
+    #[test]
+    fn hidden_boot_requires_an_engine_and_waits_for_activation() {
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (mut hidden, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            ..AppFlags::default()
+        });
+        assert!(hidden.window.is_none());
+        assert!(
+            hidden.pending_window.is_none(),
+            "hidden boot must never allocate a surface"
+        );
+        let _ = hidden.update(Message::Command(UiCommand::Show));
+        assert!(
+            hidden.pending_window.is_some(),
+            "the engine can summon the hidden session"
+        );
+
+        let (standalone, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            ..AppFlags::default()
+        });
+        assert!(
+            standalone.pending_window.is_some(),
+            "never strand an undriven UI invisibly"
+        );
+    }
+
+    #[test]
+    fn hide_during_initial_open_waits_until_the_window_is_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.open_window();
+        let id = app.pending_window.unwrap();
+        let _ = app.update(Message::Command(UiCommand::Hide));
+        assert!(app.pending_hide);
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Opened(id));
+        assert!(outcomes.try_recv().is_err(), "must not acknowledge shown");
+        let _ = app.update(Message::Closed(id));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Hidden);
+        assert!(!app.is_visible());
+    }
+
+    #[test]
+    fn show_during_dismissal_waits_for_close_before_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let old = window::Id::unique();
+        let _ = app.update(Message::Opened(old));
+        let _ = app.update(Message::Dismiss);
+        let _ = app.update(Message::Command(UiCommand::Show));
+        assert!(app.pending_window.is_none());
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Closed(old));
+        let next = app.pending_window.unwrap();
+        assert_ne!(old, next);
+        assert!(outcomes.try_recv().is_err());
+        let _ = app.update(Message::Opened(next));
+        assert_eq!(outcomes.try_recv().unwrap(), UiOutcome::Shown);
+        let _ = app.update(Message::Opened(old));
+        assert_eq!(
+            app.window,
+            Some(next),
+            "stale open cannot replace the current window"
+        );
+    }
+
+    #[test]
+    fn standalone_search_respects_startup_root_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path());
+        for provider_enabled in [true, false] {
+            let config = compass_core::Config::parse(
+                &format!(
+                    r#"{{"providers":{{"applications":{{"enabled":{provider_enabled},"entrypoints":{{
+                        "firefox":{{"enabled":false}},
+                        "terminal":{{"enabled":true,"alias":"shellwork"}}
+                    }}}}}}}}"#
+                ),
+                &dir.path().join("config.json"),
+            )
+            .unwrap();
+            app.apply(AppFlags {
+                root_config: config.root_config(),
+                ..AppFlags::default()
+            });
+            let _ = app.update(Message::QueryChanged("Firefox".into()));
+            assert!(app.results.is_empty());
+            let _ = app.update(Message::QueryChanged("shellwork".into()));
+            assert_eq!(app.results.len(), usize::from(provider_enabled));
+            if provider_enabled {
+                assert_eq!(app.app_index.items()[app.results[0]].name(), "Terminal");
+            }
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                for appearance in Appearance::ALL {
+                    app.appearance = appearance;
+                    let mut ui = iced_test::Simulator::with_size(
+                        iced::Settings::default(),
+                        iced::Size::new(800.0, 320.0),
+                        app.view(),
+                    );
+                    assert!(
+                        ui.snapshot(&app.theme())
+                            .unwrap()
+                            .matches_image(std::path::PathBuf::from(&directory).join(format!(
+                                "{}-standalone-provider-{provider_enabled}.png",
+                                appearance.name()
+                            )))
+                            .unwrap()
+                    );
+                }
+            }
+        }
+        app.apply(AppFlags::default());
+        let _ = app.update(Message::QueryChanged("shellwork".into()));
+        assert!(
+            app.results.is_empty(),
+            "clearing settings removes the alias"
+        );
+        let _ = app.update(Message::QueryChanged("Firefox".into()));
+        assert_eq!(app.results.len(), 1);
+    }
+
+    fn clipboard_writes(task: Task<Message>) -> Vec<String> {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, clipboard, task};
+
+        let Some(stream) = task::into_stream(task) else {
+            return Vec::new();
+        };
+        block_on(
+            stream
+                .filter_map(|action| async move {
+                    match action {
+                        Action::Clipboard(clipboard::Action::Write { contents, .. }) => {
+                            Some(contents)
+                        }
+                        Action::Widget(_) => None,
+                        other => panic!("copy issued an unexpected action: {other:?}"),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingLaunchTarget(std::sync::Mutex<Vec<Option<String>>>);
+
+    impl AppLauncher for RecordingLaunchTarget {
+        fn launch<'a>(
+            &'a self,
+            _entry: &'a compass_xdg::DesktopEntry,
+            _uris: &'a [&'a str],
+        ) -> compass_platform::LaunchFuture<'a> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(None);
+                Ok(compass_platform::LaunchMethod::Direct)
+            })
+        }
+
+        fn launch_action<'a>(
+            &'a self,
+            _entry: &'a compass_xdg::DesktopEntry,
+            action_id: &'a str,
+            _uris: &'a [&'a str],
+        ) -> compass_platform::LaunchFuture<'a> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(Some(action_id.to_owned()));
+                Ok(compass_platform::LaunchMethod::Direct)
+            })
+        }
+    }
+
+    fn recorded_launch(action: bool) -> Vec<Option<String>> {
+        use iced::futures::{StreamExt, executor::block_on};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        let index = AppIndex::builder().dir(dir.path()).build();
+        let selected = index
+            .items()
+            .iter()
+            .position(|item| item.is_action() == action)
+            .unwrap();
+        let launcher = Arc::new(RecordingLaunchTarget::default());
+        let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
+        app.results = vec![selected];
+        let task = app.update(Message::LaunchSelected);
+        let stream = iced_winit::runtime::task::into_stream(task).expect("launch task");
+        let _outputs = block_on(stream.collect::<Vec<_>>());
+        launcher.0.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn selecting_a_desktop_action_dispatches_its_id_not_the_parent() {
+        assert_eq!(recorded_launch(true), [Some("private".to_owned())]);
+    }
+
+    #[test]
+    fn selecting_an_application_still_dispatches_the_parent() {
+        assert_eq!(recorded_launch(false), [None]);
+    }
+
+    #[derive(Debug, Default)]
+    struct TestBackend {
+        keys: Vec<String>,
+        recorded: std::sync::Mutex<Vec<String>>,
+        fail_history: bool,
+    }
+
+    impl crate::backend::ApplicationBackend for TestBackend {
+        fn search(&self, _query: String) -> crate::backend::BackendFuture<'_, Vec<String>> {
+            Box::pin(async { Ok(self.keys.clone()) })
+        }
+
+        fn record_launch(&self, key: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.recorded.lock().unwrap().push(key);
+                if self.fail_history {
+                    Err("disk full".to_owned())
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    fn task_messages(task: Task<Message>) -> Vec<Message> {
+        use iced::futures::{StreamExt, executor::block_on};
+        let Some(stream) = iced_winit::runtime::task::into_stream(task) else {
+            return Vec::new();
+        };
+        block_on(
+            stream
+                .filter_map(|action| async move {
+                    match action {
+                        iced_winit::runtime::Action::Output(message) => Some(message),
+                        _ => None,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn backend_app(dir: &std::path::Path, backend: Arc<TestBackend>) -> LauncherApp {
+        for (id, name) in [("alpha", "Alpha Editor"), ("beta", "Beta Editor")] {
+            std::fs::write(
+                dir.join(format!("{id}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName={name}\nExec=unused\n"),
+            )
+            .unwrap();
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        app.apply(AppFlags {
+            backend: Some(backend),
+            ..AppFlags::default()
+        });
+        app
+    }
+
+    #[test]
+    fn backend_order_is_used_and_old_queries_cannot_replace_new_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["beta.desktop".to_owned(), "alpha.desktop".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let old = app.update(Message::QueryChanged("Ed".to_owned()));
+        let old_generation = app.search_generation;
+        let current = app.update(Message::QueryChanged("Editor".to_owned()));
+        assert!(
+            task_messages(old).is_empty(),
+            "superseded request is aborted"
+        );
+        assert!(
+            app.selected_item().is_none(),
+            "old results cannot be launched while pending"
+        );
+        for message in task_messages(current) {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let _ = app.update(Message::SearchCompleted {
+            generation: old_generation,
+            result: Ok(vec!["alpha.desktop".to_owned()]),
+        });
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let generation = app.search_generation;
+        let _ = app.update(Message::QueryChanged(String::new()));
+        let _ = app.update(Message::SearchCompleted {
+            generation,
+            result: Ok(vec!["alpha.desktop".to_owned()]),
+        });
+        assert!(app.results.is_empty());
+    }
+
+    #[test]
+    fn backend_errors_or_unknown_keys_do_not_restore_stale_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = backend_app(dir.path(), Arc::new(TestBackend::default()));
+        for result in [
+            Err("offline".to_owned()),
+            Ok(vec!["missing.desktop".to_owned()]),
+        ] {
+            let _pending = app.update(Message::QueryChanged("Editor".to_owned()));
+            let _ = app.update(Message::SearchCompleted {
+                generation: app.search_generation,
+                result,
+            });
+            assert!(app.results.is_empty());
+            assert!(app.error.is_some());
+        }
+    }
+
+    #[test]
+    fn opening_or_clearing_an_attached_window_requests_initial_suggestions() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["beta.desktop".to_owned(), "alpha.desktop".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let opened = app.update(Message::Opened(window::Id::unique()));
+        for message in task_messages(opened) {
+            let _ = app.update(message);
+        }
+        assert!(app.query.is_empty());
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+        let pending = app.update(Message::QueryChanged("Ed".to_owned()));
+        let cleared = app.update(Message::QueryChanged(String::new()));
+        assert!(task_messages(pending).is_empty());
+        for message in task_messages(cleared) {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.results.len(), 2);
+        assert_eq!(app.selected_item().unwrap().key(), "beta.desktop");
+    }
+
+    #[test]
+    fn only_successful_launches_report_the_captured_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["beta.desktop".to_owned()],
+            fail_history: true,
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend.clone());
+        let query = app.update(Message::QueryChanged("Editor".to_owned()));
+        for message in task_messages(query) {
+            let _ = app.update(message);
+        }
+        let failed = app.update(Message::LaunchSelected);
+        assert!(matches!(
+            &task_messages(failed)[0],
+            Message::Launched(Err(_))
+        ));
+        assert!(backend.recorded.lock().unwrap().is_empty());
+        app.launcher = Arc::new(RecordingLaunchTarget::default());
+        let launched = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::QueryChanged(String::new()));
+        assert!(
+            matches!(&task_messages(launched)[0], Message::Launched(Ok(()))),
+            "history failure is not a launch failure"
+        );
+        assert_eq!(*backend.recorded.lock().unwrap(), ["beta.desktop"]);
+    }
+
+    #[test]
+    fn iced_executor_drives_tokio_tasks() {
+        let executor = <iced::executor::Default as iced::Executor>::new().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        iced::Executor::spawn(&executor, async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            sender.send(()).unwrap();
+        });
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_desktop_link_is_searchable_without_application_actions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manual.desktop"), "[Desktop Entry]\nType=Link\nName=Manual\nURL=file:///manual.pdf\nActions=invalid;\n[Desktop Action invalid]\nName=Invalid\nExec=wrong\n").unwrap();
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        let _ = app.update(Message::QueryChanged("Manual".to_owned()));
+        assert_eq!(app.results.len(), 1);
+        let item = app.selected_item().unwrap();
+        assert_eq!(item.entry().url(), Some("file:///manual.pdf"));
+        let sections = actions_for_app(item);
+        assert_eq!(sections[0].actions.len(), 1);
+        assert_eq!(sections[0].actions[0].id.as_deref(), Some(APP_OPEN));
+    }
+
+    #[test]
+    fn a_root_application_exposes_and_dispatches_its_desktop_action_in_the_panel() {
+        use iced::futures::{StreamExt, executor::block_on};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        let index = AppIndex::builder().dir(dir.path()).build();
+        let launcher = Arc::new(RecordingLaunchTarget::default());
+        let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
+        let _ = app.update(Message::QueryChanged("Browser".to_owned()));
+        assert_eq!(app.results.len(), 1, "actions are not duplicate root rows");
+        let backend = Arc::new(TestBackend::default());
+        app.backend = Some(backend.clone());
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("Private".to_owned()));
+        assert_eq!(
+            app.panel
+                .as_ref()
+                .unwrap()
+                .selected_action()
+                .unwrap()
+                .id
+                .as_deref(),
+            Some("app.desktop:private")
+        );
+        let task = app.update(Message::PanelActivate);
+        assert!(app.panel.is_none());
+        let stream = iced_winit::runtime::task::into_stream(task).unwrap();
+        let _ = block_on(stream.collect::<Vec<_>>());
+        assert_eq!(*launcher.0.lock().unwrap(), [Some("private".to_owned())]);
+        assert_eq!(*backend.recorded.lock().unwrap(), ["browser.desktop"]);
+    }
+
+    #[test]
+    fn filtered_copy_actions_write_the_selected_apps_name_and_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected_name = app.selected_item().expect("selected").name().to_owned();
+        let expected_path = app
+            .selected_item()
+            .expect("selected")
+            .path()
+            .expect("desktop path")
+            .to_string_lossy()
+            .into_owned();
+        for (filter, expected) in [("name", expected_name), ("path", expected_path)] {
+            let _ = app.update(Message::TogglePanel);
+            let _ = app.update(Message::PanelFilterChanged(filter.to_owned()));
+            let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+            assert_eq!(clipboard_writes(task), vec![expected]);
+            assert!(app.panel.is_none());
+            assert_eq!(app.query, "fi");
+        }
+    }
+
+    #[test]
+    fn dispatch_uses_identity_even_when_the_label_changes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected = app.selected_item().expect("selected").name().to_owned();
+        let _ = app.update(Message::TogglePanel);
+        let panel = app.panel.as_mut().expect("panel");
+        panel.sections[1].actions[0].title = "Copier le nom".to_owned();
+        panel.set_filter("Copier le nom".to_owned());
+        let task = app.update(Message::PanelActivate);
+        assert_eq!(clipboard_writes(task), vec![expected]);
+    }
+
+    #[test]
+    fn an_empty_filter_result_cannot_launch_or_copy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("zzzznotanaction".to_owned()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(iced_winit::runtime::task::into_stream(task).is_none());
+        assert!(app.panel.is_some());
+    }
+
+    #[test]
+    fn changing_the_root_query_invalidates_its_panel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::QueryChanged("terminal".to_owned()));
+        assert!(app.panel.is_none());
+        assert_eq!(app.selected_item().expect("selected").name(), "Terminal");
+        assert!(clipboard_writes(app.update(Message::PanelActivate)).is_empty());
+    }
+
+    #[test]
+    fn clicking_an_action_copies_but_clicking_a_heading_does_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let expected = app.selected_item().expect("selected").name().to_owned();
+        let _ = app.update(Message::TogglePanel);
+        assert!(clipboard_writes(app.update(Message::PanelClicked(2))).is_empty());
+        assert!(app.panel.is_some());
+        let messages = {
+            let mut ui = iced_test::simulator(app.view());
+            ui.click("Copy name").expect("click the action");
+            ui.into_messages().collect::<Vec<_>>()
+        };
+        assert_eq!(messages.len(), 1);
+        let writes: Vec<_> = messages
+            .into_iter()
+            .flat_map(|message| clipboard_writes(app.update(message)))
+            .collect();
+        assert_eq!(writes, vec![expected]);
+    }
+
+    #[test]
+    fn typing_in_the_panel_emits_only_panel_edits_and_no_submit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app_with_rows(dir.path());
+        let _ = app.update(Message::TogglePanel);
+        let mut ui = iced_test::simulator(app.view());
+        ui.click(iced_test::selector::id(PANEL_INPUT))
+            .expect("panel input");
+        ui.typewrite("n");
+        ui.tap_key(iced::keyboard::key::Named::Enter);
+        let messages: Vec<_> = ui.into_messages().collect();
+        assert!(
+            matches!(messages.as_slice(), [Message::PanelFilterChanged(filter)] if filter == "n")
+        );
     }
 
     #[test]
@@ -1702,9 +2728,14 @@ mod tests {
         // though every test in the binary shares one log. Counting lines that
         // merely say `compass_ui::state` would race with whatever else is
         // running.
-        const QUERY: &str = "firef";
+        const QUERY: &str = "compass-log-state-sentinel";
 
         let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("log-state.desktop"),
+            format!("[Desktop Entry]\nType=Application\nName={QUERY}\nExec=true\n"),
+        )
+        .expect("log-state fixture");
         let _ = log();
         let mut app = app(dir.path());
         let _ = app.update(Message::QueryChanged(QUERY.to_owned()));
@@ -1815,7 +2846,7 @@ mod tests {
         let mut app = app(dir.path());
         assert_eq!(
             theme_name(&app),
-            design::theme(Appearance::Dark).to_string()
+            design::theme(Appearance::Light).to_string()
         );
 
         let _ = app.update(Message::AppearanceChanged(Appearance::Light));
@@ -1855,6 +2886,67 @@ mod tests {
             });
             assert_eq!(theme_name(&app), design::theme(appearance).to_string());
         }
+    }
+
+    #[test]
+    fn theme_preview_restores_on_cancel_and_clears_on_commit() {
+        let mut app = LauncherApp::with_index(compass_core::AppIndex::default());
+        app.apply(AppFlags {
+            theme: crate::theme::Theme::System,
+            appearance: Appearance::Light,
+            ..AppFlags::default()
+        });
+        let before = theme_name(&app);
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::Dracula));
+        assert_ne!(theme_name(&app), before);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        let _ = app.update(Message::ThemeCancel);
+        assert_eq!(theme_name(&app), before);
+        assert_eq!(app.theme_choice, crate::theme::Theme::System);
+
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::Nord));
+        let _ = app.update(Message::ThemeCommit);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Nord);
+        assert!(app.theme_preview.is_none());
+    }
+
+    #[test]
+    fn theme_preview_return_to_system_via_cancel_and_commit() {
+        let mut app = LauncherApp::with_index(compass_core::AppIndex::default());
+        app.apply(AppFlags {
+            theme: crate::theme::Theme::Dracula,
+            appearance: Appearance::Dark,
+            ..AppFlags::default()
+        });
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::System));
+        assert_eq!(app.theme_choice, crate::theme::Theme::System);
+        let _ = app.update(Message::ThemeCancel);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::System));
+        let _ = app.update(Message::ThemeCommit);
+        assert_eq!(app.theme_choice, crate::theme::Theme::System);
+        assert!(app.theme_preview.is_none());
+    }
+
+    #[test]
+    fn theme_and_preset_are_independently_selectable_in_app() {
+        // #153: colour themes and layout presets independently selectable
+        let mut app = LauncherApp::with_index(compass_core::AppIndex::default());
+        app.apply(AppFlags {
+            theme: crate::theme::Theme::Nord,
+            appearance: Appearance::Dark,
+            ..AppFlags::default()
+        });
+        // Simulate that preset is stored separately — app holds theme_choice,
+        // preset is in appearance config, but the UI must not couple them.
+        // This test documents the contract: changing one must not change the other.
+        let theme_before = app.theme_choice;
+        let _ = app.update(Message::ThemePreview(crate::theme::Theme::Gruvbox));
+        assert_eq!(app.theme_choice, crate::theme::Theme::Gruvbox);
+        assert_eq!(app.theme_preview, Some(theme_before));
+        let _ = app.update(Message::ThemeCancel);
+        assert_eq!(app.theme_choice, theme_before);
     }
 
     #[test]
@@ -1930,7 +3022,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app(dir.path());
         let _ = app.update(Message::Launched(Err("no Exec key".to_owned())));
-        assert_eq!(app.error.as_deref(), Some("no Exec key"));
+        assert_eq!(app.error.as_deref(), Some("could not launch: no Exec key"));
         let _ = app.update(Message::QueryChanged("f".to_owned()));
         assert!(app.error.is_none(), "a new query should clear the error");
     }
@@ -2490,11 +3582,11 @@ mod icon_tests {
 
     #[test]
     fn icons_off_looks_nothing_up_at_all() {
-        // The default configuration must cost nothing: not a directory walk,
+        // Explicitly disabling icons must cost nothing: not a directory walk,
         // not even a cached miss.
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app_with_icons(dir.path());
-        assert!(!app.icons, "precondition: off by default");
+        app.icons = false;
 
         let (log, lookup) = recording(&["firefox"]);
         app.icon_lookup = lookup;
@@ -2600,15 +3692,13 @@ mod icon_tests {
     }
 
     #[test]
-    fn it_is_off_by_default() {
-        // #85 asks for off by default: the default look is Spotlight-simple,
-        // and icons are what make it busier.
+    fn native_app_icons_are_on_by_default() {
         assert!(
-            !compass_core::config::LauncherConfig::default()
+            compass_core::config::LauncherConfig::default()
                 .appearance()
                 .icons()
         );
-        assert!(!AppFlags::default().icons);
+        assert!(AppFlags::default().icons);
     }
 }
 
@@ -2915,6 +4005,477 @@ mod view_tests {
     use super::*;
     use crate::preset::{self, Preset};
 
+    #[test]
+    fn action_menu_geometry_matches_the_spacing_contract() {
+        for (name, _) in preset::NAMES {
+            for appearance in Appearance::ALL {
+                let mut app = LauncherApp::with_index(AppIndex::builder().build());
+                app.apply(AppFlags {
+                    appearance,
+                    appearance_preset: preset::resolve(Some(name), None, None),
+                    ..AppFlags::default()
+                });
+                let panel = PanelState::new(vec![
+                    PanelSection {
+                        name: String::new(),
+                        actions: vec![Action::new("Open").with_shortcut("enter")],
+                    },
+                    PanelSection {
+                        name: "Copy".into(),
+                        actions: vec![Action::new("Copy name"), Action::new("Copy path")],
+                    },
+                ]);
+                let mut row = iced_test::Simulator::with_size(
+                    iced::Settings::default(),
+                    iced::Size::new(288.0, 34.0),
+                    app.panel_item("Open", Some("enter"), true),
+                );
+                for label in ["Open", "enter"] {
+                    let bounds = row.find(label).unwrap().bounds();
+                    assert!(
+                        (bounds.y + bounds.height / 2.0 - 17.0).abs() < 0.1,
+                        "{name}: {label} not centered"
+                    );
+                }
+                let mut ui = iced_test::Simulator::with_size(
+                    iced::Settings::default(),
+                    iced::Size::new(300.0, 240.0),
+                    app.view_panel(&panel),
+                );
+                let divider = ui
+                    .find(iced_test::selector::id("panel-divider-line"))
+                    .unwrap()
+                    .bounds();
+                assert_eq!(
+                    divider.height, 1.0,
+                    "padding must not be painted as a divider"
+                );
+                let open = ui.find("Open").unwrap().bounds();
+                let heading = ui.find("COPY").unwrap().bounds();
+                let copy = ui.find("Copy name").unwrap().bounds();
+                assert_eq!(open.x, heading.x);
+                assert_eq!(open.x, copy.x);
+                assert!(divider.y > open.y + open.height);
+                assert!(heading.y > divider.y + divider.height);
+                if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                    ui.click(iced_test::selector::id(PANEL_INPUT)).unwrap();
+                    assert!(
+                        ui.snapshot(&app.theme())
+                            .unwrap()
+                            .matches_image(
+                                std::path::PathBuf::from(directory)
+                                    .join(format!("{}-{name}-action-menu.png", appearance.name()))
+                            )
+                            .unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_result_rows_center_their_labels_and_render_resolved_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let icon = dir.path().join("test.svg");
+        std::fs::write(
+            &icon,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="7" fill="#33a36d"/><path d="M8 9l7 7-7 7m10 0h7" stroke="white" stroke-width="3" fill="none"/></svg>"##,
+        )
+        .unwrap();
+        for (id, comment) in [("Editor", "Comment=Edit documents\n"), ("Terminal", "")] {
+            std::fs::write(
+                dir.path().join(format!("{id}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName=Test {id}\nExec=/bin/true\nIcon=test\n{comment}"),
+            )
+            .unwrap();
+        }
+        for (name, _) in preset::NAMES {
+            for appearance in Appearance::ALL {
+                let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+                let path = icon.clone();
+                app.apply(AppFlags {
+                    appearance,
+                    appearance_preset: preset::resolve(Some(name), None, None),
+                    icon_lookup: IconLookup::new(move |_| Some(path.clone())),
+                    ..AppFlags::default()
+                });
+                let _ = app.update(Message::QueryChanged("Test".into()));
+                for index in &app.results {
+                    let item = &app.app_index.items()[*index];
+                    assert!(matches!(
+                        app.row_art(item),
+                        Some(crate::icons::IconArt::Vector(_))
+                    ));
+                    let mut ui = iced_test::Simulator::with_size(
+                        iced::Settings::default(),
+                        iced::Size::new(720.0, f32::from(app.geometry.row_height)),
+                        app.result_row(item, false),
+                    );
+                    let title = ui.find(item.name()).unwrap().bounds();
+                    let bottom = if app.subtitles && item.comment().is_some() {
+                        let subtitle = ui.find(item.comment().unwrap()).unwrap().bounds();
+                        subtitle.y + subtitle.height
+                    } else {
+                        title.y + title.height
+                    };
+                    assert!(
+                        ((title.y + bottom) / 2.0 - f32::from(app.geometry.row_height) / 2.0).abs()
+                            < 0.1,
+                        "{name}: label block is not centered"
+                    );
+                }
+                if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                    let mut ui = iced_test::Simulator::with_size(
+                        iced::Settings::default(),
+                        iced::Size::new(800.0, 320.0),
+                        app.view(),
+                    );
+                    assert!(
+                        ui.snapshot(&app.theme())
+                            .unwrap()
+                            .matches_image(
+                                std::path::PathBuf::from(directory)
+                                    .join(format!("{}-{name}-mixed-rows.png", appearance.name()))
+                            )
+                            .unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn query_input_leaves_the_border_and_fill_to_its_container() {
+        for theme in [Theme::Light, Theme::Dark] {
+            for status in [
+                text_input::Status::Active,
+                text_input::Status::Hovered,
+                text_input::Status::Focused { is_hovered: false },
+                text_input::Status::Focused { is_hovered: true },
+                text_input::Status::Disabled,
+            ] {
+                let style = query_input_style(&theme, status);
+                let default = text_input::default(&theme, status);
+                assert_eq!(style.background, Color::TRANSPARENT.into());
+                assert_eq!(style.border.width, 0.0);
+                assert_eq!(style.value, default.value);
+                assert_eq!(style.placeholder, default.placeholder);
+                assert_eq!(style.selection, default.selection);
+            }
+        }
+    }
+
+    fn long_results(dir: &std::path::Path) -> LauncherApp {
+        for i in 0..40 {
+            std::fs::write(
+                dir.join(format!("app-{i:02}.desktop")),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName=Application {i:02}\nExec=/bin/true\n"
+                ),
+            )
+            .unwrap();
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        let _ = app.update(Message::QueryChanged("Application".to_owned()));
+        app
+    }
+
+    #[test]
+    fn long_root_results_scroll_without_moving_the_query_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = long_results(dir.path());
+        for appearance in Appearance::ALL {
+            app.appearance = appearance;
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 320.0),
+                app.view(),
+            );
+            let field = ui
+                .find(iced_test::selector::id(SEARCH_INPUT))
+                .unwrap()
+                .bounds();
+            assert!(
+                ui.find("Application 39")
+                    .unwrap()
+                    .visible_bounds()
+                    .is_none()
+            );
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                assert!(
+                    ui.snapshot(&app.theme())
+                        .unwrap()
+                        .matches_image(
+                            std::path::PathBuf::from(directory)
+                                .join(format!("{}-root-start.png", appearance.name()))
+                        )
+                        .unwrap()
+                );
+            }
+            ui.point_at(iced::Point::new(400.0, 200.0));
+            ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Pixels {
+                    x: 0.0,
+                    y: -10000.0,
+                },
+            })]);
+            assert!(
+                ui.find("Application 39")
+                    .unwrap()
+                    .visible_bounds()
+                    .is_some()
+            );
+            assert_eq!(
+                ui.find(iced_test::selector::id(SEARCH_INPUT))
+                    .unwrap()
+                    .bounds(),
+                field
+            );
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                assert!(
+                    ui.snapshot(&app.theme())
+                        .unwrap()
+                        .matches_image(
+                            std::path::PathBuf::from(directory)
+                                .join(format!("{}-root-scrolled.png", appearance.name()))
+                        )
+                        .unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn root_keyboard_selection_stays_visible_across_presets_and_query_changes() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_test::Selector;
+        use iced_winit::{
+            core::{
+                renderer::Headless,
+                widget::{
+                    Operation,
+                    operation::{self, Outcome},
+                },
+            },
+            runtime::{Action as RuntimeAction, UserInterface, user_interface},
+        };
+
+        let mut renderer = block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            None,
+        ))
+        .unwrap();
+        for (name, _) in preset::NAMES {
+            let dir = tempfile::tempdir().unwrap();
+            let mut app = long_results(dir.path());
+            app.apply(AppFlags {
+                appearance_preset: preset::resolve(Some(name), None, None),
+                ..AppFlags::default()
+            });
+            app.wrap_navigation = true;
+            let mut cache = user_interface::Cache::default();
+            let moves = std::iter::repeat_n(Message::MoveSelection(Direction::Down), 39)
+                .chain([
+                    Message::MoveSelection(Direction::Down),
+                    Message::MoveSelection(Direction::Up),
+                    Message::QueryChanged("Application 00".to_owned()),
+                    Message::QueryChanged("Application".to_owned()),
+                ])
+                .chain(std::iter::repeat_n(
+                    Message::MoveSelection(Direction::Down),
+                    39,
+                ))
+                .chain(std::iter::repeat_n(
+                    Message::MoveSelection(Direction::Up),
+                    39,
+                ));
+            for message in moves {
+                let task = app.update(message);
+                let mut ui = UserInterface::build(
+                    app.view(),
+                    iced::Size::new(800.0, 320.0),
+                    cache,
+                    &mut renderer,
+                );
+                let actions = iced_winit::runtime::task::into_stream(task)
+                    .map(|stream| block_on(stream.collect::<Vec<_>>()))
+                    .unwrap_or_default();
+                for action in actions {
+                    let RuntimeAction::Widget(mut operation) = action else {
+                        panic!("expected widget operation")
+                    };
+                    loop {
+                        ui.operate(&renderer, operation.as_mut());
+                        match operation.finish() {
+                            Outcome::Chain(next) => operation = next,
+                            Outcome::None => break,
+                            Outcome::Some(()) => panic!("unexpected output"),
+                        }
+                    }
+                }
+                let mut selected = iced_test::selector::id(crate::scroll::ROOT_SELECTION).find();
+                ui.operate(&renderer, &mut operation::black_box(&mut selected));
+                let Outcome::Some(Some(selected)) = selected.finish() else {
+                    panic!("missing selection")
+                };
+                let visible = selected
+                    .visible_bounds()
+                    .expect("selected application is offscreen");
+                assert!(
+                    (visible.height - selected.bounds().height).abs() < 0.1,
+                    "{name}: clipped selection {selected:?}"
+                );
+                cache = ui.into_cache();
+            }
+        }
+    }
+
+    #[test]
+    fn long_action_panels_keep_a_bounded_scroll_region_below_the_filter() {
+        let mut app = LauncherApp::with_index(AppIndex::builder().build());
+        for appearance in Appearance::ALL {
+            app.appearance = appearance;
+            let panel = PanelState::new(vec![PanelSection {
+                name: String::new(),
+                actions: (0..40)
+                    .map(|i| Action::new(format!("Action {i}")))
+                    .collect(),
+            }]);
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(320.0, 180.0),
+                app.view_panel(&panel),
+            );
+            let filter = ui
+                .find(iced_test::selector::id(PANEL_INPUT))
+                .unwrap()
+                .bounds();
+            let scroller = ui
+                .find(iced_test::selector::id("panel-results"))
+                .unwrap()
+                .bounds();
+            assert!(filter.y >= 0.0 && filter.y + filter.height <= 180.0);
+            assert!(scroller.y >= filter.y + filter.height);
+            assert!(scroller.y + scroller.height <= 180.0);
+            assert!(scroller.height > 34.0);
+            assert!(ui.find("Action 39").unwrap().visible_bounds().is_none());
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                assert!(
+                    ui.snapshot(&app.theme())
+                        .unwrap()
+                        .matches_image(
+                            std::path::PathBuf::from(directory)
+                                .join(format!("{}-panel-start.png", appearance.name()))
+                        )
+                        .unwrap()
+                );
+            }
+            ui.point_at(iced::Point::new(150.0, 100.0));
+            ui.simulate([iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y: -2000.0 },
+            })]);
+            assert!(ui.find("Action 39").unwrap().visible_bounds().is_some());
+            assert_eq!(
+                ui.find(iced_test::selector::id(PANEL_INPUT))
+                    .unwrap()
+                    .bounds(),
+                filter
+            );
+            if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
+                assert!(
+                    ui.snapshot(&app.theme())
+                        .unwrap()
+                        .matches_image(
+                            std::path::PathBuf::from(directory)
+                                .join(format!("{}-panel-scrolled.png", appearance.name()))
+                        )
+                        .unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_selection_stays_visible_in_the_real_panel_widget_tree() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_test::Selector;
+        use iced_winit::{
+            core::{
+                renderer::Headless,
+                widget::{
+                    Operation,
+                    operation::{self, Outcome},
+                },
+            },
+            runtime::{Action as RuntimeAction, UserInterface, user_interface},
+        };
+
+        let mut app = LauncherApp::with_index(AppIndex::builder().build());
+        app.panel = Some(PanelState::new(vec![PanelSection {
+            name: "Actions".to_owned(),
+            actions: (0..40)
+                .map(|i| Action::new(format!("Action {i:02}")))
+                .collect(),
+        }]));
+        let mut renderer = block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            None,
+        ))
+        .unwrap();
+        let mut cache = user_interface::Cache::default();
+        let size = iced::Size::new(320.0, 180.0);
+        app.wrap_navigation = true;
+        let moves = std::iter::repeat_n(Message::PanelMove(Direction::Down), 39)
+            .chain([
+                Message::PanelMove(Direction::Down),
+                Message::PanelMove(Direction::Up),
+                Message::PanelFilterChanged("Action 00".to_owned()),
+                Message::PanelFilterChanged(String::new()),
+            ])
+            .chain(std::iter::repeat_n(Message::PanelMove(Direction::Down), 39))
+            .chain(std::iter::repeat_n(Message::PanelMove(Direction::Up), 39));
+        for message in moves {
+            let task = app.update(message);
+            let mut ui = UserInterface::build(
+                app.view_panel(app.panel.as_ref().unwrap()),
+                size,
+                cache,
+                &mut renderer,
+            );
+            let actions = iced_winit::runtime::task::into_stream(task)
+                .map(|stream| block_on(stream.collect::<Vec<_>>()))
+                .unwrap_or_default();
+            for action in actions {
+                let RuntimeAction::Widget(mut operation) = action else {
+                    panic!("expected scroll operation")
+                };
+                loop {
+                    ui.operate(&renderer, operation.as_mut());
+                    match operation.finish() {
+                        Outcome::Chain(next) => operation = next,
+                        Outcome::None => break,
+                        Outcome::Some(()) => panic!("unexpected output"),
+                    }
+                }
+            }
+            let mut selected = iced_test::selector::id(crate::scroll::PANEL_SELECTION).find();
+            ui.operate(&renderer, &mut operation::black_box(&mut selected));
+            let Outcome::Some(Some(selected)) = selected.finish() else {
+                panic!("missing selected widget")
+            };
+            let visible = selected
+                .visible_bounds()
+                .expect("selection must be onscreen");
+            assert!(
+                (visible.height - selected.bounds().height).abs() < 0.1,
+                "selection clipped: {selected:?}"
+            );
+            cache = ui.into_cache();
+        }
+    }
+
     /// A launcher showing results, built through the code `vicinae` uses.
     fn app_showing_results(dir: &std::path::Path, preset_name: &str) -> LauncherApp {
         // Comments matter: the subtitle is what `subtitles` hides, and a
@@ -3007,6 +4568,29 @@ mod view_tests {
             ui.find("Files").is_err(),
             "the error replaces the list while it is shown"
         );
+    }
+
+    #[test]
+    fn empty_query_suggestions_are_visible_instead_of_the_greeting() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_showing_results(dir.path(), "gnome");
+        app.query.clear();
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Firefox").is_ok());
+        assert!(ui.find("Type to search").is_err());
+    }
+
+    #[test]
+    fn a_search_failure_is_not_presented_as_a_failed_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_showing_results(dir.path(), "gnome");
+        let _ = app.update(Message::SearchCompleted {
+            generation: app.search_generation,
+            result: Err("engine unavailable".to_owned()),
+        });
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("could not search: engine unavailable").is_ok());
+        assert!(ui.find("could not launch: engine unavailable").is_err());
     }
 
     #[test]

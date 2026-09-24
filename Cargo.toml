@@ -49,6 +49,12 @@ toml = "0.9"
 # `slugify` normalises to NFD before stripping non-ASCII, so an accented
 # letter keeps its base form. See crates/compass-core/src/slug.rs.
 unicode-normalization = "0.1"
+# File-indexer tree walking: parallel traversal with real gitignore semantics.
+# See crates/compass-core/src/file_walk.rs for the vicinae policy layered on it.
+ignore = "0.4"
+# File-indexer MIME probing by extension, the way the C++ asks QMimeDatabase
+# with MatchExtension. See crates/compass-db/src/sqlite_writer.rs.
+mime_guess = "2"
 
 # Clipboard-at-rest crypto. See crates/compass-crypto/src/lib.rs for why these
 # and not the `openssl` crate.
@@ -58,6 +64,10 @@ sha2 = "0.11"
 getrandom = "0.3"
 # Qt stores binary keyring entries base64-encoded; see crates/compass-crypto/src/keyring.rs.
 base64 = "0.22"
+
+# File-watcher backend: inotify on Linux, kqueue/FSEvents/ReFS equivalents
+# elsewhere. See crates/compass-platform-linux/src/dir_watcher.rs.
+notify = "8"
 
 # Spike B (docs/rust-engine issue #3): the sandbox primitives Phase 4 plans to
 # use. Both expose safe APIs, so `unsafe_code = "forbid"` still holds here.

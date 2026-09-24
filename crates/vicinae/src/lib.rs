@@ -16,9 +16,16 @@ pub mod cli;
 pub mod doctor;
 pub mod engine;
 pub mod hotkey;
+pub mod indexer_client;
+pub mod indexer_service;
+pub mod indexer_watch;
 pub mod ipc;
 pub mod serve;
+pub mod session;
 pub mod spike;
+pub mod typography;
+pub mod ui_backend;
+mod ui_instance;
 pub mod window;
 
 use std::process::ExitCode;
@@ -69,7 +76,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
     // started on, and on Wayland that has to be the process's main thread —
     // so the launcher cannot be dispatched from inside `block_on` like every
     // other command. ADR-0011 records what this costs and what it defers.
-    if matches!(cli.command, Command::Ui) {
+    if matches!(cli.command, Command::Ui | Command::Start { .. }) {
+        require_servable_engine(cli.engine)?;
         // Checked here rather than left to Iced. With no display, `iced::run`
         // does not return an error — winit panics inside it, and the user gets
         // a backtrace naming winit's source file for the entirely ordinary
@@ -84,12 +92,59 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                  nothing to open a window on. Run `vicinae doctor` for the full picture"
             );
         }
+        let _ui_lease = match ui_instance::acquire(cli.socket_path().as_path())
+            .context("claiming the resident launcher instance")?
+        {
+            Some(lease) => lease,
+            None => {
+                if matches!(cli.command, Command::Start { hidden: true }) {
+                    return Ok(ExitCode::from(EXIT_OK));
+                }
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        ipc::send_ack(&cli.socket_path(), Request::Show),
+                    )
+                    .await
+                    .context("the existing launcher did not respond")?
+                    .context("a launcher is already running but could not be shown")
+                })?;
+                return Ok(ExitCode::from(EXIT_OK));
+            }
+        };
+
+        let _engine_session = if matches!(cli.command, Command::Start { .. }) {
+            let mut command = std::process::Command::new(std::env::current_exe()?);
+            command
+                .arg("--engine=rust")
+                .arg("--socket")
+                .arg(cli.socket_path().as_path())
+                .arg("serve")
+                .stdin(std::process::Stdio::null());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            Some(runtime.block_on(session::ensure(
+                &cli.socket_path(),
+                &mut command,
+                std::time::Duration::from_secs(15),
+            ))?)
+        } else {
+            None
+        };
+
         // Attached before Iced starts, on a thread that still belongs to us.
         // `None` means no engine is listening, which leaves the launcher
         // running undriven rather than refusing to start -- `vicinae ui` by
         // hand is a supported way to use it.
         let link = window::attach(cli.socket_path().as_path())
             .context("attaching the launcher window to the engine")?;
+        if link.is_none() && matches!(cli.command, Command::Start { .. }) {
+            bail!("the Compass engine stopped before the launcher could attach");
+        }
         if link.is_none() {
             tracing::info!("no engine attached; Escape will exit rather than hide");
         }
@@ -100,31 +155,44 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         // The user's chord scheme. A configuration that cannot be read is not
         // a reason to refuse to start: the launcher runs with the defaults and
         // says so, which is what every other unreadable setting here does.
-        let (keybinding, wrap_navigation, quick_launch, appearance_preset) =
-            match compass_core::Config::load() {
-                Ok(config) => {
-                    let appearance = config.launcher().appearance();
-                    (
-                        config.launcher().keybinding_scheme(),
-                        config.launcher().wrap_navigation(),
-                        config.launcher().quick_launch(),
-                        compass_ui::preset::resolve(
-                            Some(appearance.preset()),
-                            appearance.icons_override(),
-                            appearance.tint_override(),
-                        ),
-                    )
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "could not read the configuration; using the defaults");
-                    (
-                        compass_core::keybinding::Scheme::default(),
-                        compass_core::config::DEFAULT_WRAP_NAVIGATION,
-                        compass_core::config::DEFAULT_QUICK_LAUNCH,
-                        compass_ui::preset::resolve(None, None, None),
-                    )
-                }
-            };
+        let (
+            keybinding,
+            wrap_navigation,
+            quick_launch,
+            appearance_preset,
+            color_scheme,
+            theme_choice,
+            root_config,
+        ) = match compass_core::Config::load() {
+            Ok(config) => {
+                let appearance = config.launcher().appearance();
+                (
+                    config.launcher().keybinding_scheme(),
+                    config.launcher().wrap_navigation(),
+                    config.launcher().quick_launch(),
+                    compass_ui::preset::resolve(
+                        Some(appearance.preset()),
+                        appearance.icons_override(),
+                        appearance.tint_override(),
+                    ),
+                    appearance.color_scheme().to_owned(),
+                    compass_ui::theme::Theme::from_name(appearance.theme()).unwrap_or_default(),
+                    config.root_config(),
+                )
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not read the configuration; using the defaults");
+                (
+                    compass_core::keybinding::Scheme::default(),
+                    compass_core::config::DEFAULT_WRAP_NAVIGATION,
+                    compass_core::config::DEFAULT_QUICK_LAUNCH,
+                    compass_ui::preset::resolve(None, None, None),
+                    compass_core::config::DEFAULT_COLOR_SCHEME.to_owned(),
+                    compass_ui::theme::Theme::System,
+                    compass_core::root_items::RootConfig::default(),
+                )
+            }
+        };
 
         // Said rather than swallowed: drawing the default for a name the user
         // typed leaves them adjusting a setting nothing is reading.
@@ -140,13 +208,35 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             );
         }
 
+        let color_mode = appearance::ColorMode::from_config(&color_scheme);
+        if !appearance::ColorMode::is_known(&color_scheme) {
+            tracing::warn!(
+                color_scheme = %color_scheme,
+                "unknown launcher.appearance.color_scheme; following the system"
+            );
+        }
+
         // Read before the window opens so the first frame is the right
         // colour; see `appearance` for what happens when the portal is slow.
-        let (appearance, appearance_link) = appearance::follow();
+        let (appearance, appearance_link) = appearance::follow(color_mode);
+
+        // The interface typeface: portal first, gsettings fallback, same
+        // 250 ms budget as above so a wedged portal never blocks startup.
+        let (font_family, typography_link) = typography::follow();
+
+        let backend = link.as_ref().map(|_| {
+            std::sync::Arc::new(ui_backend::DaemonBackend::new(cli.socket_path()))
+                as std::sync::Arc<dyn compass_ui::backend::ApplicationBackend>
+        });
 
         compass_ui::run_resident(compass_ui::AppFlags {
+            theme: theme_choice,
             launcher: std::sync::Arc::new(compass_platform_linux::LinuxLauncher),
+            backend,
+            root_config,
             link,
+            exit_on_engine_disconnect: matches!(cli.command, Command::Start { .. }),
+            start_hidden: matches!(cli.command, Command::Start { hidden: true }),
             keybinding,
             wrap_navigation,
             quick_launch,
@@ -155,6 +245,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             started_at: Some(started_at),
             appearance,
             appearance_link,
+            font_family,
+            typography_link,
             ..compass_ui::AppFlags::default()
         })
         .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
@@ -289,12 +381,73 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::from(EXIT_OK))
         }
 
+        Command::Theme(theme_cmd) => handle_theme(theme_cmd).await,
+
         // Handled in `run`, before the runtime exists.
-        Command::Ui => unreachable!("the launcher is dispatched before the runtime"),
+        Command::Ui | Command::Start { .. } => {
+            unreachable!("the launcher is dispatched before the runtime")
+        }
 
         Command::Toggle => window_command(&socket, cli.engine, Request::Toggle).await,
         Command::Show => window_command(&socket, cli.engine, Request::Show).await,
         Command::Hide => window_command(&socket, cli.engine, Request::Hide).await,
+    }
+}
+
+async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
+    use crate::cli::ThemeCommand;
+    match cmd {
+        ThemeCommand::List { json } => {
+            let themes: Vec<_> = compass_ui::theme::Theme::ALL
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name(),
+                        "description": match t {
+                            compass_ui::theme::Theme::System => "Follow OS (Adwaita)",
+                            compass_ui::theme::Theme::Catppuccin => "Catppuccin (Mocha/Latte)",
+                            compass_ui::theme::Theme::Dracula => "Dracula",
+                            compass_ui::theme::Theme::Nord => "Nord",
+                            compass_ui::theme::Theme::Gruvbox => "Gruvbox",
+                            compass_ui::theme::Theme::TokyoNight => "Tokyo Night",
+                            compass_ui::theme::Theme::Solarized => "Solarized",
+                        }
+                    })
+                })
+                .collect();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&themes)?);
+            } else {
+                for t in &themes {
+                    println!(
+                        "{} - {}",
+                        t["name"].as_str().unwrap(),
+                        t["description"].as_str().unwrap()
+                    );
+                }
+            }
+            Ok(ExitCode::from(EXIT_OK))
+        }
+        ThemeCommand::Set { theme } => {
+            let parsed = compass_ui::theme::Theme::from_name(&theme).ok_or_else(|| {
+                anyhow::anyhow!("unknown theme {theme:?}; try `vicinae theme list`")
+            })?;
+            let mut config = compass_core::Config::load().unwrap_or_default();
+            config
+                .launcher_mut()
+                .appearance_mut()
+                .set_theme(Some(parsed.name().to_owned()));
+            config.save_to(compass_core::config::default_config_path()?)?;
+            println!("theme set to {}", parsed.name());
+            Ok(ExitCode::from(EXIT_OK))
+        }
+        ThemeCommand::Reset => {
+            let mut config = compass_core::Config::load().unwrap_or_default();
+            config.launcher_mut().appearance_mut().set_theme(None);
+            config.save_to(compass_core::config::default_config_path()?)?;
+            println!("theme reset to system");
+            Ok(ExitCode::from(EXIT_OK))
+        }
     }
 }
 

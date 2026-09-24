@@ -1,0 +1,8 @@
+FROM quay.io/fedora/fedora:44@sha256:7b69773df572b314b36b6deef160b26fec7f73b40ab11ad2c71ab463013a7491
+RUN dnf install -y --setopt=install_weak_deps=False rustup gcc gcc-c++ make pkgconf-pkg-config openssl-devel libxkbcommon-devel libX11-devel libxcb-devel fontconfig-devel freetype-devel python3 xorg-x11-server-Xvfb xdotool mesa-dri-drivers mesa-vulkan-drivers vulkan-loader libXcursor libXi libXrandr libXinerama libXrender libxkbcommon-x11 xcb-util-cursor xcb-util-keysyms dbus-libs alsa-lib tar gzip findutils git ca-certificates
+RUN /usr/bin/rustup-init -y --no-modify-path --default-toolchain 1.94.1 --profile minimal
+ENV PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV CARGO_HOME=/cache/cargo
+ENV CARGO_TARGET_DIR=/cache/target
+WORKDIR /src
+RUN dnf install -y --setopt=install_weak_deps=False libglvnd-opengl libglvnd-egl

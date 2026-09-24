@@ -20,7 +20,7 @@ tracing.workspace = true
 # to. Icon themes are PNG and SVG; `crate::icons::classify` accepts exactly
 # those two and nothing else, so a format we cannot decode falls back to the
 # row's initial rather than drawing an empty box.
-iced = { version = "0.14", features = ["wayland", "image-without-codecs", "svg"] }
+iced = { version = "0.14", features = ["wayland", "image-without-codecs", "svg", "tokio"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 iced_winit = { version = "0.14", features = ["wayland"] }
 winit = { version = "0.30", features = ["wayland"] }
@@ -32,6 +32,7 @@ serde = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+insta.workspace = true
 # Renders `view()` headlessly, which nothing else in the workspace can do.
 # See `tests/view.rs` for why that gap mattered.
 iced_test = "0.14"

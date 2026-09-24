@@ -122,8 +122,18 @@ design=crates/compass-ui/src/design.rs
 geometry_field() {
   sed -n "s/^[[:space:]]*$1: \([0-9]\+\),.*/\1/p" "$design" | head -1
 }
-win_w=$(geometry_field card_width)
-win_h=$(geometry_field card_max_height)
+card_w=$(geometry_field card_width)
+card_h=$(geometry_field card_max_height)
+shadow_pad=$(geometry_field SHADOW_PADDING)
+# The window is the card plus its drop-shadow padding on all sides (design.rs
+# SHADOW_PADDING=24, SHADOW_BLUR=32). The card's 720x560 plus 24px padding
+# becomes a 768x608 transparent window, centred, with the shadow inside the
+# padding. The containment box must track the WINDOW, not just the card, or
+# the 48px of padding fails the gate exactly as run 35568015733 did:
+#   changed region x 256..1023 (768w centred) not inside 260..1020 (720w centred)
+if [ -z "$shadow_pad" ]; then shadow_pad=0; fi
+win_w=$(( card_w + 2 * shadow_pad ))
+win_h=$(( card_h + 2 * shadow_pad ))
 for field in win_w win_h; do
   if [ -z "${!field}" ]; then
     echo "launcher.sh: could not read the window geometry from $design" >&2

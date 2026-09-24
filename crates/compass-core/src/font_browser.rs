@@ -241,3 +241,127 @@ pub fn navigation_title(command: &str, selected: Option<&str>) -> String {
         None => String::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn families() -> Vec<FontFamily> {
+        vec![
+            FontFamily {
+                name: "Cantarell".to_owned(),
+                family: "Cantarell".to_owned(),
+                glyph: "A".to_owned(),
+                color: false,
+                categories: vec!["latin".to_owned()],
+            },
+            FontFamily {
+                name: "Noto Color Emoji".to_owned(),
+                family: "Noto Color Emoji".to_owned(),
+                glyph: "😀".to_owned(),
+                color: true,
+                categories: vec!["emoji".to_owned(), "latin".to_owned()],
+            },
+            FontFamily {
+                name: "Missing".to_owned(),
+                family: "Missing".to_owned(),
+                glyph: String::new(),
+                color: false,
+                categories: vec![],
+            },
+        ]
+    }
+
+    #[test]
+    fn filter_options_starts_with_all_and_only_offered_categories() {
+        let ordered = vec![
+            "latin".to_owned(),
+            "emoji".to_owned(),
+            "cyrillic".to_owned(),
+        ];
+        let opts = filter_options(&ordered, &families());
+        assert_eq!(opts[0], ALL_OPTION);
+        assert!(opts.contains(&"latin".to_owned()));
+        assert!(opts.contains(&"emoji".to_owned()));
+        assert!(!opts.contains(&"cyrillic".to_owned()));
+    }
+
+    #[test]
+    fn category_for_index_zero_and_out_of_bounds_is_all() {
+        let opts = vec!["All".to_owned(), "latin".to_owned()];
+        assert_eq!(category_for_index(&opts, 0), None);
+        assert_eq!(category_for_index(&opts, -1), None);
+        assert_eq!(category_for_index(&opts, 1), Some("latin".to_owned()));
+        assert_eq!(category_for_index(&opts, 99), None);
+    }
+
+    #[test]
+    fn index_for_saved_only_when_found_and_gt_zero() {
+        let opts = vec!["All".to_owned(), "latin".to_owned(), "emoji".to_owned()];
+        assert_eq!(index_for_saved(&opts, Some("latin")), Some(1));
+        assert_eq!(index_for_saved(&opts, Some("All")), None);
+        assert_eq!(index_for_saved(&opts, Some("missing")), None);
+        assert_eq!(index_for_saved(&opts, None), None);
+    }
+
+    #[test]
+    fn build_root_and_search_with_category_filter() {
+        let fam = families();
+        let root_all = build(&fam, "", None);
+        match root_all {
+            Mode::Root { title, families } => {
+                assert!(title.contains("All Fonts"));
+                assert_eq!(families.len(), 3);
+            }
+            _ => panic!("expected root"),
+        }
+        let root_emoji = build(&fam, "", Some("emoji"));
+        match root_emoji {
+            Mode::Root { families, .. } => assert_eq!(families.len(), 1),
+            _ => panic!("expected root"),
+        }
+        let search = build(&fam, "Cant", None);
+        match search {
+            Mode::Search { families, .. } => {
+                assert_eq!(families.len(), 1);
+                assert_eq!(families[0].name, "Cantarell");
+            }
+            _ => panic!("expected search"),
+        }
+        let search_filtered = build(&fam, "Cant", Some("emoji"));
+        match search_filtered {
+            Mode::Search { families, .. } => assert!(families.is_empty()),
+            _ => panic!("expected search"),
+        }
+    }
+
+    #[test]
+    fn preview_handles_missing_glyph_and_color() {
+        let miss = FontFamily {
+            glyph: String::new(),
+            ..families()[0].clone()
+        };
+        let p = preview(&miss);
+        assert_eq!(p.glyph, MISSING_GLYPH);
+        assert!(p.fill_foreground);
+        let color = preview(&families()[1]);
+        assert!(!color.fill_foreground);
+        let plain = preview(&families()[0]);
+        assert!(plain.fill_foreground);
+    }
+
+    #[test]
+    fn action_panel_and_navigation_title() {
+        let panel = action_panel();
+        assert_eq!(panel.len(), 3);
+        assert_eq!(panel[0].title, PREVIEW_TITLE);
+        assert!(panel[0].primary);
+        assert_eq!(panel[1].keybind, Some(COPY_KEYBIND));
+        assert_eq!(
+            navigation_title("Fonts", Some("Cantarell")),
+            "Fonts - Cantarell"
+        );
+        assert_eq!(navigation_title("Fonts", Some("")), "");
+        assert_eq!(navigation_title("Fonts", None), "");
+    }
+}

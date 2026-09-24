@@ -18,6 +18,8 @@ compass-xdg.workspace = true
 compass-search.workspace = true
 compass-core.workspace = true
 compass-crypto.workspace = true
+compass-ipc.workspace = true
+tokio.workspace = true
 
 # PLAN §8.7's pre-flight command names this target. It produces the criterion
 # baselines the SLA rows are compared across commits; the thresholds themselves
@@ -29,6 +31,10 @@ harness = false
 [[bin]]
 name = "parity"
 path = "src/parity.rs"
+
+[[bin]]
+name = "head-to-head"
+path = "src/head_to_head.rs"
 
 # Suite 0 rung 1 (PLAN §8.1a): diffs the C++ scorer against the Rust one. Needs
 # the C++ probe built and passed with --probe; see src/lib/fuzzy/probe/main.cpp.
@@ -45,6 +51,4 @@ path = "src/crypto_parity.rs"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 tempfile.workspace = true
-compass-ipc.workspace = true

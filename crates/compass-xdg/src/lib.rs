@@ -45,6 +45,7 @@ pub use scan::{
     DesktopFile, DesktopScan, ScanError, ScannedDesktopEntry, desktop_file_id, scan_desktop_files,
 };
 pub use xdg_dirs::{
-    DEFAULT_DATA_DIRS, application_dirs, current_desktops, data_dirs, data_home, exec_search_path,
-    home_dir, icon_dirs, in_flatpak, sandbox_data_roots, sandbox_data_roots_for,
+    DEFAULT_DATA_DIRS, application_dirs, cache_home, config_home, current_desktops, data_dirs,
+    data_home, exec_search_path, home_dir, icon_dirs, in_flatpak, sandbox_data_roots,
+    sandbox_data_roots_for,
 };

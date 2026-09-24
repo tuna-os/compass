@@ -29,6 +29,54 @@ the Rust.
 
 It does **not** prove Iced paints the same picture. It is HTML.
 
+### Regular design audits
+
+Run a browser audit after each user-visible UI change and before merging UI
+work. During longer backend-only stretches, audit again at each integrated
+launcher milestone. Generate fresh states, inspect the rendered images (not
+just the screenshot command's exit status), and record the source commit,
+states inspected, findings and remaining coverage gaps in the PR or an audit
+note. Review light and dark appearances, the default preset's affected states,
+and all four presets whenever geometry or shared tokens change.
+
+Include screenshots of the affected feature directly in every UI PR body.
+Use durable image URLs (for example committed PR evidence assets), not local
+paths or expiring artifact links. Caption each image with its renderer and
+scope: browser surrogate, headless Iced/wgpu, or native desktop session. Include
+before/after or relevant interaction states when they explain the change. A
+nonvisual PR should explicitly say that screenshots are not applicable.
+
+Check hierarchy, spacing, selection contrast, truncation, action-panel layout,
+and empty/loading/error states. If the surrogate cannot show the changed
+production state, record that as missing coverage; a nearby fixture is not a
+pass. Keep fixture-only actions distinct from working application actions.
+Native widget behaviour and OS integration still need the other tiers above.
+
+### Component review before shipping
+
+For each changed component, write down its geometry invariants before changing
+the layout: row height, vertical centering, shared text inset, divider thickness,
+and focused-input treatment. Keep component dimensions in `design.rs`, consumed
+by both Iced and the browser export rather than duplicated CSS literals.
+
+Run a focused `iced_test::Simulator` layout test against the production widget
+tree. Assert bounds, not merely that text exists. For action menus this includes
+centered labels and shortcuts, aligned section labels, and a one-logical-pixel
+painted divider with transparent surrounding padding. Capture focused light/dark
+states for every preset with `COMPASS_UI_SCREENSHOT_DIR`; inspect the headless
+Iced/wgpu images as well as the browser preview. These native-widget fixtures
+exist today even though the wasm renderer described below does not.
+
+Review short, filtered, empty and overflowing states. Preserve keyboard focus,
+scrolling and Escape behavior while removing unwanted visual defaults. Include
+the affected component captures in the PR body and state the renderer and
+coverage limits. A screenshot of a nearby fixture does not approve an untested
+production state. The installed desktop remains the check for compositor,
+scaling, application discovery and keyboard delivery.
+
+The [2026-09-20 audit](./design-audits/2026-09-20.md) records the starting
+coverage and the current theme/default distinction.
+
 ## 2. The wgpu path — not built, and here is exactly what it takes
 
 This is the missing middle: the *real* widget code and the *real* renderer, in

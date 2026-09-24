@@ -43,6 +43,16 @@ Two smaller gaps, both visible on the page:
 - **Text metrics are approximate.** The page is given the same font stack, but
   a browser and wgpu do not lay out glyphs identically.
 
+The action filter is a focused, read-only preview of the native input. Select
+`panel`, `panel-filtered` or `panel-no-actions` to inspect the Rust-filtered
+rows; typing into the browser does not drive the application. The screenshot
+runner checks its value, focus, absence of a second root-query caret, and empty
+action notice before capturing each panel state. It also checks the filter is
+inside the visible panel/card: focus alone does not prove it is visible. The
+preview panel scrolls when its fixture actions exceed the card height; native
+scrolling and keyboard selection still require native tests. Fixture-only management
+actions do not establish that those actions are wired in the launcher.
+
 See `../../docs/rust-engine/RENDER-HARNESSES.md` for how this fits beside the
 other two harnesses, and for the Playwright mechanics that bite.
 

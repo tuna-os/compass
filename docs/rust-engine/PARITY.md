@@ -219,10 +219,13 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 | `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
 | `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
-The single 🟡 is `windows`, and it is generous: `compass-ui` opens one window, shows a text input
-and a result list, moves a selection with the arrow keys, launches on Enter and dismisses on
-Escape. That is the launcher's core loop and nothing else — no navigation stack, no action panel,
-no views, no settings, no theming, no icons.
+`compass-ui` opens a window, searches applications, moves the selection, launches on Enter and
+dismisses on Escape. It also draws themed application icons and an action panel. The panel now
+has its own focused fuzzy filter, dispatches Open and both copy actions by stable IDs, accepts
+clicks, and restores search focus when closed. Copy actions emit native clipboard writes;
+headless tests inspect those writes and exercise the widgets, but delivery to another application
+still needs a desktop check. The general command/view stack, settings and extension views remain
+unfinished, so these UI rows are not fully green.
 
 Three things about this section are worth stating plainly, because a table of ❌s invites the wrong
 reading:
@@ -902,19 +905,83 @@ answer, because the result is a stored key.
 
 Three things in the conversion are deliberate and each has a test saying so. The **subtitle is
 empty**, because an application's comment is its description in the settings and filling it would
-give every row a paragraph. The **unlocalized name joins the keywords**, so someone who knows an
+give every row a paragraph. The **unlocalized name has its own title-weight field**, so someone who knows an
 application by its English name still finds it on a localised desktop where the title is something
 else. And `enabled` starts true: the root item manager's merge is what turns an item off, and an
 application is not disabled by being converted.
 
-**Not wired into the launcher yet, deliberately.** `compass_ui::root_list` and this conversion are
-both tested, but the launcher still searches the application index directly. Flipping that is a
-change to the one path the VM tier has actually verified — it is where #91 was found — and changing
-it blind, in a container with no compositor, would trade a working launcher for an untested one. The
-pieces are ready; the switch waits for a run that can answer for it.
+The pinned upstream v0.29.0 audit corrected the previous keyword-weight handling:
+the untranslated name scores at 1.0, not 0.6. A regression test checks equality
+with a display-title match and precedence over a keyword match. Restoring the old
+weight fails it (60 versus 100). The conversion preserves keywords and omits an
+untranslated name identical to the display name, as upstream does. The root-item
+suite now has 64 tests; this correction alone does not establish end-to-end search parity.
+
+**Application root scoring is now wired into daemon and UI search.** `AppIndex`
+caches root fields and their catalog positions when scanning, and both consumers
+use the root manager's scorer. The XDG adapter combines categories then keywords
+at keyword weight, as upstream does; generic names and comments are not root
+fields. Unresolved TryExec remains a diagnostic rather than hiding a host app.
+The daemon retains the existing desktop-file IDs, result limit and frecency keys;
+its wire match score still excludes the frecency boost. This does not yet connect
+all builtin/extension providers, root configuration or the grouped `root_list`
+presentation. Attached UI windows request history-ranked application suggestions
+on opening and when clearing the query; returned rows replace the idle greeting.
+End-to-end upstream Unicode ordering must still be
+proved before search timing is a comparable benchmark.
+
+The daemon now accepts `RecordLaunch` over IPC for indexed application/action
+keys. It serializes history updates through its existing store and performs
+blocking persistence off the async executor; unknown keys return BadRequest and
+store failures return Internal rather than Ack. Protocol v3 distinguishes the
+new request from older peers, with the variant appended to preserve existing
+discriminants. The existing unreadable-store fallback remains in-memory for that
+session.
+
+Attached UI windows now use a socket-free backend interface supplied by `vicinae`
+to query the same daemon ranking and report successful launches. The adapter
+bounds each IPC operation, and Iced explicitly uses its Tokio executor. The UI
+cancels superseded queries, rejects late generations, and clears stale rows while
+waiting; backend errors or catalog mismatches do not silently substitute local
+ranking. Launch reports capture the original item key, including desktop-action
+panel launches recorded against their root application, and history failures do
+not turn an already successful launch into a launch error. A real-daemon test
+drives UI tasks through selection, launch and reopening, verifying the persisted
+visit changes the new UI's order. Headless tests do not prove an external app
+opened. Standalone UI without a daemon still uses local search without persisted
+history and retains its idle greeting. Non-application providers, favourites and
+grouped root presentation remain unfinished. Widget tests distinguish initial
+suggestions from the greeting and search failures from launch failures; the
+real-daemon UI test also verifies history ordering when reopening with no query.
+
+Desktop `Type=Link` entries now enter the application index without an Exec,
+including the harvested Singular manual fixture. Missing or empty URLs are
+reported, and link entries do not expose application-only desktop actions.
+Linux dispatches the URL as a single `xdg-open` argument, using
+`flatpak-spawn --host` inside Flatpak so host file links are resolved on the host.
+Invalid schemes, option-like paths and control characters are rejected; Exec is
+never substituted for the URL. Index, UI and real daemon tests cover visibility,
+and argument tests cover URI dispatch. Opening the target in another application
+still needs an on-target desktop check; this is not a completed search-parity or
+launch-performance gate.
+The [same-corpus audit](benchmarks/2026-09-20-desktop-links/README.md) now returns
+all 448 empty-query IDs in upstream order, but the Unicode query still differs.
+
+An integration prerequisite found during the upstream audit is corrected: the
+launcher's selected desktop-action row now dispatches its stable action ID to
+`AppLauncher::launch_action`, instead of launching the parent entry. Linux resolves
+that declared action's own Exec/URI arguments through the existing launch route;
+unknown IDs and missing Exec return errors, never a parent-launch fallback.
+Backends without action support report that explicitly. UI task tests distinguish
+ordinary and action dispatch, and Linux argument tests distinguish the two Execs.
+Desktop actions now appear in the owning application's panel instead of root
+search results. A UI task test drives query, panel filtering and activation by
+stable action ID; a real-daemon IPC test rejects action and description matches
+while retaining an unresolved TryExec application. Target-session action launch
+verification and the rest of root-provider integration remain required.
 
 **`src/services/root-item-manager` → `compass-core::root_items`** — the *search* is ported in
-full: the weighted fields (title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
+full: the weighted fields (title and unlocalized title 1.0, subtitle 0.5, alias 1.0, keyword 0.6), the `MIN_QUALITY` gate,
 the frecency boost, the empty-query `100 - FRECENCY_WEIGHT + FRECENCY_WEIGHT * frecency` ranking, the
 enabled/provider/favourite filters, and the stable sort with its alias-prefix prioritisation. Twelve
 tests, twelve controls, each read off `root-item-manager.cpp`. `mergeConfigWithMetadata`,
@@ -924,6 +991,23 @@ favourite positions and fallback flags. `searchGroupedByProvider` is ported
 too, with its two rules that differ from the flat search — a provider whose *display name* matches
 contributes all of its items, including ones scoring zero, and `providerId` is not applied — for
 another nine tests and nine controls.
+
+The daemon now loads the top-level `providers`, `favorites` and `fallbacks`
+settings and merges them into application root metadata at startup. Application
+aliases and enabled settings affect real IPC queries (and therefore attached UI
+search); a disabled provider overrides an enabled entrypoint. Configuration keys
+use upstream identities such as `applications:org.example.Editor`, while IPC and
+launch-history keys remain `org.example.Editor.desktop`. Unknown provider and
+entrypoint fields, including preferences, survive configuration round trips.
+Real-daemon tests cover alias lookup and both levels of enabled precedence;
+catalog tests cover clearing settings without retaining stale aliases. This is
+startup configuration, not live reload or a settings editor. Favourite sections,
+shortcut registration and fallback dispatch remain unwired; parsing their
+metadata is not completion of those features. Standalone UI startup now applies
+the same root configuration to its local catalog. UI state-machine tests cover
+alias queries, disabled applications, provider precedence and clearing settings;
+attached searches remain authoritative in the daemon. This does not add standalone
+history persistence or change its empty-query greeting.
 
 The manager's state changes are ported too, and this note previously understated that:
 `mergeConfigWithMetadata` and `registerVisit` were already done when it was written, and the config
@@ -1913,6 +1997,18 @@ verbatim and passes. What does not:
 
 ### How closely is "closely"? 79.2%
 
+The 2026-09-20 end-to-end audit exposed a separate nucleo 0.3.1 defect, not an
+intended fzf divergence: its single-character Unicode path updates the previous
+character class only when a character matches, losing intervening boundaries.
+The adapter now evaluates matching positions through nucleo's public postfix
+scorer, retaining the actual preceding character, earliest ties and char indices.
+It remains linear and does not duplicate scoring constants or replace nucleo.
+The reproducer failed at 26 versus 36 before the fix; ASCII/Unicode metamorphic
+tests, Cyrillic/CJK cases and six harvested-title regressions cover the correction.
+The six changed corpus pairs are A/a against Animation Editor, E against all
+three Bear Factory editors, and I against Spritedesc interpreter. Their normalized
+quality now agrees with C++; the last pair was previously rejected.
+
 The table above was written from a ported ordering suite over hand-written cases, which could say
 *that* nucleo and fzf differ but not *how much*. `compass-testkit`'s `scorer-parity` bin now
 measures it directly, against the real C++ scorer compiled from `src/lib/fuzzy` — that library is
@@ -1922,16 +2018,16 @@ Over 738 harvested entries and 1685 queries derived from them:
 
 | | |
 |---|---|
-| identical | 1333 (79.2%) |
-| divergent queries | 352 |
-| divergent (query, entry) pairs | 1417 |
+| identical | 1334 (79.2%) |
+| divergent queries | 351 |
+| divergent (query, entry) pairs | 1411 |
 
 | shape | count |
 |---|---|
 | C++ rejected, Rust accepted | 771 |
-| both accepted, C++ higher | 440 |
+| both accepted, C++ higher | 435 |
 | both accepted, **Rust** higher | 145 |
-| **Rust** rejected, C++ accepted | 61 |
+| **Rust** rejected, C++ accepted | 60 |
 
 Both directions occur, which is what two different algorithms produce and what a smaller corpus
 hid: over the previous 115-entry set only six queries diverged and every one had C++ stricter.

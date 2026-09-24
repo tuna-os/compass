@@ -89,6 +89,16 @@ impl From<AshpdColorScheme> for ColorScheme {
     }
 }
 
+/// The desktop's interface font, as `org.gnome.desktop.interface font-name`.
+///
+/// A Pango font description such as `Cantarell 11` or `Adwaita Sans 11`.
+/// The portal proxies the underlying GSettings key, so the same value is
+/// visible through `gsettings get org.gnome.desktop.interface font-name`
+/// outside a sandbox.
+pub const INTERFACE_FONT_NAMESPACE: &str = "org.gnome.desktop.interface";
+/// Key for the interface font.
+pub const INTERFACE_FONT_KEY: &str = "font-name";
+
 /// Client for `org.freedesktop.portal.Settings`.
 #[derive(Debug, Clone)]
 pub struct SettingsPortal {
@@ -116,6 +126,26 @@ impl SettingsPortal {
         Ok(scheme.into())
     }
 
+    /// Read the desktop's interface font, if the portal exposes it.
+    ///
+    /// Returns `None` when the key is unset or the portal is not available.
+    /// The caller decides the fallback (typically `Cantarell 11`).
+    pub async fn interface_font(&self) -> Result<Option<String>> {
+        let proxy = self.proxy().await?;
+        let value = bounded(
+            self.timeout,
+            "Read",
+            proxy.read::<String>(INTERFACE_FONT_NAMESPACE, INTERFACE_FONT_KEY),
+        )
+        .await?;
+        let trimmed = value.trim().to_owned();
+        if trimmed.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(trimmed))
+        }
+    }
+
     async fn proxy(&self) -> Result<Settings> {
         bounded(
             self.timeout,
@@ -123,6 +153,23 @@ impl SettingsPortal {
             Settings::with_connection(self.conn.clone()),
         )
         .await
+    }
+
+    /// A stream of the interface font as it changes.
+    ///
+    /// Yields the raw Pango description (e.g. `Cantarell 11`) on each change.
+    pub async fn watch_interface_font(&self) -> Result<impl Stream<Item = String> + use<>> {
+        let proxy = self.proxy().await?;
+        let stream = bounded(
+            self.timeout,
+            "SettingChanged",
+            proxy.receive_setting_changed_with_args::<String>(
+                INTERFACE_FONT_NAMESPACE,
+                INTERFACE_FONT_KEY,
+            ),
+        )
+        .await?;
+        Ok(stream.filter_map(|value| std::future::ready(value.ok())))
     }
 
     /// A stream of the preference as it changes.

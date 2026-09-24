@@ -1,0 +1,88 @@
+diff --git a/figura/ipc.fig b/figura/ipc.fig
+index d972c77..201009f 100644
+--- a/figura/ipc.fig
++++ b/figura/ipc.fig
+@@ -107,6 +107,19 @@ struct FileResult {
+   mimeType?: string;
+ };
+ 
++struct RootHit {
++  id: string;
++  title: string;
++  subtitle?: string;
++  score: double;
++};
++
++struct RootQueryParams {
++  limit: int;
++  providerId?: string;
++  includeDisabled: bool;
++};
++
+ struct FsQueryParams {
+   limit: int;
+   category?: string;
+@@ -123,6 +136,9 @@ service Ipc {
+   fn browserInit(req: BrowserInitRequest) => void;
+   fn browserTabsChanged(tabs: BrowserTabInfo[]) => void;
+ 
++  // Benchmark instrumentation: delegate to the unchanged root-item ranker.
++  fn rootQuery(q: string, params: RootQueryParams) => RootHit[];
++
+   // filesystem
+   fn fsQuery(q: string, params: FsQueryParams) => FileResult[];
+ 
+diff --git a/src/server/src/ipc/ipc-command-server.cpp b/src/server/src/ipc/ipc-command-server.cpp
+index b5161ec..a808ca7 100644
+--- a/src/server/src/ipc/ipc-command-server.cpp
++++ b/src/server/src/ipc/ipc-command-server.cpp
+@@ -165,6 +165,37 @@ ipc_gen::Result<ipc_gen::DescribeResponse>::Future IpcService::describe() {
+        .entrypoint = m_ctx.navigation->activeCommand()->uniqueId()});
+ }
+ 
++ipc_gen::Result<std::vector<ipc_gen::RootHit>>::Future
++IpcService::rootQuery(std::string q, ipc_gen::RootQueryParams params) {
++  if (params.limit < 0) {
++    return ipc_gen::Result<std::vector<ipc_gen::RootHit>>::fail("limit must not be negative");
++  }
++
++  auto root = m_ctx.services->rootItemManager();
++  RootItemPrefixSearchOptions const opts{
++      .includeDisabled = params.includeDisabled,
++      .providerId = params.providerId,
++  };
++  auto scored = root->search(QString::fromStdString(q), opts);
++  std::size_t const limit =
++      params.limit == 0 ? scored.size() : std::min(static_cast<std::size_t>(params.limit), scored.size());
++  std::vector<ipc_gen::RootHit> hits;
++  hits.reserve(limit);
++  for (const auto &entry : scored | std::views::take(limit)) {
++    const auto &item = entry.item.get();
++    auto const subtitle = item->subtitle();
++    std::optional<std::string> maybeSubtitle;
++    if (!subtitle.isEmpty()) { maybeSubtitle = subtitle.toStdString(); }
++    hits.emplace_back(ipc_gen::RootHit{
++        .id = item->uniqueId(),
++        .title = item->title().toStdString(),
++        .subtitle = std::move(maybeSubtitle),
++        .score = entry.score,
++    });
++  }
++  return ipc_gen::Result<std::vector<ipc_gen::RootHit>>::ok(std::move(hits));
++}
++
+ ipc_gen::Result<std::vector<ipc_gen::FileResult>>::Future IpcService::fsQuery(std::string q,
+                                                                               ipc_gen::FsQueryParams params) {
+   auto files = m_ctx.services->fileService();
+diff --git a/src/server/src/ipc/ipc-command-server.hpp b/src/server/src/ipc/ipc-command-server.hpp
+index c3d1145..5765a1e 100644
+--- a/src/server/src/ipc/ipc-command-server.hpp
++++ b/src/server/src/ipc/ipc-command-server.hpp
+@@ -34,6 +34,8 @@ public:
+   ipc_gen::Result<ipc_gen::DMenuResponse>::Future dmenu(ipc_gen::DMenuRequest req) override;
+   ipc_gen::Result<void>::Future browserInit(ipc_gen::BrowserInitRequest req) override;
+   ipc_gen::Result<void>::Future browserTabsChanged(std::vector<ipc_gen::BrowserTabInfo> tabs) override;
++  ipc_gen::Result<std::vector<ipc_gen::RootHit>>::Future rootQuery(std::string q,
++                                                                   ipc_gen::RootQueryParams params) override;
+   ipc_gen::Result<std::vector<ipc_gen::FileResult>>::Future fsQuery(std::string q,
+                                                                     ipc_gen::FsQueryParams params) override;

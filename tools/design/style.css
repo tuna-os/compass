@@ -97,7 +97,7 @@ body {
    caret is always captured in the same phase. */
 @keyframes blink { 50% { opacity: 0; } }
 
-.list { overflow: hidden; padding-top: 6px; }
+.list { overflow-y: auto; min-height: 0; padding-top: 6px; }
 
 .heading {
   font-size: var(--heading-size);
@@ -146,33 +146,73 @@ body {
 /* The action panel floats over the list rather than replacing it, anchored
    bottom-right the way Raycast's does. */
 .panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--panel-gap);
   position: absolute;
   right: 8px;
   bottom: 8px;
-  width: 300px;
-  padding: 6px;
+  width: var(--panel-width);
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  padding: var(--panel-padding);
   border-radius: 12px;
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
   z-index: 2;
 }
-.panel .row { height: 34px; }
+.panel .row {
+  flex-shrink: 0;
+  height: var(--panel-row-height);
+  padding: 0 var(--panel-inset);
+  border-radius: var(--panel-row-radius);
+  margin-bottom: 0;
+}
+.panel .heading {
+  flex-shrink: 0;
+  letter-spacing: normal;
+  height: var(--panel-header-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--panel-inset);
+  margin-bottom: 0;
+}
 .panel .divider {
+  flex-shrink: 0;
   height: 1px;
   background: var(--border);
-  margin: 5px 8px;
+  margin: var(--panel-divider-gap) var(--panel-inset);
 }
 .panel .shortcut {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--subtitle-size);
   color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 1px 6px;
+  border: none;
+  padding: 0;
 }
 .panel .row.selected .shortcut { color: var(--selection-text); border-color: rgba(255,255,255,0.4); }
-.panel-filter { font-size: 12px; color: var(--muted); padding: 6px 10px 2px; }
+.panel-filter {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: var(--panel-filter-height);
+  padding: 0 var(--panel-inset);
+  margin-bottom: 0;
+  font: inherit;
+  font-size: var(--title-size);
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  outline: none;
+  caret-color: var(--text);
+}
+.panel-filter::placeholder { color: var(--muted); }
 
 .card-wrap { position: relative; }
 

@@ -219,3 +219,244 @@ impl<E: PasteEnvironment> PasteService<E> {
         Some(target)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    struct Mock {
+        supports_paste: bool,
+        supports_focus: bool,
+        copy_ok: bool,
+        copy_called: Cell<bool>,
+        paste_called: Cell<bool>,
+        restore_called: Cell<bool>,
+    }
+
+    impl Mock {
+        fn new(supports_paste: bool) -> Self {
+            Self {
+                supports_paste,
+                supports_focus: false,
+                copy_ok: true,
+                copy_called: Cell::new(false),
+                paste_called: Cell::new(false),
+                restore_called: Cell::new(false),
+            }
+        }
+    }
+
+    impl PasteEnvironment for Mock {
+        type Content = String;
+        fn copy(&self, _: &Self::Content) -> bool {
+            self.copy_called.set(true);
+            self.copy_ok
+        }
+        fn supports_paste(&self) -> bool {
+            self.supports_paste
+        }
+        fn supports_focus_handoff_detection(&self) -> bool {
+            self.supports_focus
+        }
+        fn focused_foreign_window(&self) -> Option<Window> {
+            None
+        }
+        fn focused_window(&self) -> Option<Window> {
+            None
+        }
+        fn find_app(&self, _: &str) -> Option<String> {
+            None
+        }
+        fn schedule_execute(&self, _: u64) {}
+        fn start_focus_polling(&self) {}
+        fn stop_focus_polling(&self) {}
+        fn paste_to_app(&self, _: &PasteTarget) -> bool {
+            self.paste_called.set(true);
+            true
+        }
+        fn schedule_clipboard_restore(&self) {
+            self.restore_called.set(true);
+        }
+    }
+
+    #[test]
+    fn supports_paste_gating() {
+        let svc = PasteService::new(Mock::new(true));
+        assert!(svc.supports_paste());
+        let svc2 = PasteService::new(Mock::new(false));
+        assert!(!svc2.supports_paste());
+    }
+
+    #[test]
+    fn has_pending_paste_after_paste_content() {
+        let mock = Mock::new(true);
+        let mut svc = PasteService::new(mock);
+        assert!(!svc.has_pending_paste());
+        assert!(svc.paste_content(&"hello".to_owned()));
+        assert!(svc.has_pending_paste());
+        // execute clears pending even without focus
+        let _ = svc.execute_paste();
+        assert!(!svc.has_pending_paste());
+    }
+
+    #[test]
+    fn copy_happens_even_when_paste_cannot() {
+        let mock = Mock {
+            supports_paste: false,
+            supports_focus: false,
+            copy_ok: true,
+            copy_called: Cell::new(false),
+            paste_called: Cell::new(false),
+            restore_called: Cell::new(false),
+        };
+        let mut svc = PasteService::new(mock);
+        assert!(!svc.paste_content(&"hello".to_owned()));
+        assert!(
+            svc.env().copy_called.get(),
+            "copy must happen even when paste cannot"
+        );
+        assert!(!svc.env().paste_called.get());
+        assert!(!svc.has_pending_paste());
+    }
+
+    #[test]
+    fn blind_paste_schedules_without_polling_when_no_focus_detection() {
+        // #6: without focus handoff, paste schedules blind 150ms
+        struct BlindMock {
+            scheduled: Cell<Option<u64>>,
+        }
+        impl PasteEnvironment for BlindMock {
+            type Content = String;
+            fn copy(&self, _: &Self::Content) -> bool {
+                true
+            }
+            fn supports_paste(&self) -> bool {
+                true
+            }
+            fn supports_focus_handoff_detection(&self) -> bool {
+                false
+            }
+            fn focused_foreign_window(&self) -> Option<Window> {
+                None
+            }
+            fn focused_window(&self) -> Option<Window> {
+                None
+            }
+            fn find_app(&self, _: &str) -> Option<String> {
+                None
+            }
+            fn schedule_execute(&self, d: u64) {
+                self.scheduled.set(Some(d));
+            }
+            fn start_focus_polling(&self) {}
+            fn stop_focus_polling(&self) {}
+            fn paste_to_app(&self, _: &PasteTarget) -> bool {
+                true
+            }
+            fn schedule_clipboard_restore(&self) {}
+        }
+        let mock = BlindMock {
+            scheduled: Cell::new(None),
+        };
+        let mut svc = PasteService::new(mock);
+        assert!(svc.paste_content(&"x".to_owned()));
+        assert_eq!(svc.env().scheduled.get(), Some(BLIND_PASTE_DELAY_MS));
+        assert!(svc.has_pending_paste());
+    }
+
+    #[test]
+    fn poll_focus_lands_schedules_post_delay_and_timeout_drops_paste() {
+        struct PollMock {
+            foreign: Cell<bool>,
+            scheduled: Cell<Option<u64>>,
+            polling: Cell<bool>,
+        }
+        impl PasteEnvironment for PollMock {
+            type Content = String;
+            fn copy(&self, _: &Self::Content) -> bool {
+                true
+            }
+            fn supports_paste(&self) -> bool {
+                true
+            }
+            fn supports_focus_handoff_detection(&self) -> bool {
+                true
+            }
+            fn focused_foreign_window(&self) -> Option<Window> {
+                if self.foreign.get() {
+                    Some(Window {
+                        title: "t".to_owned(),
+                        wm_class: "c".to_owned(),
+                    })
+                } else {
+                    None
+                }
+            }
+            fn focused_window(&self) -> Option<Window> {
+                None
+            }
+            fn find_app(&self, _: &str) -> Option<String> {
+                None
+            }
+            fn schedule_execute(&self, d: u64) {
+                self.scheduled.set(Some(d));
+            }
+            fn start_focus_polling(&self) {
+                self.polling.set(true);
+            }
+            fn stop_focus_polling(&self) {
+                self.polling.set(false);
+            }
+            fn paste_to_app(&self, _: &PasteTarget) -> bool {
+                true
+            }
+            fn schedule_clipboard_restore(&self) {}
+        }
+        // Landed case
+        let mock = PollMock {
+            foreign: Cell::new(true),
+            scheduled: Cell::new(None),
+            polling: Cell::new(false),
+        };
+        let mut svc = PasteService::new(mock);
+        assert!(svc.paste_content(&"x".to_owned()));
+        svc.poll_focus();
+        assert_eq!(svc.env().scheduled.get(), Some(POST_FOCUS_DELAY_MS));
+        // Poll again after landed already stopped — no further schedule
+        // Timeout case: never lands, poll until max
+        let mock2 = PollMock {
+            foreign: Cell::new(false),
+            scheduled: Cell::new(None),
+            polling: Cell::new(false),
+        };
+        let mut svc2 = PasteService::new(mock2);
+        assert!(svc2.paste_content(&"y".to_owned()));
+        for _ in 0..FOCUS_POLL_MAX {
+            svc2.poll_focus();
+            if !svc2.has_pending_paste() {
+                break;
+            }
+        }
+        assert!(!svc2.has_pending_paste(), "timeout must drop pending");
+        assert_eq!(
+            svc2.env().scheduled.get(),
+            None,
+            "timeout schedules nothing"
+        );
+    }
+
+    #[test]
+    fn execute_paste_clears_pending_and_restores_clipboard() {
+        let mock = Mock::new(true);
+        let mut svc = PasteService::new(mock);
+        assert_eq!(svc.execute_paste(), None);
+        assert!(svc.paste_content(&"hello".to_owned()));
+        let target = svc.execute_paste();
+        assert!(target.is_some());
+        assert!(svc.env().restore_called.get());
+        assert!(!svc.has_pending_paste());
+        // second execute returns None — no double paste
+        assert_eq!(svc.execute_paste(), None);
+    }
+}

@@ -78,6 +78,14 @@ impl Cli {
 /// Subcommands of `vicinae`.
 #[derive(Debug, Subcommand, PartialEq, Eq)]
 pub enum Command {
+    /// Start a resident launcher, starting its engine if needed.
+    /// Reopening activates the existing window. Escape hides it.
+    Start {
+        /// Wait for activation without opening a window. Does not enable autostart.
+        #[arg(long)]
+        hidden: bool,
+    },
+
     /// Toggle the launcher window between shown and hidden.
     Toggle,
 
@@ -126,6 +134,10 @@ pub enum Command {
         json: bool,
     },
 
+    /// Theme management (#153).
+    #[command(subcommand)]
+    Theme(ThemeCommand),
+
     /// Extension management.
     #[command(subcommand)]
     Ext(ExtCommand),
@@ -140,10 +152,8 @@ pub enum Command {
 
     /// Open the launcher window.
     ///
-    /// Runs the launcher in the foreground until it is dismissed or something
-    /// is launched. It does not talk to `serve` and does not need one running:
-    /// it indexes and ranks in-process. See ADR-0011 for why the window is its
-    /// own command rather than something the engine hosts.
+    /// Attaches to an existing engine when available. Without one, indexes
+    /// in-process and exits on dismissal. Use `start` for a resident session.
     Ui,
 
     /// Report what works on this machine and what does not.
@@ -157,6 +167,24 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+/// Theme management subcommands (#153: Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized + System).
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum ThemeCommand {
+    /// List available themes.
+    List {
+        /// Emit the list as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set the theme. Use `system` to return to OS natives.
+    Set {
+        /// Theme name (system, catppuccin, dracula, nord, gruvbox, tokyo-night, solarized).
+        theme: String,
+    },
+    /// Reset to System (OS native) theme.
+    Reset,
 }
 
 /// Extension management subcommands.
@@ -351,6 +379,19 @@ mod tests {
     }
 
     #[test]
+    fn hidden_start_is_explicit() {
+        assert_eq!(
+            parse(&["vicinae", "start"]).command,
+            Command::Start { hidden: false }
+        );
+        assert_eq!(
+            parse(&["vicinae", "start", "--hidden"]).command,
+            Command::Start { hidden: true }
+        );
+        assert!(Cli::try_parse_from(["vicinae", "ui", "--hidden"]).is_err());
+    }
+
+    #[test]
     fn the_engine_commands_parse() {
         assert_eq!(
             parse(&["vicinae", "serve"]).command,
@@ -469,5 +510,23 @@ mod tests {
 
         let cli = parse(&["vicinae", "ext", "list", "--json"]);
         assert_eq!(cli.command, Command::Ext(ExtCommand::List { json: true }));
+    }
+
+    #[test]
+    fn theme_commands_parse() {
+        assert_eq!(
+            parse(&["vicinae", "theme", "list"]).command,
+            Command::Theme(ThemeCommand::List { json: false })
+        );
+        assert_eq!(
+            parse(&["vicinae", "theme", "set", "dracula"]).command,
+            Command::Theme(ThemeCommand::Set {
+                theme: "dracula".to_owned()
+            })
+        );
+        assert_eq!(
+            parse(&["vicinae", "theme", "reset"]).command,
+            Command::Theme(ThemeCommand::Reset)
+        );
     }
 }

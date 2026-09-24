@@ -13,6 +13,32 @@ treated as packaging evidence.
 
 ## Building
 
+After installation, open **Compass** from the application grid. Its `start`
+entrypoint reuses a running launcher or starts an engine and a resident window
+together. The engine requests the native global-shortcut permission; Escape
+hides the launcher so the granted shortcut can bring it back.
+
+This is not yet the complete first-run experience (#154): start-at-login is
+not enabled automatically, and onboarding, permission-refusal guidance and
+an explicit login-start choice remain to be implemented. Closing the graphical
+session stops an engine it started itself, but does not stop an independently
+managed engine. The development `ui` and `serve` commands remain available.
+An app-grid session exits if its engine disconnects, so a subsequent app-grid
+activation can start a fresh session instead of finding an undriven window.
+The explicit `ui` command retains its previous keep-running behavior.
+
+`vicinae start --hidden` prepares a resident session without opening a window.
+This is the entrypoint for a future user-approved start-at-login flow; running
+it does not itself configure login startup. A duplicate hidden start leaves
+the existing launcher's visibility unchanged. Ordinary `start` still opens it.
+
+The native color mode is also the default. Leave
+`launcher.appearance.color_scheme` absent (or set it to `"system"`) to follow
+the desktop's light/dark preference, including changes while Compass is
+running. Set it to `"light"` or `"dark"` for an explicit override; clearing the
+key restores System. If the Settings portal is unavailable, System falls back
+to the readable Adwaita light palette.
+
 ```sh
 # One-off: the offline dependency manifest Flathub builds require.
 python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json

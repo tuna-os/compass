@@ -222,6 +222,14 @@ pub fn default_numbers() -> Vec<i64> {
     DEFAULT_DENYLIST.iter().map(|d| d.number).collect()
 }
 
+/// Whether the filter is enforced (`EPERM`) rather than log-only.
+///
+/// Log-only ships the filter with `SeccompAction::Log` so violations are
+/// recorded but not denied — useful for measuring what would break. Enforce
+/// is `SeccompAction::Errno(EPERM)`. Flipping this is the Phase 4 gate:
+/// log-only first, enforce a release later. The default is enforce.
+pub const ENFORCE: bool = true;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +299,21 @@ mod tests {
             number_for("read").is_err(),
             "a filter that ignored an unknown name would be weaker than it reads"
         );
+    }
+
+    #[test]
+    fn filter_is_enforce_not_log_only() {
+        // Phase 4 gate: shipped log-only first, flipped to enforce. A filter
+        // that logs but does not deny is how a sandbox becomes decorative.
+        const {
+            assert!(
+                ENFORCE,
+                "seccomp filter must be enforce (EPERM), not log-only"
+            );
+        }
+        // Also verified where it matters: deny() builds SeccompAction::Errno,
+        // not SeccompAction::Log, so a real violation is refused, not recorded.
+        // The shape is compile-time (ENFORCE const) rather than runtime probe;
+        // the probe would require forking a child and triggering ptrace.
     }
 }

@@ -150,7 +150,7 @@ fn hidden_and_nodisplay_and_wrong_desktop_entries_are_absent() {
 }
 
 #[test]
-fn non_application_types_are_not_indexed() {
+fn links_are_indexed_but_directories_are_not() {
     let dir = tempfile::tempdir().unwrap();
     write(
         dir.path(),
@@ -167,7 +167,12 @@ fn non_application_types_are_not_indexed() {
     let index = builder().dir(dir.path()).build();
 
     let names: Vec<&str> = index.items().iter().map(|i| i.name()).collect();
-    assert_eq!(names, ["Real"]);
+    assert_eq!(names, ["Site", "Real"]);
+    assert_eq!(
+        index.get("link.desktop").unwrap().entry().url(),
+        Some("https://example.com")
+    );
+    assert_eq!(index.skipped()[0].reason, SkipReason::NotAnApplication);
 }
 
 #[test]
@@ -183,6 +188,40 @@ fn an_application_without_exec_is_not_indexed() {
 
     assert!(index.is_empty());
     assert_eq!(index.skipped()[0].reason, SkipReason::NoExec);
+}
+
+#[test]
+fn a_link_without_a_url_is_reported_and_never_becomes_an_action() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "missing.desktop",
+        "[Desktop Entry]\nType=Link\nName=Missing\n",
+    );
+    write(
+        dir.path(),
+        "empty.desktop",
+        "[Desktop Entry]\nType=Link\nName=Empty\nURL=\n",
+    );
+    write(
+        dir.path(),
+        "link.desktop",
+        "[Desktop Entry]\nType=Link\nName=Manual\nURL=file:///manual.pdf\nExec=ignored\nActions=invalid;\n[Desktop Action invalid]\nName=Invalid\nExec=ignored-action\n",
+    );
+    let index = builder().dir(dir.path()).build();
+    assert_eq!(index.len(), 1);
+    assert!(!index.items()[0].is_action());
+    assert_eq!(
+        index
+            .skipped()
+            .iter()
+            .filter(|entry| entry.reason == SkipReason::NoUrl)
+            .count(),
+        1
+    );
+    assert!(index.skipped().iter().any(|entry| {
+        entry.path.ends_with("missing.desktop") && matches!(entry.reason, SkipReason::Malformed(_))
+    }));
 }
 
 #[test]
@@ -506,43 +545,28 @@ fn the_harvested_entries_index_and_no_display_is_read_as_a_value() {
         "a harvested entry was dropped silently"
     );
 
-    // NotShown and NotAnApplication are the two legitimate reasons, and the
-    // second one is here because the corpus grew and proved the first version
-    // of this assertion wrong.
-    //
-    // It allowed NotShown alone, on the stated grounds that "harvested entries
-    // are all valid applications". That held for 96 entries harvested from one
-    // Bluefin image and stopped holding at 738: Fedora ships
-    // Singular-manual.desktop as Type=Link, and a real /usr/share/applications
-    // contains entries like it.
-    //
-    // The fix is to admit the reason rather than drop the fixture. A launcher
-    // has to skip a Type=Link entry, that path should be exercised by something
-    // real, and this is now the fixture that exercises it. Anything OTHER than
-    // these two is still a defect — a malformed or unreadable harvested entry
-    // means the harvester or the parser is wrong.
+    // The harvested Type=Link manual is a launchable URI, not a parser error
+    // or an application to discard. Other skips must be visibility decisions.
     for skip in index.skipped() {
         assert!(
-            matches!(
-                skip.reason,
-                SkipReason::NotShown | SkipReason::NotAnApplication
-            ),
-            "{}: a harvested entry may only be skipped as NotShown or \
-             NotAnApplication; got {}",
+            matches!(skip.reason, SkipReason::NotShown),
+            "{}: a harvested entry may only be skipped as NotShown; got {}",
             skip.path.display(),
             skip.reason
         );
     }
 
-    // And the corpus must keep containing one of each, or the two paths above
-    // stop being exercised and the assertion quietly weakens to nothing.
     let reasons: Vec<&SkipReason> = index.skipped().iter().map(|s| &s.reason).collect();
-    assert!(
-        reasons
-            .iter()
-            .any(|r| matches!(r, SkipReason::NotAnApplication)),
-        "no harvested entry exercises NotAnApplication any more; the corpus lost its \
-         non-application fixtures and this assertion now proves nothing"
+    let manual = index
+        .get("host--Singular-manual.desktop")
+        .expect("harvested link retained");
+    assert!(matches!(
+        manual.entry().entry_type(),
+        compass_xdg::EntryType::Link
+    ));
+    assert_eq!(
+        manual.entry().url(),
+        Some("file:///usr/share/doc/Singular-doc/html/index.htm")
     );
     assert!(
         reasons.iter().any(|r| matches!(r, SkipReason::NotShown)),

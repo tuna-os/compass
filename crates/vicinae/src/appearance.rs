@@ -20,23 +20,68 @@ use std::time::Duration;
 use compass_ui::appearance::AppearanceLink;
 use compass_ui::design::{Appearance, ColorScheme};
 
+/// A persisted colour choice for the launcher.
+///
+/// `System` is the default and is the only mode that subscribes to portal
+/// changes. Fixed modes intentionally do not keep a portal watcher alive: an
+/// explicit choice must remain explicit when the desktop changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ColorMode {
+    /// Follow the desktop's native light/dark preference.
+    System,
+    /// Always use the light palette.
+    Light,
+    /// Always use the dark palette.
+    Dark,
+}
+
+impl ColorMode {
+    /// Parse the durable config spelling, treating unknown values as System.
+    pub(crate) fn from_config(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "light" => Self::Light,
+            "dark" => Self::Dark,
+            _ => Self::System,
+        }
+    }
+
+    /// Whether the durable spelling is one this build understands.
+    pub(crate) fn is_known(value: &str) -> bool {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "system" | "light" | "dark"
+        )
+    }
+
+    /// The fixed appearance, if this mode does not follow the system.
+    fn fixed_appearance(self) -> Option<Appearance> {
+        match self {
+            Self::System => None,
+            Self::Light => Some(Appearance::Light),
+            Self::Dark => Some(Appearance::Dark),
+        }
+    }
+}
+
 /// How long the window waits for the first read before drawing anyway.
 const FIRST_READ_BUDGET: Duration = Duration::from_millis(250);
 
 /// The appearance to draw with when nothing has said otherwise.
 ///
-/// Dark because that is what the launcher has always drawn. A machine with no
-/// Settings portal keeps the appearance it had rather than changing the day
-/// this landed.
-const FALLBACK: Appearance = Appearance::Dark;
+/// Light because that is Adwaita's no-preference default. A machine without a
+/// Settings portal still gets a readable, documented native fallback.
+const FALLBACK: Appearance = Appearance::Light;
 
-/// Start following the desktop's preference.
+/// Start in the configured colour mode.
 ///
-/// Returns what to draw the first frame with, and the link later changes
-/// arrive on. The link is `None` when there is no way to follow the desktop at
-/// all, which keeps "we are not following" visible in the flags rather than
-/// hidden behind a channel nothing will ever send on.
-pub fn follow() -> (Appearance, Option<AppearanceLink>) {
+/// Returns what to draw the first frame with, and (for System mode) the link
+/// later changes arrive on. Fixed modes return no link, which keeps an
+/// explicit choice from being overwritten by a desktop change.
+pub(crate) fn follow(mode: ColorMode) -> (Appearance, Option<AppearanceLink>) {
+    if let Some(appearance) = mode.fixed_appearance() {
+        return (appearance, None);
+    }
+
     let (link, sender) = AppearanceLink::new();
     let (first_tx, first_rx) = mpsc::sync_channel::<Appearance>(1);
 
@@ -136,6 +181,26 @@ fn to_appearance(scheme: compass_portals::ColorScheme) -> Appearance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_modes_are_case_insensitive_and_unknown_values_follow_system() {
+        assert_eq!(ColorMode::from_config("LIGHT"), ColorMode::Light);
+        assert_eq!(ColorMode::from_config(" dark "), ColorMode::Dark);
+        assert_eq!(ColorMode::from_config("solarized"), ColorMode::System);
+        assert!(ColorMode::is_known("system"));
+        assert!(!ColorMode::is_known("solarized"));
+    }
+
+    #[test]
+    fn fixed_modes_do_not_create_a_portal_link() {
+        let (light, light_link) = follow(ColorMode::Light);
+        assert_eq!(light, Appearance::Light);
+        assert!(light_link.is_none());
+
+        let (dark, dark_link) = follow(ColorMode::Dark);
+        assert_eq!(dark, Appearance::Dark);
+        assert!(dark_link.is_none());
+    }
 
     #[test]
     fn the_portals_preference_becomes_the_matching_palette() {

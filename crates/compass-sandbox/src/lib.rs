@@ -107,6 +107,42 @@ pub enum Error {
     MissingPath(PathBuf),
 }
 
+/// Allowlist as written in an extension's manifest — JSON, not `a{sv}`.
+///
+/// The host never invents paths; the manifest lists them. Empty allowlist
+/// means nothing allowed beyond the runtime's own read-only mounts.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct Allowlist {
+    /// Paths the extension may read.
+    #[serde(default)]
+    pub read: Vec<PathBuf>,
+    /// Paths the extension may read and write.
+    #[serde(default)]
+    pub write: Vec<PathBuf>,
+    /// Paths the extension may execute.
+    #[serde(default)]
+    pub execute: Vec<PathBuf>,
+}
+
+impl Allowlist {
+    /// Parse the JSON allowlist an extension ships (e.g. `{"read":["/usr/share"]}`).
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// Turn the allowlist into a `Policy` that Landlock can enforce.
+    #[must_use]
+    pub fn into_policy(self) -> Policy {
+        Policy {
+            read: self.read,
+            write: self.write,
+            execute: self.execute,
+            mode: Mode::Strict,
+            syscall_filter: true,
+        }
+    }
+}
+
 /// What a worker may reach.
 ///
 /// Everything not named here is denied: there is no "allow the rest". A policy
@@ -404,6 +440,26 @@ mod tests {
             Err(Error::MissingPath(path)) => assert_eq!(path, Path::new("/definitely/not/here")),
             other => panic!("a missing path must be refused, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn allowlist_json_parses_and_becomes_a_strict_policy() {
+        let json = r#"{"read":["/usr/share"],"write":["/tmp/work"],"execute":["/usr/bin/node"]}"#;
+        let allow = Allowlist::from_json(json).expect("parses");
+        assert_eq!(allow.read, vec![PathBuf::from("/usr/share")]);
+        let policy = allow.into_policy();
+        assert_eq!(policy.read, vec![PathBuf::from("/usr/share")]);
+        assert_eq!(policy.write, vec![PathBuf::from("/tmp/work")]);
+        assert_eq!(policy.execute, vec![PathBuf::from("/usr/bin/node")]);
+        assert_eq!(policy.mode, Mode::Strict);
+        assert!(policy.syscall_filter);
+    }
+
+    #[test]
+    fn empty_allowlist_is_a_valid_deny_all_policy() {
+        let allow = Allowlist::from_json("{}").expect("empty");
+        let policy = allow.into_policy();
+        assert!(policy.read.is_empty() && policy.write.is_empty() && policy.execute.is_empty());
     }
 
     #[test]

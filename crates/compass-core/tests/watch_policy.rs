@@ -1,51 +1,41 @@
 //! Which directories are worth an inotify watch.
 //!
-//! Ported from `important-dir-watcher-linux.cpp`.
+//! Ported from `important-dir-watcher-linux.cpp`. The root enumeration is
+//! pinned against injected answers, as before; the watch-set enumeration walks
+//! real temporary trees through the same policy the deep scan enforces.
 
-use std::collections::HashMap;
+mod support;
+
 use std::path::{Path, PathBuf};
 
-use compass_core::entry_filter::EntryFilter;
-use compass_core::file_walk::{Tree, WalkEntry};
+use compass_core::file_walk::IndexWalk;
 use compass_core::watch_policy::{
     MAX_WATCH_DEPTH, WATCH_BUDGET, build_watch_set, important_roots, new_directory_depth,
     should_watch_new_directory,
 };
-
-#[derive(Default)]
-struct FakeTree {
-    dirs: HashMap<PathBuf, Vec<WalkEntry>>,
-}
-
-impl FakeTree {
-    fn with(mut self, dir: &str, entries: Vec<WalkEntry>) -> Self {
-        self.dirs.insert(PathBuf::from(dir), entries);
-        self
-    }
-}
-
-impl Tree for FakeTree {
-    fn entries(&self, dir: &Path) -> Vec<WalkEntry> {
-        self.dirs.get(dir).cloned().unwrap_or_default()
-    }
-
-    fn is_directory(&self, path: &Path) -> bool {
-        self.dirs.contains_key(path)
-    }
-
-    fn is_cachedir_tag(&self, _path: &Path) -> bool {
-        false
-    }
-}
+use support::{mkdir, symlink, write};
 
 fn owned(items: &[&str]) -> Vec<PathBuf> {
     items.iter().map(PathBuf::from).collect()
 }
 
-fn watched(set: &[(PathBuf, usize)]) -> Vec<String> {
-    set.iter()
-        .map(|(path, _)| path.to_string_lossy().into_owned())
-        .collect()
+fn under(root: &Path, set: &[(PathBuf, usize)]) -> Vec<String> {
+    let mut paths: Vec<String> = set
+        .iter()
+        .map(|(path, _)| {
+            path.strip_prefix(root)
+                .expect("watch under the root")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// A watch enumeration with nothing configured.
+fn walk() -> IndexWalk {
+    IndexWalk::new(None)
 }
 
 fn all_directories(path: &Path) -> bool {
@@ -191,104 +181,92 @@ fn the_shipped_limits_are_what_they_are() {
 
 #[test]
 fn a_root_is_watched_at_depth_zero() {
-    let tree = FakeTree::default().with("/root", vec![]);
+    let dir = tempfile::tempdir().expect("temporary tree");
 
-    let set = build_watch_set(
-        &tree,
-        &owned(&["/root"]),
-        &EntryFilter::new(None),
-        WATCH_BUDGET,
-    );
+    let set = build_watch_set(&[dir.path().to_path_buf()], &walk(), WATCH_BUDGET);
 
-    assert_eq!(set.watches, [(PathBuf::from("/root"), 0)]);
+    assert_eq!(set.watches, [(dir.path().to_path_buf(), 0)]);
     assert!(!set.budget_exhausted);
 }
 
 #[test]
 fn subdirectories_are_watched_down_to_the_ceiling() {
-    let tree = FakeTree::default()
-        .with("/root", vec![WalkEntry::directory("/root/a")])
-        .with("/root/a", vec![WalkEntry::directory("/root/a/b")])
-        .with("/root/a/b", vec![WalkEntry::directory("/root/a/b/c")]);
+    let dir = tempfile::tempdir().expect("temporary tree");
+    mkdir(dir.path(), "a/b/c");
 
-    let set = build_watch_set(
-        &tree,
-        &owned(&["/root"]),
-        &EntryFilter::new(None),
-        WATCH_BUDGET,
-    );
+    let set = build_watch_set(&[dir.path().to_path_buf()], &walk(), WATCH_BUDGET);
 
     // Depth 2 is watched; its children are left to the periodic scan.
-    assert_eq!(watched(&set.watches), ["/root", "/root/a", "/root/a/b"]);
+    assert_eq!(under(dir.path(), &set.watches), ["", "a", "a/b"]);
 }
 
 #[test]
 fn a_file_is_not_watched() {
-    let tree = FakeTree::default().with(
-        "/root",
-        vec![
-            WalkEntry::file("/root/notes.txt"),
-            WalkEntry::directory("/root/a"),
-        ],
-    );
+    let dir = tempfile::tempdir().expect("temporary tree");
+    write(dir.path(), "notes.txt", "notes");
+    mkdir(dir.path(), "a");
 
-    let set = build_watch_set(
-        &tree,
-        &owned(&["/root"]),
-        &EntryFilter::new(None),
-        WATCH_BUDGET,
-    );
+    let set = build_watch_set(&[dir.path().to_path_buf()], &walk(), WATCH_BUDGET);
 
-    assert_eq!(watched(&set.watches), ["/root", "/root/a"]);
+    assert_eq!(under(dir.path(), &set.watches), ["", "a"]);
+}
+
+#[test]
+fn a_symlinked_directory_is_not_watched() {
+    // It would watch a tree already watched under its real name.
+    let dir = tempfile::tempdir().expect("temporary tree");
+    mkdir(dir.path(), "real");
+    symlink(dir.path(), "real", "link");
+
+    let set = build_watch_set(&[dir.path().to_path_buf()], &walk(), WATCH_BUDGET);
+
+    assert_eq!(under(dir.path(), &set.watches), ["", "real"]);
 }
 
 #[test]
 fn a_filtered_directory_is_not_watched() {
-    let mut filter = EntryFilter::new(None);
-    filter.set_excluded_filenames(vec!["node_modules".to_owned()]);
+    let dir = tempfile::tempdir().expect("temporary tree");
+    mkdir(dir.path(), "node_modules");
+    mkdir(dir.path(), "src");
 
-    let tree = FakeTree::default().with(
-        "/root",
-        vec![
-            WalkEntry::directory("/root/node_modules"),
-            WalkEntry::directory("/root/src"),
-        ],
-    );
+    // node_modules is excluded by the shipped list, no configuration needed —
+    // and the scan policy agrees, so no watch is spent on it either.
+    let set = build_watch_set(&[dir.path().to_path_buf()], &walk(), WATCH_BUDGET);
 
-    let set = build_watch_set(&tree, &owned(&["/root"]), &filter, WATCH_BUDGET);
-
-    assert_eq!(watched(&set.watches), ["/root", "/root/src"]);
+    assert_eq!(under(dir.path(), &set.watches), ["", "src"]);
 }
 
 #[test]
-fn a_directory_reached_twice_is_watched_once() {
-    let tree = FakeTree::default()
-        .with("/a", vec![WalkEntry::directory("/shared")])
-        .with("/b", vec![WalkEntry::directory("/shared")])
-        .with("/shared", vec![]);
+fn the_hidden_flag_reaches_the_watch_set() {
+    // `tempfile` roots are dot-prefixed, so they read as hidden: with the
+    // flag on, nothing below the root is enumerated, and with it off,
+    // everything visible is. The per-name behaviour itself is pinned in the
+    // entry-filter tests, over paths without a hidden root above them.
+    let dir = tempfile::tempdir().expect("temporary tree");
+    mkdir(dir.path(), ".config");
+    mkdir(dir.path(), "src");
 
-    let set = build_watch_set(
-        &tree,
-        &owned(&["/a", "/b"]),
-        &EntryFilter::new(None),
-        WATCH_BUDGET,
-    );
+    let plain = build_watch_set(&[dir.path().to_path_buf()], &walk(), WATCH_BUDGET);
+    assert_eq!(under(dir.path(), &plain.watches), ["", ".config", "src"]);
 
-    assert_eq!(watched(&set.watches), ["/a", "/b", "/shared"]);
+    let mut hidden = walk();
+    hidden.set_ignore_hidden_paths(true);
+
+    let set = build_watch_set(&[dir.path().to_path_buf()], &hidden, WATCH_BUDGET);
+    assert_eq!(under(dir.path(), &set.watches), [""]);
 }
 
 #[test]
 fn a_root_listed_twice_is_watched_once() {
-    let tree = FakeTree::default().with("/root", vec![]);
+    let dir = tempfile::tempdir().expect("temporary tree");
 
     let set = build_watch_set(
-        &tree,
-        &owned(&["/root", "/root"]),
-        &EntryFilter::new(None),
+        &[dir.path().to_path_buf(), dir.path().to_path_buf()],
+        &walk(),
         WATCH_BUDGET,
     );
 
-    assert_eq!(watched(&set.watches), ["/root"]);
+    assert_eq!(set.watches, [(dir.path().to_path_buf(), 0)]);
 }
 
 #[test]
@@ -296,37 +274,37 @@ fn every_root_is_covered_before_any_root_goes_deeper() {
     // Breadth-first is the point. With a budget that can run out, the order
     // decides what is covered when it does -- depth-first would spend it all
     // inside the first root and leave the others unwatched.
-    let tree = FakeTree::default()
-        .with("/a", vec![WalkEntry::directory("/a/deep")])
-        .with("/a/deep", vec![])
-        .with("/b", vec![]);
+    let dir = tempfile::tempdir().expect("temporary tree");
+    mkdir(dir.path(), "a/deep");
+    mkdir(dir.path(), "b");
 
     let set = build_watch_set(
-        &tree,
-        &owned(&["/a", "/b"]),
-        &EntryFilter::new(None),
+        &[dir.path().join("a"), dir.path().join("b")],
+        &walk(),
         WATCH_BUDGET,
     );
 
-    assert_eq!(watched(&set.watches), ["/a", "/b", "/a/deep"]);
+    // Breadth-first: both roots land before either root's child.
+    assert_eq!(
+        set.watches,
+        [
+            (dir.path().join("a"), 0),
+            (dir.path().join("b"), 0),
+            (dir.path().join("a/deep"), 1),
+        ]
+    );
 }
 
 #[test]
 fn running_out_of_watches_stops_the_walk_and_says_so() {
-    let tree = FakeTree::default()
-        .with(
-            "/root",
-            vec![
-                WalkEntry::directory("/root/a"),
-                WalkEntry::directory("/root/b"),
-            ],
-        )
-        .with("/root/a", vec![])
-        .with("/root/b", vec![]);
+    let dir = tempfile::tempdir().expect("temporary tree");
+    mkdir(dir.path(), "a");
+    mkdir(dir.path(), "b");
 
-    let set = build_watch_set(&tree, &owned(&["/root"]), &EntryFilter::new(None), 2);
+    let set = build_watch_set(&[dir.path().to_path_buf()], &walk(), 2);
 
-    assert_eq!(watched(&set.watches), ["/root", "/root/a"]);
+    assert_eq!(set.watches.len(), 2);
+    assert_eq!(set.watches[0], (dir.path().to_path_buf(), 0));
     assert!(set.budget_exhausted);
 }
 
@@ -335,18 +313,18 @@ fn a_budget_that_was_enough_is_not_reported_as_exhausted() {
     // Reaching the limit is not an error -- the remaining directories fall back
     // to the scan cadence, which would have covered them anyway. But a set that
     // fit must not claim it did.
-    let tree = FakeTree::default().with("/root", vec![]);
+    let dir = tempfile::tempdir().expect("temporary tree");
 
-    let set = build_watch_set(&tree, &owned(&["/root"]), &EntryFilter::new(None), 1);
+    let set = build_watch_set(&[dir.path().to_path_buf()], &walk(), 1);
 
     assert!(!set.budget_exhausted);
 }
 
 #[test]
 fn a_budget_of_nothing_watches_nothing() {
-    let tree = FakeTree::default().with("/root", vec![]);
+    let dir = tempfile::tempdir().expect("temporary tree");
 
-    let set = build_watch_set(&tree, &owned(&["/root"]), &EntryFilter::new(None), 0);
+    let set = build_watch_set(&[dir.path().to_path_buf()], &walk(), 0);
 
     assert!(set.watches.is_empty());
     assert!(set.budget_exhausted);

@@ -31,6 +31,13 @@ pub enum Message {
     FrameDrawn,
     /// The search query changed.
     QueryChanged(String),
+    /// An asynchronous search completed. Only the current generation may apply.
+    SearchCompleted {
+        /// Generation captured when the request started.
+        generation: u64,
+        /// Stable application keys, in backend ranking order, or a failure.
+        result: Result<Vec<String>, String>,
+    },
     /// A result was selected (by keyboard navigation).
     ResultSelected(usize),
     /// Move the selection one row, wrapping at both ends.
@@ -53,6 +60,8 @@ pub enum Message {
     PanelMove(Direction),
     /// Run the action panel's selected action.
     PanelActivate,
+    /// Activate the clicked action row; headings and dividers are ignored.
+    PanelClicked(usize),
     /// A global shortcut was activated.
     ShortcutActivated(String),
     /// Window focus changed.
@@ -65,8 +74,24 @@ pub enum Message {
     EventOccurred(Event),
     /// The engine asked the window to show, hide or toggle.
     Command(UiCommand),
+    /// The engine closed its command channel.
+    EngineDisconnected,
     /// The desktop's light/dark preference changed.
     AppearanceChanged(crate::design::Appearance),
+    /// The desktop's interface font family changed.
+    TypographyChanged(String),
+    /// Preview a theme without persisting it (#153 live preview).
+    ThemePreview(crate::theme::Theme),
+    /// Commit the previewed theme to config.
+    ThemeCommit,
+    /// Cancel preview and restore the theme from config.
+    ThemeCancel,
+    /// Close a window from the switcher (`ctrl+q`).
+    ///
+    /// The id is the plain `u32` the shell minted (see
+    /// `compass_core::window_switcher::window_launch_target_for_app`), not the
+    /// shell's `WindowId` type: this shared crate must never name it.
+    CloseWindow(u32),
     /// A window finished opening, and this is its id.
     ///
     /// Carried separately from `Command(Show)` because the honest moment to

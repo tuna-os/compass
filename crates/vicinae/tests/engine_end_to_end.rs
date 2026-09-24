@@ -32,6 +32,95 @@ fn binary() -> PathBuf {
     path.join("vicinae")
 }
 
+#[test]
+fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
+    let dir = TempDir::new().unwrap();
+    let socket = compass_ipc::SocketPath::exact(dir.path().join("ipc.sock"));
+    let mut command = Command::new(binary());
+    command
+        .arg("--socket")
+        .arg(socket.as_path())
+        .args(["serve", "--no-hotkey"])
+        .env("XDG_DATA_HOME", dir.path().join("data"))
+        .env("XDG_DATA_DIRS", dir.path().join("empty"))
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .env("HOME", dir.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let owner = vicinae::session::ensure(&socket, &mut command, STARTUP_TIMEOUT)
+            .await
+            .unwrap();
+        assert!(vicinae::ipc::ping(&socket).await.is_ok());
+        let mut must_not_spawn = Command::new("/does/not/exist");
+        let guest = vicinae::session::ensure(&socket, &mut must_not_spawn, STARTUP_TIMEOUT)
+            .await
+            .unwrap();
+        drop(guest);
+        assert!(
+            vicinae::ipc::ping(&socket).await.is_ok(),
+            "reusing must not stop the engine"
+        );
+        drop(owner);
+        assert!(
+            vicinae::ipc::ping(&socket).await.is_err(),
+            "owned engine must be reaped"
+        );
+    });
+}
+
+#[test]
+fn graphical_session_reports_engine_startup_failure() {
+    let dir = TempDir::new().unwrap();
+    let socket = compass_ipc::SocketPath::exact(dir.path().join("ipc.sock"));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let error = runtime
+        .block_on(vicinae::session::ensure(
+            &socket,
+            &mut Command::new("/bin/false"),
+            STARTUP_TIMEOUT,
+        ))
+        .expect_err("failed child must not count as ready");
+    assert!(error.to_string().contains("exited before becoming ready"));
+}
+
+#[test]
+fn graphical_session_does_not_replace_an_unresponsive_socket_owner() {
+    let dir = TempDir::new().unwrap();
+    let socket = compass_ipc::SocketPath::exact(dir.path().join("ipc.sock"));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let listener = tokio::net::UnixListener::bind(socket.as_path()).unwrap();
+        let server = tokio::spawn(async move {
+            let (_connection, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let error = vicinae::session::ensure(
+            &socket,
+            &mut Command::new("/does/not/exist"),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(
+            !server.is_finished(),
+            "existing socket owner must be left alone"
+        );
+        server.abort();
+    });
+}
+
 /// A `.desktop` fixture tree, laid out the way XDG expects.
 fn write_apps(root: &Path, entries: &[(&str, &str)]) {
     let dir = root.join("applications");
@@ -54,9 +143,16 @@ struct Daemon {
 
 impl Daemon {
     fn start(entries: &[(&str, &str)]) -> Daemon {
+        Self::start_with_config(entries, "{}")
+    }
+
+    fn start_with_config(entries: &[(&str, &str)], config: &str) -> Daemon {
         let dirs = TempDir::new().expect("tempdir");
         let data = dirs.path().join("data");
         write_apps(&data, entries);
+        let config_dir = dirs.path().join("config/vicinae");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("vicinae.json"), config).unwrap();
 
         let socket = dirs.path().join("ipc.sock");
         let child = Command::new(binary())
@@ -118,6 +214,21 @@ impl Daemon {
         );
         String::from_utf8(out.stdout).expect("utf-8 stdout")
     }
+
+    fn request(&self, request: compass_ipc::Request) -> compass_ipc::Response {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                compass_ipc::Client::connect(&self.socket)
+                    .await
+                    .unwrap()
+                    .request(request)
+                    .await
+                    .unwrap()
+            })
+    }
 }
 
 impl Drop for Daemon {
@@ -128,6 +239,41 @@ impl Drop for Daemon {
 }
 
 // ---------------------------------------------------------------------------
+
+#[test]
+fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() {
+    use compass_ipc::{Request, Response};
+    let entries = [
+        ("alpha.desktop", entry("Alpha Editor", "")),
+        ("beta.desktop", entry("Beta Editor", "")),
+    ];
+    let entries = entries
+        .iter()
+        .map(|(id, body)| (*id, body.as_str()))
+        .collect::<Vec<_>>();
+    for (enabled, expected) in [(true, vec!["beta.desktop"]), (false, vec![])] {
+        let config = serde_json::json!({"providers": {"applications": {
+            "enabled": enabled,
+            "entrypoints": {
+                "alpha": {"enabled": false},
+                "beta": {"enabled": true, "alias": "uniquealias"}
+            }
+        }}});
+        let daemon = Daemon::start_with_config(&entries, &config.to_string());
+        for query in ["", "Editor", "uniquealias"] {
+            let Response::QueryResults { hits } =
+                daemon.request(Request::Query { text: query.into() })
+            else {
+                panic!("expected query result");
+            };
+            assert_eq!(
+                hits.iter().map(|hit| hit.id.as_str()).collect::<Vec<_>>(),
+                expected,
+                "{query}"
+            );
+        }
+    }
+}
 
 #[test]
 fn the_engine_starts_and_answers_a_ping() {
@@ -163,6 +309,193 @@ fn a_multi_word_query_is_joined_before_it_reaches_the_engine() {
 }
 
 #[test]
+fn reporting_a_launch_persists_history_and_changes_root_order() {
+    use compass_core::FrecencyStore;
+    use compass_ipc::{Request, Response};
+    let daemon = Daemon::start(&[
+        ("alpha.desktop", &entry("Alpha Editor", "")),
+        ("beta.desktop", &entry("Beta Editor", "")),
+    ]);
+    let query = || {
+        let Response::QueryResults { hits } = daemon.request(Request::Query {
+            text: "Editor".to_owned(),
+        }) else {
+            panic!("query failed")
+        };
+        hits
+    };
+    let before = query();
+    assert_eq!(before[0].id, "alpha.desktop");
+    assert_eq!(
+        daemon.request(Request::RecordLaunch {
+            key: "beta.desktop".to_owned()
+        }),
+        Response::Ack
+    );
+    let after = query();
+    assert_eq!(after[0].id, "beta.desktop");
+    assert_eq!(
+        after[0].score, before[1].score,
+        "wire score excludes history"
+    );
+    let reopened = compass_core::JsonFrecencyStore::open(
+        daemon._dirs.path().join("data-home/vicinae/frecency.json"),
+    )
+    .unwrap();
+    let record = reopened.record("beta.desktop").unwrap();
+    assert_eq!(record.launch_count, 1);
+    assert!(record.last_launched_at.is_some());
+    assert!(reopened.record("alpha.desktop").is_none());
+}
+
+#[test]
+fn unknown_launch_keys_do_not_create_history_and_persistence_errors_are_reported() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    let path = daemon._dirs.path().join("data-home/vicinae/frecency.json");
+    for key in ["", "unknown.desktop", "../alpha.desktop"] {
+        assert!(matches!(
+            daemon.request(Request::RecordLaunch { key: key.to_owned() }),
+            Response::Error(error) if error.kind == ErrorKind::BadRequest
+        ));
+    }
+    assert!(!path.exists());
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(matches!(
+        daemon.request(Request::RecordLaunch { key: "alpha.desktop".to_owned() }),
+        Response::Error(error) if error.kind == ErrorKind::Internal
+    ));
+    assert!(matches!(
+        daemon.request(Request::Ping),
+        Response::Pong { .. }
+    ));
+}
+
+#[test]
+fn concurrent_launch_reports_do_not_lose_visits() {
+    use compass_core::FrecencyStore;
+    use compass_ipc::{Client, Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut requests = tokio::task::JoinSet::new();
+            for _ in 0..16 {
+                let socket = daemon.socket.clone();
+                requests.spawn(async move {
+                    Client::connect(socket)
+                        .await
+                        .unwrap()
+                        .request(Request::RecordLaunch {
+                            key: "alpha.desktop".to_owned(),
+                        })
+                        .await
+                        .unwrap()
+                });
+            }
+            while let Some(result) = requests.join_next().await {
+                assert_eq!(result.unwrap(), Response::Ack);
+            }
+        });
+    let reopened = compass_core::JsonFrecencyStore::open(
+        daemon._dirs.path().join("data-home/vicinae/frecency.json"),
+    )
+    .unwrap();
+    assert_eq!(reopened.record("alpha.desktop").unwrap().launch_count, 16);
+}
+
+#[test]
+fn ui_search_and_successful_launch_share_the_real_daemons_history() {
+    use compass_core::FrecencyStore;
+    use compass_platform::{AppLauncher, LaunchFuture, LaunchMethod};
+    use compass_ui::{LauncherApp, Message};
+    use futures_util::StreamExt;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Default)]
+    struct Launcher(Mutex<Vec<String>>);
+    impl AppLauncher for Launcher {
+        fn launch<'a>(
+            &'a self,
+            entry: &'a compass_xdg::DesktopEntry,
+            _uris: &'a [&'a str],
+        ) -> LaunchFuture<'a> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(entry.name().to_owned());
+                Ok(LaunchMethod::Direct)
+            })
+        }
+    }
+
+    let daemon = Daemon::start(&[
+        ("alpha.desktop", &entry("Alpha Editor", "")),
+        ("beta.desktop", &entry("Beta Editor", "")),
+    ]);
+    let launcher = Arc::new(Launcher::default());
+    let build_ui = || {
+        LauncherApp::with_index(
+            compass_core::AppIndex::builder()
+                .dir(daemon._dirs.path().join("data/applications"))
+                .build(),
+        )
+        .with_launcher(launcher.clone())
+        .with_backend(Arc::new(vicinae::ui_backend::DaemonBackend::new(
+            compass_ipc::SocketPath::exact(&daemon.socket),
+        )))
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let drive = |app: &mut LauncherApp, message| {
+        let task = app.update(message);
+        runtime.block_on(async {
+            if let Some(mut stream) = iced_winit::runtime::task::into_stream(task) {
+                while let Some(action) = stream.next().await {
+                    if let iced_winit::runtime::Action::Output(message) = action {
+                        let _ = app.update(message);
+                    }
+                }
+            }
+        });
+    };
+    let mut app = build_ui();
+    drive(&mut app, Message::QueryChanged("Editor".to_owned()));
+    assert_eq!(app.selected_item().unwrap().key(), "alpha.desktop");
+    drive(&mut app, Message::ResultSelected(1));
+    drive(&mut app, Message::LaunchSelected);
+    assert_eq!(*launcher.0.lock().unwrap(), ["Beta Editor"]);
+    let mut reopened_ui = build_ui();
+    drive(
+        &mut reopened_ui,
+        Message::Opened(iced::window::Id::unique()),
+    );
+    assert_eq!(reopened_ui.selected_item().unwrap().key(), "beta.desktop");
+    let history = compass_core::JsonFrecencyStore::open(
+        daemon._dirs.path().join("data-home/vicinae/frecency.json"),
+    )
+    .unwrap();
+    assert_eq!(history.record("beta.desktop").unwrap().launch_count, 1);
+}
+
+#[test]
+fn a_desktop_link_without_exec_is_returned_by_root_search() {
+    let daemon = Daemon::start(&[(
+        "manual.desktop",
+        "[Desktop Entry]\nType=Link\nName=Reference Manual\nURL=file:///usr/share/doc/manual.html\n",
+    )]);
+    for query in ["", "Reference"] {
+        let out = daemon.client(&["query", query, "--json"]);
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["id"], "manual.desktop");
+        assert_eq!(rows[0]["title"], "Reference Manual");
+    }
+}
+
+#[test]
 fn an_empty_query_lists_everything_rather_than_nothing() {
     // The pre-typing state of a launcher. Returning nothing here would make the
     // window open blank, which reads as broken.
@@ -193,7 +526,10 @@ fn query_json_is_machine_readable_and_carries_the_documented_fields() {
     let first = &hits[0];
 
     assert_eq!(first["title"], "Text Editor");
-    assert_eq!(first["subtitle"], "Editor");
+    assert!(
+        first["subtitle"].is_null(),
+        "application descriptions are not root subtitles"
+    );
     assert!(first["id"].is_string(), "{first}");
 
     let score = first["score"].as_u64().expect("a numeric score");
@@ -201,6 +537,26 @@ fn query_json_is_machine_readable_and_carries_the_documented_fields() {
         score <= 100,
         "score {score} is outside the documented 0..=100"
     );
+}
+
+#[test]
+fn queries_use_root_provider_fields_and_do_not_return_desktop_actions() {
+    let daemon = Daemon::start(&[(
+        "browser.desktop",
+        &entry(
+            "Browser",
+            "TryExec=compass-unresolved-sentinel\nComment=DescriptionSentinel\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=browser --private\n",
+        ),
+    )]);
+    let all: serde_json::Value =
+        serde_json::from_str(&daemon.client(&["query", "--json", ""])).unwrap();
+    assert_eq!(all.as_array().unwrap().len(), 1);
+    assert_eq!(all[0]["id"], "browser.desktop");
+    for query in ["DescriptionSentinel", "Private"] {
+        let hits: serde_json::Value =
+            serde_json::from_str(&daemon.client(&["query", "--json", query])).unwrap();
+        assert!(hits.as_array().unwrap().is_empty(), "{query}: {hits}");
+    }
 }
 
 #[test]
@@ -432,6 +788,55 @@ fn an_attached_window_turns_the_refusal_into_a_real_show() {
         String::from_utf8_lossy(&after.stderr)
     );
     assert_eq!(window.seen(), vec![compass_ipc::WindowCommand::Show]);
+}
+
+#[test]
+fn a_second_ui_invocation_shows_the_existing_window_without_starting_a_renderer() {
+    let daemon = Daemon::start(&[]);
+    let lease = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(daemon.socket.with_extension("ui.lock"))
+        .unwrap();
+    lease.try_lock().unwrap();
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+    let output = Command::new(binary())
+        .args(["--socket", daemon.socket.to_str().unwrap(), "ui"])
+        .env("DISPLAY", ":65534")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("WAYLAND_SOCKET")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(window.seen(), vec![compass_ipc::WindowCommand::Show]);
+    let hidden = Command::new(binary())
+        .args([
+            "--socket",
+            daemon.socket.to_str().unwrap(),
+            "start",
+            "--hidden",
+        ])
+        .env("DISPLAY", ":65534")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("WAYLAND_SOCKET")
+        .output()
+        .unwrap();
+    assert!(
+        hidden.status.success(),
+        "{}",
+        String::from_utf8_lossy(&hidden.stderr)
+    );
+    assert_eq!(
+        window.seen(),
+        vec![compass_ipc::WindowCommand::Show],
+        "a duplicate hidden start must not change visibility"
+    );
 }
 
 #[test]

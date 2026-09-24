@@ -33,44 +33,10 @@ on:
     tags:
       - "v*"
 
-  # PRs, for this tier's OWN PLUMBING ONLY.
-  #
-  # WHAT CHANGED AND WHY
-  #
-  # This list used to include the code the tier exercises — `crates/compass-ui/**`,
-  # `crates/compass-ipc/**`, the summon path, the Flatpak manifest. That made
-  # ordinary iteration wait twenty-plus minutes on three VMs, on nearly every
-  # PR touching the launcher, and the concurrency note below records what
-  # actually happened: runs 186-190 were all cancelled by the next push while a
-  # branch was under active development. A tier that only completes on a quiet
-  # branch is a nightly tier with extra steps, and it was charging PR latency
-  # for the privilege.
-  #
-  # So the code paths move to nightly and release, and what stays is the tier's
-  # own scripts. The reason for that split is the one the old comment gave and
-  # it still holds: a change to `checks.sh` or `launcher.sh` that breaks the
-  # tier would otherwise ship unverified and surface at 3am, or — worse now —
-  # at a release, when the tier is the last thing standing between a tag and a
-  # user. These files are small, rarely touched, and self-verifying: the PR
-  # that edits them is the PR that runs them.
-  #
-  # `packaging/flatpak/**` and `flatpak.yaml` are deliberately NOT here any
-  # more. The `Flatpak / build` job already runs on every PR and catches a
-  # broken manifest in minutes without booting anything.
-  #
-  # WHAT THIS COSTS, STATED PLAINLY
-  #
-  # A regression in the launcher's own code is now caught by the nightly run
-  # rather than by the PR that introduced it. That is up to a day of exposure
-  # on main instead of a block before merge. The trade is deliberate: the tier
-  # was not reliably completing on active branches anyway, so what is being
-  # given up is less coverage than the old trigger list implied.
-  pull_request:
-    paths:
-      - .github/workflows/vm-tier.yaml
-      - .github/actions/vm-host/**
-      - packaging/vmtest/**
-      - scripts/vmtest/**
+  # PRs: intentionally no pull_request trigger.
+  # VM tier is nightly (03:00 UTC), release tags (v*), and manual workflow_dispatch only.
+  # Per user request PRs do not boot VMs — use workflow_dispatch on the branch
+  # for a one-off run if needed.
 
 # `cancel-in-progress: true` is this repository's convention for per-ref
 # workflows and it is right for the fast ones: a superseded build is wasted

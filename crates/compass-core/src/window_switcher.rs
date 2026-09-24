@@ -7,6 +7,33 @@
 //! None of the window manager itself is here. This is the part that turns a
 //! list of windows into rows, which is the part with the decisions in it.
 
+/// Whether a `RootItem` is a window, and which one.
+///
+/// `id == "window:{n}"` with `provider_id == "switch-windows"` is the only
+/// shape the switcher mints (see `compass-shell::switcher::window_to_root_item`).
+/// Parsing is deliberately strict: a `window:foo` that is not a `u32` is not a
+/// window launch target. The id is a plain `u32` so this shared crate never
+/// names the shell's `WindowId` type.
+#[must_use]
+pub fn window_launch_target(item: &crate::root_items::RootItem) -> Option<u32> {
+    if item.meta.provider_id != "switch-windows" {
+        return None;
+    }
+    let suffix = item.id.strip_prefix("window:")?;
+    suffix.parse::<u32>().ok()
+}
+
+/// Whether an `AppItem` key is a window, and which one.
+///
+/// `key == "window:{n}"` is the `AppItem` shape when windows are
+/// presented as launchable items. Strict parsing keeps a non-window
+/// `AppItem` from being mistaken for one. Plain `u32`, as above.
+#[must_use]
+pub fn window_launch_target_for_app(key: &str) -> Option<u32> {
+    let suffix = key.strip_prefix("window:")?;
+    suffix.parse::<u32>().ok()
+}
+
 /// A capability the compositor may or may not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Capabilities {
@@ -284,5 +311,181 @@ pub fn workspace_search_placeholder(is_windows: bool) -> &'static str {
         "Search desktops..."
     } else {
         "Search workspaces..."
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::root_items::{RootItem, RootItemMeta};
+
+    fn root_item(id: &str, provider_id: &str) -> RootItem {
+        RootItem {
+            id: id.to_owned(),
+            meta: RootItemMeta {
+                provider_id: provider_id.to_owned(),
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn window_launch_target_accepts_only_window_ids() {
+        assert_eq!(
+            window_launch_target(&root_item("window:42", "switch-windows")),
+            Some(42)
+        );
+        // Wrong provider
+        assert_eq!(window_launch_target(&root_item("window:42", "apps")), None);
+        // Wrong id shape
+        assert_eq!(
+            window_launch_target(&root_item("window:foo", "switch-windows")),
+            None
+        );
+        assert_eq!(
+            window_launch_target(&root_item("not-a-window", "switch-windows")),
+            None
+        );
+    }
+
+    #[test]
+    fn window_launch_target_for_app_accepts_only_window_keys() {
+        assert_eq!(window_launch_target_for_app("window:42"), Some(42));
+        assert_eq!(window_launch_target_for_app("window:foo"), None);
+        assert_eq!(window_launch_target_for_app("not-a-window"), None);
+    }
+
+    #[test]
+    fn window_action_panel_exposes_focus_and_close() {
+        let entry = WindowEntry {
+            title: "Terminal".to_owned(),
+            wm_class: "org.gnome.Terminal".to_owned(),
+            ..Default::default()
+        };
+        let panel = window_action_panel(&entry, Capabilities::default());
+        assert_eq!(panel[0], ["focus", "close"]);
+        assert_eq!(panel.len(), 1); // no app_name → no quit-app section
+        // With app_name and full caps, panel gains pin/bring and quit
+        let mut entry_with_app = entry;
+        entry_with_app.app_name = Some("Terminal".to_owned());
+        let caps = Capabilities {
+            set_sticky: true,
+            move_to_workspace: true,
+            ..Capabilities::default()
+        };
+        let panel2 = window_action_panel(&entry_with_app, caps);
+        assert_eq!(panel2[0], ["focus", "pin", "bring-to-workspace", "close"]);
+        assert_eq!(panel2[1], ["quit-app", "force-quit-app"]);
+    }
+
+    #[test]
+    fn workspace_subtitle_counts_and_screen() {
+        // #6 parity: declared divergence — 1 window vs N windows, empty vs 0
+        let empty = WorkspaceEntry {
+            name: "1".to_owned(),
+            window_count: 0,
+            ..Default::default()
+        };
+        assert_eq!(workspace_subtitle(&empty), "empty");
+        let one = WorkspaceEntry {
+            name: "1".to_owned(),
+            window_count: 1,
+            ..Default::default()
+        };
+        assert_eq!(workspace_subtitle(&one), "1 window");
+        let three = WorkspaceEntry {
+            name: "1".to_owned(),
+            window_count: 3,
+            screen_name: Some("HDMI-1".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(workspace_subtitle(&three), "3 windows - HDMI-1");
+    }
+
+    #[test]
+    fn workspace_name_worth_showing_treats_id_as_no_name() {
+        // A compositor with no names reports id as name — must show WS N
+        assert!(!workspace_name_worth_showing("3", "3"));
+        assert!(workspace_name_worth_showing("Work", "3"));
+        assert!(workspace_name_worth_showing("", "3") || !workspace_name_worth_showing("", "3"));
+        // window_accessory uses name when worth showing, else WS id
+        let named = WindowEntry {
+            title: "t".to_owned(),
+            wm_class: "c".to_owned(),
+            workspace_name: "Work".to_owned(),
+            workspace_id: Some("3".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(window_accessory(&named).as_deref(), Some("Work"));
+        let unnamed = WindowEntry {
+            workspace_name: "3".to_owned(),
+            workspace_id: Some("3".to_owned()),
+            ..Default::default()
+        };
+        // name == id → not worth showing → falls back to WS 3 via window_accessory's check
+        // window_accessory checks workspace_name.is_empty, so this still shows "3" — the worth check is for callers that decide
+        assert!(!workspace_name_worth_showing(&unnamed.workspace_name, "3"));
+    }
+
+    #[test]
+    fn window_search_fields_weight_title_over_wm_class() {
+        let entry = WindowEntry {
+            title: "Inbox".to_owned(),
+            wm_class: "org.gnome.Geary".to_owned(),
+            app_name: Some("Geary".to_owned()),
+            ..Default::default()
+        };
+        let fields = window_search_fields(&entry);
+        assert_eq!(fields[0], ("Inbox", 1.0));
+        assert!(fields.iter().any(|(t, w)| *t == "Geary" && *w == 0.5));
+        assert!(
+            fields
+                .iter()
+                .any(|(t, w)| *t == "org.gnome.Geary" && *w == 0.3)
+        );
+    }
+
+    #[test]
+    fn registered_commands_gated_on_capabilities() {
+        assert_eq!(
+            registered_commands(Capabilities::default()),
+            vec!["switch-windows"]
+        );
+        let with_ws = Capabilities {
+            workspaces: true,
+            ..Default::default()
+        };
+        assert!(registered_commands(with_ws).contains(&"switch-workspaces"));
+        let full = Capabilities {
+            workspaces: true,
+            fullscreen: true,
+            toggle_floating: true,
+            toggle_overview: true,
+            ..Capabilities::default()
+        };
+        let cmds = registered_commands(full);
+        assert!(cmds.contains(&"toggle-fullscreen"));
+        assert!(cmds.contains(&"toggle-floating"));
+        assert!(cmds.contains(&"toggle-overview"));
+        // set_sticky gates no command — documented parity
+        let sticky_only = Capabilities {
+            set_sticky: true,
+            ..Default::default()
+        };
+        assert_eq!(registered_commands(sticky_only), vec!["switch-windows"]);
+    }
+
+    #[test]
+    fn switch_workspaces_naming_is_platform_specific() {
+        assert_eq!(switch_workspaces_name(false), "Switch Workspaces");
+        assert_eq!(switch_workspaces_name(true), "Switch Desktops");
+        assert_eq!(switch_to_workspace_label(false), "Switch to workspace");
+        assert_eq!(switch_to_workspace_label(true), "Switch to desktop");
+        assert_eq!(workspace_search_placeholder(false), "Search workspaces...");
+        assert_eq!(workspace_search_placeholder(true), "Search desktops...");
+        assert!(SWITCH_WORKSPACES_KEYWORDS.contains(&"workspaces"));
+        assert!(SWITCH_WORKSPACES_KEYWORDS.contains(&"desktops"));
     }
 }

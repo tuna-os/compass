@@ -30,9 +30,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use compass_core::{
-    AppIndex, Config, FrecencyStore, JsonFrecencyStore, SystemClock, rank_with_frecency,
-};
+use compass_core::{AppIndex, Config, FrecencyStore, JsonFrecencyStore, SystemClock};
 use compass_ipc::{
     ErrorKind, Listener, ProtocolError, QueryHit, Request, Response, SocketPath, WindowCommand,
     WindowLink, WindowOutcome, protocol::PROTOCOL_VERSION,
@@ -114,20 +112,22 @@ impl EngineState {
     /// start over a corrupt ranking cache would be a worse failure than the one
     /// it is reporting.
     pub fn from_environment(socket: SocketPath) -> Self {
-        let index = AppIndex::from_environment();
+        let mut index = AppIndex::from_environment();
         tracing::info!(applications = index.len(), "indexed applications");
 
         // A bad config is reported and then ignored rather than fatal. Refusing
         // to start because `max_results` is misspelled would be a worse outcome
         // than starting with the default and saying so.
-        let max_results = match Config::load() {
-            Ok(config) => config.launcher().max_results(),
+        let config = match Config::load() {
+            Ok(config) => config,
             Err(err) => {
                 let fallback = Config::default();
                 tracing::warn!(error = %err, "using default configuration");
-                fallback.launcher().max_results()
+                fallback
             }
         };
+        let max_results = config.launcher().max_results();
+        index.apply_root_config(&config.root_config());
 
         let frecency = Self::open_frecency();
 
@@ -217,18 +217,14 @@ impl EngineState {
     /// is given.
     #[must_use]
     pub fn query(&self, text: &str) -> Vec<QueryHit> {
-        let items: Vec<_> = self.index.launchable_items().cloned().collect();
-        rank_with_frecency(text, &items, |item| item.key(), self.frecency.as_ref())
+        self.index
+            .search_root(text, Some(self.frecency.as_ref()))
             .into_iter()
             .take(self.max_results)
             .map(|ranked| QueryHit {
                 id: ranked.item.key().to_owned(),
                 title: ranked.item.display_name(),
-                subtitle: ranked
-                    .item
-                    .generic_name()
-                    .or_else(|| ranked.item.comment())
-                    .map(ToOwned::to_owned),
+                subtitle: None,
                 // `match_score`, not `score`. `Ranked::score` is the combined
                 // value that includes the frecency boost and is not bounded,
                 // whereas the wire documents `0..=100` on compass-search's
@@ -321,6 +317,39 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             Response::DoctorReport {
                 checks: doctor::run_on_this_machine(&socket, engine).await.checks,
             }
+        }
+
+        Request::RecordLaunch { key } => {
+            let state = Arc::clone(state);
+            // JSON persistence is blocking disk work. Keep it off the async
+            // executor, and serialize updates through the daemon's store.
+            tokio::task::spawn_blocking(move || {
+                let mut state = state.blocking_write();
+                if state.index.get(&key).is_none() {
+                    return Response::Error(ProtocolError::new(
+                        ErrorKind::BadRequest,
+                        "launch key is not present in the application index",
+                    ));
+                }
+                match state.frecency.record_launch(&key) {
+                    Ok(()) => Response::Ack,
+                    Err(error) => {
+                        tracing::warn!(%error, "could not persist launch history");
+                        Response::Error(ProtocolError::new(
+                            ErrorKind::Internal,
+                            "could not persist launch history",
+                        ))
+                    }
+                }
+            })
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "launch history task failed");
+                Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    "launch history task failed",
+                ))
+            })
         }
 
         // Handled by the serve loop, which owns the shutdown signal; reaching

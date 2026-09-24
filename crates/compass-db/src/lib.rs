@@ -42,6 +42,19 @@
 //! detection. Here a mismatch is an error, because a stored value with no
 //! reader is not a check.
 
+pub mod db_writer;
+pub mod file_indexer;
+pub mod incremental_scanner;
+pub mod indexer_scanner;
+pub mod query_engine;
+pub mod query_policy;
+pub mod query_pool;
+pub mod query_reader;
+pub mod scan;
+pub mod scan_dispatcher;
+pub mod scanner;
+pub mod sqlite_reader;
+pub mod sqlite_writer;
 pub mod vicinae;
 
 use std::time::{SystemTime, UNIX_EPOCH};
