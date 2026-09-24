@@ -455,6 +455,8 @@ enum Page {
     Clipboard(crate::clipboard_page::ClipboardPage),
     /// The window switcher.
     Windows(crate::windows_page::WindowsPage),
+    /// The emoji and symbol picker.
+    Emoji(crate::emoji_page::EmojiPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -1982,6 +1984,21 @@ impl LauncherApp {
                 self.page = Page::Root;
                 Task::batch([closing, focus_search()])
             }
+            Message::EmojiQueryChanged(query) => {
+                if let Page::Emoji(page) = &mut self.page {
+                    page.query = query;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::EmojiSelected(position) => {
+                if let Page::Emoji(page) = &mut self.page
+                    && position < page.shown.len()
+                {
+                    page.selected = position;
+                }
+                self.copy_selected_emoji()
+            }
             Message::WindowsQueryChanged(query) => {
                 if let Page::Windows(page) = &mut self.page {
                     page.query = query;
@@ -2093,6 +2110,25 @@ impl LauncherApp {
                             return Task::none();
                         }
                         Key::Named(Named::Enter) => return self.activate_extension_action(),
+                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                    };
+                    if let Some(direction) = direction {
+                        page.selected = next_selection(
+                            page.shown.len(),
+                            page.selected,
+                            direction,
+                            self.wrap_navigation,
+                        );
+                        return crate::scroll::reveal_root_selection();
+                    }
+                    return Task::none();
+                }
+                if let Page::Emoji(page) = &mut self.page {
+                    let direction = match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) => return self.update(Message::Back),
+                        Key::Named(Named::Enter) => return self.copy_selected_emoji(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                     };
                     if let Some(direction) = direction {
@@ -2293,6 +2329,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::ClipboardQueryChanged as OnInput),
             ),
+            Page::Emoji(page) => (
+                "Search emojis and symbols…",
+                &page.query,
+                Some(Message::EmojiQueryChanged as OnInput),
+            ),
             Page::Windows(page) => (
                 "Search windows…",
                 &page.query,
@@ -2333,6 +2374,8 @@ impl LauncherApp {
             self.preferences_body(page)
         } else if let Page::Extension(page) = &self.page {
             self.extension_body(page)
+        } else if let Page::Emoji(page) = &self.page {
+            self.emoji_body(page)
         } else if let Page::Windows(page) = &self.page {
             self.windows_body(page)
         } else if let Page::Clipboard(page) = &self.page {
@@ -2465,6 +2508,60 @@ impl LauncherApp {
     }
 
     /// The window switcher's body: its state, or its rows.
+    /// The emoji picker's rows: the character in the icon slot, its name.
+    fn emoji_body<'a>(&'a self, page: &'a crate::emoji_page::EmojiPage) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        if page.shown.is_empty() {
+            return self.notice("No matching emojis or symbols");
+        }
+        let glyphs = compass_core::glyph::glyphs();
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        for (position, &index) in page.shown.iter().enumerate() {
+            let Some(glyph) = glyphs.get(index) else {
+                continue;
+            };
+            let selected = position == page.selected;
+            let icon = container(text(glyph.character).size(f32::from(geometry.icon_size) * 0.75))
+                .width(Length::Fixed(f32::from(geometry.icon_size)))
+                .height(Length::Fixed(f32::from(geometry.icon_size)))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into();
+            let row = self.list_row(
+                icon,
+                glyph.name.to_owned(),
+                self.subtitles.then(|| glyph.category.label().to_owned()),
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::EmojiSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink)
+            .into()
+    }
+
+    /// Copies the selected emoji and gets out of the way, so it can be
+    /// pasted where the person was.
+    fn copy_selected_emoji(&mut self) -> Task<Message> {
+        let Page::Emoji(page) = &self.page else {
+            return Task::none();
+        };
+        let Some(glyph) = page.selected_glyph() else {
+            return Task::none();
+        };
+        let copy = iced::clipboard::write(glyph.character.to_owned());
+        Task::batch([copy, self.conceal()])
+    }
+
     fn windows_body<'a>(
         &'a self,
         page: &'a crate::windows_page::WindowsPage,
@@ -3466,6 +3563,10 @@ impl LauncherApp {
             CommandKind::ClipboardHistory => {
                 self.page = Page::Clipboard(crate::clipboard_page::ClipboardPage::default());
                 Task::batch([record, self.clipboard_search_task(), focus_search()])
+            }
+            CommandKind::SearchEmojis => {
+                self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
+                Task::batch([record, focus_search()])
             }
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
@@ -5508,6 +5609,27 @@ mod tests {
     }
 
     #[test]
+    fn the_emoji_picker_opens_from_root_search_and_filters() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("emoji".to_owned()));
+        let position = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "search-emojis"))
+            .expect("the command is in root search");
+        app.selected = position;
+        let _ = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::EmojiQueryChanged("thumbs up".into()));
+        let Page::Emoji(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.selected_glyph().map(|g| g.character), Some("👍"));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("thumbs up").is_ok());
+    }
+
+    #[test]
     fn a_calculation_that_matches_nothing_is_answered_first() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app(dir.path());
@@ -5815,9 +5937,13 @@ mod tests {
             );
             let _ = app.update(Message::MoveSelection(Direction::Down));
         }
+        // Commands rank after the applications here; walk past them too.
+        for _ in expected.len()..app.results.len() {
+            let _ = app.update(Message::MoveSelection(Direction::Down));
+        }
         assert_eq!(
             app.selected,
-            expected.len() - 1,
+            app.results.len() - 1,
             "and it stayed on the last row, because wrap_navigation is off by default"
         );
     }

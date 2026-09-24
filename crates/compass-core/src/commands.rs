@@ -38,6 +38,8 @@ pub enum CommandKind {
     ClipboardHistory,
     /// Focus an open window.
     SwitchWindows,
+    /// Find an emoji or symbol and copy it.
+    SearchEmojis,
 }
 
 /// Every builtin command, in the order an empty query lists them.
@@ -59,6 +61,22 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             "windows", "window", "switch", "focus", "alt tab", "switcher",
         ],
         icon: "switch-windows",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SearchEmojis,
+        entrypoint: "search-emojis",
+        title: "Search Emojis & Symbols",
+        subtitle: "Find a character and copy it",
+        keywords: &[
+            "emoji",
+            "emojis",
+            "symbol",
+            "symbols",
+            "glyph",
+            "character",
+            "unicode",
+        ],
+        icon: "emoji",
     },
 ];
 

@@ -101,6 +101,10 @@ pub enum Message {
     Back,
     /// The window switcher's filter changed.
     WindowsQueryChanged(String),
+    /// The emoji picker's filter changed.
+    EmojiQueryChanged(String),
+    /// An emoji row was clicked, by position in the shown list.
+    EmojiSelected(usize),
     /// The open windows arrived, or why they could not be listed.
     WindowsLoaded(Result<Vec<crate::backend::WindowRow>, String>),
     /// A window row was clicked.
