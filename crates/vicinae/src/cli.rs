@@ -191,6 +191,28 @@ pub enum Command {
         url: String,
     },
 
+    /// Suite 1: run installed extensions headlessly and judge each first frame.
+    ///
+    /// Hidden: it is CI's, not a user's. Starts an engine of its own on a
+    /// private socket, with this process's environment, so the caller chooses
+    /// the extensions and the data directories. Exits non-zero when any
+    /// command fails. See `crates/vicinae/src/conformance.rs`.
+    #[command(hide = true)]
+    Conformance {
+        /// A JSON plan naming the commands and their inputs; without one, the
+        /// first command of every installed extension.
+        #[arg(long)]
+        plan: Option<std::path::PathBuf>,
+
+        /// Seconds each command has to draw a frame with something in it.
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Open the launcher window.
     ///
     /// Attaches to an existing engine when available. Without one, indexes

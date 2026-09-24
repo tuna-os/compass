@@ -1,0 +1,175 @@
+# SUITE 1 (PLAN §8.2): real store extensions, run headlessly through the
+# engine, one command each, judged on their first frame.
+#
+# The corpus is pinned in scripts/suite1/corpus.json (the selection criterion
+# is in scripts/suite1/select.py): the top 25 Raycast store extensions by
+# installs that can run on Linux at all, and every Vicinae store extension.
+# fetch.py downloads the prebuilt bundles the stores serve — what a user's
+# install gets — and `vicinae conformance` runs them against an engine of its
+# own, behind the same sandbox a user's run has.
+#
+# THE GATE IS A RATCHET, NOT YET THE PHASE 4 GATE
+#
+# Phase 4's gate is every command passing inside the Flatpak. They do not
+# yet, and scripts/suite1/expected.json records each failing command's
+# verdict and reason (a missing host API, a tool the runner lacks, a login
+# wall). check.py fails the job when a command recorded as passing stops
+# passing, or when a failure's verdict changes without the ledger saying so;
+# a command that starts passing is reported so the ledger can be tightened.
+#
+# The stores are live services. A store outage fails the fetch step loudly
+# (every download is retried with backoff first), which is the honest
+# outcome: the suite could not run.
+name: Suite 1
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - crates/**
+      - src/typescript/**
+      - figura/**
+      - scripts/suite1/**
+      - scripts/build-extension-runtime.sh
+      - Cargo.lock
+      - .github/workflows/suite1.yaml
+  schedule:
+    # Nightly, because the corpus moves under us: the stores serve only the
+    # current build of each extension.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: "Suite 1 on the host: 120 store extensions, first frame"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # g++-14 for figura (see the Rust workflow's extension-runtime job);
+      # gnome-keyring because preferences are stored under a key from the
+      # login keyring, and the engine refuses a command whose required
+      # preferences it has nowhere safe to keep.
+      - name: Install what the runtime build and the keyring need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 gnome-keyring dbus
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: suite1-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: suite1-${{ runner.os }}-
+
+      - name: Build the extension runtime
+        env:
+          CXX: g++-14
+        run: ./scripts/build-extension-runtime.sh
+
+      - name: Build the engine and the sandbox launcher
+        run: cargo build -p vicinae -p compass-sandbox --bins
+
+      - name: Fetch the corpus from the stores
+        run: |
+          python3 scripts/suite1/fetch.py /tmp/suite1/extensions /tmp/suite1/plan.json
+          test "$(python3 -c 'import json; print(len(json.load(open("/tmp/suite1/plan.json"))["commands"]))')" -gt 0
+
+      - name: Run every command
+        env:
+          COMPASS_EXTENSION_RUNTIME: ${{ github.workspace }}/src/typescript/extension-manager/dist/runtime.js
+        run: |
+          # The harness exits non-zero while any command fails; the ratchet
+          # below is the judgement, so that status is not the step's.
+          scripts/suite1/run.sh target/debug/vicinae /tmp/suite1/extensions \
+            /tmp/suite1/plan.json /tmp/suite1/report.json 30 || true
+          test -s /tmp/suite1/report.json
+
+      - name: Judge against the ledger
+        run: python3 scripts/suite1/check.py /tmp/suite1/report.json
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite1-host-report
+          path: /tmp/suite1/report.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  # The gate names the Flatpak: extensions that shell out are exactly what a
+  # sandbox breaks. This builds it the one way the repository defines, installs
+  # the bundle, and runs the same harness inside it.
+  #
+  # REPORT-ONLY until it has been seen green: preferences inside the sandbox
+  # reach the keyring through the Secret portal, and a portal on a headless
+  # runner (xdg-desktop-portal plus gnome-keyring's Secret backend, on a
+  # private session bus) is plumbing that has not run in CI before. Its
+  # failures are reported, not hidden, and the ledger check runs on its report
+  # too; flipping `continue-on-error` off is the step that makes this the gate.
+  flatpak-build:
+    uses: ./.github/workflows/flatpak.yaml
+
+  flatpak:
+    name: "Suite 1 inside the Flatpak (report-only)"
+    needs: flatpak-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flatpak, the runtime, and a headless portal and keyring
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak gnome-keyring dbus xdg-desktop-portal
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub org.freedesktop.Platform//26.08
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: /tmp/bundle
+
+      - name: Install the bundle
+        run: flatpak install --user --noninteractive --bundle /tmp/bundle/com.vicinae.Vicinae.flatpak
+
+      # Straight into the app's own data directory, which is where the
+      # engine inside the sandbox looks.
+      - name: Fetch the corpus from the stores
+        run: |
+          python3 scripts/suite1/fetch.py \
+            "$HOME/.var/app/com.vicinae.Vicinae/data/vicinae/extensions" /tmp/suite1/plan.json
+
+      - name: Run every command inside the Flatpak
+        run: |
+          export XDG_CURRENT_DESKTOP=GNOME
+          dbus-run-session -- sh -c '
+            printf compass | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            flatpak run --user --filesystem=/tmp/suite1 --command=vicinae com.vicinae.Vicinae \
+              conformance --plan /tmp/suite1/plan.json --timeout 30 --json > /tmp/suite1/report.json
+          ' || true
+          test -s /tmp/suite1/report.json
+
+      - name: Judge against the ledger
+        run: python3 scripts/suite1/check.py /tmp/suite1/report.json
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite1-flatpak-report
+          path: /tmp/suite1/report.json
+          retention-days: 14
+          if-no-files-found: warn

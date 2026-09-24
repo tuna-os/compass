@@ -29,8 +29,13 @@ with the decision taken and why.
 
 Not replaceable, checked: crypto (already crates), keyring (`oo7`), XDG base dirs (`dirs` plus
 Flatpak-specific roots), the uinput keyboard (a protocol model), clipboard filtering, file walking
-(`ignore`), MIME detection (`mime_guess`), the calculator (`fend-core`). There is no HTTP client in
-the tree yet; the store work will add one (`ureq` or `reqwest`), and remote icons will use it.
+(`ignore`), MIME detection (`mime_guess`), the calculator (`fend-core`).
+
+The HTTP client is `ureq` 3 with native-tls (remote images in extension views): blocking is all a
+fetch on a worker thread needs, and native-tls verifies against the system's roots through the
+OpenSSL already linked for SQLCipher. URL parsing (the OAuth redirect) is `url`, already in the tree.
+`oauth2` was considered and not used: Raycast's PKCE client builds the request and exchanges the
+code in the extension, so the host never speaks OAuth itself.
 
 ## Phase 5 Track B: the wlroots family (2026-09-24)
 

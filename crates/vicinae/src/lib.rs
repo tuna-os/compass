@@ -15,6 +15,7 @@ pub mod appearance;
 pub mod cli;
 pub mod clipboard_service;
 pub mod config_cmd;
+pub mod conformance;
 pub mod doctor;
 pub mod engine;
 pub mod extension_apps;
@@ -434,6 +435,25 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             }
             ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
             Ok(ExitCode::from(EXIT_OK))
+        }
+
+        Command::Conformance {
+            plan,
+            timeout,
+            json,
+        } => {
+            let report =
+                conformance::run(plan.as_deref(), std::time::Duration::from_secs(timeout)).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", report.render_human());
+            }
+            Ok(ExitCode::from(if report.passed == report.total {
+                EXIT_OK
+            } else {
+                EXIT_FAILURE
+            }))
         }
 
         Command::Spike(Spike::Sandbox { json }) => {

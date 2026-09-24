@@ -2297,7 +2297,7 @@ Ordered by what blocks what, not by size.
 |---|---|
 | framing, manager protocol, tsapi envelope | done, pinned against the IDL and the generator |
 | worker lifecycle (spawn, request, read, shutdown) | done |
-| Landlock boundary + seccomp denylist + launcher | done; the cgroups v2 memory cap is not |
+| Landlock boundary + seccomp denylist + launcher | done, with §8.2's negative list: a program the extension wrote cannot be run (read no longer implies execute), raw and packet sockets answer `EPERM`, and `RLIMIT_DATA` (512 MiB) refuses a 512 MiB `Buffer` where no cgroup is reachable; each beside a positive control (`compass-sandbox/tests/boundary.rs`, `engine_end_to_end.rs`). The systemd scope's `MemoryMax` still applies only outside a Flatpak |
 | session routing (event → service → reply) | done |
 | `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
 | `Wallpaper/set`, `BrowserExtension` (both) | the adapters are done and pinned (`wallpaper_service`, `browser_service`) — 33 of 49. The wallpaper backends and the browser bridge are Phase 5/6 work |
@@ -2309,11 +2309,12 @@ Ordered by what blocks what, not by size.
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
 | `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
-| `UI/confirmAlert` | the adapter and deferred reply transport are implemented (`UiShellService::defer`, `Session::answer_deferred`, `Session::fail_deferred`); the launcher still needs to draw the dialog and settle it on confirmation, cancellation, replacement and navigation |
-| `EventCore/handlerActivated` | the event is built and pinned to the IDL; nothing fires it yet, because nothing draws the tree |
-| `OAuth/authorize` | **not started**; needs a browser and an overlay |
+| `UI/confirmAlert` | done: drawn by the launcher, and settled on confirmation, cancellation, replacement (a second alert) and navigation (the launcher popping, or the extension pushing or popping) |
+| `EventCore/handlerActivated` | done: actions, search text and form fields fire it (`Views::activate`) |
+| `OAuth/authorize` | done without the overlay: the browser opens on the default https handler, a toast says so, and the `raycast://oauth` redirect comes back through `vicinae deeplink` (IPC v11) keyed by `state`; the token store is routed in the engine. 46 of 49 |
+| remote images, date/tag/file pickers | done: `ureq` into Compass's own image cache; a typed date field, tag toggles, and the FileChooser portal (PARITY "Extension views") |
 | running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
-| Suite 1 (the gate) | **not started** |
+| Suite 1 (the gate) | **the harness runs, and the gate is not met.** `vicinae conformance` runs installed extensions against an engine of its own and judges each command's first frame; `scripts/suite1/` pins the corpus (top 25 Raycast store extensions by installs that can run on Linux at all, plus all 95 Vicinae store extensions), fetches the stores' own bundles, and ratchets against `expected.json`; `.github/workflows/suite1.yaml` runs it on the host (gating on regressions) and inside the Flatpak (report-only until seen green). First measured run, in the dev container: **71 of 120 pass** — Raycast 11 of 25, Vicinae 60 of 95. Of the 49 failures, 7 wait on an OAuth sign-in a headless run cannot give, about 30 need a program, file, session or account the runner does not have (hyprctl, pactl, a system bus, a Firefox profile, API keys), 2 need host APIs Compass lacks (`getSelectedText`, `WindowManagement/getActiveWindow`), 1 is the sandbox refusing a downloaded binary (`speedtest`), 1 the heap cap (`dashboard-icons`), and 5 draw only an empty first frame. None of it has run inside the Flatpak yet |
 | the seam (the gate's third condition) | **done and in CI**: `scripts/ci/extension-api-seam.sh` checks `cargo tree -p compass-extension-api` (normal, build and dev edges) never reaches `compass-worker-host`, then copies the crate into a workspace where the host does not exist and runs `cargo test` there against the same `Cargo.lock` pins. Rust workflow job `extension-api-seam` |
 
 #### 11.4a Phase 4 specified a transport the worker does not speak — resolved

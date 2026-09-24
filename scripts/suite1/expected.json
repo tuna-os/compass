@@ -1,0 +1,411 @@
+{
+  "store.raycast.1password:item-list": {
+    "verdict": "rendered"
+  },
+  "store.raycast.chatgpt:ask": {
+    "verdict": "rendered"
+  },
+  "store.raycast.downloads-manager:manage-downloads": {
+    "verdict": "rendered"
+  },
+  "store.raycast.gif-search:search": {
+    "verdict": "rendered"
+  },
+  "store.raycast.github:my-pull-requests": {
+    "verdict": "needs-sign-in",
+    "why": "waiting on an OAuth sign-in in the browser"
+  },
+  "store.raycast.google-search:index": {
+    "verdict": "crashed",
+    "why": "Google Search crashed: TypeError: Cannot read properties of null (reading 'filter')"
+  },
+  "store.raycast.json-format:formatSelectionAndShow": {
+    "verdict": "error-toast",
+    "why": "Failed to fetch latest data: Selected text is not available to extensions in Compass yet"
+  },
+  "store.raycast.linear:create-issue": {
+    "verdict": "needs-sign-in",
+    "why": "waiting on an OAuth sign-in in the browser"
+  },
+  "store.raycast.lorem-ipsum:paragraphs": {
+    "verdict": "ran"
+  },
+  "store.raycast.notion:create-database-page": {
+    "verdict": "needs-sign-in",
+    "why": "waiting on an OAuth sign-in in the browser"
+  },
+  "store.raycast.obsidian:searchNoteCommand": {
+    "verdict": "rendered"
+  },
+  "store.raycast.raycast-gemini:history": {
+    "verdict": "rendered-empty",
+    "why": "only ever drew an empty frame"
+  },
+  "store.raycast.remove-paywall:remove-paywall": {
+    "verdict": "ran"
+  },
+  "store.raycast.slack:search": {
+    "verdict": "needs-sign-in",
+    "why": "waiting on an OAuth sign-in in the browser"
+  },
+  "store.raycast.speedtest:index": {
+    "verdict": "error-toast",
+    "why": "Speedtest failed: spawn /tmp/tmp.6e64FjtJZQ/data/vicinae/support/store.raycast.speedtest/cli/speedtest EACCES"
+  },
+  "store.raycast.spotify-player:search": {
+    "verdict": "needs-sign-in",
+    "why": "waiting on an OAuth sign-in in the browser"
+  },
+  "store.raycast.tailwindcss:search-documentation": {
+    "verdict": "rendered"
+  },
+  "store.raycast.timers:startCustomTimer": {
+    "verdict": "rendered"
+  },
+  "store.raycast.todoist:home": {
+    "verdict": "needs-sign-in",
+    "why": "waiting on an OAuth sign-in in the browser"
+  },
+  "store.raycast.translate:translate": {
+    "verdict": "rendered"
+  },
+  "store.raycast.video-downloader:index": {
+    "verdict": "rendered"
+  },
+  "store.raycast.visual-studio-code:index": {
+    "verdict": "crashed",
+    "why": "Search Recent Projects crashed: TypeError [ERR_INVALID_ARG_TYPE]: The \"path\" argument must be of type string. Received undefined"
+  },
+  "store.raycast.warp:launch-config": {
+    "verdict": "error-toast",
+    "why": "No Tab Configs found: You need to create at least one Tab Config before launching."
+  },
+  "store.raycast.youtube:search-videos": {
+    "verdict": "error-toast",
+    "why": "Could not search videos: API key not valid. Please pass a valid API key."
+  },
+  "store.raycast.zoom:schedule-meeting": {
+    "verdict": "needs-sign-in",
+    "why": "waiting on an OAuth sign-in in the browser"
+  },
+  "store.vicinae.agenda:manage-calendars": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.agent-skills-sh:install-agent-skills": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.arch-packages:search-arch-packages": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.aria2-manager:index": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.aseprite:open-recent": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.awww-switcher:wpgrid": {
+    "verdict": "error-toast",
+    "why": "Failed to get images from provided path:"
+  },
+  "store.vicinae.bedrock-chat:ask": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.bitwarden:browse-vault": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.bluetooth:devices": {
+    "verdict": "crashed",
+    "why": "Devices crashed: Error: connect ENOENT /var/run/dbus/system_bus_socket"
+  },
+  "store.vicinae.brotab:tabs-list": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.buku:add-bookmark": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.cardwire-control:set-asus-state": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.case-converter:case-converter": {
+    "verdict": "error-toast",
+    "why": "Window management unavailable: You can still use all case conversions. Copy to clipboard works perfectly."
+  },
+  "store.vicinae.chromium-bookmarks:search-bookmarks": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.clean-keyboard:clean-keyboard": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.coffee:caffeinate-for": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.color-converter:convert-color": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.custom-commands:commands": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.dashboard-icons:search-icons": {
+    "verdict": "crashed",
+    "why": "Search Icons crashed: Error [ERR_WORKER_OUT_OF_MEMORY]: Worker terminated due to reaching memory limit: JS heap out of memory"
+  },
+  "store.vicinae.dbus:explore-bus": {
+    "verdict": "crashed",
+    "why": "Explore The Bus crashed: Error: connect ENOENT /var/run/dbus/system_bus_socket"
+  },
+  "store.vicinae.dms-integration:dsearch": {
+    "verdict": "error-toast",
+    "why": "Failed to fetch data: Cannot connect to DMS backend (connection refused). Is the server running?:"
+  },
+  "store.vicinae.exegol:exegol": {
+    "verdict": "error-toast",
+    "why": "Exegol is not installed: Exegol must be installed in order to use this extension, you can install it from https://exegol.com/install"
+  },
+  "store.vicinae.firefox:bookmarks": {
+    "verdict": "error-toast",
+    "why": "No Firefox profiles found: No Firefox profiles detected on this system."
+  },
+  "store.vicinae.flathub-search:flathub-search": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.floww:floww": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.freetube:bookmarks": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.fuzzy-files:find": {
+    "verdict": "crashed",
+    "why": "Find Files crashed: UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a pro"
+  },
+  "store.vicinae.gentoo-explorer:browse-categories": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.github:createIssue": {
+    "verdict": "error-toast",
+    "why": "This GitHub API path is not available: sessions are bound to their configured repositories. Use repository-scoped endpoints (repos/{owner}/{repo}/...). - https:"
+  },
+  "store.vicinae.gnome-dnd:status": {
+    "verdict": "crashed",
+    "why": "Do Not Disturb Status crashed: Re: Command failed with exit code 1: gsettings get org.gnome.desktop.notifications show-banners"
+  },
+  "store.vicinae.gnome-extensions:gnome-extensions": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.gnome-settings:appearance": {
+    "verdict": "ran"
+  },
+  "store.vicinae.gpu-screen-recorder:main": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.helium:search-bookmarks": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.html-symbol-finder:index": {
+    "verdict": "error-toast",
+    "why": "Failed to fetch latest data: WindowManagement/getActiveWindow is not implemented by this host (compass-worker-host)"
+  },
+  "store.vicinae.hypr-keybinds:hyprland-keybinds": {
+    "verdict": "error-toast",
+    "why": "Failed to load keybinds: Command failed: hyprctl -j binds"
+  },
+  "store.vicinae.hypr:keybinds": {
+    "verdict": "error-toast",
+    "why": "Failed to load keybinds: This extension only works in a Hyprland session."
+  },
+  "store.vicinae.hyprland-monitors:configure-monitors": {
+    "verdict": "error-toast",
+    "why": "Failed to fetch monitors:"
+  },
+  "store.vicinae.iconify:search-icons": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.it-tools:it-tools-command": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.jetbrains-recent-projects:jetbrains-projects": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.jwt:decode": {
+    "verdict": "error-toast",
+    "why": "Clipboard holds no JWT: No token to decode."
+  },
+  "store.vicinae.kaomojis:kaomoji": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.kde-connect:ring-phone": {
+    "verdict": "error-toast",
+    "why": "kdeconnect-cli not found: Install KDE Connect"
+  },
+  "store.vicinae.kde-system-settings:search-kde-settings": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.keepassxc:search": {
+    "verdict": "error-toast",
+    "why": "Error: KeePassXC not found"
+  },
+  "store.vicinae.linuxbrew:installed": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.lorem-ipsum:generate": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.mise:mise": {
+    "verdict": "crashed",
+    "why": "Mise crashed: Error: Command failed: mise ls --json"
+  },
+  "store.vicinae.mullvad:mullvad": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.nerdfont-search:nerdfonts-search": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.niri-monitors:niri-monitors": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.niri:keybinds": {
+    "verdict": "error-toast",
+    "why": "Failed to read the niri config: ENOENT: no such file or directory, open '/tmp/tmp.6e64FjtJZQ/config/niri/config.kdl'"
+  },
+  "store.vicinae.nix:flake-packages": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.noctalia-shell-wallpaper-selector:change-your-wallpaper": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.npm:npm-install": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.number-converter:convert-from-binary": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.ollama-wordsmith:dictionary": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.omarchy-menu:capture": {
+    "verdict": "error-toast",
+    "why": "Failed to fetch latest data: ENOENT: no such file or directory, access '/usr/share/omarchy/default/omarchy/omarchy-menu.jsonc'"
+  },
+  "store.vicinae.otp:add-account": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.pacman-updates:check-pacman": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.pass:pass": {
+    "verdict": "error-toast",
+    "why": "Failed to load passwords: Password store path \"/tmp/tmp.6e64FjtJZQ/home/.password-store\" is not a directory"
+  },
+  "store.vicinae.player-pilot:player-pilot": {
+    "verdict": "rendered-empty",
+    "why": "only ever drew an empty frame"
+  },
+  "store.vicinae.podman:containers": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.port-killer:port-killer": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.power-profile:power-profile": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.process-manager:processes": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.prompt-deck:manage-prompts": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.protondb-search:protondb-search": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.protonvpn:connect": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.pulseaudio:configuration": {
+    "verdict": "error-toast",
+    "why": "Failed to read PulseAudio state: Required CLI tool `pactl` was not found in PATH."
+  },
+  "store.vicinae.reminders:remind": {
+    "verdict": "crashed",
+    "why": "Remind Me crashed: Error: EACCES: permission denied, mkdir '/tmp/tmp.6e64FjtJZQ/data/vicinae-reminders'"
+  },
+  "store.vicinae.rodalies:departures": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.screen-mirror:mirror-screen": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.searxng:search-with-searxng": {
+    "verdict": "crashed",
+    "why": "Search with Searxng crashed: TypeError: Invalid URL"
+  },
+  "store.vicinae.seerr:explore": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.silverbullet:silverbullet-notes": {
+    "verdict": "error-toast",
+    "why": "Error loading notes: TypeError: Failed to parse URL from compass-conformance/.fs/"
+  },
+  "store.vicinae.simple-bookmarks:simple-bookmarks": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.skate:skate": {
+    "verdict": "error-toast",
+    "why": "Failed to load databases: Skate is not installed or not in PATH"
+  },
+  "store.vicinae.spongebob-text-transformer:spongebob-text-transformer": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.ssh:ssh": {
+    "verdict": "rendered-empty",
+    "why": "only ever drew an empty frame"
+  },
+  "store.vicinae.stocks:stocks": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.supergenpass:supergenpass": {
+    "verdict": "rendered-empty",
+    "why": "only ever drew an empty frame"
+  },
+  "store.vicinae.systemd:services": {
+    "verdict": "crashed",
+    "why": "Services crashed: Error: connect ENOENT /var/run/dbus/system_bus_socket"
+  },
+  "store.vicinae.timer:index": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.vscode-recents:open-recents": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.vscrot:all": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.wallhaven:downloaded-wallpapers": {
+    "verdict": "rendered-empty",
+    "why": "only ever drew an empty frame"
+  },
+  "store.vicinae.wayland-explorer:protocols": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.wifi-commander:manage-saved-networks": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.wikipedia:open-page": {
+    "verdict": "error-toast",
+    "why": "Page not found: compass-conformance"
+  },
+  "store.vicinae.wiktionary:define": {
+    "verdict": "crashed",
+    "why": "Define crashed: UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise"
+  },
+  "store.vicinae.workspace:manage-workspaces": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.zed-recents:open-recents": {
+    "verdict": "rendered"
+  },
+  "store.vicinae.zoxide-recent-directories:recent-directories": {
+    "verdict": "error-toast",
+    "why": "zoxide not found: Please install zoxide"
+  }
+}

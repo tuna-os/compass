@@ -1,0 +1,1195 @@
+{
+  "pinned": "2026-09-24",
+  "criterion": "Raycast: top 25 by download_count over the first 300 listings, excluding compat-sheet 'impossible' and macOS-only listings; Vicinae: every store extension. First view command of each.",
+  "raycast": [
+    {
+      "store": "raycast",
+      "name": "translate",
+      "author": "gebeto",
+      "owner": "gebeto",
+      "title": "Google Translate",
+      "downloads": 487312,
+      "commit": "3a5a559d085c3e0dbf1dbe18fa4380030aa06793",
+      "command": "translate",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "spotify-player",
+      "author": "mattisssa",
+      "owner": "mattisssa",
+      "title": "Spotify Player",
+      "downloads": 479906,
+      "commit": "8490f28184f90685095c1177c7af4d04a6812579",
+      "command": "search",
+      "compat": "partial"
+    },
+    {
+      "store": "raycast",
+      "name": "visual-studio-code",
+      "author": "thomas",
+      "owner": "thomas",
+      "title": "Visual Studio Code",
+      "downloads": 403249,
+      "commit": "081f60f7ae5bf9b1787e789cfcc3fbe11c8115bb",
+      "command": "index",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "linear",
+      "author": "thomaslombart",
+      "owner": "linear",
+      "title": "Linear",
+      "downloads": 393731,
+      "commit": "4dee315bb203eaae0a5e7bfdc1718274eb6e2295",
+      "command": "create-issue",
+      "compat": "partial"
+    },
+    {
+      "store": "raycast",
+      "name": "slack",
+      "author": "mommertf",
+      "owner": "mommertf",
+      "title": "Slack",
+      "downloads": 327940,
+      "commit": "4dee315bb203eaae0a5e7bfdc1718274eb6e2295",
+      "command": "search",
+      "compat": null
+    },
+    {
+      "store": "raycast",
+      "name": "notion",
+      "author": "HenriChabrand",
+      "owner": "notion",
+      "title": "Notion",
+      "downloads": 274803,
+      "commit": "4dee315bb203eaae0a5e7bfdc1718274eb6e2295",
+      "command": "create-database-page",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "chatgpt",
+      "author": "abielzulio",
+      "owner": "abielzulio",
+      "title": "ChatGPT",
+      "downloads": 256648,
+      "commit": "704e1a8988b8998debfbd29903d63310a0d8c15d",
+      "command": "ask",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "1password",
+      "author": "khasbilegt",
+      "owner": "khasbilegt",
+      "title": "1Password",
+      "downloads": 245466,
+      "commit": "3c654737b0d566d3103fcdf72221a9f34664bdf2",
+      "command": "item-list",
+      "compat": null
+    },
+    {
+      "store": "raycast",
+      "name": "github",
+      "author": "thomaslombart",
+      "owner": "raycast",
+      "title": "GitHub",
+      "downloads": 205182,
+      "commit": "4dee315bb203eaae0a5e7bfdc1718274eb6e2295",
+      "command": "my-pull-requests",
+      "compat": "partial"
+    },
+    {
+      "store": "raycast",
+      "name": "speedtest",
+      "author": "tonka3000",
+      "owner": "tonka3000",
+      "title": "Speedtest",
+      "downloads": 181417,
+      "commit": "2e9c66f0bbc014643d6f9d7bd42ec7cd26bb3384",
+      "command": "index",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "obsidian",
+      "author": "marcjulian",
+      "owner": "marcjulian",
+      "title": "Obsidian",
+      "downloads": 170894,
+      "commit": "734506e382bba7c9116020bef6280e3199c6ff8b",
+      "command": "searchNoteCommand",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "google-search",
+      "author": "mblode",
+      "owner": "mblode",
+      "title": "Google Search",
+      "downloads": 148458,
+      "commit": "3c654737b0d566d3103fcdf72221a9f34664bdf2",
+      "command": "index",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "video-downloader",
+      "author": "vimtor",
+      "owner": "vimtor",
+      "title": "Video Downloader",
+      "downloads": 132359,
+      "commit": "a9e5806c10f771b1ffc0d7c088052bff13aab672",
+      "command": "index",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "timers",
+      "author": "ThatNerd",
+      "owner": "ThatNerd",
+      "title": "Timers",
+      "downloads": 120409,
+      "commit": "351f1abf14bd550862b49e2cbfcd8d4b9fab901e",
+      "command": "startCustomTimer",
+      "compat": "partial"
+    },
+    {
+      "store": "raycast",
+      "name": "zoom",
+      "author": "thomaslombart",
+      "owner": "raycast",
+      "title": "Zoom",
+      "downloads": 114360,
+      "commit": "4dee315bb203eaae0a5e7bfdc1718274eb6e2295",
+      "command": "schedule-meeting",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "warp",
+      "author": "joetannenbaum",
+      "owner": "warpdotdev",
+      "title": "Warp",
+      "downloads": 113471,
+      "commit": "8a4409d03a593ea0b69b825b525c80753102a379",
+      "command": "launch-config",
+      "compat": null
+    },
+    {
+      "store": "raycast",
+      "name": "youtube",
+      "author": "tonka3000",
+      "owner": "tonka3000",
+      "title": "YouTube",
+      "downloads": 109299,
+      "commit": "bc7a586cfdcbed0fd7b993feae78944b755bc9c0",
+      "command": "search-videos",
+      "compat": "partial"
+    },
+    {
+      "store": "raycast",
+      "name": "lorem-ipsum",
+      "author": "AntonNiklasson",
+      "owner": "AntonNiklasson",
+      "title": "Lorem Ipsum",
+      "downloads": 109255,
+      "commit": "3c654737b0d566d3103fcdf72221a9f34664bdf2",
+      "command": "paragraphs",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "gif-search",
+      "author": "josephschmitt",
+      "owner": "josephschmitt",
+      "title": "GIF Search",
+      "downloads": 104889,
+      "commit": "5029e95bc9786e5751bc99a4372ccc93aecc5ebf",
+      "command": "search",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "json-format",
+      "author": "destiner",
+      "owner": "destiner",
+      "title": "Format JSON",
+      "downloads": 99004,
+      "commit": "3c654737b0d566d3103fcdf72221a9f34664bdf2",
+      "command": "formatSelectionAndShow",
+      "compat": "partial"
+    },
+    {
+      "store": "raycast",
+      "name": "todoist",
+      "author": "thomaslombart",
+      "owner": "doist",
+      "title": "Todoist",
+      "downloads": 94988,
+      "commit": "4dee315bb203eaae0a5e7bfdc1718274eb6e2295",
+      "command": "home",
+      "compat": "partial"
+    },
+    {
+      "store": "raycast",
+      "name": "remove-paywall",
+      "author": "tegola",
+      "owner": "tegola",
+      "title": "Remove Paywall",
+      "downloads": 84783,
+      "commit": "186d955eda64f9e956b25a3fdf5566b1d38f57f2",
+      "command": "remove-paywall",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "raycast-gemini",
+      "author": "EvanZhouDev",
+      "owner": "EvanZhouDev",
+      "title": "Google Gemini",
+      "downloads": 83607,
+      "commit": "4b994f9073b922c5e5936c65be2a47aafe8de3e3",
+      "command": "history",
+      "compat": null
+    },
+    {
+      "store": "raycast",
+      "name": "downloads-manager",
+      "author": "thomas",
+      "owner": "thomas",
+      "title": "Downloads Manager",
+      "downloads": 83198,
+      "commit": "3c654737b0d566d3103fcdf72221a9f34664bdf2",
+      "command": "manage-downloads",
+      "compat": "full"
+    },
+    {
+      "store": "raycast",
+      "name": "tailwindcss",
+      "author": "vimtor",
+      "owner": "vimtor",
+      "title": "Tailwind CSS",
+      "downloads": 79185,
+      "commit": "c953d0a09af79f508bf7f8a8621775fcc2bab755",
+      "command": "search-documentation",
+      "compat": "full"
+    }
+  ],
+  "raycast_skipped": [
+    {
+      "name": "brew",
+      "why": "listed for macOS only"
+    },
+    {
+      "name": "arc",
+      "why": "compat sheet: impossible",
+      "notes": [
+        "applescript"
+      ]
+    },
+    {
+      "name": "apple-notes",
+      "why": "compat sheet: impossible",
+      "notes": [
+        "applescript",
+        "hardcoded MacOS paths to db"
+      ]
+    },
+    {
+      "name": "coffee",
+      "why": "compat sheet: impossible",
+      "notes": [
+        "depends on `caffinate` program"
+      ]
+    },
+    {
+      "name": "apple-reminders",
+      "why": "compat sheet: impossible",
+      "notes": [
+        "swift code"
+      ]
+    },
+    {
+      "name": "raycast-system-monitor",
+      "why": "listed for macOS only"
+    },
+    {
+      "name": "cleanshotx",
+      "why": "compat sheet: impossible",
+      "notes": [
+        "MacOS only app"
+      ]
+    },
+    {
+      "name": "pomodoro",
+      "why": "listed for macOS only"
+    },
+    {
+      "name": "music",
+      "why": "compat sheet: impossible",
+      "notes": [
+        "applescript"
+      ]
+    }
+  ],
+  "vicinae": [
+    {
+      "store": "vicinae",
+      "name": "bluetooth",
+      "author": "gelei",
+      "title": "Bluetooth",
+      "downloads": 3175,
+      "checksum": "e17403b212493d4c00114322987816eeeff99ba3498dfa0f4c0c472e016cd976",
+      "command": "devices"
+    },
+    {
+      "store": "vicinae",
+      "name": "process-manager",
+      "author": "leonkohli",
+      "title": "Process Manager",
+      "downloads": 3164,
+      "checksum": "16c70968d4e6e174326ce0680cce6811263b7d3ba324a204fecf5389f4696902",
+      "command": "processes"
+    },
+    {
+      "store": "vicinae",
+      "name": "arch-packages",
+      "author": "rithvikvibhu",
+      "title": "Arch Packages",
+      "downloads": 2658,
+      "checksum": "edf99cc96415f7760cddc2fac374a4ee190490d6d1dc4386b4ae76d018b4b3aa",
+      "command": "search-arch-packages"
+    },
+    {
+      "store": "vicinae",
+      "name": "fuzzy-files",
+      "author": "sameoldlab",
+      "title": "Fuzzy Files",
+      "downloads": 2388,
+      "checksum": "a88f9d57cef2ea8919653f90d737d9e81a932456049d0667cbdc419cc4876527",
+      "command": "find"
+    },
+    {
+      "store": "vicinae",
+      "name": "wifi-commander",
+      "author": "dagimg-dot",
+      "title": "Wifi Commander",
+      "downloads": 2277,
+      "checksum": "1fb38f7c476bef183f1d3aed2889a51346cc205e10a10cfb462ce98be0338355",
+      "command": "manage-saved-networks"
+    },
+    {
+      "store": "vicinae",
+      "name": "systemd",
+      "author": "knoopx",
+      "title": "Systemd",
+      "downloads": 2231,
+      "checksum": "e4c0e8371884024661687e4bcc459979854e0a6c6a4846c1b3cedbcd2cd510b0",
+      "command": "services"
+    },
+    {
+      "store": "vicinae",
+      "name": "it-tools",
+      "author": "nikbpetrov",
+      "title": "IT Tools",
+      "downloads": 1859,
+      "checksum": "5ef075ac7525dc0a613de3bb999debd172b0010e235f1c9cdfca010dd9373c79",
+      "command": "it-tools-command"
+    },
+    {
+      "store": "vicinae",
+      "name": "player-pilot",
+      "author": "dagimg-dot",
+      "title": "Player Pilot",
+      "downloads": 1646,
+      "checksum": "1c138141d1af83b002739aa6582abadf8e4d9e6cace0df59541fcbd8b134fc1d",
+      "command": "player-pilot"
+    },
+    {
+      "store": "vicinae",
+      "name": "firefox",
+      "author": "knoopx",
+      "title": "Firefox",
+      "downloads": 1545,
+      "checksum": "8bf5b52808c06df5fc458f59e9dcd327014015b4081191496e9c1d073d975292",
+      "command": "bookmarks"
+    },
+    {
+      "store": "vicinae",
+      "name": "hypr-keybinds",
+      "author": "sovereign",
+      "title": "hypr keybinds",
+      "downloads": 1478,
+      "checksum": "364d1e3ed6f37ad9c552f4e021ab226e940a421635091a1b908cc89c704b7575",
+      "command": "hyprland-keybinds"
+    },
+    {
+      "store": "vicinae",
+      "name": "kde-system-settings",
+      "author": "mmstroik",
+      "title": "KDE System Settings",
+      "downloads": 1442,
+      "checksum": "4b09fc0b35a4ec923a11e80f3dc5e8069392e971225462d27a45f35d6f8129c0",
+      "command": "search-kde-settings"
+    },
+    {
+      "store": "vicinae",
+      "name": "niri",
+      "author": "knoopx",
+      "title": "Niri",
+      "downloads": 1395,
+      "checksum": "b893f787ffb0bd8b9461a14c7ae364580e67b9cb283fba7e12cbaa470e9e3692",
+      "command": "keybinds"
+    },
+    {
+      "store": "vicinae",
+      "name": "nix",
+      "author": "knoopx",
+      "title": "Nix",
+      "downloads": 1382,
+      "checksum": "bcd16cbc793bfd0bb016f2dc00c96beba8cd7a02189a63612ae23fa3c57c25f0",
+      "command": "flake-packages"
+    },
+    {
+      "store": "vicinae",
+      "name": "awww-switcher",
+      "author": "sovereign",
+      "title": "AWWW Switcher",
+      "downloads": 1373,
+      "checksum": "3d7a9aa4b71f34f83a0066bd756233bd3ec19405e5c3be74911d77cd19db6211",
+      "command": "wpgrid"
+    },
+    {
+      "store": "vicinae",
+      "name": "gnome-settings",
+      "author": "dagimg-dot",
+      "title": "GNOME Settings",
+      "downloads": 1231,
+      "checksum": "7491c910e89374b810eecb7ebeae48c75cccf61fd67a597076d4ebf4b6fadf76",
+      "command": "appearance"
+    },
+    {
+      "store": "vicinae",
+      "name": "pulseaudio",
+      "author": "rastsislaux",
+      "title": "PulseAudio",
+      "downloads": 1177,
+      "checksum": "366ae921b4ecb73a6ca0630b0208eea51850877521a0991a8d4ed8c0147f5f36",
+      "command": "configuration"
+    },
+    {
+      "store": "vicinae",
+      "name": "port-killer",
+      "author": "luggapugga",
+      "title": "Kill Port",
+      "downloads": 1170,
+      "checksum": "0bf1183c55ad7ec18e1a009f33ba2c2a7d18aaf03113d3cc1461101da8aca690",
+      "command": "port-killer"
+    },
+    {
+      "store": "vicinae",
+      "name": "vscode-recents",
+      "author": "shyassassin",
+      "title": "Visual Studio Code Recent Projects",
+      "downloads": 1097,
+      "checksum": "794b51b45f1db5a938e724cf7f105bf4e522f2f13de6d1005ef7f7ea2299d567",
+      "command": "open-recents"
+    },
+    {
+      "store": "vicinae",
+      "name": "brotab",
+      "author": "brpaz",
+      "title": "Brotab",
+      "downloads": 1042,
+      "checksum": "e13894afc231a6dfe561838757ce444563095b55c10af7da2081689f9755d4b5",
+      "command": "tabs-list"
+    },
+    {
+      "store": "vicinae",
+      "name": "power-profile",
+      "author": "botkooper",
+      "title": "Power profile",
+      "downloads": 1022,
+      "checksum": "df2955eb8979e3df855682a98d0bedd7bc5217b9af3c26593992134879abad47",
+      "command": "power-profile"
+    },
+    {
+      "store": "vicinae",
+      "name": "ssh",
+      "author": "leiserfg",
+      "title": "ssh",
+      "downloads": 1009,
+      "checksum": "eb0ea8cac0ef322c3420f3d619723893504473cdb3429d80323ca4e92545b3c8",
+      "command": "ssh"
+    },
+    {
+      "store": "vicinae",
+      "name": "flathub-search",
+      "author": "fbosch",
+      "title": "Flathub",
+      "downloads": 975,
+      "checksum": "8e7f9a7be6a66266d27d4fb2678f3cb7d303f5c097f0db9f234a8a0a7a517cdf",
+      "command": "flathub-search"
+    },
+    {
+      "store": "vicinae",
+      "name": "github",
+      "author": "knoopx",
+      "title": "GitHub",
+      "downloads": 964,
+      "checksum": "9643ce78a1755ee248fdcfce2e8545b1f38a784378bf00afd819eb6e3d362507",
+      "command": "createIssue"
+    },
+    {
+      "store": "vicinae",
+      "name": "pacman-updates",
+      "author": "sovereign",
+      "title": "pacman-updates",
+      "downloads": 926,
+      "checksum": "88e807f964744c6bd483c5265c998b74517003c05aea3bcafdecb9f8add3c86c",
+      "command": "check-pacman"
+    },
+    {
+      "store": "vicinae",
+      "name": "color-converter",
+      "author": "costeer",
+      "title": "Color Converter",
+      "downloads": 852,
+      "checksum": "93a85bcdcef046601935d79e1b746b577feb6f522d453e76fc0ad3dca08f13be",
+      "command": "convert-color"
+    },
+    {
+      "store": "vicinae",
+      "name": "zed-recents",
+      "author": "pavle99",
+      "title": "Zed Recent Projects",
+      "downloads": 834,
+      "checksum": "e24ec40d4ae3c07b7466a09d892ed6f8bae9a62cb10e1161049706a8a150969c",
+      "command": "open-recents"
+    },
+    {
+      "store": "vicinae",
+      "name": "nerdfont-search",
+      "author": "fbosch",
+      "title": "NerdFonts",
+      "downloads": 733,
+      "checksum": "edabe549f65b1d4995c5d46f85384325f1bc2cb3869617202752c433ca09e56b",
+      "command": "nerdfonts-search"
+    },
+    {
+      "store": "vicinae",
+      "name": "protondb-search",
+      "author": "fbosch",
+      "title": "ProtonDB",
+      "downloads": 728,
+      "checksum": "fabd46f159db0de94e14bcde8efe6b480d6ebe6f9ee147dab9b8450c61f253d3",
+      "command": "protondb-search"
+    },
+    {
+      "store": "vicinae",
+      "name": "aria2-manager",
+      "author": "ozer-01",
+      "title": "Aria2 Manager",
+      "downloads": 695,
+      "checksum": "8f2b24ccaf0aa2e5e68191c592705e2ff3c31e51ce4718d3e62dc24f3937979a",
+      "command": "index"
+    },
+    {
+      "store": "vicinae",
+      "name": "wikipedia",
+      "author": "sei40kr",
+      "title": "Wikipedia",
+      "downloads": 671,
+      "checksum": "b561fd1bd255e65fd28b5365608bd79dd066eb7f641a9a7bcb54f417f379d176",
+      "command": "open-page"
+    },
+    {
+      "store": "vicinae",
+      "name": "dashboard-icons",
+      "author": "aurelleb",
+      "title": "Dashboard Icons",
+      "downloads": 653,
+      "checksum": "814769e0cc789fae71a44c257883fda879ba5857f59539777632a1307a1d6a49",
+      "command": "search-icons"
+    },
+    {
+      "store": "vicinae",
+      "name": "dbus",
+      "author": "aurelleb",
+      "title": "DBus",
+      "downloads": 650,
+      "checksum": "ff21db6a21a1ccb6533db9b6de9311b2e2b578e26e462ce9aff523477ada7d8f",
+      "command": "explore-bus"
+    },
+    {
+      "store": "vicinae",
+      "name": "omarchy-menu",
+      "author": "codingcodax",
+      "title": "Omarchy Menu",
+      "downloads": 634,
+      "checksum": "fe91de7de046ce75e243861da4e8df3b450a878d341a57b09f1adbfcca77d01a",
+      "command": "capture"
+    },
+    {
+      "store": "vicinae",
+      "name": "case-converter",
+      "author": "alan7a",
+      "title": "Case converter",
+      "downloads": 627,
+      "checksum": "b5f7d238124616888dfcf4da5849128c6374162fb77dabc9596bbbba74d10384",
+      "command": "case-converter"
+    },
+    {
+      "store": "vicinae",
+      "name": "wiktionary",
+      "author": "luleyleo",
+      "title": "Wiktionary Dictionary",
+      "downloads": 608,
+      "checksum": "43a0f2458a997e5fed21bdb2bc763810d1dfeabca956436f6e8feee2e1da65fd",
+      "command": "define"
+    },
+    {
+      "store": "vicinae",
+      "name": "podman",
+      "author": "knoopx",
+      "title": "Podman",
+      "downloads": 585,
+      "checksum": "488baa835da655260547c80589e5a992ac8c2a4f7b5bba4fef03dd5235c3408a",
+      "command": "containers"
+    },
+    {
+      "store": "vicinae",
+      "name": "mullvad",
+      "author": "aurelleb",
+      "title": "Mullvad VPN",
+      "downloads": 578,
+      "checksum": "39fdbb5617ed94274535744052a4dc24fe6bcb9009b515e45a09a486cf641da0",
+      "command": "mullvad"
+    },
+    {
+      "store": "vicinae",
+      "name": "jetbrains-recent-projects",
+      "author": "furkantrn",
+      "title": "JetBrains Recent Projects",
+      "downloads": 568,
+      "checksum": "c8bacb059a9663701ac2ef4cd8d4324ef6254b5ae66e9e0c5729845faefaccc5",
+      "command": "jetbrains-projects"
+    },
+    {
+      "store": "vicinae",
+      "name": "timer",
+      "author": "harshnarayanjha",
+      "title": "Timer",
+      "downloads": 565,
+      "checksum": "a398274b8cd86c91deb57acce544fbe0dfb4844578817804cb43a9eb4dfa3ee0",
+      "command": "index"
+    },
+    {
+      "store": "vicinae",
+      "name": "hyprland-monitors",
+      "author": "fredrikmwold",
+      "title": "Hyprland Monitors",
+      "downloads": 538,
+      "checksum": "53f93381cee6a0d07324d242825ef4c2f7063632788e48530839c97aebe93408",
+      "command": "configure-monitors"
+    },
+    {
+      "store": "vicinae",
+      "name": "stocks",
+      "author": "knoopx",
+      "title": "Stocks",
+      "downloads": 526,
+      "checksum": "f3c9bd5785e6ef6ab7f96a09329e30a3ddcd90ee0b19b0d6a7ba2b83b4bc638d",
+      "command": "stocks"
+    },
+    {
+      "store": "vicinae",
+      "name": "chromium-bookmarks",
+      "author": "aurelleb",
+      "title": "Chromium Bookmarks",
+      "downloads": 512,
+      "checksum": "f110e5f334bb02451a6ed31c5d3c7f3f339ad89fc2a3b012fc79f5eeaac73bf8",
+      "command": "search-bookmarks"
+    },
+    {
+      "store": "vicinae",
+      "name": "agenda",
+      "author": "knoopx",
+      "title": "Agenda",
+      "downloads": 502,
+      "checksum": "6c311374f268873d0a07367ffb36ca1e951645bd78e6710ff07f9029e6440608",
+      "command": "manage-calendars"
+    },
+    {
+      "store": "vicinae",
+      "name": "keepassxc",
+      "author": "system7",
+      "title": "KeePassXC",
+      "downloads": 500,
+      "checksum": "08f528738fa612079e661752a64d72bbaf72827972545f0ebea2fdde00f3995c",
+      "command": "search"
+    },
+    {
+      "store": "vicinae",
+      "name": "zoxide-recent-directories",
+      "author": "c4n4m1",
+      "title": "zoxide recent directories",
+      "downloads": 493,
+      "checksum": "8bbfc0344272506ec7e95294ed06356b239b3a576d3be741293ba7e7f7cad9bf",
+      "command": "recent-directories"
+    },
+    {
+      "store": "vicinae",
+      "name": "hypr",
+      "author": "nino-mau",
+      "title": "Hypr",
+      "downloads": 486,
+      "checksum": "d03c96a71549bfa7c666d9cf370770dbaa712c08fe28e4d713e316ce4cae1e95",
+      "command": "keybinds"
+    },
+    {
+      "store": "vicinae",
+      "name": "searxng",
+      "author": "ninetonine",
+      "title": "Searxng Integration",
+      "downloads": 469,
+      "checksum": "7b19bf601757fb6716908ac9e2ba6d92e4383bb41dcf7a4c577d060db46ed180",
+      "command": "search-with-searxng"
+    },
+    {
+      "store": "vicinae",
+      "name": "agent-skills-sh",
+      "author": "aurelleb",
+      "title": "Agent Skills",
+      "downloads": 446,
+      "checksum": "89440222c226131ed0233f5357dc43df808ca84d0ea4739584540f75f34a3159",
+      "command": "install-agent-skills"
+    },
+    {
+      "store": "vicinae",
+      "name": "pass",
+      "author": "tinkerbells",
+      "title": "Pass",
+      "downloads": 430,
+      "checksum": "2ed573be39f7c774dbea422d711a6c7d7c1caa66d6cadf0952b2d4164340fd0b",
+      "command": "pass"
+    },
+    {
+      "store": "vicinae",
+      "name": "noctalia-shell-wallpaper-selector",
+      "author": "gimblet",
+      "title": "Noctalia Shell Wallpaper Selector",
+      "downloads": 418,
+      "checksum": "3ec59674d29efb7d126e8b35a70a9385b9b8eb872d16463e49561dbffabde050",
+      "command": "change-your-wallpaper"
+    },
+    {
+      "store": "vicinae",
+      "name": "iconify",
+      "author": "nino-mau",
+      "title": "Iconify",
+      "downloads": 395,
+      "checksum": "ab6c1aee7810fa239ba2f71369b9f56afcfe54904e64e819e3a3b2fe0d8cb49f",
+      "command": "search-icons"
+    },
+    {
+      "store": "vicinae",
+      "name": "mise",
+      "author": "fredrikmwold",
+      "title": "Manage Tools",
+      "downloads": 381,
+      "checksum": "e09c81f95f3c0d0b95b293053341314f467132ec2c40eae61fbf67fdbf94e291",
+      "command": "mise"
+    },
+    {
+      "store": "vicinae",
+      "name": "html-symbol-finder",
+      "author": "codingcodax",
+      "title": "HTML Symbol Finder",
+      "downloads": 368,
+      "checksum": "ea6fa816a74735ead0f01e1ffbe5192baf71f92302fb706e002a9a2eb5cb7cb7",
+      "command": "index"
+    },
+    {
+      "store": "vicinae",
+      "name": "supergenpass",
+      "author": "knoopx",
+      "title": "SuperGenPass",
+      "downloads": 346,
+      "checksum": "12f82a7b9ecc7fabb36450366f9fe93a1c5f774e84f6eddbf94fc008399e9dfd",
+      "command": "supergenpass"
+    },
+    {
+      "store": "vicinae",
+      "name": "otp",
+      "author": "knoopx",
+      "title": "OTP",
+      "downloads": 337,
+      "checksum": "8ddcdc2830e3be4379abaea23249e34f10aa7791929fbbf66e349eacdb07ddea",
+      "command": "add-account"
+    },
+    {
+      "store": "vicinae",
+      "name": "gnome-extensions",
+      "author": "7system7",
+      "title": "GNOME Extensions",
+      "downloads": 321,
+      "checksum": "0e1ecdc1b4740bbe9bd49cf4a3b9bfc9f5f64f0db8f3ea95fe77620cd4efa3b1",
+      "command": "gnome-extensions"
+    },
+    {
+      "store": "vicinae",
+      "name": "kaomojis",
+      "author": "bl4zee1g",
+      "title": "Kaomojis",
+      "downloads": 311,
+      "checksum": "7f9a2b41d06102ff92769ce2101cc877894ea6c164fb4e2941dcaa9b4c51500d",
+      "command": "kaomoji"
+    },
+    {
+      "store": "vicinae",
+      "name": "simple-bookmarks",
+      "author": "shadercompilation",
+      "title": "Simple Bookmarks",
+      "downloads": 304,
+      "checksum": "6e9f46cdb11a87ac49ba9cc5f462e90f860bf2679d996ecad8ade78766ea356c",
+      "command": "simple-bookmarks"
+    },
+    {
+      "store": "vicinae",
+      "name": "npm",
+      "author": "fredrikmwold",
+      "title": "NPM",
+      "downloads": 302,
+      "checksum": "383ad83c66ca62649e248f0a60e2a6491d24852121a7a9e6c085deeb649c14fa",
+      "command": "npm-install"
+    },
+    {
+      "store": "vicinae",
+      "name": "clean-keyboard",
+      "author": "xevrion",
+      "title": "Clean Keyboard",
+      "downloads": 301,
+      "checksum": "d8984957ccfa2b3afa456cd018769df7f250e9a3fdadff261cf87a870f6211d0",
+      "command": "clean-keyboard"
+    },
+    {
+      "store": "vicinae",
+      "name": "wallhaven",
+      "author": "aurelleb",
+      "title": "Wallhaven",
+      "downloads": 299,
+      "checksum": "879514f50a1674b20be318fffa4f3c3d04dc4cf7fbb8ded8277dfb0a37e05792",
+      "command": "downloaded-wallpapers"
+    },
+    {
+      "store": "vicinae",
+      "name": "gnome-dnd",
+      "author": "brpaz",
+      "title": "Do Not Disturb",
+      "downloads": 294,
+      "checksum": "45cc465f939fa8556297908548096e094696cdf5e24ffae2306b24f875fab659",
+      "command": "status"
+    },
+    {
+      "store": "vicinae",
+      "name": "linuxbrew",
+      "author": "domainus",
+      "title": "Linuxbrew",
+      "downloads": 287,
+      "checksum": "3445e8e9af3061f2405d7ad34d6eaf84cbfcf1a049dccd1f9f770a36adf77af7",
+      "command": "installed"
+    },
+    {
+      "store": "vicinae",
+      "name": "spongebob-text-transformer",
+      "author": "bassadin",
+      "title": "Spongebob Text Transformer",
+      "downloads": 285,
+      "checksum": "d20f1711b2ef8abd547b3be1737bd57aed65e0eabb817881850b3a24f1a9f739",
+      "command": "spongebob-text-transformer"
+    },
+    {
+      "store": "vicinae",
+      "name": "number-converter",
+      "author": "asd2003ru",
+      "title": "Number converter",
+      "downloads": 279,
+      "checksum": "1fc31a0a2ac548ab850450340138063451c6fd02f2ca25c63bed9c8c972636f1",
+      "command": "convert-from-binary"
+    },
+    {
+      "store": "vicinae",
+      "name": "bitwarden",
+      "author": "bl4zee1g",
+      "title": "Bitwarden (rbw)",
+      "downloads": 278,
+      "checksum": "8dfcffd16cbc1d970f6da9d5e283c852f7ff137ac758e05ea5c4dc2aa0e70501",
+      "command": "browse-vault"
+    },
+    {
+      "store": "vicinae",
+      "name": "floww",
+      "author": "dagimg-dot",
+      "title": "Floww",
+      "downloads": 235,
+      "checksum": "f60be0acbc1801f22655781726f34fa7afd8bc28bcba3e94ac63aeb53e84ad20",
+      "command": "floww"
+    },
+    {
+      "store": "vicinae",
+      "name": "silverbullet",
+      "author": "knoopx",
+      "title": "Silverbullet",
+      "downloads": 232,
+      "checksum": "0ee01707cc4c8946d3ec3888a5487d017c2be00029c393194319e8f299b3bbd9",
+      "command": "silverbullet-notes"
+    },
+    {
+      "store": "vicinae",
+      "name": "bedrock-chat",
+      "author": "hongyilyu",
+      "title": "Bedrock Chat",
+      "downloads": 205,
+      "checksum": "d2ab49048d858c93627499c4af231ce1e206ef2bb8f866fdc1e3ae10ae3f261b",
+      "command": "ask"
+    },
+    {
+      "store": "vicinae",
+      "name": "rodalies",
+      "author": "knoopx",
+      "title": "Rodalies",
+      "downloads": 201,
+      "checksum": "87808fe0c34f2ea1ac700008825830aebe12041465b47a3bbc38893a74a1672c",
+      "command": "departures"
+    },
+    {
+      "store": "vicinae",
+      "name": "exegol",
+      "author": "lap1nou",
+      "title": "Manage Exegol containers",
+      "downloads": 186,
+      "checksum": "8fd247d4de8af2f08e09dfc0a4c3416a7651b9156c7ef81cc982c0336af9b936",
+      "command": "exegol"
+    },
+    {
+      "store": "vicinae",
+      "name": "skate",
+      "author": "knoopx",
+      "title": "Skate",
+      "downloads": 184,
+      "checksum": "65dae8781007d8a5dab1b6aa0082131d29e72223f3c527f255764198f5df5b9d",
+      "command": "skate"
+    },
+    {
+      "store": "vicinae",
+      "name": "seerr",
+      "author": "vmohammad24",
+      "title": "Seerr",
+      "downloads": 146,
+      "checksum": "6ef6e4b99f84ed3289972233b76758690276d9918e6663b81aa4a888a5510c82",
+      "command": "explore"
+    },
+    {
+      "store": "vicinae",
+      "name": "freetube",
+      "author": "nihalxkumar",
+      "title": "FreeTube",
+      "downloads": 141,
+      "checksum": "ba70fb090f2554e90bc3779244ec7175121458f1b80e1c18b8bf4b2cf8bb1e06",
+      "command": "bookmarks"
+    },
+    {
+      "store": "vicinae",
+      "name": "niri-monitors",
+      "author": "xwaleedahmad",
+      "title": "Niri Monitors",
+      "downloads": 123,
+      "checksum": "a1a2ba6a6fd810d41e7c65b67bec600040c909f449b57a92050b1cb6f6d7023c",
+      "command": "niri-monitors"
+    },
+    {
+      "store": "vicinae",
+      "name": "prompt-deck",
+      "author": "tadassuksteris",
+      "title": "PromptDeck",
+      "downloads": 106,
+      "checksum": "91909b6940f4a3f1d0e199a3f031a6c62a1718d993eb5aeb3fe8b8c157527ba7",
+      "command": "manage-prompts"
+    },
+    {
+      "store": "vicinae",
+      "name": "gpu-screen-recorder",
+      "author": "lufimio",
+      "title": "GPU Screen Recorder",
+      "downloads": 104,
+      "checksum": "933783e2e622a048af0fd407f8692ba067e9b6af28a4c7f37208b7b4361d9833",
+      "command": "main"
+    },
+    {
+      "store": "vicinae",
+      "name": "helium",
+      "author": "adityazxxx",
+      "title": "Helium",
+      "downloads": 98,
+      "checksum": "87103421741d9b3cffc73a2159f32f0527c3becce977967c5fd452998dcaeb24",
+      "command": "search-bookmarks"
+    },
+    {
+      "store": "vicinae",
+      "name": "kde-connect",
+      "author": "xwaleedahmad",
+      "title": "KDE Connect",
+      "downloads": 84,
+      "checksum": "50f6983e48a4db82a74aeca053a354ed7677685caf44c97d96be186ce7bfc04d",
+      "command": "ring-phone"
+    },
+    {
+      "store": "vicinae",
+      "name": "lorem-ipsum",
+      "author": "tiagem",
+      "title": "Lorem Ipsum",
+      "downloads": 83,
+      "checksum": "92a125676e929210005813642ce777145b26c6981a66a639139a5db56015b0d2",
+      "command": "generate"
+    },
+    {
+      "store": "vicinae",
+      "name": "coffee",
+      "author": "tiagem",
+      "title": "Coffee",
+      "downloads": 79,
+      "checksum": "937a5fc067a6476283c75be0ee748a687b4ae373eb6f1bcaa494186fa4f6cd04",
+      "command": "caffeinate-for"
+    },
+    {
+      "store": "vicinae",
+      "name": "reminders",
+      "author": "wy3z",
+      "title": "Reminders",
+      "downloads": 77,
+      "checksum": "daa6c2f30b74d99eea5690e5a908c5ca63770cfe799efa85e1627052a5cbdcd8",
+      "command": "remind"
+    },
+    {
+      "store": "vicinae",
+      "name": "ollama-wordsmith",
+      "author": "adityazxxx",
+      "title": "Ollama WordSmith",
+      "downloads": 72,
+      "checksum": "b4c907c7ea3b5db91ccd96a5eff1f6abbe48251e65e466551572ec1c6f5918e2",
+      "command": "dictionary"
+    },
+    {
+      "store": "vicinae",
+      "name": "protonvpn",
+      "author": "skifli",
+      "title": "ProtonVPN",
+      "downloads": 60,
+      "checksum": "a5489d85db3b1449cf8367b0b3488d3b9f6b39a79854d95ff4bf6077296ab66d",
+      "command": "connect"
+    },
+    {
+      "store": "vicinae",
+      "name": "custom-commands",
+      "author": "omermohideen",
+      "title": "Custom Commands",
+      "downloads": 57,
+      "checksum": "04fb320665e8828254d7659fe4ed5dcc1c11709e6b61f788b1f26c2335192303",
+      "command": "commands"
+    },
+    {
+      "store": "vicinae",
+      "name": "dms-integration",
+      "author": "aurelienjt",
+      "title": "DMS",
+      "downloads": 55,
+      "checksum": "c80a794cdd213eae1d49808bccd60238f652380a906ba35ffdd18e8963c8f7a9",
+      "command": "dsearch"
+    },
+    {
+      "store": "vicinae",
+      "name": "vscrot",
+      "author": "jaintp",
+      "title": "VScrot",
+      "downloads": 54,
+      "checksum": "30bfbf844d3a0655cf2a72158ec78e9130ba83857747e852391ea47546101216",
+      "command": "all"
+    },
+    {
+      "store": "vicinae",
+      "name": "wayland-explorer",
+      "author": "aurelleb",
+      "title": "Wayland Explorer",
+      "downloads": 53,
+      "checksum": "f5a9473c73ecf856c012366de64c0b66747ca9f012f719ea948d4d74f16f72fa",
+      "command": "protocols"
+    },
+    {
+      "store": "vicinae",
+      "name": "jwt",
+      "author": "balazsorban44",
+      "title": "JWT",
+      "downloads": 44,
+      "checksum": "968ec996eebdfe9cf89a677341cd8d156de33cb05951759c3456adfd9a0f4f39",
+      "command": "decode"
+    },
+    {
+      "store": "vicinae",
+      "name": "screen-mirror",
+      "author": "xwaleedahmad",
+      "title": "Screen Mirror",
+      "downloads": 40,
+      "checksum": "0fb3e79ffc25de6442e9def7a2f7f16b273cdf3c8031603f37788879b5faba23",
+      "command": "mirror-screen"
+    },
+    {
+      "store": "vicinae",
+      "name": "workspace",
+      "author": "tiagem",
+      "title": "Workspace",
+      "downloads": 38,
+      "checksum": "98c1d183dc333296c73e0f33a91450a4cbd5348dd6538a80865518fe406f1482",
+      "command": "manage-workspaces"
+    },
+    {
+      "store": "vicinae",
+      "name": "gentoo-explorer",
+      "author": "aurelleb",
+      "title": "Gentoo Explorer",
+      "downloads": 35,
+      "checksum": "2831407a05a769ed5b4c5f07e8a4d60684e8c5c5d2102d4cd91602e462c438ff",
+      "command": "browse-categories"
+    },
+    {
+      "store": "vicinae",
+      "name": "aseprite",
+      "author": "omermohideen",
+      "title": "Aseprite",
+      "downloads": 28,
+      "checksum": "db6bb5f21548c651e5121643b8051af9620ce299f130ddcd954c2e89a9e26807",
+      "command": "open-recent"
+    },
+    {
+      "store": "vicinae",
+      "name": "buku",
+      "author": "msclp",
+      "title": "Buku",
+      "downloads": 22,
+      "checksum": "11418ec38287a743796434e15418a756b6577b63ef8733b8f85d0722f623dc34",
+      "command": "add-bookmark"
+    },
+    {
+      "store": "vicinae",
+      "name": "cardwire-control",
+      "author": "busybox11",
+      "title": "Cardwire and ASUS",
+      "downloads": 19,
+      "checksum": "bda9e2a41d457002fb68799d88187433b528f00d549adb6682999b7a946a0dde",
+      "command": "set-asus-state"
+    }
+  ]
+}
