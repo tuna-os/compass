@@ -1172,6 +1172,16 @@ the channel that matters.
 Behaviour that intentionally differs from the C++ engine. Each is pinned by a test that fails if
 the behaviour changes, so a future fix is loud rather than silent.
 
+### `compass-core::calculator` — fend instead of Numen, and a digit required
+
+The C++ calculator is Numen, an in-tree library; porting it was not the job, so root search uses
+[`fend-core`](https://crates.io/crates/fend-core), an existing Rust calculator with no dependencies
+of its own. The two engines therefore format some answers differently (fend writes `approx.` before
+an inexact result), and **currency conversion is not available yet**: fend needs exchange rates and
+Compass has no source for them. When to try is the C++ rule (a leading `=` always; otherwise at
+least three characters and nothing else matched), plus one: without the `=`, the query must contain
+a digit, because fend reads almost any word as something (`a` is one ampere).
+
 ### `compass-db` — typo correction without `spellfix1`, in its own file
 
 **Kept on purpose (ADR-0017).** The C++ file indexer asks SQLite's `spellfix1` extension for

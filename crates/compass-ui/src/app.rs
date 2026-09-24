@@ -442,6 +442,8 @@ pub enum RootRow {
     /// An installed extension's command, as its index in
     /// `AppIndex::extensions`.
     Extension(usize),
+    /// The calculator's answer to the query, held in `LauncherApp::calculator`.
+    Calculator,
 }
 
 /// Which view the card shows.
@@ -590,6 +592,8 @@ pub struct LauncherApp {
     /// space, an `AppItem` carries its whole parsed desktop entry, and a
     /// launcher re-ranks on every keystroke.
     results: Vec<RootRow>,
+    /// The calculator's answer to the query, shown first when there is one.
+    calculator: Option<compass_core::calculator::Answer>,
     /// Which view is showing. See [`Page`].
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
@@ -881,6 +885,7 @@ impl LauncherApp {
             app_index,
             query: String::new(),
             results: Vec::new(),
+            calculator: None,
             page: Page::Root,
             clipboard: None,
             windows: None,
@@ -1048,7 +1053,7 @@ impl LauncherApp {
     pub fn selected_item(&self) -> Option<&AppItem> {
         match *self.results.get(self.selected)? {
             RootRow::App(index) => self.app_index.items().get(index),
-            RootRow::Command(_) | RootRow::Extension(_) => None,
+            RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
         }
     }
 
@@ -1120,6 +1125,10 @@ impl LauncherApp {
                     .get(index)
                     .map_or("", |command| command.title.as_str());
                 line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::Calculator) => {
+                let answer = self.calculator.as_ref().map_or("", |a| a.answer.as_str());
+                line.push_str(&format!(" selected_title={answer:?}"));
             }
             None => line.push_str(" selected_title=none"),
         }
@@ -1485,6 +1494,7 @@ impl LauncherApp {
                         if let Some(positions) = positions {
                             self.results = positions;
                             self.selected = 0;
+                            self.apply_calculator();
                             self.warm_icons();
                         } else {
                             self.error = Some(
@@ -1512,6 +1522,14 @@ impl LauncherApp {
                 crate::scroll::reveal_root_selection()
             }
             Message::LaunchSelected => {
+                if let Some(RootRow::Calculator) = self.selected_row()
+                    && let Some(answer) = &self.calculator
+                {
+                    // The C++ primary action: copy the answer, then get out of
+                    // the way so it can be pasted.
+                    let copy = iced::clipboard::write(answer.answer.clone());
+                    return Task::batch([copy, self.conceal()]);
+                }
                 if let Some(RootRow::Command(command)) = self.selected_row() {
                     return self.open_command(command);
                 }
@@ -2342,6 +2360,17 @@ impl LauncherApp {
                         self.subtitles.then(|| command.subtitle.to_owned()),
                         selected,
                     ),
+                    RootRow::Calculator => {
+                        let Some(answer) = &self.calculator else {
+                            continue;
+                        };
+                        self.list_row(
+                            self.initial_badge("=", selected),
+                            answer.answer.clone(),
+                            Some(answer.question.clone()),
+                            selected,
+                        )
+                    }
                     RootRow::Extension(index) => {
                         let Some(command) = self.app_index.extensions().get(*index) else {
                             continue;
@@ -3587,7 +3616,17 @@ impl LauncherApp {
         // different list, and keeping its position would silently select an
         // unrelated application.
         self.selected = 0;
+        self.apply_calculator();
         self.warm_icons();
+    }
+
+    /// Puts the calculator's answer to the query first, when there is one.
+    fn apply_calculator(&mut self) {
+        self.results.retain(|row| *row != RootRow::Calculator);
+        self.calculator = compass_core::calculator::evaluate(&self.query, !self.results.is_empty());
+        if self.calculator.is_some() {
+            self.results.insert(0, RootRow::Calculator);
+        }
     }
 
     /// What goes in a row's icon slot: resolved art, or nothing for the initial.
@@ -3623,7 +3662,7 @@ impl LauncherApp {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => self.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
             })
             .filter_map(AppItem::icon)
             .collect();
@@ -5414,6 +5453,27 @@ mod tests {
     }
 
     #[test]
+    fn a_calculation_that_matches_nothing_is_answered_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("12*3+6".to_owned()));
+        assert_eq!(app.results, [RootRow::Calculator], "{}", app.state_line());
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("42").is_ok() && ui.find("12*3+6").is_ok());
+        }
+        assert!(app.state_line().contains("selected_title=\"42\""));
+
+        let _ = app.update(Message::QueryChanged("fi".to_owned()));
+        assert!(
+            !app.results.contains(&RootRow::Calculator),
+            "a query that matches applications is not a calculation"
+        );
+        let _ = app.update(Message::QueryChanged("=2^10".to_owned()));
+        assert_eq!(app.results.first(), Some(&RootRow::Calculator));
+    }
+
+    #[test]
     fn the_action_panel_is_not_bound_to_the_vim_chord() {
         // Ctrl+K is "move up" in the default Linux scheme. The C++ binds the
         // panel to Ctrl+K on macOS only and Ctrl+B everywhere else, and this
@@ -5686,7 +5746,7 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -6373,7 +6433,7 @@ mod quick_launch_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -6516,7 +6576,7 @@ mod icon_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => app.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) => None,
+                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
             })
             .find(|item| item.name() == name)
             .unwrap_or_else(|| panic!("{name} is not a row"))

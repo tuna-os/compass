@@ -1913,6 +1913,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/fend-core/fend-core-1.5.8.crate",
+        "sha256": "59b16d394a9991c9b0fee89855daafc7c6cd341be9528ac8b45f9b7aed3d8be8",
+        "dest": "cargo/vendor/fend-core-1.5.8"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"59b16d394a9991c9b0fee89855daafc7c6cd341be9528ac8b45f9b7aed3d8be8\", \"files\": {}}",
+        "dest": "cargo/vendor/fend-core-1.5.8",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/find-msvc-tools/find-msvc-tools-0.1.12.crate",
         "sha256": "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d",
         "dest": "cargo/vendor/find-msvc-tools-0.1.12"

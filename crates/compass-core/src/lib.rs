@@ -43,6 +43,7 @@ pub mod boilerplate;
 pub mod browse_apps;
 pub mod bug_report;
 pub mod builtin_icon;
+pub mod calculator;
 pub mod calculator_history;
 pub mod clipboard_history;
 pub mod commands;
