@@ -58,7 +58,11 @@ fn add(db: &Database, id: &str, text: &str) {
 
 fn age(db: &Database, id: &str, seconds_ago: i64) {
     let mut stmt = db
-        .prepare("UPDATE selection SET updated_at = unixepoch() - :ago WHERE id = :id")
+        // Milliseconds, like the store's own clock.
+        .prepare(
+            "UPDATE selection SET updated_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) \
+             - :ago * 1000 WHERE id = :id",
+        )
         .expect("prepare");
     stmt.bind_int64(":ago", seconds_ago).expect("bind");
     stmt.bind_text(":id", id).expect("bind");
@@ -109,36 +113,34 @@ fn updated_at(db: &Database, id: &str) -> i64 {
 
 #[test]
 fn bubbling_up_moves_a_selection_to_now() {
-    // Asserted on updated_at rather than on list order, deliberately.
-    // `updated_at` is whole seconds -- `QDateTime::currentSecsSinceEpoch()` in
-    // the C++, and the same here -- so two selections bubbled within the same
-    // second tie, and `ORDER BY updated_at DESC` leaves their relative order to
-    // SQLite. An earlier version of this test asserted the order and failed on
-    // exactly that tie. The tie is a real property of second granularity, not
-    // something either engine promises, so the test does not lean on it.
+    // Asserted on updated_at; the ordering claim has its own test below.
+    // `updated_at` was whole seconds in the C++ engine, where two selections
+    // bubbled within one second tied. Compass keeps milliseconds and breaks
+    // any remaining tie by insertion order (see `write::now`).
     let d = fresh();
     add(&d.db, "a", "first");
     add(&d.db, "b", "second");
     age(&d.db, "a", 500);
     age(&d.db, "b", 500);
 
-    let before = updated_at(&d.db, "a");
+    let before_a = updated_at(&d.db, "a");
+    let before_b = updated_at(&d.db, "b");
 
     // By id.
     assert!(write::bubble_up(&d.db, "a").expect("bubble"));
     assert!(
-        updated_at(&d.db, "a") > before,
+        updated_at(&d.db, "a") > before_a,
         "bubbling must move updated_at forward"
     );
     assert_eq!(
         updated_at(&d.db, "b"),
-        before,
+        before_b,
         "and must not touch anything else"
     );
 
     // By content hash, which is the path clipboard-service.cpp actually uses.
     assert!(write::bubble_up(&d.db, "hash-b").expect("bubble"));
-    assert!(updated_at(&d.db, "b") > before);
+    assert!(updated_at(&d.db, "b") > before_b);
 }
 
 #[test]
@@ -518,4 +520,70 @@ fn the_preferred_offer_is_the_one_the_list_shows() {
     // different questions rather than one being a special case of the other.
     let all = write::find_selection(&d.db, "one").expect("find").unwrap();
     assert_eq!(all.offers.len(), 2);
+}
+
+#[test]
+fn copies_made_in_quick_succession_list_newest_first() {
+    // The C++ engine's whole-second clock tied these and left their order to
+    // SQLite. Ten inserts back to back, well inside one second.
+    let d = fresh();
+    let ids: Vec<String> = (0..10).map(|i| format!("quick-{i}")).collect();
+    for id in &ids {
+        add(&d.db, id, id);
+    }
+    let page = compass_clipboard::store::query(
+        &d.db,
+        20,
+        0,
+        &compass_clipboard::store::ListSettings::default(),
+    )
+    .expect("query");
+    let listed: Vec<&str> = page.data.iter().map(|e| e.id.as_str()).collect();
+    let newest_first: Vec<&str> = ids.iter().rev().map(String::as_str).collect();
+    assert_eq!(listed, newest_first);
+
+    let searched = compass_clipboard::store::query(
+        &d.db,
+        20,
+        0,
+        &compass_clipboard::store::ListSettings {
+            query: "quick".into(),
+            kind: None,
+        },
+    )
+    .expect("search");
+    let listed: Vec<&str> = searched.data.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(listed, newest_first, "the search path orders the same way");
+}
+
+#[test]
+fn a_recopied_entry_goes_on_top_even_when_the_clock_is_behind() {
+    // Deterministic form of the same-millisecond tie: the newest entry's stamp
+    // is ahead of the wall clock (a clock stepped backwards, or two writes in
+    // one tick). Re-copying an older entry must still put it on top.
+    let d = fresh();
+    add(&d.db, "old", "old");
+    add(&d.db, "new", "new");
+    let ahead = updated_at(&d.db, "new") + 60_000;
+    let mut stmt =
+        d.db.prepare("UPDATE selection SET updated_at = :t WHERE id = 'new'")
+            .expect("prepare");
+    stmt.bind_int64(":t", ahead).expect("bind");
+    stmt.step().expect("move it ahead");
+    drop(stmt);
+
+    assert!(write::bubble_up(&d.db, "old").expect("bubble"));
+    assert!(
+        updated_at(&d.db, "old") > ahead,
+        "strictly after the newest"
+    );
+
+    let page = compass_clipboard::store::query(
+        &d.db,
+        10,
+        0,
+        &compass_clipboard::store::ListSettings::default(),
+    )
+    .expect("query");
+    assert_eq!(page.data[0].id, "old");
 }

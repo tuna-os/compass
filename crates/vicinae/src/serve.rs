@@ -87,6 +87,9 @@ pub struct EngineState {
     max_results: usize,
     /// The attached launcher window, if one is.
     window: WindowSlot,
+    /// Clipboard history, once [`crate::clipboard_service::run`] has opened
+    /// it. `None` until then, and for good when there is no keyring.
+    clipboard: Option<Arc<crate::clipboard_service::ClipboardStore>>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -137,6 +140,7 @@ impl EngineState {
             socket,
             max_results,
             window: WindowSlot::default(),
+            clipboard: None,
         }
     }
 
@@ -179,7 +183,13 @@ impl EngineState {
             socket,
             max_results,
             window: WindowSlot::default(),
+            clipboard: None,
         }
+    }
+
+    /// Makes clipboard history available to requests.
+    pub fn set_clipboard(&mut self, store: Arc<crate::clipboard_service::ClipboardStore>) {
+        self.clipboard = Some(store);
     }
 
     /// The slot holding the attached launcher window.
@@ -218,28 +228,43 @@ impl EngineState {
     #[must_use]
     pub fn query(&self, text: &str) -> Vec<QueryHit> {
         self.index
-            .search_root(text, Some(self.frecency.as_ref()))
+            .search_root_all(text, Some(self.frecency.as_ref()))
             .into_iter()
             .take(self.max_results)
-            .map(|ranked| QueryHit {
-                // The ENTRYPOINT id, not the desktop key. The protocol
-                // documents this field as the "stable identifier of the
-                // underlying root item", and `AppIndex` already builds one
-                // (`app_root_item` -> `entrypoint_id(APPS_PROVIDER_ID, ...)`);
-                // this put `AppItem::key` there instead, so the wire carried
-                // `host--byobu.desktop` for the item every other part of the
-                // system — and the C++ engine — calls
-                // `applications:host--byobu`.
-                id: ranked.entrypoint_id.to_owned(),
-                title: ranked.item.display_name(),
-                subtitle: None,
-                // `match_score`, not `score`. `Ranked::score` is the combined
-                // value that includes the frecency boost and is not bounded,
-                // whereas the wire documents `0..=100` on compass-search's
-                // scale. See the ordering note on `query`.
-                score: ranked.match_score,
+            .map(|hit| match hit {
+                compass_core::RootHit::App(ranked) => app_hit(&ranked),
+                compass_core::RootHit::Command {
+                    command,
+                    match_score,
+                } => QueryHit {
+                    id: command.id(),
+                    title: command.title.to_owned(),
+                    subtitle: Some(command.subtitle.to_owned()),
+                    score: match_score,
+                },
             })
             .collect()
+    }
+}
+
+fn app_hit(ranked: &compass_core::apps::ApplicationRootHit<'_>) -> QueryHit {
+    QueryHit {
+        // The ENTRYPOINT id, not the desktop key. The protocol
+        // documents this field as the "stable identifier of the
+        // underlying root item", and `AppIndex` already builds one
+        // (`app_root_item` -> `entrypoint_id(APPS_PROVIDER_ID, ...)`);
+        // this put `AppItem::key` there instead, so the wire carried
+        // `host--byobu.desktop` for the item every other part of the
+        // system — and the C++ engine — calls
+        // `applications:host--byobu`.
+        id: ranked.entrypoint_id.to_owned(),
+        title: ranked.item.display_name(),
+        subtitle: None,
+        // `match_score`, not `score`. `Ranked::score` is the combined
+        // value that includes the frecency boost and is not bounded,
+        // whereas the wire documents `0..=100` on compass-search's
+        // scale. See the ordering note on `query`.
+        score: ranked.match_score,
     }
 }
 
@@ -333,10 +358,11 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             // executor, and serialize updates through the daemon's store.
             tokio::task::spawn_blocking(move || {
                 let mut state = state.blocking_write();
-                if state.index.get(&key).is_none() {
+                if state.index.get(&key).is_none() && compass_core::commands::by_id(&key).is_none()
+                {
                     return Response::Error(ProtocolError::new(
                         ErrorKind::BadRequest,
-                        "launch key is not present in the application index",
+                        "launch key is neither an application nor a builtin command",
                     ));
                 }
                 match state.frecency.record_launch(&key) {
@@ -358,6 +384,57 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                     "launch history task failed",
                 ))
             })
+        }
+
+        Request::ClipboardHistory { query, limit } => {
+            if limit == 0 {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "a clipboard history request must ask for at least one entry",
+                ));
+            }
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            // SQLite is blocking I/O; keep it off the executor.
+            match tokio::task::spawn_blocking(move || store.history(&query, limit)).await {
+                Ok(Ok(entries)) => Response::ClipboardHistory { entries },
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard history task failed: {err}"),
+                )),
+            }
+        }
+
+        Request::ClipboardContent { id } => {
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    "clipboard history is unavailable: no keyring, or the store would not open \
+                     (the engine log says which)",
+                ));
+            };
+            match tokio::task::spawn_blocking(move || store.content(&id)).await {
+                Ok(Ok(Some((mime_type, data)))) => Response::ClipboardContent { mime_type, data },
+                Ok(Ok(None)) => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no clipboard history entry has that id",
+                )),
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard content task failed: {err}"),
+                )),
+            }
         }
 
         // Handled by the serve loop, which owns the shutdown signal; reaching
@@ -434,6 +511,10 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     // Detached: the hotkey is a convenience, the socket is the contract. A
     // portal that never answers must not keep the engine from listening, so
     // this is spawned rather than awaited or raced against the serve loop.
+    // Detached for the same reason: a keyring that is slow or absent costs
+    // clipboard history, never the socket.
+    tokio::spawn(crate::clipboard_service::run(Arc::clone(&state)));
+
     if hotkey {
         tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
     } else {

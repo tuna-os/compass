@@ -120,3 +120,65 @@ fn equal_root_scores_keep_case_insensitive_display_order_not_file_order() {
         }
     }
 }
+
+fn command_ids(hits: &[compass_core::RootHit<'_>]) -> Vec<String> {
+    hits.iter()
+        .filter_map(|hit| match hit {
+            compass_core::RootHit::Command { command, .. } => Some(command.id()),
+            compass_core::RootHit::App(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn builtin_commands_are_found_by_title_keyword_and_typo() {
+    let (_dir, index) = index();
+    for query in ["Clipboard History", "clipboard", "paste", "clipbaord"] {
+        let hits = index.search_root_all(query, None);
+        assert_eq!(
+            command_ids(&hits).first().map(String::as_str),
+            Some("commands:clipboard-history"),
+            "{query}"
+        );
+    }
+    let exact = index.search_root_all("Clipboard History", None);
+    assert!(matches!(
+        exact.first(),
+        Some(compass_core::RootHit::Command {
+            match_score: 100,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn application_only_search_never_returns_a_command() {
+    let (_dir, index) = index();
+    for query in ["", "clipboard", "clipbaord"] {
+        let all = index.search_root_all(query, None);
+        let apps = index.search_root(query, None);
+        let app_rows = all
+            .iter()
+            .filter(|hit| matches!(hit, compass_core::RootHit::App(_)))
+            .count();
+        assert_eq!(apps.len(), app_rows, "{query:?}");
+    }
+    assert!(index.search_root("clipboard", None).is_empty());
+    assert!(
+        index
+            .position_by_entrypoint("commands:clipboard-history")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_command_used_often_rises_on_the_empty_query() {
+    let (_dir, index) = index();
+    let mut history = JsonFrecencyStore::in_memory(Arc::new(ManualClock::new(1700000000)));
+    history.record_launch("commands:clipboard-history").unwrap();
+    let hits = index.search_root_all("", Some(&history));
+    assert!(
+        matches!(hits.first(), Some(compass_core::RootHit::Command { .. })),
+        "{hits:?}"
+    );
+}

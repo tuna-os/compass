@@ -190,6 +190,8 @@ pub struct AppFlags {
     pub launcher: Arc<dyn AppLauncher>,
     /// Shared ranking/history service when attached to an engine.
     pub backend: Option<Arc<dyn crate::backend::ApplicationBackend>>,
+    /// Clipboard history, which only an attached engine has.
+    pub clipboard: Option<Arc<dyn crate::backend::ClipboardBackend>>,
     /// Startup root settings for local searches; attached searches use the engine's settings.
     pub root_config: compass_core::root_items::RootConfig,
     /// The navigation chord scheme, from `launcher.keybinding`.
@@ -284,6 +286,7 @@ impl Default for AppFlags {
             // exists to end. `vicinae` sets this explicitly.
             launcher: Arc::new(NullLauncher),
             backend: None,
+            clipboard: None,
             root_config: compass_core::root_items::RootConfig::default(),
             link: None,
             exit_on_engine_disconnect: false,
@@ -408,18 +411,44 @@ fn launch_task(
     )
 }
 
+/// What the search field sends as the user types.
+type OnInput = fn(String) -> Message;
+
+/// One row of the root list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootRow {
+    /// An application, as its index in `AppIndex::items`.
+    App(usize),
+    /// A builtin command.
+    Command(&'static compass_core::commands::BuiltinCommand),
+}
+
+/// Which view the card shows.
+#[derive(Debug, Clone)]
+enum Page {
+    /// The root list: applications and commands.
+    Root,
+    /// Clipboard history.
+    Clipboard(crate::clipboard_page::ClipboardPage),
+}
+
 /// The launcher application state.
 pub struct LauncherApp {
     /// The application index.
     app_index: AppIndex,
     /// Current query text.
     query: String,
-    /// Ranked results, as indices into `app_index.items()`.
+    /// Ranked results: applications as indices into `app_index.items()`,
+    /// and builtin commands.
     ///
     /// Indices rather than cloned items: the ranking already works in index
     /// space, an `AppItem` carries its whole parsed desktop entry, and a
     /// launcher re-ranks on every keystroke.
-    results: Vec<usize>,
+    results: Vec<RootRow>,
+    /// Which view is showing. See [`Page`].
+    page: Page,
+    /// Clipboard history. See [`AppFlags::clipboard`].
+    clipboard: Option<Arc<dyn crate::backend::ClipboardBackend>>,
     /// Which row is selected, as a position in `results`.
     selected: usize,
     /// The last launch failure, shown until the query changes.
@@ -657,6 +686,7 @@ impl LauncherApp {
         let app = self;
         app.launcher = flags.launcher;
         app.backend = flags.backend;
+        app.clipboard = flags.clipboard;
         app.app_index.apply_root_config(&flags.root_config);
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
@@ -703,6 +733,8 @@ impl LauncherApp {
             app_index,
             query: String::new(),
             results: Vec::new(),
+            page: Page::Root,
+            clipboard: None,
             selected: 0,
             panel: None,
             error: None,
@@ -805,6 +837,8 @@ impl LauncherApp {
     fn conceal(&mut self) -> Task<Message> {
         self.cancel_search();
         self.panel = None;
+        // A summon starts at the root, whatever view was open when it hid.
+        self.page = Page::Root;
         self.reopen_after_close = false;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
@@ -856,8 +890,22 @@ impl LauncherApp {
     /// The item the selection currently points at, if any.
     #[must_use]
     pub fn selected_item(&self) -> Option<&AppItem> {
-        let index = *self.results.get(self.selected)?;
-        self.app_index.items().get(index)
+        match *self.results.get(self.selected)? {
+            RootRow::App(index) => self.app_index.items().get(index),
+            RootRow::Command(_) => None,
+        }
+    }
+
+    /// The row the selection points at, application or command.
+    #[must_use]
+    pub fn selected_row(&self) -> Option<RootRow> {
+        self.results.get(self.selected).copied()
+    }
+
+    /// Whether clipboard history is the view showing.
+    #[must_use]
+    pub fn showing_clipboard(&self) -> bool {
+        matches!(self.page, Page::Clipboard(_))
     }
 
     /// One line saying what the launcher is showing, for a log.
@@ -895,9 +943,23 @@ impl LauncherApp {
         // The title, not just the index: an index is only meaningful against a
         // corpus the reader cannot see, and "selected=0" is equally true of a
         // right and a wrong first row.
-        match self.selected_item() {
-            Some(item) => line.push_str(&format!(" selected_title={:?}", item.name())),
+        match self.selected_row() {
+            Some(RootRow::App(_)) => {
+                let name = self.selected_item().map_or("", AppItem::name);
+                line.push_str(&format!(" selected_title={name:?}"));
+            }
+            Some(RootRow::Command(command)) => {
+                line.push_str(&format!(" selected_title={:?}", command.title));
+            }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::Clipboard(page) = &self.page {
+            line.push_str(&format!(
+                " page=clipboard clipboard_query={:?} clipboard_rows={} clipboard_selected={}",
+                page.query,
+                page.rows.len(),
+                page.selected
+            ));
         }
         match &self.panel {
             None => line.push_str(" panel=closed"),
@@ -1220,6 +1282,9 @@ impl LauncherApp {
                         let positions: Option<Vec<_>> = keys
                             .iter()
                             .map(|key| {
+                                if let Some(command) = compass_core::commands::by_id(key) {
+                                    return Some(RootRow::Command(command));
+                                }
                                 // By ENTRYPOINT id: `QueryHit.id` is
                                 // `applications:foo`, not the launch key
                                 // `foo.desktop`, and `position` answers only
@@ -1227,7 +1292,8 @@ impl LauncherApp {
                                 // one returns None for every hit and shows
                                 // "the application catalog changed".
                                 let position = self.app_index.position_by_entrypoint(key)?;
-                                (!self.app_index.items()[position].is_action()).then_some(position)
+                                (!self.app_index.items()[position].is_action())
+                                    .then_some(RootRow::App(position))
                             })
                             .collect();
                         if let Some(positions) = positions {
@@ -1260,6 +1326,9 @@ impl LauncherApp {
                 crate::scroll::reveal_root_selection()
             }
             Message::LaunchSelected => {
+                if let Some(RootRow::Command(command)) = self.selected_row() {
+                    return self.open_command(command);
+                }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
@@ -1449,10 +1518,74 @@ impl LauncherApp {
             Message::Command(command) => self.obey(command),
             Message::PollShortcuts => Task::none(),
             Message::EventOccurred(_) => Task::none(),
+            Message::ClipboardQueryChanged(query) => {
+                if let Page::Clipboard(page) = &mut self.page {
+                    page.query = query;
+                }
+                self.clipboard_search_task()
+            }
+            Message::ClipboardLoaded { generation, result } => {
+                if let Page::Clipboard(page) = &mut self.page {
+                    page.apply(generation, result);
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::ClipboardSelected(index) => {
+                if let Page::Clipboard(page) = &mut self.page
+                    && index < page.rows.len()
+                {
+                    page.selected = index;
+                }
+                self.copy_selected_clipboard_entry()
+            }
+            Message::ClipboardContentLoaded(result) => {
+                let Page::Clipboard(page) = &mut self.page else {
+                    return Task::none();
+                };
+                match result.and_then(|content| crate::clipboard_page::copyable_text(&content)) {
+                    Ok(text) => {
+                        // Copy, then get out of the way: the user copied it
+                        // to paste it somewhere else.
+                        let copy = iced::clipboard::write(text);
+                        Task::batch([copy, self.conceal()])
+                    }
+                    Err(reason) => {
+                        page.notice = Some(reason);
+                        Task::none()
+                    }
+                }
+            }
+            Message::Back => {
+                self.page = Page::Root;
+                focus_search()
+            }
             Message::Keyboard(iced::keyboard::Event::KeyPressed {
                 ref key, modifiers, ..
             }) => {
                 use iced::keyboard::{Key, key::Named};
+
+                // A command's view takes every key the root list would, and
+                // Escape goes back to the root rather than hiding the window:
+                // one key undoes opening the wrong command.
+                if let Page::Clipboard(page) = &mut self.page {
+                    let direction = match key.as_ref() {
+                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
+                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                        Key::Named(Named::Escape) => return self.update(Message::Back),
+                        Key::Named(Named::Enter) => return self.copy_selected_clipboard_entry(),
+                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                    };
+                    if let Some(direction) = direction {
+                        page.selected = next_selection(
+                            page.rows.len(),
+                            page.selected,
+                            direction,
+                            self.wrap_navigation,
+                        );
+                        return crate::scroll::reveal_root_selection();
+                    }
+                    return Task::none();
+                }
 
                 // Ctrl+B opens and closes the panel, over the list either way.
                 //
@@ -1568,11 +1701,28 @@ impl LauncherApp {
         let geometry = self.geometry;
         let palette = self.palette();
 
-        let input = text_input("Search…", &self.query)
+        // One field, whose meaning follows the view: the root query, or a
+        // command's own filter. Same id either way, so focus survives the
+        // switch and `focus_search` needs no second target.
+        let (placeholder, value, on_input): (&str, &str, Option<OnInput>) = match &self.page {
+            Page::Root => (
+                "Search…",
+                &self.query,
+                self.panel
+                    .is_none()
+                    .then_some(Message::QueryChanged as OnInput),
+            ),
+            Page::Clipboard(page) => (
+                "Search clipboard history…",
+                &page.query,
+                Some(Message::ClipboardQueryChanged as OnInput),
+            ),
+        };
+        let input = text_input(placeholder, value)
             .id(SEARCH_INPUT)
             .font(self.font())
             .style(query_input_style)
-            .on_input_maybe(self.panel.is_none().then_some(Message::QueryChanged))
+            .on_input_maybe(on_input)
             .padding(Padding::new(0.0).left(14).right(14))
             .size(f32::from(geometry.query_size));
 
@@ -1590,7 +1740,9 @@ impl LauncherApp {
                 ..container::Style::default()
             });
 
-        let body: Element<Message> = if let Some(err) = &self.error {
+        let body: Element<Message> = if let Page::Clipboard(page) = &self.page {
+            self.clipboard_body(page)
+        } else if let Some(err) = &self.error {
             self.notice(err)
         } else if self.query.is_empty() && self.results.is_empty() {
             self.notice("Type to search")
@@ -1598,12 +1750,22 @@ impl LauncherApp {
             self.notice("No results")
         } else {
             let mut list = column![].spacing(f32::from(geometry.row_spacing));
-            for (position, index) in self.results.iter().enumerate() {
-                let Some(item) = self.app_index.items().get(*index) else {
-                    continue;
-                };
+            for (position, root_row) in self.results.iter().enumerate() {
                 let selected = position == self.selected;
-                let row = self.result_row(item, selected);
+                let row = match root_row {
+                    RootRow::App(index) => {
+                        let Some(item) = self.app_index.items().get(*index) else {
+                            continue;
+                        };
+                        self.result_row(item, selected)
+                    }
+                    RootRow::Command(command) => self.list_row(
+                        self.initial_badge(command.title, selected),
+                        command.title.to_owned(),
+                        self.subtitles.then(|| command.subtitle.to_owned()),
+                        selected,
+                    ),
+                };
                 let row: Element<Message> = if selected {
                     container(row).id(crate::scroll::ROOT_SELECTION).into()
                 } else {
@@ -1685,6 +1847,53 @@ impl LauncherApp {
         .into()
     }
 
+    /// Clipboard history's body: its state, or its rows.
+    fn clipboard_body<'a>(
+        &'a self,
+        page: &'a crate::clipboard_page::ClipboardPage,
+    ) -> Element<'a, Message> {
+        use crate::clipboard_page::Status;
+        let geometry = self.geometry;
+        match &page.status {
+            Status::Loading => return self.notice("Loading clipboard history…"),
+            Status::Failed(reason) => return self.notice(reason),
+            Status::Ready if page.rows.is_empty() && page.query.is_empty() => {
+                return self.notice("Nothing copied yet");
+            }
+            Status::Ready if page.rows.is_empty() => return self.notice("No matching entries"),
+            Status::Ready => {}
+        }
+        let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        for (position, entry) in page.rows.iter().enumerate() {
+            let selected = position == page.selected;
+            let subtitle = self
+                .subtitles
+                .then(|| crate::clipboard_page::subtitle(entry));
+            let row = self.list_row(
+                self.initial_badge(crate::clipboard_page::subtitle(entry).as_str(), selected),
+                entry.preview.clone(),
+                subtitle,
+                selected,
+            );
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::ClipboardSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![rows, self.notice(notice)].into(),
+            None => rows.into(),
+        }
+    }
+
     /// A line of explanation where the list would be.
     fn notice(&self, message: &str) -> Element<'_, Message> {
         let geometry = self.geometry;
@@ -1714,18 +1923,6 @@ impl LauncherApp {
     /// the VM tier's window box does not move when the option is turned on.
     fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let palette = self.palette();
-        let title_color = if selected {
-            palette.selection_text
-        } else {
-            palette.text
-        };
-        let subtitle_color = if selected {
-            palette.selection_text
-        } else {
-            palette.muted
-        };
-
         let icon: Element<Message> = match self.row_art(item) {
             Some(crate::icons::IconArt::Raster(path)) => {
                 container(image(path).width(Length::Fill).height(Length::Fill))
@@ -1739,55 +1936,91 @@ impl LauncherApp {
                     .height(Length::Fixed(f32::from(geometry.icon_size)))
                     .into()
             }
-            None => {
-                let initial = item
-                    .name()
-                    .chars()
-                    .next()
-                    .map_or_else(String::new, |c| c.to_uppercase().to_string());
+            None => self.initial_badge(item.name(), selected),
+        };
+        // `subtitles` gates this, not just the presence of a comment: the dense
+        // preset's row is one line tall and a second would overflow it.
+        let subtitle = self
+            .subtitles
+            .then(|| item.comment().map(str::to_owned))
+            .flatten();
+        self.list_row(icon, item.name().to_owned(), subtitle, selected)
+    }
 
-                container(
-                    text(initial)
-                        .font(self.font())
-                        .size(f32::from(geometry.icon_size) / 2.0)
-                        .color(title_color.to_iced()),
-                )
-                .width(Length::Fixed(f32::from(geometry.icon_size)))
-                .height(Length::Fixed(f32::from(geometry.icon_size)))
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .style(move |_: &Theme| container::Style {
-                    background: Some(
-                        Color {
-                            a: 0.18,
-                            ..palette.accent.to_iced()
-                        }
-                        .into(),
-                    ),
-                    border: Border {
-                        color: Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: 8.0.into(),
-                    },
-                    ..container::Style::default()
-                })
-                .into()
-            }
+    /// The first letter of `title` in a tinted square, for a row with no art.
+    fn initial_badge(&self, title: &str, selected: bool) -> Element<'_, Message> {
+        let geometry = self.geometry;
+        let palette = self.palette();
+        let title_color = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        };
+        let initial = title
+            .chars()
+            .next()
+            .map_or_else(String::new, |c| c.to_uppercase().to_string());
+        container(
+            text(initial)
+                .font(self.font())
+                .size(f32::from(geometry.icon_size) / 2.0)
+                .color(title_color.to_iced()),
+        )
+        .width(Length::Fixed(f32::from(geometry.icon_size)))
+        .height(Length::Fixed(f32::from(geometry.icon_size)))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(move |_: &Theme| container::Style {
+            background: Some(
+                Color {
+                    a: 0.18,
+                    ..palette.accent.to_iced()
+                }
+                .into(),
+            ),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+    }
+
+    /// One list row: an icon slot, a title and an optional subtitle, with the
+    /// selection drawn as a filled rounded rectangle. Every list the card
+    /// shows -- applications, commands, clipboard history -- is these rows, so
+    /// they measure and select alike.
+    fn list_row<'a>(
+        &'a self,
+        icon: Element<'a, Message>,
+        title: String,
+        subtitle: Option<String>,
+        selected: bool,
+    ) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        let palette = self.palette();
+        let title_color = if selected {
+            palette.selection_text
+        } else {
+            palette.text
+        };
+        let subtitle_color = if selected {
+            palette.selection_text
+        } else {
+            palette.muted
         };
 
         let mut labels = column![
-            text(item.name().to_owned())
+            text(title)
                 .font(self.font())
                 .size(f32::from(geometry.title_size))
                 .color(title_color.to_iced())
         ];
-        // `subtitles` gates this, not just the presence of a comment: the dense
-        // preset's row is one line tall and a second would overflow it.
-        if self.subtitles
-            && let Some(comment) = item.comment()
-        {
+        if let Some(subtitle) = subtitle {
             labels = labels.push(
-                text(comment.to_owned())
+                text(subtitle)
                     .font(self.font())
                     .size(f32::from(geometry.subtitle_size))
                     .color(subtitle_color.to_iced()),
@@ -2023,6 +2256,75 @@ impl LauncherApp {
         }
     }
 
+    /// Opens a builtin command's view, and counts the use like a launch.
+    fn open_command(
+        &mut self,
+        command: &'static compass_core::commands::BuiltinCommand,
+    ) -> Task<Message> {
+        use compass_core::commands::CommandKind;
+        self.panel = None;
+        let record = match self.backend.clone() {
+            Some(backend) => {
+                let key = command.id();
+                Task::future(async move {
+                    if let Err(error) = backend.record_launch(key).await {
+                        tracing::warn!(%error, "could not record opening a command");
+                    }
+                })
+                .discard()
+            }
+            None => Task::none(),
+        };
+        match command.kind {
+            CommandKind::ClipboardHistory => {
+                self.page = Page::Clipboard(crate::clipboard_page::ClipboardPage::default());
+                Task::batch([record, self.clipboard_search_task(), focus_search()])
+            }
+        }
+    }
+
+    /// Asks for clipboard history matching the view's filter.
+    fn clipboard_search_task(&mut self) -> Task<Message> {
+        let Page::Clipboard(page) = &mut self.page else {
+            return Task::none();
+        };
+        page.generation = page.generation.wrapping_add(1);
+        page.notice = None;
+        let generation = page.generation;
+        let Some(clipboard) = self.clipboard.clone() else {
+            page.status = crate::clipboard_page::Status::Failed(
+                "Clipboard history needs the Compass engine, and this window is running \
+                 without one"
+                    .to_owned(),
+            );
+            return Task::none();
+        };
+        let query = page.query.clone();
+        Task::perform(
+            async move {
+                clipboard
+                    .clipboard_history(query, crate::clipboard_page::PAGE_SIZE)
+                    .await
+            },
+            move |result| Message::ClipboardLoaded { generation, result },
+        )
+    }
+
+    /// Fetches the selected entry's content, to copy it.
+    fn copy_selected_clipboard_entry(&mut self) -> Task<Message> {
+        let Page::Clipboard(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(clipboard)) = (page.selected_row(), self.clipboard.clone()) else {
+            return Task::none();
+        };
+        let id = row.id.clone();
+        Task::perform(
+            async move { clipboard.clipboard_content(id).await },
+            Message::ClipboardContentLoaded,
+        )
+    }
+
     /// Re-rank locally when no daemon backend is attached.
     fn search(&mut self) {
         if self.query.trim().is_empty() {
@@ -2033,9 +2335,12 @@ impl LauncherApp {
 
         self.results = self
             .app_index
-            .search_root(&self.query, None)
+            .search_root_all(&self.query, None)
             .into_iter()
-            .map(|scored| scored.index)
+            .map(|hit| match hit {
+                compass_core::RootHit::App(app) => RootRow::App(app.index),
+                compass_core::RootHit::Command { command, .. } => RootRow::Command(command),
+            })
             .collect();
         // Back to the top on every new query: the old selection pointed into a
         // different list, and keeping its position would silently select an
@@ -2075,7 +2380,10 @@ impl LauncherApp {
         let names: Vec<&str> = self
             .results
             .iter()
-            .filter_map(|index| self.app_index.items().get(*index))
+            .filter_map(|row| match row {
+                RootRow::App(index) => self.app_index.items().get(*index),
+                RootRow::Command(_) => None,
+            })
             .filter_map(AppItem::icon)
             .collect();
         let find = self.icon_lookup.clone();
@@ -2253,7 +2561,7 @@ mod tests {
             let _ = app.update(Message::QueryChanged("shellwork".into()));
             assert_eq!(app.results.len(), usize::from(provider_enabled));
             if provider_enabled {
-                assert_eq!(app.app_index.items()[app.results[0]].name(), "Terminal");
+                assert_eq!(app.selected_item().map(AppItem::name), Some("Terminal"));
             }
             if let Some(directory) = std::env::var_os("COMPASS_UI_SCREENSHOT_DIR") {
                 for appearance in Appearance::ALL {
@@ -2347,7 +2655,7 @@ mod tests {
             .unwrap();
         let launcher = Arc::new(RecordingLaunchTarget::default());
         let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
-        app.results = vec![selected];
+        app.results = vec![RootRow::App(selected)];
         let task = app.update(Message::LaunchSelected);
         let stream = iced_winit::runtime::task::into_stream(task).expect("launch task");
         let _outputs = block_on(stream.collect::<Vec<_>>());
@@ -3387,7 +3695,10 @@ mod tests {
         let expected: Vec<String> = app
             .results
             .iter()
-            .filter_map(|i| app.app_index.items().get(*i))
+            .filter_map(|row| match row {
+                RootRow::App(i) => app.app_index.items().get(*i),
+                RootRow::Command(_) => None,
+            })
             .map(|item| item.name().to_owned())
             .collect();
         assert!(expected.len() > 1, "need several rows: {expected:?}");
@@ -3405,6 +3716,296 @@ mod tests {
             expected.len() - 1,
             "and it stayed on the last row, because wrap_navigation is off by default"
         );
+    }
+
+    // ---- builtin commands and the clipboard history view ----
+
+    #[derive(Debug, Default)]
+    struct FakeClipboard {
+        rows: Vec<crate::backend::ClipboardRow>,
+        content: Option<crate::backend::ClipboardContent>,
+        queries: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl crate::backend::ClipboardBackend for FakeClipboard {
+        fn clipboard_history(
+            &self,
+            query: String,
+            _limit: u32,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ClipboardRow>> {
+            Box::pin(async move {
+                self.queries.lock().unwrap().push(query.clone());
+                Ok(self
+                    .rows
+                    .iter()
+                    .filter(|row| row.preview.contains(&query))
+                    .cloned()
+                    .collect())
+            })
+        }
+
+        fn clipboard_content(
+            &self,
+            _id: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ClipboardContent> {
+            Box::pin(async move { self.content.clone().ok_or_else(|| "gone".to_owned()) })
+        }
+    }
+
+    fn clip_row(id: &str, preview: &str) -> crate::backend::ClipboardRow {
+        crate::backend::ClipboardRow {
+            id: id.into(),
+            preview: preview.into(),
+            kind: crate::backend::ClipboardRowKind::Text,
+            pinned: false,
+            url_host: None,
+        }
+    }
+
+    /// Runs `task`, feeding every message it produces back into `app`, and
+    /// returns what it wrote to the clipboard. Other actions (focus, closing
+    /// the window) are allowed and ignored.
+    fn settle(app: &mut LauncherApp, task: Task<Message>) -> Vec<String> {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, clipboard, task};
+        let Some(stream) = task::into_stream(task) else {
+            return Vec::new();
+        };
+        let actions: Vec<_> = block_on(stream.collect());
+        let mut writes = Vec::new();
+        for action in actions {
+            match action {
+                Action::Output(message) => {
+                    let next = app.update(message);
+                    writes.extend(settle(app, next));
+                }
+                Action::Clipboard(clipboard::Action::Write { contents, .. }) => {
+                    writes.push(contents);
+                }
+                _ => {}
+            }
+        }
+        writes
+    }
+
+    fn clipboard_app(
+        dir: &std::path::Path,
+        clipboard: Option<Arc<FakeClipboard>>,
+    ) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir));
+        app.apply(AppFlags {
+            clipboard: clipboard.map(|c| c as Arc<dyn crate::backend::ClipboardBackend>),
+            ..AppFlags::default()
+        });
+        // The ranking backend only for `record_launch`; search stays local so
+        // the command row comes from the real index.
+        app.backend = Some(backend.clone());
+        (app, backend)
+    }
+
+    fn open_clipboard(app: &mut LauncherApp) -> Vec<String> {
+        app.query = "clipboard".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Command(
+                compass_core::commands::by_id("commands:clipboard-history").unwrap()
+            )),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(app, task)
+    }
+
+    #[test]
+    fn enter_on_the_command_opens_clipboard_history_and_records_the_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "newest"), clip_row("2", "older")],
+            ..FakeClipboard::default()
+        });
+        let (mut app, backend) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+
+        assert!(app.showing_clipboard());
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.status, crate::clipboard_page::Status::Ready);
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["commands:clipboard-history"]
+        );
+        assert!(
+            app.state_line().contains("page=clipboard"),
+            "{}",
+            app.state_line()
+        );
+    }
+
+    #[test]
+    fn typing_filters_arrows_move_and_escape_goes_back_not_away() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![
+                clip_row("1", "alpha one"),
+                clip_row("2", "alpha two"),
+                clip_row("3", "beta"),
+            ],
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        open_clipboard(&mut app);
+
+        let task = app.update(Message::ClipboardQueryChanged("alpha".into()));
+        settle(&mut app, task);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(
+            clipboard.queries.lock().unwrap().last().map(String::as_str),
+            Some("alpha")
+        );
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.selected, 1);
+
+        let back = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.showing_clipboard(), "Escape leaves the view");
+        assert_eq!(app.query, "clipboard", "and the root query is where it was");
+        // Leaving the view by hiding the window would also reset it, so the
+        // state alone cannot tell "back" from "away": the task can.
+        let actions: Vec<_> = iced_winit::runtime::task::into_stream(back)
+            .map(|stream| {
+                iced::futures::executor::block_on(iced::futures::StreamExt::collect::<Vec<_>>(
+                    stream,
+                ))
+            })
+            .unwrap_or_default();
+        assert!(
+            !actions.iter().any(|action| matches!(
+                action,
+                iced_winit::runtime::Action::Exit | iced_winit::runtime::Action::Window(_)
+            )),
+            "Escape in a command view must not hide or quit the launcher"
+        );
+    }
+
+    #[test]
+    fn enter_copies_the_whole_entry_and_hides() {
+        let dir = tempfile::tempdir().unwrap();
+        let whole = "the whole entry, not its preview ".repeat(10);
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "the whole entry…")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: whole.clone().into_bytes(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, [whole]);
+        assert!(
+            !app.showing_clipboard(),
+            "hiding resets the view for the next summon"
+        );
+    }
+
+    #[test]
+    fn an_image_is_not_copied_as_text_and_the_view_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "Image")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "image/png".into(),
+                data: vec![0x89, b'P', b'N', b'G'],
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(settle(&mut app, task).is_empty(), "nothing written");
+        let Page::Clipboard(page) = &app.page else {
+            panic!("the view stays open to show the reason")
+        };
+        assert!(page.notice.as_deref().is_some_and(|n| n.contains("images")));
+    }
+
+    #[test]
+    fn without_an_engine_the_view_says_so_instead_of_showing_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = clipboard_app(dir.path(), None);
+        open_clipboard(&mut app);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert!(
+            matches!(&page.status, crate::clipboard_page::Status::Failed(reason) if reason.contains("engine")),
+            "{:?}",
+            page.status
+        );
+    }
+
+    #[test]
+    fn clicking_a_clipboard_row_copies_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "first"), clip_row("2", "second entry")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"second entry".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+
+        let mut ui = iced_test::simulator(app.view());
+        ui.click("second entry").expect("the row is drawn");
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::ClipboardSelected(1))),
+            "{messages:?}"
+        );
+        let mut writes = Vec::new();
+        for message in messages {
+            let task = app.update(message);
+            writes.extend(settle(&mut app, task));
+        }
+        assert_eq!(writes, ["second entry"]);
+    }
+
+    #[test]
+    fn a_backend_answer_naming_a_command_becomes_a_command_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec![
+                "commands:clipboard-history".into(),
+                "applications:alpha".into(),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = backend_app(dir.path(), backend);
+        let task = app.update(Message::QueryChanged("a".into()));
+        settle(&mut app, task);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(matches!(app.results.first(), Some(RootRow::Command(_))));
+        assert!(matches!(app.results.get(1), Some(RootRow::App(_))));
     }
 }
 
@@ -3481,7 +4082,10 @@ mod quick_launch_tests {
         let rows: Vec<String> = app
             .results
             .iter()
-            .filter_map(|i| app.app_index.items().get(*i))
+            .filter_map(|row| match row {
+                RootRow::App(i) => app.app_index.items().get(*i),
+                RootRow::Command(_) => None,
+            })
             .map(|item| item.name().to_owned())
             .collect();
         assert!(rows.len() >= 2, "need several rows: {rows:?}");
@@ -3621,7 +4225,10 @@ mod icon_tests {
     fn row<'a>(app: &'a LauncherApp, name: &str) -> &'a AppItem {
         app.results
             .iter()
-            .filter_map(|index| app.app_index.items().get(*index))
+            .filter_map(|row| match row {
+                RootRow::App(index) => app.app_index.items().get(*index),
+                RootRow::Command(_) => None,
+            })
             .find(|item| item.name() == name)
             .unwrap_or_else(|| panic!("{name} is not a row"))
     }
@@ -4146,7 +4753,8 @@ mod view_tests {
                     ..AppFlags::default()
                 });
                 let _ = app.update(Message::QueryChanged("Test".into()));
-                for index in &app.results {
+                for row in &app.results {
+                    let RootRow::App(index) = row else { continue };
                     let item = &app.app_index.items()[*index];
                     assert!(matches!(
                         app.row_art(item),

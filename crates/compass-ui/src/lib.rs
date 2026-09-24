@@ -10,6 +10,7 @@ pub mod action_panel;
 pub mod app;
 pub mod appearance;
 pub mod backend;
+pub mod clipboard_page;
 pub mod design;
 pub mod icons;
 pub mod message;

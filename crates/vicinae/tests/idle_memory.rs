@@ -54,6 +54,12 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+/// A session bus address with nothing behind it, for every engine this file
+/// starts. The engine opens clipboard history through the login keyring on
+/// the session bus; pointed at a real one, running these tests would create a
+/// Compass key in the developer's own keyring.
+const NO_SESSION_BUS: &str = "unix:path=/nonexistent/compass-test-no-session-bus";
+
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How many generated entries the engine indexes before being measured.
@@ -118,6 +124,7 @@ fn start() -> (Engine, u32) {
         .arg("--socket")
         .arg(&socket)
         .arg("serve")
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
         .env("XDG_DATA_DIRS", dirs.path().join("data"))
         .env("XDG_DATA_HOME", dirs.path().join("data-home"))
         .env("XDG_CONFIG_HOME", dirs.path().join("config"))

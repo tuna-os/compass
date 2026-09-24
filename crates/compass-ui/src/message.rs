@@ -44,6 +44,21 @@ pub enum Message {
     MoveSelection(Direction),
     /// Launch the selected result.
     LaunchSelected,
+    /// The clipboard history filter changed.
+    ClipboardQueryChanged(String),
+    /// Clipboard history rows arrived for request `generation`.
+    ClipboardLoaded {
+        /// The request they answer; a stale one is dropped.
+        generation: u64,
+        /// The rows, or why there are none.
+        result: Result<Vec<crate::backend::ClipboardRow>, String>,
+    },
+    /// The selected clipboard entry's content arrived, to be copied.
+    ClipboardContentLoaded(Result<crate::backend::ClipboardContent, String>),
+    /// A clipboard row was clicked.
+    ClipboardSelected(usize),
+    /// Leave a command's view for the root list.
+    Back,
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must

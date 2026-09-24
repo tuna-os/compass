@@ -15,6 +15,12 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+/// A session bus address with nothing behind it, for every engine this file
+/// starts. The engine opens clipboard history through the login keyring on
+/// the session bus; pointed at a real one, running these tests would create a
+/// Compass key in the developer's own keyring.
+const NO_SESSION_BUS: &str = "unix:path=/nonexistent/compass-test-no-session-bus";
+
 /// How long to wait for the daemon to bind before calling it a failure.
 ///
 /// Generous because CI runners are slow and a flaky timeout here would be
@@ -41,6 +47,7 @@ fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
         .arg("--socket")
         .arg(socket.as_path())
         .args(["serve", "--no-hotkey"])
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
         .env("XDG_DATA_HOME", dir.path().join("data"))
         .env("XDG_DATA_DIRS", dir.path().join("empty"))
         .env("XDG_CONFIG_HOME", dir.path().join("config"))
@@ -159,6 +166,7 @@ impl Daemon {
             .arg("--socket")
             .arg(&socket)
             .arg("serve")
+            .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
             .env("XDG_DATA_DIRS", &data)
             // Keep the daemon out of the invoking user's home entirely: its
             // config, its launch history and its data all land in the tempdir.
@@ -268,8 +276,13 @@ fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() 
             else {
                 panic!("expected query result");
             };
+            // Applications only: this is about their config. Builtin
+            // commands rank in the same list and have their own test.
             assert_eq!(
-                hits.iter().map(|hit| hit.id.as_str()).collect::<Vec<_>>(),
+                hits.iter()
+                    .map(|hit| hit.id.as_str())
+                    .filter(|id| id.starts_with("applications:"))
+                    .collect::<Vec<_>>(),
                 expected,
                 "{query}"
             );
@@ -489,7 +502,7 @@ fn a_desktop_link_without_exec_is_returned_by_root_search() {
         "[Desktop Entry]\nType=Link\nName=Reference Manual\nURL=file:///usr/share/doc/manual.html\n",
     )]);
     for query in ["", "Reference"] {
-        let out = daemon.client(&["query", query, "--json"]);
+        let out = daemon.client(&["query", query, "--json", "--provider", "applications"]);
         let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(rows.as_array().unwrap().len(), 1);
         // The ENTRYPOINT id, which is what the protocol documents this field
@@ -553,8 +566,14 @@ fn queries_use_root_provider_fields_and_do_not_return_desktop_actions() {
             "TryExec=compass-unresolved-sentinel\nComment=DescriptionSentinel\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=browser --private\n",
         ),
     )]);
-    let all: serde_json::Value =
-        serde_json::from_str(&daemon.client(&["query", "--json", ""])).unwrap();
+    let all: serde_json::Value = serde_json::from_str(&daemon.client(&[
+        "query",
+        "--json",
+        "--provider",
+        "applications",
+        "",
+    ]))
+    .unwrap();
     assert_eq!(all.as_array().unwrap().len(), 1);
     assert_eq!(all[0]["id"], "applications:browser");
     for query in ["DescriptionSentinel", "Private"] {
@@ -642,6 +661,7 @@ fn a_second_engine_on_the_same_socket_refuses_to_start() {
         .arg("--socket")
         .arg(&daemon.socket)
         .arg("serve")
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
         .output()
         .expect("run a second engine");
 
@@ -924,4 +944,78 @@ fn a_window_that_dies_puts_the_engine_back_to_refusing() {
             "attempt {attempt}: the refusal should say how to fix it: {stderr}"
         );
     }
+}
+
+#[test]
+fn clipboard_history_without_a_keyring_is_refused_by_name() {
+    // Every engine here runs with no session bus, so no keyring: the history
+    // cannot be opened, and the request must say so rather than answer with
+    // an empty list a client would show as "nothing copied yet".
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let response = daemon.request(compass_ipc::Request::ClipboardHistory {
+        query: String::new(),
+        limit: 10,
+    });
+    let compass_ipc::Response::Error(err) = response else {
+        panic!("expected a refusal, got {response:?}");
+    };
+    assert_eq!(err.kind, compass_ipc::ErrorKind::Unsupported);
+    assert!(err.message.contains("keyring"), "{}", err.message);
+}
+
+#[test]
+fn a_clipboard_request_for_no_entries_is_a_bad_request() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let response = daemon.request(compass_ipc::Request::ClipboardHistory {
+        query: String::new(),
+        limit: 0,
+    });
+    let compass_ipc::Response::Error(err) = response else {
+        panic!("expected a refusal, got {response:?}");
+    };
+    assert_eq!(err.kind, compass_ipc::ErrorKind::BadRequest);
+}
+
+#[test]
+fn builtin_commands_rank_in_the_root_and_their_use_is_remembered() {
+    use compass_ipc::{Request, Response};
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "clipboard".into(),
+    }) else {
+        panic!("expected query results");
+    };
+    assert_eq!(
+        hits.first().map(|h| h.id.as_str()),
+        Some("commands:clipboard-history")
+    );
+    assert_eq!(hits[0].title, "Clipboard History");
+
+    // The provider flag narrows either way.
+    let commands: serde_json::Value =
+        serde_json::from_str(&daemon.client(&["query", "--json", "--provider", "commands", ""]))
+            .unwrap();
+    assert!(commands.as_array().unwrap().iter().all(|row| {
+        row["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("commands:"))
+    }));
+
+    // Opening it counts, like launching an application.
+    assert!(matches!(
+        daemon.request(Request::RecordLaunch {
+            key: "commands:clipboard-history".into()
+        }),
+        Response::Ack
+    ));
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: String::new(),
+    }) else {
+        panic!("expected query results");
+    };
+    assert_eq!(
+        hits.first().map(|h| h.id.as_str()),
+        Some("commands:clipboard-history"),
+        "the most-used row leads the empty query"
+    );
 }

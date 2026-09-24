@@ -29,6 +29,8 @@ compass-platform = { path = "crates/compass-platform" }
 compass-platform-linux = { path = "crates/compass-platform-linux" }
 compass-ui = { path = "crates/compass-ui" }
 compass-crypto = { path = "crates/compass-crypto" }
+compass-clipboard = { path = "crates/compass-clipboard" }
+compass-sqlcipher-sys = { path = "crates/compass-sqlcipher-sys" }
 
 anyhow = "1"
 nucleo-matcher = "0.3.1"
@@ -41,6 +43,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 tokio-util = { version = "0.7", features = ["codec"] }
 futures-util = "0.3"
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+oo7 = { version = "0.5", default-features = false, features = ["tokio", "native_crypto"] }
 postcard = { version = "1", features = ["use-std"] }
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"

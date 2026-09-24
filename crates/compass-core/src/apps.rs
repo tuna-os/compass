@@ -455,6 +455,14 @@ impl AppIndexBuilder {
                 app.entry().unlocalized_name(),
             ));
         }
+        // After every application, so `root_indices[i]` still names the item
+        // behind `roots[i]` for each application root; a command's position
+        // is past its end. See `crate::commands`.
+        roots.extend(
+            crate::commands::BUILTIN_COMMANDS
+                .iter()
+                .map(crate::commands::BuiltinCommand::root_item),
+        );
         AppIndex {
             roots,
             root_indices,
@@ -638,6 +646,20 @@ pub struct AppIndex {
     skipped: Vec<SkippedEntry>,
 }
 
+/// One row of a root search over applications and commands.
+#[derive(Debug)]
+pub enum RootHit<'a> {
+    /// An application.
+    App(ApplicationRootHit<'a>),
+    /// A builtin command.
+    Command {
+        /// Which one.
+        command: &'static crate::commands::BuiltinCommand,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
+}
+
 /// A root application match with its stable index into the application catalog.
 #[derive(Debug)]
 pub struct ApplicationRootHit<'a> {
@@ -689,6 +711,58 @@ impl AppIndex {
                 .and_then(|store| store.record(self.items[self.root_indices[index]].key()))
                 .map_or(0.0, |record| record.score_at(now))
         };
+        // Applications only: builtin commands share `roots` (see `build`) and
+        // are reached through `search_root_all`. The provider filter runs
+        // before frecency is asked for, so `frecency` never sees a command.
+        let options = crate::root_items::SearchOptions {
+            provider_id: Some(crate::root_items::APPS_PROVIDER_ID.to_owned()),
+            ..crate::root_items::SearchOptions::default()
+        };
+        crate::root_items::search_with_frecency(&self.roots, pattern, &options, frecency)
+            .into_iter()
+            .map(|hit| {
+                let index = self.root_indices[hit.index];
+                let item = &self.items[index];
+                let match_score = if pattern.trim().is_empty() {
+                    0
+                } else {
+                    (hit.score - compass_search::FRECENCY_WEIGHT * frecency(hit.index, hit.item))
+                        .round()
+                        .clamp(0.0, 100.0) as u32
+                };
+                ApplicationRootHit {
+                    item,
+                    index,
+                    entrypoint_id: &self.roots[hit.index].id,
+                    match_score,
+                }
+            })
+            .collect()
+    }
+
+    /// Search applications **and** builtin commands, ranked together.
+    ///
+    /// One scoring pass over both, so a command competes with applications on
+    /// the same fuzzy score, typo tolerance and frecency. A command's frecency
+    /// key is its `commands:<entrypoint>` id.
+    #[must_use]
+    pub fn search_root_all(
+        &self,
+        pattern: &str,
+        history: Option<&dyn crate::FrecencyStore>,
+    ) -> Vec<RootHit<'_>> {
+        let now = history.map_or(0, crate::FrecencyStore::now);
+        let key = |index: usize| -> &str {
+            match self.root_indices.get(index) {
+                Some(&item) => self.items[item].key(),
+                None => &self.roots[index].id,
+            }
+        };
+        let frecency = |index: usize, _: &crate::root_items::RootItem| {
+            history
+                .and_then(|store| store.record(key(index)))
+                .map_or(0.0, |record| record.score_at(now))
+        };
         crate::root_items::search_with_frecency(
             &self.roots,
             pattern,
@@ -696,9 +770,7 @@ impl AppIndex {
             frecency,
         )
         .into_iter()
-        .map(|hit| {
-            let index = self.root_indices[hit.index];
-            let item = &self.items[index];
+        .filter_map(|hit| {
             let match_score = if pattern.trim().is_empty() {
                 0
             } else {
@@ -706,11 +778,18 @@ impl AppIndex {
                     .round()
                     .clamp(0.0, 100.0) as u32
             };
-            ApplicationRootHit {
-                item,
-                index,
-                entrypoint_id: &self.roots[hit.index].id,
-                match_score,
+            let entrypoint_id = &self.roots[hit.index].id;
+            match self.root_indices.get(hit.index) {
+                Some(&index) => Some(RootHit::App(ApplicationRootHit {
+                    item: &self.items[index],
+                    index,
+                    entrypoint_id,
+                    match_score,
+                })),
+                None => crate::commands::by_id(entrypoint_id).map(|command| RootHit::Command {
+                    command,
+                    match_score,
+                }),
             }
         })
         .collect()
