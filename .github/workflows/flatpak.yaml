@@ -102,7 +102,8 @@ jobs:
           flatpak install --user --noninteractive --or-update flathub \
             org.freedesktop.Platform//26.08 \
             org.freedesktop.Sdk//26.08 \
-            org.freedesktop.Sdk.Extension.rust-stable//26.08
+            org.freedesktop.Sdk.Extension.rust-stable//26.08 \
+            org.freedesktop.Sdk.Extension.node22//26.08
 
       # This step earned its keep on the very first run: the build failed with
       # "rustc 1.89.0 is not supported ... requires rustc 1.94" after vendoring all
@@ -120,6 +121,17 @@ jobs:
           echo -n "SDK ships:                     "
           flatpak run --user --command=sh --devel org.freedesktop.Sdk//26.08 \
             -c 'PATH=/usr/lib/sdk/rust-stable/bin:$PATH rustc --version' || echo "could not query"
+
+      # The manifest installs this from the source tree, because the offline
+      # build cannot run figura or npm. Same script, same C++23 need, as the
+      # Rust workflow's extension-runtime job.
+      - name: Build the extension runtime bundle
+        env:
+          CXX: g++-14
+        run: |
+          sudo apt-get install -y g++-14
+          ./scripts/build-extension-runtime.sh
+          test -s src/typescript/extension-manager/dist/runtime.js
 
       - name: Build
         run: |
@@ -149,6 +161,11 @@ jobs:
             echo "::error::the installed Flatpak is not the one this job built"
             exit 1
           fi
+
+          # Extensions need both halves inside the sandbox, not on the runner.
+          flatpak run --user --command=sh com.vicinae.Vicinae -c \
+            'node --version && test -s /app/share/vicinae/extension-runtime.js' \
+            || { echo "::error::the Flatpak cannot run extensions: Node or the runtime bundle is missing"; exit 1; }
 
           flatpak run --user com.vicinae.Vicinae --socket /tmp/ci.sock doctor --json | tee /tmp/doctor.json
           python3 -c "
