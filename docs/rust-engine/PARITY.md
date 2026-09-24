@@ -84,7 +84,7 @@ that. The plan has been corrected.
 | `compass-power` | 11 | logind; one C++ bug deliberately not reproduced |
 | `compass-db` | 10 | the shared migration runner and the `vicinae` schema |
 | `compass-oauth-store` | 9 | the extension token store |
-| `compass-sqlcipher-sys` | 8 | SQLCipher and the vendored tokenizer; connection pragmas pinned to the C++ |
+| `compass-sqlcipher-sys` | 8 | `rusqlite` over SQLCipher, and the vendored tokenizer; connection pragmas pinned to the C++ |
 | `compass-testkit` | 8 | corpora — **757 desktop entries, 738 harvested from real hosts** |
 | `compass-platform` | 6 | the launcher seam (ADR-0013) |
 | `compass-platform-linux` | 26 | the launcher, and the uinput virtual keyboard's protocol |
@@ -1070,14 +1070,19 @@ Still C++-only: the DBus plumbing (the StatusNotifierWatcher registration, the `
 the property-change signals), which belongs to whoever owns the bus connection.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
-itself, built from the same C the C++ engine links (ADR-0014). `Database::open` does what
+itself (ADR-0014). SQLCipher is `rusqlite`'s `bundled-sqlcipher` build (`libsqlite3-sys` 0.38,
+SQLCipher 4.14.0 on SQLite 3.51.3, OpenSSL crypto on Linux as the C++ build uses) rather than the
+vendored 4.16.0, which only the C++ engine still compiles; both are SQLCipher 4 with its default
+cipher settings, so each reads the other's files. `fuzzy_trigram` is still the vendored C, compiled
+against `libsqlite3-sys`'s own headers. `compass_sqlcipher_sys::open` does what
 `ClipboardDatabase`'s constructor does and in the same order — open, key with raw bytes in
 SQLCipher's `x'...'` form, register `fuzzy_trigram`, apply the four pragmas — because that order is
-load-bearing. Tested against real encrypted files rather than SQL strings: the file has no
-`SQLite format 3` magic and does not contain its own payload in the clear, a wrong key is refused by
-`open`, the FTS table the clipboard schema declares can be created and queried, and a second
-connection to an existing encrypted file still has the tokenizer. Not yet ported: blobs, the
-transaction wrapper, and `sqlite3_changes` (deliberately — see `tryBubbleUpSelection` below).
+load-bearing, and hands back a `rusqlite::Connection`. Tested against real encrypted files rather
+than SQL strings: the file has no `SQLite format 3` magic and does not contain its own payload in
+the clear, a wrong key is refused by `open`, the FTS table the clipboard schema declares can be
+created and queried, and a second connection to an existing encrypted file still has the
+tokenizer. `Connection::changes` is available now but deliberately unused — see
+`tryBubbleUpSelection` below.
 
 **`src/services/clipboard` → `compass-clipboard`** — **`clipboard-db.cpp` (478 lines) is ported in
 full.** Every function `clipboard-db.hpp` declares has a Rust counterpart:
@@ -1094,8 +1099,8 @@ full.** Every function `clipboard-db.hpp` declares has a Rust counterpart:
 | `oldestEvictableTimestamp` | `write::oldest_evictable` |
 | `findSelection`, `findPreferredOffer` | `write::find_selection`, `find_preferred_offer` |
 
-It runs on `compass-sqlcipher-sys`, which builds `vendor/sqlcipher` and `vendor/fuzzy-trigram` from
-the same C the C++ engine links ([ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md)),
+It runs on `compass-sqlcipher-sys`: SQLCipher 4 through `rusqlite`, and `vendor/fuzzy-trigram`, the
+same tokenizer C the C++ engine links ([ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md)),
 so both engines read and write the same encrypted files with the same tokenizer.
 
 **Still C++-only, and the reason the row is 🟡:** `clipboard-service.cpp` — the Wayland selection
@@ -1233,7 +1238,7 @@ obvious move and turned out to be unnecessary.
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | -2 | `evictOlderThan` computes its cutoff with `unixepoch()` in **both** the `SELECT` that collects the offer ids to unlink from disk and the `DELETE` that removes the rows. Those are separate statements with separate readings of the clock (measured: inside `BEGIN`, `unixepoch('subsec')` advanced after 434 consecutive statements), so the `DELETE` set is a superset and anything crossing the threshold in between is deleted but never reported — its payload stays on disk forever. | Compute the cutoff once and bind it to both statements, which makes the two sets identical by construction. | `eviction_returns_every_offer_it_deletes` (fails when the second reading is reintroduced) |
-| -1 | `tryBubbleUpSelection` runs its `UPDATE`, discards whether it succeeded, and answers from `m_db.changes()` — a connection-wide counter holding the most recent *successful* statement's count. A failed or no-op update can therefore report success, and its caller (`clipboard-service.cpp:508`) then skips `insertSelection`, so the copied content never reaches the history. | `RETURNING id`: did *this* statement touch a row. `compass-sqlcipher-sys` deliberately does not expose `sqlite3_changes`. | `bubbling_up_something_absent_reports_false_even_after_a_successful_write` |
+| -1 | `tryBubbleUpSelection` runs its `UPDATE`, discards whether it succeeded, and answers from `m_db.changes()` — a connection-wide counter holding the most recent *successful* statement's count. A failed or no-op update can therefore report success, and its caller (`clipboard-service.cpp:508`) then skips `insertSelection`, so the copied content never reaches the history. | `RETURNING id`: did *this* statement touch a row. `bubble_up` deliberately does not call `Connection::changes`, the same connection-wide counter. | `bubbling_up_something_absent_reports_false_even_after_a_successful_write` |
 | 0 | `query` divides by `limit` to compute `totalPages` (`ceil(totalCount / limit)`), so a zero `limit` is a division by zero whose result is cast to `int`. It also interpolates `limit` and `offset` into the SQL text with `.arg()` rather than binding them. | Refuse a non-positive `limit`; bind both. `current_page`'s ceiling rounding *is* reproduced, oddity included — it is a display value the C++ UI already agrees with. | `a_zero_limit_is_refused_rather_than_dividing_by_it` |
 | 1 | `MigrationManager::runMigrations` catches every exception, logs it, rolls back and returns `void`; `ClipboardDatabase::runMigrations` returns `void` too. A failed migration is silent, and the next thing the user sees is every query failing against a schema that was never created. | `schema::run` returns a `Result`. | `an_edited_migration_is_refused`, `a_database_from_a_newer_build_is_refused` |
 | 2 | The `checksum` column exists to detect a migration edited after it was applied. `insertMigration` writes it and `loadDatabaseMigrations` reads it back into a struct field — and nothing ever compares the two. It is a stored value with no reader, so the detection it exists for never happens. | Compare it, and refuse on a mismatch. The expected hashes are also pinned in `schema.rs`'s tests, so editing a migration fails at development time rather than on a user's machine. | `an_edited_migration_is_refused`, `the_embedded_content_hashes_to_what_the_cpp_engine_recorded` |
