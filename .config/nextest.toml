@@ -1,0 +1,7 @@
+# Timing gates measure the code, not the other tests. Run alone, nothing else
+# is scheduled beside them: under a full parallel run the IPC round-trip's
+# median stayed at 33 µs while its p99 reached 3 ms, which is CPU contention
+# on the runner, not a regression the gate exists to catch.
+[[profile.default.overrides]]
+filter = 'test(roundtrip_p99_is_within_the_phase_2_budget)'
+threads-required = "num-cpus"
