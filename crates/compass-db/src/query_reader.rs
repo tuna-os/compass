@@ -31,7 +31,7 @@ use crate::query_engine::{
     score_candidate_with_plan, score_candidates, skeleton_merge_decision, sort_scored,
 };
 use crate::query_policy::{
-    QueryWord, SpellfixSuggestion, adjusted_suggestion_score, build_correction_plans,
+    QueryWord, VocabularySuggestion, adjusted_suggestion_score, build_correction_plans,
     pick_corrections, prepare_candidate_search_query, prepare_correction_search_query,
     split_query_words,
 };
@@ -64,7 +64,12 @@ pub trait IndexReader: Send + 'static {
         options: &SearchOptions,
     ) -> Vec<SearchCandidate>;
     /// Up to `top` vocabulary words near `word`, prefix-extended when asked.
-    fn spellfix_suggestions(&self, word: &str, top: i32, prefix: bool) -> Vec<SpellfixSuggestion>;
+    fn vocabulary_suggestions(
+        &self,
+        word: &str,
+        top: i32,
+        prefix: bool,
+    ) -> Vec<VocabularySuggestion>;
     /// The indexed paths directly inside `path`: empty when the directory
     /// itself is not indexed.
     fn list_indexed_directory_files(&self, path: &Path) -> HashSet<PathBuf>;
@@ -77,7 +82,7 @@ pub trait IndexReader: Send + 'static {
     fn last_scan(&self, path: &Path, scan_type: ScanType) -> Option<ScanRecord>;
     /// Whether the typo-correction vocabulary has any words. False doubles
     /// as "the table is not there yet", so failures read as absent, silently.
-    fn has_spellfix_vocabulary(&self) -> bool;
+    fn has_vocabulary(&self) -> bool;
     /// The most recently changed directories, newest first, up to `limit`.
     ///
     /// Feeds the watcher's dynamic directories; failures read as empty,
@@ -235,10 +240,10 @@ impl<R: IndexReader> FileIndexerQueryEngine<R> {
             }
             let mut suggestions =
                 self.reader
-                    .spellfix_suggestions(&query_word.word, SUGGESTION_FETCH_COUNT, true);
+                    .vocabulary_suggestions(&query_word.word, SUGGESTION_FETCH_COUNT, true);
             let mut exact =
                 self.reader
-                    .spellfix_suggestions(&query_word.word, SUGGESTION_FETCH_COUNT, false);
+                    .vocabulary_suggestions(&query_word.word, SUGGESTION_FETCH_COUNT, false);
             suggestions.append(&mut exact);
             suggestions.sort_by(|a, b| {
                 adjusted_suggestion_score(a).total_cmp(&adjusted_suggestion_score(b))
@@ -314,7 +319,7 @@ mod tests {
         open: bool,
         hits: HashMap<String, Vec<PathBuf>>,
         skeleton_hits: HashMap<String, Vec<PathBuf>>,
-        spellfix: HashMap<(String, bool), Vec<SpellfixSuggestion>>,
+        spellfix: HashMap<(String, bool), Vec<VocabularySuggestion>>,
     }
 
     impl FakeReader {
@@ -340,7 +345,7 @@ mod tests {
             self
         }
 
-        fn with_suggestion(mut self, word: &str, suggestion: SpellfixSuggestion) -> Self {
+        fn with_suggestion(mut self, word: &str, suggestion: VocabularySuggestion) -> Self {
             // The engine asks twice per word, prefix-extended then exact:
             // answer both the way a vocabulary containing the word would.
             self.spellfix
@@ -389,12 +394,12 @@ mod tests {
             Self::candidates(self.skeleton_hits.get(query).cloned().unwrap_or_default())
         }
 
-        fn spellfix_suggestions(
+        fn vocabulary_suggestions(
             &self,
             word: &str,
             _top: i32,
             prefix: bool,
-        ) -> Vec<SpellfixSuggestion> {
+        ) -> Vec<VocabularySuggestion> {
             self.spellfix
                 .get(&(word.to_owned(), prefix))
                 .cloned()
@@ -417,7 +422,7 @@ mod tests {
             None
         }
 
-        fn has_spellfix_vocabulary(&self) -> bool {
+        fn has_vocabulary(&self) -> bool {
             false
         }
 
@@ -501,7 +506,7 @@ mod tests {
             .with_hit("\"report\"", path.clone())
             .with_suggestion(
                 "reprot",
-                SpellfixSuggestion {
+                VocabularySuggestion {
                     word: "report".to_owned(),
                     distance: 2,
                     score: 100,

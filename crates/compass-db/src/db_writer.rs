@@ -133,7 +133,7 @@ pub trait IndexDatabase: Send + 'static {
     /// Whether reclaiming would help.
     fn needs_compaction(&self) -> bool;
     /// Rebuilds the typo-correction vocabulary.
-    fn rebuild_spellfix_vocabulary(&mut self);
+    fn rebuild_vocabulary(&mut self);
     /// Applies scanner-found changes and removals.
     fn index_events(&mut self, events: &[FileEvent]);
 }
@@ -392,14 +392,14 @@ impl<D: IndexDatabase> DbWriter<D> {
     /// Rebuilds the typo-correction vocabulary, coalescing bursts: a second
     /// call while one is queued or running is dropped, not queued. The flag
     /// clears on the worker thread, after the rebuild runs.
-    pub fn rebuild_spellfix_vocabulary(&self) {
+    pub fn rebuild_vocabulary(&self) {
         if self.shared.vocab_queued.swap(true, Ordering::SeqCst) {
             return;
         }
         let shared = Arc::clone(&self.shared);
         self.submit(
             move |db: &mut D| {
-                db.rebuild_spellfix_vocabulary();
+                db.rebuild_vocabulary();
                 shared.vocab_queued.store(false, Ordering::SeqCst);
             },
             false,
@@ -510,7 +510,7 @@ mod tests {
             self.compact_needed
         }
 
-        fn rebuild_spellfix_vocabulary(&mut self) {
+        fn rebuild_vocabulary(&mut self) {
             self.rebuilds.fetch_add(1, Ordering::SeqCst);
             self.record("rebuild");
         }
@@ -644,8 +644,8 @@ mod tests {
             },
             false,
         );
-        writer.rebuild_spellfix_vocabulary();
-        writer.rebuild_spellfix_vocabulary();
+        writer.rebuild_vocabulary();
+        writer.rebuild_vocabulary();
         let _ = release.send(());
 
         let entries = logged(&log, 1);

@@ -336,7 +336,7 @@ mod tests {
 
     use compass_db::db_writer::{DbWriter, ScanRecord, ScanStatus, ScanType};
     use compass_db::query_engine::{SearchCandidate, SearchOptions};
-    use compass_db::query_policy::SpellfixSuggestion;
+    use compass_db::query_policy::VocabularySuggestion;
     use compass_db::scan::ScanEvent;
 
     struct FakeDb;
@@ -391,7 +391,7 @@ mod tests {
             false
         }
 
-        fn rebuild_spellfix_vocabulary(&mut self) {}
+        fn rebuild_vocabulary(&mut self) {}
 
         fn index_events(&mut self, _events: &[compass_db::db_writer::FileEvent]) {}
     }
@@ -424,12 +424,12 @@ mod tests {
             Vec::new()
         }
 
-        fn spellfix_suggestions(
+        fn vocabulary_suggestions(
             &self,
             _word: &str,
             _top: i32,
             _prefix: bool,
-        ) -> Vec<SpellfixSuggestion> {
+        ) -> Vec<VocabularySuggestion> {
             Vec::new()
         }
 
@@ -449,7 +449,7 @@ mod tests {
             None
         }
 
-        fn has_spellfix_vocabulary(&self) -> bool {
+        fn has_vocabulary(&self) -> bool {
             false
         }
 

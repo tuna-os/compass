@@ -136,7 +136,7 @@ mod tests {
 
     use crate::db_writer::{ScanRecord, ScanType};
     use crate::query_engine::{IndexedFileCategory, SearchCandidate};
-    use crate::query_policy::SpellfixSuggestion;
+    use crate::query_policy::VocabularySuggestion;
 
     /// A reader answering one fixed path per query string.
     struct FakeReader {
@@ -174,12 +174,12 @@ mod tests {
             Vec::new()
         }
 
-        fn spellfix_suggestions(
+        fn vocabulary_suggestions(
             &self,
             _word: &str,
             _top: i32,
             _prefix: bool,
-        ) -> Vec<SpellfixSuggestion> {
+        ) -> Vec<VocabularySuggestion> {
             Vec::new()
         }
 
@@ -199,7 +199,7 @@ mod tests {
             None
         }
 
-        fn has_spellfix_vocabulary(&self) -> bool {
+        fn has_vocabulary(&self) -> bool {
             false
         }
 

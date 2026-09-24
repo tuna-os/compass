@@ -1,5 +1,7 @@
-//! Compile SQLCipher, the `fuzzy_trigram` tokenizer, and the `spellfix1`
-//! virtual table from `vendor/`.
+//! Compile SQLCipher and the `fuzzy_trigram` tokenizer from `vendor/`.
+//!
+//! `spellfix1` is no longer built: the file index's typo vocabulary is a plain
+//! table with suggestions computed in Rust (`compass_db::vocabulary`, ADR-0017).
 //!
 //! The flags mirror `vendor/sqlcipher/CMakeLists.txt` exactly, because the C++
 //! engine and this crate have to produce and read the same files. A flag that
@@ -21,9 +23,8 @@ fn main() {
     let vendor = vendor_dir();
     let sqlcipher = vendor.join("sqlcipher/sqlite3.c");
     let tokenizer = vendor.join("fuzzy-trigram/register.c");
-    let spellfix = vendor.join("spellfix/register.c");
 
-    for file in [&sqlcipher, &tokenizer, &spellfix] {
+    for file in [&sqlcipher, &tokenizer] {
         assert!(
             file.exists(),
             "{} is missing. This crate builds the vendored C that defines the clipboard file \
@@ -81,17 +82,4 @@ fn main() {
         .warnings(false)
         .define("SQLITE_CORE", "1")
         .compile("compass_fuzzy_trigram");
-
-    // The spellfix1 vocabulary, statically linked the same way: the file
-    // indexer keeps its typo-correction vocabulary in `spellfix_vocab`, and
-    // without this module every access to that table fails — including the
-    // reads in `compass-db`'s `SqliteReader`.
-    cc::Build::new()
-        .file(&spellfix)
-        .include(&vendor)
-        .include(vendor.join("sqlcipher"))
-        .include(vendor.join("spellfix"))
-        .warnings(false)
-        .define("SQLITE_CORE", "1")
-        .compile("compass_spellfix");
 }

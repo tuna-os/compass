@@ -2404,8 +2404,10 @@ where it is.
    after every real match; the formerly ignored `search_quality.rs` test is the acceptance
    criterion and passes. The C++ engine has the same gap, which is the point of ADR-0017.
 2. **Storage onto `rusqlite`** (ADR-0017 decision 4), in steps that are each their own PR:
-   (a) `spellfix1` out — the file index's vocabulary typo correction moves into Rust over `fst` or
-   `strsim`, measured by the file indexer's quality suite; (b) the hand-written SQLite wrapper
+   (a) ~~`spellfix1` out~~ **done** — a plain `vocabulary` table and a `strsim` suggester
+   (`compass_db::vocabulary`), passing the ported file-search quality suite (23/23, including the
+   four cases that depend on typo correction); Compass's index moved to its own file,
+   `compass-file-index.db`, at schema v2, so the two engines stop purging each other's; (b) the hand-written SQLite wrapper
    re-based on `rusqlite` + `bundled-sqlcipher`, keeping its API so ~400 call sites are
    untouched. **`fuzzy_trigram` stays** — it carries short-term matching, skeleton tokens,
    skip-grams and CJK segmentation that SQLite's `trigram` lacks — so one registration call remains

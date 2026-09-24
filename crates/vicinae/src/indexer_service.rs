@@ -39,8 +39,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::indexer_watch::{IndexWatchBackend, RecentDirs};
 
-/// The index file's name, `file-indexer.db` in production.
-pub const DATABASE_FILE_NAME: &str = "file-indexer.db";
+/// The index file's name.
+///
+/// Not the C++ engine's `file-indexer.db`, though it sits in the same
+/// directory: Compass owns its schema (ADR-0017), and the two engines stamping
+/// different versions on one file would purge each other's index at every
+/// start. It is a cache, so nothing is migrated — the first scan fills it.
+pub const DATABASE_FILE_NAME: &str = "compass-file-index.db";
 
 /// Query workers, like the C++ `QUERY_WORKER_COUNT`.
 pub const QUERY_WORKER_COUNT: usize = 3;
@@ -459,7 +464,7 @@ pub fn remove_legacy_db_files(data_home: &Path) {
     let vicinae = data_home.join("vicinae");
     for base in [
         vicinae.join("file-indexer.db"),
-        vicinae.join("file-indexer").join(DATABASE_FILE_NAME),
+        vicinae.join("file-indexer").join("file-indexer.db"),
     ] {
         // Order matches the C++: the logs go before the database itself.
         for suffix in ["-wal", "-shm", ""] {
@@ -506,7 +511,7 @@ mod tests {
 
     use compass_db::db_writer::{DbWriter, FileEvent, ScanRecord, ScanStatus, ScanType};
     use compass_db::query_engine::{SearchCandidate, SearchOptions};
-    use compass_db::query_policy::SpellfixSuggestion;
+    use compass_db::query_policy::VocabularySuggestion;
 
     struct FakeDb;
 
@@ -560,7 +565,7 @@ mod tests {
             false
         }
 
-        fn rebuild_spellfix_vocabulary(&mut self) {}
+        fn rebuild_vocabulary(&mut self) {}
 
         fn index_events(&mut self, _events: &[FileEvent]) {}
     }
@@ -591,12 +596,12 @@ mod tests {
             Vec::new()
         }
 
-        fn spellfix_suggestions(
+        fn vocabulary_suggestions(
             &self,
             _word: &str,
             _top: i32,
             _prefix: bool,
-        ) -> Vec<SpellfixSuggestion> {
+        ) -> Vec<VocabularySuggestion> {
             Vec::new()
         }
 
@@ -616,7 +621,7 @@ mod tests {
             None
         }
 
-        fn has_spellfix_vocabulary(&self) -> bool {
+        fn has_vocabulary(&self) -> bool {
             false
         }
 
@@ -851,7 +856,7 @@ mod tests {
                 .path()
                 .join("vicinae")
                 .join("file-indexer")
-                .join("file-indexer.db")
+                .join("compass-file-index.db")
         );
 
         let data = tempfile::tempdir().expect("tempdir");
