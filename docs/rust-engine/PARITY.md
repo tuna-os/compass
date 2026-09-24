@@ -2219,6 +2219,24 @@ the C++'s Markdown with the path and the `npm` steps; Enter opens the new folder
 | 2 | The success view offers "Open in …" for every application that opens folders. | Enter opens the folder with the default one. | `create_extension_sends_the_form_and_shows_where_it_went` |
 | 3 | The API dependency is pinned to the build's git tag. | Pinned to `v` + the crate version (`^0.1.0` today), through the same `api_dependency_version` rule. | `create_extension_writes_the_boilerplate_under_home` |
 
+### Browse Fonts — what the port does not have yet
+
+Browse Fonts runs end to end: the engine reads the installed families once (warmed five seconds
+after start, or on first use), folds the members of a typeface together and classifies each with
+the ported `font_service` rules (`ListFonts`, IPC v11). The launcher lists them under the ported
+heading ("All Fonts (n)", "<Category> (n)", "Results (n)"), with a category filter that offers only
+categories some font has. Each row draws its glyph in its own font. Enter opens the ported specimen
+(`FontSpecimen`), drawn in the family, and Escape returns to the list with its filter kept. The
+panel offers "Preview font" and "Copy font family". What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | A family's scripts come from `QFontDatabase::writingSystems`, which on Linux is fontconfig's language coverage. | Read from the font's character map (`ttf-parser`), one or two sample characters per script (`font_service::SCRIPT_SAMPLES`), over the fonts `fontdb` finds on the fontconfig path. A font whose coverage claims and cmap disagree can land in a different category. | `a_font_file_is_found_and_classified_by_what_it_covers`, `browse_fonts_lists_families_and_previews_one` |
+| 2 | A six-column grid of glyph tiles. | A list: glyph, name, and its category as the subtitle. | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
+| 3 | "Set as vicinae font" sets the launcher's font. | Not offered: the launcher follows the desktop's interface font and has no font setting yet. | — |
+| 4 | The chosen category is remembered across openings (`fontCategory` in local storage). | Kept while the launcher is shown (across a preview); a new opening starts at "All". | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
+| 5 | The specimen is Markdown rendered in the family. | The same Markdown read back line by line (heading, regular, bold, italic, rule) and drawn in the family; bold and italic ask the renderer for that face, which synthesises nothing when the family has none. | `a_specimen_reads_back_as_lines` |
+
 ### `compass-crypto` — one error variant the C++ API cannot express
 
 Not a behavioural divergence; a faithful reproduction of an awkward C++ signature, recorded so the

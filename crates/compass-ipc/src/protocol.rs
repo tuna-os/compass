@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
-/// shortcuts, snippets, script commands, Run Terminal Program, dmenu, themes
-/// and create-extension.
+/// shortcuts, snippets, script commands, Run Terminal Program, dmenu, themes,
+/// create-extension and fonts.
 pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
@@ -492,6 +492,15 @@ pub enum Request {
         /// The command template, e.g. `:boilerplate/tmpl-list`.
         template: String,
     },
+    /// The installed font families, grouped and classified as Browse Fonts
+    /// lists them. Answered with [`Response::Fonts`].
+    ListFonts,
+    /// A family's specimen, as Markdown. Answered with [`Response::Text`];
+    /// an unknown family is refused as [`ErrorKind::BadRequest`].
+    FontSpecimen {
+        /// The family's name, as [`FontEntry::name`] carries it.
+        name: String,
+    },
 }
 
 /// What the engine answers.
@@ -622,6 +631,13 @@ pub enum Response {
         /// The run to follow, when the launcher shows its output.
         session: Option<u64>,
     },
+    /// Answer to [`Request::ListFonts`].
+    Fonts {
+        /// The families, in the browser's order.
+        fonts: Vec<FontEntry>,
+        /// The category names, in the order the filter offers them.
+        categories: Vec<String>,
+    },
     /// Answer to [`Request::CreateExtension`].
     ExtensionCreated {
         /// Where the extension was written.
@@ -718,6 +734,23 @@ pub struct SnippetEntry {
     pub word: bool,
     /// The applications the keyword is limited to.
     pub apps: Vec<String>,
+}
+
+/// One family in Browse Fonts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FontEntry {
+    /// The typeface's name, its members folded together.
+    pub name: String,
+    /// The member to draw it with.
+    pub family: String,
+    /// The glyph its row shows, in its own script.
+    pub glyph: Option<String>,
+    /// Whether it is a colour emoji font.
+    pub color: bool,
+    /// The category it is listed under.
+    pub primary: String,
+    /// Every category it can be filtered by.
+    pub categories: Vec<String>,
 }
 
 /// One stored shortcut (quicklink), as `shortcuts.json` holds it.

@@ -58,6 +58,8 @@ pub enum CommandKind {
     SetTheme,
     /// Generate a new extension's boilerplate from a form.
     CreateExtension,
+    /// Browse the installed fonts by script, and preview one.
+    BrowseFonts,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -165,6 +167,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Start a new extension from a template",
         keywords: &["developer", "extension", "boilerplate", "template", "new"],
         icon: "hammer",
+    },
+    BuiltinCommand {
+        kind: CommandKind::BrowseFonts,
+        entrypoint: "browse-fonts",
+        title: "Browse Fonts",
+        subtitle: "Browse and preview the installed fonts",
+        keywords: &["fonts", "font", "typeface", "typography", "specimen"],
+        icon: "text",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

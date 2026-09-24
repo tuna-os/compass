@@ -203,6 +203,10 @@ fn all_requests() -> Vec<Request> {
         Request::SetTheme {
             theme: "tokyo-night".into(),
         },
+        Request::ListFonts,
+        Request::FontSpecimen {
+            name: "Noto Sans ไทย".into(),
+        },
         Request::CreateExtension {
             author: "zoë".into(),
             title: "My Extension".into(),
@@ -479,6 +483,17 @@ fn all_responses() -> Vec<Response> {
         Response::ExtensionCreated {
             path: "/home/me/code/my-extension".into(),
         },
+        Response::Fonts {
+            fonts: vec![compass_ipc::FontEntry {
+                name: "Noto Sans Thai".into(),
+                family: "Noto Sans Thai".into(),
+                glyph: Some("กข".into()),
+                color: false,
+                primary: "Thai".into(),
+                categories: vec!["Thai".into(), "Latin".into()],
+            }],
+            categories: vec!["Latin".into(), "Thai".into()],
+        },
         Response::DmenuOutput {
             output: "gamma 🚀".into(),
         },
@@ -555,6 +570,8 @@ fn request_variants_are_exhaustive() {
             | Request::DmenuChoose { .. }
             | Request::SetTheme { .. }
             | Request::CreateExtension { .. }
+            | Request::ListFonts
+            | Request::FontSpecimen { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -587,6 +604,7 @@ fn response_variants_are_exhaustive() {
             | Response::ScriptOutput { .. }
             | Response::Programs { .. }
             | Response::ExtensionCreated { .. }
+            | Response::Fonts { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::Window(_) => {}

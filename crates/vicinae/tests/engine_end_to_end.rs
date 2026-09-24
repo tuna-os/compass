@@ -3298,6 +3298,36 @@ fn set_theme_keeps_the_theme_in_the_configuration() {
     assert_eq!(err.kind, ErrorKind::BadRequest);
 }
 
+#[test]
+fn browse_fonts_lists_families_and_previews_one() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let Response::Fonts { fonts, categories } = daemon.request(Request::ListFonts) else {
+        panic!("no font list");
+    };
+    assert!(categories.iter().any(|category| category == "Latin"));
+    for font in &fonts {
+        assert!(
+            font.categories.contains(&font.primary),
+            "{font:?} is listed under a category it cannot be filtered by"
+        );
+    }
+    if let Some(font) = fonts.first() {
+        let Response::Text { text } = daemon.request(Request::FontSpecimen {
+            name: font.name.clone(),
+        }) else {
+            panic!("no specimen for {}", font.name);
+        };
+        assert!(!text.is_empty());
+    }
+    let Response::Error(err) = daemon.request(Request::FontSpecimen {
+        name: "No Such Family 123".into(),
+    }) else {
+        panic!("an unknown family was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
 /// Runs `vicinae dmenu` against `daemon` with `stdin`, returning its output.
 fn run_dmenu(daemon: &Daemon, args: &[&str], stdin: &str) -> std::process::Output {
     use std::io::Write as _;

@@ -27,6 +27,7 @@ use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
 mod developer;
 mod dmenu;
+mod fonts;
 mod programs;
 mod scripts;
 mod shortcuts;
@@ -485,6 +486,10 @@ enum Page {
     Themes(crate::themes_page::ThemesPage),
     /// The page after Create Extension.
     Created(crate::developer_page::CreatedPage),
+    /// Browse Fonts.
+    Fonts(crate::fonts_page::FontsPage),
+    /// One font's specimen.
+    FontPreview(crate::fonts_page::FontPreviewPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -746,6 +751,8 @@ pub struct LauncherApp {
     parked_shortcuts: Option<crate::shortcuts_page::ShortcutsPage>,
     /// Manage Snippets as it was when a form was opened over it.
     parked_snippets: Option<crate::snippets_page::SnippetsPage>,
+    /// Browse Fonts as it was when a specimen was opened over it.
+    parked_fonts: Option<crate::fonts_page::FontsPage>,
     /// A compact or inline script run the root list is waiting on.
     following_script: Option<scripts::FollowedScript>,
 }
@@ -967,6 +974,7 @@ impl LauncherApp {
             awaiting: false,
             parked_shortcuts: None,
             parked_snippets: None,
+            parked_fonts: None,
             following_script: None,
         }
     }
@@ -1039,6 +1047,7 @@ impl LauncherApp {
         if matches!(self.page, Page::Themes(_)) {
             let _ = self.update(Message::ThemeCancel);
         }
+        self.parked_fonts = None;
         let dismissed = self.cancel_dmenu();
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
@@ -1819,6 +1828,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_dmenu_panel() {
                     return task;
+                } else if let Some(task) = self.open_font_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1880,6 +1891,7 @@ impl LauncherApp {
                         .or_else(|| self.script_panel_action(&id))
                         .or_else(|| self.program_panel_action(&id))
                         .or_else(|| self.dmenu_panel_action(&id))
+                        .or_else(|| self.font_panel_action(&id))
                 {
                     return task;
                 }
@@ -2269,6 +2281,11 @@ impl LauncherApp {
             Message::ExtensionCreated { .. } | Message::CreatedFolderOpened(_) => {
                 self.developer_message(message)
             }
+            Message::FontsLoaded(_)
+            | Message::FontsQueryChanged(_)
+            | Message::FontsCategoryChanged(_)
+            | Message::FontSelected(_)
+            | Message::FontSpecimenLoaded { .. } => self.font_message(message),
             Message::Back => {
                 // Escape on a dmenu list dismisses it and the launcher, as the
                 // C++'s instant dismiss does.
@@ -2517,6 +2534,12 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::Created(_)) {
                     return self.created_page_key(key);
+                }
+                if !panel_key && matches!(self.page, Page::Fonts(_)) {
+                    return self.fonts_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::FontPreview(_)) {
+                    return self.font_preview_key(key);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2770,6 +2793,12 @@ impl LauncherApp {
                 Some(Message::ThemesQueryChanged as OnInput),
             ),
             Page::Created(page) => ("", &page.path, None),
+            Page::Fonts(page) => (
+                "Search fonts...",
+                &page.query,
+                Some(Message::FontsQueryChanged as OnInput),
+            ),
+            Page::FontPreview(page) => ("", &page.name, None),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2841,6 +2870,10 @@ impl LauncherApp {
             self.themes_body(page)
         } else if let Page::Created(page) = &self.page {
             self.created_body(page)
+        } else if let Page::Fonts(page) = &self.page {
+            self.fonts_body(page)
+        } else if let Page::FontPreview(page) = &self.page {
+            self.font_preview_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -4200,6 +4233,10 @@ impl LauncherApp {
             CommandKind::RunProgram => Task::batch([record, self.open_run_program()]),
             CommandKind::SetTheme => Task::batch([record, self.open_set_theme()]),
             CommandKind::CreateExtension => Task::batch([record, self.open_create_extension()]),
+            CommandKind::BrowseFonts => {
+                self.parked_fonts = None;
+                Task::batch([record, self.open_browse_fonts()])
+            }
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
@@ -4939,6 +4976,32 @@ mod tests {
                 self.themes_kept.lock().unwrap().push(theme);
                 Ok(())
             })
+        }
+
+        fn list_fonts(&self) -> crate::backend::BackendFuture<'_, crate::backend::FontList> {
+            Box::pin(async {
+                let font = |name: &str, primary: &str, categories: &[&str]| {
+                    crate::backend::FontListEntry {
+                        name: name.into(),
+                        family: name.into(),
+                        glyph: Some("Aa".into()),
+                        color: false,
+                        primary: primary.into(),
+                        categories: categories.iter().map(|c| (*c).to_owned()).collect(),
+                    }
+                };
+                Ok(crate::backend::FontList {
+                    fonts: vec![
+                        font("Inter", "Latin", &["Latin"]),
+                        font("JetBrains Mono", "Monospace", &["Latin", "Monospace"]),
+                    ],
+                    categories: vec!["Latin".into(), "Monospace".into()],
+                })
+            })
+        }
+
+        fn font_specimen(&self, name: String) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move { Ok(format!("# {name}\n\nThe quick brown fox\n\n---\n")) })
         }
 
         fn choose_dmenu(
@@ -6105,11 +6168,11 @@ mod tests {
     fn a_root_application_exposes_and_dispatches_its_desktop_action_in_the_panel() {
         use iced::futures::{StreamExt, executor::block_on};
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Webbrowser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
         let index = AppIndex::builder().dir(dir.path()).build();
         let launcher = Arc::new(RecordingLaunchTarget::default());
         let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
-        let _ = app.update(Message::QueryChanged("Browser".to_owned()));
+        let _ = app.update(Message::QueryChanged("Webbrowser".to_owned()));
         assert_eq!(app.results.len(), 1, "actions are not duplicate root rows");
         let backend = Arc::new(TestBackend::default());
         app.backend = Some(backend.clone());
@@ -7519,6 +7582,54 @@ mod tests {
             panic!("no success page: {}", app.state_line());
         };
         assert_eq!(page.path, "/home/me/code/hello");
+    }
+
+    // ---- Browse Fonts ----
+
+    #[test]
+    fn browse_fonts_filters_previews_and_goes_back_to_the_same_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        open_builtin(&mut app, "browse fonts", "commands:browse-fonts");
+        let Page::Fonts(page) = &app.page else {
+            panic!("not Browse Fonts: {}", app.state_line());
+        };
+        assert_eq!(page.shown().0, "All Fonts (2)");
+        assert_eq!(page.options, ["All", "Latin", "Monospace"]);
+
+        let task = app.update(Message::FontsCategoryChanged("Monospace".into()));
+        settle(&mut app, task);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::FontPreview(preview) = &app.page else {
+            panic!("no specimen: {}", app.state_line());
+        };
+        assert_eq!(preview.name, "JetBrains Mono");
+        assert_eq!(
+            preview.lines.first(),
+            Some(&crate::fonts_page::SpecimenLine::Heading(
+                "JetBrains Mono".into()
+            ))
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Fonts(page) = &app.page else {
+            panic!("not back at the list: {}", app.state_line());
+        };
+        assert_eq!(page.category.as_deref(), Some("Monospace"), "filter kept");
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let task = app.update(Message::PanelActivate);
+        assert_eq!(
+            settle(&mut app, task),
+            ["JetBrains Mono"],
+            "Copy font family"
+        );
     }
 
     // ---- Set Theme ----

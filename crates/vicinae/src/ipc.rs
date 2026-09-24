@@ -131,6 +131,8 @@ fn describe(request: &Request) -> &'static str {
         Request::ListPrograms => "ListPrograms",
         Request::SetTheme { .. } => "SetTheme",
         Request::CreateExtension { .. } => "CreateExtension",
+        Request::ListFonts => "ListFonts",
+        Request::FontSpecimen { .. } => "FontSpecimen",
         Request::Dmenu { .. } => "Dmenu",
         Request::DmenuFetch { .. } => "DmenuFetch",
         Request::DmenuChoose { .. } => "DmenuChoose",

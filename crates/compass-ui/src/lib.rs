@@ -24,6 +24,7 @@ pub mod emoji_page;
 pub mod extension_fields;
 pub mod extension_page;
 pub mod files_page;
+pub mod fonts_page;
 pub mod icons;
 pub mod message;
 pub mod preferences_page;

@@ -148,6 +148,23 @@ pub enum Message {
     },
     /// Opening the new extension's folder finished.
     CreatedFolderOpened(Result<(), String>),
+    /// Browse Fonts' families arrived, or why they could not be listed.
+    FontsLoaded(Result<crate::backend::FontList, String>),
+    /// Browse Fonts' search text changed.
+    FontsQueryChanged(String),
+    /// Browse Fonts' category filter changed, to the option titled so.
+    FontsCategoryChanged(String),
+    /// A Browse Fonts row was clicked, by position.
+    FontSelected(usize),
+    /// A family's specimen arrived, or why not.
+    FontSpecimenLoaded {
+        /// The typeface's name.
+        name: String,
+        /// The member to draw it with.
+        family: String,
+        /// The specimen's Markdown.
+        result: Result<String, String>,
+    },
     /// Set Theme's search text changed.
     ThemesQueryChanged(String),
     /// A Set Theme row was clicked, by position.

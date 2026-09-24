@@ -143,6 +143,42 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn list_fonts(&self) -> BackendFuture<'_, compass_ui::backend::FontList> {
+        Box::pin(async move {
+            match self.ask(Request::ListFonts, "Listing the fonts").await? {
+                compass_ipc::Response::Fonts { fonts, categories } => {
+                    Ok(compass_ui::backend::FontList {
+                        fonts: fonts
+                            .into_iter()
+                            .map(|font| compass_ui::backend::FontListEntry {
+                                name: font.name,
+                                family: font.family,
+                                glyph: font.glyph,
+                                color: font.color,
+                                primary: font.primary,
+                                categories: font.categories,
+                            })
+                            .collect(),
+                        categories,
+                    })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn font_specimen(&self, name: String) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            match self
+                .ask(Request::FontSpecimen { name }, "Loading the specimen")
+                .await?
+            {
+                compass_ipc::Response::Text { text } => Ok(text),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
         Box::pin(async move {
             match self

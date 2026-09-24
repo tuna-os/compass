@@ -110,6 +110,8 @@ pub struct EngineState {
     run_program_default: String,
     /// `vicinae dmenu` lists waiting on the launcher.
     dmenus: Arc<crate::dmenu::Pending>,
+    /// Browse Fonts' families, read once.
+    fonts: Arc<tokio::sync::OnceCell<Vec<compass_core::font_service::BrowsedFamily>>>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -195,6 +197,7 @@ impl EngineState {
             scripts,
             script_runs: Arc::default(),
             dmenus: Arc::default(),
+            fonts: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -251,6 +254,7 @@ impl EngineState {
             script_runs: Arc::default(),
             run_program_default: crate::programs::default_action(None),
             dmenus: Arc::default(),
+            fonts: Arc::default(),
         }
     }
 
@@ -455,6 +459,20 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
             "no application opens this kind of file",
         ))
     }
+}
+
+/// Browse Fonts' families, read from the font database the first time they
+/// are asked for (or warmed at start), then kept.
+async fn installed_fonts(
+    fonts: &tokio::sync::OnceCell<Vec<compass_core::font_service::BrowsedFamily>>,
+) -> &[compass_core::font_service::BrowsedFamily] {
+    fonts
+        .get_or_init(|| async {
+            tokio::task::spawn_blocking(crate::fonts::browse)
+                .await
+                .unwrap_or_default()
+        })
+        .await
 }
 
 /// Runs a command line for Run Terminal Program, as `OpenInTerminalAction`
@@ -1765,6 +1783,30 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 ))
             }
         }
+        Request::ListFonts => {
+            let fonts = Arc::clone(&state.read().await.fonts);
+            let families = installed_fonts(&fonts).await;
+            Response::Fonts {
+                fonts: families.iter().map(crate::fonts::entry).collect(),
+                categories: crate::fonts::category_names(),
+            }
+        }
+        Request::FontSpecimen { name } => {
+            let fonts = Arc::clone(&state.read().await.fonts);
+            match installed_fonts(&fonts)
+                .await
+                .iter()
+                .find(|f| f.name == name)
+            {
+                Some(family) => Response::Text {
+                    text: crate::fonts::specimen(family),
+                },
+                None => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no installed font family has that name",
+                )),
+            }
+        }
         Request::CreateExtension {
             author,
             title,
@@ -2137,6 +2179,17 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     // Detached for the same reason: a keyring that is slow or absent costs
     // clipboard history, never the socket.
     tokio::spawn(crate::clipboard_service::run(Arc::clone(&state)));
+
+    // Reading every font's character map takes a moment on a machine with
+    // many fonts; done once, after start-up has settled, so Browse Fonts
+    // answers at once.
+    {
+        let fonts = Arc::clone(&state.read().await.fonts);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            installed_fonts(&fonts).await;
+        });
+    }
 
     // The Shell extension, for window switching. Connecting only fails with
     // no session bus at all; an absent extension is reported per request.

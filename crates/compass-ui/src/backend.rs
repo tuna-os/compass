@@ -126,6 +126,17 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err("Set Theme needs the Compass engine to keep the theme".to_owned()) })
     }
 
+    /// The installed font families, as Browse Fonts lists them.
+    fn list_fonts(&self) -> BackendFuture<'_, FontList> {
+        Box::pin(async { Err("Browse Fonts needs the Compass engine".to_owned()) })
+    }
+
+    /// A family's specimen, as Markdown.
+    fn font_specimen(&self, name: String) -> BackendFuture<'_, String> {
+        let _ = name;
+        Box::pin(async { Err("Browse Fonts needs the Compass engine".to_owned()) })
+    }
+
     /// The `vicinae dmenu` list the engine holds under `token`.
     fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
         let _ = token;
@@ -272,6 +283,32 @@ pub struct ExtensionDraft {
     pub command_description: String,
     /// The command template's resource id.
     pub template: String,
+}
+
+/// Browse Fonts' families and its filter's categories.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FontList {
+    /// The families, in the browser's order.
+    pub fonts: Vec<FontListEntry>,
+    /// The category names, in the filter's order.
+    pub categories: Vec<String>,
+}
+
+/// One family in Browse Fonts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FontListEntry {
+    /// The typeface's name, its members folded together.
+    pub name: String,
+    /// The member to draw it with.
+    pub family: String,
+    /// The glyph its row shows.
+    pub glyph: Option<String>,
+    /// Whether it is a colour emoji font.
+    pub color: bool,
+    /// The category it is listed under.
+    pub primary: String,
+    /// Every category it can be filtered by.
+    pub categories: Vec<String>,
 }
 
 /// A `vicinae dmenu` list and its options.

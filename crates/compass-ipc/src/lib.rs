@@ -59,7 +59,7 @@ pub use error::{Error, Result};
 pub use path::{SocketPath, ensure_private_dir};
 pub use protocol::{
     ClipboardEntry, ClipboardKind, DmenuSpec, DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert,
-    ExtensionToast, ExtensionToastStyle, FileHit, PROTOCOL_VERSION, PreferenceField,
+    ExtensionToast, ExtensionToastStyle, FileHit, FontEntry, PROTOCOL_VERSION, PreferenceField,
     PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope, Response,
     ResponseEnvelope, ScriptArgumentEntry, ScriptEntry, ShortcutEntry, SnippetEntry, WindowCommand,
     WindowInfo, WindowOutcome,

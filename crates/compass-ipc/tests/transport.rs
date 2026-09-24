@@ -120,6 +120,13 @@ async fn echo_handler(request: Request) -> Response {
         Request::DmenuFetch { .. } => Response::DmenuList {
             spec: compass_ipc::DmenuSpec::default(),
         },
+        Request::ListFonts => Response::Fonts {
+            fonts: vec![],
+            categories: vec![],
+        },
+        Request::FontSpecimen { .. } => Response::Text {
+            text: String::new(),
+        },
         Request::CreateExtension { .. } => Response::ExtensionCreated {
             path: String::new(),
         },

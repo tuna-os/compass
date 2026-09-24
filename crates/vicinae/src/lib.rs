@@ -23,6 +23,7 @@ pub mod engine;
 pub mod extension_apps;
 pub mod extension_runner;
 pub mod file_search;
+pub mod fonts;
 pub mod hotkey;
 pub mod indexer_client;
 pub mod indexer_service;

@@ -62,6 +62,8 @@ seccompiler.workspace = true
 libc.workspace = true
 tempfile.workspace = true
 url = "2"
+fontdb = "0.23"
+ttf-parser = "0.25"
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 uuid = { version = "1", features = ["v4"] }
 
