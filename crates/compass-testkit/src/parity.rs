@@ -24,6 +24,10 @@ struct ParityConfig {
     corpus_dir: PathBuf,
     /// Output directory for diffs.
     output_dir: Option<PathBuf>,
+    /// Drive the Rust binary on BOTH sides, to check the harness itself.
+    ///
+    /// See [`main`]'s `--selftest`.
+    selftest: bool,
 }
 
 /// One ranked hit, as an engine actually emits it.
@@ -92,6 +96,7 @@ fn main() -> Result<()> {
         rust_engine: PathBuf::from("./target/release/vicinae"),
         corpus_dir: PathBuf::from("crates/compass-testkit/corpus/desktop-entries"),
         output_dir: None,
+        selftest: false,
     };
 
     // Parse command line args
@@ -114,6 +119,21 @@ fn main() -> Result<()> {
                 i += 1;
                 config.output_dir = Some(PathBuf::from(&args[i]));
             }
+            // A HARNESS THAT HAS NEVER RUN PROVES NOTHING, and this one had
+            // not: running it for the first time found a panic on the first
+            // accented name in the corpus, before a single query was
+            // compared. `--selftest` drives the Rust binary on both sides so
+            // the pipeline -- stage, serve, poll, query, parse, compare -- is
+            // exercised wherever the C++ engine is not available, which is
+            // everywhere except the Bluefin container.
+            //
+            // It does NOT claim parity: an engine agrees with itself by
+            // construction. It claims the harness works, and it refuses a run
+            // in which nothing ranked, which is the only way self-parity can
+            // pass while measuring nothing.
+            "--selftest" => {
+                config.selftest = true;
+            }
             _ => {}
         }
         i += 1;
@@ -131,6 +151,27 @@ fn main() -> Result<()> {
     println!("  Identical:         {}", report.identical);
     println!("  Known divergence:  {}", report.known_divergence);
     println!("  Regressions:       {}", report.regression);
+
+    // SELF-PARITY OVER EMPTY RANKINGS IS THE FAILURE MODE THIS WHOLE SUITE
+    // EXISTS TO CATCH. An engine compared with itself agrees on every query,
+    // including every query that returned nothing, so "0 regressions" is
+    // worthless unless something was actually ranked.
+    if config.selftest {
+        let ranked = report
+            .details
+            .iter()
+            .filter(|detail| !detail.cpp_results.is_empty())
+            .count();
+        println!("  Queries that ranked:  {ranked}");
+        if ranked == 0 {
+            eprintln!(
+                "\n❌ SELFTEST RANKED NOTHING across {} queries — the engine served but indexed \
+                 no corpus, so this run compared nothing and agreed perfectly.",
+                report.total
+            );
+            std::process::exit(1);
+        }
+    }
 
     if report.regression > 0 {
         eprintln!("\n❌ REGRESSIONS DETECTED!");
@@ -172,8 +213,21 @@ fn run_parity(config: &ParityConfig) -> Result<ParityReport> {
     // One engine each, started once and reused for every query. Starting them
     // per query would make the run time dominated by index builds and would say
     // nothing extra: Suite 0 compares ranking, not startup.
-    let cpp = RunningEngine::start(&config.cpp_engine, "cpp", Flavour::Cpp)?;
-    let rust = RunningEngine::start(&config.rust_engine, "rust", Flavour::Rust)?;
+    // Both engines index THIS, and nothing the runner happens to have.
+    let corpus = StagedCorpus::stage(&config.corpus_dir)?;
+    println!(
+        "  Staged {} entries at {}",
+        corpus.entries,
+        corpus.root.display()
+    );
+
+    let left_flavour = if config.selftest {
+        Flavour::Rust
+    } else {
+        Flavour::Cpp
+    };
+    let cpp = RunningEngine::start(&config.cpp_engine, "cpp", left_flavour, &corpus)?;
+    let rust = RunningEngine::start(&config.rust_engine, "rust", Flavour::Rust, &corpus)?;
 
     for query in &queries {
         report.total += 1;
@@ -211,11 +265,21 @@ fn generate_test_queries(_corpus_dir: &Path) -> Result<Vec<String>> {
             for line in text.lines() {
                 if let Some(name) = line.strip_prefix("Name=") {
                     let name = name.trim();
-                    if !name.is_empty() && name.len() > 2 {
+                    if name.chars().count() > 2 {
                         queries.push(name.to_owned());
-                        // Add partial queries
-                        for i in 1..=name.len().min(4) {
-                            queries.push(name[..i].to_owned());
+
+                        // Prefixes by CHARACTER, not by byte. `name[..i]`
+                        // panics the moment a corpus entry is not ASCII --
+                        // "byte index 2 is not a char boundary; it is inside
+                        // 'é' of `Déjà Dup Backups`" -- and the checked-in
+                        // corpus has such entries, so the harness aborted
+                        // before it compared anything at all. Found by
+                        // running it, which nothing had done.
+                        for (count, (offset, _)) in name.char_indices().enumerate().skip(1) {
+                            if count > 4 {
+                                break;
+                            }
+                            queries.push(name[..offset].to_owned());
                         }
                     }
                 }
@@ -244,6 +308,121 @@ fn generate_test_queries(_corpus_dir: &Path) -> Result<Vec<String>> {
     Ok(queries)
 }
 
+/// The corpus, laid out where an XDG engine will actually look for it.
+///
+/// # Why this exists
+///
+/// Without it both engines index THE HOST'S applications, and the comparison
+/// is over whatever happens to be installed on the runner. That is not a
+/// corpus: it is not checked in, it differs between machines, and it makes a
+/// green run mean nothing in particular.
+///
+/// The Suite 0 spike settled the mechanics against a real C++ engine
+/// (`.github/workflows/cpp-on-target.yaml`): `XDG_DATA_DIRS=<root>` with the
+/// entries at `<root>/applications` is what both sides read —
+/// `xdgpp::appDirs()` is `dataHome()/applications` plus each
+/// `dataDirs()/applications`, and `compass_xdg` follows the same spec outside
+/// a Flatpak sandbox.
+///
+/// `XDG_DATA_HOME` and `HOME` are pointed at empty directories for the same
+/// reason: left alone, the runner's own `~/.local/share/applications` joins
+/// the index on one side of a comparison that is supposed to be about the
+/// engines.
+#[derive(Debug)]
+struct StagedCorpus {
+    /// Set as `XDG_DATA_DIRS`. Entries live in `<root>/applications`.
+    root: PathBuf,
+    /// Set as `XDG_DATA_HOME`, empty.
+    data_home: PathBuf,
+    /// Set as `HOME`, empty.
+    home: PathBuf,
+    /// How many `.desktop` files were staged.
+    entries: usize,
+}
+
+impl StagedCorpus {
+    /// Copies every `.desktop` file under `corpus_dir` into a private tree.
+    ///
+    /// # Errors
+    ///
+    /// When the corpus yields no entries. AN EMPTY CORPUS IS NOT A PASS: two
+    /// engines that rank nothing agree on everything, and the run would report
+    /// perfect parity having compared nothing. The Suite 0 spike spent five
+    /// commits diagnosing an empty ranking that turned out to be a query term
+    /// absent from the corpus, which is the same mistake read from the other
+    /// end.
+    fn stage(corpus_dir: &Path) -> Result<Self> {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!(
+            "compass-parity-corpus-{}-{nanos}",
+            std::process::id()
+        ));
+
+        let root = base.join("share");
+        let applications = root.join("applications");
+        let data_home = base.join("data-home");
+        let home = base.join("home");
+        for dir in [&applications, &data_home, &home] {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
+
+        let mut entries = 0usize;
+        let mut pending = vec![corpus_dir.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            let listing = std::fs::read_dir(&dir)
+                .with_context(|| format!("reading the corpus at {}", dir.display()))?;
+            for entry in listing {
+                let path = entry?.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "desktop") {
+                    let Some(name) = path.file_name() else {
+                        continue;
+                    };
+                    std::fs::copy(&path, applications.join(name))
+                        .with_context(|| format!("staging {}", path.display()))?;
+                    entries += 1;
+                }
+            }
+        }
+
+        anyhow::ensure!(
+            entries > 0,
+            "no .desktop entries under {} — an empty corpus makes both engines rank nothing and \
+             agree perfectly, which is not a pass",
+            corpus_dir.display()
+        );
+
+        Ok(Self {
+            root,
+            data_home,
+            home,
+            entries,
+        })
+    }
+
+    /// The environment both engines are given, so neither can see the other's
+    /// index or the runner's.
+    fn env(&self) -> [(&'static str, PathBuf); 3] {
+        [
+            ("XDG_DATA_DIRS", self.root.clone()),
+            ("XDG_DATA_HOME", self.data_home.clone()),
+            ("HOME", self.home.clone()),
+        ]
+    }
+}
+
+impl Drop for StagedCorpus {
+    fn drop(&mut self) {
+        if let Some(base) = self.root.parent() {
+            let _ = std::fs::remove_dir_all(base);
+        }
+    }
+}
+
 /// An engine process started for the duration of a parity run.
 ///
 /// `query` asks a RUNNING engine over its IPC socket — it is not a one-shot
@@ -264,6 +443,11 @@ struct RunningEngine {
     /// The private `XDG_RUNTIME_DIR` a C++ engine was given, and `None` for a
     /// Rust one, which takes `--socket` instead.
     runtime_dir: Option<PathBuf>,
+    /// The staged corpus environment, applied to the server AND to every
+    /// client call: the C++ CLI resolves paths the same way its server does,
+    /// and a client reading the runner's real `HOME` is a difference between
+    /// the two sides that has nothing to do with either engine.
+    corpus_env: Vec<(String, PathBuf)>,
 }
 
 /// Which engine a binary is, because the two are started, asked and stopped
@@ -354,7 +538,7 @@ impl RunningEngine {
     /// learning the same lesson the expensive way — three runs screenshotted a
     /// launcher that had not painted yet because the check waited for the
     /// process instead of the renderer.
-    fn start(binary: &Path, name: &str, flavour: Flavour) -> Result<Self> {
+    fn start(binary: &Path, name: &str, flavour: Flavour, corpus: &StagedCorpus) -> Result<Self> {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -374,6 +558,12 @@ impl RunningEngine {
             Flavour::Cpp => (dir.join("vicinae").join("vicinae.sock"), Some(dir.clone())),
         };
 
+        let corpus_env: Vec<(String, PathBuf)> = corpus
+            .env()
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect();
+
         let mut command = Command::new(binary);
         command
             .args(flavour.serve_args(&socket))
@@ -382,6 +572,9 @@ impl RunningEngine {
 
         if let Some(runtime) = &runtime_dir {
             command.env("XDG_RUNTIME_DIR", runtime);
+        }
+        for (key, value) in &corpus_env {
+            command.env(key, value);
         }
 
         let child = command
@@ -394,6 +587,7 @@ impl RunningEngine {
             socket,
             flavour,
             runtime_dir,
+            corpus_env,
         };
         engine.wait_until_answering(name)?;
         Ok(engine)
@@ -405,6 +599,9 @@ impl RunningEngine {
         command.args(args);
         if let Some(runtime) = &self.runtime_dir {
             command.env("XDG_RUNTIME_DIR", runtime);
+        }
+        for (key, value) in &self.corpus_env {
+            command.env(key, value);
         }
         command
     }
@@ -648,6 +845,129 @@ mod tests {
             compare_results(&deep, &deep_swapped).0,
             ParityStatus::Regression
         );
+    }
+
+    /// A non-ASCII name must not abort the run.
+    ///
+    /// `name[..i]` on byte indices panicked on the first accented entry in the
+    /// checked-in corpus:
+    ///
+    /// ```text
+    /// byte index 2 is not a char boundary; it is inside 'é' (bytes 1..3)
+    /// of `Déjà Dup Backups`
+    /// ```
+    ///
+    /// The harness died before comparing a single query, and no test noticed
+    /// because nothing had ever run it against the real corpus.
+    #[test]
+    fn prefixes_are_taken_by_character_so_an_accented_name_does_not_abort_the_run() {
+        let corpus = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            corpus.path().join("deja-dup.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Déjà Dup Backups\nExec=/bin/true\n",
+        )
+        .expect("write");
+
+        let queries = generate_test_queries(corpus.path()).expect("queries");
+
+        assert!(
+            queries.iter().any(|q| q == "Déjà Dup Backups"),
+            "the full name must be queried"
+        );
+        for prefix in ["D", "Dé", "Déj", "Déjà"] {
+            assert!(
+                queries.iter().any(|q| q == prefix),
+                "the {prefix:?} prefix must be generated, split on characters"
+            );
+        }
+    }
+
+    /// CONTROL. An empty corpus must be refused, not run.
+    ///
+    /// Two engines that rank nothing agree on everything, so a run over an
+    /// empty corpus reports perfect parity having compared nothing. That is
+    /// the exact shape of green Suite 0 exists to catch, and it would be the
+    /// worst possible place to produce one.
+    #[test]
+    fn staging_refuses_a_corpus_with_no_entries() {
+        let empty = tempfile::tempdir().expect("tempdir");
+        std::fs::write(empty.path().join("README.md"), "not a desktop entry").expect("write");
+
+        let error = StagedCorpus::stage(empty.path()).expect_err("an empty corpus must not pass");
+        let message = format!("{error}");
+        assert!(
+            message.contains("agree perfectly"),
+            "the refusal must say why an empty corpus is not a pass: {message}"
+        );
+    }
+
+    /// Entries land where an XDG engine looks: `$XDG_DATA_DIRS/applications`.
+    ///
+    /// Nested directories are flattened on purpose — the checked-in corpus
+    /// keeps entries in `real/`, and `$XDG_DATA_DIRS` names the parent of
+    /// `applications`, not of `real`.
+    #[test]
+    fn staging_collects_every_entry_into_the_applications_directory() {
+        let source = tempfile::tempdir().expect("tempdir");
+        let nested = source.path().join("real");
+        std::fs::create_dir_all(&nested).expect("mkdir");
+        for name in ["one", "two"] {
+            std::fs::write(
+                nested.join(format!("{name}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName={name}\nExec=/bin/true\n"),
+            )
+            .expect("write");
+        }
+        std::fs::write(source.path().join("notes.txt"), "ignored").expect("write");
+
+        let staged = StagedCorpus::stage(source.path()).expect("staging");
+        assert_eq!(staged.entries, 2, "only .desktop files are staged");
+        for name in ["one", "two"] {
+            assert!(
+                staged
+                    .root
+                    .join("applications")
+                    .join(format!("{name}.desktop"))
+                    .exists(),
+                "{name} must be staged under applications/"
+            );
+        }
+    }
+
+    /// Both engines are pointed at the staged corpus and away from the
+    /// runner's own.
+    ///
+    /// Without `XDG_DATA_HOME` and `HOME`, the machine's
+    /// `~/.local/share/applications` joins one side of a comparison that is
+    /// supposed to be about the engines. Asserted on the environment the
+    /// harness builds, because that is the thing that was missing.
+    #[test]
+    fn the_staged_corpus_replaces_every_data_root_an_engine_would_read() {
+        let source = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            source.path().join("one.desktop"),
+            "[Desktop Entry]\nType=Application\nName=One\nExec=/bin/true\n",
+        )
+        .expect("write");
+
+        let staged = StagedCorpus::stage(source.path()).expect("staging");
+        let env = staged.env();
+        let keys: Vec<&str> = env.iter().map(|(key, _)| *key).collect();
+        assert_eq!(keys, ["XDG_DATA_DIRS", "XDG_DATA_HOME", "HOME"]);
+
+        assert_eq!(
+            env[0].1, staged.root,
+            "entries are read from the staged root"
+        );
+        for (key, value) in &env[1..] {
+            assert!(
+                std::fs::read_dir(value)
+                    .expect("the directory exists")
+                    .next()
+                    .is_none(),
+                "{key} must point at an empty directory, or the runner's own apps leak in"
+            );
+        }
     }
 
     /// The two engines' argv, pinned.
