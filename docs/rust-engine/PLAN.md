@@ -2400,13 +2400,17 @@ where it is.
 
 **Next, in order:**
 
-1. **#204 — typo tolerance in app search.** One transposed or doubled keystroke drops the app
-   entirely. The ignored test in `search_quality.rs` is the acceptance criterion. A user-visible
-   quality win, and the cleanest demonstration of ADR-0017: the C++ engine has the same bug.
+1. ~~**#204 — typo tolerance in app search.**~~ **Done:** a one-edit `strsim` fallback, ranked
+   after every real match; the formerly ignored `search_quality.rs` test is the acceptance
+   criterion and passes. The C++ engine has the same gap, which is the point of ADR-0017.
 2. **Storage onto `rusqlite`** (ADR-0017 decision 4). Replace `compass-sqlcipher-sys` in its four
-   callers, move the file index to SQLite's built-in `trigram` tokenizer, drop
-   `vendor/fuzzy-trigram` from the Rust build, and remove the workspace's one `unsafe` opt-out.
-   Existing storage tests are the safety net.
+   callers, move the clipboard and file index to SQLite's built-in `trigram` tokenizer, and remove
+   the workspace's one `unsafe` opt-out. The file index also registers the vendored `spellfix1` C
+   extension for its typo fallback (`sqlite_writer.rs`); that moves into Rust — `fst`'s Levenshtein
+   automaton over the vocabulary, or the `strsim` scan app search now uses — so neither
+   `vendor/fuzzy-trigram` nor `vendor/spellfix` is linked. Three steps, each its own PR: the
+   wrapper onto `rusqlite` keeping its API; the tokenizer swap; spellfix out. Existing storage and
+   `query-quality` tests are the safety net.
 3. **A Vicinae importer** for clipboard history, extension storage and OAuth tokens (decision 3),
    reading content tables only. Needed before cutover, not before item 2.
 4. **Summon-to-first-frame** — §8.5's SLA row still has no harness. The paint tier's

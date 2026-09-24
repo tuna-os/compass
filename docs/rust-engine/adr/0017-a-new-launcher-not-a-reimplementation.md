@@ -63,7 +63,8 @@ it; the content tables are ordinary tables.)
 **4. ADR-0014 is superseded.** New stores use `rusqlite` — `bundled-sqlcipher` where the data is
 secret (OAuth tokens, extension storage, clipboard), plain `bundled` where it is not (the file
 index) — and SQLite's built-in `trigram` tokenizer. `compass-sqlcipher-sys` and
-`vendor/fuzzy-trigram` leave the Rust engine's dependency graph. Encryption at rest is kept: it is
+`vendor/fuzzy-trigram` leave the Rust engine's dependency graph, and so does `vendor/spellfix`: the
+file index's typo fallback moves into Rust over an off-the-shelf edit-distance crate. Encryption at rest is kept: it is
 a property users rely on, not a compatibility detail.
 
 **5. Compatibility identifiers from ADR-0012 are unchanged.** The `vicinae` binary, socket, config
