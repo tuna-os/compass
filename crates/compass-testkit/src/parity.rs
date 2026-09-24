@@ -506,6 +506,9 @@ struct StagedCorpus {
     data_home: PathBuf,
     /// Set as `HOME`, empty.
     home: PathBuf,
+    /// Set as `XDG_CACHE_HOME`, where the Rust engine's file indexer keeps
+    /// its database: a runner's real cache is not the engines' to write.
+    cache_home: PathBuf,
     /// How many `.desktop` files were staged.
     entries: usize,
 }
@@ -535,7 +538,8 @@ impl StagedCorpus {
         let applications = root.join("applications");
         let data_home = base.join("data-home");
         let home = base.join("home");
-        for dir in [&applications, &data_home, &home] {
+        let cache_home = base.join("cache-home");
+        for dir in [&applications, &data_home, &home, &cache_home] {
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
 
@@ -570,17 +574,19 @@ impl StagedCorpus {
             root,
             data_home,
             home,
+            cache_home,
             entries,
         })
     }
 
     /// The environment both engines are given, so neither can see the other's
     /// index or the runner's.
-    fn env(&self) -> [(&'static str, PathBuf); 3] {
+    fn env(&self) -> [(&'static str, PathBuf); 4] {
         [
             ("XDG_DATA_DIRS", self.root.clone()),
             ("XDG_DATA_HOME", self.data_home.clone()),
             ("HOME", self.home.clone()),
+            ("XDG_CACHE_HOME", self.cache_home.clone()),
         ]
     }
 }
@@ -1311,7 +1317,10 @@ mod tests {
         let staged = StagedCorpus::stage(source.path()).expect("staging");
         let env = staged.env();
         let keys: Vec<&str> = env.iter().map(|(key, _)| *key).collect();
-        assert_eq!(keys, ["XDG_DATA_DIRS", "XDG_DATA_HOME", "HOME"]);
+        assert_eq!(
+            keys,
+            ["XDG_DATA_DIRS", "XDG_DATA_HOME", "HOME", "XDG_CACHE_HOME"]
+        );
 
         assert_eq!(
             env[0].1, staged.root,

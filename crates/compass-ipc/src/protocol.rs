@@ -34,8 +34,8 @@ use serde::{Deserialize, Serialize};
 /// version 6, window switching; version 7, pasting, pinning and removing a
 /// clipboard entry, and running an installed extension's command; version 8,
 /// following and driving an extension's view; version 9, an extension view's
-/// toast; version 10, the power and media commands, and file search.
-pub const PROTOCOL_VERSION: u16 = 10;
+/// toast; version 10, the power and media commands; version 11, file search.
+pub const PROTOCOL_VERSION: u16 = 11;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
