@@ -28,6 +28,10 @@ struct ParityConfig {
     ///
     /// See [`main`]'s `--selftest`.
     selftest: bool,
+    /// Report regressions without failing on them.
+    ///
+    /// See [`main`]'s `--report-only`.
+    report_only: bool,
 }
 
 /// One ranked hit, as an engine actually emits it.
@@ -97,6 +101,7 @@ fn main() -> Result<()> {
         corpus_dir: PathBuf::from("crates/compass-testkit/corpus/desktop-entries"),
         output_dir: None,
         selftest: false,
+        report_only: false,
     };
 
     // Parse command line args
@@ -134,6 +139,22 @@ fn main() -> Result<()> {
             "--selftest" => {
                 config.selftest = true;
             }
+            // RECORDED BEFORE GATED, per ADR-0010.
+            //
+            // The first differential between two independently written
+            // engines will disagree somewhere, and nobody knows where yet. A
+            // job that reddens on that first run teaches nothing and gets
+            // muted; a job that PRINTS where they disagree turns an unknown
+            // into a list.
+            //
+            // This suppresses only the exit code for ranking differences. A
+            // harness that could not run, an engine that would not start, and
+            // a run in which nothing ranked all still fail: those are not
+            // findings about the engines, they are the harness measuring
+            // nothing.
+            "--report-only" => {
+                config.report_only = true;
+            }
             _ => {}
         }
         i += 1;
@@ -151,6 +172,16 @@ fn main() -> Result<()> {
     println!("  Identical:         {}", report.identical);
     println!("  Known divergence:  {}", report.known_divergence);
     println!("  Regressions:       {}", report.regression);
+
+    // BEFORE ANY EXIT. The report was written last, after the `exit(1)` on
+    // regressions, so the run that most needed its diff on disk was the one
+    // run that never wrote one.
+    if let Some(output_dir) = &config.output_dir {
+        std::fs::create_dir_all(output_dir)?;
+        let report_path = output_dir.join("parity-report.json");
+        std::fs::write(report_path, serde_json::to_string_pretty(&report)?)?;
+        println!("  Report written to: {}", output_dir.display());
+    }
 
     // SELF-PARITY OVER EMPTY RANKINGS IS THE FAILURE MODE THIS WHOLE SUITE
     // EXISTS TO CATCH. An engine compared with itself agrees on every query,
@@ -174,25 +205,38 @@ fn main() -> Result<()> {
     }
 
     if report.regression > 0 {
-        eprintln!("\n❌ REGRESSIONS DETECTED!");
-        for detail in &report.details {
-            if detail.status == ParityStatus::Regression {
-                eprintln!("  Query: {}", detail.query);
-                eprintln!("    C++:  {:?}", detail.cpp_results);
-                eprintln!("    Rust: {:?}", detail.rust_results);
-            }
+        let banner = if config.report_only {
+            "⚠️  RANKING DIFFERENCES (recorded, not gated)"
+        } else {
+            "❌ REGRESSIONS DETECTED!"
+        };
+        eprintln!("\n{banner}");
+
+        // Bounded: a first differential can disagree on hundreds of queries,
+        // and a log nobody scrolls to the end of is a log nobody reads.
+        const SHOWN: usize = 25;
+        let differing = report
+            .details
+            .iter()
+            .filter(|detail| detail.status == ParityStatus::Regression);
+        for detail in differing.clone().take(SHOWN) {
+            eprintln!("  Query: {}", detail.query);
+            eprintln!("    C++:  {:?}", detail.cpp_results);
+            eprintln!("    Rust: {:?}", detail.rust_results);
         }
-        std::process::exit(1);
+        let total = differing.count();
+        if total > SHOWN {
+            eprintln!(
+                "  … and {} more; the full list is in the report",
+                total - SHOWN
+            );
+        }
+
+        if !config.report_only {
+            std::process::exit(1);
+        }
     } else {
         println!("\n✅ All checks passed");
-    }
-
-    // Write report if output dir specified
-    if let Some(output_dir) = config.output_dir {
-        std::fs::create_dir_all(&output_dir)?;
-        let report_path = output_dir.join("parity-report.json");
-        std::fs::write(report_path, serde_json::to_string_pretty(&report)?)?;
-        println!("Report written to: {}", output_dir.display());
     }
 
     Ok(())
@@ -468,6 +512,29 @@ enum Flavour {
 }
 
 impl Flavour {
+    /// Environment this flavour needs before it will start at all.
+    ///
+    /// The C++ engine is a Qt application and tries to open a display even
+    /// when serving headlessly. Without this it aborts before binding its
+    /// socket, which the Suite 0 spike measured directly:
+    ///
+    /// ```text
+    /// === rung: bare ===
+    /// FATAL - This application failed to start because no Qt platform
+    ///         plugin could be initialized.
+    /// === rung: offscreen ===
+    /// ANSWERED after 400ms
+    /// ```
+    ///
+    /// `offscreen` is enough: no compositor, no session bus, no
+    /// `dbus-run-session`. The Rust engine needs nothing.
+    fn env(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Cpp => &[("QT_QPA_PLATFORM", "offscreen")],
+            Self::Rust => &[],
+        }
+    }
+
     /// The argv that starts a server.
     ///
     /// `serve` on the Rust side; `server` on the C++ side, which is a
@@ -576,6 +643,9 @@ impl RunningEngine {
         for (key, value) in &corpus_env {
             command.env(key, value);
         }
+        for (key, value) in flavour.env() {
+            command.env(key, value);
+        }
 
         let child = command
             .spawn()
@@ -601,6 +671,9 @@ impl RunningEngine {
             command.env("XDG_RUNTIME_DIR", runtime);
         }
         for (key, value) in &self.corpus_env {
+            command.env(key, value);
+        }
+        for (key, value) in self.flavour.env() {
             command.env(key, value);
         }
         command

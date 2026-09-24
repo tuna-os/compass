@@ -716,3 +716,110 @@ jobs:
           path: spike-*.log
           if-no-files-found: ignore
           retention-days: 7
+
+  # THE REAL DIFFERENTIAL: both engines, one container, one corpus.
+  #
+  # Everything before this job established that it is possible. The spike
+  # proved the C++ engine serves AND ranks on the `offscreen` rung with no
+  # compositor and no session bus; `suite0-selftest` in `rust.yaml` proved the
+  # harness completes a run end to end. This is the two of them together,
+  # which is what §8.1 has been asking for since Phase 1 opened.
+  parity:
+    name: "Suite 0: the two engines, side by side"
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the C++ engine this workflow just built
+        uses: actions/download-artifact@v4
+        with:
+          name: vicinae-cpp-bluefin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: suite0-parity-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: suite0-parity-${{ runner.os }}-
+
+      # Built on the runner rather than in the container: the Bluefin image
+      # ships no Rust toolchain, and a glibc built against 2.39 runs on the
+      # container's newer one. The reverse would not, which is why the C++
+      # engine is built IN the container and this is not.
+      #
+      # The `ldd` guard below is what turns that reasoning into a check.
+      - name: Build the Rust engine and the harness
+        run: cargo build --locked --release -p vicinae -p compass-testkit --bin vicinae --bin parity
+
+      - name: Both engines, one corpus
+        run: |
+          set -o pipefail
+          timeout --signal=KILL 2100 podman run --rm \
+            -v "$PWD:/src:z" \
+            -w /src \
+            --shm-size=2g \
+            ghcr.io/ublue-os/bluefin:stable bash -euo pipefail -c '
+              ./scripts/runners/bluefin/install-deps.sh >/dev/null 2>&1
+              tar -C / -xzf /src/vicinae-bluefin.tar.gz
+
+              # A binary that cannot load is not a parity finding. Both sides
+              # are checked, because the Rust one crossed a distribution
+              # boundary to get here and the C++ one needs its Qt runtime.
+              for engine in /usr/bin/vicinae /src/target/release/vicinae; do
+                echo "--- $engine ---"
+                "$engine" --version 2>&1 | head -2 || "$engine" version 2>&1 | head -2 || true
+                if ldd "$engine" 2>&1 | grep "not found"; then
+                  echo "::error::$engine has unresolved libraries in this container"
+                  exit 1
+                fi
+              done
+
+              # --report-only, per ADR-0010: the first differential between two
+              # independently written engines will disagree somewhere and
+              # nobody knows where yet. Record the list, then gate on it once
+              # it is known. The harness still FAILS if it cannot run, if an
+              # engine will not start, or if nothing ranked.
+              /src/target/release/parity \
+                --report-only \
+                --cpp /usr/bin/vicinae \
+                --rust /src/target/release/vicinae \
+                --corpus /src/crates/compass-testkit/corpus/desktop-entries \
+                --output /src/parity-out 2>&1 | tee /src/parity-run.log
+            '
+          sudo chown -R "$(id -un)" parity-out parity-run.log 2>/dev/null || true
+
+      - name: What the two engines agreed and disagreed on
+        if: always()
+        run: |
+          {
+            echo "### Suite 0: the two engines, side by side"
+            echo
+            if [ -f parity-run.log ]; then
+              echo '```'
+              sed -n '/^Results:/,/^$/p' parity-run.log
+              echo '```'
+            else
+              echo 'The run produced no log, so it did not reach a comparison.'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The per-query diff, which is the input to setting the gate. Kept long
+      # because the series is the point: a divergence that appears once is
+      # noise, one that persists is a bug in one of the two engines.
+      - name: Keep the per-query report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            parity-out/parity-report.json
+            parity-run.log
+          if-no-files-found: warn
+          retention-days: 90
