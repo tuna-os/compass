@@ -207,20 +207,6 @@ fn from_indexed(category: IndexedFileCategory) -> FileCategory {
     }
 }
 
-/// The MIME type a file is opened as: `inode/directory` for a directory, the
-/// extension's registered type otherwise, and `application/octet-stream`
-/// when the extension says nothing.
-#[must_use]
-pub fn mime_for(path: &Path) -> String {
-    if path.is_dir() {
-        return "inode/directory".to_owned();
-    }
-    mime_guess::from_path(path)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,16 +247,5 @@ mod tests {
     fn the_root_is_searched_for_rather_than_listed() {
         let search = FileSearch::without_indexer();
         assert_eq!(search.search("/", None), Err(INDEXER_UNAVAILABLE));
-    }
-
-    #[test]
-    fn mime_follows_the_extension_and_directories() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        assert_eq!(mime_for(dir.path()), "inode/directory");
-        assert_eq!(mime_for(Path::new("/x/report.pdf")), "application/pdf");
-        assert_eq!(
-            mime_for(Path::new("/x/unknown.zzzz")),
-            "application/octet-stream"
-        );
     }
 }

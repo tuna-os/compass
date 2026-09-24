@@ -1189,6 +1189,7 @@ name = "compass-xdg"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "mime_guess",
  "percent-encoding",
  "proptest",
  "roxmltree",
@@ -6309,7 +6310,6 @@ dependencies = [
  "iced_winit",
  "landlock",
  "libc",
- "mime_guess",
  "notify",
  "notify-rust",
  "oo7",

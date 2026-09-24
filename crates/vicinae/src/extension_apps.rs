@@ -77,11 +77,11 @@ impl EngineApps {
     /// Search Files' `OpenFileAction` opens it with the first curated
     /// opener. `false` when no installed application opens that type.
     pub fn open_file(&self, path: &std::path::Path) -> bool {
-        let mime = crate::file_search::mime_for(path);
-        let Some(opener) = self.default_opener(&mime) else {
+        let path = path.to_string_lossy();
+        let Some(opener) = self.default_opener(&path) else {
             return false;
         };
-        self.launch(&opener, &path.to_string_lossy());
+        self.launch(&opener, &path);
         true
     }
 
@@ -360,12 +360,19 @@ mod tests {
             Some("browser.desktop".to_owned())
         );
         assert_eq!(
-            apps.openers("/home")
+            apps.openers(&dir.path().to_string_lossy())
                 .iter()
                 .map(|a| a.id.as_str())
                 .collect::<Vec<_>>(),
-            Vec::<&str>::new(),
-            "a bare path is not classified yet, so nothing claims it"
+            ["files.desktop"],
+            "a directory path is classified as inode/directory"
+        );
+        let page = dir.path().join("index.html");
+        std::fs::write(&page, "<p>").unwrap();
+        assert_eq!(
+            apps.default_opener(&page.to_string_lossy()).map(|a| a.id),
+            Some("browser.desktop".to_owned()),
+            "a file path opens with what claims its MIME type, not the path as a type"
         );
         assert_eq!(apps.list().len(), 2);
         assert!(apps.by_id("files").is_some());
