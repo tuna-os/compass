@@ -2413,7 +2413,9 @@ where it is.
    crate keeps `unsafe` either way. What (b) would still buy is ~500 lines of FFI replaced by a
    crate, at the price of linking our C tokenizer against `libsqlite3-sys`'s own SQLCipher (4.6.1,
    against the vendored 4.16.0) — a real risk for a modest gain. Revisit if the wrapper grows or
-   a bug lands in it.
+   a bug lands in it. **Re-ranked up (2026-09-24):** `libsqlite3-sys` 0.38.2 now bundles SQLCipher
+   4.14.0, so the version gap is mostly gone and the ~300 hand-bound call sites are the payoff; see
+   [`CRATE-AUDIT.md`](./CRATE-AUDIT.md).
 3. **A Vicinae importer** for clipboard history, extension storage and OAuth tokens (decision 3),
    reading content tables only. Needed before cutover, not before item 2.
    **Clipboard history: done** (`crates/vicinae/src/vicinae_import.rs`). On the first engine
