@@ -1076,6 +1076,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "ask", "title": "Ask First", "mode": "view"},
               {"name": "link", "title": "Open Link", "mode": "no-view"},
               {"name": "tiles", "title": "Tiles", "mode": "view"},
+              {"name": "issue", "title": "New Issue", "mode": "view"},
               {"name": "greet", "title": "Greet Someone", "mode": "no-view",
                "arguments": [{"name": "name", "type": "text", "placeholder": "Name",
                               "required": true}]},
@@ -1134,6 +1135,29 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                      require('node:fs').writeFileSync({acted:?}, 'acted') }}))
                }}));",
             acted = acted.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let submitted = root.join("data-home/vicinae/support/hello/submitted.json");
+    std::fs::write(
+        ext.join("issue.js"),
+        format!(
+            "const React = require('react');
+             const {{ Form, ActionPanel, Action }} = require('@vicinae/api');
+             module.exports.default = function Issue() {{
+               const [title, setTitle] = React.useState('');
+               return React.createElement(Form, {{ actions:
+                   React.createElement(ActionPanel, null,
+                     React.createElement(Action.SubmitForm, {{ title: 'Create', onSubmit: (values) =>
+                       require('node:fs').writeFileSync({submitted:?},
+                         JSON.stringify({{ values, title }})) }}))
+                 }},
+                 React.createElement(Form.TextField, {{ id: 'title', title: 'Title',
+                   value: title, onChange: setTitle }}),
+                 React.createElement(Form.Checkbox, {{ id: 'urgent', label: 'Urgent',
+                   defaultValue: false }}));
+             }};",
+            submitted = submitted.to_string_lossy()
         ),
     )
     .unwrap();
@@ -1697,6 +1721,92 @@ fn a_grid_command_renders_typed_cells() {
     assert_eq!(
         section.items[1].content,
         GridContent::Color(Color::Literal("#ff0000".into()))
+    );
+    daemon.request(Request::CloseExtension { session });
+}
+
+#[test]
+fn a_form_command_takes_edits_and_its_submit_gets_the_values() {
+    use compass_extension_api::View;
+    use compass_extension_api::view::{FieldValue, FormItem};
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut submitted = std::path::PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        submitted = dir.join("data-home/vicinae/support/hello/submitted.json");
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:issue".into(),
+        arguments_json: None,
+    }) else {
+        panic!("the form command did not start a view");
+    };
+    let (view, _) = wait_for_view(
+        &daemon,
+        session,
+        |view, _| matches!(view, View::Form(form) if !form.items.is_empty()),
+    );
+    let View::Form(form) = view else {
+        unreachable!()
+    };
+    let FormItem::Field(title) = &form.items[0] else {
+        panic!("no title field");
+    };
+    let on_change = title.on_change.clone().expect("a controlled field");
+    let submit = form.actions.as_ref().expect("actions").actions()[0]
+        .handler
+        .clone();
+
+    // The person types; the extension's state takes it and echoes it back.
+    let answer = daemon.request(Request::ExtensionEvent {
+        session,
+        handler: on_change.0,
+        args_json: r#"["Crash on paste", 1]"#.into(),
+    });
+    assert_eq!(answer, Response::Ack);
+    let (echoed, _) = wait_for_view(&daemon, session, |view, _| match view {
+        View::Form(form) => matches!(&form.items[0],
+            FormItem::Field(f) if f.value == Some(FieldValue::Text("Crash on paste".into()))),
+        _ => false,
+    });
+    let View::Form(echoed) = echoed else {
+        unreachable!()
+    };
+    let FormItem::Field(title) = &echoed.items[0] else {
+        unreachable!()
+    };
+    assert_eq!(
+        title.echo.map(|seq| seq.raw()),
+        Some(1),
+        "an echo of edit 1"
+    );
+
+    daemon.request(Request::ExtensionEvent {
+        session,
+        handler: submit.0,
+        args_json: r#"[{"title": "Crash on paste", "urgent": true}]"#.into(),
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !submitted.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let got: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&submitted).expect("submitted")).unwrap();
+    assert_eq!(
+        got,
+        serde_json::json!({
+            "values": {"title": "Crash on paste", "urgent": true},
+            "title": "Crash on paste"
+        })
     );
     daemon.request(Request::CloseExtension { session });
 }

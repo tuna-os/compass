@@ -14,8 +14,9 @@
 //! `list-item` (title, subtitle, `id`, keywords, text and tag accessories,
 //! actions, a Markdown detail) and `detail`, with `action-panel`,
 //! `action-panel-section`, `action-panel-submenu` and `action` beneath them.
-//! `grid` (sections, cells with their image or colour, and actions) is
-//! covered the same way.
+//! `grid` (sections, cells with their image or colour, and actions) and
+//! `form` (its fields, their values and echo counts, descriptions,
+//! separators, and `Action.SubmitForm`'s `onSubmit`) are covered the same way.
 //! Anything else at the root is an [`Unsupported`] naming the tag, so a front
 //! end can say which component it cannot draw yet instead of drawing nothing.
 //! Props a covered component has but this does not read (icons, colours,
@@ -25,9 +26,11 @@
 use compass_extension_api::action::{
     Action, ActionItem, ActionPanel, ActionSection, ActionSubmenu, KeyModifier, Shortcut,
 };
+use compass_extension_api::input::Seq;
 use compass_extension_api::view::{
-    Accessory, Color, Detail, EmptyState, GridContent, GridFit, GridInset, GridItem, GridSection,
-    GridView, Image, ImageSource, ListItem, ListSection, ListView, View,
+    Accessory, Color, Detail, Dropdown, DropdownOption, DropdownSection, EmptyState, FieldKind,
+    FieldValue, FormField, FormItem, FormView, GridContent, GridFit, GridInset, GridItem,
+    GridSection, GridView, Image, ImageSource, ListItem, ListSection, ListView, View,
 };
 use serde_json::Value;
 
@@ -45,12 +48,13 @@ pub struct Unsupported {
 ///
 /// # Errors
 ///
-/// [`Unsupported`] for a root this does not cover (a `form`).
+/// [`Unsupported`] for a root this does not cover.
 pub fn to_view(root: &RenderNode) -> Result<View, Unsupported> {
     match root.tag.as_str() {
         "list" => Ok(View::List(list(root))),
         "detail" => Ok(View::Detail(detail(root))),
         "grid" => Ok(View::Grid(grid(root))),
+        "form" => Ok(View::Form(form(root))),
         other => Err(Unsupported {
             tag: other.to_owned(),
         }),
@@ -197,6 +201,166 @@ fn grid(node: &RenderNode) -> GridView {
     }
     flush(&mut view.sections, &mut loose);
     view
+}
+
+fn form(node: &RenderNode) -> FormView {
+    let mut view = FormView {
+        navigation_title: text(node, "navigationTitle"),
+        is_loading: flag(node, "isLoading"),
+        enable_drafts: flag(node, "enableDrafts"),
+        ..FormView::default()
+    };
+    for child in node.children() {
+        match child.tag.as_str() {
+            "action-panel" => view.actions = Some(panel(child)),
+            "separator" => view.items.push(FormItem::Separator {
+                id: compass_extension_api::id::NodeId::ROOT,
+            }),
+            "form-description" => view.items.push(FormItem::Description {
+                id: compass_extension_api::id::NodeId::ROOT,
+                title: text(child, "title"),
+                text: text(child, "text").unwrap_or_default(),
+            }),
+            _ => {
+                if let Some(field) = form_field(child) {
+                    view.items.push(FormItem::Field(Box::new(field)));
+                }
+            }
+        }
+    }
+    view
+}
+
+/// A field's `value` is `{value, eventCount}` where the API counts echoes
+/// (`useEventCounted`), the bare value where it does not; `defaultValue` is
+/// the extension's starting value and never an echo.
+fn field_value(node: &RenderNode) -> (Option<&Value>, Option<Seq>) {
+    match node.props.get("value") {
+        Some(counted) if counted.get("eventCount").is_some() => (
+            counted.get("value"),
+            counted
+                .get("eventCount")
+                .and_then(Value::as_u64)
+                .map(Seq::from_raw),
+        ),
+        Some(Value::Null) | None => (node.props.get("defaultValue"), None),
+        Some(bare) => (Some(bare), None),
+    }
+}
+
+fn form_field(node: &RenderNode) -> Option<FormField> {
+    let placeholder = text(node, "placeholder");
+    let kind = match node.tag.as_str() {
+        "text-field" => FieldKind::Text { placeholder },
+        "password-field" => FieldKind::Password { placeholder },
+        "text-area-field" => FieldKind::TextArea {
+            placeholder,
+            markdown: flag(node, "enableMarkdown"),
+        },
+        "checkbox-field" => FieldKind::Checkbox {
+            label: text(node, "label"),
+        },
+        "dropdown-field" => FieldKind::Dropdown(Dropdown {
+            placeholder,
+            sections: dropdown_sections(node),
+            filtering: flag(node, "filtering"),
+            ..Dropdown::default()
+        }),
+        "date-picker-field" => FieldKind::DatePicker {
+            min: None,
+            max: None,
+            precision: compass_extension_api::view::DatePrecision::default(),
+        },
+        "tag-picker-field" => FieldKind::TagPicker {
+            options: dropdown_sections(node)
+                .into_iter()
+                .flat_map(|section| section.options)
+                .collect(),
+            placeholder,
+        },
+        "file-picker-field" => FieldKind::FilePicker {
+            allow_multiple: flag(node, "allowMultipleSelection"),
+            allow_directories: flag(node, "canChooseDirectories"),
+            allow_files: node
+                .props
+                .get("canChooseFiles")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        },
+        _ => return None,
+    };
+    let (value, echo) = field_value(node);
+    let value = value.and_then(|value| match (&kind, value) {
+        (_, Value::Null) => None,
+        (_, Value::Bool(on)) => Some(FieldValue::Bool(*on)),
+        (_, Value::String(text)) if matches!(kind, FieldKind::DatePicker { .. }) => {
+            Some(FieldValue::Date(text.clone()))
+        }
+        (_, Value::String(text)) => Some(FieldValue::Text(text.clone())),
+        (FieldKind::FilePicker { .. }, Value::Array(all)) => Some(FieldValue::Paths(
+            all.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+        )),
+        (_, Value::Array(all)) => Some(FieldValue::Values(
+            all.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+        )),
+        (_, Value::Number(n)) => n.as_i64().map(FieldValue::Integer),
+        _ => None,
+    });
+    Some(FormField {
+        id: compass_extension_api::id::NodeId::ROOT,
+        name: text(node, "id")?,
+        title: text(node, "title"),
+        error: text(node, "error"),
+        info: text(node, "info"),
+        autofocus: flag(node, "autoFocus"),
+        value,
+        echo,
+        on_change: handler(node, "onChange"),
+        kind,
+    })
+}
+
+/// `dropdown-item`s, loose or in `dropdown-section`s.
+fn dropdown_sections(node: &RenderNode) -> Vec<DropdownSection> {
+    let option = |item: &RenderNode| {
+        (item.tag == "dropdown-item").then(|| DropdownOption {
+            title: text(item, "title").unwrap_or_default(),
+            value: text(item, "value").unwrap_or_default(),
+            icon: None,
+            keywords: Vec::new(),
+        })
+    };
+    let mut sections = Vec::new();
+    let mut loose = Vec::new();
+    for child in node.children() {
+        if child.tag == "dropdown-section" {
+            if !loose.is_empty() {
+                sections.push(DropdownSection {
+                    title: None,
+                    options: std::mem::take(&mut loose),
+                });
+            }
+            sections.push(DropdownSection {
+                title: text(child, "title"),
+                options: child.children().iter().filter_map(option).collect(),
+            });
+        } else {
+            loose.extend(option(child));
+        }
+    }
+    if !loose.is_empty() {
+        sections.push(DropdownSection {
+            title: None,
+            options: loose,
+        });
+    }
+    sections
 }
 
 fn columns(node: &RenderNode) -> Option<u16> {
@@ -436,7 +600,9 @@ fn panel(node: &RenderNode) -> ActionPanel {
 fn action_item(node: &RenderNode) -> Option<ActionItem> {
     match node.tag.as_str() {
         "action" => {
-            let handler = text(node, "onAction")?;
+            // `Action.SubmitForm` renders a no-op `onAction` beside the real
+            // `onSubmit`, which the host calls with the form's values.
+            let handler = text(node, "onSubmit").or_else(|| text(node, "onAction"))?;
             let mut action = Action::new(text(node, "title").unwrap_or_default(), handler);
             action.key = text(node, "stableId");
             action.shortcut = node.props.get("shortcut").and_then(shortcut);
@@ -565,12 +731,83 @@ mod tests {
             "cb-3"
         );
 
-        let form = node(serde_json::json!({"$t": "form"}));
+        let menu = node(serde_json::json!({"$t": "menu-bar"}));
         assert_eq!(
-            to_view(&form),
+            to_view(&menu),
             Err(Unsupported {
-                tag: "form".to_owned()
+                tag: "menu-bar".to_owned()
             })
+        );
+    }
+
+    #[test]
+    fn a_form_keeps_its_fields_values_and_submit_handler() {
+        let root = node(serde_json::json!({
+            "$t": "form", "navigationTitle": "New Issue",
+            "children": [
+                {"$t": "text-field", "id": "title", "title": "Title", "placeholder": "Short",
+                 "value": {"value": "Crash", "eventCount": 3}, "onChange": "cb-1"},
+                {"$t": "text-area-field", "id": "body", "defaultValue": "Steps"},
+                {"$t": "separator"},
+                {"$t": "checkbox-field", "id": "urgent", "label": "Urgent", "value": true},
+                {"$t": "dropdown-field", "id": "repo", "children": [
+                    {"$t": "dropdown-item", "title": "Compass", "value": "compass"},
+                    {"$t": "dropdown-section", "title": "Forks", "children": [
+                        {"$t": "dropdown-item", "title": "Vicinae", "value": "vicinae"}
+                    ]}
+                ]},
+                {"$t": "form-description", "title": "Note", "text": "Be kind"},
+                {"$t": "action-panel", "children": [
+                    {"$t": "action", "title": "Create", "onAction": "cb-noop",
+                     "onSubmit": "cb-submit"}
+                ]}
+            ]
+        }));
+        let View::Form(form) = to_view(&root).expect("a form") else {
+            panic!("not a form");
+        };
+        assert_eq!(form.navigation_title.as_deref(), Some("New Issue"));
+        assert_eq!(form.items.len(), 6);
+        let FormItem::Field(title) = &form.items[0] else {
+            panic!("not a field");
+        };
+        assert_eq!(title.name, "title");
+        assert_eq!(title.value, Some(FieldValue::Text("Crash".into())));
+        assert_eq!(title.echo, Some(Seq::from_raw(3)), "an echo of edit 3");
+        assert_eq!(title.on_change.as_ref().map(|h| h.0.as_str()), Some("cb-1"));
+        let FormItem::Field(body) = &form.items[1] else {
+            panic!("not a field");
+        };
+        assert_eq!(
+            (&body.value, body.echo),
+            (&Some(FieldValue::Text("Steps".into())), None),
+            "a default is not an echo"
+        );
+        assert!(matches!(form.items[2], FormItem::Separator { .. }));
+        let FormItem::Field(urgent) = &form.items[3] else {
+            panic!("not a field");
+        };
+        assert_eq!(urgent.value, Some(FieldValue::Bool(true)));
+        let FormItem::Field(repo) = &form.items[4] else {
+            panic!("not a field");
+        };
+        let FieldKind::Dropdown(dropdown) = &repo.kind else {
+            panic!("not a dropdown");
+        };
+        let options: Vec<&str> = dropdown
+            .sections
+            .iter()
+            .flat_map(|s| s.options.iter().map(|o| o.value.as_str()))
+            .collect();
+        assert_eq!(options, ["compass", "vicinae"]);
+        assert!(matches!(
+            &form.items[5],
+            FormItem::Description { text, .. } if text == "Be kind"
+        ));
+        assert_eq!(
+            form.actions.expect("actions").actions()[0].handler.0,
+            "cb-submit",
+            "SubmitForm runs onSubmit, not its no-op onAction"
         );
     }
 

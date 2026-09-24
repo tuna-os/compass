@@ -86,6 +86,8 @@ pub enum Message {
     PreferencesSaved(Result<(), String>),
     /// A link in an extension's Markdown was clicked.
     ExtensionLinkClicked(String),
+    /// The person changed a field of an extension's form: its name and value.
+    ExtensionFieldEdited(String, serde_json::Value),
     /// An action or search event reached the extension, or did not.
     ExtensionEventSent(Result<(), String>),
     /// An entry was pinned, unpinned or removed, or could not be; the list

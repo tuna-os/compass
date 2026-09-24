@@ -1678,7 +1678,8 @@ impl LauncherApp {
                         .and_then(|id| id.strip_prefix(EXTENSION_ACTION)),
                     &self.page,
                 ) {
-                    let task = self.extension_event(page.session, handler.to_owned(), Vec::new());
+                    let task =
+                        self.extension_event(page.session, handler.to_owned(), page.action_args());
                     self.panel = None;
                     return Task::batch([task, focus_search()]);
                 }
@@ -1892,6 +1893,16 @@ impl LauncherApp {
                 }
                 self.activate_extension_action()
             }
+            Message::ExtensionFieldEdited(name, value) => {
+                let Page::Extension(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let session = page.session;
+                match page.edit_field(&name, value) {
+                    Some((handler, args)) => self.extension_event(session, handler.0, args),
+                    None => Task::none(),
+                }
+            }
             Message::ExtensionLinkClicked(url) => {
                 // No URL opener in the launcher yet; the link is said, not lost.
                 tracing::info!(%url, "a link in an extension's view was clicked");
@@ -2022,9 +2033,16 @@ impl LauncherApp {
                         .and_then(|(mods, name)| page.action_for(&mods, &name))
                         .cloned()
                 {
-                    return self.extension_event(page.session, handler.0, Vec::new());
+                    return self.extension_event(page.session, handler.0, page.action_args());
                 }
                 if !panel_key && let Page::Extension(page) = &mut self.page {
+                    if page.form().is_some() && key.as_ref() == Key::Named(Named::Tab) {
+                        return if modifiers.shift() {
+                            iced::widget::operation::focus_previous()
+                        } else {
+                            iced::widget::operation::focus_next()
+                        };
+                    }
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
@@ -2938,7 +2956,7 @@ impl LauncherApp {
         let Some(handler) = page.primary_action().cloned() else {
             return Task::none();
         };
-        self.extension_event(page.session, handler.0, Vec::new())
+        self.extension_event(page.session, handler.0, page.action_args())
     }
 
     /// Stops the extension whose view is open, if one is.
@@ -3051,6 +3069,125 @@ impl LauncherApp {
             .into()
     }
 
+    /// An extension's form: its fields as the person has them, and how to
+    /// submit it.
+    fn extension_form<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+        form: &'a compass_extension_api::view::FormView,
+    ) -> Element<'a, Message> {
+        use compass_extension_api::view::{FieldKind, FormItem};
+        let mut body = column![].spacing(12).padding(Padding::new(16.0));
+        for item in &form.items {
+            let field = match item {
+                FormItem::Separator { .. } => {
+                    body = body.push(iced::widget::rule::horizontal(1));
+                    continue;
+                }
+                FormItem::Description { title, text, .. } => {
+                    let mut entry = column![].spacing(4);
+                    if let Some(title) = title {
+                        entry = entry
+                            .push(iced::widget::text(title.clone()).font(self.font()).size(13));
+                    }
+                    body = body.push(
+                        entry.push(iced::widget::text(text.clone()).font(self.font()).size(12)),
+                    );
+                    continue;
+                }
+                FormItem::Field(field) => field,
+            };
+            let name = field.name.clone();
+            let value = page.form_values.get(&field.name);
+            let text_value = value
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let mut entry = column![].spacing(4);
+            if let Some(title) = &field.title {
+                entry = entry.push(iced::widget::text(title.clone()).font(self.font()).size(13));
+            }
+            let input: Element<Message> = match &field.kind {
+                FieldKind::Text { placeholder }
+                | FieldKind::Password { placeholder }
+                | FieldKind::TextArea { placeholder, .. } => {
+                    text_input(placeholder.as_deref().unwrap_or_default(), text_value)
+                        .secure(matches!(field.kind, FieldKind::Password { .. }))
+                        .font(self.font())
+                        .on_input(move |text| {
+                            Message::ExtensionFieldEdited(name.clone(), text.into())
+                        })
+                        .padding(8)
+                        .into()
+                }
+                FieldKind::Checkbox { label } => iced::widget::checkbox(
+                    value.and_then(serde_json::Value::as_bool).unwrap_or(false),
+                )
+                .label(label.clone().unwrap_or_default())
+                .on_toggle(move |on| Message::ExtensionFieldEdited(name.clone(), on.into()))
+                .into(),
+                FieldKind::Dropdown(dropdown) => {
+                    let options: Vec<(String, String)> = dropdown
+                        .sections
+                        .iter()
+                        .flat_map(|section| &section.options)
+                        .map(|option| (option.title.clone(), option.value.clone()))
+                        .collect();
+                    let titles: Vec<String> = options.iter().map(|(t, _)| t.clone()).collect();
+                    let selected = options
+                        .iter()
+                        .find(|(_, v)| {
+                            Some(v.as_str()) == value.and_then(serde_json::Value::as_str)
+                        })
+                        .map(|(title, _)| title.clone());
+                    iced::widget::pick_list(titles, selected, move |title: String| {
+                        let chosen = options
+                            .iter()
+                            .find(|(t, _)| *t == title)
+                            .map(|(_, value)| value.clone())
+                            .unwrap_or_default();
+                        Message::ExtensionFieldEdited(name.clone(), chosen.into())
+                    })
+                    .into()
+                }
+                FieldKind::DatePicker { .. }
+                | FieldKind::TagPicker { .. }
+                | FieldKind::FilePicker { .. } => {
+                    iced::widget::text("Compass cannot edit this kind of field yet")
+                        .font(self.font())
+                        .size(12)
+                        .into()
+                }
+            };
+            entry = entry.push(input);
+            if let Some(error) = &field.error {
+                entry = entry.push(
+                    iced::widget::text(error.clone())
+                        .font(self.font())
+                        .size(11)
+                        .color(self.theme().palette().danger),
+                );
+            } else if let Some(info) = &field.info {
+                entry = entry.push(iced::widget::text(info.clone()).font(self.font()).size(11));
+            }
+            body = body.push(entry);
+        }
+        let submit = page
+            .actions()
+            .and_then(|panel| panel.actions().into_iter().next())
+            .map_or_else(
+                || "Esc: back".to_owned(),
+                |action| format!("Enter: {}    Esc: back", action.title),
+            );
+        body = body.push(iced::widget::text(submit).font(self.font()).size(12));
+        if let Some(notice) = &page.notice {
+            body = body.push(iced::widget::text(notice.clone()).font(self.font()));
+        }
+        scrollable(body)
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink)
+            .into()
+    }
+
     fn extension_body<'a>(
         &'a self,
         page: &'a crate::extension_page::ExtensionPage,
@@ -3100,6 +3237,7 @@ impl LauncherApp {
                     None => body.into(),
                 };
             }
+            (Status::Ready, Some(View::Form(form))) => return self.extension_form(page, form),
             (Status::Ready, Some(View::List(_))) => {}
             (Status::Ready, _) => {
                 return self.notice("Compass cannot draw this extension view yet");
@@ -3918,6 +4056,68 @@ mod tests {
             pending.extend(task_messages(app.update(message)));
         }
         (app, backend, dir)
+    }
+
+    #[test]
+    fn an_extension_form_is_filled_in_and_enter_submits_its_values() {
+        use compass_extension_api::action::{Action, ActionPanel, HandlerId};
+        use compass_extension_api::view::{FieldKind, FormField, FormItem, FormView};
+        let field = |name: &str, title: &str, kind: FieldKind| {
+            FormItem::Field(Box::new(FormField {
+                id: compass_extension_api::id::NodeId::ROOT,
+                name: name.into(),
+                title: Some(title.into()),
+                error: None,
+                info: None,
+                autofocus: false,
+                value: None,
+                echo: None,
+                on_change: Some(HandlerId::new(format!("change-{name}"))),
+                kind,
+            }))
+        };
+        let form = compass_extension_api::View::Form(FormView {
+            items: vec![
+                field("title", "Title", FieldKind::Text { placeholder: None }),
+                field(
+                    "urgent",
+                    "Urgent",
+                    FieldKind::Checkbox {
+                        label: Some("Page someone".into()),
+                    },
+                ),
+            ],
+            actions: Some(ActionPanel::of([Action::new("Create Issue", "submit")])),
+            ..FormView::default()
+        });
+        let (mut app, backend, _dir) = open_extension_view(form);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Title").is_ok(), "{}", app.state_line());
+            assert!(ui.find("Enter: Create Issue    Esc: back").is_ok());
+        }
+        let mut pending = task_messages(app.update(Message::ExtensionFieldEdited(
+            "title".into(),
+            "Crash on paste".into(),
+        )));
+        pending.extend(task_messages(
+            app.update(Message::ExtensionFieldEdited("urgent".into(), true.into())),
+        ));
+        pending.extend(task_messages(
+            app.update(pressed(iced::keyboard::key::Named::Enter)),
+        ));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        let events = backend.events.lock().unwrap().clone();
+        assert!(events.contains(&(
+            "change-title".to_owned(),
+            vec!["Crash on paste".into(), 1.into()]
+        )));
+        assert!(events.contains(&(
+            "submit".to_owned(),
+            vec![serde_json::json!({"title": "Crash on paste", "urgent": true})]
+        )));
     }
 
     #[test]

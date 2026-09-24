@@ -57,6 +57,11 @@ pub struct ExtensionPage {
     pub depth: u32,
     /// A detail's Markdown, parsed once per render rather than per frame.
     pub markdown: Vec<iced::widget::markdown::Item>,
+    /// A form's values as the person has them, by field name.
+    pub form_values: serde_json::Map<String, serde_json::Value>,
+    /// How many times the person has edited each field, for `onChange`'s
+    /// echo count (ADR-0009).
+    pub form_edits: std::collections::BTreeMap<String, u64>,
 }
 
 impl ExtensionPage {
@@ -77,6 +82,8 @@ impl ExtensionPage {
             alert: None,
             depth: 1,
             markdown: Vec::new(),
+            form_values: serde_json::Map::new(),
+            form_edits: std::collections::BTreeMap::new(),
         }
     }
 
@@ -89,6 +96,8 @@ impl ExtensionPage {
                 // A different screen: its search starts empty, as Raycast's does.
                 self.query.clear();
                 self.selected = 0;
+                self.form_values.clear();
+                self.form_edits.clear();
             }
             self.depth = state.depth.max(1);
         }
@@ -108,6 +117,9 @@ impl ExtensionPage {
                     .unwrap_or_default(),
                 _ => Vec::new(),
             };
+            if let View::Form(form) = view.as_ref() {
+                self.take_form_values(form);
+            }
             self.view = Some(*view);
             self.status = Status::Ready;
             self.refilter();
@@ -205,7 +217,73 @@ impl ExtensionPage {
                 .and_then(|item| item.actions.as_ref())
                 .or(list.actions.as_ref()),
             Some(View::Detail(detail)) => detail.actions.as_ref(),
+            Some(View::Form(form)) => form.actions.as_ref(),
             _ => None,
+        }
+    }
+
+    /// The form, when the view is one.
+    #[must_use]
+    pub fn form(&self) -> Option<&compass_extension_api::view::FormView> {
+        match &self.view {
+            Some(View::Form(form)) => Some(form),
+            _ => None,
+        }
+    }
+
+    /// What an action is called with: a form's values, so `SubmitForm`'s
+    /// `onSubmit` gets them (a plain `onAction` ignores its arguments);
+    /// nothing elsewhere.
+    #[must_use]
+    pub fn action_args(&self) -> Vec<serde_json::Value> {
+        if self.form().is_some() {
+            vec![serde_json::Value::Object(self.form_values.clone())]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The person set `name` to `value`: kept, counted, and the field's
+    /// `onChange` with its arguments, if it has one.
+    pub fn edit_field(
+        &mut self,
+        name: &str,
+        value: serde_json::Value,
+    ) -> Option<(HandlerId, Vec<serde_json::Value>)> {
+        self.form_values.insert(name.to_owned(), value.clone());
+        let count = self.form_edits.entry(name.to_owned()).or_default();
+        *count += 1;
+        let count = *count;
+        let handler = self.form()?.items.iter().find_map(|item| match item {
+            compass_extension_api::view::FormItem::Field(field) if field.name == name => {
+                field.on_change.clone()
+            }
+            _ => None,
+        })?;
+        Some((handler, vec![value, serde_json::Value::from(count)]))
+    }
+
+    /// A render's field values, where they do not undo the person's typing:
+    /// a starting value only fills an empty field, and an echo only lands
+    /// when it answers the latest edit (or is newer, the extension having
+    /// set the field itself).
+    fn take_form_values(&mut self, form: &compass_extension_api::view::FormView) {
+        use compass_extension_api::view::FormItem;
+        for item in &form.items {
+            let FormItem::Field(field) = item else {
+                continue;
+            };
+            let Some(value) = field.value.as_ref().map(field_json) else {
+                continue;
+            };
+            let edits = self.form_edits.get(&field.name).copied().unwrap_or(0);
+            let take = match field.echo {
+                Some(echo) => echo.raw() >= edits,
+                None => !self.form_values.contains_key(&field.name),
+            };
+            if take {
+                self.form_values.insert(field.name.clone(), value);
+            }
         }
     }
 
@@ -243,6 +321,20 @@ impl ExtensionPage {
             .into_iter()
             .next()
             .map(|action| &action.handler)
+    }
+}
+
+/// A field value as the extension reads it in `Form.Values`.
+fn field_json(value: &compass_extension_api::view::FieldValue) -> serde_json::Value {
+    use compass_extension_api::view::FieldValue;
+    match value {
+        FieldValue::Text(text) | FieldValue::Date(text) => serde_json::Value::String(text.clone()),
+        FieldValue::Bool(on) => serde_json::Value::Bool(*on),
+        FieldValue::Integer(n) => serde_json::Value::from(*n),
+        FieldValue::Paths(all) | FieldValue::Values(all) => {
+            serde_json::Value::Array(all.iter().cloned().map(serde_json::Value::String).collect())
+        }
+        FieldValue::Empty => serde_json::Value::Null,
     }
 }
 
@@ -399,6 +491,53 @@ mod tests {
         page.query = "moon".into();
         page.refilter();
         assert_eq!(page.primary_action().map(|h| h.0.as_str()), Some("cb-2"));
+    }
+
+    #[test]
+    fn a_form_keeps_typing_over_stale_echoes_and_submits_its_values() {
+        use compass_extension_api::input::Seq;
+        use compass_extension_api::view::{FieldKind, FieldValue, FormField, FormItem, FormView};
+        let form = |value: &str, echo: Option<u64>| {
+            View::Form(FormView {
+                items: vec![FormItem::Field(Box::new(FormField {
+                    id: compass_extension_api::id::NodeId::ROOT,
+                    name: "title".into(),
+                    title: None,
+                    error: None,
+                    info: None,
+                    autofocus: false,
+                    value: Some(FieldValue::Text(value.into())),
+                    echo: echo.map(Seq::from_raw),
+                    on_change: Some(HandlerId::new("cb-change")),
+                    kind: FieldKind::Text { placeholder: None },
+                }))],
+                actions: Some(ActionPanel::of([Action::new("Create", "cb-submit")])),
+                ..FormView::default()
+            })
+        };
+        let mut page = ExtensionPage::new(1, "New");
+        page.apply(state(1, form("", None)));
+        assert_eq!(page.form_values["title"], "");
+
+        let first = page.edit_field("title", "a".into());
+        assert_eq!(
+            first.map(|(h, args)| (h.0, args)),
+            Some(("cb-change".into(), vec!["a".into(), 1.into()]))
+        );
+        page.edit_field("title", "ab".into());
+        page.apply(state(2, form("a", Some(1))));
+        assert_eq!(page.form_values["title"], "ab", "a stale echo is ignored");
+        page.apply(state(3, form("AB", Some(2))));
+        assert_eq!(
+            page.form_values["title"], "AB",
+            "the answer to the latest edit lands, even when the extension changed it"
+        );
+
+        assert_eq!(
+            page.primary_action().map(|h| h.0.as_str()),
+            Some("cb-submit")
+        );
+        assert_eq!(page.action_args(), [serde_json::json!({"title": "AB"})]);
     }
 
     #[test]
