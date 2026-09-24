@@ -457,7 +457,7 @@ jobs:
                     # AND WITH THE CORPUS MOUNTED IT STILL RANKS NOTHING.
                     #
                     # Measured: 738 entries visible, engine answering `ping`
-                    # in 600ms, `query --json firefox` returning `[]`
+                    # in 600ms, `query --json chromium` returning `[]`
                     # immediately -- not a timeout, the 30s budget below was
                     # not spent. So the empty ranking is NOT about an empty
                     # container, which was the obvious explanation and is now
@@ -487,6 +487,32 @@ jobs:
                     # the same corpus Suite 0 diffs against.
                     echo "--- indexable entries visible to the engine ---"
                     ls /corpus/applications | wc -l
+
+                    # THE QUERY TERM MUST EXIST IN THE CORPUS.
+                    #
+                    # Every run so far asked for `firefox`. There is no
+                    # Firefox entry in this corpus -- it is a harvest of
+                    # 738 host entries and Firefox is not among them. So
+                    # `[]` may have been the CORRECT answer all along, and
+                    # the spike could not tell that from a broken query
+                    # path. Same defect as the probe above, one layer out:
+                    # an empty result meaning two different things.
+                    #
+                    # `chromium` is present as `Chromium Web Browser`, with
+                    # no NoDisplay, no Hidden and no OnlyShowIn, so
+                    # DesktopEntry::shouldBeShownInCurrentContext() keeps it
+                    # even with XDG_CURRENT_DESKTOP unset in this container.
+                    #
+                    # Checked here rather than assumed, because the corpus
+                    # can be re-harvested and this is the assumption that
+                    # makes every number below readable.
+                    echo "--- does the corpus contain what we are about to ask for? ---"
+                    matches=$(grep -lix "Name=Chromium Web Browser" /corpus/applications/*.desktop | wc -l)
+                    echo "entries named exactly \"Chromium Web Browser\": $matches"
+                    if [ "$matches" -eq 0 ]; then
+                      echo "::error::the corpus has no entry for the query term -- an empty ranking would prove nothing"
+                      exit 1
+                    fi
                     # BOUNDED, because the first corpus run hung here.
                     #
                     # The rung answered `ping`, then the query did not return.
@@ -509,7 +535,7 @@ jobs:
                     echo "--- polling the query until it ranks something (30s) ---"
                     ranked=""
                     for attempt in $(seq 1 60); do
-                      if timeout 5 vicinae query --json firefox > /src/spike-query.json 2>&1 \
+                      if timeout 5 vicinae query --json chromium > /src/spike-query.json 2>&1 \
                          && [ -s /src/spike-query.json ] \
                          && ! grep -qx "\[\]" /src/spike-query.json; then
                         echo "RANKED after $((attempt * 500))ms"
@@ -552,7 +578,7 @@ jobs:
                     echo
 
                     echo "--- and once more, bounded, for the record ---"
-                    if timeout 30 vicinae query --json firefox > /src/spike-query.json 2>&1; then
+                    if timeout 30 vicinae query --json chromium > /src/spike-query.json 2>&1; then
                       cat /src/spike-query.json
                     else
                       status=$?
@@ -583,7 +609,7 @@ jobs:
                         echo "empty rankings, agree perfectly, and prove nothing."
                       fi
                       echo
-                      echo "Hits for \`firefox\` over the checked-in corpus:"
+                      echo "Hits for \`chromium\` over the checked-in corpus:"
                       echo '```json'
                       head -c 400 /src/spike-query.json
                       echo
