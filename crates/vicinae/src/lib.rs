@@ -350,6 +350,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             clock,
             favicon_service,
             remote_icons: true,
+            onboarding: onboarding_due(),
             ..compass_ui::AppFlags::default()
         };
 
@@ -385,6 +386,15 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
 ///
 /// No compositor to ask (a probe that fails) is `xdg_toplevel`, which is what
 /// Iced would have tried anyway, so its own error reaches the user unchanged.
+/// Where the first-run flow is recorded, when it is due: `onboarding.json`
+/// older than the flow and `COMPASS_NO_ONBOARDING` unset, as the C++ shows
+/// its onboarding window at server start in a build with `ENABLE_ONBOARDING`.
+fn onboarding_due() -> Option<std::path::PathBuf> {
+    use compass_core::onboarding;
+    let disabled = onboarding::disabled_by(std::env::var_os(onboarding::DISABLE_ENV).as_deref());
+    onboarding::default_path().filter(|path| onboarding::should_show(path, disabled))
+}
+
 /// Whether each power command asks first, from its `confirm` preference
 /// (`providers.power.entrypoints.<id>.preferences`) or its own default.
 fn power_asks(config: &compass_core::Config) -> std::collections::BTreeMap<String, bool> {

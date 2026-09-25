@@ -37,6 +37,7 @@ mod grants;
 mod hud;
 mod launch;
 mod media;
+mod onboarding;
 mod open_with;
 mod preview;
 mod programs;
@@ -341,6 +342,11 @@ pub struct AppFlags {
     pub exit_on_engine_disconnect: bool,
     /// Start without a window when an engine link can summon it later.
     pub start_hidden: bool,
+    /// Where the first-run flow records that it was finished, when it is
+    /// due (`compass_core::onboarding::should_show`): the window then opens
+    /// on it, even when started hidden, as the C++ shows its onboarding
+    /// window at server start. `None` when it is not due.
+    pub onboarding: Option<std::path::PathBuf>,
     /// The desktop's interface font family, as `org.gnome.desktop.interface font-name`.
     ///
     /// `None` is the historic hard-coded `Cantarell` path; `Some` means the
@@ -411,6 +417,7 @@ impl Default for AppFlags {
             link: None,
             exit_on_engine_disconnect: false,
             start_hidden: false,
+            onboarding: None,
             // Light, until a desktop says otherwise. This is Adwaita's
             // documented no-preference fallback; `vicinae` replaces it with
             // the portal's native choice before the first frame when possible.
@@ -686,6 +693,8 @@ enum Page {
     Preferences(Box<crate::preferences_page::PreferencesPage>),
     /// The settings: the C++ settings window's pages.
     Settings(Box<crate::settings_page::SettingsPage>),
+    /// The first-run flow.
+    Onboarding(Box<crate::onboarding_page::OnboardingPage>),
 }
 
 /// A key press as an extension shortcut: its modifiers and the key's name
@@ -1214,8 +1223,12 @@ impl LauncherApp {
     /// windows at all: without this, `vicinae ui` with no engine attached would
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
-        let hidden = flags.start_hidden && flags.link.is_some();
+        let onboarding = flags.onboarding.clone();
+        let hidden = flags.start_hidden && flags.link.is_some() && onboarding.is_none();
         let (mut app, task) = Self::new(flags);
+        if let Some(path) = onboarding {
+            app.open_onboarding(path);
+        }
         if hidden {
             return (app, task);
         }
@@ -2236,6 +2249,12 @@ impl LauncherApp {
             Message::Opened(id) if self.hud.owns(id) => Task::none(),
             Message::Closed(id) if self.hud.closed(id) => Task::none(),
             Message::HudTick(now) => self.hud_tick(now),
+            Message::OnboardingContinue
+            | Message::OnboardingBack
+            | Message::OnboardingJump(_)
+            | Message::OnboardingTheme(_)
+            | Message::OnboardingOpen(_)
+            | Message::OnboardingLinkOpened(_) => self.onboarding_message(message),
             Message::ActionDone(Some(hud), Ok(())) => self.show_hud(hud),
             Message::ActionDone(None, Ok(())) => self.conceal(),
             Message::ActionDone(_, Err(reason)) => {
@@ -3096,6 +3115,9 @@ impl LauncherApp {
                         _ => Task::none(),
                     };
                 }
+                if matches!(self.page, Page::Onboarding(_)) {
+                    return self.onboarding_key(key);
+                }
                 if let Page::Preferences(page) = &self.page {
                     return match key.as_ref() {
                         // A text area's Enter is a newline; the form submits
@@ -3517,6 +3539,7 @@ impl LauncherApp {
                 Some(Message::SnippetsQueryChanged as OnInput),
             ),
             Page::ScriptOutput(page) => ("", &page.title, None),
+            Page::Onboarding(_) => ("", "", None),
             Page::Programs(page) => (
                 "Search for a program to execute...",
                 &page.query,
@@ -3870,7 +3893,9 @@ impl LauncherApp {
         // container rather than a border on the field, because the field has
         // its own rounded border in the other presets and a rule has to span
         // the card's full width regardless of the field's radius.
-        let card_content = if self.field_rule {
+        let card_content = if let Page::Onboarding(page) = &self.page {
+            column![self.onboarding_body(page)].width(Length::Fill)
+        } else if self.field_rule {
             column![
                 field,
                 container(Space::new())
@@ -6477,6 +6502,117 @@ mod tests {
         });
         let mut exit = task::into_stream(app.update(Message::EngineDisconnected)).unwrap();
         assert!(matches!(block_on(exit.next()), Some(Action::Exit)));
+    }
+
+    #[test]
+    fn a_due_onboarding_opens_the_window_even_when_started_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            onboarding: Some(dir.path().join("vicinae/onboarding.json")),
+            ..AppFlags::default()
+        });
+        assert!(app.pending_window.is_some(), "the flow is put on screen");
+        assert_eq!(
+            app.onboarding_step(),
+            Some(compass_core::onboarding::Step::Welcome)
+        );
+
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            onboarding: None,
+            ..AppFlags::default()
+        });
+        assert!(app.pending_window.is_none(), "not due: hidden as asked");
+        assert!(!app.showing_onboarding());
+    }
+
+    #[test]
+    fn finishing_the_onboarding_records_it_and_hides() {
+        use compass_core::onboarding::{self, Step};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vicinae").join(onboarding::FILE_NAME);
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        app.open_onboarding(path.clone());
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert_eq!(app.onboarding_step(), Some(Step::Personalize));
+        let task = app.update(Message::OnboardingTheme(
+            crate::onboarding_page::ThemeOption(crate::theme::Theme::Dracula),
+        ));
+        settle(&mut app, task);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula, "previewed");
+        assert_eq!(
+            backend.themes_kept.lock().unwrap().as_slice(),
+            ["dracula"],
+            "and kept"
+        );
+        let task = app.update(Message::OnboardingOpen(onboarding::HOTKEY_DOCS_URL));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            [onboarding::HOTKEY_DOCS_URL]
+        );
+
+        let _ = app.update(Message::OnboardingContinue);
+        assert_eq!(app.onboarding_step(), Some(Step::Complete));
+        assert!(onboarding::should_show(&path, false), "not before Finish");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(!app.showing_onboarding(), "Finish hides the flow");
+        assert!(!onboarding::should_show(&path, false), "and records it");
+    }
+
+    #[test]
+    fn escape_closes_the_onboarding_without_recording_it() {
+        use compass_core::onboarding;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(onboarding::FILE_NAME);
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.open_onboarding(path.clone());
+        let _ = app.update(Message::OnboardingJump(2));
+        assert_eq!(
+            app.onboarding_step(),
+            Some(onboarding::Step::Complete),
+            "a dot goes straight to its step"
+        );
+        let _ = app.update(Message::OnboardingBack);
+        assert_eq!(app.onboarding_step(), Some(onboarding::Step::Personalize));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.showing_onboarding());
+        assert!(!path.exists(), "the next start asks again");
+    }
+
+    #[test]
+    fn every_onboarding_step_draws_its_heading_and_buttons() {
+        use compass_core::onboarding::Step;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        for (step, expected) in [
+            (Step::Welcome, ["Welcome to Vicinae", "Continue"]),
+            (Step::Personalize, ["Make it your own", "Open Docs"]),
+            (Step::Complete, ["Setup complete", "Finish"]),
+        ] {
+            assert_eq!(app.onboarding_step(), Some(step));
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            for label in expected {
+                assert!(ui.find(label).is_ok(), "{step:?} has no {label:?}");
+            }
+            drop(ui);
+            let _ = app.update(Message::OnboardingContinue);
+        }
     }
 
     #[test]

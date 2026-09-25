@@ -185,6 +185,7 @@ def measure():
     state = pathlib.Path(cpp_env["XDG_STATE_HOME"]) / "vicinae"
     state.mkdir(exist_ok=True)
     (state / "onboarding.json").write_text(json.dumps({"version": 1, "completedAt": "2026-09-20T00:00:00Z"}))
+    rust_env["COMPASS_NO_ONBOARDING"] = "1"
     config = RESULTS / "upstream-config.json"
     config.write_text(json.dumps({"telemetry": {"system_info": False}}))
     cpp = RESULTS / "squashfs-root/AppRun"

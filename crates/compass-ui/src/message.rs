@@ -526,4 +526,16 @@ pub enum Message {
     /// with this HUD where there is one (`Quit Files`, `Wallpaper set`); on
     /// failure the reason shows in the view.
     ActionDone(Option<crate::hud::Hud>, Result<(), String>),
+    /// The first-run flow's Continue (or Finish on its last step).
+    OnboardingContinue,
+    /// The first-run flow's Back.
+    OnboardingBack,
+    /// A step dot was clicked.
+    OnboardingJump(usize),
+    /// A theme was chosen in the first-run flow.
+    OnboardingTheme(crate::onboarding_page::ThemeOption),
+    /// One of the first-run flow's links was clicked.
+    OnboardingOpen(&'static str),
+    /// The link opened, or why not.
+    OnboardingLinkOpened(Result<(), String>),
 }

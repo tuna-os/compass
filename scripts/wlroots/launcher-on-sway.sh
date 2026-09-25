@@ -115,7 +115,7 @@ run_session() { # run_session <label> <expect layer: yes|no>
     >"$work/$label-engine.log" 2>&1 &
   local engine=$!; pids+=("$engine")
   wait_for "engine" quiet "$VICINAE" --socket "$socket" ping
-  RUST_LOG=${RUST_LOG:-info} "$VICINAE" --socket "$socket" ui >"$work/$label-ui.log" 2>&1 &
+  COMPASS_NO_ONBOARDING=1 RUST_LOG=${RUST_LOG:-info} "$VICINAE" --socket "$socket" ui >"$work/$label-ui.log" 2>&1 &
   local ui=$!; pids+=("$ui")
 
   hidden || { echo "[$label] the output is not empty before the launcher" >&2; return 1; }

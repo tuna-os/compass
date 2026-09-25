@@ -197,6 +197,8 @@ impl LauncherApp {
             Message::ThemeSaved(Err(reason)) => {
                 if let Page::Themes(page) = &mut self.page {
                     page.notice = Some(reason);
+                } else if let Page::Onboarding(page) = &mut self.page {
+                    page.notice = Some(reason);
                 }
                 Task::none()
             }

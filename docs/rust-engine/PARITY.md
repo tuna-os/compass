@@ -231,7 +231,7 @@ clicks, and restores search focus when closed. Copy actions emit native clipboar
 headless tests inspect those writes and exercise the widgets, but delivery to another application
 still needs a desktop check. Since then the launcher has grown a page per builtin, extension
 views (list, grid, detail, form) and dialogs, which is why no row here is ❌ any more (the ledger
-truth pass below). The HUD landed in "The gaps pass, HUD and onboarding"; `alert`,
+truth pass below). The HUD and onboarding landed in "The gaps pass, HUD and onboarding"; `alert`,
 `action-panel` and, since the settings pass, `settings` are the rows fully green.
 
 Three things about this section are worth stating plainly, because a table of ❌s invited the wrong
@@ -333,15 +333,15 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/tray`: Still C++-only: Vicinae's own tray icon.
 - `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
   escape).
-- `ui/qml`, `ui/quick`: Still C++-only: onboarding (the HUD closed in "The gaps pass, HUD and onboarding").
+- `ui/qml`, `ui/quick`: The HUD and onboarding closed in "The gaps pass, HUD and onboarding".
   `ui/views` closed in "The gaps pass, UI" below (match and Markdown highlighting, extension
   grids; the edit-keywords view had landed with clipboard history and the emoji picker, the
   app-selector in the views pass), the settings pages in "The gaps pass, settings"; dragging
   out of the window is a declared difference, Iced having no drag out of a window.
 - `ui/settings`: closed in "The gaps pass, settings" below.
 - `ui/windows`: the settings window is a view of the launcher since "The gaps pass, settings"
-  (declared there). Still C++-only: the onboarding window (the HUD closed in "The gaps pass, HUD and
-  onboarding").
+  (declared there). The HUD and onboarding closed in "The gaps pass, HUD and onboarding"
+  (onboarding drawn in the launcher card, declared there).
 - `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
   "The gaps pass, icons and tray"; masks, root rows' icons, favicons, `ImageURL(source)` and the
   tile's gradient and shadow since "The gaps pass, UI" below.
@@ -879,6 +879,34 @@ Declared differences:
 - Where there is no HUD, the engine's HUDs become a transient notification rather than nothing.
 - Set Default Terminal's HUD has no icon (the C++'s is a green `$` symbol, which the builtin set does
   not have).
+
+**Onboarding** (`ui/windows/onboarding-window.*`, `ui/qml/onboarding`). `compass_core::onboarding`
+is `OnboardingWindow`'s gate and record and the QML's step logic: the flow is due when
+`$XDG_STATE_HOME/vicinae/onboarding.json` records a version older than `ONBOARDING_VERSION` (1) or
+cannot be read, and finishing writes `{"version":1,"completedAt":"…"}` there, the C++'s own file,
+so a person who finished it under either engine is not asked again. The steps are the QML's on
+Linux: "Welcome to Vicinae", "Make it your own" (the theme, kept as Set Theme keeps it, and the
+global hotkey row) and "Setup complete" (GitHub and Sponsor), with Back, the step dots (a click
+jumps), Continue and Finish; Enter continues and Escape closes without recording, so the next start
+asks again. `vicinae` passes the state file to the window when the flow is due
+(`AppFlags::onboarding`), and the window opens on it at start even when started hidden, as the C++
+shows its window at server start. `COMPASS_NO_ONBOARDING` is the C++'s `ENABLE_ONBOARDING=OFF`, and
+the VM tier, the sway harness and the session bench set it.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `ui/qml`, `ui/quick`, `ui/windows` | — (onboarding is closed; the settings window keeps each amber) | `compass_core::onboarding` (`should_show`, `mark_completed`, `Flow`), `compass_ui::onboarding_page`, `compass_ui::app::onboarding`, `vicinae::onboarding_due` | `it_is_due_until_the_current_version_is_recorded`, `the_cpps_own_file_is_read`, `linux_has_three_steps_and_continue_finishes_on_the_last`, `the_permissions_step_is_macos_only`, `the_switch_reads_like_a_boolean_environment_variable`, `a_due_onboarding_opens_the_window_even_when_started_hidden`, `finishing_the_onboarding_records_it_and_hides`, `escape_closes_the_onboarding_without_recording_it`, `every_onboarding_step_draws_its_heading_and_buttons` |
+
+Declared differences:
+
+- The flow is drawn in the launcher's card rather than a 700×480 window of its own: the launcher has
+  one surface, and a second toplevel would be a second window for the compositor to place. Finishing
+  hides the card, as finishing hides the C++'s window.
+- The global hotkey row takes the C++'s branch for a platform without global shortcuts ("Bind a key
+  to "vicinae toggle"" and Open Docs): the engine binds its toggle through the portal, with no
+  recorder to change it from here (`src/services/global-shortcuts`' gap). The last step's sentence
+  follows.
+- The macOS permissions step and Launch at login are not offered, as on the C++'s Linux build.
 
 ### Earlier row notes
 

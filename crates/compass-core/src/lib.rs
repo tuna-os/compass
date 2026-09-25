@@ -80,6 +80,7 @@ pub mod list_navigation;
 pub mod manifest;
 pub mod media_commands;
 pub mod news;
+pub mod onboarding;
 pub mod paste;
 pub mod placeholder;
 pub mod power_commands;

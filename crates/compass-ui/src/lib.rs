@@ -33,6 +33,7 @@ pub mod hud;
 pub mod icons;
 pub mod media_page;
 pub mod message;
+pub mod onboarding_page;
 pub mod open_with_page;
 pub mod preferences_page;
 pub mod preset;
