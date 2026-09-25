@@ -22,6 +22,8 @@ const EDIT_KEYWORDS: &str = "clipboard.edit-keywords";
 const REMOVE: &str = "clipboard.remove";
 const REMOVE_ALL: &str = "clipboard.remove-all";
 const MONITORING: &str = "clipboard.monitoring";
+const OPEN: &str = "clipboard.open";
+const OPEN_WITH: &str = "clipboard.open-with";
 
 /// `EditClipboardKeywordsAction`'s description, under the field.
 const KEYWORDS_DESCRIPTION: &str = "Additional keywords that will be used to index this selection.";
@@ -167,17 +169,26 @@ impl LauncherApp {
             return None;
         };
         let entry = page.selected_row()?;
+        let mut main = vec![
+            Action::new("Paste to active window")
+                .with_id(PASTE)
+                .with_shortcut("enter"),
+            Action::new("Copy to clipboard")
+                .with_id(COPY)
+                .with_shortcut("ctrl+shift+c"),
+        ];
+        if self.clipboard_open_target().is_some() {
+            main.push(Action::new("Open").with_id(OPEN).with_shortcut("ctrl+o"));
+            main.push(
+                Action::new("Open with...")
+                    .with_id(OPEN_WITH)
+                    .with_shortcut("ctrl+shift+o"),
+            );
+        }
         let mut sections = vec![
             PanelSection {
                 name: String::new(),
-                actions: vec![
-                    Action::new("Paste to active window")
-                        .with_id(PASTE)
-                        .with_shortcut("enter"),
-                    Action::new("Copy to clipboard")
-                        .with_id(COPY)
-                        .with_shortcut("ctrl+shift+c"),
-                ],
+                actions: main,
             },
             PanelSection {
                 name: String::new(),
@@ -217,6 +228,26 @@ impl LauncherApp {
         if !matches!(self.page, Page::Clipboard(_)) {
             return None;
         }
+        if id == OPEN || id == OPEN_WITH {
+            let target = self.clipboard_open_target()?;
+            self.panel = None;
+            if id == OPEN_WITH {
+                let target = target.as_str().to_owned();
+                return Some(self.open_with(target.clone(), target));
+            }
+            let backend = self.backend.clone()?;
+            return Some(Task::perform(
+                async move {
+                    match target {
+                        clipboard_page::OpenTarget::Url(url) => backend.open_url(url).await,
+                        clipboard_page::OpenTarget::File(path) => {
+                            backend.open_file(path, false).await
+                        }
+                    }
+                },
+                Message::FileActionDone,
+            ));
+        }
         let task = match id {
             PASTE => self.paste_selected_clipboard_entry(),
             COPY => self.copy_selected_clipboard_entry(),
@@ -229,6 +260,23 @@ impl LauncherApp {
         };
         self.panel = None;
         Some(Task::batch([task, focus_search()]))
+    }
+
+    /// What the selected entry opens as, once its content is in the pane: a
+    /// link, or a single copied file that still exists.
+    fn clipboard_open_target(&self) -> Option<clipboard_page::OpenTarget> {
+        let Page::Clipboard(page) = &self.page else {
+            return None;
+        };
+        let entry = page.selected_row()?;
+        let detail = page
+            .detail
+            .as_ref()
+            .filter(|detail| detail.id == entry.id)?;
+        let Some(Ok(content)) = &detail.content else {
+            return None;
+        };
+        clipboard_page::open_target(entry.kind, content)
     }
 
     /// Asks before removing everything, as `RemoveAllSelectionsAction` does.

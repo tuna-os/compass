@@ -34,6 +34,8 @@ compass-platform.workspace = true
 serde = { workspace = true }
 ureq.workspace = true
 sha2.workspace = true
+# A copied file's `file://` URI back to its path, for clipboard history's Open.
+url.workspace = true
 tempfile.workspace = true
 # A file's MIME type, for its file-type icon (already in the tree through compass-xdg).
 mime_guess.workspace = true

@@ -189,7 +189,7 @@ whether a real GNOME session grants the shortcut we ask for.
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/builtins/calculator` | `compass-core`, `compass_ui::calculator_page` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -403,7 +403,7 @@ with a named module and named tests that fail on a regression.
 |---|---|---|---|
 | `src/services/glyph-service` | Rust ✅ | `compass_core::glyph_service` (file I/O, `score`), `compass_ui::emoji_page`, `compass_ui::app::emoji` | `tests/glyph_service.rs` (`the_cpp_file_is_read_with_its_camel_case_keys`, `the_file_is_written_and_read_back_and_a_missing_one_is_empty`, `a_visit_raises_a_glyph_among_matches_and_a_keyword_makes_it_match`), `emoji_page::tests` (pins and visits head the empty query, keywords, per-glyph tones, the panel), `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
 | `src/services/clipboard` | Rust ✅ | `compass_clipboard::retention`, `compass_clipboard::store::entry`, `vicinae::clipboard_service::{Settings, Control, run_eviction}`, `ClipboardStore::{evict, remove_all, detail, set_keywords, history_of_kind}` | `retention::tests`, `eviction_removes_what_is_older_than_the_threshold_and_reports_the_next`, `remove_all_spares_tagged_entries_when_asked_and_unlinks_the_rest`, `nothing_is_recorded_while_monitoring_is_off`, `the_preferences_are_read_with_the_cpp_defaults`, `pausing_the_clipboard_is_answered_and_kept_as_the_monitoring_preference` |
-| `src/builtins/clipboard` | — (open actions and drag remain) | `compass_ui::clipboard_page`, `compass_ui::app::clipboard` | `clipboard_page::tests` (filter vocabulary, `format_size`, the pane's content, stale answers), `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
+| `src/builtins/clipboard` | — (the open actions landed in the views pass; drag is declared there) | `compass_ui::clipboard_page`, `compass_ui::app::clipboard` | `clipboard_page::tests` (filter vocabulary, `format_size`, the pane's content, stale answers), `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
 | `src/builtins/root`, `src/services/root-item-manager` | — (the provider search view; per-item shortcuts and other fallbacks remain) | `compass_core::root_items::{apply_edit, deeplink}`, `Config::{favorite_ids, apply_root_edit}`, `root_view::SearchHistory`, `ClockConfig`, `compass_ui::app::root`, IPC `RootItemEdit` | `favouriting_inserts_first_and_moving_swaps_within_the_list_only`, `an_alias_and_the_switch_are_written_under_the_items_provider_and_merged`, `the_root_panel_writes_favorites_whole_and_an_items_alias_and_switch`, `the_search_history_keeps_one_of_each_newest_first_in_the_cpp_shape`, `the_clock_is_on_every_minute_in_hh_mm_unless_set`, `the_root_panel_favourites_aliases_and_the_up_arrow_recalls_searches` |
 
 **`src/services/clipboard` → retention and monitoring.** The clipboard extension's preferences
@@ -637,6 +637,7 @@ fail on a regression.
 |---|---|---|---|
 | `src/builtins/shortcut` | Rust ✅ | `compass_ui::{open_with_page, app::open_with}` (the app-selector), `vicinae::serve::openers` over `EngineApps` (IPC v18 `ListOpeners`, `OpenWith`), `compass_ui::shortcuts_page::{Detail, detail_fields, suitable_for_fallback}`, `compass_ui::app::shortcuts` (the pane, Open with…), `RootRow::ShortcutFallback` | `open_with_lists_what_opens_a_target_the_default_first` (a real engine over temp XDG dirs), `the_default_opener_comes_first_and_is_marked`, `open_with_launches_the_chosen_application_and_refuses_an_unknown_one`, `open_with_page::tests`, `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `the_pane_lists_what_load_detail_lists_in_its_order` |
 | `src/builtins/file` | Rust ✅ | `compass_ui::app::file_actions` (`file_panel_sections`, the actions), `compass_ui::files_page::{runs_as_executable, FilesPage::searching}`, `vicinae::serve::files` (IPC v18 `FileActions`, `CopyFile`, `RunExecutable`, `SetWallpaper`), Open with… through `compass_ui::app::open_with` | `search_files_panel_is_the_cpps_file_actions`, `a_files_panel_learns_its_mime_type_and_an_appimage_is_made_executable_and_run` (a real engine; the AppImage is a script in the test's tempdir), `an_executable_is_given_the_owners_execute_permission`, `a_file_is_copied_as_its_escaped_file_uri`, `a_superseded_answer_is_dropped` |
+| `src/builtins/clipboard` | Rust ✅ | `compass_ui::clipboard_page::{open_target, OpenTarget}`, `compass_ui::app::clipboard` (Open, Open with… through `compass_ui::app::open_with`) | `a_link_or_one_existing_file_is_what_open_acts_on`, `a_copied_link_opens_and_opens_with_a_chosen_application`, `plain_text_offers_no_open`, with the gaps pass's `clipboard_page::tests` and `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
 | `src/builtins/wm` | Rust ✅ | `compass_platform_linux::compositor` (`Provider::{capabilities, toggle_fullscreen, toggle_floating, toggle_overview}`), `vicinae::serve::workspaces`, `compass_core::window_switcher::command_offered`, `AppIndex::set_window_capabilities`, `compass_ui::{workspaces_page, app::workspaces}` | `niri_toggles_fullscreen_floating_and_the_overview`, `hyprland_toggles_a_window_and_has_no_overview` (fake sockets replaying captured replies), `workspaces_count_their_windows_and_name_their_applications_once`, `a_toggle_acts_on_the_active_window_and_refuses_one_elsewhere`, `a_window_on_another_workspace_is_not_on_the_active_one`, `without_a_compositor_everything_is_refused_and_nothing_is_offered`, `a_window_command_is_offered_only_where_it_is_registered`, `workspaces_page::tests`, `workspaces_and_the_toggles_are_offered_where_the_compositor_has_them`, `a_refused_toggle_says_why` |
 
 **`src/builtins/shortcut`.** "Open with…" is a view of its own, the app-selector the
@@ -669,6 +670,14 @@ Declared differences:
   failures show under the list rather than as a toast.
 - Dragging a file out of the list: Iced offers no drag out of a window (`src/builtins/clipboard`
   shares this).
+
+**`src/builtins/clipboard`.** A link, or a copy of exactly one file that still exists (its
+`file://` URI decoded as `QUrl::path` decodes it), offers Open (Ctrl+O) and Open with…
+(Ctrl+Shift+O, the app-selector) after the copy and paste actions, as `actionPanel` adds them.
+Declared differences: Open is offered whether or not a default application claims the target (the
+C++ adds it only then); without one the engine's refusal shows under the list. The target is read
+from the detail pane's content, so the two appear once the pane has loaded. Dragging an entry out
+stays unported: Iced has no drag out of a window.
 
 **`src/builtins/wm`.** Switch Workspaces, Toggle Fullscreen, Toggle Floating and Toggle Overview
 are builtins, offered in root search only where `WindowManagementExtension` registers them: the
@@ -1042,9 +1051,9 @@ carriage return — looked correct. The stub now names the paths it knows.
 
 Clipboard History is in the launcher: search, copy, paste, pin and remove
 (`compass-ui::clipboard_page`), and since the gaps pass the kind filter, the detail pane, keyword
-editing, remove-all and the monitoring switch (see "The gaps pass"). Still C++-only: the open
-actions (Open, Open with…), and the drag payload — blocked rather than pending, because Iced has no
-drag-and-drop out of its window.
+editing, remove-all and the monitoring switch (see "The gaps pass"), and since the views pass Open
+and Open with… (see "The gaps pass, views"). The drag payload is a declared difference, blocked
+because Iced has no drag-and-drop out of its window.
 
 **`src/builtins/raycast` → `compass-core::raycast_store_view`** — the store's two views. Its API
 client was already ported (`compass-core::raycast_store`); this is what the views do with what it

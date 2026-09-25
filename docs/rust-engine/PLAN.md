@@ -2470,7 +2470,7 @@ subsystem. "None" under *blocked by* means only the work.
 | ~~`src/services/app-runtime`~~ | **Done in the gaps pass**: Quit, Force Quit, running and frontmost (IPC v17) | — | — |
 | ~~`src/services/app-service`~~ | **Done** (`vicinae::catalog_watch`, `EngineApps`' lookups and `set_web_browser`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/calculator-service` | currency conversion, refresh-rates (the history view is done in the gaps pass) | medium | currency needs a decision on a rate source (fend has none); the backend dropdown is not wanted (fend by design) |
-| `src/builtins/clipboard` | the open actions (Open, Open with…) and the drag payload (eviction and its timer, monitoring, the preferences, the kind filter, keywords, remove-all and the detail pane landed in the gaps pass) | small (Open) and medium (Open with…, which needs the app-selector view) | drag needs drag-and-drop out of an Iced window, which Iced does not offer |
+| ~~`src/builtins/clipboard`~~ | **Done in the views pass**: Open and Open with… (the rest landed in the gaps pass); drag stays a declared difference, Iced having no drag out of a window | — | — |
 | ~~`src/services/desktop-notification`~~ | **Done** (`vicinae::notification_icon`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | ~~`src/services/extension-registry`~~ | **Done** (`vicinae::catalog_watch::watch_extensions`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/global-shortcuts` | per-command global shortcuts from the config, conflict detection, `vicinae-hotkey-v1`, X11 | medium (X11 large) | a compositor: GNOME's portal grant is VM-tier only, no released compositor has the hotkey protocols; X11 needs a decision on whether it is supported |
@@ -2502,6 +2502,11 @@ clipboard eviction and its timer, the monitoring switch and preferences, the kin
 editing, remove-all and the detail pane (118 of 156); and in the root view, favourites, the row's
 panel, the alias form, the space-bar alias, up-arrow history and the clock (no row flips: the
 provider search view, per-item shortcuts and other fallbacks remain).
+
+Closed in the views pass (`PARITY.md`, "The gaps pass, views", IPC v18): Switch Workspaces and the
+window toggles, shortcuts' Open with…, detail pane and fallback rows, Search Files' action panel
+and loading indicator, and clipboard history's Open and Open with…, over one app-selector view
+(125 → 129 of 156).
 
 **Landed in this round:**
 

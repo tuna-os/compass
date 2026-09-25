@@ -124,6 +124,54 @@ pub fn detail_content(content: &Result<ClipboardContent, String>) -> DetailConte
     DetailContent::None
 }
 
+/// What clipboard history's Open and Open with… act on
+/// (`ClipboardHistorySection::actionPanel`): a link's URL, or a copied
+/// single file that still exists, as its path. `None` for anything else,
+/// which offers neither.
+#[must_use]
+pub fn open_target(kind: ClipboardRowKind, content: &ClipboardContent) -> Option<OpenTarget> {
+    let text = String::from_utf8_lossy(&content.data);
+    match kind {
+        ClipboardRowKind::Link => {
+            let url = text.trim();
+            (!url.is_empty()).then(|| OpenTarget::Url(url.to_owned()))
+        }
+        ClipboardRowKind::File => {
+            let urls: Vec<&str> = text
+                .split("\r\n")
+                .flat_map(|line| line.split('\n'))
+                .filter(|line| !line.trim().is_empty())
+                .collect();
+            let [single] = urls.as_slice() else {
+                return None;
+            };
+            let path = url::Url::parse(single.trim()).ok()?.to_file_path().ok()?;
+            path.exists()
+                .then(|| OpenTarget::File(path.to_string_lossy().into_owned()))
+        }
+        _ => None,
+    }
+}
+
+/// What an entry opens as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenTarget {
+    /// A link, opened with the default browser or a chosen application.
+    Url(String),
+    /// A file's path.
+    File(String),
+}
+
+impl OpenTarget {
+    /// The URL or path.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Url(target) | Self::File(target) => target,
+        }
+    }
+}
+
 /// A size as the pane shows it (`utils.cpp`'s `formatSize`): whole bytes,
 /// then the largest 1024-based unit it reaches, with two decimals under 10,
 /// one under 100 and none above.
@@ -395,6 +443,45 @@ pub fn subtitle(row: &ClipboardRow) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_link_or_one_existing_file_is_what_open_acts_on() {
+        let content = |data: &str| ClipboardContent {
+            mime_type: "text/uri-list".into(),
+            data: data.as_bytes().to_vec(),
+        };
+        assert_eq!(
+            open_target(ClipboardRowKind::Link, &content(" https://docs.rs \n")),
+            Some(OpenTarget::Url("https://docs.rs".into()))
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a b.txt");
+        std::fs::write(&file, "x").unwrap();
+        let uri = url::Url::from_file_path(&file).unwrap().to_string();
+        assert!(uri.contains("%20"), "{uri}");
+        assert_eq!(
+            open_target(ClipboardRowKind::File, &content(&format!("{uri}\r\n"))),
+            Some(OpenTarget::File(file.to_string_lossy().into_owned())),
+            "the path is decoded, as QUrl::path"
+        );
+        assert_eq!(
+            open_target(
+                ClipboardRowKind::File,
+                &content(&format!("{uri}\r\n{uri}\r\n"))
+            ),
+            None,
+            "two files open neither"
+        );
+        assert_eq!(
+            open_target(ClipboardRowKind::File, &content("file:///nowhere/at/all")),
+            None,
+            "a file that is gone"
+        );
+        assert_eq!(
+            open_target(ClipboardRowKind::Text, &content("https://docs.rs")),
+            None
+        );
+    }
 
     fn row(id: &str, kind: ClipboardRowKind) -> ClipboardRow {
         ClipboardRow {

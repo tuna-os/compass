@@ -12048,6 +12048,79 @@ mod tests {
     }
 
     #[test]
+    fn a_copied_link_opens_and_opens_with_a_chosen_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut link = clip_row("1", "https://docs.rs/serde");
+        link.kind = crate::backend::ClipboardRowKind::Link;
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![link],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"https://docs.rs/serde".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, backend) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let titles = panel_titles(&app);
+        assert_eq!(
+            titles[..4],
+            [
+                "Paste to active window",
+                "Copy to clipboard",
+                "Open",
+                "Open with..."
+            ]
+        );
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::OpenWith(_)),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(
+            backend.opener_lookups.lock().unwrap().as_slice(),
+            ["https://docs.rs/serde"]
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Clipboard(_)),
+            "Escape returns to the history: {}",
+            app.state_line()
+        );
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Open");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            ["https://docs.rs/serde"]
+        );
+    }
+
+    #[test]
+    fn plain_text_offers_no_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "some text")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"some text".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(!panel_titles(&app).iter().any(|t| t.starts_with("Open")));
+    }
+
+    #[test]
     fn the_kind_filter_the_pane_keywords_remove_all_and_monitoring() {
         let dir = tempfile::tempdir().unwrap();
         let mut image = clip_row("2", "Image");
