@@ -218,6 +218,62 @@ impl ExtensionCommand {
     }
 }
 
+/// `vicinae cmd launch <id> [args…]`'s positional values as the command's
+/// arguments, by name: the C++ `buildLaunchArguments`. Too many values, a
+/// dropdown value that is not one of its options, and a required argument
+/// left out are each refused with the C++'s sentence and a usage line.
+///
+/// # Errors
+///
+/// That sentence, then `Usage: vicinae cmd launch <id> <required> [optional]`.
+pub fn launch_arguments(
+    id: &str,
+    declared: &[CommandArgument],
+    values: &[String],
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let fail = |message: String| {
+        let mut usage = format!("{message}\nUsage: vicinae cmd launch {id}");
+        for argument in declared {
+            let (open, close) = if argument.required {
+                ('<', '>')
+            } else {
+                ('[', ']')
+            };
+            usage.push_str(&format!(" {open}{}{close}", argument.name));
+        }
+        usage
+    };
+    if values.len() > declared.len() {
+        return Err(fail(format!(
+            "Too many arguments: expected at most {}, got {}",
+            declared.len(),
+            values.len()
+        )));
+    }
+    let mut arguments = serde_json::Map::new();
+    for (argument, value) in declared.iter().zip(values) {
+        if let Some(options) = &argument.data
+            && !options.iter().any(|option| option.value == *value)
+        {
+            return Err(fail(format!(
+                "Invalid value '{value}' for argument '{}'",
+                argument.name
+            )));
+        }
+        arguments.insert(
+            argument.name.clone(),
+            serde_json::Value::String(value.clone()),
+        );
+    }
+    if let Some(missing) = declared[values.len()..].iter().find(|a| a.required) {
+        return Err(fail(format!(
+            "Missing required argument '{}'",
+            missing.name
+        )));
+    }
+    Ok(arguments)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +316,53 @@ mod tests {
             search.arguments_with(given.as_object()),
             Ok(serde_json::json!({"query": "compass"})),
             "an empty optional one and an undeclared one are left out"
+        );
+    }
+
+    #[test]
+    fn positional_launch_arguments_are_checked_as_the_cpp_checks_them() {
+        let search = command(
+            r#"[{"name": "query", "type": "text", "placeholder": "Query", "required": true},
+                {"name": "sort", "type": "dropdown", "data": [{"title": "Stars", "value": "stars"}]}]"#,
+        );
+        let args = |values: &[&str]| {
+            launch_arguments(
+                "@a/x:c",
+                &search.arguments,
+                &values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            args(&["compass"]).map(serde_json::Value::Object),
+            Ok(serde_json::json!({"query": "compass"}))
+        );
+        assert_eq!(
+            args(&["compass", "stars"]).map(serde_json::Value::Object),
+            Ok(serde_json::json!({"query": "compass", "sort": "stars"}))
+        );
+        assert_eq!(
+            args(&[]),
+            Err("Missing required argument 'query'\n\
+                 Usage: vicinae cmd launch @a/x:c <query> [sort]"
+                .to_owned())
+        );
+        assert_eq!(
+            args(&["compass", "forks"]).unwrap_err().lines().next(),
+            Some("Invalid value 'forks' for argument 'sort'")
+        );
+        assert_eq!(
+            args(&["a", "stars", "b"]).unwrap_err().lines().next(),
+            Some("Too many arguments: expected at most 2, got 3")
+        );
+        assert_eq!(
+            launch_arguments("commands:x", &[], &["a".to_owned()])
+                .unwrap_err()
+                .lines()
+                .collect::<Vec<_>>(),
+            [
+                "Too many arguments: expected at most 0, got 1",
+                "Usage: vicinae cmd launch commands:x"
+            ]
         );
     }
 }

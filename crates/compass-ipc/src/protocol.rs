@@ -46,8 +46,26 @@ use serde::{Deserialize, Serialize};
 /// ([`Request::ExtensionSubtitles`]), and a command's preferences form without
 /// running it ([`Request::ExtensionPreferences`]); version 16, media arguments,
 /// Now Playing, the launcher's font, store avatars, extension deeplinks and
-/// reviewing Rhai script permissions.
-pub const PROTOCOL_VERSION: u16 = 16;
+/// reviewing Rhai script permissions; version 17, the catalog generation a
+/// window compares to know that applications or extensions were installed or
+/// removed while it ran ([`Request::CatalogGeneration`]), the default
+/// browser and terminal pickers ([`Request::ListDefaultApps`],
+/// [`Request::SetDefaultApp`]), and clipboard history's kind filter, detail
+/// pane, keywords, remove-all and monitoring switch
+/// ([`Request::ClipboardHistoryOfKind`], [`Request::ClipboardDetail`],
+/// [`Request::ClipboardSetKeywords`], [`Request::ClipboardRemoveAll`],
+/// [`Request::ClipboardMonitoring`]), the root row's favourite, alias, disable
+/// and reset-ranking actions ([`Request::RootItemEdit`]), and the rest of
+/// the C++ CLI's requests: listing and launching root commands
+/// ([`Request::ListCommands`], [`Request::LaunchCommand`]), launching or
+/// focusing an application ([`Request::LaunchApp`]), whether the window is
+/// open ([`Request::DescribeWindow`], [`WindowCommand::Describe`]) and the
+/// file index's own query ([`Request::FsQuery`]); and Quit and Force Quit
+/// for a running application ([`Request::AppRuntime`], [`Request::QuitApp`],
+/// [`Request::QuitWindowApp`]); and the calculator's history
+/// ([`Request::CalculatorHistory`], [`Request::AddCalculatorRecord`],
+/// [`Request::EditCalculatorHistory`]).
+pub const PROTOCOL_VERSION: u16 = 17;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -633,6 +651,189 @@ pub enum Request {
         /// The script's id, `script.<folder name>`.
         id: String,
     },
+    /// How many times the engine has rescanned its catalog (the applications
+    /// or the installed extensions) because their directories changed.
+    /// Answered with [`Response::CatalogGeneration`]; a window whose last
+    /// answer differs scans its own copy again.
+    CatalogGeneration,
+    /// The applications Set Default Browser or Set Default Terminal offers,
+    /// the current default first. Answered with [`Response::DefaultApps`].
+    ListDefaultApps {
+        /// Which choice.
+        kind: DefaultAppKind,
+    },
+    /// Make `id` the default browser (`mimeapps.list`) or terminal
+    /// (`xdg-terminals.list`). Answered with [`Response::Ack`], or an error
+    /// carrying the sentence to show.
+    SetDefaultApp {
+        /// Which choice.
+        kind: DefaultAppKind,
+        /// The desktop file id.
+        id: String,
+    },
+    /// [`Request::ClipboardHistory`] restricted to one kind of entry, the
+    /// history view's filter; `None` is every kind. Answered with
+    /// [`Response::ClipboardHistory`].
+    ClipboardHistoryOfKind {
+        /// Text to filter by; empty lists everything.
+        query: String,
+        /// At most this many entries; zero is a bad request.
+        limit: u32,
+        /// The kind to keep.
+        kind: Option<ClipboardKind>,
+    },
+    /// What the detail pane shows about one entry besides its content.
+    /// Answered with [`Response::ClipboardDetail`]; an unknown id is not
+    /// found.
+    ClipboardDetail {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// Set the words an entry is also found by; empty clears them.
+    /// Answered with [`Response::Ack`]; an unknown id is not found.
+    ClipboardSetKeywords {
+        /// [`ClipboardEntry::id`].
+        id: String,
+        /// Space-separated keywords.
+        keywords: String,
+    },
+    /// Remove every entry, sparing pinned and keyworded ones when the
+    /// `preserveTagged` preference says so. Answered with [`Response::Ack`].
+    ClipboardRemoveAll,
+    /// Whether copies are being recorded, turning it on or off first when
+    /// `enabled` is given (and keeping the choice in the configuration, as
+    /// the `monitoring` preference). Answered with
+    /// [`Response::ClipboardMonitoring`].
+    ClipboardMonitoring {
+        /// The new state, or `None` to ask.
+        enabled: Option<bool>,
+    },
+    /// What the root row's action panel changes about one root item: its
+    /// favourite, its place among the favourites, its alias, its switch
+    /// (all kept in the configuration) or its ranking (the launch history).
+    /// Answered with [`Response::Ack`] once kept and applied to root search;
+    /// an id no root item has is a bad request.
+    RootItemEdit {
+        /// The item's `provider:entrypoint` id, as [`QueryHit::id`].
+        id: String,
+        /// What to change.
+        edit: RootItemEdit,
+    },
+    /// Every root item's id and title, sorted by id, as the C++
+    /// `listCommands` answers `vicinae cmd ls`. Answered with
+    /// [`Response::Commands`]. (v17.)
+    ListCommands,
+    /// Run a root item as if it had been picked in root search: an
+    /// application is launched by the engine, anything else is pushed to the
+    /// window as [`WindowCommand::Launch`]. `args` fill the command's
+    /// arguments in order, checked as the C++ `buildLaunchArguments` checks
+    /// them; `query` is its fallback text. Answered with [`Response::Ack`];
+    /// an unknown id or ill-fitting arguments are a bad request. (v17.)
+    LaunchCommand {
+        /// The item's [`QueryHit::id`], e.g. `commands:clipboard-history`.
+        id: String,
+        /// The command's arguments, positionally.
+        args: Vec<String>,
+        /// The caller's working directory, for the command's context.
+        cwd: Option<String>,
+        /// Fallback text: what the command's search starts with.
+        query: Option<String>,
+    },
+    /// Launch an application, or focus its first open window unless
+    /// `new_instance`. Answered with [`Response::AppLaunched`]; an unknown
+    /// id is a bad request. (v17.)
+    LaunchApp {
+        /// The application's desktop id, e.g. `firefox.desktop`, or its root
+        /// id, `applications:firefox`.
+        id: String,
+        /// Passed to it as `%U`/`%F` arguments.
+        args: Vec<String>,
+        /// Always start a new instance.
+        new_instance: bool,
+    },
+    /// Whether the launcher window is open. Answered with
+    /// [`Response::WindowState`]; with no window attached it is closed. (v17.)
+    DescribeWindow,
+    /// The file index, queried directly as `vicinae fs query` does: no
+    /// recent files, no direct paths. Answered with [`Response::Files`];
+    /// refused as [`ErrorKind::Unsupported`] while the indexer is not
+    /// running. (v17.)
+    FsQuery {
+        /// Search text.
+        query: String,
+        /// At most this many files.
+        limit: u32,
+        /// Only this category, as `compass_core::file_search::CATEGORY_FILTER_KEYS`
+        /// spells it.
+        category: Option<String>,
+    },
+    /// Whether an application is running, which is whether it has a
+    /// window, and whether one of them has focus. Answered with
+    /// [`Response::AppRuntime`]; an unknown id is a bad request. (v17.)
+    AppRuntime {
+        /// The application's desktop id, e.g. `firefox.desktop`.
+        id: String,
+    },
+    /// Quit an application, as the C++ `LinuxAppRuntime` does: close every
+    /// window it has, or with `force`, `SIGKILL` every process that owns one
+    /// and close the windows that name none. Answered with
+    /// [`Response::Ack`] when something was done; refused otherwise. (v17.)
+    QuitApp {
+        /// The application's desktop id.
+        id: String,
+        /// Force Quit rather than Quit.
+        force: bool,
+    },
+    /// [`Request::QuitApp`] for the application a window belongs to, as the
+    /// window switcher offers it. (v17.)
+    QuitWindowApp {
+        /// The window's [`WindowInfo::id`].
+        window: u32,
+        /// Force Quit rather than Quit.
+        force: bool,
+    },
+    /// The calculator's history matching `query`, grouped by when each
+    /// answer was copied. Answered with [`Response::CalculatorHistory`];
+    /// refused as [`ErrorKind::Unsupported`] with no keyring to open it
+    /// with. (v17.)
+    CalculatorHistory {
+        /// Filters the rows by question and answer; empty keeps them all.
+        query: String,
+    },
+    /// Remember a calculation whose answer was copied, as the C++
+    /// `addRecord`. Answered with [`Response::Ack`]. (v17.)
+    AddCalculatorRecord {
+        /// What was asked.
+        question: String,
+        /// What came back.
+        answer: String,
+        /// A unit conversion rather than arithmetic.
+        conversion: bool,
+    },
+    /// Pin, unpin or remove one remembered calculation, or remove them all.
+    /// Answered with [`Response::Ack`]. (v17.)
+    EditCalculatorHistory {
+        /// What to do.
+        edit: CalculatorEdit,
+    },
+}
+
+/// One change [`Request::RootItemEdit`] makes (`RootSearchActionGenerator`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RootItemEdit {
+    /// Add it to the favourites (first) or take it out.
+    Favorite(bool),
+    /// Swap it with its neighbour among the favourites, below when `down`.
+    MoveFavorite {
+        /// Towards the end of the list.
+        down: bool,
+    },
+    /// Set its alias.
+    Alias(String),
+    /// Take it out of root search.
+    Disable,
+    /// Forget its launch history.
+    ResetRanking,
 }
 
 /// What the engine answers.
@@ -862,6 +1063,161 @@ pub enum Response {
         /// One per script with something allowed.
         grants: Vec<ScriptGrantEntry>,
     },
+    /// Answer to [`Request::CatalogGeneration`].
+    CatalogGeneration {
+        /// Starts at zero and goes up by one per rescan.
+        generation: u64,
+    },
+    /// Answer to [`Request::ListDefaultApps`], in the order offered.
+    DefaultApps {
+        /// The candidates.
+        apps: Vec<DefaultAppEntry>,
+    },
+    /// Answer to [`Request::ClipboardDetail`].
+    ClipboardDetail {
+        /// What the pane shows.
+        detail: ClipboardDetail,
+    },
+    /// Answer to [`Request::ClipboardMonitoring`].
+    ClipboardMonitoring {
+        /// Whether the engine can record copies at all on this desktop.
+        supported: bool,
+        /// Whether it is recording them.
+        enabled: bool,
+    },
+    /// Answer to [`Request::ListCommands`]. (v17.)
+    Commands {
+        /// Sorted by id.
+        commands: Vec<CommandInfo>,
+    },
+    /// Answer to [`Request::LaunchApp`]. (v17.)
+    AppLaunched {
+        /// The title of the window focused instead of launching, if one was.
+        focused_window_title: Option<String>,
+    },
+    /// Answer to [`Request::DescribeWindow`]. (v17.)
+    WindowState {
+        /// Whether the launcher window is on screen.
+        open: bool,
+    },
+    /// Answer to [`Request::CalculatorHistory`]: the non-empty groups, in
+    /// order. (v17.)
+    CalculatorHistory {
+        /// `Pinned`, `Today`, `This week`, `This month`, `This year`,
+        /// `A few years ago`, each only when it has a row.
+        groups: Vec<CalculatorGroup>,
+    },
+    /// Answer to [`Request::AppRuntime`]. (v17.)
+    AppRuntime {
+        /// It has at least one window.
+        running: bool,
+        /// One of its windows has focus.
+        frontmost: bool,
+        /// Its windows, the first the one to focus.
+        windows: Vec<WindowInfo>,
+    },
+    /// Answer to [`Request::ExtensionLaunchFetch`] for a launch that carries
+    /// fallback text (`vicinae cmd launch --query`). (v17.)
+    CommandLaunch {
+        /// The item's [`QueryHit::id`].
+        id: String,
+        /// Its arguments, as a JSON object, when any were given.
+        arguments_json: Option<String>,
+        /// What its search starts with.
+        fallback_text: Option<String>,
+    },
+}
+
+/// Which system default a picker sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DefaultAppKind {
+    /// The web browser.
+    Browser,
+    /// The terminal emulator.
+    Terminal,
+}
+
+/// One application a default picker offers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefaultAppEntry {
+    /// The desktop file id.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// Its comment.
+    pub description: String,
+    /// Whether it is the current default.
+    pub is_default: bool,
+}
+
+/// What the clipboard detail pane shows about one entry besides its content
+/// (`ClipboardHistoryViewHost::loadDetail`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipboardDetail {
+    /// [`ClipboardEntry::id`].
+    pub id: String,
+    /// The preferred offer's MIME type.
+    pub mime_type: String,
+    /// What kind of thing it is.
+    pub kind: ClipboardKind,
+    /// The payload's size in bytes.
+    pub size: i64,
+    /// Its MD5, as the store keeps it.
+    pub md5: String,
+    /// When it was last copied, in milliseconds since the Unix epoch.
+    pub updated_at: i64,
+    /// Whether the payload is encrypted at rest.
+    pub encrypted: bool,
+    /// The words it is also found by; empty for none.
+    pub keywords: String,
+    /// Whether it is pinned.
+    pub pinned: bool,
+}
+
+/// One group of [`Response::CalculatorHistory`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalculatorGroup {
+    /// The section's name.
+    pub name: String,
+    /// Its rows, pinned first and newest first.
+    pub records: Vec<CalculatorRecord>,
+}
+
+/// One remembered calculation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalculatorRecord {
+    /// Its id, for [`Request::EditCalculatorHistory`].
+    pub id: String,
+    /// What was asked.
+    pub question: String,
+    /// What came back.
+    pub answer: String,
+    /// A unit conversion rather than arithmetic.
+    pub conversion: bool,
+    /// Whether it is pinned.
+    pub pinned: bool,
+}
+
+/// A change to the calculator's history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CalculatorEdit {
+    /// Pin a row, by id.
+    Pin(String),
+    /// Unpin a row, by id.
+    Unpin(String),
+    /// Remove a row, by id.
+    Remove(String),
+    /// Remove every row.
+    RemoveAll,
+}
+
+/// One root item, as `vicinae cmd ls` lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandInfo {
+    /// Its [`QueryHit::id`].
+    pub id: String,
+    /// Its title.
+    pub name: String,
 }
 
 /// What the user has allowed one Rhai script.
@@ -1132,6 +1488,9 @@ pub enum WindowCommand {
     /// Show, at what the deeplink names (a store extension's detail page).
     /// Answered, like `Show`, with [`WindowOutcome::Shown`]. (v16.)
     Deeplink(String),
+    /// Change nothing; answer [`WindowOutcome::Shown`] if the window is on
+    /// screen and [`WindowOutcome::Hidden`] if not. (v17.)
+    Describe,
 }
 
 /// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and

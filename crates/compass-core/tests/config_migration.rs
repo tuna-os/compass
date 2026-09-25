@@ -37,7 +37,11 @@ const CPP_SETTINGS: &str = r#"// This configuration is merged with the default v
     "dark": { "name": "catppuccin-mocha", "icon_theme": "Papirus" },
     "light": { "name": "catppuccin-latte" }
   },
-  "launcher_window": { "opacity": 0.9, "blur": { "enabled": false } },
+  "launcher_window": {
+    "opacity": 0.9,
+    "blur": { "enabled": false },
+    "clock": { "enabled": false, "format": "hh:mm:ss", "interval": 30 }
+  },
   "providers": {
     "applications": {
       "enabled": true,
@@ -68,7 +72,8 @@ fn every_shared_setting_is_carried_across() {
                 "close_on_focus_loss": true,
                 "keybinding": "emacs",
                 "wrap_navigation": true,
-                "appearance": { "theme": "catppuccin" }
+                "appearance": { "theme": "catppuccin" },
+                "clock": { "enabled": false, "format": "hh:mm:ss", "interval": 30 }
             },
             "providers": {
                 "applications": {
@@ -216,7 +221,11 @@ fn a_value_of_the_wrong_type_is_skipped_with_a_reason() {
 
     assert!(migration.config.launcher().wrap_navigation());
     assert!(!migration.config.launcher().close_on_focus_loss());
-    assert!(migration.config.root_config().favorites.is_empty());
+    // Nothing of the file's: an unset list is the default file's.
+    assert_eq!(
+        migration.config.root_config().favorites,
+        ["commands:clipboard-history"]
+    );
     assert!(migration.config.root_config().providers.is_empty());
     let reasons: Vec<(&str, &str)> = migration
         .skipped

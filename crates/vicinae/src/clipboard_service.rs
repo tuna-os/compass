@@ -30,7 +30,7 @@ use compass_clipboard::ingest::{self, Decision, Incoming};
 use compass_clipboard::kind::OfferKind;
 use compass_clipboard::store::{self, ListSettings};
 use compass_crypto::KEY_SIZE;
-use compass_ipc::{ClipboardEntry, ClipboardKind};
+use compass_ipc::{ClipboardDetail, ClipboardEntry, ClipboardKind};
 use compass_sqlcipher_sys::rusqlite::{Connection, named_params};
 use tokio::sync::RwLock;
 
@@ -384,9 +384,23 @@ impl ClipboardStore {
     ///
     /// [`Error::Store`] when the query fails; a zero `limit` is one.
     pub fn history(&self, query: &str, limit: u32) -> Result<Vec<ClipboardEntry>, Error> {
+        self.history_of_kind(query, limit, None)
+    }
+
+    /// [`Self::history`] restricted to one kind, the view's filter.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::history`].
+    pub fn history_of_kind(
+        &self,
+        query: &str,
+        limit: u32,
+        kind: Option<ClipboardKind>,
+    ) -> Result<Vec<ClipboardEntry>, Error> {
         let settings = ListSettings {
             query: query.to_owned(),
-            kind: None,
+            kind: kind.map(kind_in_the_store),
         };
         let page = store::query(&self.db(), i64::from(limit), 0, &settings)
             .map_err(|err| Error::Store(err.to_string()))?;
@@ -403,6 +417,292 @@ impl ClipboardStore {
                 url_host: entry.url_host,
             })
             .collect())
+    }
+}
+
+impl ClipboardStore {
+    /// What the detail pane shows about `id`; `None` when no entry has it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Store`] when the lookup fails.
+    pub fn detail(&self, id: &str) -> Result<Option<ClipboardDetail>, Error> {
+        let entry = store::entry(&self.db(), id).map_err(|err| Error::Store(err.to_string()))?;
+        Ok(entry.map(|entry| ClipboardDetail {
+            id: entry.id,
+            mime_type: entry.mime_type,
+            kind: kind_on_the_wire(entry.kind),
+            size: entry.size,
+            md5: entry.md5sum,
+            updated_at: entry.updated_at,
+            encrypted: entry.encryption != compass_clipboard::kind::EncryptionType::None,
+            keywords: entry.keywords,
+            pinned: entry.pinned_at != 0,
+        }))
+    }
+
+    /// Sets the words `id` is also found by; `false` when no entry has it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Store`] when the update fails.
+    pub fn set_keywords(&self, id: &str, keywords: &str) -> Result<bool, Error> {
+        compass_clipboard::write::set_keywords(&self.db(), id, keywords.trim())
+            .map_err(|err| Error::Store(err.to_string()))
+    }
+
+    /// Removes every entry — every one but the pinned and keyworded when
+    /// `preserve_tagged` — and unlinks their payloads, as
+    /// `removeAllSelections` does. Returns how many payloads went.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Store`] when the delete fails.
+    pub fn remove_all(&self, preserve_tagged: bool) -> Result<usize, Error> {
+        let removed = compass_clipboard::write::remove_all(&self.db(), preserve_tagged)
+            .map_err(|err| Error::Store(err.to_string()))?;
+        Ok(self.unlink(&removed))
+    }
+
+    /// One eviction pass (`runEvictionPass`): removes what was last copied
+    /// longer than `threshold` ago and unlinks its payloads, then reports
+    /// how many went and the oldest `updated_at` still evictable, for the
+    /// next pass to be timed from.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Store`] when the sweep or the lookup fails.
+    pub fn evict(
+        &self,
+        threshold: Duration,
+        preserve_tagged: bool,
+    ) -> Result<(usize, Option<i64>), Error> {
+        let evicted =
+            compass_clipboard::write::evict_older_than(&self.db(), threshold, preserve_tagged)
+                .map_err(|err| Error::Store(err.to_string()))?;
+        let count = self.unlink(&evicted);
+        let oldest = compass_clipboard::write::oldest_evictable(&self.db(), preserve_tagged)
+            .map_err(|err| Error::Store(err.to_string()))?;
+        Ok((count, oldest))
+    }
+
+    /// Unlinks the payloads of `offers`, logging any that will not go.
+    fn unlink(&self, offers: &[String]) -> usize {
+        offers
+            .iter()
+            .filter(|offer| {
+                let path = ingest::payload_path(&self.payload_dir, offer);
+                match std::fs::remove_file(&path) {
+                    Ok(()) => true,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+                    Err(err) => {
+                        tracing::warn!(path = %path.display(), %err, "could not unlink a payload");
+                        false
+                    }
+                }
+            })
+            .count()
+    }
+}
+
+/// The clipboard extension's id, which its preferences are kept under
+/// (`providers.clipboard.preferences`).
+pub const PROVIDER_ID: &str = "clipboard";
+
+/// The clipboard extension's preferences, as `preferenceValuesChanged` reads
+/// them, with its defaults.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settings {
+    /// `monitoring`: whether copies are recorded. Default on.
+    pub monitoring: bool,
+    /// `ignorePasswords`: whether a copy a password manager marked is left
+    /// out. Default on.
+    pub ignore_passwords: bool,
+    /// `preserveTagged`: whether eviction and remove-all spare pinned and
+    /// keyworded entries. Default on.
+    pub preserve_tagged: bool,
+    /// `evictionThreshold`: how long history is kept; `None` is for ever,
+    /// the default.
+    pub eviction: Option<Duration>,
+    /// `eraseOnStartup`: whether the history is cleared when the engine
+    /// starts. Default off.
+    pub erase_on_startup: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self::from_preferences(None)
+    }
+}
+
+impl Settings {
+    /// Reads the preferences object, each missing or mistyped value taking
+    /// its default.
+    #[must_use]
+    pub fn from_preferences(
+        preferences: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Self {
+        let flag = |key: &str, default: bool| {
+            preferences
+                .and_then(|values| values.get(key))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(default)
+        };
+        Self {
+            monitoring: flag("monitoring", true),
+            ignore_passwords: flag("ignorePasswords", true),
+            preserve_tagged: flag("preserveTagged", true),
+            eviction: compass_clipboard::retention::parse_threshold(
+                preferences
+                    .and_then(|values| values.get("evictionThreshold"))
+                    .and_then(serde_json::Value::as_str),
+            ),
+            erase_on_startup: flag("eraseOnStartup", false),
+        }
+    }
+}
+
+/// What the running service is told after it starts: the monitoring switch
+/// and the two preferences the history view acts on, shared between the
+/// recording loop, the eviction timer and the requests.
+#[derive(Debug, Default)]
+pub struct Control {
+    monitoring: std::sync::atomic::AtomicBool,
+    supported: std::sync::atomic::AtomicBool,
+    ignore_passwords: std::sync::atomic::AtomicBool,
+    preserve_tagged: std::sync::atomic::AtomicBool,
+    /// Woken after each copy is recorded, so an idle eviction timer re-arms
+    /// (`armEvictionTimer(now)` in the C++'s insert handler).
+    inserted: tokio::sync::Notify,
+}
+
+impl Control {
+    /// A control holding `settings`, not yet recording anything.
+    #[must_use]
+    pub fn new(settings: &Settings) -> Self {
+        let control = Self::default();
+        control.apply(settings);
+        control
+    }
+
+    /// Takes the preferences in.
+    pub fn apply(&self, settings: &Settings) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.monitoring.store(settings.monitoring, Relaxed);
+        self.ignore_passwords
+            .store(settings.ignore_passwords, Relaxed);
+        self.preserve_tagged
+            .store(settings.preserve_tagged, Relaxed);
+    }
+
+    /// Whether copies are being recorded.
+    #[must_use]
+    pub fn monitoring(&self) -> bool {
+        self.monitoring.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Turns recording on or off (`setMonitoring`).
+    pub fn set_monitoring(&self, enabled: bool) {
+        self.monitoring
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether something is watching the selection at all
+    /// (`supportsMonitoring`): false until a watcher has started.
+    #[must_use]
+    pub fn supported(&self) -> bool {
+        self.supported.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn set_supported(&self, supported: bool) {
+        self.supported
+            .store(supported, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a copy a password manager marked is left out.
+    #[must_use]
+    pub fn ignore_passwords(&self) -> bool {
+        self.ignore_passwords
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether eviction and remove-all spare tagged entries.
+    #[must_use]
+    pub fn preserve_tagged(&self) -> bool {
+        self.preserve_tagged
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// Records one copy if monitoring is on, waking the eviction timer when it
+/// went in. `None` when monitoring is off and nothing was tried.
+fn record_if_monitoring(
+    store: &ClipboardStore,
+    control: &Control,
+    data: &[u8],
+    mime_type: &str,
+    source_app: Option<&str>,
+) -> Option<Result<Decision, Error>> {
+    if !control.monitoring() {
+        return None;
+    }
+    let recorded = store.record(data, mime_type, source_app);
+    if matches!(recorded, Ok(Decision::Inserted { .. })) {
+        control.inserted.notify_one();
+    }
+    Some(recorded)
+}
+
+/// Keeps history within `threshold` for the life of the engine: a first pass
+/// after [`compass_clipboard::retention::MISCONFIGURATION_GRACE`], then one
+/// each time the oldest evictable entry comes due, and — when nothing is
+/// evictable — one a threshold after the next copy.
+pub async fn run_eviction(store: Arc<ClipboardStore>, control: Arc<Control>, threshold: Duration) {
+    use compass_clipboard::retention;
+    tokio::time::sleep(retention::MISCONFIGURATION_GRACE).await;
+    loop {
+        let pass_store = Arc::clone(&store);
+        let preserve = control.preserve_tagged();
+        let pass = tokio::task::spawn_blocking(move || pass_store.evict(threshold, preserve)).await;
+        let oldest = match pass {
+            Ok(Ok((evicted, oldest))) => {
+                if evicted > 0 {
+                    tracing::info!(evicted, "evicted clipboard offers");
+                }
+                oldest
+            }
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, "clipboard eviction failed");
+                None
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "the clipboard eviction task failed");
+                None
+            }
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| {
+                i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+            });
+        let delay = match oldest {
+            Some(oldest) => retention::next_delay(oldest, threshold, now),
+            None => {
+                control.inserted.notified().await;
+                retention::next_delay(now, threshold, now)
+            }
+        };
+        tokio::time::sleep(delay).await;
+    }
+}
+
+fn kind_in_the_store(kind: ClipboardKind) -> OfferKind {
+    match kind {
+        ClipboardKind::Text => OfferKind::Text,
+        ClipboardKind::Link => OfferKind::Link,
+        ClipboardKind::Image => OfferKind::Image,
+        ClipboardKind::File => OfferKind::File,
+        ClipboardKind::Unknown => OfferKind::Unknown,
     }
 }
 
@@ -443,6 +743,15 @@ const RETRY_MAX: Duration = Duration::from_secs(60);
 /// history unavailable (the request then says so) rather than stopping the
 /// engine.
 pub async fn run(state: Arc<RwLock<EngineState>>) {
+    // Read when the service starts, as `initialized` and
+    // `preferenceValuesChanged` read them.
+    let settings = Settings::from_preferences(
+        compass_core::Config::load()
+            .unwrap_or_default()
+            .provider_preferences(PROVIDER_ID),
+    );
+    let control = state.read().await.clipboard_control();
+    control.apply(&settings);
     let (store, dir, keyring) = match open_from_environment().await {
         Ok((store, dir, keyring)) => (Arc::new(store), dir, keyring),
         Err(err) => {
@@ -453,9 +762,27 @@ pub async fn run(state: Arc<RwLock<EngineState>>) {
     tracing::info!("clipboard history open");
     state.write().await.set_clipboard(Arc::clone(&store));
     import_from_vicinae(Arc::clone(&store), dir, &keyring).await;
+    if settings.erase_on_startup {
+        let erased = Arc::clone(&store);
+        let preserve = settings.preserve_tagged;
+        match tokio::task::spawn_blocking(move || erased.remove_all(preserve)).await {
+            Ok(Ok(count)) => tracing::info!(count, "erased clipboard history on startup"),
+            Ok(Err(err)) => tracing::warn!(error = %err, "could not erase clipboard history"),
+            Err(err) => tracing::warn!(error = %err, "the erase task failed"),
+        }
+    }
+    if let Some(threshold) = settings.eviction {
+        tokio::spawn(run_eviction(
+            Arc::clone(&store),
+            Arc::clone(&control),
+            threshold,
+        ));
+    }
     match crate::wlroots::detect().await {
-        Some(wlroots) if wlroots.capabilities.data_control => record_from_data_control(store).await,
-        _ => record_from_shell(store).await,
+        Some(wlroots) if wlroots.capabilities.data_control => {
+            record_from_data_control(store, control).await;
+        }
+        _ => record_from_shell(store, control).await,
     }
 }
 
@@ -463,8 +790,9 @@ pub async fn run(state: Arc<RwLock<EngineState>>) {
 /// the wlroots path, where there is no Shell extension and none is needed.
 ///
 /// A selection a password manager marked (`x-kde-passwordManagerHint`, or
-/// our own `vicinae/concealed`) is not recorded at all.
-async fn record_from_data_control(store: Arc<ClipboardStore>) {
+/// our own `vicinae/concealed`) is not recorded while `ignorePasswords` is
+/// on, and nothing is recorded while monitoring is off.
+async fn record_from_data_control(store: Arc<ClipboardStore>, control: Arc<Control>) {
     let (tx, mut changes) = tokio::sync::mpsc::unbounded_channel();
     let watcher = tokio::task::spawn_blocking(move || compass_wayland::clipboard::watch(tx)).await;
     match watcher {
@@ -481,8 +809,9 @@ async fn record_from_data_control(store: Arc<ClipboardStore>) {
             return;
         }
     }
+    control.set_supported(true);
     while let Some(change) = changes.recv().await {
-        if change.concealed() {
+        if change.concealed() && control.ignore_passwords() {
             tracing::debug!("a concealed selection was not recorded");
             continue;
         }
@@ -490,15 +819,19 @@ async fn record_from_data_control(store: Arc<ClipboardStore>) {
             continue;
         };
         let store = Arc::clone(&store);
-        let recorded =
-            tokio::task::spawn_blocking(move || store.record(&offer.data, &offer.mime_type, None))
-                .await;
+        let control = Arc::clone(&control);
+        let recorded = tokio::task::spawn_blocking(move || {
+            record_if_monitoring(&store, &control, &offer.data, &offer.mime_type, None)
+        })
+        .await;
         match recorded {
-            Ok(Ok(decision)) => tracing::debug!(?decision, "clipboard change"),
-            Ok(Err(err)) => tracing::warn!(error = %err, "clipboard change not recorded"),
+            Ok(Some(Ok(decision))) => tracing::debug!(?decision, "clipboard change"),
+            Ok(None) => tracing::debug!("monitoring is off; a copy was not recorded"),
+            Ok(Some(Err(err))) => tracing::warn!(error = %err, "clipboard change not recorded"),
             Err(err) => tracing::warn!(error = %err, "clipboard recording task failed"),
         }
     }
+    control.set_supported(false);
     tracing::info!("the compositor stopped sending clipboard changes");
 }
 
@@ -548,7 +881,7 @@ async fn import_from_vicinae(store: Arc<ClipboardStore>, dir: PathBuf, keyring: 
 
 /// Follows `ClipboardChanged` for as long as the extension provides it,
 /// reconnecting with backoff when it is absent or goes away.
-async fn record_from_shell(store: Arc<ClipboardStore>) {
+async fn record_from_shell(store: Arc<ClipboardStore>, control: Arc<Control>) {
     let client = match compass_shell::ShellClient::connect_session().await {
         Ok(client) => client,
         Err(err) => {
@@ -562,6 +895,7 @@ async fn record_from_shell(store: Arc<ClipboardStore>) {
         match client.clipboard_changes().await {
             Ok(mut changes) => {
                 tracing::info!("recording clipboard changes from the Shell extension");
+                control.set_supported(true);
                 reported_absent = false;
                 delay = RETRY_INITIAL;
                 while let Some(change) = changes.next().await {
@@ -573,8 +907,11 @@ async fn record_from_shell(store: Arc<ClipboardStore>) {
                         }
                     };
                     let store = Arc::clone(&store);
+                    let control = Arc::clone(&control);
                     let recorded = tokio::task::spawn_blocking(move || {
-                        store.record(
+                        record_if_monitoring(
+                            &store,
+                            &control,
                             &change.content.data,
                             &change.content.mime_type,
                             change.source_app.as_deref(),
@@ -582,13 +919,15 @@ async fn record_from_shell(store: Arc<ClipboardStore>) {
                     })
                     .await;
                     match recorded {
-                        Ok(Ok(decision)) => tracing::debug!(?decision, "clipboard change"),
-                        Ok(Err(err)) => {
+                        Ok(Some(Ok(decision))) => tracing::debug!(?decision, "clipboard change"),
+                        Ok(None) => tracing::debug!("monitoring is off; a copy was not recorded"),
+                        Ok(Some(Err(err))) => {
                             tracing::warn!(error = %err, "clipboard change not recorded")
                         }
                         Err(err) => tracing::warn!(error = %err, "clipboard recording task failed"),
                     }
                 }
+                control.set_supported(false);
                 tracing::info!("the Shell extension stopped sending clipboard changes");
             }
             Err(err) => {
@@ -823,5 +1162,173 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
         assert!(store.history("", 0).is_err());
+    }
+
+    fn payload_count(dir: &Path) -> usize {
+        std::fs::read_dir(dir.join(PAYLOAD_DIR_NAME))
+            .map(Iterator::count)
+            .unwrap_or(0)
+    }
+
+    /// Moves every entry's last copy `ago` into the past.
+    fn age_everything(store: &ClipboardStore, ago: Duration) {
+        let ago = i64::try_from(ago.as_millis()).expect("fits");
+        store
+            .db()
+            .execute(
+                "UPDATE selection SET updated_at = updated_at - :ago",
+                named_params! { ":ago": ago },
+            )
+            .expect("aged");
+    }
+
+    #[test]
+    fn the_kind_filter_keeps_one_kind() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
+        store
+            .record(b"plain words", "text/plain", None)
+            .expect("text");
+        store
+            .record(b"https://example.org/", "text/plain", None)
+            .expect("link");
+        let links = store
+            .history_of_kind("", 10, Some(ClipboardKind::Link))
+            .expect("listed");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].kind, ClipboardKind::Link);
+        assert_eq!(
+            store
+                .history_of_kind("", 10, Some(ClipboardKind::Image))
+                .expect("listed")
+                .len(),
+            0
+        );
+        assert_eq!(store.history_of_kind("", 10, None).expect("all").len(), 2);
+    }
+
+    #[test]
+    fn the_detail_says_size_hash_encryption_and_keywords_which_are_searchable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
+        store
+            .record(b"twelve bytes", "text/plain", None)
+            .expect("recorded");
+        let id = store.history("", 1).expect("listed").remove(0).id;
+
+        let detail = store.detail(&id).expect("read").expect("found");
+        assert_eq!(detail.size, 12);
+        assert!(detail.encrypted, "the store encrypts at rest");
+        assert_eq!(detail.kind, ClipboardKind::Text);
+        assert!(!detail.md5.is_empty());
+        assert_eq!(detail.keywords, "");
+
+        assert!(store.set_keywords(&id, " receipt ").expect("set"));
+        let detail = store.detail(&id).expect("read").expect("found");
+        assert_eq!(detail.keywords, "receipt");
+        assert_eq!(store.history("receipt", 10).expect("searched").len(), 1);
+
+        assert!(!store.set_keywords("nobody", "x").expect("no such entry"));
+        assert!(store.detail("nobody").expect("read").is_none());
+    }
+
+    #[test]
+    fn remove_all_spares_tagged_entries_when_asked_and_unlinks_the_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
+        store.record(b"loose", "text/plain", None).expect("loose");
+        store.record(b"pinned", "text/plain", None).expect("pinned");
+        store.record(b"tagged", "text/plain", None).expect("tagged");
+        let id_of = |preview: &str| store.history(preview, 1).expect("found").remove(0).id;
+        store.set_pinned(&id_of("pinned"), true).expect("pin");
+        store.set_keywords(&id_of("tagged"), "keep").expect("tag");
+
+        assert_eq!(store.remove_all(true).expect("removed"), 1);
+        assert_eq!(store.history("", 10).expect("listed").len(), 2);
+        assert_eq!(payload_count(dir.path()), 2);
+
+        assert_eq!(store.remove_all(false).expect("removed"), 2);
+        assert!(store.history("", 10).expect("listed").is_empty());
+        assert_eq!(payload_count(dir.path()), 0);
+    }
+
+    #[test]
+    fn eviction_removes_what_is_older_than_the_threshold_and_reports_the_next() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
+        let hour = Duration::from_secs(3600);
+        store
+            .record(b"old and loose", "text/plain", None)
+            .expect("old");
+        store
+            .record(b"old but pinned", "text/plain", None)
+            .expect("pinned");
+        let pinned = store.history("pinned", 1).expect("found").remove(0).id;
+        store.set_pinned(&pinned, true).expect("pin");
+        age_everything(&store, 2 * hour);
+        store.record(b"fresh", "text/plain", None).expect("fresh");
+
+        let (evicted, oldest) = store.evict(hour, true).expect("swept");
+        assert_eq!(evicted, 1, "the pinned entry is preserved");
+        let left: Vec<String> = store
+            .history("", 10)
+            .expect("listed")
+            .into_iter()
+            .map(|entry| entry.preview)
+            .collect();
+        assert_eq!(left, ["old but pinned", "fresh"]);
+        assert_eq!(payload_count(dir.path()), 2);
+        let fresh = store.detail(&store.history("fresh", 1).expect("f").remove(0).id);
+        assert_eq!(oldest, fresh.expect("read").map(|d| d.updated_at));
+
+        let (evicted, _) = store.evict(hour, false).expect("swept");
+        assert_eq!(evicted, 1, "unpreserved, the old pinned one goes too");
+    }
+
+    #[test]
+    fn nothing_is_recorded_while_monitoring_is_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ClipboardStore::open(dir.path(), &MASTER).expect("open");
+        let control = Control::new(&Settings::default());
+        assert!(control.monitoring(), "on by default");
+
+        control.set_monitoring(false);
+        assert!(record_if_monitoring(&store, &control, b"private", "text/plain", None).is_none());
+        assert!(store.history("", 10).expect("listed").is_empty());
+
+        control.set_monitoring(true);
+        assert!(matches!(
+            record_if_monitoring(&store, &control, b"public", "text/plain", None),
+            Some(Ok(Decision::Inserted { .. }))
+        ));
+        assert_eq!(store.history("", 10).expect("listed").len(), 1);
+    }
+
+    #[test]
+    fn the_preferences_are_read_with_the_cpp_defaults() {
+        let defaults = Settings::default();
+        assert!(defaults.monitoring && defaults.ignore_passwords && defaults.preserve_tagged);
+        assert!(!defaults.erase_on_startup);
+        assert_eq!(defaults.eviction, None);
+
+        let set: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            r#"{"monitoring":false,"ignorePasswords":false,"preserveTagged":false,
+                "evictionThreshold":"3600","eraseOnStartup":true}"#,
+        )
+        .expect("json");
+        let settings = Settings::from_preferences(Some(&set));
+        assert_eq!(
+            settings,
+            Settings {
+                monitoring: false,
+                ignore_passwords: false,
+                preserve_tagged: false,
+                eviction: Some(Duration::from_secs(3600)),
+                erase_on_startup: true,
+            }
+        );
+        let never: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"evictionThreshold":"never"}"#).expect("json");
+        assert_eq!(Settings::from_preferences(Some(&never)).eviction, None);
     }
 }

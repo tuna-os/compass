@@ -61,6 +61,7 @@ thiserror.workspace = true
 landlock.workspace = true
 seccompiler.workspace = true
 libc.workspace = true
+nix.workspace = true
 tempfile.workspace = true
 url = "2"
 # Finding image links in a store README (already in the tree through iced's Markdown).
@@ -70,6 +71,8 @@ ttf-parser = "0.25"
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 uuid = { version = "1", features = ["v4"] }
 ureq.workspace = true
+# Drawing a builtin or SVG icon into a notification's PNG (already in the tree through iced's SVG).
+resvg = { version = "0.45", default-features = false }
 
 [dev-dependencies]
 iced = { version = "0.14", features = ["tokio"] }

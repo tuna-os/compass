@@ -115,6 +115,20 @@ pub const DEFAULT_KEYBINDING: &str = "default";
 /// Default for `extensions.auto_update`.
 pub const DEFAULT_AUTO_UPDATE: bool = true;
 
+/// The favourites when the file sets none: the C++ default file's
+/// `favorites`, Clipboard History by its C++ id.
+pub const DEFAULT_FAVORITES: &[&str] = &["clipboard:history"];
+
+/// Default for `launcher.clock.enabled`: the C++ default file shows it.
+pub const DEFAULT_CLOCK_ENABLED: bool = true;
+
+/// Default for `launcher.clock.interval`, in seconds.
+pub const DEFAULT_CLOCK_INTERVAL: u64 = 60;
+
+/// The format the clock uses when none is set: the C++ default file's
+/// "localized hh:mm", as a Qt format.
+pub const DEFAULT_CLOCK_FORMAT: &str = "hh:mm";
+
 /// Path of the config file relative to `$XDG_CONFIG_HOME`.
 pub const CONFIG_RELATIVE_PATH: &str = "vicinae/vicinae.json";
 
@@ -232,10 +246,55 @@ pub struct LauncherConfig {
     /// Colour mode and row presentation.
     #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
     appearance: AppearanceConfig,
+    /// The clock the root search shows in its status bar.
+    #[serde(default, skip_serializing_if = "ClockConfig::is_empty")]
+    clock: ClockConfig,
 
     /// Keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
     unknown: BTreeMap<String, Value>,
+}
+
+/// The `launcher.clock` section (the C++ `launcher_window.clock`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ClockConfig {
+    /// Whether the clock is shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_CLOCK_ENABLED))]
+    enabled: Option<bool>,
+    /// A Qt date-time format, e.g. `hh:mm:ss`; `hh:mm` when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("examples" = ["hh:mm:ss", "ddd hh:mm"]))]
+    format: Option<String>,
+    /// How often the clock is redrawn, in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_CLOCK_INTERVAL))]
+    interval: Option<u64>,
+}
+
+impl ClockConfig {
+    /// Whether the clock is shown. Defaults to [`DEFAULT_CLOCK_ENABLED`].
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(DEFAULT_CLOCK_ENABLED)
+    }
+
+    /// The Qt format it is drawn in. Defaults to [`DEFAULT_CLOCK_FORMAT`].
+    #[must_use]
+    pub fn format(&self) -> &str {
+        self.format.as_deref().unwrap_or(DEFAULT_CLOCK_FORMAT)
+    }
+
+    /// Seconds between redraws, never zero. Defaults to
+    /// [`DEFAULT_CLOCK_INTERVAL`].
+    #[must_use]
+    pub fn interval(&self) -> u64 {
+        self.interval.unwrap_or(DEFAULT_CLOCK_INTERVAL).max(1)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.enabled.is_none() && self.format.is_none() && self.interval.is_none()
+    }
 }
 
 /// The `launcher.appearance` section: colour mode and row presentation, not behavior.
@@ -517,6 +576,7 @@ impl LauncherConfig {
             wrap_navigation,
             quick_launch,
             appearance,
+            clock,
             unknown,
         } = self;
         hotkey.is_none()
@@ -526,7 +586,14 @@ impl LauncherConfig {
             && wrap_navigation.is_none()
             && quick_launch.is_none()
             && appearance.is_empty()
+            && clock.is_empty()
             && unknown.is_empty()
+    }
+
+    /// The `launcher.clock` section.
+    #[must_use]
+    pub fn clock(&self) -> &ClockConfig {
+        &self.clock
     }
 }
 
@@ -699,8 +766,70 @@ impl Config {
                     )
                 })
                 .collect(),
-            favorites: self.favorites.clone().unwrap_or_default(),
+            favorites: self.favorite_ids(),
             fallbacks: self.fallbacks.clone().unwrap_or_default(),
+        }
+    }
+
+    /// The favourites, in the order arranged: the file's `favorites`, or the
+    /// default file's `["clipboard:history"]` when it sets none, each C++
+    /// builtin id read as the Compass command it names
+    /// ([`crate::commands::canonical_id`]). An empty list the user wrote stays
+    /// empty.
+    #[must_use]
+    pub fn favorite_ids(&self) -> Vec<String> {
+        match &self.favorites {
+            Some(favorites) => favorites
+                .iter()
+                .map(|id| crate::commands::canonical_id(id))
+                .collect(),
+            None => DEFAULT_FAVORITES
+                .iter()
+                .map(|id| crate::commands::canonical_id(id))
+                .collect(),
+        }
+    }
+
+    /// Writes what the root row's panel changed about the item `id`
+    /// ([`crate::root_items::apply_edit`]) into this file: the whole
+    /// `favorites` list (so a default the file did not set is written out,
+    /// as `mergeWithUser` does with the merged list), or the item's entry
+    /// under `providers`. Returns whether anything changed.
+    pub fn apply_root_edit(&mut self, id: &str, edit: &crate::root_items::RootEdit) -> bool {
+        use crate::root_items::RootEdit;
+        match edit {
+            RootEdit::Favorite(_) | RootEdit::MoveFavorite { .. } => {
+                let mut root = crate::root_items::RootConfig {
+                    favorites: self.favorite_ids(),
+                    ..crate::root_items::RootConfig::default()
+                };
+                let changed = crate::root_items::apply_edit(&mut root, id, edit);
+                if changed {
+                    self.favorites = Some(root.favorites);
+                }
+                changed
+            }
+            RootEdit::Alias(_) | RootEdit::Disable => {
+                let Some((provider, entrypoint)) = crate::root_items::split_entrypoint_id(id)
+                else {
+                    return false;
+                };
+                let item = self
+                    .providers
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry(provider.to_owned())
+                    .or_default()
+                    .entrypoints
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry(entrypoint.to_owned())
+                    .or_default();
+                match edit {
+                    RootEdit::Alias(alias) => item.alias = Some(alias.clone()),
+                    _ => item.enabled = Some(false),
+                }
+                true
+            }
+            RootEdit::ResetRanking => false,
         }
     }
 
@@ -800,6 +929,33 @@ impl Config {
             .as_str()?
             .trim();
         (!family.is_empty() && family != "auto" && family != "system").then_some(family)
+    }
+
+    /// Sets one of a provider's preferences
+    /// (`providers.<provider>.preferences.<key>`), keeping the others, as the
+    /// C++ `setPreferenceValues` merges a patch.
+    pub fn set_provider_preference(
+        &mut self,
+        provider: &str,
+        key: &str,
+        value: Value,
+    ) -> &mut Self {
+        let settings = self
+            .providers
+            .get_or_insert_with(BTreeMap::new)
+            .entry(provider.to_owned())
+            .or_default();
+        let preferences = settings
+            .unknown
+            .entry("preferences".to_owned())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if !preferences.is_object() {
+            *preferences = Value::Object(serde_json::Map::new());
+        }
+        if let Some(preferences) = preferences.as_object_mut() {
+            preferences.insert(key.to_owned(), value);
+        }
+        self
     }
 
     /// Sets `font.normal.family`, keeping the rest of the `font` object (its
@@ -994,12 +1150,60 @@ pub fn json_schema_pretty() -> String {
     out
 }
 
-/// `$XDG_CONFIG_HOME/vicinae/vicinae.json`, falling back to `~/.config`.
+/// The configuration every unset key amounts to, as `vicinae config default`
+/// prints it: each `default` the [`json_schema`] documents, nested as the
+/// file nests it, plus the fallbacks and the `$schema` line.
+///
+/// Read from the schema rather than written out a second time, so a default
+/// changed in one place cannot be printed stale from another.
+#[must_use]
+pub fn default_document() -> Value {
+    fn defaults(node: &Value, defs: &Value) -> Option<Value> {
+        if let Some(default) = node.get("default") {
+            return Some(default.clone());
+        }
+        if let Some(name) = node
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(|r| r.rsplit('/').next())
+        {
+            return defaults(defs.get(name)?, defs);
+        }
+        let properties = node.get("properties")?.as_object()?;
+        let object: serde_json::Map<String, Value> = properties
+            .iter()
+            .filter_map(|(key, property)| Some((key.clone(), defaults(property, defs)?)))
+            .collect();
+        (!object.is_empty()).then_some(Value::Object(object))
+    }
+    let schema = json_schema();
+    let defs = schema.get("$defs").cloned().unwrap_or(Value::Null);
+    let mut document = serde_json::Map::new();
+    document.insert("$schema".to_owned(), Value::String(SCHEMA_URL.to_owned()));
+    if let Some(Value::Object(found)) = defaults(&schema, &defs) {
+        document.extend(found);
+    }
+    document.insert(
+        "fallbacks".to_owned(),
+        serde_json::json!(Config::default().fallback_ids()),
+    );
+    Value::Object(document)
+}
+
+/// Overrides where `vicinae.json` is read and written, as the C++ server's
+/// `--config`; `vicinae server --config` sets it for the engine it starts.
+pub const CONFIG_PATH_ENV: &str = "COMPASS_CONFIG";
+
+/// `$XDG_CONFIG_HOME/vicinae/vicinae.json`, falling back to `~/.config`; or
+/// [`CONFIG_PATH_ENV`] when that is set.
 ///
 /// # Errors
 ///
 /// [`ConfigError::NoConfigDir`] when neither `$XDG_CONFIG_HOME` nor `$HOME` is usable.
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
+    if let Some(path) = std::env::var_os(CONFIG_PATH_ENV).filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
     let dir = dirs::config_dir().ok_or(ConfigError::NoConfigDir)?;
     Ok(dir.join(CONFIG_RELATIVE_PATH))
 }

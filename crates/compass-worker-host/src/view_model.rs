@@ -447,6 +447,21 @@ fn color_like(color: &Value) -> Option<Color> {
     })
 }
 
+/// An image an extension sent as JSON, in any of the shapes the API
+/// accepts: `serializeProtoImage`'s object, or a bare source string (a URL,
+/// a path, an asset or a builtin icon name).
+#[must_use]
+pub fn image_from_json(value: &Value) -> Option<Image> {
+    match value.as_str() {
+        Some(raw) => {
+            let mut image = Image::builtin(String::new());
+            image.source = raw_source(raw);
+            Some(image)
+        }
+        None => image(value),
+    }
+}
+
 /// An image as `serializeProtoImage` writes it: `{source: {raw} | {themed}}`,
 /// or `{fileIcon}`.
 fn image(value: &Value) -> Option<Image> {

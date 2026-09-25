@@ -78,6 +78,118 @@ fn migrate_writes_vicinae_json_and_leaves_the_cpp_file_alone() {
     assert!(dir.join("vicinae.json.bak").exists());
 }
 
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+#[test]
+fn config_default_prints_every_default_as_json() {
+    let home = tempfile::tempdir().unwrap();
+    let out = run(home.path(), &["config", "default"]);
+    assert!(out.status.success());
+    let printed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(printed, compass_core::config::default_document());
+}
+
+#[test]
+fn script_template_prints_the_cpp_template_and_script_check_reads_it_back() {
+    let home = tempfile::tempdir().unwrap();
+    let out = run(
+        home.path(),
+        &[
+            "script", "template", "-t", "Say Hi", "-l", "python", "-m", "compact",
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let script = text(&out.stdout);
+    assert_eq!(
+        script,
+        format!(
+            "{}\n",
+            compass_core::script_template::generate(
+                "Say Hi",
+                compass_core::script_template::Language::Python,
+                compass_core::script_command::OutputMode::Compact,
+            )
+        )
+    );
+    let file = home.path().join("say-hi.py");
+    std::fs::write(&file, &script).unwrap();
+    let checked = run(home.path(), &["script", "check", file.to_str().unwrap()]);
+    assert!(checked.status.success(), "{}", text(&checked.stderr));
+    assert!(checked.stdout.is_empty() && checked.stderr.is_empty());
+
+    std::fs::write(&file, "#!/bin/sh\n# @vicinae.schemaVersion 1\n").unwrap();
+    let broken = run(home.path(), &["script", "check", file.to_str().unwrap()]);
+    assert_eq!(broken.status.code(), Some(1));
+    assert!(text(&broken.stderr).starts_with("Error: "));
+
+    let missing = run(home.path(), &["script", "check", "/nonexistent/x.sh"]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(text(&missing.stderr).contains("Error: File not found: /nonexistent/x.sh"));
+
+    let cobol = run(
+        home.path(),
+        &["script", "template", "-t", "x", "-l", "cobol"],
+    );
+    assert_eq!(cobol.status.code(), Some(1));
+    assert!(
+        text(&cobol.stderr)
+            .contains("Invalid language: cobol\n\nSupported languages: bash, python, javascript")
+    );
+    let mode = run(
+        home.path(),
+        &["script", "template", "-t", "x", "-m", "loud"],
+    );
+    assert!(text(&mode.stderr).contains("Supported modes: fullOutput, compact"));
+}
+
+#[test]
+fn theme_template_check_and_paths() {
+    let home = tempfile::tempdir().unwrap();
+    let template = run(home.path(), &["theme", "template"]);
+    assert!(template.status.success());
+    let expected = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../extra/theme-template.toml"),
+    )
+    .unwrap();
+    assert_eq!(text(&template.stdout), format!("{expected}\n"));
+
+    let file = home.path().join("mine.toml");
+    std::fs::write(&file, &template.stdout).unwrap();
+    let valid = run(home.path(), &["th", "check", file.to_str().unwrap()]);
+    assert!(valid.status.success(), "{}", text(&valid.stderr));
+    assert_eq!(text(&valid.stdout), "Theme file is valid\n");
+
+    std::fs::write(&file, "[colors.core]\naccent = \"#fff\"\n").unwrap();
+    let invalid = run(home.path(), &["theme", "check", file.to_str().unwrap()]);
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(text(&invalid.stderr).contains("Theme is invalid: a [meta] table is required"));
+
+    let paths = run(home.path(), &["theme", "paths"]);
+    assert!(paths.status.success());
+    assert_eq!(
+        text(&paths.stdout).lines().next(),
+        Some(
+            home.path()
+                .join(".local/share/vicinae/themes")
+                .to_str()
+                .unwrap()
+        )
+    );
+}
+
+#[test]
+fn version_prints_the_cpps_three_lines() {
+    let home = tempfile::tempdir().unwrap();
+    let out = run(home.path(), &["version"]);
+    assert!(out.status.success());
+    let printed = text(&out.stdout);
+    assert!(printed.starts_with(&format!("Version {} (commit ", env!("CARGO_PKG_VERSION"))));
+    assert_eq!(printed.lines().count(), 3);
+    assert_eq!(text(&run(home.path(), &["ver"]).stdout), printed);
+}
+
 #[test]
 fn migrate_without_settings_fails_clearly() {
     let home = tempfile::tempdir().unwrap();

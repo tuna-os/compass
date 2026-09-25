@@ -330,3 +330,52 @@ fn stored_preferences_fill_what_defaults_cannot_and_override_the_rest() {
         "an empty required value is still missing"
     );
 }
+
+/// `AppService::scanSync` after a directory changed: an application installed
+/// while the launcher runs joins root search, one removed leaves it, and
+/// nothing else in the root moves or loses its settings.
+#[test]
+fn a_rescan_takes_installed_and_removed_applications_and_keeps_the_rest() {
+    let (dir, mut index) = index();
+    let config = compass_core::Config::parse(
+        r#"{"providers":{"applications":{"entrypoints":{
+            "editor":{"alias":"xyzed"}
+        }}}}"#,
+        std::path::Path::new("config.json"),
+    )
+    .unwrap();
+    index.apply_root_config(&config.root_config());
+    assert_eq!(index.application_dirs(), [dir.path().to_path_buf()]);
+    let commands_before = command_ids(&index.search_root_all("clipboard", None));
+    assert!(index.search_root("Editor", None).is_empty());
+
+    std::fs::write(
+        dir.path().join("editor.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor\n",
+    )
+    .unwrap();
+    std::fs::remove_file(dir.path().join("files.desktop")).unwrap();
+    index.rescan_applications();
+
+    let mut keys: Vec<&str> = index
+        .search_root("", None)
+        .iter()
+        .map(|hit| hit.item.key())
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["browser.desktop", "editor.desktop"]);
+    let aliased = index.search_root("xyzed", None);
+    assert_eq!(aliased.len(), 1, "the alias applies to the new row");
+    assert_eq!(aliased[0].item.key(), "editor.desktop");
+    assert!(
+        index.search_root("Dateien", None).is_empty(),
+        "the removed one is gone"
+    );
+    assert_eq!(
+        command_ids(&index.search_root_all("clipboard", None)),
+        commands_before,
+        "the commands are untouched"
+    );
+    let hit = &index.search_root("Editor", None)[0];
+    assert_eq!(index.items()[hit.index].key(), "editor.desktop");
+}

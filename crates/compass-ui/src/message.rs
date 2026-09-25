@@ -97,6 +97,30 @@ pub enum Message {
     ClipboardEntryChanged(Result<(), String>),
     /// A clipboard row was clicked.
     ClipboardSelected(usize),
+    /// The clipboard kind filter was changed, to this label.
+    ClipboardKindChanged(String),
+    /// The detail pane's metadata for entry `id` arrived.
+    ClipboardDetailLoaded {
+        /// Which entry.
+        id: String,
+        /// What the engine answered.
+        result: Result<crate::backend::ClipboardDetail, String>,
+    },
+    /// The detail pane's content for entry `id` arrived.
+    ClipboardDetailContent {
+        /// Which entry.
+        id: String,
+        /// What the engine answered.
+        result: Result<crate::backend::ClipboardContent, String>,
+    },
+    /// An entry's keywords arrived, to open the keyword form with.
+    ClipboardKeywordsLoaded(Result<crate::backend::ClipboardDetail, String>),
+    /// Whether copies are being recorded, as the engine answered.
+    ClipboardMonitoringLoaded(Result<crate::backend::ClipboardMonitoring, String>),
+    /// The engine kept (or refused) what the root row's panel changed.
+    RootItemEdited(Result<(), String>),
+    /// A second passed; the root search's clock may need redrawing.
+    ClockTick,
     /// Leave a command's view for the root list.
     Back,
     /// The window switcher's filter changed.
@@ -194,6 +218,17 @@ pub enum Message {
     FontSet(Result<String, String>),
     /// Script Permissions' list arrived.
     GrantsLoaded(Result<Vec<crate::backend::ScriptGrant>, String>),
+    /// Browse Apps' or a default picker's filter changed.
+    AppsQueryChanged(String),
+    /// A row of Browse Apps or a default picker was clicked.
+    AppsSelected(usize),
+    /// A default picker's candidates arrived.
+    DefaultAppsLoaded(Result<Vec<crate::backend::DefaultAppRow>, String>),
+    /// A default picker's choice was written, or could not be.
+    DefaultAppSet(Result<(), String>),
+    /// The engine's catalog generation, asked on every summon: when it moved,
+    /// applications or extensions were installed or removed.
+    CatalogGeneration(Result<u64, String>),
     /// Script Permissions' filter changed.
     GrantsQueryChanged(String),
     /// A script row was clicked, by position in the shown list.
@@ -293,6 +328,28 @@ pub enum Message {
     WindowActivated(Result<(), String>),
     /// Closing a window finished; the list is reloaded either way.
     ShellWindowClosed(Result<(), String>),
+    /// Whether the application under the root row's panel runs, by its key.
+    AppRuntimeLoaded {
+        /// The application's key, so a late answer for another row is dropped.
+        key: String,
+        /// Whether it runs, and its windows.
+        result: Result<crate::backend::AppRuntimeInfo, String>,
+    },
+    /// Quit, Force Quit, or a root row's Focus or Close Window finished.
+    AppQuit(Result<(), String>),
+    /// Calculator History's filter changed.
+    CalculatorQueryChanged(String),
+    /// Calculator History's rows arrived for request `generation`.
+    CalculatorLoaded {
+        /// The request they answer; a stale one is dropped.
+        generation: u64,
+        /// The groups, or why there are none.
+        result: Result<Vec<crate::backend::CalculatorGroupRow>, String>,
+    },
+    /// A Calculator History row was clicked, by position.
+    CalculatorSelected(usize),
+    /// A pin, unpin or removal finished, with what to say.
+    CalculatorEdited(Result<&'static str, String>),
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must

@@ -15,7 +15,9 @@ pub const APP_ID: &str = "com.vicinae.Vicinae";
 pub mod action_panel;
 pub mod app;
 pub mod appearance;
+pub mod apps_page;
 pub mod backend;
+pub mod calculator_page;
 pub mod clipboard_page;
 pub mod design;
 pub mod developer_page;
@@ -49,7 +51,7 @@ pub mod typography;
 pub mod view_memory;
 pub mod windows_page;
 
-pub use app::{AppFlags, Dismissal, LauncherApp, next_selection};
+pub use app::{AppFlags, ClockSettings, Dismissal, LauncherApp, next_selection};
 pub use appearance::{AppearanceLink, AppearanceSender};
 pub use typography::{TypographyLink, TypographySender};
 

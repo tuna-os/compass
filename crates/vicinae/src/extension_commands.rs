@@ -38,6 +38,8 @@ pub struct Launch {
     pub arguments_json: Option<String>,
     /// Open its preferences rather than run it.
     pub preferences: bool,
+    /// What its search starts with: `vicinae cmd launch --query`.
+    pub fallback_text: Option<String>,
 }
 
 /// What an extension's launch carries beyond its arguments.
@@ -242,6 +244,7 @@ impl Commands for EngineCommands {
                 id: entrypoint_id.to_owned(),
                 arguments_json,
                 preferences: false,
+                fallback_text: None,
             },
             context,
         );
@@ -263,6 +266,7 @@ impl Commands for EngineCommands {
                 id: self.command_id.clone(),
                 arguments_json: None,
                 preferences: true,
+                fallback_text: None,
             },
             None,
         );
@@ -330,6 +334,7 @@ mod tests {
                 id: "@ada/notes:create".into(),
                 arguments_json: Some(r#"{"title":"Groceries"}"#.into()),
                 preferences: false,
+                fallback_text: None,
             })
         );
         assert_eq!(launches.take(token), None, "a launch is taken once");
@@ -394,6 +399,7 @@ mod tests {
                 id: "@ada/notes:list".into(),
                 arguments_json: None,
                 preferences: true,
+                fallback_text: None,
             })
         );
     }

@@ -130,6 +130,7 @@ fn start() -> (Engine, u32) {
         .env("XDG_CONFIG_HOME", dirs.path().join("config"))
         .env("XDG_CACHE_HOME", dirs.path().join(".cache"))
         .env("HOME", dirs.path())
+        .env_remove("XDG_STATE_HOME")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

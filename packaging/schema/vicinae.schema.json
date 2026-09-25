@@ -67,6 +67,41 @@
       },
       "type": "object"
     },
+    "ClockConfig": {
+      "description": "The `launcher.clock` section (the C++ `launcher_window.clock`).",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether the clock is shown.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "A Qt date-time format, e.g. `hh:mm:ss`; `hh:mm` when unset.",
+          "examples": [
+            "hh:mm:ss",
+            "ddd hh:mm"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "interval": {
+          "default": 60,
+          "description": "How often the clock is redrawn, in seconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ExtensionsConfig": {
       "additionalProperties": true,
       "description": "The `extensions` section.",
@@ -114,6 +149,10 @@
         "appearance": {
           "$ref": "#/$defs/AppearanceConfig",
           "description": "Colour mode and row presentation."
+        },
+        "clock": {
+          "$ref": "#/$defs/ClockConfig",
+          "description": "The clock the root search shows in its status bar."
         },
         "close_on_focus_loss": {
           "default": false,

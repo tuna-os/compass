@@ -26,6 +26,7 @@ fn to_ui(command: WindowCommand) -> UiCommand {
         WindowCommand::Dmenu(token) => UiCommand::Dmenu(token),
         WindowCommand::Launch(token) => UiCommand::Launch(token),
         WindowCommand::Deeplink(url) => UiCommand::Deeplink(url),
+        WindowCommand::Describe => UiCommand::Describe,
     }
 }
 
@@ -231,6 +232,7 @@ mod tests {
                     UiCommand::Dmenu(_) | UiCommand::Launch(_) | UiCommand::Deeplink(_) => {
                         UiOutcome::Shown
                     }
+                    UiCommand::Describe => UiOutcome::Hidden,
                 };
                 if outcomes_tx.send(outcome).is_err() {
                     return;
@@ -355,6 +357,7 @@ mod tests {
             WindowCommand::Dmenu(42),
             WindowCommand::Launch(7),
             WindowCommand::Deeplink("vicinae://extensions/a/b".into()),
+            WindowCommand::Describe,
         ] {
             let ui = to_ui(command.clone());
             let back = match ui {
@@ -364,6 +367,7 @@ mod tests {
                 UiCommand::Dmenu(token) => WindowCommand::Dmenu(token),
                 UiCommand::Launch(token) => WindowCommand::Launch(token),
                 UiCommand::Deeplink(url) => WindowCommand::Deeplink(url),
+                UiCommand::Describe => WindowCommand::Describe,
             };
             assert_eq!(back, command, "{command:?} did not survive the round trip");
         }

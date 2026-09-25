@@ -40,6 +40,10 @@ use tokio::sync::{Mutex, RwLock};
 use crate::doctor;
 use crate::engine::Engine;
 
+mod app_runtime;
+mod calculator;
+mod launch;
+
 /// The at-most-one launcher window this engine drives.
 ///
 /// # Last window wins
@@ -90,6 +94,9 @@ pub struct EngineState {
     /// Clipboard history, once [`crate::clipboard_service::run`] has opened
     /// it. `None` until then, and for good when there is no keyring.
     clipboard: Option<Arc<crate::clipboard_service::ClipboardStore>>,
+    /// The clipboard service's switch and preferences, shared with its
+    /// recording loop and eviction timer.
+    clipboard_control: Arc<crate::clipboard_service::Control>,
     /// The GNOME Shell extension's client, once the session bus answered.
     /// `None` until then, and for good without a session bus.
     shell: Option<Arc<compass_shell::ShellClient>>,
@@ -123,6 +130,11 @@ pub struct EngineState {
     expander: Option<Arc<crate::snippet_expansion::Expander>>,
     /// Launches extensions asked for, and their commands' subtitle overrides.
     launches: Arc<crate::extension_commands::Launches>,
+    /// How many times a directory watch has rescanned the catalog; see
+    /// [`Request::CatalogGeneration`].
+    catalog_generation: u64,
+    /// The calculator history's database, once the keyring opened it.
+    calculator: Arc<tokio::sync::Mutex<Option<crate::extension_runner::Storage>>>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -223,6 +235,11 @@ impl EngineState {
             max_results,
             window: WindowSlot::default(),
             clipboard: None,
+            clipboard_control: Arc::new(crate::clipboard_service::Control::new(
+                &crate::clipboard_service::Settings::from_preferences(
+                    config.provider_preferences(crate::clipboard_service::PROVIDER_ID),
+                ),
+            )),
             shell: None,
             views: Arc::default(),
             files: Arc::new(files),
@@ -237,6 +254,8 @@ impl EngineState {
             stores: Arc::default(),
             expander: None,
             launches: Arc::default(),
+            catalog_generation: 0,
+            calculator: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -284,6 +303,9 @@ impl EngineState {
             max_results,
             window: WindowSlot::default(),
             clipboard: None,
+            clipboard_control: Arc::new(crate::clipboard_service::Control::new(
+                &crate::clipboard_service::Settings::default(),
+            )),
             shell: None,
             views: Arc::default(),
             files: Arc::default(),
@@ -299,7 +321,39 @@ impl EngineState {
             stores: Arc::default(),
             expander: None,
             launches: Arc::default(),
+            catalog_generation: 0,
+            calculator: Arc::default(),
         }
+    }
+
+    /// Takes `fresh`'s applications, scanned after an application directory
+    /// changed, as `AppService::scanSync` ends in `appsChanged`.
+    pub fn replace_applications(&mut self, fresh: AppIndex) {
+        self.index.replace_applications(fresh);
+        self.catalog_generation += 1;
+        tracing::info!(
+            applications = self.index.len(),
+            generation = self.catalog_generation,
+            "applications rescanned"
+        );
+    }
+
+    /// Takes the installed extensions again after an extension directory
+    /// changed, as the registry's debounced `requestScan` does.
+    pub fn rescan_extensions(&mut self) {
+        self.index.rescan_extensions();
+        self.catalog_generation += 1;
+        tracing::info!(
+            commands = self.index.extensions().len(),
+            generation = self.catalog_generation,
+            "extensions rescanned"
+        );
+    }
+
+    /// See [`Request::CatalogGeneration`].
+    #[must_use]
+    pub fn catalog_generation(&self) -> u64 {
+        self.catalog_generation
     }
 
     /// Makes the Shell extension's client available to requests.
@@ -334,6 +388,12 @@ impl EngineState {
     /// Makes clipboard history available to requests.
     pub fn set_clipboard(&mut self, store: Arc<crate::clipboard_service::ClipboardStore>) {
         self.clipboard = Some(store);
+    }
+
+    /// The clipboard service's switch and preferences.
+    #[must_use]
+    pub fn clipboard_control(&self) -> Arc<crate::clipboard_service::Control> {
+        Arc::clone(&self.clipboard_control)
     }
 
     /// The snippet store, when there is a data directory for one.
@@ -652,6 +712,133 @@ async fn uninstall_extension(state: &Arc<RwLock<EngineState>>, id: String) -> Re
     Response::Ack
 }
 
+/// The application database as a request sees it: the index, the
+/// associations read now, and the runtime to launch on.
+fn engine_apps_now(state: &EngineState) -> crate::extension_apps::EngineApps {
+    crate::extension_apps::EngineApps::new(
+        &state.index,
+        compass_xdg::mimeapps::Lists::from_environment(),
+        tokio::runtime::Handle::current(),
+    )
+}
+
+/// Set Default Browser's and Set Default Terminal's list, as
+/// `SetDefaultBrowserViewHost::reloadItems` and its terminal twin build it:
+/// what opens [`compass_core::default_app::BROWSER_PROBE_URL`], or every
+/// terminal emulator, with the current default first.
+async fn list_default_apps(
+    state: &Arc<RwLock<EngineState>>,
+    kind: compass_ipc::DefaultAppKind,
+) -> Response {
+    use compass_core::default_app::{PickerApp, browser_picker, terminal_picker};
+    use compass_worker_host::application_service::Apps as _;
+    let state = state.read().await;
+    let apps = engine_apps_now(&state);
+    let service = compass_core::app_service::AppService::new(&state.index);
+    let picker_app = |app: &compass_worker_host::application_service::Application| {
+        let item = service.find_by_id(&app.id);
+        PickerApp {
+            id: app.id.clone(),
+            display_name: app.name.clone(),
+            description: item
+                .and_then(compass_core::AppItem::comment)
+                .unwrap_or_default()
+                .to_owned(),
+            // The index holds only what the root shows, so everything in it
+            // is `displayable()`.
+            displayable: true,
+            terminal_emulator: item
+                .is_some_and(|item| item.categories().iter().any(|c| c == "TerminalEmulator")),
+        }
+    };
+    let picker = match kind {
+        compass_ipc::DefaultAppKind::Browser => {
+            let default = apps.web_browser().map(|app| app.id);
+            let openers: Vec<PickerApp> = apps
+                .openers(compass_core::default_app::BROWSER_PROBE_URL)
+                .iter()
+                .map(picker_app)
+                .collect();
+            browser_picker(&openers, default.as_deref())
+        }
+        compass_ipc::DefaultAppKind::Terminal => {
+            let default = apps.terminal_emulator().map(|app| app.id);
+            let terminals: Vec<PickerApp> =
+                apps.terminal_emulators().iter().map(picker_app).collect();
+            terminal_picker(&terminals, default.as_deref())
+        }
+    };
+    Response::DefaultApps {
+        apps: picker
+            .items
+            .into_iter()
+            .map(|item| compass_ipc::DefaultAppEntry {
+                id: item.app.id,
+                name: item.app.display_name,
+                description: item.app.description,
+                is_default: item.is_default,
+            })
+            .collect(),
+    }
+}
+
+/// The picker's action: `appDb->setWebBrowser(app)` into the user's
+/// `mimeapps.list`, or `xdgpp::setDefaultTerminal(id)` into the user's
+/// `xdg-terminals.list`. A failure answers with the picker's own sentence.
+async fn set_default_app(
+    state: &Arc<RwLock<EngineState>>,
+    kind: compass_ipc::DefaultAppKind,
+    id: &str,
+) -> Response {
+    use compass_core::default_app::{BROWSER_FAILURE, TERMINAL_FAILURE};
+    let failure = |sentence: &str| {
+        Response::Error(ProtocolError::new(ErrorKind::Internal, sentence.to_owned()))
+    };
+    let Some(config_home) = compass_xdg::mimeapps::config_home() else {
+        return failure(match kind {
+            compass_ipc::DefaultAppKind::Browser => BROWSER_FAILURE,
+            compass_ipc::DefaultAppKind::Terminal => TERMINAL_FAILURE,
+        });
+    };
+    match kind {
+        compass_ipc::DefaultAppKind::Browser => {
+            let mut apps = engine_apps_now(&*state.read().await);
+            let id = id.to_owned();
+            let set = tokio::task::spawn_blocking(move || {
+                apps.set_web_browser(
+                    &id,
+                    &config_home.join("mimeapps.list"),
+                    &compass_xdg::mimeapps::search_paths(),
+                )
+            })
+            .await
+            .unwrap_or(false);
+            if set {
+                tokio::spawn(show_hud(compass_core::default_app::BROWSER_SUCCESS));
+                Response::Ack
+            } else {
+                failure(BROWSER_FAILURE)
+            }
+        }
+        compass_ipc::DefaultAppKind::Terminal => {
+            match compass_xdg::terminal::set_default_terminal(
+                &config_home.join("xdg-terminals.list"),
+                id,
+                None,
+            ) {
+                Ok(()) => {
+                    tokio::spawn(show_hud(compass_core::default_app::TERMINAL_SUCCESS));
+                    Response::Ack
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "could not write xdg-terminals.list");
+                    failure(TERMINAL_FAILURE)
+                }
+            }
+        }
+    }
+}
+
 /// Clears what an extension kept in local storage, and its preference
 /// values, as `m_storage.clearNamespace(id)` does. Only when the storage
 /// database exists: an extension that never ran has nothing there, and
@@ -829,6 +1016,99 @@ async fn run_script(state: &Arc<RwLock<EngineState>>, id: &str, arguments: &[Str
 }
 
 /// The snippet list as the wire carries it.
+/// Applies what the root row's panel changed: forgets the launch history,
+/// or writes the configuration and applies it to root search, as the C++
+/// root item manager merges it into the user's file and its metadata.
+fn edit_root_item(
+    state: &Arc<RwLock<EngineState>>,
+    id: &str,
+    edit: compass_ipc::RootItemEdit,
+) -> Response {
+    use compass_core::root_items::RootEdit;
+    let edit = match edit {
+        compass_ipc::RootItemEdit::Favorite(favorite) => RootEdit::Favorite(favorite),
+        compass_ipc::RootItemEdit::MoveFavorite { down } => RootEdit::MoveFavorite { down },
+        compass_ipc::RootItemEdit::Alias(alias) => RootEdit::Alias(alias),
+        compass_ipc::RootItemEdit::Disable => RootEdit::Disable,
+        compass_ipc::RootItemEdit::ResetRanking => RootEdit::ResetRanking,
+    };
+    let mut state = state.blocking_write();
+    if state.index.root(id).is_none() {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no root item has that id",
+        ));
+    }
+    if edit == RootEdit::ResetRanking {
+        let key = state.index.history_key(id);
+        return match state.frecency.forget(&key) {
+            Ok(_) => Response::Ack,
+            Err(err) => Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("could not reset the ranking: {err}"),
+            )),
+        };
+    }
+    // A file that does not parse is left alone rather than replaced by one
+    // holding only this change.
+    let mut config = match Config::load() {
+        Ok(config) => config,
+        Err(err) => {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("could not read the configuration: {err}"),
+            ));
+        }
+    };
+    if config.apply_root_edit(id, &edit) {
+        let saved =
+            compass_core::config::default_config_path().and_then(|path| config.save_to(path));
+        if let Err(err) = saved {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("could not save the configuration: {err}"),
+            ));
+        }
+    }
+    state.index.apply_root_config(&config.root_config());
+    Response::Ack
+}
+
+fn clipboard_unavailable() -> Response {
+    Response::Error(ProtocolError::new(
+        ErrorKind::Unsupported,
+        "clipboard history is unavailable: no keyring, or the store would not open \
+         (the engine log says which)",
+    ))
+}
+
+/// Clipboard history for `query`, of one kind or of every kind.
+async fn clipboard_history(
+    state: &Arc<RwLock<EngineState>>,
+    query: String,
+    limit: u32,
+    kind: Option<compass_ipc::ClipboardKind>,
+) -> Response {
+    if limit == 0 {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "a clipboard history request must ask for at least one entry",
+        ));
+    }
+    let Some(store) = state.read().await.clipboard.clone() else {
+        return clipboard_unavailable();
+    };
+    // SQLite is blocking I/O; keep it off the executor.
+    match tokio::task::spawn_blocking(move || store.history_of_kind(&query, limit, kind)).await {
+        Ok(Ok(entries)) => Response::ClipboardHistory { entries },
+        Ok(Err(err)) => Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string())),
+        Err(err) => Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!("clipboard history task failed: {err}"),
+        )),
+    }
+}
+
 fn snippets_response(snippets: &compass_core::snippet_store::SnippetStore) -> Response {
     Response::Snippets {
         snippets: snippets
@@ -2048,6 +2328,63 @@ pub(crate) async fn forward(slot: &WindowSlot, command: WindowCommand, what: &st
     }
 }
 
+/// `ListWindows`: over Wayland on a wlroots compositor, through the Shell
+/// extension everywhere else.
+pub(crate) async fn list_windows(state: &Arc<RwLock<EngineState>>) -> Response {
+    // wlroots compositors list windows over Wayland; never on GNOME.
+    if crate::wlroots::detect().await.is_some() {
+        let state = state.read().await;
+        if let Some(response) = crate::window_service::wlroots_list(&state.index).await {
+            return response;
+        }
+    }
+    let (shell, index_state) = (state.read().await.shell.clone(), Arc::clone(state));
+    let Some(shell) = shell else {
+        return Response::Error(crate::window_service::no_bus("Window switching"));
+    };
+    match shell.list_windows().await {
+        Ok(windows) => {
+            let state = index_state.read().await;
+            Response::Windows {
+                windows: crate::window_service::rows(
+                    windows.into_iter().map(Into::into).collect(),
+                    &state.index,
+                ),
+            }
+        }
+        Err(err) => Response::Error(crate::window_service::refusal(&err, "Window switching")),
+    }
+}
+
+/// `ActivateWindow` or, with `close`, `CloseWindow`.
+pub(crate) async fn act_on_window(
+    state: &Arc<RwLock<EngineState>>,
+    id: u32,
+    close: bool,
+) -> Response {
+    let what = if close {
+        "Closing a window"
+    } else {
+        "Switching to a window"
+    };
+    if let Some(response) = crate::window_service::wlroots_act(id, close, what).await {
+        return response;
+    }
+    let Some(shell) = state.read().await.shell.clone() else {
+        return Response::Error(crate::window_service::no_bus(what));
+    };
+    let id = compass_shell::WindowId(id);
+    let done = if close {
+        shell.close_window(id).await
+    } else {
+        shell.activate_window(id).await
+    };
+    match done {
+        Ok(()) => Response::Ack,
+        Err(err) => Response::Error(crate::window_service::refusal(&err, what)),
+    }
+}
+
 /// Answers one request.
 ///
 /// Separated from the serve loop so the whole request surface is testable
@@ -2111,30 +2448,115 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
 
         Request::ClipboardHistory { query, limit } => {
-            if limit == 0 {
-                return Response::Error(ProtocolError::new(
-                    ErrorKind::BadRequest,
-                    "a clipboard history request must ask for at least one entry",
-                ));
-            }
+            clipboard_history(state, query, limit, None).await
+        }
+
+        Request::ClipboardHistoryOfKind { query, limit, kind } => {
+            clipboard_history(state, query, limit, kind).await
+        }
+
+        Request::ClipboardDetail { id } => {
             let Some(store) = state.read().await.clipboard.clone() else {
-                return Response::Error(ProtocolError::new(
-                    ErrorKind::Unsupported,
-                    "clipboard history is unavailable: no keyring, or the store would not open \
-                     (the engine log says which)",
-                ));
+                return clipboard_unavailable();
             };
-            // SQLite is blocking I/O; keep it off the executor.
-            match tokio::task::spawn_blocking(move || store.history(&query, limit)).await {
-                Ok(Ok(entries)) => Response::ClipboardHistory { entries },
+            match tokio::task::spawn_blocking(move || store.detail(&id)).await {
+                Ok(Ok(Some(detail))) => Response::ClipboardDetail { detail },
+                Ok(Ok(None)) => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no clipboard history entry has that id",
+                )),
                 Ok(Err(err)) => {
                     Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
                 }
                 Err(err) => Response::Error(ProtocolError::new(
                     ErrorKind::Internal,
-                    format!("clipboard history task failed: {err}"),
+                    format!("clipboard detail task failed: {err}"),
                 )),
             }
+        }
+
+        Request::ClipboardSetKeywords { id, keywords } => {
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return clipboard_unavailable();
+            };
+            match tokio::task::spawn_blocking(move || store.set_keywords(&id, &keywords)).await {
+                Ok(Ok(true)) => Response::Ack,
+                Ok(Ok(false)) => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no clipboard history entry has that id",
+                )),
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard keywords task failed: {err}"),
+                )),
+            }
+        }
+
+        Request::ClipboardRemoveAll => {
+            let (store, control) = {
+                let state = state.read().await;
+                (state.clipboard.clone(), state.clipboard_control())
+            };
+            let Some(store) = store else {
+                return clipboard_unavailable();
+            };
+            let preserve = control.preserve_tagged();
+            match tokio::task::spawn_blocking(move || store.remove_all(preserve)).await {
+                Ok(Ok(_)) => Response::Ack,
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard remove-all task failed: {err}"),
+                )),
+            }
+        }
+
+        Request::ClipboardMonitoring { enabled } => {
+            let control = state.read().await.clipboard_control();
+            if let Some(enabled) = enabled {
+                control.set_monitoring(enabled);
+                // Kept as the preference, as `toggleMonitoring` patches it,
+                // so the choice outlives the engine.
+                let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    // A file that does not parse is left alone rather than
+                    // replaced by one holding only this choice.
+                    let mut config = Config::load()?;
+                    config.set_provider_preference(
+                        crate::clipboard_service::PROVIDER_ID,
+                        "monitoring",
+                        serde_json::Value::Bool(enabled),
+                    );
+                    config.save_to(compass_core::config::default_config_path()?)?;
+                    Ok(())
+                })
+                .await;
+                match saved {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => tracing::warn!(error = %err, "monitoring choice not saved"),
+                    Err(err) => tracing::warn!(error = %err, "the monitoring save task failed"),
+                }
+            }
+            Response::ClipboardMonitoring {
+                supported: control.supported(),
+                enabled: control.monitoring(),
+            }
+        }
+
+        Request::RootItemEdit { id, edit } => {
+            let state = Arc::clone(state);
+            tokio::task::spawn_blocking(move || edit_root_item(&state, &id, edit))
+                .await
+                .unwrap_or_else(|err| {
+                    Response::Error(ProtocolError::new(
+                        ErrorKind::Internal,
+                        format!("the root item task failed: {err}"),
+                    ))
+                })
         }
 
         Request::ClipboardContent { id } => {
@@ -2161,58 +2583,43 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
-        Request::ListWindows => {
-            // wlroots compositors list windows over Wayland; never on GNOME.
-            if crate::wlroots::detect().await.is_some() {
-                let state = state.read().await;
-                if let Some(response) = crate::window_service::wlroots_list(&state.index).await {
-                    return response;
-                }
-            }
-            let (shell, index_state) = (state.read().await.shell.clone(), Arc::clone(state));
-            let Some(shell) = shell else {
-                return Response::Error(crate::window_service::no_bus("Window switching"));
-            };
-            match shell.list_windows().await {
-                Ok(windows) => {
-                    let state = index_state.read().await;
-                    Response::Windows {
-                        windows: crate::window_service::rows(
-                            windows.into_iter().map(Into::into).collect(),
-                            &state.index,
-                        ),
-                    }
-                }
-                Err(err) => {
-                    Response::Error(crate::window_service::refusal(&err, "Window switching"))
-                }
-            }
-        }
+        Request::ListWindows => list_windows(state).await,
 
         Request::ActivateWindow { id } | Request::CloseWindow { id } => {
-            let close = matches!(request, Request::CloseWindow { .. });
-            let what = if close {
-                "Closing a window"
-            } else {
-                "Switching to a window"
-            };
-            if let Some(response) = crate::window_service::wlroots_act(id, close, what).await {
-                return response;
-            }
-            let Some(shell) = state.read().await.shell.clone() else {
-                return Response::Error(crate::window_service::no_bus(what));
-            };
-            let id = compass_shell::WindowId(id);
-            let done = if close {
-                shell.close_window(id).await
-            } else {
-                shell.activate_window(id).await
-            };
-            match done {
-                Ok(()) => Response::Ack,
-                Err(err) => Response::Error(crate::window_service::refusal(&err, what)),
+            act_on_window(state, id, matches!(request, Request::CloseWindow { .. })).await
+        }
+
+        Request::ListCommands => {
+            let state = state.read().await;
+            Response::Commands {
+                commands: launch::commands(&state.index),
             }
         }
+        Request::LaunchCommand {
+            id,
+            args,
+            cwd,
+            query,
+        } => launch::launch_command(state, id, &args, cwd, query).await,
+        Request::LaunchApp {
+            id,
+            args,
+            new_instance,
+        } => launch::launch_app(state, &id, &args, new_instance).await,
+        Request::DescribeWindow => launch::describe_window(state).await,
+        Request::FsQuery {
+            query,
+            limit,
+            category,
+        } => launch::fs_query(state, query, limit, category).await,
+        Request::AppRuntime { id } => app_runtime::describe(state, &id).await,
+        Request::QuitApp { id, force } => app_runtime::quit(state, &id, force).await,
+        Request::QuitWindowApp { window, force } => {
+            app_runtime::quit_window_app(state, window, force).await
+        }
+        request @ (Request::CalculatorHistory { .. }
+        | Request::AddCalculatorRecord { .. }
+        | Request::EditCalculatorHistory { .. }) => calculator::handle(state, request).await,
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id, None).await,
@@ -2701,10 +3108,17 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             set_extension_preferences(state, id, values_json).await
         }
         Request::ExtensionLaunchFetch { token } => match state.read().await.launches.take(token) {
-            Some(launch) => Response::ExtensionLaunch {
-                id: launch.id,
-                arguments_json: launch.arguments_json,
-                preferences: launch.preferences,
+            Some(launch) => match launch.fallback_text {
+                Some(fallback_text) => Response::CommandLaunch {
+                    id: launch.id,
+                    arguments_json: launch.arguments_json,
+                    fallback_text: Some(fallback_text),
+                },
+                None => Response::ExtensionLaunch {
+                    id: launch.id,
+                    arguments_json: launch.arguments_json,
+                    preferences: launch.preferences,
+                },
             },
             None => Response::Error(ProtocolError::new(
                 ErrorKind::BadRequest,
@@ -2739,6 +3153,11 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
             Response::Ack
         }
+        Request::CatalogGeneration => Response::CatalogGeneration {
+            generation: state.read().await.catalog_generation,
+        },
+        Request::ListDefaultApps { kind } => list_default_apps(state, kind).await,
+        Request::SetDefaultApp { kind, id } => set_default_app(state, kind, &id).await,
         Request::ListScriptGrants => {
             let rhai = Arc::clone(&state.read().await.rhai);
             match tokio::task::spawn_blocking(move || rhai.grants()).await {
@@ -2940,6 +3359,7 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     let listener = Listener::bind(socket.as_path())
         .await
         .with_context(|| format!("binding the engine socket at {socket}"))?;
+    crate::logs::activate_engine_log();
 
     let state = Arc::new(RwLock::new(EngineState::from_environment(socket.clone())));
     tracing::info!(socket = %socket, "engine listening");
@@ -2971,6 +3391,11 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
 
     // Rhai scripts' hot reload.
     tokio::spawn(crate::rhai_scripts::watch(Arc::clone(&state)));
+
+    // Applications installed or removed while the engine runs.
+    tokio::spawn(crate::catalog_watch::watch_applications(Arc::clone(&state)));
+    // An extension a developer builds into place.
+    tokio::spawn(crate::catalog_watch::watch_extensions(Arc::clone(&state)));
 
     // Snippet keyword expansion: the input server, when `input_server.enabled`.
     {

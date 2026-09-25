@@ -54,6 +54,13 @@ fn script_grant(entry: compass_ipc::ScriptGrantEntry) -> compass_ui::backend::Sc
     }
 }
 
+fn default_app_kind(kind: compass_ui::backend::DefaultApp) -> compass_ipc::DefaultAppKind {
+    match kind {
+        compass_ui::backend::DefaultApp::Browser => compass_ipc::DefaultAppKind::Browser,
+        compass_ui::backend::DefaultApp::Terminal => compass_ipc::DefaultAppKind::Terminal,
+    }
+}
+
 /// Uses the same engine/socket as the resident window link.
 #[derive(Debug)]
 pub struct DaemonBackend {
@@ -91,6 +98,30 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn edit_root_item(
+        &self,
+        id: String,
+        edit: compass_core::root_items::RootEdit,
+    ) -> BackendFuture<'_, ()> {
+        use compass_core::root_items::RootEdit;
+        let edit = match edit {
+            RootEdit::Favorite(favorite) => compass_ipc::RootItemEdit::Favorite(favorite),
+            RootEdit::MoveFavorite { down } => compass_ipc::RootItemEdit::MoveFavorite { down },
+            RootEdit::Alias(alias) => compass_ipc::RootItemEdit::Alias(alias),
+            RootEdit::Disable => compass_ipc::RootItemEdit::Disable,
+            RootEdit::ResetRanking => compass_ipc::RootItemEdit::ResetRanking,
+        };
+        Box::pin(async move {
+            match self
+                .ask(Request::RootItemEdit { id, edit }, "Changing the item")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn run_power_command(&self, id: String) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self
@@ -118,6 +149,84 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn calculator_history(
+        &self,
+        query: String,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::CalculatorGroupRow>> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::CalculatorHistory { query },
+                    "Reading the calculator history",
+                )
+                .await?
+            {
+                compass_ipc::Response::CalculatorHistory { groups } => Ok(groups
+                    .into_iter()
+                    .map(|group| compass_ui::backend::CalculatorGroupRow {
+                        name: group.name,
+                        records: group
+                            .records
+                            .into_iter()
+                            .map(|record| compass_ui::backend::CalculatorRow {
+                                id: record.id,
+                                question: record.question,
+                                answer: record.answer,
+                                conversion: record.conversion,
+                                pinned: record.pinned,
+                            })
+                            .collect(),
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn add_calculator_record(
+        &self,
+        question: String,
+        answer: String,
+        conversion: bool,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let request = Request::AddCalculatorRecord {
+                question,
+                answer,
+                conversion,
+            };
+            match self.ask(request, "Remembering the calculation").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn edit_calculator_history(
+        &self,
+        change: compass_ui::backend::CalculatorChange,
+    ) -> BackendFuture<'_, ()> {
+        use compass_ui::backend::CalculatorChange;
+        Box::pin(async move {
+            let edit = match change {
+                CalculatorChange::Pin(id) => compass_ipc::CalculatorEdit::Pin(id),
+                CalculatorChange::Unpin(id) => compass_ipc::CalculatorEdit::Unpin(id),
+                CalculatorChange::Remove(id) => compass_ipc::CalculatorEdit::Remove(id),
+                CalculatorChange::RemoveAll => compass_ipc::CalculatorEdit::RemoveAll,
+            };
+            match self
+                .ask(
+                    Request::EditCalculatorHistory { edit },
+                    "Changing the calculator history",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn list_script_grants(&self) -> BackendFuture<'_, Vec<compass_ui::backend::ScriptGrant>> {
         Box::pin(async move {
             match self
@@ -127,6 +236,68 @@ impl ApplicationBackend for DaemonBackend {
                 compass_ipc::Response::ScriptGrants { grants } => {
                     Ok(grants.into_iter().map(script_grant).collect())
                 }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_default_apps(
+        &self,
+        kind: compass_ui::backend::DefaultApp,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::DefaultAppRow>> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ListDefaultApps {
+                        kind: default_app_kind(kind),
+                    },
+                    "Listing the applications",
+                )
+                .await?
+            {
+                compass_ipc::Response::DefaultApps { apps } => Ok(apps
+                    .into_iter()
+                    .map(|app| compass_ui::backend::DefaultAppRow {
+                        id: app.id,
+                        name: app.name,
+                        description: app.description,
+                        is_default: app.is_default,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_default_app(
+        &self,
+        kind: compass_ui::backend::DefaultApp,
+        id: String,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::SetDefaultApp {
+                        kind: default_app_kind(kind),
+                        id,
+                    },
+                    "Setting the default",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn catalog_generation(&self) -> BackendFuture<'_, u64> {
+        Box::pin(async move {
+            match self
+                .ask(Request::CatalogGeneration, "Asking what changed")
+                .await?
+            {
+                compass_ipc::Response::CatalogGeneration { generation } => Ok(generation),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })
@@ -437,11 +608,19 @@ impl ApplicationBackend for DaemonBackend {
                     preferences,
                 } => Ok(compass_ui::backend::ExtensionLaunch {
                     id,
-                    arguments: arguments_json
-                        .map(|json| serde_json::from_str(&json))
-                        .transpose()
-                        .map_err(|err| format!("The launch's arguments are unreadable: {err}"))?,
+                    arguments: launch_arguments(arguments_json)?,
                     preferences,
+                    fallback_text: None,
+                }),
+                compass_ipc::Response::CommandLaunch {
+                    id,
+                    arguments_json,
+                    fallback_text,
+                } => Ok(compass_ui::backend::ExtensionLaunch {
+                    id,
+                    arguments: launch_arguments(arguments_json)?,
+                    preferences: false,
+                    fallback_text,
                 }),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
@@ -1160,23 +1339,109 @@ impl ClipboardBackend for DaemonBackend {
             }
         })
     }
+
+    fn clipboard_history_of_kind(
+        &self,
+        query: String,
+        limit: u32,
+        kind: Option<ClipboardRowKind>,
+    ) -> BackendFuture<'_, Vec<ClipboardRow>> {
+        Box::pin(async move {
+            let request = Request::ClipboardHistoryOfKind {
+                query,
+                limit,
+                kind: kind.map(wire_kind),
+            };
+            match self.ask(request, "Clipboard history").await? {
+                compass_ipc::Response::ClipboardHistory { entries } => {
+                    Ok(entries.into_iter().map(row).collect())
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn clipboard_detail(
+        &self,
+        id: String,
+    ) -> BackendFuture<'_, compass_ui::backend::ClipboardDetail> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ClipboardDetail { id }, "Reading the entry")
+                .await?
+            {
+                compass_ipc::Response::ClipboardDetail { detail } => {
+                    Ok(compass_ui::backend::ClipboardDetail {
+                        id: detail.id,
+                        mime_type: detail.mime_type,
+                        kind: row_kind(detail.kind),
+                        size: detail.size,
+                        md5: detail.md5,
+                        updated_at: detail.updated_at,
+                        encrypted: detail.encrypted,
+                        keywords: detail.keywords,
+                    })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn clipboard_set_keywords(&self, id: String, keywords: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ClipboardSetKeywords { id, keywords },
+                    "Saving the keywords",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn clipboard_remove_all(&self) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ClipboardRemoveAll, "Removing every entry")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn clipboard_monitoring(
+        &self,
+        enabled: Option<bool>,
+    ) -> BackendFuture<'_, compass_ui::backend::ClipboardMonitoring> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ClipboardMonitoring { enabled },
+                    "Clipboard monitoring",
+                )
+                .await?
+            {
+                compass_ipc::Response::ClipboardMonitoring { supported, enabled } => {
+                    Ok(compass_ui::backend::ClipboardMonitoring { supported, enabled })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
 }
 
 impl WindowBackend for DaemonBackend {
     fn list_windows(&self) -> BackendFuture<'_, Vec<WindowRow>> {
         Box::pin(async move {
             match self.ask(Request::ListWindows, "Listing windows").await? {
-                compass_ipc::Response::Windows { windows } => Ok(windows
-                    .into_iter()
-                    .map(|window| WindowRow {
-                        id: window.id,
-                        app: window.app_name.unwrap_or_else(|| window.wm_class.clone()),
-                        title: window.title,
-                        wm_class: window.wm_class,
-                        pid: window.pid,
-                        can_close: window.can_close,
-                    })
-                    .collect()),
+                compass_ipc::Response::Windows { windows } => {
+                    Ok(windows.into_iter().map(window_row).collect())
+                }
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })
@@ -1205,19 +1470,86 @@ impl WindowBackend for DaemonBackend {
             }
         })
     }
+
+    fn app_runtime(&self, id: String) -> BackendFuture<'_, compass_ui::backend::AppRuntimeInfo> {
+        Box::pin(async move {
+            match self
+                .ask(Request::AppRuntime { id }, "Asking whether it runs")
+                .await?
+            {
+                compass_ipc::Response::AppRuntime {
+                    running,
+                    frontmost,
+                    windows,
+                } => Ok(compass_ui::backend::AppRuntimeInfo {
+                    running,
+                    frontmost,
+                    windows: windows.into_iter().map(window_row).collect(),
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn quit_app(&self, id: String, force: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self.ask(Request::QuitApp { id, force }, "Quitting").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn quit_window_app(&self, window: u32, force: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::QuitWindowApp { window, force }, "Quitting")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+}
+
+fn window_row(window: compass_ipc::WindowInfo) -> WindowRow {
+    WindowRow {
+        id: window.id,
+        app_known: window.app_name.is_some(),
+        app: window.app_name.unwrap_or_else(|| window.wm_class.clone()),
+        title: window.title,
+        wm_class: window.wm_class,
+        pid: window.pid,
+        can_close: window.can_close,
+    }
+}
+
+const fn row_kind(kind: compass_ipc::ClipboardKind) -> ClipboardRowKind {
+    match kind {
+        compass_ipc::ClipboardKind::Text => ClipboardRowKind::Text,
+        compass_ipc::ClipboardKind::Link => ClipboardRowKind::Link,
+        compass_ipc::ClipboardKind::Image => ClipboardRowKind::Image,
+        compass_ipc::ClipboardKind::File => ClipboardRowKind::File,
+        compass_ipc::ClipboardKind::Unknown => ClipboardRowKind::Unknown,
+    }
+}
+
+const fn wire_kind(kind: ClipboardRowKind) -> compass_ipc::ClipboardKind {
+    match kind {
+        ClipboardRowKind::Text => compass_ipc::ClipboardKind::Text,
+        ClipboardRowKind::Link => compass_ipc::ClipboardKind::Link,
+        ClipboardRowKind::Image => compass_ipc::ClipboardKind::Image,
+        ClipboardRowKind::File => compass_ipc::ClipboardKind::File,
+        ClipboardRowKind::Unknown => compass_ipc::ClipboardKind::Unknown,
+    }
 }
 
 fn row(entry: compass_ipc::ClipboardEntry) -> ClipboardRow {
     ClipboardRow {
         id: entry.id,
         preview: entry.preview,
-        kind: match entry.kind {
-            compass_ipc::ClipboardKind::Text => ClipboardRowKind::Text,
-            compass_ipc::ClipboardKind::Link => ClipboardRowKind::Link,
-            compass_ipc::ClipboardKind::Image => ClipboardRowKind::Image,
-            compass_ipc::ClipboardKind::File => ClipboardRowKind::File,
-            compass_ipc::ClipboardKind::Unknown => ClipboardRowKind::Unknown,
-        },
+        kind: row_kind(entry.kind),
         pinned: entry.pinned,
         url_host: entry.url_host,
     }
@@ -1245,6 +1577,15 @@ fn preference_input(field: compass_ipc::PreferenceField) -> compass_ui::backend:
         placeholder: field.placeholder,
         required: field.required,
     }
+}
+
+/// A launch's arguments, from the JSON object the engine carries them as.
+fn launch_arguments(
+    json: Option<String>,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, String> {
+    json.map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|err| format!("The launch's arguments are unreadable: {err}"))
 }
 
 #[cfg(test)]

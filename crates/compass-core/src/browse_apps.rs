@@ -34,6 +34,109 @@ pub const COPY_ID_TITLE: &str = "Copy App ID";
 /// The title of the action that copies the path to the desktop file.
 pub const COPY_LOCATION_TITLE: &str = "Copy App Location";
 
+/// The search field's placeholder.
+pub const PLACEHOLDER: &str = "Search apps...";
+
+/// The command's entrypoint, where its preferences are kept
+/// (`providers.commands.entrypoints.browse-apps.preferences`).
+pub const ENTRYPOINT: &str = "browse-apps";
+
+/// The `showHidden` preference.
+pub const SHOW_HIDDEN: &str = "showHidden";
+
+/// The `sortAlphabetically` preference.
+pub const SORT_ALPHABETICALLY: &str = "sortAlphabetically";
+
+/// The command's two preferences, with the C++ defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    /// `showHidden`, off by default: list what `NoDisplay` hides too.
+    pub show_hidden: bool,
+    /// `sortAlphabetically`, on by default.
+    pub sort_alphabetically: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            show_hidden: false,
+            sort_alphabetically: true,
+        }
+    }
+}
+
+impl Options {
+    /// Reads the preferences, each falling back to its default when missing
+    /// or not a boolean.
+    #[must_use]
+    pub fn from_preferences(
+        preferences: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Self {
+        let flag = |key: &str, default: bool| {
+            preferences
+                .and_then(|preferences| preferences.get(key))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(default)
+        };
+        let defaults = Self::default();
+        Self {
+            show_hidden: flag(SHOW_HIDDEN, defaults.show_hidden),
+            sort_alphabetically: flag(SORT_ALPHABETICALLY, defaults.sort_alphabetically),
+        }
+    }
+}
+
+/// What `BrowseAppsViewHost::reload` lists: every installed application,
+/// the hidden ones only with `showHidden`, sorted by display name
+/// (case-insensitively) with `sortAlphabetically` and in scan order
+/// otherwise. Each with whether it is `displayable()`.
+#[must_use]
+pub fn listed(index: &crate::AppIndex, options: Options) -> Vec<(&crate::AppItem, bool)> {
+    let shown = index
+        .items()
+        .iter()
+        .filter(|item| !item.is_action())
+        .map(|item| (item, true));
+    let hidden = index
+        .hidden_applications()
+        .iter()
+        .filter(|_| options.show_hidden)
+        .map(|item| (item, false));
+    let mut apps: Vec<(&crate::AppItem, bool)> = shown.chain(hidden).collect();
+    if options.sort_alphabetically {
+        apps.sort_by_cached_key(|(item, _)| item.display_name().to_lowercase());
+    }
+    apps
+}
+
+/// The model's view of an indexed application.
+#[must_use]
+pub fn from_item(item: &crate::AppItem, displayable: bool) -> BrowseApp {
+    BrowseApp {
+        id: item.desktop_id().to_owned(),
+        display_name: item.display_name(),
+        description: item.comment().unwrap_or_default().to_owned(),
+        keywords: item.keywords().to_vec(),
+        path: item
+            .path()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        displayable,
+        actions: item
+            .entry()
+            .actions()
+            .iter()
+            .filter(|action| action.exec().is_some())
+            .filter_map(|action| {
+                Some(DesktopAction {
+                    id: action.id().to_owned(),
+                    display_name: action.name().filter(|name| !name.is_empty())?.to_owned(),
+                })
+            })
+            .collect(),
+    }
+}
+
 /// How many desktop actions get a numbered shortcut: `i < 9`.
 pub const NUMBERED_ACTION_LIMIT: usize = 9;
 

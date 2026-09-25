@@ -199,6 +199,8 @@ enum Kind {
     String,
     Strings,
     Object,
+    /// A non-negative whole number.
+    Count,
 }
 
 impl Kind {
@@ -206,6 +208,7 @@ impl Kind {
         match self {
             Kind::Bool => value.is_boolean(),
             Kind::String => value.is_string(),
+            Kind::Count => value.is_u64(),
             Kind::Strings => value
                 .as_array()
                 .is_some_and(|items| items.iter().all(Value::is_string)),
@@ -219,6 +222,7 @@ impl Kind {
             Kind::String => "a string",
             Kind::Strings => "an array of strings",
             Kind::Object => "an object",
+            Kind::Count => "a whole number",
         }
     }
 }
@@ -228,7 +232,22 @@ impl Kind {
 /// `providers` is copied whole: the C++ and Rust shapes agree on `enabled` and on `entrypoints`
 /// with `enabled`, `alias` and `shortcut`, and the per-provider `preferences` the Rust root
 /// manager does not read yet survive as unknown fields rather than being lost.
-const DIRECT: [(&str, &str, Kind); 8] = [
+const DIRECT: [(&str, &str, Kind); 11] = [
+    (
+        "launcher_window.clock.enabled",
+        "launcher.clock.enabled",
+        Kind::Bool,
+    ),
+    (
+        "launcher_window.clock.format",
+        "launcher.clock.format",
+        Kind::String,
+    ),
+    (
+        "launcher_window.clock.interval",
+        "launcher.clock.interval",
+        Kind::Count,
+    ),
     (
         "close_on_focus_loss",
         "launcher.close_on_focus_loss",

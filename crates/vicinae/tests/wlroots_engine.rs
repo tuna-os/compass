@@ -60,6 +60,7 @@ impl Engine {
             .env("XDG_DATA_HOME", dirs.path().join("data"))
             .env("XDG_CONFIG_HOME", dirs.path().join("config"))
             .env("HOME", dirs.path())
+            .env_remove("XDG_STATE_HOME")
             .env("XDG_RUNTIME_DIR", sway.runtime_dir())
             .env("WAYLAND_DISPLAY", sway.display())
             .env("XDG_CURRENT_DESKTOP", desktop)

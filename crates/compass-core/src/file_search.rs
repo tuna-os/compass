@@ -189,6 +189,38 @@ pub const CATEGORY_FILTER_KEYS: &[&str] = &[
     "Applications",
 ];
 
+/// The names `vicinae fs query --category` takes and prints, in the C++
+/// CLI's order (`fileCategoryToString`), each with the filter key above
+/// that selects it.
+pub const CLI_CATEGORY_NAMES: [(&str, &str); 8] = [
+    ("image", "Images"),
+    ("video", "Videos"),
+    ("audio", "Audio"),
+    ("document", "Documents"),
+    ("archive", "Archives"),
+    ("application", "Applications"),
+    ("directory", "Directories"),
+    ("other", "Other"),
+];
+
+/// The filter key a `--category` name selects.
+#[must_use]
+pub fn filter_key_for_cli_name(name: &str) -> Option<&'static str> {
+    CLI_CATEGORY_NAMES
+        .iter()
+        .find(|(cli, _)| *cli == name)
+        .map(|(_, key)| *key)
+}
+
+/// The `--category` name a filter key is printed as.
+#[must_use]
+pub fn cli_name_for_filter_key(key: &str) -> Option<&'static str> {
+    CLI_CATEGORY_NAMES
+        .iter()
+        .find(|(_, filter)| *filter == key)
+        .map(|(cli, _)| *cli)
+}
+
 /// The key the chosen filter is stored under.
 pub const CATEGORY_STORAGE_KEY: &str = "fileCategory";
 
@@ -365,6 +397,21 @@ pub fn category_for_key(key: &str) -> Option<FileCategory> {
 mod tests {
     use super::*;
     use crate::file_category::FileCategory;
+
+    #[test]
+    fn every_cli_category_selects_a_distinct_real_category_and_prints_back() {
+        let mut seen = Vec::new();
+        for (name, key) in CLI_CATEGORY_NAMES {
+            assert_eq!(filter_key_for_cli_name(name), Some(key));
+            assert_eq!(cli_name_for_filter_key(key), Some(name));
+            let category = category_for_key(key).expect("a real category, not All");
+            assert!(!seen.contains(&category), "{name} repeats a category");
+            seen.push(category);
+        }
+        assert_eq!(seen.len(), CATEGORY_FILTER_KEYS.len() - 1, "all but All");
+        assert_eq!(filter_key_for_cli_name("Images"), None, "exact names only");
+        assert_eq!(cli_name_for_filter_key("All"), None);
+    }
 
     #[test]
     fn explicit_path_query_unix_anchored() {

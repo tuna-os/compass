@@ -70,8 +70,16 @@ pub enum CommandKind {
     NowPlaying,
     /// Review and revoke what the user's Rhai scripts were allowed.
     ScriptPermissions,
+    /// Browse, pin and remove past calculations.
+    CalculatorHistory,
     /// A media command, by its id in [`crate::media_commands`].
     Media(&'static str),
+    /// Browse every installed application, hidden ones included on request.
+    BrowseApps,
+    /// Choose the web browser links open in.
+    SetDefaultBrowser,
+    /// Choose the terminal commands run in.
+    SetDefaultTerminal,
 }
 
 /// Every builtin command, in the order an empty query lists them. The power
@@ -280,6 +288,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         icon: "key",
     },
     BuiltinCommand {
+        kind: CommandKind::CalculatorHistory,
+        entrypoint: "calculator-history",
+        title: "Calculator History",
+        subtitle: "Browse past calculations",
+        keywords: &["calculator", "history", "calc", "math", "calculations"],
+        icon: "calculator",
+    },
+    BuiltinCommand {
         kind: CommandKind::NowPlaying,
         entrypoint: "now-playing",
         title: "Now Playing",
@@ -375,6 +391,32 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &["audio", "sound", "volume", "mute", "unmute"],
         icon: "speaker-off",
     },
+    // The system extension's other three (`system-extension.hpp`). Browse
+    // Apps is `isDefaultDisabled`: see `BuiltinCommand::default_disabled`.
+    BuiltinCommand {
+        kind: CommandKind::BrowseApps,
+        entrypoint: "browse-apps",
+        title: "Browse Apps",
+        subtitle: "Browse all applications that are installed on the system",
+        keywords: &[],
+        icon: "box",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SetDefaultTerminal,
+        entrypoint: "set-default-terminal",
+        title: "Set Default Terminal",
+        subtitle: "Change the default system terminal",
+        keywords: &[],
+        icon: "terminal",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SetDefaultBrowser,
+        entrypoint: "set-default-browser",
+        title: "Set Default Browser",
+        subtitle: "Change the default system web browser",
+        keywords: &[],
+        icon: "globe-01",
+    },
 ];
 
 impl BuiltinCommand {
@@ -383,6 +425,13 @@ impl BuiltinCommand {
     #[must_use]
     pub fn id(&self) -> String {
         entrypoint_id(COMMANDS_PROVIDER_ID, self.entrypoint)
+    }
+
+    /// Whether the command is left out of the root list until the user
+    /// enables it: `isDefaultDisabled`, which only Browse Apps sets.
+    #[must_use]
+    pub fn default_disabled(&self) -> bool {
+        self.kind == CommandKind::BrowseApps
     }
 
     /// Its root-list row.
@@ -396,7 +445,7 @@ impl BuiltinCommand {
             keywords: self.keywords.iter().map(|&k| k.to_owned()).collect(),
             meta: RootItemMeta {
                 provider_id: COMMANDS_PROVIDER_ID.to_owned(),
-                enabled: true,
+                enabled: !self.default_disabled(),
                 ..RootItemMeta::default()
             },
         }
@@ -426,9 +475,57 @@ pub fn fallback(id: &str) -> Option<&'static BuiltinCommand> {
     (command.kind == CommandKind::SearchFiles).then_some(command)
 }
 
+/// The C++ ids of the builtin commands a configuration is likely to name,
+/// with the command each is here. The C++ addresses a builtin as
+/// `<extension>:<command>` (`clipboard:history`), Compass as
+/// `commands:<entrypoint>`; the default `favorites` list and a file written
+/// by the C++ use the former.
+pub const CPP_BUILTIN_IDS: &[(&str, CommandKind)] = &[
+    ("clipboard:history", CommandKind::ClipboardHistory),
+    ("files:search", CommandKind::SearchFiles),
+    ("core:search-emojis", CommandKind::SearchEmojis),
+];
+
+/// The id Compass knows an entrypoint by: a C++ builtin's id becomes its
+/// command's `commands:` id, and anything else is returned as it is.
+#[must_use]
+pub fn canonical_id(id: &str) -> String {
+    CPP_BUILTIN_IDS
+        .iter()
+        .find(|(cpp, _)| *cpp == id)
+        .and_then(|(_, kind)| {
+            BUILTIN_COMMANDS
+                .iter()
+                .find(|command| command.kind == *kind)
+        })
+        .map_or_else(|| id.to_owned(), BuiltinCommand::id)
+}
+
+/// Whether running the command opens a view in the launcher, which is what
+/// lets its alias and a space open it (`supportsAliasSpaceShortcut`, which
+/// the C++ answers with `isView()`): a command that runs and hides has
+/// nothing to show for it.
+#[must_use]
+pub const fn opens_a_view(kind: CommandKind) -> bool {
+    !matches!(kind, CommandKind::Power(_) | CommandKind::Media(_))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cpp_builtin_id_names_its_compass_command_and_others_are_kept() {
+        assert_eq!(
+            canonical_id("clipboard:history"),
+            "commands:clipboard-history"
+        );
+        assert_eq!(canonical_id("core:search-emojis"), "commands:search-emojis");
+        assert_eq!(canonical_id("applications:firefox"), "applications:firefox");
+        for (_, kind) in CPP_BUILTIN_IDS {
+            assert!(BUILTIN_COMMANDS.iter().any(|command| command.kind == *kind));
+        }
+    }
 
     #[test]
     fn the_power_commands_are_the_power_catalogue_in_order() {

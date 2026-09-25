@@ -4,9 +4,10 @@
 //! working: `toggle`, `ping` and the socket semantics are the same, and the
 //! C++ spellings `open`/`close` survive as aliases of `show`/`hide`.
 //!
-//! This is the Phase 2 slice only (PLAN §6): window control, liveness and the
-//! diagnostic. `launch`, `cmd`, `dmenu`, `deeplink` and `logs` stay with the
-//! C++ binary until their parity-ledger rows go green.
+//! Every C++ subcommand has a counterpart: `version`, `server`, `ping`,
+//! `query`, `toggle`/`open`/`close`, `cmd ls`/`launch`, `deeplink`, `dmenu`,
+//! `theme`, `fs query`, `app launch`, `config default`, `script
+//! template`/`check`, `state open` and `logs`.
 
 use std::path::PathBuf;
 
@@ -161,8 +162,61 @@ pub enum Command {
     },
 
     /// Theme management (#153).
-    #[command(subcommand)]
+    #[command(subcommand, alias = "th")]
     Theme(ThemeCommand),
+
+    /// Show version and build information.
+    #[command(alias = "ver")]
+    Version,
+
+    /// Start the engine in the foreground, as the C++ `vicinae server`.
+    ///
+    /// Refuses while one is already running unless `--replace` is passed,
+    /// which kills it first.
+    Server {
+        /// Open the launcher window once the engine is started.
+        #[arg(long)]
+        open: bool,
+        /// Replace the currently running instance if there is one.
+        #[arg(long)]
+        replace: bool,
+        /// Path to the main config file.
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+        /// Do not start the extension runtime. TypeScript extensions will not run.
+        #[arg(long)]
+        no_extension_runtime: bool,
+    },
+
+    /// Command utilities.
+    #[command(subcommand, alias = "command")]
+    Cmd(CmdCommand),
+
+    /// System application commands.
+    #[command(subcommand)]
+    App(AppCommand),
+
+    /// File search related commands.
+    #[command(subcommand)]
+    Fs(FsCommand),
+
+    /// Script command utilities.
+    #[command(subcommand)]
+    Script(ScriptCommand),
+
+    /// Query vicinae state.
+    #[command(subcommand)]
+    State(StateCommand),
+
+    /// Show the engine's log.
+    Logs {
+        /// Number of trailing lines to print.
+        #[arg(short = 'n', long, default_value_t = 50)]
+        lines: usize,
+        /// Keep printing new log lines as they are written.
+        #[arg(short, long)]
+        follow: bool,
+    },
 
     /// The keyboard helper behind snippet keyword expansion.
     #[command(subcommand)]
@@ -192,6 +246,7 @@ pub enum Command {
     /// extension that asked, and opens a store extension's detail page for
     /// `vicinae://extensions/<author>/<name>` (the Raycast store's for the
     /// `raycast://` spellings); other deeplinks are refused by name.
+    #[command(alias = "link")]
     Deeplink {
         /// The URL, verbatim.
         url: String,
@@ -301,6 +356,108 @@ pub enum ThemeCommand {
     },
     /// Reset to System (OS native) theme.
     Reset,
+    /// Print out the theme template, every key it can set.
+    #[command(alias = "tmpl")]
+    Template,
+    /// Check whether the target theme file is valid.
+    Check {
+        /// The `.toml` theme file.
+        file: PathBuf,
+    },
+    /// Print the paths themes are searched at.
+    Paths,
+}
+
+/// `vicinae cmd` subcommands.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum CmdCommand {
+    /// List loaded commands.
+    #[command(alias = "list")]
+    Ls {
+        /// Output command list as json.
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Launch a command.
+    Launch {
+        /// The command entrypoint ID to launch, e.g. `commands:clipboard-history`.
+        entrypoint: String,
+        /// Arguments to pass to the command.
+        args: Vec<String>,
+        /// Working directory forwarded to the command.
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Fallback text: what the command's search starts with.
+        #[arg(short, long)]
+        query: Option<String>,
+    },
+}
+
+/// `vicinae app` subcommands.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum AppCommand {
+    /// Launch or focus an app from vicinae.
+    Launch {
+        /// The ID of the application, e.g. `firefox.desktop`.
+        app_id: String,
+        /// Arguments to pass to the launched application.
+        args: Vec<String>,
+        /// Always launch a new instance.
+        #[arg(long)]
+        new: bool,
+    },
+}
+
+/// `vicinae fs` subcommands.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum FsCommand {
+    /// Return a list of indexed files matching the given query.
+    #[command(alias = "q")]
+    Query {
+        /// Fuzzyish search query, at least three characters.
+        query: String,
+        /// Limit the number of results (up to 10,000).
+        #[arg(short = 'n', long, default_value_t = 100)]
+        limit: u32,
+        /// Filter by file category: image, video, audio, document, archive,
+        /// application, directory, other.
+        #[arg(short, long, value_parser = [
+            "image", "video", "audio", "document", "archive", "application", "directory", "other",
+        ])]
+        category: Option<String>,
+        /// Output result set as json.
+        #[arg(short, long)]
+        json: bool,
+    },
+}
+
+/// `vicinae script` subcommands.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum ScriptCommand {
+    /// Generate a new script template.
+    Template {
+        /// Title for the script.
+        #[arg(short, long)]
+        title: String,
+        /// Language for the script.
+        #[arg(short, long, default_value = "bash")]
+        lang: String,
+        /// Output mode (fullOutput, compact, inline, silent, terminal).
+        #[arg(short, long, default_value = "fullOutput")]
+        mode: String,
+    },
+    /// Validate a script command file.
+    Check {
+        /// Path to the script file to validate.
+        file: PathBuf,
+    },
+}
+
+/// `vicinae state` subcommands.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum StateCommand {
+    /// Exit with code 0 if the window is open.
+    Open,
 }
 
 /// `vicinae input-server` subcommands.
@@ -354,6 +511,9 @@ pub enum ConfigCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Print out the default config: every setting at its default.
+    Default,
 }
 
 /// Extension management subcommands.
@@ -704,6 +864,133 @@ mod tests {
 
         let cli = parse(&["vicinae", "ext", "list", "--json"]);
         assert_eq!(cli.command, Command::Ext(ExtCommand::List { json: true }));
+    }
+
+    #[test]
+    fn the_cpp_subcommands_all_parse_with_their_cpp_flags() {
+        assert_eq!(parse(&["vicinae", "version"]).command, Command::Version);
+        assert_eq!(parse(&["vicinae", "ver"]).command, Command::Version);
+        assert_eq!(
+            parse(&[
+                "vicinae",
+                "server",
+                "--replace",
+                "--open",
+                "--config",
+                "/c.json"
+            ])
+            .command,
+            Command::Server {
+                open: true,
+                replace: true,
+                config: Some(PathBuf::from("/c.json")),
+                no_extension_runtime: false,
+            }
+        );
+        assert_eq!(
+            parse(&["vicinae", "command", "list", "-j"]).command,
+            Command::Cmd(CmdCommand::Ls { json: true })
+        );
+        assert_eq!(
+            parse(&[
+                "vicinae", "cmd", "launch", "@a/b:c", "one", "two", "-q", "milk", "--cwd", "/tmp"
+            ])
+            .command,
+            Command::Cmd(CmdCommand::Launch {
+                entrypoint: "@a/b:c".into(),
+                args: vec!["one".into(), "two".into()],
+                cwd: Some("/tmp".into()),
+                query: Some("milk".into()),
+            })
+        );
+        assert!(Cli::try_parse_from(["vicinae", "cmd", "launch"]).is_err());
+        assert_eq!(
+            parse(&[
+                "vicinae",
+                "app",
+                "launch",
+                "firefox.desktop",
+                "--new",
+                "https://a"
+            ])
+            .command,
+            Command::App(AppCommand::Launch {
+                app_id: "firefox.desktop".into(),
+                args: vec!["https://a".into()],
+                new: true,
+            })
+        );
+        assert_eq!(
+            parse(&[
+                "vicinae", "fs", "q", "report", "-n", "5", "-c", "document", "-j"
+            ])
+            .command,
+            Command::Fs(FsCommand::Query {
+                query: "report".into(),
+                limit: 5,
+                category: Some("document".into()),
+                json: true,
+            })
+        );
+        assert!(
+            Cli::try_parse_from(["vicinae", "fs", "query", "abc", "-c", "Documents"]).is_err(),
+            "the C++'s category names, and only those"
+        );
+        assert_eq!(
+            parse(&["vicinae", "fs", "query", "abc"]).command,
+            Command::Fs(FsCommand::Query {
+                query: "abc".into(),
+                limit: 100,
+                category: None,
+                json: false,
+            })
+        );
+        assert_eq!(
+            parse(&["vicinae", "script", "template", "-t", "Hi"]).command,
+            Command::Script(ScriptCommand::Template {
+                title: "Hi".into(),
+                lang: "bash".into(),
+                mode: "fullOutput".into(),
+            })
+        );
+        assert_eq!(
+            parse(&["vicinae", "script", "check", "a.sh"]).command,
+            Command::Script(ScriptCommand::Check {
+                file: PathBuf::from("a.sh")
+            })
+        );
+        assert_eq!(
+            parse(&["vicinae", "state", "open"]).command,
+            Command::State(StateCommand::Open)
+        );
+        assert_eq!(
+            parse(&["vicinae", "logs"]).command,
+            Command::Logs {
+                lines: 50,
+                follow: false
+            }
+        );
+        assert_eq!(
+            parse(&["vicinae", "logs", "-n", "3", "-f"]).command,
+            Command::Logs {
+                lines: 3,
+                follow: true
+            }
+        );
+        assert_eq!(
+            parse(&["vicinae", "config", "default"]).command,
+            Command::Config(ConfigCommand::Default)
+        );
+        assert_eq!(
+            parse(&["vicinae", "th", "tmpl"]).command,
+            Command::Theme(ThemeCommand::Template)
+        );
+        assert_eq!(
+            parse(&["vicinae", "link", "vicinae://x"]).command,
+            Command::Deeplink {
+                url: "vicinae://x".into()
+            }
+        );
     }
 
     #[test]

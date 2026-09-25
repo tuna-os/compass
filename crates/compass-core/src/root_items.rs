@@ -620,6 +620,99 @@ pub fn set_shortcut(item: &mut RootItem, config: &mut RootConfig, shortcut: &str
     }
 }
 
+/// What the root row's action panel changes about one item
+/// (`RootSearchActionGenerator`'s actions).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootEdit {
+    /// Add it to the favourites (at the top, as `setItemAsFavorite` inserts
+    /// it) or take it out.
+    Favorite(bool),
+    /// Swap it with its neighbour in the favourites, below when `down`.
+    MoveFavorite {
+        /// Towards the end of the list.
+        down: bool,
+    },
+    /// Set the word that selects it directly.
+    Alias(String),
+    /// Take it out of root search (`disableItem`).
+    Disable,
+    /// Forget its visits (`resetRanking`); nothing in the configuration.
+    ResetRanking,
+}
+
+/// Applies `edit` to `config` for the item `id`, as the C++ root item
+/// manager writes it: the favourites list for the first two, the item's
+/// entry under its provider for the alias and the switch. Returns whether
+/// anything changed; [`RootEdit::ResetRanking`] never changes the config.
+///
+/// Moving the first favourite up or the last one down changes nothing, as
+/// `moveFavoriteUp` and `moveFavoriteDown` refuse; so does removing an item
+/// that is not a favourite, or adding one twice.
+pub fn apply_edit(config: &mut RootConfig, id: &str, edit: &RootEdit) -> bool {
+    match edit {
+        RootEdit::Favorite(true) => {
+            if config.favorites.iter().any(|favorite| favorite == id) {
+                return false;
+            }
+            config.favorites.insert(0, id.to_owned());
+            true
+        }
+        RootEdit::Favorite(false) => {
+            let before = config.favorites.len();
+            config.favorites.retain(|favorite| favorite != id);
+            config.favorites.len() != before
+        }
+        RootEdit::MoveFavorite { down } => {
+            let Some(at) = config.favorites.iter().position(|favorite| favorite == id) else {
+                return false;
+            };
+            let to = if *down {
+                at + 1
+            } else {
+                let Some(to) = at.checked_sub(1) else {
+                    return false;
+                };
+                to
+            };
+            if to >= config.favorites.len() {
+                return false;
+            }
+            config.favorites.swap(at, to);
+            true
+        }
+        RootEdit::Alias(alias) => {
+            let Some((provider, entrypoint)) = split_entrypoint_id(id) else {
+                return false;
+            };
+            config.merge_entrypoint(
+                provider,
+                entrypoint,
+                &ItemConfigPatch {
+                    alias: Some(alias.clone()),
+                    ..ItemConfigPatch::default()
+                },
+            );
+            true
+        }
+        RootEdit::Disable => {
+            let Some((provider, entrypoint)) = split_entrypoint_id(id) else {
+                return false;
+            };
+            set_item_enabled(config, provider, entrypoint, false);
+            true
+        }
+        RootEdit::ResetRanking => false,
+    }
+}
+
+/// The deeplink that launches an item (`CopyItemDeeplink`):
+/// `vicinae://launch/<provider>/<entrypoint>`.
+#[must_use]
+pub fn deeplink(id: &str) -> Option<String> {
+    let (provider, entrypoint) = split_entrypoint_id(id)?;
+    Some(format!("vicinae://launch/{provider}/{entrypoint}"))
+}
+
 /// Turn one item on or off.
 ///
 /// Only the config is written; the metadata follows on the next merge. That is

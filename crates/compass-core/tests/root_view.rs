@@ -296,3 +296,37 @@ fn a_failed_save_leaves_the_form_open() {
     assert_eq!(style, "danger");
     assert!(!pops);
 }
+
+#[test]
+fn the_search_history_keeps_one_of_each_newest_first_in_the_cpp_shape() {
+    use compass_core::root_view::{MAX_HISTORY_SIZE, SearchHistory};
+    let mut history = SearchHistory::default();
+    assert!(!history.add("", 1), "an empty search is not kept");
+    assert!(history.add("fire", 1));
+    assert!(history.add("term", 2));
+    assert!(history.add("fire", 3));
+    assert_eq!(history.queries(), ["fire", "term"]);
+
+    for n in 0..MAX_HISTORY_SIZE + 5 {
+        history.add(&format!("q{n}"), 4);
+    }
+    assert_eq!(history.entries.len(), MAX_HISTORY_SIZE);
+    assert_eq!(history.queries()[0], format!("q{}", MAX_HISTORY_SIZE + 4));
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vicinae").join("search-history.json");
+    let mut small = SearchHistory::default();
+    small.add("gimp", 1_700_000_000);
+    small.save_file(&path).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        written,
+        serde_json::json!({"entries": [{"q": "gimp", "ts": 1_700_000_000u64}]})
+    );
+    assert_eq!(SearchHistory::load_file(&path), small);
+    assert_eq!(
+        SearchHistory::load_file(&dir.path().join("missing.json")),
+        SearchHistory::default()
+    );
+}

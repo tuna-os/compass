@@ -15,6 +15,15 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+/// compass-shell's private `dbus-daemon` and mock GNOME Shell extension, for
+/// the tests that need the extension's windows.
+#[path = "../../compass-shell/tests/support/bus.rs"]
+#[allow(dead_code)]
+mod shell_bus;
+#[path = "../../compass-shell/tests/support/mock.rs"]
+#[allow(dead_code)]
+mod shell_mock;
+
 /// A session bus address with nothing behind it, for every engine this file
 /// starts. The engine opens clipboard history through the login keyring on
 /// the session bus; pointed at a real one, running these tests would create a
@@ -53,6 +62,7 @@ fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
         .env("XDG_CONFIG_HOME", dir.path().join("config"))
         .env("XDG_CACHE_HOME", dir.path().join(".cache"))
         .env("HOME", dir.path())
+        .env_remove("XDG_STATE_HOME")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -188,6 +198,8 @@ impl Daemon {
             // receive from a test.
             .env("XDG_CACHE_HOME", dirs.path().join(".cache"))
             .env("HOME", dirs.path())
+            // Nor its log, which goes under the home the line above set.
+            .env_remove("XDG_STATE_HOME")
             // Nor its compositor: on a wlroots session the engine would answer
             // window requests over Wayland (`tests/wlroots_engine.rs`).
             .env_remove("WAYLAND_DISPLAY")
@@ -285,6 +297,191 @@ impl Drop for Daemon {
 }
 
 // ---------------------------------------------------------------------------
+
+/// `AppService`'s directory watch: an application installed while the engine
+/// runs is found without a restart, one removed is gone, and the catalog
+/// generation a window compares says so.
+#[test]
+fn an_application_installed_while_the_engine_runs_is_found_without_a_restart() {
+    use compass_ipc::{Request, Response};
+    let alpha = entry("Alpha Editor", "");
+    let daemon = Daemon::start(&[("alpha.desktop", alpha.as_str())]);
+    let ids = |query: &str| -> Vec<String> {
+        let Response::QueryResults { hits } = daemon.request(Request::Query { text: query.into() })
+        else {
+            panic!("expected query results");
+        };
+        hits.into_iter()
+            .map(|hit| hit.id)
+            .filter(|id| id.starts_with("applications:"))
+            .collect()
+    };
+    let generation = || match daemon.request(Request::CatalogGeneration) {
+        Response::CatalogGeneration { generation } => generation,
+        other => panic!("unexpected answer: {other:?}"),
+    };
+    assert_eq!(generation(), 0);
+    assert!(ids("Zephyr").is_empty());
+
+    let apps = daemon._dirs.path().join("data/applications");
+    std::fs::write(apps.join("zephyr.desktop"), entry("Zephyr Mail", "")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while ids("Zephyr").is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the new application never appeared"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(ids("Zephyr"), ["applications:zephyr"]);
+    assert!(generation() >= 1);
+
+    std::fs::remove_file(apps.join("alpha.desktop")).unwrap();
+    while !ids("Alpha").is_empty() {
+        assert!(Instant::now() < deadline, "the removed application stayed");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// `ExtensionRegistry`'s directory watch: an extension a developer builds
+/// into place (the directory first, the manifest after, as `vicinae develop`
+/// does) joins root search without a restart, and leaves it when removed.
+#[test]
+fn an_extension_built_into_place_while_the_engine_runs_joins_root_search() {
+    use compass_ipc::{Request, Response};
+    let daemon = Daemon::start_prepared(&[], "{}", |root| {
+        std::fs::create_dir_all(root.join("data-home/vicinae/extensions")).unwrap();
+        Vec::new()
+    });
+    let ids = |query: &str| -> Vec<String> {
+        let Response::QueryResults { hits } = daemon.request(Request::Query { text: query.into() })
+        else {
+            panic!("expected query results");
+        };
+        hits.into_iter()
+            .map(|hit| hit.id)
+            .filter(|id| id.starts_with('@'))
+            .collect()
+    };
+    let generation = || match daemon.request(Request::CatalogGeneration) {
+        Response::CatalogGeneration { generation } => generation,
+        other => panic!("unexpected answer: {other:?}"),
+    };
+    assert!(ids("Zulu Clock").is_empty());
+
+    let extension = daemon
+        ._dirs
+        .path()
+        .join("data-home/vicinae/extensions/zulu-clock");
+    std::fs::create_dir_all(&extension).unwrap();
+    // Long enough for the first rescan to find no manifest yet.
+    std::thread::sleep(Duration::from_millis(400));
+    std::fs::write(
+        extension.join("package.json"),
+        r#"{"name": "zulu-clock", "title": "Zulu Clock", "author": "dev",
+            "commands": [{"name": "show", "title": "Zulu Clock", "mode": "view"}]}"#,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while ids("Zulu Clock").is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the built extension never appeared"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(ids("Zulu Clock"), ["@dev/zulu-clock:show"]);
+    let seen = generation();
+    assert!(seen >= 1);
+
+    std::fs::remove_dir_all(&extension).unwrap();
+    while !ids("Zulu Clock").is_empty() {
+        assert!(Instant::now() < deadline, "the removed extension stayed");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(generation() > seen);
+}
+
+/// Set Default Browser and Set Default Terminal against a real engine: the
+/// candidates with the current default first, and a choice written to the
+/// user's `mimeapps.list` or `xdg-terminals.list` under the temp config home.
+#[test]
+fn the_default_browser_and_terminal_are_listed_and_set_in_the_users_files() {
+    use compass_ipc::{DefaultAppKind, Request, Response};
+    let web = entry("Web", "MimeType=x-scheme-handler/https;text/html;\n");
+    let surf = entry(
+        "Surf",
+        "Comment=A small browser\nMimeType=x-scheme-handler/https;\n",
+    );
+    let editor = entry("Editor", "MimeType=text/plain;\n");
+    let xterm = entry("XTerm", "Categories=System;TerminalEmulator;\n");
+    let kitty = entry("Kitty", "Categories=System;TerminalEmulator;\n");
+    let daemon = Daemon::start(&[
+        ("web.desktop", web.as_str()),
+        ("surf.desktop", surf.as_str()),
+        ("editor.desktop", editor.as_str()),
+        ("xterm.desktop", xterm.as_str()),
+        ("kitty.desktop", kitty.as_str()),
+    ]);
+    let listed = |kind| match daemon.request(Request::ListDefaultApps { kind }) {
+        Response::DefaultApps { apps } => apps
+            .into_iter()
+            .map(|app| (app.id, app.is_default))
+            .collect::<Vec<_>>(),
+        other => panic!("unexpected answer: {other:?}"),
+    };
+    let set = |kind, id: &str| {
+        daemon.request(Request::SetDefaultApp {
+            kind,
+            id: id.to_owned(),
+        })
+    };
+    let config = daemon._dirs.path().join("config");
+
+    let browsers = listed(DefaultAppKind::Browser);
+    assert_eq!(
+        browsers.len(),
+        2,
+        "what opens https, not the editor: {browsers:?}"
+    );
+    assert_eq!(
+        browsers[0],
+        ("surf.desktop".to_owned(), true),
+        "the first opener"
+    );
+    assert_eq!(set(DefaultAppKind::Browser, "web.desktop"), Response::Ack);
+    let written = std::fs::read_to_string(config.join("mimeapps.list")).unwrap();
+    assert!(
+        written.contains("x-scheme-handler/http=web.desktop"),
+        "{written}"
+    );
+    assert!(
+        written.contains("application/xhtml+xml=web.desktop"),
+        "{written}"
+    );
+    assert_eq!(
+        listed(DefaultAppKind::Browser)[0],
+        ("web.desktop".to_owned(), true)
+    );
+
+    let terminals = listed(DefaultAppKind::Terminal);
+    let mut ids: Vec<&str> = terminals.iter().map(|(id, _)| id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["kitty.desktop", "xterm.desktop"]);
+    assert_eq!(
+        set(DefaultAppKind::Terminal, "xterm.desktop"),
+        Response::Ack
+    );
+    let written = std::fs::read_to_string(config.join("xdg-terminals.list")).unwrap();
+    assert!(
+        written.lines().any(|line| line == "xterm.desktop"),
+        "{written}"
+    );
+    assert_eq!(
+        listed(DefaultAppKind::Terminal)[0],
+        ("xterm.desktop".to_owned(), true)
+    );
+}
 
 #[test]
 fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() {
@@ -700,6 +897,8 @@ fn a_second_engine_on_the_same_socket_refuses_to_start() {
         .arg(&daemon.socket)
         .arg("serve")
         .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+        .env("HOME", daemon._dirs.path())
+        .env_remove("XDG_STATE_HOME")
         .output()
         .expect("run a second engine");
 
@@ -1000,6 +1199,17 @@ fn clipboard_history_without_a_keyring_is_refused_by_name() {
             pinned: true,
         },
         compass_ipc::Request::ClipboardRemove { id: "1".into() },
+        compass_ipc::Request::ClipboardHistoryOfKind {
+            query: String::new(),
+            limit: 10,
+            kind: Some(compass_ipc::ClipboardKind::Image),
+        },
+        compass_ipc::Request::ClipboardDetail { id: "1".into() },
+        compass_ipc::Request::ClipboardSetKeywords {
+            id: "1".into(),
+            keywords: "x".into(),
+        },
+        compass_ipc::Request::ClipboardRemoveAll,
     ] {
         let response = daemon.request(request.clone());
         let compass_ipc::Response::Error(err) = response else {
@@ -1008,6 +1218,46 @@ fn clipboard_history_without_a_keyring_is_refused_by_name() {
         assert_eq!(err.kind, compass_ipc::ErrorKind::Unsupported, "{request:?}");
         assert!(err.message.contains("keyring"), "{}", err.message);
     }
+}
+
+#[test]
+fn pausing_the_clipboard_is_answered_and_kept_as_the_monitoring_preference() {
+    use compass_ipc::{Request, Response};
+    let config = serde_json::json!({
+        "launcher": {"max_results": 7},
+        "providers": {"clipboard": {"preferences": {"evictionThreshold": "3600"}}}
+    });
+    let daemon =
+        Daemon::start_with_config(&[("a.desktop", &entry("Alpha", ""))], &config.to_string());
+    let asked = daemon.request(Request::ClipboardMonitoring { enabled: None });
+    assert_eq!(
+        asked,
+        Response::ClipboardMonitoring {
+            // No session bus: nothing watches the selection here.
+            supported: false,
+            enabled: true,
+        }
+    );
+    let paused = daemon.request(Request::ClipboardMonitoring {
+        enabled: Some(false),
+    });
+    assert_eq!(
+        paused,
+        Response::ClipboardMonitoring {
+            supported: false,
+            enabled: false,
+        }
+    );
+    let written: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(daemon._dirs.path().join("config/vicinae/vicinae.json"))
+            .expect("the config"),
+    )
+    .expect("json");
+    assert_eq!(
+        written["providers"]["clipboard"]["preferences"],
+        serde_json::json!({"evictionThreshold": "3600", "monitoring": false})
+    );
+    assert_eq!(written["launcher"]["max_results"], 7, "the rest is kept");
 }
 
 #[test]
@@ -5026,4 +5276,542 @@ fn wait_for_launch(window: &FakeWindow, after: usize) -> u64 {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("the window was never handed a launch: {:?}", window.seen());
+}
+
+// --- the rest of the C++ CLI: cmd, app, state, logs, fs, server ------------
+
+/// A fake application that appends `launched` and then each argument to
+/// `<dir>/<name>.log`, and its desktop entry (`%U`, so every argument).
+fn logging_app(dir: &Path, name: &str) -> (String, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = dir.join(format!("{name}.log"));
+    let program = dir.join(name);
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\necho launched >> '{log}'\nfor arg in \"$@\"; do echo \"$arg\" >> '{log}'; done\n",
+            log = log.display()
+        ),
+    )
+    .expect("fake application");
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName={name}\nExec={} %U\n",
+        program.display()
+    );
+    (entry, log)
+}
+
+fn stderr_of(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn cmd_ls_lists_every_root_item_by_id_and_cmd_launch_hands_the_window_a_launch() {
+    use compass_ipc::{Request, Response, WindowCommand};
+    let daemon = Daemon::start(&[
+        ("zeta.desktop", &entry("Zeta Editor", "")),
+        ("alpha.desktop", &entry("Alpha", "")),
+    ]);
+
+    let ids: Vec<String> = daemon
+        .client(&["cmd", "ls"])
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert!(ids.contains(&"applications:alpha".to_owned()), "{ids:?}");
+    assert!(ids.contains(&"applications:zeta".to_owned()));
+    assert!(ids.contains(&"commands:clipboard-history".to_owned()));
+    let mut sorted = ids.clone();
+    sorted.sort();
+    assert_eq!(ids, sorted, "sorted by id, as the C++ sorts them");
+
+    let listed: Vec<serde_json::Value> =
+        serde_json::from_str(&daemon.client(&["command", "list", "--json"])).unwrap();
+    assert_eq!(listed.len(), ids.len());
+    assert!(
+        listed.contains(&serde_json::json!({"id": "applications:zeta", "name": "Zeta Editor"}))
+    );
+
+    // Checked before anything is launched, in the C++'s words.
+    for (args, expected) in [
+        (
+            &["cmd", "launch", "nothing"][..],
+            "Ill-formed command entrypoint: nothing",
+        ),
+        (
+            &["cmd", "launch", "commands:nope"][..],
+            "Unknown command entrypoint: commands:nope",
+        ),
+        (
+            &["cmd", "launch", "commands:search-files", "extra"][..],
+            "Too many arguments: expected at most 0, got 1",
+        ),
+    ] {
+        let out = daemon.try_client(args);
+        assert!(!out.status.success(), "{args:?}");
+        let err = stderr_of(&out);
+        assert!(err.contains("Failed to launch command"), "{err}");
+        assert!(err.contains(expected), "{args:?}: {err}");
+    }
+
+    // With no window, a builtin has nowhere to open.
+    let out = daemon.try_client(&["cmd", "launch", "commands:search-files"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr_of(&out).contains("no launcher window"),
+        "{}",
+        stderr_of(&out)
+    );
+
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+    daemon.client(&["cmd", "launch", "commands:search-files", "-q", "report"]);
+    let token = wait_for_launch(&window, 0);
+    assert_eq!(
+        daemon.request(Request::ExtensionLaunchFetch { token }),
+        Response::CommandLaunch {
+            id: "commands:search-files".into(),
+            arguments_json: None,
+            fallback_text: Some("report".into()),
+        }
+    );
+    daemon.client(&["cmd", "launch", "commands:clipboard-history"]);
+    let token = wait_for_launch(&window, 1);
+    assert_eq!(
+        daemon.request(Request::ExtensionLaunchFetch { token }),
+        Response::ExtensionLaunch {
+            id: "commands:clipboard-history".into(),
+            arguments_json: None,
+            preferences: false,
+        }
+    );
+    assert_eq!(
+        window
+            .seen()
+            .iter()
+            .filter(|c| matches!(c, WindowCommand::Launch(_)))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn app_launch_and_cmd_launch_start_the_application_with_its_arguments() {
+    let bin = TempDir::new().expect("tempdir");
+    let (recorder, log) = logging_app(bin.path(), "recorder");
+    let (other, other_log) = logging_app(bin.path(), "other");
+    let daemon = Daemon::start(&[("recorder.desktop", &recorder), ("other.desktop", &other)]);
+
+    // No window manager here, so nothing to focus: it launches, as the C++
+    // does with its dummy provider.
+    let out = daemon.client(&["app", "launch", "recorder.desktop", "/tmp/a b", "--", "-x"]);
+    assert_eq!(out, "", "nothing was focused, so nothing is said");
+    assert_eq!(launched_with(&log), ["launched", "/tmp/a b", "-x"]);
+
+    // The root id works too, and so does `cmd launch` on an application.
+    daemon.client(&["cmd", "launch", "applications:other"]);
+    assert_eq!(launched_with(&other_log), ["launched"]);
+
+    let out = daemon.try_client(&["app", "launch", "missing.desktop"]);
+    assert!(!out.status.success());
+    let err = stderr_of(&out);
+    assert!(err.contains("Failed to launch app"), "{err}");
+    assert!(err.contains("No app with id"), "{err}");
+}
+
+#[test]
+fn state_open_asks_the_window_and_exits_by_the_answer() {
+    use compass_ipc::{WindowCommand, WindowOutcome};
+    let daemon = Daemon::start(&[]);
+    assert_eq!(
+        daemon.try_client(&["state", "open"]).status.code(),
+        Some(1),
+        "no window is not an open window"
+    );
+
+    let shown = FakeWindow::attach(&daemon.socket, WindowOutcome::Shown);
+    let out = daemon.try_client(&["state", "open"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
+    assert_eq!(shown.seen(), vec![WindowCommand::Describe]);
+    drop(shown);
+
+    let hidden = FakeWindow::attach(&daemon.socket, WindowOutcome::Hidden);
+    assert_eq!(daemon.try_client(&["state", "open"]).status.code(), Some(1));
+    assert_eq!(hidden.seen(), vec![WindowCommand::Describe]);
+}
+
+/// Runs the client with the daemon's own home, for the commands that read
+/// files rather than ask the engine.
+fn client_at_home(daemon: &Daemon, args: &[&str]) -> std::process::Output {
+    Command::new(binary())
+        .arg("--socket")
+        .arg(&daemon.socket)
+        .args(args)
+        .env("HOME", daemon._dirs.path())
+        .env_remove("XDG_STATE_HOME")
+        .output()
+        .expect("run the client")
+}
+
+#[test]
+fn the_engine_keeps_a_log_file_and_logs_prints_its_last_lines() {
+    let dirs = TempDir::new().unwrap();
+    let out = Command::new(binary())
+        .args(["logs"])
+        .env("HOME", dirs.path())
+        .env_remove("XDG_STATE_HOME")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr_of(&out).contains("Has the server been started yet?"));
+
+    let daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    let log = daemon._dirs.path().join(".local/state/vicinae/compass.log");
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while std::fs::metadata(&log).map_or(0, |m| m.len()) == 0 {
+        assert!(Instant::now() < deadline, "the engine never wrote its log");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let written = std::fs::read_to_string(&log).unwrap();
+    let last = written.lines().last().unwrap().to_owned();
+    assert!(!last.contains('\u{1b}'), "no colours in the file: {last}");
+
+    let out = client_at_home(&daemon, &["logs", "-n", "1"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let printed = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(printed.lines().count(), 1, "{printed}");
+    // Read again: the engine may have written more since.
+    let now = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        now.lines().any(|line| line == printed.trim_end()),
+        "{printed}"
+    );
+}
+
+#[test]
+fn fs_query_asks_the_index_alone_and_names_categories_as_the_cpp_does() {
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        let documents = root.join("Documents");
+        std::fs::create_dir_all(&documents).unwrap();
+        std::fs::write(documents.join("quarterly-report.pdf"), "%PDF").unwrap();
+        std::fs::write(documents.join("quarterly-chart.png"), "png").unwrap();
+        Vec::new()
+    });
+    let out = daemon.try_client(&["fs", "query", "ab"]);
+    assert!(!out.status.success());
+    assert!(stderr_of(&out).contains("at least 3 characters"));
+
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let rows = loop {
+        let out = daemon.try_client(&["fs", "q", "quarterly", "-c", "document", "--json"]);
+        if out.status.success() {
+            let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+            if !rows.is_empty() {
+                break rows;
+            }
+        }
+        assert!(Instant::now() < deadline, "{}", stderr_of(&out));
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert!(
+        rows[0]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("/Documents/quarterly-report.pdf")
+    );
+    assert!(
+        rows.iter().all(|row| row["category"] == "document"),
+        "{rows:?}"
+    );
+
+    let plain = daemon.client(&["fs", "query", "quarterly", "-n", "1"]);
+    assert_eq!(plain.lines().count(), 1, "{plain}");
+}
+
+#[test]
+fn server_refuses_a_running_engine_and_replace_kills_it_and_serves_in_its_place() {
+    use compass_ipc::{Request, Response};
+    let mut daemon = Daemon::start(&[("alpha.desktop", &entry("Alpha", ""))]);
+    let first = daemon.child.id();
+
+    let out = daemon.try_client(&["server"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr_of(&out).contains(&format!(
+            "A server is already running (pid {first}). Pass --replace to replace it."
+        )),
+        "{}",
+        stderr_of(&out)
+    );
+
+    // The replacement reads the configuration it is given.
+    let config = daemon._dirs.path().join("elsewhere.json");
+    std::fs::write(&config, r#"{"launcher": {"max_results": 1}}"#).unwrap();
+    let dirs = daemon._dirs.path();
+    let mut server = Command::new(binary())
+        .arg("--socket")
+        .arg(&daemon.socket)
+        .arg("server")
+        .arg("--replace")
+        .arg("--config")
+        .arg(&config)
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+        .env("XDG_DATA_DIRS", dirs.join("data"))
+        .env("XDG_DATA_HOME", dirs.join("data-home"))
+        .env("XDG_CONFIG_HOME", dirs.join("config"))
+        .env("XDG_CACHE_HOME", dirs.join(".cache"))
+        .env("HOME", dirs)
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+        .env_remove("NIRI_SOCKET")
+        .env_remove("XDG_CURRENT_DESKTOP")
+        .env("VICINAE_INPUT_SERVER_BIN", "/bin/true")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    // The engine this test started is killed: it exits on a signal.
+    let status = daemon.child.wait().unwrap();
+    assert!(!status.success(), "{status:?}");
+
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let ping = |socket: &Path| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut client = compass_ipc::Client::connect(socket).await.ok()?;
+                match client.request(Request::Ping).await.ok()? {
+                    Response::Pong { pid, .. } => Some(pid),
+                    _ => None,
+                }
+            })
+    };
+    let pid = loop {
+        if let Some(pid) = ping(&daemon.socket) {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "the replacement never answered");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(pid, server.id(), "the server became the engine itself");
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: String::new(),
+    }) else {
+        panic!("expected results");
+    };
+    assert_eq!(hits.len(), 1, "launcher.max_results from --config");
+
+    let _ = server.kill();
+    let _ = server.wait();
+}
+
+/// A `sleep` this test owns, to stand behind a window: the only processes
+/// Force Quit may ever be pointed at here.
+fn sleeper() -> Child {
+    Command::new("sleep")
+        .arg("600")
+        .spawn()
+        .expect("spawn sleep")
+}
+
+/// Whether `child` was ended by `SIGKILL`, waiting for it to be.
+fn killed(child: &mut Child) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            return status.signal() == Some(9);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
+#[test]
+fn quit_closes_an_applications_windows_and_force_quit_kills_their_processes() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use shell_mock::{MockOptions, MockShell, MockWindow};
+    let Some(bus) = shell_bus::start_or_skip(
+        "quit_closes_an_applications_windows_and_force_quit_kills_their_processes",
+    ) else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let shell = runtime
+        .block_on(MockShell::start(bus.address(), MockOptions::default()))
+        .expect("the mock shell");
+    let (mut first, mut second, mut bystander) = (sleeper(), sleeper(), sleeper());
+    let window = |id: u32, class: &str, title: &str, pid: Option<u32>| MockWindow {
+        pid,
+        ..MockWindow::new(id, class, title)
+    };
+    let windows = vec![
+        window(1, "recorder", "Recording one", Some(first.id())),
+        window(2, "recorder", "Recording two", Some(first.id())),
+        window(3, "recorder", "A pidless recording", None),
+        window(4, "Recorder", "Recording three", Some(second.id())),
+        window(5, "bystander", "Not this one", Some(bystander.id())).focused(),
+    ];
+    shell.set_windows(windows.clone());
+
+    let bin = TempDir::new().unwrap();
+    let (recorder, _) = logging_app(bin.path(), "recorder");
+    let (other, _) = logging_app(bin.path(), "other");
+    let address = bus.address().to_owned();
+    let daemon = Daemon::start_prepared(
+        &[("recorder.desktop", &recorder), ("other.desktop", &other)],
+        "{}",
+        move |_| vec![("DBUS_SESSION_BUS_ADDRESS", address.into())],
+    );
+
+    // The engine reaches the extension in the background.
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let (running, frontmost, listed) = loop {
+        if let Response::AppRuntime {
+            running,
+            frontmost,
+            windows,
+        } = daemon.request(Request::AppRuntime {
+            id: "recorder.desktop".into(),
+        }) && running
+        {
+            break (running, frontmost, windows);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the engine never saw the windows"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(running);
+    assert!(!frontmost, "the focused window is the bystander's");
+    assert_eq!(
+        listed.iter().map(|w| w.id).collect::<Vec<_>>(),
+        [1, 2, 3, 4],
+        "every window of its class, and only those"
+    );
+    let Response::AppRuntime { running, .. } = daemon.request(Request::AppRuntime {
+        id: "other.desktop".into(),
+    }) else {
+        panic!("expected an answer");
+    };
+    assert!(!running);
+
+    // Quit: every window closed, no process touched.
+    assert_eq!(
+        daemon.request(Request::QuitApp {
+            id: "recorder.desktop".into(),
+            force: false,
+        }),
+        Response::Ack
+    );
+    let mut closed: Vec<u32> = shell
+        .calls()
+        .into_iter()
+        .filter(|(call, _)| *call == "CloseWindow")
+        .map(|(_, id)| id)
+        .collect();
+    closed.sort_unstable();
+    assert_eq!(closed, [1, 2, 3, 4]);
+    for child in [&mut first, &mut second, &mut bystander] {
+        assert!(child.try_wait().unwrap().is_none(), "Quit killed nothing");
+    }
+
+    // Force Quit: each owning process killed once, the pidless window closed,
+    // the bystander left alone.
+    shell.set_windows(windows.clone());
+    assert_eq!(
+        daemon.request(Request::QuitApp {
+            id: "recorder.desktop".into(),
+            force: true,
+        }),
+        Response::Ack
+    );
+    assert!(killed(&mut first), "the first window's process");
+    assert!(killed(&mut second), "the other window's process");
+    assert_eq!(
+        shell
+            .calls()
+            .into_iter()
+            .filter(|(call, _)| *call == "CloseWindow")
+            .map(|(_, id)| id)
+            .skip(4)
+            .collect::<Vec<_>>(),
+        [3],
+        "only the window with no process is closed"
+    );
+    assert!(
+        bystander.try_wait().unwrap().is_none(),
+        "the bystander lives"
+    );
+
+    // From the window switcher: the application the window belongs to.
+    let mut third = sleeper();
+    shell.set_windows(vec![
+        window(6, "recorder", "Again", Some(third.id())),
+        window(5, "bystander", "Not this one", Some(bystander.id())),
+    ]);
+    assert_eq!(
+        daemon.request(Request::QuitWindowApp {
+            window: 6,
+            force: true
+        }),
+        Response::Ack
+    );
+    assert!(killed(&mut third));
+    let Response::Error(err) = daemon.request(Request::QuitWindowApp {
+        window: 5,
+        force: true,
+    }) else {
+        panic!("a window of no known application was quit");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    assert!(bystander.try_wait().unwrap().is_none());
+
+    // Nothing to quit, and nothing by that name, are both said.
+    let Response::Error(err) = daemon.request(Request::QuitApp {
+        id: "other.desktop".into(),
+        force: false,
+    }) else {
+        panic!("quitting what does not run succeeded");
+    };
+    assert_eq!(err.message, "Failed to quit other");
+    let Response::Error(err) = daemon.request(Request::QuitApp {
+        id: "missing.desktop".into(),
+        force: true,
+    }) else {
+        panic!("an unknown application was quit");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+
+    let _ = bystander.kill();
+    let _ = bystander.wait();
+    drop(daemon);
+    runtime.block_on(shell.shutdown());
+}
+
+#[test]
+fn calculator_history_is_a_builtin_and_without_a_keyring_is_refused_by_name() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[]);
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "calculator history".into(),
+    }) else {
+        panic!("expected results");
+    };
+    assert_eq!(
+        hits.first().map(|hit| hit.id.as_str()),
+        Some("commands:calculator-history")
+    );
+    let Response::Error(err) = daemon.request(Request::CalculatorHistory {
+        query: String::new(),
+    }) else {
+        panic!("the history opened without a keyring");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(err.message.contains("keyring"), "{}", err.message);
 }

@@ -245,6 +245,105 @@ fn all_requests() -> Vec<Request> {
         Request::RevokeScriptGrant {
             id: "script.quick-notes".into(),
         },
+        Request::CatalogGeneration,
+        Request::ListDefaultApps {
+            kind: compass_ipc::DefaultAppKind::Browser,
+        },
+        Request::SetDefaultApp {
+            kind: compass_ipc::DefaultAppKind::Terminal,
+            id: "org.gnome.Ptyxis.desktop".into(),
+        },
+        Request::ClipboardHistoryOfKind {
+            query: "café".into(),
+            limit: 100,
+            kind: Some(compass_ipc::ClipboardKind::Image),
+        },
+        Request::ClipboardDetail {
+            id: "c0ffee".into(),
+        },
+        Request::ClipboardSetKeywords {
+            id: "c0ffee".into(),
+            keywords: "reçu facture".into(),
+        },
+        Request::ClipboardRemoveAll,
+        Request::ClipboardMonitoring {
+            enabled: Some(false),
+        },
+        Request::RootItemEdit {
+            id: "applications:org.gnome.TextEditor".into(),
+            edit: compass_ipc::RootItemEdit::Favorite(true),
+        },
+        Request::RootItemEdit {
+            id: "commands:clipboard-history".into(),
+            edit: compass_ipc::RootItemEdit::MoveFavorite { down: true },
+        },
+        Request::RootItemEdit {
+            id: "@zoë/notes:list".into(),
+            edit: compass_ipc::RootItemEdit::Alias("nö".into()),
+        },
+        Request::RootItemEdit {
+            id: "scripts:hello".into(),
+            edit: compass_ipc::RootItemEdit::Disable,
+        },
+        Request::RootItemEdit {
+            id: "commands:clipboard-history".into(),
+            edit: compass_ipc::RootItemEdit::ResetRanking,
+        },
+        Request::ListCommands,
+        Request::LaunchCommand {
+            id: "@zoë/notes:new".into(),
+            args: vec!["first ✓".into(), String::new()],
+            cwd: Some("/home/zoë".into()),
+            query: Some("groceries 🛒".into()),
+        },
+        Request::LaunchCommand {
+            id: "commands:clipboard-history".into(),
+            args: vec![],
+            cwd: None,
+            query: None,
+        },
+        Request::LaunchApp {
+            id: "org.gnome.Nautilus.desktop".into(),
+            args: vec!["/home/zoë/Téléchargements".into()],
+            new_instance: true,
+        },
+        Request::DescribeWindow,
+        Request::AppRuntime {
+            id: "org.gnome.Nautilus.desktop".into(),
+        },
+        Request::QuitApp {
+            id: "firefox.desktop".into(),
+            force: true,
+        },
+        Request::QuitWindowApp {
+            window: u32::MAX,
+            force: false,
+        },
+        Request::CalculatorHistory {
+            query: "√2 ≈".into(),
+        },
+        Request::AddCalculatorRecord {
+            question: "5 ft to m".into(),
+            answer: "1.524 m".into(),
+            conversion: true,
+        },
+        Request::EditCalculatorHistory {
+            edit: compass_ipc::CalculatorEdit::Pin("ä-1".into()),
+        },
+        Request::EditCalculatorHistory {
+            edit: compass_ipc::CalculatorEdit::Unpin("ä-1".into()),
+        },
+        Request::EditCalculatorHistory {
+            edit: compass_ipc::CalculatorEdit::Remove("ä-1".into()),
+        },
+        Request::EditCalculatorHistory {
+            edit: compass_ipc::CalculatorEdit::RemoveAll,
+        },
+        Request::FsQuery {
+            query: "résumé".into(),
+            limit: 10_000,
+            category: Some("Documents".into()),
+        },
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -352,6 +451,52 @@ fn all_responses() -> Vec<Response> {
         Response::Window(WindowCommand::Deeplink(
             "vicinae://extensions/zoë/clock".into(),
         )),
+        Response::Window(WindowCommand::Describe),
+        Response::Commands {
+            commands: vec![compass_ipc::CommandInfo {
+                id: "@zoë/notes:new".into(),
+                name: "New Note ✍".into(),
+            }],
+        },
+        Response::AppLaunched {
+            focused_window_title: Some("Téléchargements — Files".into()),
+        },
+        Response::AppLaunched {
+            focused_window_title: None,
+        },
+        Response::WindowState { open: true },
+        Response::CalculatorHistory {
+            groups: vec![compass_ipc::CalculatorGroup {
+                name: "Pinned".into(),
+                records: vec![compass_ipc::CalculatorRecord {
+                    id: "ä-1".into(),
+                    question: "2π".into(),
+                    answer: "approx. 6.2831853072".into(),
+                    conversion: false,
+                    pinned: true,
+                }],
+            }],
+        },
+        Response::AppRuntime {
+            running: true,
+            frontmost: false,
+            windows: vec![compass_ipc::WindowInfo {
+                id: 7,
+                title: "Téléchargements".into(),
+                wm_class: "org.gnome.Nautilus".into(),
+                app_name: Some("Files".into()),
+                app_icon: None,
+                pid: Some(4242),
+                workspace: Some(1),
+                focused: false,
+                can_close: true,
+            }],
+        },
+        Response::CommandLaunch {
+            id: "commands:search-files".into(),
+            arguments_json: Some(r#"{"a":"ü"}"#.into()),
+            fallback_text: Some("résumé".into()),
+        },
         Response::ClipboardHistory { entries: vec![] },
         Response::ClipboardHistory {
             entries: vec![
@@ -613,6 +758,15 @@ fn all_responses() -> Vec<Response> {
                 ..Default::default()
             }],
         },
+        Response::CatalogGeneration { generation: 3 },
+        Response::DefaultApps {
+            apps: vec![compass_ipc::DefaultAppEntry {
+                id: "firefox.desktop".into(),
+                name: "Firefox".into(),
+                description: "Browse the Wörld Wide Web".into(),
+                is_default: true,
+            }],
+        },
         Response::ScriptGrants {
             grants: vec![compass_ipc::ScriptGrantEntry {
                 id: "script.quick-notes".into(),
@@ -620,6 +774,23 @@ fn all_responses() -> Vec<Response> {
                 capabilities: vec!["clipboard.write".into()],
                 descriptions: vec!["copy to the clipboard".into()],
             }],
+        },
+        Response::ClipboardDetail {
+            detail: compass_ipc::ClipboardDetail {
+                id: "c0ffee".into(),
+                mime_type: "text/plain;charset=utf-8".into(),
+                kind: ClipboardKind::Text,
+                size: 12,
+                md5: "d41d8cd98f00b204e9800998ecf8427e".into(),
+                updated_at: 1_700_000_000_000,
+                encrypted: true,
+                keywords: "reçu".into(),
+                pinned: false,
+            },
+        },
+        Response::ClipboardMonitoring {
+            supported: true,
+            enabled: false,
         },
         Response::Fonts {
             fonts: vec![compass_ipc::FontEntry {
@@ -727,7 +898,27 @@ fn request_variants_are_exhaustive() {
             | Request::OpenDeeplink { .. }
             | Request::ListScriptGrants
             | Request::RevokeScriptGrant { .. }
+            | Request::CatalogGeneration
+            | Request::ListDefaultApps { .. }
+            | Request::SetDefaultApp { .. }
+            | Request::ClipboardHistoryOfKind { .. }
+            | Request::ClipboardDetail { .. }
+            | Request::ClipboardSetKeywords { .. }
+            | Request::ClipboardRemoveAll
+            | Request::ClipboardMonitoring { .. }
+            | Request::RootItemEdit { .. }
             | Request::ControlMediaPlayer { .. }
+            | Request::ListCommands
+            | Request::LaunchCommand { .. }
+            | Request::LaunchApp { .. }
+            | Request::DescribeWindow
+            | Request::FsQuery { .. }
+            | Request::AppRuntime { .. }
+            | Request::QuitApp { .. }
+            | Request::QuitWindowApp { .. }
+            | Request::CalculatorHistory { .. }
+            | Request::AddCalculatorRecord { .. }
+            | Request::EditCalculatorHistory { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -766,12 +957,22 @@ fn response_variants_are_exhaustive() {
             | Response::StoreInstalled { .. }
             | Response::MediaPlayers { .. }
             | Response::ScriptGrants { .. }
+            | Response::CatalogGeneration { .. }
+            | Response::DefaultApps { .. }
+            | Response::ClipboardDetail { .. }
+            | Response::ClipboardMonitoring { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }
             | Response::InputServerStatus(_)
             | Response::ExtensionLaunch { .. }
             | Response::ExtensionSubtitles { .. }
+            | Response::Commands { .. }
+            | Response::AppLaunched { .. }
+            | Response::WindowState { .. }
+            | Response::CommandLaunch { .. }
+            | Response::AppRuntime { .. }
+            | Response::CalculatorHistory { .. }
             | Response::Window(_) => {}
         }
     }

@@ -20,6 +20,17 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// Record an already successful launch; never execute the application again.
     fn record_launch(&self, key: String) -> BackendFuture<'_, ()>;
 
+    /// Keep what the root row's panel changed about the item `id`, and apply
+    /// it to the engine's root search. An error is the sentence to show.
+    fn edit_root_item(
+        &self,
+        id: String,
+        edit: compass_core::root_items::RootEdit,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (id, edit);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// Run a Power Management command by its id. An error is the sentence to
     /// show.
     fn run_power_command(&self, id: String) -> BackendFuture<'_, ()> {
@@ -51,6 +62,49 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// after the change.
     fn revoke_script_grant(&self, id: String) -> BackendFuture<'_, Vec<ScriptGrant>> {
         let _ = id;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// How many times the engine has rescanned its catalog because an
+    /// application or extension directory changed. A window whose last
+    /// answer differs scans its own copy again.
+    fn catalog_generation(&self) -> BackendFuture<'_, u64> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// What a default picker offers, the current default first.
+    fn list_default_apps(&self, kind: DefaultApp) -> BackendFuture<'_, Vec<DefaultAppRow>> {
+        let _ = kind;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Makes `id` the default browser or terminal. An error is the sentence
+    /// to show.
+    fn set_default_app(&self, kind: DefaultApp, id: String) -> BackendFuture<'_, ()> {
+        let _ = (kind, id);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// The calculator's history matching `query`, in its non-empty groups.
+    fn calculator_history(&self, query: String) -> BackendFuture<'_, Vec<CalculatorGroupRow>> {
+        let _ = query;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Remembers a calculation whose answer was copied.
+    fn add_calculator_record(
+        &self,
+        question: String,
+        answer: String,
+        conversion: bool,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (question, answer, conversion);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Pins, unpins or removes a remembered calculation, or all of them.
+    fn edit_calculator_history(&self, change: CalculatorChange) -> BackendFuture<'_, ()> {
+        let _ = change;
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
@@ -369,6 +423,65 @@ const FILES_NEED_ENGINE: &str =
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
 
+/// Which system default a picker sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultApp {
+    /// Set Default Browser.
+    Browser,
+    /// Set Default Terminal.
+    Terminal,
+}
+
+/// One application a default picker offers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefaultAppRow {
+    /// The desktop file id.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// Its comment.
+    pub description: String,
+    /// Whether it is the current default.
+    pub is_default: bool,
+}
+
+/// One group of the calculator's history.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CalculatorGroupRow {
+    /// The section's name, e.g. `Today`.
+    pub name: String,
+    /// Its rows.
+    pub records: Vec<CalculatorRow>,
+}
+
+/// One remembered calculation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CalculatorRow {
+    /// Its id.
+    pub id: String,
+    /// What was asked.
+    pub question: String,
+    /// What came back.
+    pub answer: String,
+    /// A unit conversion rather than arithmetic.
+    pub conversion: bool,
+    /// Whether it is pinned.
+    pub pinned: bool,
+}
+
+/// A change to the calculator's history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CalculatorChange {
+    /// Pin a row, by id.
+    Pin(String),
+    /// Unpin a row, by id.
+    Unpin(String),
+    /// Remove a row, by id.
+    Remove(String),
+    /// Remove every row.
+    RemoveAll,
+}
+
 /// What the user has allowed one Rhai script.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScriptGrant {
@@ -649,6 +762,8 @@ pub struct ExtensionLaunch {
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
     /// Open its preferences form rather than run it.
     pub preferences: bool,
+    /// What its search starts with (`vicinae cmd launch --query`).
+    pub fallback_text: Option<String>,
 }
 
 /// How an extension command began.
@@ -827,6 +942,79 @@ pub trait ClipboardBackend: std::fmt::Debug + Send + Sync {
 
     /// Remove one entry and its stored content.
     fn clipboard_remove(&self, id: String) -> BackendFuture<'_, ()>;
+
+    /// [`Self::clipboard_history`] restricted to one kind, the view's filter;
+    /// `None` is every kind.
+    fn clipboard_history_of_kind(
+        &self,
+        query: String,
+        limit: u32,
+        kind: Option<ClipboardRowKind>,
+    ) -> BackendFuture<'_, Vec<ClipboardRow>> {
+        match kind {
+            None => self.clipboard_history(query, limit),
+            Some(_) => Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) }),
+        }
+    }
+
+    /// What the detail pane shows about one entry besides its content.
+    fn clipboard_detail(&self, id: String) -> BackendFuture<'_, ClipboardDetail> {
+        let _ = id;
+        Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Set the words an entry is also found by; empty clears them.
+    fn clipboard_set_keywords(&self, id: String, keywords: String) -> BackendFuture<'_, ()> {
+        let _ = (id, keywords);
+        Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Remove every entry (sparing tagged ones when the preference says so).
+    fn clipboard_remove_all(&self) -> BackendFuture<'_, ()> {
+        Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Whether copies are being recorded, after turning recording on or off
+    /// when `enabled` is given.
+    fn clipboard_monitoring(
+        &self,
+        enabled: Option<bool>,
+    ) -> BackendFuture<'_, ClipboardMonitoring> {
+        let _ = enabled;
+        Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) })
+    }
+}
+
+const CLIPBOARD_NEEDS_ENGINE: &str = "Clipboard history needs the Compass engine";
+
+/// What the detail pane shows about one entry besides its content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardDetail {
+    /// The entry.
+    pub id: String,
+    /// The MIME type of what was copied.
+    pub mime_type: String,
+    /// What kind of thing it is.
+    pub kind: ClipboardRowKind,
+    /// Its size in bytes.
+    pub size: i64,
+    /// Its MD5.
+    pub md5: String,
+    /// When it was last copied, in milliseconds since the epoch.
+    pub updated_at: i64,
+    /// Whether it is encrypted at rest.
+    pub encrypted: bool,
+    /// The words it is also found by.
+    pub keywords: String,
+}
+
+/// Whether copies are being recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClipboardMonitoring {
+    /// Whether the engine can record copies on this desktop at all.
+    pub supported: bool,
+    /// Whether it is recording them.
+    pub enabled: bool,
 }
 
 /// One open window, as the switcher draws it.
@@ -844,6 +1032,20 @@ pub struct WindowRow {
     pub pid: Option<u32>,
     /// Whether it can be closed.
     pub can_close: bool,
+    /// Whether the engine recognised its application, which is what Quit
+    /// and Force Quit act on.
+    pub app_known: bool,
+}
+
+/// Whether an application is running, as its root row's panel asks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppRuntimeInfo {
+    /// It has a window.
+    pub running: bool,
+    /// One of its windows has focus.
+    pub frontmost: bool,
+    /// Its windows, the first the one Focus Window raises.
+    pub windows: Vec<WindowRow>,
 }
 
 /// Window switching, which only the engine can do (through the Shell
@@ -857,4 +1059,23 @@ pub trait WindowBackend: std::fmt::Debug + Send + Sync {
 
     /// Ask a window to close.
     fn close_window(&self, id: u32) -> BackendFuture<'_, ()>;
+
+    /// Whether the application with this desktop id is running.
+    fn app_runtime(&self, id: String) -> BackendFuture<'_, AppRuntimeInfo> {
+        let _ = id;
+        Box::pin(async { Err("Quitting applications needs the engine".to_owned()) })
+    }
+
+    /// Quit (or with `force`, Force Quit) the application with this
+    /// desktop id.
+    fn quit_app(&self, id: String, force: bool) -> BackendFuture<'_, ()> {
+        let _ = (id, force);
+        Box::pin(async { Err("Quitting applications needs the engine".to_owned()) })
+    }
+
+    /// Quit (or Force Quit) the application a window belongs to.
+    fn quit_window_app(&self, window: u32, force: bool) -> BackendFuture<'_, ()> {
+        let _ = (window, force);
+        Box::pin(async { Err("Quitting applications needs the engine".to_owned()) })
+    }
 }

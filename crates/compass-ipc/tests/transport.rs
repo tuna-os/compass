@@ -91,7 +91,29 @@ async fn echo_handler(request: Request) -> Response {
                 }
             }
         }
-        Request::ClipboardHistory { .. } => Response::ClipboardHistory { entries: vec![] },
+        Request::ClipboardHistory { .. } | Request::ClipboardHistoryOfKind { .. } => {
+            Response::ClipboardHistory { entries: vec![] }
+        }
+        Request::ClipboardDetail { .. } => Response::ClipboardDetail {
+            detail: compass_ipc::ClipboardDetail {
+                id: String::new(),
+                mime_type: String::new(),
+                kind: compass_ipc::ClipboardKind::Text,
+                size: 0,
+                md5: String::new(),
+                updated_at: 0,
+                encrypted: false,
+                keywords: String::new(),
+                pinned: false,
+            },
+        },
+        Request::ClipboardMonitoring { .. } => Response::ClipboardMonitoring {
+            supported: false,
+            enabled: false,
+        },
+        Request::ClipboardSetKeywords { .. }
+        | Request::ClipboardRemoveAll
+        | Request::RootItemEdit { .. } => Response::Ack,
         Request::ListWindows => Response::Windows { windows: vec![] },
         Request::ActivateWindow { .. }
         | Request::CloseWindow { .. }
@@ -117,7 +139,27 @@ async fn echo_handler(request: Request) -> Response {
         | Request::StopScript { .. }
         | Request::RunProgram { .. }
         | Request::DmenuChoose { .. }
+        | Request::LaunchCommand { .. }
+        | Request::QuitApp { .. }
+        | Request::QuitWindowApp { .. }
+        | Request::AddCalculatorRecord { .. }
+        | Request::EditCalculatorHistory { .. }
         | Request::SetTheme { .. } => Response::Ack,
+        Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
+        Request::AppRuntime { .. } => Response::AppRuntime {
+            running: false,
+            frontmost: false,
+            windows: vec![],
+        },
+        Request::ListCommands => Response::Commands { commands: vec![] },
+        Request::LaunchApp { .. } => Response::AppLaunched {
+            focused_window_title: None,
+        },
+        Request::DescribeWindow => Response::WindowState { open: false },
+        Request::FsQuery { .. } => Response::Files {
+            heading: "Results".into(),
+            files: vec![],
+        },
         Request::Dmenu { .. } => Response::DmenuOutput {
             output: String::new(),
         },
@@ -150,6 +192,9 @@ async fn echo_handler(request: Request) -> Response {
         Request::ListScriptGrants | Request::RevokeScriptGrant { .. } => {
             Response::ScriptGrants { grants: vec![] }
         }
+        Request::CatalogGeneration => Response::CatalogGeneration { generation: 0 },
+        Request::ListDefaultApps { .. } => Response::DefaultApps { apps: vec![] },
+        Request::SetDefaultApp { .. } => Response::Ack,
         Request::ListFonts => Response::Fonts {
             fonts: vec![],
             categories: vec![],

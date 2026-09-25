@@ -604,7 +604,8 @@ impl ExtensionPage {
 }
 
 /// A `Color` as drawn: `#rrggbb[aa]`, or one of Raycast's named colours.
-fn color_of(color: &compass_extension_api::view::Color) -> Option<iced::Color> {
+#[must_use]
+pub fn color_of(color: &compass_extension_api::view::Color) -> Option<iced::Color> {
     use compass_extension_api::view::Color;
     let rgb = |r, g, b| Some(iced::Color::from_rgb8(r, g, b));
     match color {

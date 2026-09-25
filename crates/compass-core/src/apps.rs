@@ -415,12 +415,17 @@ impl AppIndexBuilder {
     /// because one `.desktop` file on the system is broken is not shippable.
     #[must_use]
     pub fn build(self) -> AppIndex {
+        let scan = AppIndexBuilder {
+            extension_dirs: Vec::new(),
+            ..self.clone()
+        };
         let mut items: Vec<AppItem> = Vec::new();
         let mut skipped: Vec<SkippedEntry> = Vec::new();
         // Desktop file id -> the file that claimed it. Claiming happens before any visibility
         // check, so a higher-precedence Hidden entry really does delete the lower-precedence one.
         let mut claimed: HashMap<String, PathBuf> = HashMap::new();
         let mut by_key: HashMap<String, usize> = HashMap::new();
+        let mut hidden: Vec<AppItem> = Vec::new();
 
         for dir in &self.dirs {
             let scan = scan_desktop_files(dir);
@@ -444,7 +449,14 @@ impl AppIndexBuilder {
                 }
                 claimed.insert(id.to_owned(), path.to_path_buf());
 
-                self.index_file(&file, &self.desktops, &mut items, &mut by_key, &mut skipped);
+                self.index_file(
+                    &file,
+                    &self.desktops,
+                    &mut items,
+                    &mut by_key,
+                    &mut skipped,
+                    &mut hidden,
+                );
             }
         }
 
@@ -502,6 +514,8 @@ impl AppIndexBuilder {
             rhai_scripts: Vec::new(),
             root_config: crate::root_items::RootConfig::default(),
             extension_dirs: self.extension_dirs,
+            scan,
+            hidden,
         }
     }
 
@@ -512,6 +526,7 @@ impl AppIndexBuilder {
         items: &mut Vec<AppItem>,
         by_key: &mut HashMap<String, usize>,
         skipped: &mut Vec<SkippedEntry>,
+        hidden: &mut Vec<AppItem>,
     ) {
         let id = file.id();
         let path = file.path();
@@ -554,6 +569,25 @@ impl AppIndexBuilder {
                 path: path.to_path_buf(),
                 reason: SkipReason::NotShown,
             });
+            // `NoDisplay` or another desktop's: not in the root, but still an
+            // installed application, which Browse Apps lists as "Hidden".
+            // `Hidden=true` is a deletion, as the C++ scan's `deleted()`.
+            if !entry.hidden() && entry.is_application() && entry.exec().is_some() {
+                let launchable = entry
+                    .try_exec()
+                    .is_none_or(|try_exec| self.resolves(try_exec));
+                let name = entry.name().to_owned();
+                hidden.push(AppItem {
+                    key: id.to_owned(),
+                    desktop_id: id.to_owned(),
+                    action_id: None,
+                    action_index: None,
+                    name: name.clone(),
+                    app_name: name,
+                    entry: Arc::new(entry),
+                    launchable,
+                });
+            }
             return;
         }
 
@@ -688,6 +722,13 @@ pub struct AppIndex {
     root_config: crate::root_items::RootConfig,
     /// Where installed extensions are looked for, kept for a rescan.
     extension_dirs: Vec<PathBuf>,
+    /// How the applications were scanned, kept for a rescan
+    /// ([`AppIndex::application_scan`]); without the extension directories,
+    /// which [`AppIndex::rescan_extensions`] covers.
+    scan: AppIndexBuilder,
+    /// Applications installed but not shown (`NoDisplay`, or for another
+    /// desktop), in scan order; never in the root.
+    hidden: Vec<AppItem>,
 }
 
 /// One row of a root search over applications and commands.
@@ -763,7 +804,9 @@ impl AppIndex {
             // removed setting cannot survive a subsequent configuration merge.
             root.meta.alias = None;
             root.meta.shortcut = None;
-            root.merge_config(config, false);
+            let default_disabled = crate::commands::by_id(&root.id)
+                .is_some_and(crate::commands::BuiltinCommand::default_disabled);
+            root.merge_config(config, default_disabled);
         }
     }
 
@@ -899,6 +942,30 @@ impl AppIndex {
         .collect()
     }
 
+    /// The root row an entrypoint id names, with the metadata the
+    /// configuration last applied gave it (alias, favourite, enabled).
+    #[must_use]
+    pub fn root(&self, entrypoint_id: &str) -> Option<&crate::root_items::RootItem> {
+        self.roots.iter().find(|root| root.id == entrypoint_id)
+    }
+
+    /// The key an entrypoint's launches are recorded under: an
+    /// application's desktop key, anything else's own id.
+    #[must_use]
+    pub fn history_key(&self, entrypoint_id: &str) -> String {
+        self.position_by_entrypoint(entrypoint_id).map_or_else(
+            || entrypoint_id.to_owned(),
+            |position| self.items[position].key().to_owned(),
+        )
+    }
+
+    /// Every root item: applications, builtin commands, extension commands,
+    /// shortcuts and scripts, disabled ones included, in index order.
+    #[must_use]
+    pub fn roots(&self) -> &[crate::root_items::RootItem] {
+        &self.roots
+    }
+
     /// Installed extensions' commands, in the registry's precedence order.
     #[must_use]
     pub fn extensions(&self) -> &[crate::extension_commands::ExtensionCommand] {
@@ -1008,6 +1075,68 @@ impl AppIndex {
             root.merge_config(&self.root_config, false);
             self.roots.push(root);
         }
+    }
+
+    /// The directories applications are scanned from, highest precedence
+    /// first: what `AppService` watches (`reinstallWatches(searchPaths())`).
+    #[must_use]
+    pub fn application_dirs(&self) -> &[PathBuf] {
+        &self.scan.dirs
+    }
+
+    /// A builder that scans the applications again exactly as this index
+    /// was scanned, without the extensions. Built off the lock and handed to
+    /// [`AppIndex::replace_applications`], so a rescan never holds up a query.
+    #[must_use]
+    pub fn application_scan(&self) -> AppIndexBuilder {
+        self.scan.clone()
+    }
+
+    /// Scans the application directories again and takes what is installed
+    /// now, as `AppService::scanSync` does after a directory changed.
+    pub fn rescan_applications(&mut self) {
+        let fresh = self.application_scan().build();
+        self.replace_applications(fresh);
+    }
+
+    /// Takes `fresh`'s applications in place of this index's, keeping every
+    /// other root (commands, extensions, shortcuts, scripts) and the
+    /// configuration last applied, which the new application rows get too:
+    /// an alias or a disabled flag survives an application being reinstalled.
+    pub fn replace_applications(&mut self, fresh: AppIndex) {
+        let mut roots: Vec<crate::root_items::RootItem> = fresh
+            .roots
+            .into_iter()
+            .take(fresh.root_indices.len())
+            .collect();
+        for root in &mut roots {
+            root.merge_config(&self.root_config, false);
+        }
+        roots.extend(
+            self.roots
+                .drain(self.root_indices.len().min(self.roots.len())..),
+        );
+        self.roots = roots;
+        self.root_indices = fresh.root_indices;
+        self.items = fresh.items;
+        self.by_key = fresh.by_key;
+        self.skipped = fresh.skipped;
+        self.hidden = fresh.hidden;
+    }
+
+    /// Installed applications the root does not show: `NoDisplay`, or
+    /// meant for another desktop. What `displayable()` is false for, and
+    /// what Browse Apps' `showHidden` adds.
+    #[must_use]
+    pub fn hidden_applications(&self) -> &[AppItem] {
+        &self.hidden
+    }
+
+    /// Where installed extensions are looked for, highest precedence first:
+    /// what the registry watches.
+    #[must_use]
+    pub fn extension_dirs(&self) -> &[PathBuf] {
+        &self.extension_dirs
     }
 
     /// Scans the extension directories the index was built with again and

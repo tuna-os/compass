@@ -54,6 +54,15 @@ pub fn evaluate(query: &str, found_other: bool) -> Option<Answer> {
             query
         }
     };
+    compute(question)
+}
+
+/// The answer to `question`, asked without the root list's gate: the
+/// calculator history's live result, whose own gate is
+/// [`crate::calculator_history::live_calc`].
+#[must_use]
+pub fn compute(question: &str) -> Option<Answer> {
+    let question = question.trim();
     if question.is_empty() {
         return None;
     }
@@ -75,9 +84,46 @@ pub fn evaluate(query: &str, found_other: bool) -> Option<Answer> {
     })
 }
 
+/// Whether `question` converts between units (`5 ft to m`, `3 kg in lb`,
+/// `100 C as F`) rather than computing: the C++ backends' `CONVERSION`
+/// answer type, which fend does not report, read from its conversion
+/// keywords.
+#[must_use]
+pub fn is_conversion(question: &str) -> bool {
+    question.contains("->")
+        || question
+            .split_whitespace()
+            .any(|word| matches!(word.to_lowercase().as_str(), "to" | "in" | "as"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversions_are_told_from_arithmetic_by_their_keyword() {
+        assert!(is_conversion("5 ft to m"));
+        assert!(is_conversion("3 kg IN lb"));
+        assert!(is_conversion("100 °C -> °F"));
+        assert!(is_conversion("0x10 as decimal"));
+        assert!(!is_conversion("2+2*3"));
+        assert!(!is_conversion("10% of 200"));
+        assert!(
+            !is_conversion("tonne + 1 kg"),
+            "a word containing 'to' is not the keyword"
+        );
+    }
+
+    #[test]
+    fn compute_answers_without_the_root_lists_gate() {
+        assert_eq!(
+            compute("pi").map(|a| a.answer).as_deref(),
+            Some("approx. 3.1415926536")
+        );
+        assert_eq!(compute(" 1+1 ").map(|a| a.question).as_deref(), Some("1+1"));
+        assert_eq!(compute(""), None);
+        assert_eq!(compute("firefox"), None);
+    }
 
     fn answer(query: &str) -> Option<String> {
         evaluate(query, false).map(|a| a.answer)
