@@ -1122,6 +1122,9 @@ async fn expand_shortcut(
         (shortcut.clone(), state.shell.clone())
     };
     let mut reserved = crate::shortcuts::Reserved::default();
+    if crate::shortcuts::needs_selection(&shortcut) {
+        reserved.selection = primary_selection(shell.clone()).await;
+    }
     if crate::shortcuts::needs_clipboard(&shortcut) {
         match shell {
             Some(shell) => match shell.clipboard().await {
@@ -1133,6 +1136,29 @@ async fn expand_shortcut(
     }
     let expanded = compass_core::shortcut::expand(&shortcut.link, arguments, &reserved);
     Ok((shortcut, expanded))
+}
+
+/// The selected text, read where `getSelectedText` reads it: the primary
+/// selection over data-control on a wlroots compositor, else through the
+/// Shell extension on GNOME. `None` when nothing is selected or there is
+/// nowhere to read from, which a link expands to nothing, as the C++'s does.
+async fn primary_selection(shell: Option<Arc<compass_shell::ShellClient>>) -> Option<String> {
+    if crate::wlroots::session().is_some_and(|wlroots| wlroots.capabilities.data_control) {
+        return tokio::task::spawn_blocking(compass_wayland::clipboard::read_primary_text)
+            .await
+            .ok()?
+            .unwrap_or_else(|error| {
+                tracing::info!(%error, "could not read the primary selection");
+                None
+            });
+    }
+    match shell?.primary_selection().await {
+        Ok(text) => text,
+        Err(error) => {
+            tracing::info!(%error, "could not read the primary selection");
+            None
+        }
+    }
 }
 
 /// Opens a shortcut, as `OpenShortcutAction::execute` does: expand, find the

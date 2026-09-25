@@ -169,6 +169,59 @@ fn on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extensi
 }
 
 #[test]
+fn on_sway_a_shortcut_expands_the_selected_text() {
+    use std::io::BufRead;
+    let Some(sway) = Sway::start("on_sway_a_shortcut_expands_the_selection") else {
+        return;
+    };
+    let engine = Engine::start(&sway, "sway");
+    let Response::Shortcuts { shortcuts } = engine.request(Request::SaveShortcut {
+        id: None,
+        name: "Define".into(),
+        icon: "icon://omnicast/link".into(),
+        url: "https://example.com/?q={selection}&also={selected}".into(),
+        app: "default".into(),
+    }) else {
+        panic!("the shortcut was not saved");
+    };
+    let id = shortcuts[0].id.clone();
+    let expand = || {
+        engine.request(Request::ExpandShortcut {
+            id: id.clone(),
+            arguments: Vec::new(),
+        })
+    };
+
+    // Nothing selected: the placeholders expand to nothing, as the C++'s do.
+    assert_eq!(
+        expand(),
+        Response::Text {
+            text: "https://example.com/?q=&also=".into()
+        }
+    );
+
+    let mut holder = sway.run_child(
+        "child_holds_a_primary_selection",
+        "select",
+        &[("COMPASS_WLR_TEXT", "selected words")],
+    );
+    let mut lines = std::io::BufReader::new(holder.stdout.take().unwrap()).lines();
+    assert!(
+        lines.any(|line| line.is_ok_and(|line| line.contains("CHILD-OK"))),
+        "the selection holder never started"
+    );
+    let expanded = expand();
+    let _ = holder.kill();
+    let _ = holder.wait();
+    assert_eq!(
+        expanded,
+        Response::Text {
+            text: "https://example.com/?q=selected words&also=selected words".into()
+        }
+    );
+}
+
+#[test]
 fn on_sway_a_gnome_desktop_name_keeps_the_gnome_path() {
     // The family decision puts GNOME first by name, so even a compositor with
     // every wlroots protocol is not driven over Wayland when the session says
