@@ -216,8 +216,10 @@ installed:
 * Allowing covers the capabilities listed at the time. A script that later starts declaring
   another one is asked about that one when next opened; one it stops declaring is no longer granted.
 * Answers are kept in `$XDG_CONFIG_HOME/compass/script-grants.json`
-  (`{"scripts": {"script.quick-notes": ["clipboard.write", …]}}`). Delete an entry, or the file, to
-  withdraw it; it is read again whenever a script is opened, so no restart is needed.
+  (`{"scripts": {"script.quick-notes": ["clipboard.write", …]}}`). The launcher's **Script
+  Permissions** command lists what each script was allowed and revokes it (Enter); deleting an
+  entry, or the file, does the same by hand. It is read again whenever a script is opened, so no
+  restart is needed, and a view open on a script whose permissions were revoked closes.
 
 Capability names this build does not know are never granted and never asked about.
 

@@ -412,6 +412,22 @@ pub struct RootConfig {
     pub fallbacks: Vec<String>,
 }
 
+/// The heading over the fallback commands: `Use "<query>" with...`, the
+/// query cut at 30 characters with `...` after it, as
+/// `RootFallbackSection::sectionName` (which counts bytes, and so can cut a
+/// character in half).
+#[must_use]
+pub fn fallback_heading(query: &str) -> String {
+    const MAX_QUERY_LEN: usize = 30;
+    let shown = if query.chars().count() > MAX_QUERY_LEN {
+        let cut: String = query.chars().take(MAX_QUERY_LEN).collect();
+        format!("{cut}...")
+    } else {
+        query.to_owned()
+    };
+    format!("Use \"{shown}\" with...")
+}
+
 /// An entrypoint id: `provider:entrypoint`.
 ///
 /// The C++ `EntrypointId` serialises with a colon and splits on the **first**

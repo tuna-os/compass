@@ -192,16 +192,16 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | 🟡 | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | 🟡 | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
@@ -257,7 +257,8 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 - the sibling modules below (the `DesktopFile` layer itself is now ported as
   `compass_xdg::desktop_file`: `relativeId`, `fromId`'s two-candidate lookup, and the standalone
   filename id, with 24 tests and 16 controls);
-- the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
+- the sibling modules `env`, `file`, `mime`, `special` (`bookmark` and `file-uri`, reading and
+  writing, are `compass_xdg::bookmarks`).
 
 
 #### An unresolved disagreement: two desktop file id schemes
@@ -340,8 +341,9 @@ index-minus-one arithmetic, and the remembered choice that is restored only when
 the two headings with their counts, the search that scores the display name alone, the missing-glyph
 placeholder and the colour-font rule that leaves an emoji font untinted, and the action panel whose
 *primary* action is Preview rather than apply. The thirty-three-category table itself belongs to
-`src/services/font-service`, which is its own row. Still C++-only: the grid widget and the specimen
-view.
+`src/services/font-service`, which is its own row. The grid (six columns), the specimen view,
+"Set as vicinae font" and the remembered category are in the launcher; what differs is under
+"Browse Fonts" below.
 
 **`src/builtins/developer` → `compass-core::create_extension`** — the Create Extension form's
 validation and what follows it: all six checks run every time so every mistake shows at once, the
@@ -356,7 +358,8 @@ other when it does not match), the sort that only happens when something is type
 description weights with the id *not* searchable, the `Default theme description` fallback
 subtitle, the eight palette swatches in the row's order, the action panel's two conditional
 actions, and the live preview — selecting a row applies the theme and leaving the view puts the
-configured one back. Still C++-only: the view host and the swatch rendering.
+configured one back. The view, the swatches and the theme files are in the launcher and
+`compass-core::theme_file`; what differs is under "Set Theme" below.
 
 **`src/builtins/power-management` → `compass-core::power_commands`** — the catalogue and the run
 plan are ported: eight commands in registration order with their titles, long descriptions and
@@ -687,7 +690,7 @@ comparison. Rebuilding the index is written and deliberately unregistered in the
 saying the indexer's timed sweeps and deleting its cache directory have the same effect; the port
 keeps it unregistered for the same reason, and a test pins that.
 
-Still C++-only: the indexer behind the search, the file preview in the detail pane, the drag payload
+Still C++-only: the indexer behind the search, the drag payload
 and the per-platform preference sets.
 
 **`src/builtins/media` → `compass-core::media_commands`** — which commands exist on which platform,
@@ -725,7 +728,10 @@ Two things are ported as they are rather than tidied:
   neither negates its argument, so the defaults are the only thing carrying the direction. Pinned
   rather than quietly corrected.
 
-Still C++-only: the MPRIS provider, the audio provider, and the Now Playing view.
+The MPRIS provider is `compass-media`, the audio provider the ported `pactl` adapter, and Now
+Playing a launcher view (`compass-ui::media_page`, IPC v16 `ListMediaPlayers` and
+`ControlMediaPlayer`); the `player` and `step` arguments reach the engine as
+`RunMediaCommandWith`. What still differs is declared under "Media commands" below.
 
 **`src/builtins/wm` → `compass-core::window_switcher`** — which commands the window-management
 extension offers and how a window and a workspace are described in the list. Switching windows is
@@ -2031,9 +2037,9 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`). | The launcher has hidden by then and has no HUD, so the engine posts the same sentence as a transient desktop notification (1.5 s, `transient` hint). Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
-| 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players; Turn Volume Up/Down take an optional `step`. | Not yet: the default player is always used (last acted on, else playing, else first, as `defaultPlayer`), and the step is always ±5. | `the_default_player_is_the_last_then_the_playing_then_the_first` |
+| 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players (title 1.0, artist 0.8, identity 0.6); Turn Volume Up/Down take an optional `step`. Both are typed inline beside the search field. | The same matching and the same refusals ("No media player matches …", "Invalid step value"), with no argument taking the default player (last acted on, else playing, else first) or ±5. The launcher has no inline argument fields, so Enter runs the command at once and the row's action panel offers "Choose player…" / "Choose step…", a one-field form. | `a_player_argument_picks_the_player_and_now_playing_lists_and_drives_them`, `a_media_command_runs_with_the_player_chosen_in_its_form`, `a_volume_command_runs_pactl_with_the_cpp_arguments` |
 | 3 | Volume goes through `pactl`. | The same `pactl` invocations, through `flatpak-spawn --host` inside the Flatpak, with the C++'s 3 s timeout. `libpulse-binding` was considered and not taken: a C build dependency and a threaded mainloop for five calls the ported `pactl` adapter already makes. | `a_volume_command_runs_pactl_with_the_cpp_arguments` |
-| 4 | Now Playing. | Not yet: it needs a view. | — |
+| 4 | Now Playing lists the players ("Players", fuzzy over title, artist and name), with Playing/Paused accessories, the player application's icon, and Play or Pause, Next Track and Previous Track; it reloads on `playersChanged`. | The same list, filter, accessories and actions (Enter is the first); a row shows the player's initial rather than its application's icon, and the list is asked again 300 ms after each action rather than on a bus signal, so a player changed from elsewhere shows when the view is next opened. | `now_playing_lists_the_players_and_controls_the_selected_one`, `a_player_is_found_by_track_artist_or_name_and_stays_selected` |
 
 ### Search Files — what the port does not have yet
 
@@ -2047,12 +2053,12 @@ differs:
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | An index query while the indexer is not running answers an empty list. | Refused with `Unsupported` and a sentence saying the indexer is off or missing, which the launcher shows; an empty list would read as "no such file". | `search_files_without_indexing_says_the_index_is_unavailable`, `an_index_query_without_an_indexer_says_so` |
-| 2 | The category filter is a dropdown beside the search field, stored per command. | The wire carries it (`SearchFiles.category`, the filter's untranslated key) and the engine and indexer apply it; the launcher has no dropdown yet and always sends none. | `search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query` |
-| 3 | A detail pane previews the selected file (name, path, MIME type, modified time, image or text). | Not yet. Rows carry the folder (home as `~`) as their subtitle instead, where the C++ row has none. | `the_subtitle_is_the_folder_with_home_folded` |
+| 2 | The category filter is a dropdown beside the search field, stored per command (`fileCategory`) and restored when it is not "All". | A dropdown over the list with the same keys, sent as `SearchFiles.category` and applied by the engine and the indexer; remembered with the same rule in the launcher's state file (`view_memory`), as Browse Fonts' is, rather than the keyring-backed command storage. | `search_files_filters_by_a_remembered_category_and_previews_the_selection`, `search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query` |
+| 3 | A detail pane previews the selected file (name, path, MIME type, modified time, image or text). | The same pane (`compass_ui::file_preview`, shared with dmenu's quick look): the path with home folded, the modified time as `QDateTime::toString()` writes it, an image drawn or the first 10 KiB of a text file. Rows also carry the folder as their subtitle, where the C++ row has none. The MIME type comes from the extension. | `search_files_filters_by_a_remembered_category_and_previews_the_selection`, `a_text_file_shows_its_start_and_an_image_itself` |
 | 4 | The action panel: Open with…, Run executable (AppImage), Set as wallpaper, Create shortcut, Paste, Copy file / path / name / MIME type. | Only the primary action (open with the default application for the file's MIME type) and Show in file browser. | `enter_opens_the_file_and_ctrl_enter_shows_it_in_the_file_browser` |
-| 5 | Opening a file records it in `recently-used.xbel`, so it tops the empty query next time. | Not recorded: `compass-xdg::bookmarks` reads the file and does not write it (see its module doc). | — |
-| 6 | Show in file browser selects the file through `org.freedesktop.FileManager1`. | Opens the folder it is in with the `inode/directory` handler, as `EngineApps::show_in_file_browser` does for extensions. | — |
-| 7 | Search Files is a fallback command: a root query nothing matches offers it. | The launcher has no fallback rows yet; the command is opened from root search like any other. | — |
+| 5 | Opening a file records it in `recently-used.xbel` (`recordAccess`: `vicinae` added as an application, the MIME type set, the whole file written back owner-only through a temporary file), so it tops the empty query next time. | The same, through `compass_xdg::bookmarks::record_access` (written with `xmlwriter`); as in the C++, elements the bookmark model does not hold are not written back. | `recording_an_access_adds_then_bumps_and_keeps_the_rest`, `search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly` |
+| 6 | Show in file browser selects the file through `org.freedesktop.FileManager1`. | The same `ShowItems` call (a `zbus` proxy, 3 s timeout), for extensions' `showInFileBrowser` too; when nothing on the bus implements it, the folder is opened with the `inode/directory` handler. | `show_in_file_browser_asks_file_manager1_to_select_the_file` |
+| 7 | Search Files is a fallback command: a non-empty query lists the `fallbacks` (default `["files:search"]`) under `Use "<query>" with...`, and choosing one opens it searching for the query. | The same section and heading after the results, from `fallbacks` (Search Files by its C++ id or its Compass one); the C++ hides the section while a file search it runs in root search is still answering, which Compass's root search does not do. | `a_query_offers_search_files_as_a_fallback_that_searches_for_it`, `search_files_is_the_one_fallback_by_either_id` |
 | 8 | Scan progress (`scanStatusChanged`) feeds a status indicator. | The client tracks scans, and nothing shows them. | — |
 | 9 | Recent files come from `$XDG_DATA_HOME/recently-used.xbel`. | The same — which inside the Flatpak is the sandbox's own data home, not the host's, so there the empty query falls through to "Recently Modified" from the index. | — |
 
@@ -2103,7 +2109,7 @@ them and three places where the answer an extension gets differs.
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | An overlay names the provider and waits for "Open browser". | The browser opens at once, with the default `x-scheme-handler/https` application, and the view shows a toast ("Continue in your browser to connect …") until the redirect arrives; then "Connected to …" or the provider's refusal. | `an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it` |
-| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v12); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. Every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
+| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v12); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. The store's extensions links open a detail page (IPC v16 `OpenDeeplink`, "Extension Store and Raycast Store" #13); every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
 | 3 | An authorize URL without a `state` waits for ever. | Refused at once: nothing could match a redirect to it. | `a_url_without_a_state_is_refused_rather_than_waited_on` |
 | 4 | A redirect with `error=` leaves the request waiting. | The extension's `authorize()` rejects with `error_description` (else `error`). | `every_redirect_shape_raycast_uses_parses` |
 ### Shortcuts — what the port does not have yet
@@ -2231,8 +2237,8 @@ nothing printed, as the C++ does. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | `--width`/`--height` resize the window for the list, and `--navigation-title` sets its title. | Carried to the window and not applied: the launcher window has one size and no navigation title yet. (A width under 500 still turns quick look and the footer off, as in the C++.) | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
-| 2 | Quick look previews a highlighted file (name, path, MIME type, image or text); `--no-metadata` hides its metadata; `--no-footer` hides the status bar. | No preview pane or footer yet; `--no-quick-look` only drops the folder subtitle. | `a_path_shows_its_name_and_folder` |
+| 1 | `--width`/`--height` resize the window for the list (`requestWindowSize`, the side not given keeping the configured one), and `--navigation-title` sets the title in the status bar. | The same: the card takes the asked size and the window is resized around it (`window::resize`, or a size change on a layer surface), and back when a list without a size replaces it; the title is the footer's left side. A width under 500 turns quick look and the footer off, as in the C++. | `a_dmenu_size_resizes_the_window_until_a_list_without_one` |
+| 2 | Quick look previews a highlighted file (name, path, MIME type over the image, the first 10 KiB of a text file up to 2 MiB, or the file's icon); `--no-metadata` hides the metadata; `--no-footer` hides the status bar; with quick look off a path row shows its folder instead. | The same pane beside the list (`compass_ui::file_preview`), the same limits and flags, and a footer with the title, the primary action and the panel chord. The MIME type comes from the extension (`mime_guess`), not from shared-mime-info's content sniffing, and a file that is neither image nor text shows its type where the C++ draws its icon. | `quick_look_previews_a_selected_file_and_the_size_is_asked_for`, `a_path_shows_its_name_and_folder`, `a_text_file_shows_its_start_and_an_image_itself` |
 | 3 | A path entry shows its file icon. | The initial badge, like every row without resolved art. | — |
 | 4 | Without a running launcher the C++ server starts showing its own window. | Refused like `vicinae show` is, when no window is attached. | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
 
@@ -2246,8 +2252,8 @@ the selected theme through the engine (`SetTheme`, IPC v13), which writes it to 
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | The themes are TOML files found in the theme directories, each with its own palette, icon and path. | Compass's curated themes (System, Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized), which is what the launcher can draw; user theme files are not read. | `the_configured_theme_is_its_own_section_and_the_filter_is_fuzzy` |
-| 2 | The action panel opens the theme file in the text editor, and copies its id or path; rows show the palette's colour dots. | Enter keeps the theme; no other actions or swatches yet. | `set_theme_keeps_the_chosen_theme` |
+| 1 | The themes are TOML files found in the theme directories (`$XDG_DATA_HOME/vicinae/themes`, then each `$XDG_DATA_DIRS/vicinae/themes`, the first id winning), each with its own palette, icon and path, over the built-in Vicinae Inkwell and Sandstone. | Compass's curated themes (System, Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized), then the same theme files, read by `compass_core::theme_file` with the C++'s rules (`[meta]`'s three strings, `colors.<key>` references, `opacity`/`lighter`/`darker`, `inherits`, circular references refused) and resolved to the launcher's nine palette slots through the ported `deriveSemantic` steps and the two built-in bases, which are inheritance bases here rather than listed themes. Colours are hex only: an SVG colour name (`red`) is a diagnostic, where `QColor` accepts it. The engine and `vicinae theme set`/`list` read the same directories, so a file's id is a theme everywhere. The files are read when Set Theme opens rather than watched. | `a_theme_file_is_read_and_resolved_with_its_derivations`, `a_child_inherits_from_its_parent_and_bad_files_are_refused`, `the_first_directory_wins_and_the_bases_cannot_be_replaced`, `theme_files_are_offered_after_the_curated_themes`, `set_theme_keeps_the_theme_in_the_configuration` |
+| 2 | The action panel opens the theme file in the text editor, and copies its id or path; rows show the palette's colour dots. | The same panel (`theme_picker::action_panel`: Set theme, Open theme file, Copy ID, Copy path), the file opened with its default application; a theme file's row shows its eight swatches. The curated themes have no file and no swatches. | `set_theme_keeps_the_chosen_theme` |
 | 3 | Choosing a theme applies it to every window at once through the theme service. | This window applies it at once; another launcher process picks it up from the configuration when it next reads it. | `set_theme_keeps_the_theme_in_the_configuration` |
 
 ### Create Extension — what the port does not have yet
@@ -2277,9 +2283,9 @@ panel offers "Preview font" and "Copy font family". What differs:
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | A family's scripts come from `QFontDatabase::writingSystems`, which on Linux is fontconfig's language coverage. | Read from the font's character map (`ttf-parser`), one or two sample characters per script (`font_service::SCRIPT_SAMPLES`), over the fonts `fontdb` finds on the fontconfig path. A font whose coverage claims and cmap disagree can land in a different category. | `a_font_file_is_found_and_classified_by_what_it_covers`, `browse_fonts_lists_families_and_previews_one` |
-| 2 | A six-column grid of glyph tiles. | A list: glyph, name, and its category as the subtitle. | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
-| 3 | "Set as vicinae font" sets the launcher's font. | Not offered: the launcher follows the desktop's interface font and has no font setting yet. | — |
-| 4 | The chosen category is remembered across openings (`fontCategory` in local storage). | Kept while the launcher is shown (across a preview); a new opening starts at "All". | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
+| 2 | A six-column grid of glyph tiles. | The same (`font_browser::COLUMNS`): each tile the glyph in the family over its name; arrows move along a row and between rows keeping the column (`fonts_page::grid_step`). | `the_grid_moves_by_tile_and_by_row`, `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font` |
+| 3 | "Set as vicinae font" merges `font.normal.family` into `vicinae.json`, and the launcher redraws in it. | The same write (IPC v16 `SetFont`, keeping the rest of `font`), and this window switches at once. A configured family now wins over the desktop's interface font at start, which the launcher then stops following; `auto` and `system` mean the desktop's (the C++'s `auto` is its bundled Inter, which Compass does not ship). | `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font`, `set_theme_keeps_the_theme_in_the_configuration` |
+| 4 | The chosen category is remembered across openings (`fontCategory` in the command's local storage), restored only when some font still has it. | Remembered across openings and restarts with the same restore rule (`index_for_saved`), in `$XDG_STATE_HOME/vicinae/compass-view-state.json` rather than the command's local storage: that is the engine's encrypted database, which needs the login keyring, and a filter is not a secret. | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `a_value_survives_a_new_process` |
 | 5 | The specimen is Markdown rendered in the family. | The same Markdown read back line by line (heading, regular, bold, italic, rule) and drawn in the family; bold and italic ask the renderer for that face, which synthesises nothing when the family has none. | `a_specimen_reads_back_as_lines` |
 
 ### Rhai scripts — a Compass addition, with no C++ counterpart
@@ -2290,7 +2296,13 @@ is a divergence from the C++ so much as a boundary of it. Their root entries use
 the C++ engine has no item for and ignores. They are opened as extension view sessions over IPC
 v14 (`ListRhaiScripts`, then the v8 `RunExtensionCommand` / `ExtensionView` / `ExtensionEvent`
 requests); a v13 launcher does not list them. A script's `paste` on a wlroots compositor copies
-and does not type, as an extension's paste does there ("wlroots" below).
+and does not type, as an extension's paste does there ("wlroots" below). A script's root row draws
+its manifest `icon` (a builtin icon's name) when that icon is installed, and its initial otherwise.
+What a user allowed their own scripts is reviewed and revoked in the launcher's **Script
+Permissions** command (IPC v16 `ListScriptGrants`, `RevokeScriptGrant`), which rewrites
+`script-grants.json`, rebuilds the script without the grant and ends a view open on it, so the next
+opening asks again (`script_permissions_are_listed_and_revoking_asks_again`,
+`script_permissions_lists_what_was_allowed_and_revokes_it`).
 
 ### Extension Store and Raycast Store — what the port does not have yet
 
@@ -2316,15 +2328,15 @@ root search forgets it. What differs:
 | 2 | Install checks only that `package.json` exists. | It must also parse as an extension manifest, and the id built from the store's name must be one ordinary directory name (`store.vicinae../x` is refused). | `ids_that_would_leave_the_directory_are_refused` |
 | 3 | No update detection. | An install leaves `.compass-store.json` beside the manifest with the store's version key (the Vicinae store's `checksum`, the Raycast store's `commit_sha`); a row whose store key differs says "Update available", and the detail page offers "Update extension" (a reinstall) first. An extension installed by the C++ engine, by hand or by Suite 1's harness has no marker and is never called out of date: the bundles' own timestamps land seconds before the store's publication time, so guessing from file times would flag every fresh install. | `only_a_marked_install_with_a_different_build_is_out_of_date`, `the_raycast_store_badges_compatibility_and_notices_an_update` |
 | 4 | "Verify" is not attempted. | Nor is it possible beyond the CRC: neither store publishes a signature, and the Vicinae store's `checksum` matched no hash of the archive or of its `package.json` (SHA-256 and MD5 tried on a live bundle), so it is used only as a version key. | — |
-| 5 | The detail page links the README (`readmeUrl`); the Vicinae store shows no screenshots. | The README is fetched (a GitHub `tree/`/`blob/` page is rewritten to its `raw.githubusercontent.com` text, 512 KiB at most) and rendered below the details in the launcher's Markdown view; a failed fetch leaves it out. Its relative image links are not resolved, and Markdown images are not drawn. Raycast screenshots are fetched through the remote-image cache and drawn below. | `a_github_readme_page_is_fetched_as_raw_text`, `the_detail_names_everything_the_qml_view_shows` |
-| 6 | Rows show an author avatar, a download count, an installed check and a coloured compatibility dot. | One line of text at the row's right: "Installed" or "Update available", "↓ 1.1K", and the tier's name. No avatar. | `the_accessory_says_installed_or_out_of_date_and_the_tier` |
+| 5 | The detail page links the README (`readmeUrl`); the Vicinae store shows no screenshots. | The README is fetched (a GitHub `tree/`/`blob/` page is rewritten to its `raw.githubusercontent.com` text, 512 KiB at most) and rendered below the details in the launcher's Markdown view; a failed fetch leaves it out. Its relative image links, Markdown (found with `pulldown-cmark`) and `<img src>`, are made absolute against the README's URL, `<img>` tags become Markdown images, and the images are fetched through the remote-image cache and drawn in place. Raycast screenshots are drawn below. | `a_github_readme_page_is_fetched_as_raw_text`, `a_readme_s_relative_images_are_made_absolute_and_html_ones_drawable` |
+| 6 | Rows show an author avatar, a download count, an installed check and a coloured compatibility dot. | The same at the row's right: "Installed" or "Update available" and "↓ 1.1K" as text, the tier as a coloured dot (green, orange, red, grey) with its name, and the author's avatar (IPC v16 `StoreEntry.author_avatar`) once fetched; square rather than round, as the renderer does not clip an image to a circle. | `the_accessory_says_installed_or_out_of_date_and_the_tier`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
 | 7 | The first opening shows an intro page (`alwaysShowIntro`, `introCompleted` in command storage). | No intro: the store opens straight to its list. | — |
-| 8 | "Uninstall Extension" is on every row's panel, and fails for one that is not installed. | Offered only on an installed row. The confirmation is the C++'s ("Are you sure?" and its message), answered with Enter or Escape under the list rather than in a dialog. | `the_extension_store_installs_into_root_search_and_uninstalls_after_asking` |
+| 8 | "Uninstall Extension" is on every row's panel, and fails for one that is not installed. | Offered only on an installed row. The confirmation is the C++'s alert ("Are you sure?" and its message) as a dialog over the page with Cancel and Uninstall buttons, also answered with Enter or Escape. | `the_extension_store_installs_into_root_search_and_uninstalls_after_asking`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
 | 9 | A failed list fetch shows a toast and leaves the spinner running (`FAILED_FETCH_CLEARS_LOADING`). | The failure is said under the list (or in place of it, when nothing has loaded), and loading stops. | `a_failure_after_rows_keeps_them` |
 | 10 | The list is fetched with `PreferCache` and reused while Qt's disk cache keeps it. | The Vicinae list is kept in memory for ten minutes; the Raycast pages for the session, as the C++. | — |
 | 11 | The Raycast API is always `backend.raycast.com`. | `COMPASS_RAYCAST_API_URL` overrides it, as `VICINAE_API_URL` already overrides the Vicinae API, so tests serve both stores locally. | `raycast_store::api_base_url` |
 | 12 | Only the store builtins' links open (`openTarget`). | `OpenUrl` opens any `http(s)` link with the default browser (anything else is refused), and the launcher now uses it for links clicked in Markdown, including an extension view's, which were only logged before. | `only_web_urls_are_opened` |
-| 13 | Deep links (`vicinae://extensions/<author>/<name>` into a detail host) exist. | Not yet: the detail page is reached from the list. | — |
+| 13 | Deep links (`vicinae://extensions/<author>/<name>` into a detail host; `raycast://` and `com.raycast:` into the Raycast store's) exist, and a link with the wrong number of segments answers the usage sentence. | The same: `vicinae deeplink <url>` (or a bare `vicinae <url>`) sends IPC v16 `OpenDeeplink`, the engine pushes `WindowCommand::Deeplink` to the window, which opens the detail page; Escape goes to that store's list rather than the root. | `an_extensions_link_names_the_store_author_and_extension`, `an_extensions_deeplink_goes_to_the_window_and_a_malformed_one_is_refused`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 

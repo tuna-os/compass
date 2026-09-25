@@ -35,6 +35,8 @@ serde = { workspace = true }
 ureq.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+# The local time for a file preview's modified date (already in the tree through `vicinae`).
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 
 # The layer-shell presentation for wlroots compositors (PLAN.md Phase 5 Track
 # B). Linux-only by target so the platform seam holds: macOS and Windows never

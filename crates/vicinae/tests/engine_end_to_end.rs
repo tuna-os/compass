@@ -2523,6 +2523,336 @@ exit 0
         (err.kind, err.message.as_str()),
         (ErrorKind::Internal, "Failed to set volume")
     );
+
+    // The step argument: a number moves by that much, anything else is
+    // refused before pactl runs.
+    std::fs::remove_file(bin.path().join("fail")).expect("let pactl succeed");
+    std::fs::write(&log, "").expect("clear the log");
+    let with = |id: &str, argument: &str| {
+        daemon.request(Request::RunMediaCommandWith {
+            id: id.to_owned(),
+            argument: Some(argument.to_owned()),
+        })
+    };
+    assert!(matches!(with("volume-down", "-12"), Response::Ack));
+    let Response::Error(err) = with("volume-up", "five") else {
+        panic!("a step that is not a number was not refused");
+    };
+    assert_eq!(err.message, "Invalid step value");
+    let calls = std::fs::read_to_string(&log).expect("pactl ran");
+    assert_eq!(
+        calls.lines().next(),
+        Some("set-sink-volume @DEFAULT_SINK@ -12%")
+    );
+}
+
+#[test]
+fn an_extensions_deeplink_goes_to_the_window_and_a_malformed_one_is_refused() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let open = |url: &str| {
+        daemon.request(Request::OpenDeeplink {
+            url: url.to_owned(),
+        })
+    };
+    let Response::Error(err) = open("vicinae://extensions/only-one") else {
+        panic!("a link with one segment was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (
+            ErrorKind::BadRequest,
+            compass_core::store_listing::EXTENSION_LINK_USAGE
+        )
+    );
+    let Response::Error(err) = open("vicinae://theme/set/x") else {
+        panic!("a deeplink the launcher does not handle was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    // A good link goes to the window, and there is none attached here.
+    let Response::Error(err) = open("raycast://extensions/thomas/spotify-player") else {
+        panic!("a deeplink with no window to show it was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(
+        err.message.contains("no launcher window"),
+        "{}",
+        err.message
+    );
+}
+
+/// A file manager that records what it was asked to show.
+struct FakeFileManager {
+    shown: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[zbus::interface(name = "org.freedesktop.FileManager1")]
+impl FakeFileManager {
+    fn show_items(&self, uris: Vec<String>, _startup_id: String) {
+        self.shown.lock().expect("log").extend(uris);
+    }
+}
+
+#[test]
+fn show_in_file_browser_asks_file_manager1_to_select_the_file() {
+    use compass_ipc::{Request, Response};
+    use std::io::{BufRead, BufReader};
+    let mut bus = match Command::new("dbus-daemon")
+        .args(["--session", "--print-address", "--nofork"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(bus) => bus,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("SKIPPED: no dbus-daemon on this machine");
+            return;
+        }
+        Err(err) => panic!("failed to spawn dbus-daemon: {err}"),
+    };
+    let mut address = String::new();
+    BufReader::new(bus.stdout.take().expect("piped stdout"))
+        .read_line(&mut address)
+        .expect("dbus-daemon prints its address");
+    let address = address.trim().to_owned();
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime for the file manager");
+    let shown = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let _manager: zbus::Connection = runtime.block_on(async {
+        zbus::connection::Builder::address(address.as_str())
+            .expect("the private bus")
+            .name("org.freedesktop.FileManager1")
+            .expect("the name")
+            .serve_at(
+                "/org/freedesktop/FileManager1",
+                FakeFileManager {
+                    shown: std::sync::Arc::clone(&shown),
+                },
+            )
+            .expect("the interface")
+            .build()
+            .await
+            .expect("the file manager connects")
+    });
+    let file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        let path = root.join("My Notes.txt");
+        std::fs::write(&path, "x").unwrap();
+        file.set(path).unwrap();
+        vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())]
+    });
+    assert_eq!(
+        daemon.request(Request::OpenFile {
+            path: file.get().unwrap().to_string_lossy().into_owned(),
+            reveal: true,
+        }),
+        Response::Ack
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while shown.lock().unwrap().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(daemon);
+    let _ = bus.kill();
+    let _ = bus.wait();
+    let shown = shown.lock().unwrap();
+    assert_eq!(shown.len(), 1, "ShowItems was called once");
+    assert!(shown[0].starts_with("file:///"), "{shown:?}");
+    assert!(shown[0].ends_with("/My%20Notes.txt"), "{shown:?}");
+}
+
+/// A mock MPRIS player for the engine's media tests.
+struct FakePlayer {
+    status: &'static str,
+    title: &'static str,
+    can_go_next: bool,
+    calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[zbus::interface(name = "org.mpris.MediaPlayer2.Player")]
+impl FakePlayer {
+    #[zbus(property)]
+    fn playback_status(&self) -> String {
+        self.status.to_owned()
+    }
+
+    #[zbus(property)]
+    fn metadata(&self) -> std::collections::HashMap<String, zbus::zvariant::OwnedValue> {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert(
+            "xesam:title".to_owned(),
+            zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(self.title))
+                .expect("a value"),
+        );
+        metadata
+    }
+
+    #[zbus(property)]
+    fn can_go_next(&self) -> bool {
+        self.can_go_next
+    }
+
+    #[zbus(property)]
+    fn can_go_previous(&self) -> bool {
+        true
+    }
+
+    #[zbus(name = "PlayPause")]
+    fn play_pause(&self) {
+        self.calls.lock().expect("log").push("PlayPause".to_owned());
+    }
+
+    #[zbus(name = "Next")]
+    fn next(&self) {
+        self.calls.lock().expect("log").push("Next".to_owned());
+    }
+
+    #[zbus(name = "Previous")]
+    fn previous(&self) {
+        self.calls.lock().expect("log").push("Previous".to_owned());
+    }
+}
+
+struct FakePlayerRoot {
+    identity: &'static str,
+}
+
+#[zbus::interface(name = "org.mpris.MediaPlayer2")]
+impl FakePlayerRoot {
+    #[zbus(property)]
+    fn identity(&self) -> String {
+        self.identity.to_owned()
+    }
+}
+
+#[test]
+fn a_player_argument_picks_the_player_and_now_playing_lists_and_drives_them() {
+    use compass_ipc::{ErrorKind, MediaPlayerAction, Request, Response};
+    use std::io::{BufRead, BufReader};
+    let mut bus = match Command::new("dbus-daemon")
+        .args(["--session", "--print-address", "--nofork"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(bus) => bus,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("SKIPPED: no dbus-daemon on this machine");
+            return;
+        }
+        Err(err) => panic!("failed to spawn dbus-daemon: {err}"),
+    };
+    let mut address = String::new();
+    BufReader::new(bus.stdout.take().expect("piped stdout"))
+        .read_line(&mut address)
+        .expect("dbus-daemon prints its address");
+    let address = address.trim().to_owned();
+
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime for the players");
+    let spotify = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let firefox = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let _players: Vec<zbus::Connection> = runtime.block_on(async {
+        let mut connections = Vec::new();
+        for (name, identity, status, title, can_go_next, calls) in [
+            (
+                "org.mpris.MediaPlayer2.spotify",
+                "Spotify",
+                "Playing",
+                "Blue Monday",
+                true,
+                &spotify,
+            ),
+            (
+                "org.mpris.MediaPlayer2.firefox",
+                "Firefox",
+                "Paused",
+                "A lecture",
+                false,
+                &firefox,
+            ),
+        ] {
+            let connection = zbus::connection::Builder::address(address.as_str())
+                .expect("the private bus")
+                .name(name)
+                .expect("a player name")
+                .serve_at(
+                    "/org/mpris/MediaPlayer2",
+                    FakePlayer {
+                        status,
+                        title,
+                        can_go_next,
+                        calls: std::sync::Arc::clone(calls),
+                    },
+                )
+                .expect("the player interface")
+                .serve_at("/org/mpris/MediaPlayer2", FakePlayerRoot { identity })
+                .expect("the root interface")
+                .build()
+                .await
+                .expect("the player connects");
+            connections.push(connection);
+        }
+        connections
+    });
+
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())]
+    });
+    let Response::MediaPlayers { mut players } = daemon.request(Request::ListMediaPlayers) else {
+        panic!("the players were not listed");
+    };
+    players.sort_by(|a, b| a.identity.cmp(&b.identity));
+    let summary: Vec<(&str, &str, bool, bool)> = players
+        .iter()
+        .map(|p| (p.identity.as_str(), p.title.as_str(), p.playing, p.paused))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("Firefox", "A lecture", false, true),
+            ("Spotify", "Blue Monday", true, false)
+        ]
+    );
+
+    let with = |id: &str, argument: &str| {
+        daemon.request(Request::RunMediaCommandWith {
+            id: id.to_owned(),
+            argument: Some(argument.to_owned()),
+        })
+    };
+    assert!(matches!(with("play-pause", "lecture"), Response::Ack));
+    let Response::Error(err) = with("next-track", "firefox") else {
+        panic!("a skip the player cannot make was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (
+            ErrorKind::Unsupported,
+            "Firefox cannot skip to the next track"
+        )
+    );
+    let Response::Error(err) = with("play-pause", "vlc") else {
+        panic!("a player nothing matches was not refused");
+    };
+    assert_eq!(err.message, "No media player matches \"vlc\"");
+    assert!(matches!(
+        daemon.request(Request::ControlMediaPlayer {
+            player: "org.mpris.MediaPlayer2.spotify".into(),
+            action: MediaPlayerAction::Next,
+        }),
+        Response::Ack
+    ));
+    let Response::Error(err) = daemon.request(Request::ControlMediaPlayer {
+        player: "com.example.nope".into(),
+        action: MediaPlayerAction::Next,
+    }) else {
+        panic!("a name that is not a player's was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    drop(daemon);
+    let _ = bus.kill();
+    let _ = bus.wait();
+    assert_eq!(firefox.lock().unwrap().as_slice(), ["PlayPause"]);
+    assert_eq!(spotify.lock().unwrap().as_slice(), ["Next"]);
 }
 
 /// Asks Search Files until `found` accepts the answer, or panics with the
@@ -2592,7 +2922,16 @@ fn search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_quer
 #[test]
 fn search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly() {
     use compass_ipc::{ErrorKind, Request, Response};
-    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+    let root_dir = std::sync::OnceLock::new();
+    let opener = entry("Plain Opener", "MimeType=text/plain;\n");
+    let entries = [
+        ("a.desktop", entry("Alpha", "")),
+        ("plain-opener.desktop", opener),
+    ];
+    let entries: Vec<(&str, &str)> = entries.iter().map(|(n, e)| (*n, e.as_str())).collect();
+    let daemon = Daemon::start_prepared(&entries, "{}", |root| {
+        root_dir.set(root.to_path_buf()).unwrap();
+        std::fs::write(root.join("plain.txt"), "hello").unwrap();
         let notes = root.join("notes.md");
         std::fs::write(&notes, "# notes").unwrap();
         let data_home = root.join("data-home");
@@ -2653,6 +2992,27 @@ fn search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly
         panic!("opening a file nothing opens was not refused");
     };
     assert_eq!(err.kind, ErrorKind::Unsupported);
+
+    // Opening one something does open (`/bin/true` here) records it in
+    // `recently-used.xbel`, keeping what was there.
+    let root = root_dir.get().unwrap();
+    let plain = root.join("plain.txt");
+    assert_eq!(
+        daemon.request(Request::OpenFile {
+            path: plain.to_string_lossy().into_owned(),
+            reveal: false,
+        }),
+        Response::Ack
+    );
+    let xbel = std::fs::read_to_string(root.join("data-home/recently-used.xbel")).unwrap();
+    let bookmarks = compass_xdg::bookmarks::parse(&xbel).unwrap();
+    assert_eq!(bookmarks.len(), 3, "{xbel}");
+    let recorded = bookmarks
+        .iter()
+        .find(|b| b.path().as_deref() == Some(plain.as_path()))
+        .expect("the opened file is recorded");
+    assert_eq!(recorded.mime_type.as_deref(), Some("text/plain"));
+    assert_eq!(recorded.applications[0].name, "vicinae");
 }
 
 #[test]
@@ -3366,8 +3726,36 @@ fn set_theme_keeps_the_theme_in_the_configuration() {
         config_file
             .set(root.join("config/vicinae/vicinae.json"))
             .unwrap();
+        let themes = root.join("data-home/vicinae/themes");
+        std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(
+            themes.join("harbour.toml"),
+            "[meta]\nname = \"Harbour\"\ndescription = \"\"\nvariant = \"dark\"\n",
+        )
+        .unwrap();
         Vec::new()
     });
+    assert_eq!(
+        daemon.request(Request::SetTheme {
+            theme: "harbour".into()
+        }),
+        Response::Ack,
+        "a theme file in the user's theme directory is a theme"
+    );
+    let saved = std::fs::read_to_string(config_file.get().unwrap()).unwrap();
+    assert!(saved.contains("\"harbour\""), "{saved}");
+
+    // "Set as vicinae font" writes `font.normal.family` beside it.
+    assert_eq!(
+        daemon.request(Request::SetFont {
+            family: "Fira Sans".into()
+        }),
+        Response::Ack
+    );
+    let saved = std::fs::read_to_string(config_file.get().unwrap()).unwrap();
+    let parsed = compass_core::Config::parse(&saved, std::path::Path::new("vicinae.json")).unwrap();
+    assert_eq!(parsed.font_family(), Some("Fira Sans"));
+    assert!(saved.contains("\"harbour\""), "the theme is kept: {saved}");
     assert_eq!(
         daemon.request(Request::SetTheme {
             theme: "Tokyo-Night".into()

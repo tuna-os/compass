@@ -66,6 +66,10 @@ pub enum CommandKind {
     RaycastStore,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
+    /// Browse and control the running media players.
+    NowPlaying,
+    /// Review and revoke what the user's Rhai scripts were allowed.
+    ScriptPermissions,
     /// A media command, by its id in [`crate::media_commands`].
     Media(&'static str),
 }
@@ -261,6 +265,29 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         icon: "rotate-clockwise",
     },
     BuiltinCommand {
+        kind: CommandKind::ScriptPermissions,
+        entrypoint: "script-permissions",
+        title: "Script Permissions",
+        subtitle: "Review and revoke what your Rhai scripts may do",
+        keywords: &[
+            "rhai",
+            "scripts",
+            "permissions",
+            "consent",
+            "grants",
+            "revoke",
+        ],
+        icon: "key",
+    },
+    BuiltinCommand {
+        kind: CommandKind::NowPlaying,
+        entrypoint: "now-playing",
+        title: "Now Playing",
+        subtitle: "Browse and control running media players",
+        keywords: &["media", "music", "player", "mpris"],
+        icon: "music",
+    },
+    BuiltinCommand {
         kind: CommandKind::Media("play-pause"),
         entrypoint: "play-pause",
         title: "Play / Pause",
@@ -382,6 +409,23 @@ pub fn by_id(id: &str) -> Option<&'static BuiltinCommand> {
     BUILTIN_COMMANDS.iter().find(|command| command.id() == id)
 }
 
+/// The C++ id of Search Files, which the default `fallbacks` list names.
+pub const SEARCH_FILES_FALLBACK_ID: &str = "files:search";
+
+/// The builtin command a `fallbacks` entry names, when it is one that can be
+/// a fallback (`isFallback`): Search Files, by its C++ id or its Compass one.
+#[must_use]
+pub fn fallback(id: &str) -> Option<&'static BuiltinCommand> {
+    let command = if id == SEARCH_FILES_FALLBACK_ID {
+        BUILTIN_COMMANDS
+            .iter()
+            .find(|command| command.kind == CommandKind::SearchFiles)
+    } else {
+        by_id(id)
+    }?;
+    (command.kind == CommandKind::SearchFiles).then_some(command)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,6 +452,20 @@ mod tests {
                 assert!(registered.iter().any(|r| r == id), "{id}");
             }
         }
+    }
+
+    #[test]
+    fn search_files_is_the_one_fallback_by_either_id() {
+        assert_eq!(
+            fallback("files:search").map(|c| c.kind),
+            Some(CommandKind::SearchFiles)
+        );
+        assert_eq!(
+            fallback("commands:search-files").map(|c| c.kind),
+            Some(CommandKind::SearchFiles)
+        );
+        assert_eq!(fallback("commands:clipboard-history"), None);
+        assert_eq!(fallback("nothing:here"), None);
     }
 
     #[test]

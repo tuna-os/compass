@@ -1,0 +1,354 @@
+//! The media commands in the launcher: running one at once or with its
+//! argument, and the Now Playing view.
+//!
+//! A child module of `app` so it can reach the launcher's state without
+//! widening it; the decisions that do not need that state are in
+//! [`crate::media_page`].
+
+use iced::keyboard::{Key, Modifiers, key::Named};
+
+use super::{
+    Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
+    RootRow, Task, chord_direction, column, container, focus_search, mouse_area, next_selection,
+    scrollable,
+};
+use crate::action_panel::Action;
+use crate::backend::{MediaAction, PreferenceInput, PreferenceInputKind};
+use crate::media_page::{self, NowPlayingPage, Status};
+use crate::preferences_page::{FieldValue, PreferencesPage, Purpose};
+use compass_core::commands::{BuiltinCommand, CommandKind};
+
+const RUN: &str = "media.run";
+const RUN_WITH: &str = "media.run-with";
+/// Now Playing's panel actions: `media.player.<n>`, by position in the
+/// row's actions.
+const PLAYER_ACTION: &str = "media.player.";
+
+/// How long after an action the players are asked again, so the list shows
+/// the state the player moved to rather than the one it was leaving.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
+
+const NEEDS_ENGINE: &str =
+    "Now Playing needs the Compass engine, and this window is running without one";
+
+impl LauncherApp {
+    /// Runs a media command, with what was entered for its argument; the
+    /// launcher hides at once, as a callback command does.
+    pub(super) fn run_media(
+        &mut self,
+        command: &'static BuiltinCommand,
+        id: &'static str,
+        argument: Option<String>,
+    ) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            self.error = Some(format!(
+                "{} needs the Compass engine, and this window is running without one",
+                command.title
+            ));
+            return Task::none();
+        };
+        let run = Task::perform(
+            async move { backend.run_media_command(id.to_owned(), argument).await },
+            Message::BuiltinCommandDone,
+        );
+        Task::batch([self.conceal(), run])
+    }
+
+    /// The form a media command's optional argument is entered in: the
+    /// player to act on, or the volume step.
+    fn open_media_arguments(&mut self, command: &'static BuiltinCommand) -> Task<Message> {
+        let CommandKind::Media(id) = command.kind else {
+            return Task::none();
+        };
+        let Some((name, placeholder)) = compass_core::media_commands::command_argument(id) else {
+            return Task::none();
+        };
+        self.panel = None;
+        let field = PreferenceInput {
+            name: name.to_owned(),
+            title: if name == "player" {
+                "Player".to_owned()
+            } else {
+                "Step".to_owned()
+            },
+            description: String::new(),
+            placeholder: placeholder.to_owned(),
+            required: false,
+            kind: PreferenceInputKind::Text,
+            value: None,
+        };
+        self.page = Page::Preferences(Box::new(PreferencesPage::new(
+            Purpose::MediaArguments,
+            command.entrypoint.to_owned(),
+            command.title.to_owned(),
+            vec![field],
+        )));
+        iced::widget::operation::focus_next()
+    }
+
+    /// Submits a media command's form. `None` when the form showing is not
+    /// one.
+    pub(super) fn submit_media_form(&mut self) -> Option<Task<Message>> {
+        let Page::Preferences(page) = &self.page else {
+            return None;
+        };
+        if page.purpose != Purpose::MediaArguments {
+            return None;
+        }
+        let command = compass_core::commands::BUILTIN_COMMANDS
+            .iter()
+            .find(|command| command.entrypoint == page.command_id)?;
+        let CommandKind::Media(id) = command.kind else {
+            return None;
+        };
+        let argument = match page.values.first() {
+            Some(FieldValue::Text(text)) if !text.trim().is_empty() => Some(text.trim().to_owned()),
+            _ => None,
+        };
+        self.page = Page::Root;
+        Some(self.run_media(command, id, argument))
+    }
+
+    /// Opens Now Playing and asks for the players.
+    pub(super) fn open_now_playing(&mut self) -> Task<Message> {
+        self.page = Page::NowPlaying(NowPlayingPage::default());
+        Task::batch([self.list_players(std::time::Duration::ZERO), focus_search()])
+    }
+
+    /// Asks for the players, after `delay`.
+    fn list_players(&mut self, delay: std::time::Duration) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            if let Page::NowPlaying(page) = &mut self.page {
+                page.apply(Err(NEEDS_ENGINE.to_owned()));
+            }
+            return Task::none();
+        };
+        Task::perform(
+            async move {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                backend.list_media_players().await
+            },
+            Message::NowPlayingLoaded,
+        )
+    }
+
+    /// Asks the selected player to do one of its actions.
+    fn control_selected_player(&mut self, action: MediaAction) -> Task<Message> {
+        self.panel = None;
+        let Page::NowPlaying(page) = &self.page else {
+            return Task::none();
+        };
+        let (Some(row), Some(backend)) = (page.selected_row(), self.backend.clone()) else {
+            return Task::none();
+        };
+        let player = row.id.clone();
+        Task::batch([
+            Task::perform(
+                async move { backend.control_media_player(player, action).await },
+                Message::NowPlayingActed,
+            ),
+            focus_search(),
+        ])
+    }
+
+    /// The panel over a media command's root row, or over a player.
+    pub(super) fn open_media_panel(&mut self) -> Option<Task<Message>> {
+        let actions = match &self.page {
+            Page::NowPlaying(page) => {
+                let row = page.selected_row()?;
+                media_page::actions(row)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, (title, _))| {
+                        let action =
+                            Action::new(title).with_id(format!("{PLAYER_ACTION}{position}"));
+                        if position == 0 {
+                            action.with_shortcut("enter")
+                        } else {
+                            action
+                        }
+                    })
+                    .collect()
+            }
+            Page::Root => {
+                let RootRow::Command(command) = self.selected_row()? else {
+                    return None;
+                };
+                let CommandKind::Media(id) = command.kind else {
+                    return None;
+                };
+                let (name, _) = compass_core::media_commands::command_argument(id)?;
+                vec![
+                    Action::new(command.title)
+                        .with_id(RUN)
+                        .with_shortcut("enter"),
+                    Action::new(if name == "player" {
+                        "Choose player…"
+                    } else {
+                        "Choose step…"
+                    })
+                    .with_id(RUN_WITH),
+                ]
+            }
+            _ => return None,
+        };
+        self.panel = Some(PanelState::new(vec![PanelSection {
+            name: String::new(),
+            actions,
+        }]));
+        Some(iced::widget::operation::focus(super::PANEL_INPUT))
+    }
+
+    /// Runs a media panel action, if `id` is one.
+    pub(super) fn media_panel_action(&mut self, id: &str) -> Option<Task<Message>> {
+        if let Some(position) = id.strip_prefix(PLAYER_ACTION) {
+            let position: usize = position.parse().ok()?;
+            let Page::NowPlaying(page) = &self.page else {
+                return None;
+            };
+            let (_, action) = media_page::actions(page.selected_row()?)
+                .into_iter()
+                .nth(position)?;
+            return Some(self.control_selected_player(action));
+        }
+        if id != RUN && id != RUN_WITH {
+            return None;
+        }
+        let RootRow::Command(command) = self.selected_row()? else {
+            return None;
+        };
+        let CommandKind::Media(media) = command.kind else {
+            return None;
+        };
+        self.panel = None;
+        if id == RUN_WITH {
+            return Some(self.open_media_arguments(command));
+        }
+        Some(self.run_media(command, media, None))
+    }
+
+    /// Now Playing's keys.
+    pub(super) fn now_playing_key(&mut self, key: &Key, modifiers: Modifiers) -> Task<Message> {
+        let Page::NowPlaying(page) = &mut self.page else {
+            return Task::none();
+        };
+        let direction = match key.as_ref() {
+            Key::Named(Named::ArrowDown) => Some(Direction::Down),
+            Key::Named(Named::ArrowUp) => Some(Direction::Up),
+            Key::Named(Named::Escape) => return self.update(Message::Back),
+            Key::Named(Named::Enter) => {
+                return self.control_selected_player(MediaAction::PlayPause);
+            }
+            _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+        };
+        if let Some(direction) = direction {
+            page.selected = next_selection(
+                page.shown.len(),
+                page.selected,
+                direction,
+                self.wrap_navigation,
+            );
+            return crate::scroll::reveal_root_selection();
+        }
+        Task::none()
+    }
+
+    /// Handles Now Playing's messages.
+    pub(super) fn media_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::NowPlayingLoaded(result) => {
+                if let Page::NowPlaying(page) = &mut self.page {
+                    page.apply(result);
+                }
+                Task::none()
+            }
+            Message::NowPlayingQueryChanged(query) => {
+                if let Page::NowPlaying(page) = &mut self.page {
+                    page.query = query;
+                    page.notice = None;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::NowPlayingSelected(position) => {
+                if let Page::NowPlaying(page) = &mut self.page
+                    && position < page.shown.len()
+                {
+                    page.selected = position;
+                    return self.control_selected_player(MediaAction::PlayPause);
+                }
+                Task::none()
+            }
+            Message::NowPlayingActed(result) => {
+                let Page::NowPlaying(page) = &mut self.page else {
+                    return Task::none();
+                };
+                match result {
+                    Ok(()) => {
+                        page.notice = None;
+                        self.list_players(SETTLE)
+                    }
+                    Err(reason) => {
+                        page.notice = Some(reason);
+                        Task::none()
+                    }
+                }
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// Now Playing's body.
+    pub(super) fn now_playing_body<'a>(&'a self, page: &'a NowPlayingPage) -> Element<'a, Message> {
+        match &page.status {
+            Status::Loading => return self.notice("Looking for media players…"),
+            Status::Failed(reason) => return self.notice(reason),
+            Status::Ready if page.all.is_empty() => {
+                return self.notice("No media player is running");
+            }
+            Status::Ready if page.shown.is_empty() => return self.notice("No players match"),
+            Status::Ready => {}
+        }
+        let mut list = column![
+            container(
+                iced::widget::text(media_page::SECTION)
+                    .font(self.font())
+                    .size(12)
+                    .color(self.palette().muted.to_iced()),
+            )
+            .padding(Padding::new(4.0).left(10))
+        ]
+        .spacing(f32::from(self.geometry.row_spacing));
+        for (position, &index) in page.shown.iter().enumerate() {
+            let row = &page.all[index];
+            let selected = position == page.selected;
+            let title = media_page::title(row).to_owned();
+            let subtitle = match (row.artist.is_empty(), media_page::accessory(row)) {
+                (false, Some(state)) => Some(format!("{}  ·  {state}", row.artist)),
+                (false, None) => Some(row.artist.clone()),
+                (true, Some(state)) => Some(state.to_owned()),
+                (true, None) => None,
+            };
+            let badge = self.initial_badge(&row.identity, selected);
+            let item = self.list_row(badge, title, subtitle.filter(|_| self.subtitles), selected);
+            let item: Element<Message> = mouse_area(item)
+                .on_press(Message::NowPlayingSelected(position))
+                .into();
+            let item: Element<Message> = if selected {
+                container(item).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                item
+            };
+            list = list.push(item);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![rows, self.notice(notice)].into(),
+            None => rows.into(),
+        }
+    }
+}

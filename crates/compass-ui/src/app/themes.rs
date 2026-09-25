@@ -7,16 +7,89 @@
 use iced::keyboard::{Key, Modifiers, key::Named};
 
 use super::{
-    Direction, Element, LauncherApp, Length, Message, Padding, Page, Task, chord_direction, column,
-    container, focus_search, mouse_area, next_selection, scrollable, text,
+    Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
+    Task, chord_direction, column, container, focus_search, mouse_area, next_selection, row,
+    scrollable, text,
 };
+use crate::action_panel::Action;
 use crate::themes_page::ThemesPage;
+use compass_core::theme_picker;
+
+const SET: &str = "theme.set";
+const OPEN_FILE: &str = "theme.open-file";
+const COPY_ID: &str = "theme.copy-id";
+const COPY_PATH: &str = "theme.copy-path";
 
 impl LauncherApp {
-    /// Opens Set Theme over the theme in use.
+    /// Opens Set Theme over the theme in use, reading the theme files anew
+    /// so one added since the last opening is offered.
     pub(super) fn open_set_theme(&mut self) -> Task<Message> {
-        self.page = Page::Themes(ThemesPage::new(self.theme_choice));
+        let files = crate::theme::load_user_themes(&self.theme_dirs);
+        self.page = Page::Themes(ThemesPage::new(self.theme_choice, files));
         focus_search()
+    }
+
+    /// The panel over the selected theme: `ThemeViewHost`'s actions.
+    pub(super) fn open_theme_panel(&mut self) -> Option<Task<Message>> {
+        let Page::Themes(page) = &self.page else {
+            return None;
+        };
+        let theme = page.selected_theme()?;
+        let picked = theme_picker::Theme {
+            id: theme.name().to_owned(),
+            name: theme.title().to_owned(),
+            description: theme.description().to_owned(),
+            icon: None,
+            path: theme.path().map(str::to_owned),
+        };
+        let actions = theme_picker::action_panel(&picked, self.backend.is_some())
+            .into_iter()
+            .map(|action| {
+                let id = match action.title {
+                    theme_picker::SET_THEME_TITLE => SET,
+                    theme_picker::OPEN_FILE_TITLE => OPEN_FILE,
+                    theme_picker::COPY_ID_TITLE => COPY_ID,
+                    _ => COPY_PATH,
+                };
+                let item = Action::new(action.title).with_id(id);
+                if id == SET {
+                    item.with_shortcut("enter")
+                } else {
+                    item
+                }
+            })
+            .collect();
+        self.panel = Some(PanelState::new(vec![PanelSection {
+            name: String::new(),
+            actions,
+        }]));
+        Some(iced::widget::operation::focus(super::PANEL_INPUT))
+    }
+
+    /// Runs a Set Theme panel action, if `id` is one.
+    pub(super) fn theme_panel_action(&mut self, id: &str) -> Option<Task<Message>> {
+        if ![SET, OPEN_FILE, COPY_ID, COPY_PATH].contains(&id) {
+            return None;
+        }
+        let Page::Themes(page) = &self.page else {
+            return None;
+        };
+        let theme = page.selected_theme()?;
+        self.panel = None;
+        Some(match id {
+            SET => self.keep_selected_theme(),
+            COPY_ID => iced::clipboard::write(theme.name().to_owned()),
+            COPY_PATH => iced::clipboard::write(theme.path()?.to_owned()),
+            _ => {
+                let path = theme.path()?.to_owned();
+                let backend = self.backend.clone()?;
+                let opened = Task::perform(
+                    async move { backend.open_file(path, false).await },
+                    Message::BuiltinCommandDone,
+                );
+                Task::batch([opened, self.conceal()])
+            }
+        })
     }
 
     /// Previews the selected theme, as selecting a row applies it in the
@@ -153,9 +226,47 @@ impl LauncherApp {
             let item = self.list_row(
                 self.initial_badge(row.theme.title(), selected),
                 row.theme.title().to_owned(),
-                self.subtitles.then(|| row.theme.description().to_owned()),
+                self.subtitles.then(|| {
+                    if row.theme.description().is_empty() {
+                        theme_picker::DEFAULT_DESCRIPTION.to_owned()
+                    } else {
+                        row.theme.description().to_owned()
+                    }
+                }),
                 selected,
             );
+            let item: Element<Message> = match row.theme.swatches() {
+                Some(swatches) => {
+                    let mut dots = row![].spacing(4).align_y(iced::Alignment::Center);
+                    for colour in swatches {
+                        let fill = colour.to_iced();
+                        dots = dots.push(
+                            container(iced::widget::Space::new())
+                                .width(Length::Fixed(10.0))
+                                .height(Length::Fixed(10.0))
+                                .style(move |_: &iced::Theme| container::Style {
+                                    background: Some(fill.into()),
+                                    border: iced::Border {
+                                        radius: 5.0.into(),
+                                        ..iced::Border::default()
+                                    },
+                                    ..container::Style::default()
+                                }),
+                        );
+                    }
+                    iced::widget::stack![
+                        item,
+                        container(dots)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .align_x(iced::Alignment::End)
+                            .align_y(iced::Alignment::Center)
+                            .padding(Padding::new(0.0).right(14)),
+                    ]
+                    .into()
+                }
+                None => item,
+            };
             let item: Element<Message> = mouse_area(item)
                 .on_press(Message::ThemeSelected(position))
                 .into();

@@ -27,17 +27,53 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
-    /// Run a media command by its id on the default player. An error is the
-    /// sentence to show.
-    fn run_media_command(&self, id: String) -> BackendFuture<'_, ()> {
+    /// Run a media command by its id, with its optional argument: the player
+    /// to fuzzy-match (the default player when `None`), or the volume step.
+    /// An error is the sentence to show.
+    fn run_media_command(&self, id: String, argument: Option<String>) -> BackendFuture<'_, ()> {
+        let _ = (id, argument);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// "Set as vicinae font": makes `family` the launcher's font in the
+    /// configuration.
+    fn set_font(&self, family: String) -> BackendFuture<'_, ()> {
+        let _ = family;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// What the user has allowed their own Rhai scripts.
+    fn list_script_grants(&self) -> BackendFuture<'_, Vec<ScriptGrant>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Withdraws what a Rhai script was allowed, answering with the list
+    /// after the change.
+    fn revoke_script_grant(&self, id: String) -> BackendFuture<'_, Vec<ScriptGrant>> {
         let _ = id;
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
-    /// Search Files: what `query` answers, with the list's heading. An error
-    /// is the sentence to show.
-    fn search_files(&self, query: String) -> BackendFuture<'_, FileResults> {
-        let _ = query;
+    /// The running media players, for Now Playing.
+    fn list_media_players(&self) -> BackendFuture<'_, Vec<MediaPlayerRow>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Play/pause, skip or go back on one player, by its bus name.
+    fn control_media_player(&self, player: String, action: MediaAction) -> BackendFuture<'_, ()> {
+        let _ = (player, action);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Search Files: what `query` answers within `category` (a filter key,
+    /// `None` for all), with the list's heading. An error is the sentence to
+    /// show.
+    fn search_files(
+        &self,
+        query: String,
+        category: Option<String>,
+    ) -> BackendFuture<'_, FileResults> {
+        let _ = (query, category);
         Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
     }
 
@@ -333,6 +369,53 @@ const FILES_NEED_ENGINE: &str =
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
 
+/// What the user has allowed one Rhai script.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScriptGrant {
+    /// The script's id.
+    pub id: String,
+    /// Its title, or its id when it is no longer installed.
+    pub title: String,
+    /// The capabilities allowed.
+    pub capabilities: Vec<String>,
+    /// The same, in the consent prompt's words.
+    pub descriptions: Vec<String>,
+}
+
+/// One running media player, as Now Playing lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MediaPlayerRow {
+    /// Its bus name.
+    pub id: String,
+    /// What it calls itself.
+    pub identity: String,
+    /// Its desktop entry id, when it names one.
+    pub app_id: String,
+    /// The current track's title.
+    pub title: String,
+    /// The current track's artists.
+    pub artist: String,
+    /// Whether it is playing.
+    pub playing: bool,
+    /// Whether it is paused.
+    pub paused: bool,
+    /// Whether it has a next track.
+    pub can_go_next: bool,
+    /// Whether it has a previous track.
+    pub can_go_previous: bool,
+}
+
+/// What Now Playing asks a player to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaAction {
+    /// Toggle playback.
+    PlayPause,
+    /// Skip to the next track.
+    Next,
+    /// Go back to the previous track.
+    Previous,
+}
+
 /// The Create Extension form's values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExtensionDraft {
@@ -390,6 +473,8 @@ pub struct StoreRow {
     pub update_available: bool,
     /// Its Raycast compatibility tier, where there is a sheet.
     pub compat: Option<u8>,
+    /// Its author's avatar URL.
+    pub author_avatar: Option<String>,
 }
 
 /// One store extension's detail page.
@@ -452,8 +537,16 @@ pub struct DmenuList {
     pub query: Option<String>,
     /// `--no-section`.
     pub no_section: bool,
-    /// `--no-quick-look`.
+    /// `--no-quick-look`, or a width under 500.
     pub no_quick_look: bool,
+    /// `--width`.
+    pub width: Option<u32>,
+    /// `--height`.
+    pub height: Option<u32>,
+    /// `--no-metadata`.
+    pub no_metadata: bool,
+    /// `--no-footer`, or a width under 500.
+    pub no_footer: bool,
 }
 
 const PROGRAMS_NEED_ENGINE: &str =

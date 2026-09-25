@@ -103,12 +103,22 @@ pub enum Message {
     WindowsQueryChanged(String),
     /// The engine answered a power or media command.
     BuiltinCommandDone(Result<(), String>),
+    /// Now Playing's players arrived.
+    NowPlayingLoaded(Result<Vec<crate::backend::MediaPlayerRow>, String>),
+    /// Now Playing's filter changed.
+    NowPlayingQueryChanged(String),
+    /// A player row was clicked, by position in the shown list.
+    NowPlayingSelected(usize),
+    /// A player did what it was asked, or could not.
+    NowPlayingActed(Result<(), String>),
     /// The emoji picker's filter changed.
     EmojiQueryChanged(String),
     /// An emoji row was clicked, by position in the shown list.
     EmojiSelected(usize),
     /// Search Files' text changed.
     FilesQueryChanged(String),
+    /// Search Files' category filter changed, by its key.
+    FilesCategoryChanged(String),
     /// The debounce for Search Files query `generation` ran out; ask, unless
     /// the text moved on meanwhile.
     FilesDebounced(u64),
@@ -180,6 +190,18 @@ pub enum Message {
     FontsQueryChanged(String),
     /// Browse Fonts' category filter changed, to the option titled so.
     FontsCategoryChanged(String),
+    /// "Set as vicinae font" was saved, with the family, or could not be.
+    FontSet(Result<String, String>),
+    /// Script Permissions' list arrived.
+    GrantsLoaded(Result<Vec<crate::backend::ScriptGrant>, String>),
+    /// Script Permissions' filter changed.
+    GrantsQueryChanged(String),
+    /// A script row was clicked, by position in the shown list.
+    GrantSelected(usize),
+    /// A revoke was done, with the list after it, or could not be.
+    GrantRevoked(Result<Vec<crate::backend::ScriptGrant>, String>),
+    /// The uninstall dialog was answered: `true` uninstalls.
+    StoreConfirmAnswered(bool),
     /// A Browse Fonts row was clicked, by position.
     FontSelected(usize),
     /// A family's specimen arrived, or why not.

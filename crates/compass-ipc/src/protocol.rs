@@ -44,8 +44,10 @@ use serde::{Deserialize, Serialize};
 /// or opening its preferences in the launcher ([`WindowCommand::Launch`],
 /// [`Request::ExtensionLaunchFetch`]), its subtitle override in root search
 /// ([`Request::ExtensionSubtitles`]), and a command's preferences form without
-/// running it ([`Request::ExtensionPreferences`]).
-pub const PROTOCOL_VERSION: u16 = 15;
+/// running it ([`Request::ExtensionPreferences`]); version 16, media arguments,
+/// Now Playing, the launcher's font, store avatars, extension deeplinks and
+/// reviewing Rhai script permissions.
+pub const PROTOCOL_VERSION: u16 = 16;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -587,6 +589,50 @@ pub enum Request {
         /// The command's [`QueryHit::id`].
         id: String,
     },
+    /// [`Request::RunMediaCommand`] with the command's optional argument:
+    /// the `player` to fuzzy-match over the running players, or the volume
+    /// `step` in percent. `None` or empty is the command's default.
+    RunMediaCommandWith {
+        /// The command's id in `compass_core::media_commands`.
+        id: String,
+        /// What was entered for its argument.
+        argument: Option<String>,
+    },
+    /// The running media players, for Now Playing. Answered with
+    /// [`Response::MediaPlayers`].
+    ListMediaPlayers,
+    /// Play/pause, skip or go back on one player, by its bus name, without a
+    /// HUD. Answered with [`Response::Ack`].
+    ControlMediaPlayer {
+        /// The player's bus name, as [`MediaPlayerEntry::id`] carries it.
+        player: String,
+        /// What to do.
+        action: MediaPlayerAction,
+    },
+    /// "Set as vicinae font": write `font.normal.family` to `vicinae.json`.
+    /// Answered with [`Response::Ack`]; an empty family is a bad request.
+    SetFont {
+        /// The family's name.
+        family: String,
+    },
+    /// A deeplink the launcher handles (`vicinae://extensions/<author>/<name>`
+    /// and its `raycast://` spellings), pushed to the window as
+    /// [`WindowCommand::Deeplink`]. Answered with [`Response::Ack`] once the
+    /// window shows it; one it does not handle is a bad request.
+    OpenDeeplink {
+        /// The URL.
+        url: String,
+    },
+    /// What the user has allowed their own Rhai scripts to do. Answered
+    /// with [`Response::ScriptGrants`].
+    ListScriptGrants,
+    /// Withdraw everything the user allowed a Rhai script. Answered with
+    /// [`Response::ScriptGrants`], the list after the change; an id with
+    /// nothing recorded is a bad request.
+    RevokeScriptGrant {
+        /// The script's id, `script.<folder name>`.
+        id: String,
+    },
 }
 
 /// What the engine answers.
@@ -805,6 +851,30 @@ pub enum Response {
         /// Every override, by command id.
         subtitles: Vec<(String, String)>,
     },
+    /// Answer to [`Request::ListMediaPlayers`], in the bus's order.
+    MediaPlayers {
+        /// The players.
+        players: Vec<MediaPlayerEntry>,
+    },
+    /// Answer to [`Request::ListScriptGrants`] and
+    /// [`Request::RevokeScriptGrant`], in id order.
+    ScriptGrants {
+        /// One per script with something allowed.
+        grants: Vec<ScriptGrantEntry>,
+    },
+}
+
+/// What the user has allowed one Rhai script.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptGrantEntry {
+    /// The script's id.
+    pub id: String,
+    /// Its title, or its id when it is no longer installed.
+    pub title: String,
+    /// The capabilities allowed, e.g. `clipboard.write`.
+    pub capabilities: Vec<String>,
+    /// The same, in the consent prompt's words.
+    pub descriptions: Vec<String>,
 }
 
 /// The keyboard helper behind snippet keyword expansion, as the engine sees
@@ -825,6 +895,40 @@ pub struct InputServerStatus {
     /// Why it is not working, when it is not: not installed, inside a
     /// Flatpak, no permission, gave up after crashing.
     pub problem: Option<String>,
+}
+
+/// One running media player, as Now Playing lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaPlayerEntry {
+    /// Its bus name.
+    pub id: String,
+    /// What it calls itself.
+    pub identity: String,
+    /// Its `DesktopEntry`, when it offers one.
+    pub app_id: String,
+    /// The current track's title.
+    pub title: String,
+    /// The current track's artists.
+    pub artist: String,
+    /// Whether it is playing.
+    pub playing: bool,
+    /// Whether it is paused (neither this nor `playing` is stopped).
+    pub paused: bool,
+    /// Whether it has a next track.
+    pub can_go_next: bool,
+    /// Whether it has a previous track.
+    pub can_go_previous: bool,
+}
+
+/// What [`Request::ControlMediaPlayer`] does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaPlayerAction {
+    /// Toggle playback.
+    PlayPause,
+    /// Skip to the next track.
+    Next,
+    /// Go back to the previous track.
+    Previous,
 }
 
 /// One Rhai script, as root search and the launcher need it.
@@ -879,6 +983,8 @@ pub struct StoreEntry {
     /// Its Raycast compatibility tier (0 compatible, 1 partial,
     /// 2 incompatible, 3 unknown); `None` where there is no sheet.
     pub compat: Option<u8>,
+    /// Its author's avatar URL, when the store has one. (v16.)
+    pub author_avatar: Option<String>,
 }
 
 /// One extension's detail page.
@@ -1007,7 +1113,7 @@ pub struct FileHit {
 }
 
 /// What the engine asks an attached window to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WindowCommand {
     /// Become visible and take focus.
     Show,
@@ -1023,6 +1129,9 @@ pub enum WindowCommand {
     /// Show, and take the launch an extension asked for under this token:
     /// fetched with [`Request::ExtensionLaunchFetch`]. Answered like `Show`.
     Launch(u64),
+    /// Show, at what the deeplink names (a store extension's detail page).
+    /// Answered, like `Show`, with [`WindowOutcome::Shown`]. (v16.)
+    Deeplink(String),
 }
 
 /// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and

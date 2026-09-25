@@ -109,6 +109,7 @@ pub mod store_bundle;
 pub mod store_listing;
 pub mod system_run;
 pub mod telemetry;
+pub mod theme_file;
 pub mod theme_picker;
 pub mod toast;
 pub mod tray;

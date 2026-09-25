@@ -556,6 +556,21 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
         return Response::Ack;
     }
     if apps.open_file(&target) {
+        // `OpenFileAction` records the open, so the file tops the empty
+        // query next time.
+        if let Some(xbel) = compass_xdg::bookmarks::recently_used_path() {
+            let recorded = tokio::task::spawn_blocking(move || {
+                let mime = compass_xdg::mimeapps::file_mime(&target);
+                let now = jiff::Timestamp::now()
+                    .strftime("%Y-%m-%dT%H:%M:%S%.6fZ")
+                    .to_string();
+                compass_xdg::bookmarks::record_access(&xbel, &target, &mime, &now)
+            })
+            .await;
+            if let Ok(Err(error)) = recorded {
+                tracing::warn!(%error, "not recording a recent file access");
+            }
+        }
         Response::Ack
     } else {
         Response::Error(ProtocolError::new(
@@ -1191,19 +1206,20 @@ impl compass_core::audio_control::Pactl for HostPactl {
 
 /// Runs a volume command through `pactl`, answering with the sentence the
 /// C++ puts in its HUD, or refusing with its toast.
-fn run_volume_command(id: &str) -> Result<String, &'static str> {
+fn run_volume_command(id: &str, argument: Option<&str>) -> Result<String, &'static str> {
     use compass_core::media_commands::{
         VOLUME_DOWN_STEP, VOLUME_PRESETS, VOLUME_UP_STEP, mute_message, step_fraction,
-        volume_hud_text,
+        volume_hud_text, volume_step,
     };
     let audio = compass_core::audio_control::PactlAudioControl::new(HostPactl);
     match id {
         "volume-up" | "volume-down" => {
-            let step = if id == "volume-up" {
+            let default = if id == "volume-up" {
                 VOLUME_UP_STEP
             } else {
                 VOLUME_DOWN_STEP
             };
+            let step = volume_step(argument.map(str::trim), default)?;
             audio
                 .adjust_volume(step_fraction(step))
                 .map(volume_hud_text)
@@ -1244,10 +1260,10 @@ async fn show_hud(text: &str) {
     }
 }
 
-/// Runs a media command on the default player over MPRIS. What the C++ shows
-/// in its HUD goes out as a short-lived notification, since the launcher has
-/// already hidden.
-async fn run_media_command(id: &str) -> Response {
+/// Runs a media command over MPRIS, on the player `argument` fuzzy-matches or,
+/// when it is empty, on the default one. What the C++ shows in its HUD goes
+/// out as a short-lived notification, since the launcher has already hidden.
+async fn run_media_command(id: &str, argument: Option<String>) -> Response {
     use compass_core::media_commands::{self, NoPlayer};
     let refuse =
         |message: String| Response::Error(ProtocolError::new(ErrorKind::Unsupported, message));
@@ -1255,6 +1271,7 @@ async fn run_media_command(id: &str) -> Response {
         tracing::warn!(%err, command = id, "media command failed");
         Response::Error(ProtocolError::new(ErrorKind::Internal, message))
     };
+    let argument = argument.map(|text| text.trim().to_owned());
     // Without media control, the media extension registers only the volume
     // commands.
     if media_commands::registered_commands(false)
@@ -1262,7 +1279,9 @@ async fn run_media_command(id: &str) -> Response {
         .any(|command| command == id)
     {
         let owned = id.to_owned();
-        let answer = tokio::task::spawn_blocking(move || run_volume_command(&owned)).await;
+        let answer =
+            tokio::task::spawn_blocking(move || run_volume_command(&owned, argument.as_deref()))
+                .await;
         return match answer {
             Ok(Ok(hud)) => {
                 show_hud(&hud).await;
@@ -1287,40 +1306,43 @@ async fn run_media_command(id: &str) -> Response {
         Ok(connection) => compass_media::MediaControl::new(connection),
         Err(err) => return failed(failure, &err),
     };
-    let players = match control.players().await {
-        Ok(players) => players,
+    let found = match control.players().await {
+        Ok(found) => found,
         Err(err) => return failed(failure, &err),
     };
+    let players: Vec<media_commands::MediaPlayer> = found.iter().map(command_player).collect();
+    let query = argument.unwrap_or_default();
     let last = LAST_PLAYER
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let Some(index) = compass_media::default_player(&players, last.as_deref()) else {
+    let default = compass_media::default_player(&found, last.as_deref());
+    if players.is_empty() {
         return refuse(media_commands::no_player_message(&NoPlayer::NothingRunning));
+    }
+    let matches = if query.is_empty() {
+        Vec::new()
+    } else {
+        media_commands::player_matches(&query, &players)
     };
-    let found = &players[index];
-    let player = media_commands::MediaPlayer {
-        id: found.id.clone(),
-        identity: found.identity.clone(),
-        title: found.title.clone(),
-        artist: found.artist.clone(),
-        playing: found.status == compass_media::PlaybackStatus::Playing,
-        can_go_next: found.can_go_next,
-        can_go_previous: found.can_go_previous,
+    let index = match media_commands::resolve_player(&query, default, &matches) {
+        Ok(index) => index,
+        Err(reason) => return refuse(media_commands::no_player_message(&reason)),
     };
+    let player = &players[index];
     let (result, hud) = match id {
         "play-pause" => (
             control.play_pause(&player.id).await,
-            media_commands::play_pause_message(&player),
+            media_commands::play_pause_message(player),
         ),
         "next-track" => {
-            if let Some(refusal) = media_commands::skip_refusal(&player, true) {
+            if let Some(refusal) = media_commands::skip_refusal(player, true) {
                 return refuse(refusal);
             }
             (control.next(&player.id).await, "Next Track".to_owned())
         }
         _ => {
-            if let Some(refusal) = media_commands::skip_refusal(&player, false) {
+            if let Some(refusal) = media_commands::skip_refusal(player, false) {
                 return refuse(refusal);
             }
             (
@@ -1334,9 +1356,97 @@ async fn run_media_command(id: &str) -> Response {
     }
     *LAST_PLAYER
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(player.id);
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(player.id.clone());
     show_hud(&hud).await;
     Response::Ack
+}
+
+/// A player as the media commands decide about it.
+fn command_player(found: &compass_media::MediaPlayer) -> compass_core::media_commands::MediaPlayer {
+    compass_core::media_commands::MediaPlayer {
+        id: found.id.clone(),
+        identity: found.identity.clone(),
+        title: found.title.clone(),
+        artist: found.artist.clone(),
+        playing: found.status == compass_media::PlaybackStatus::Playing,
+        can_go_next: found.can_go_next,
+        can_go_previous: found.can_go_previous,
+    }
+}
+
+/// Now Playing's list: every running player.
+async fn list_media_players() -> Response {
+    let failed = |err: &dyn std::fmt::Display| {
+        tracing::warn!(%err, "listing media players failed");
+        Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            "Failed to list media players",
+        ))
+    };
+    let control = match zbus::Connection::session().await {
+        Ok(connection) => compass_media::MediaControl::new(connection),
+        Err(err) => return failed(&err),
+    };
+    match control.players().await {
+        Ok(players) => Response::MediaPlayers {
+            players: players
+                .into_iter()
+                .map(|player| compass_ipc::MediaPlayerEntry {
+                    playing: player.status == compass_media::PlaybackStatus::Playing,
+                    paused: player.status == compass_media::PlaybackStatus::Paused,
+                    id: player.id,
+                    identity: player.identity,
+                    app_id: player.app_id,
+                    title: player.title,
+                    artist: player.artist,
+                    can_go_next: player.can_go_next,
+                    can_go_previous: player.can_go_previous,
+                })
+                .collect(),
+        },
+        Err(err) => failed(&err),
+    }
+}
+
+/// Now Playing's actions: one player, by its bus name, and no HUD, as the
+/// C++'s panel actions call the provider directly.
+async fn control_media_player(player: &str, action: compass_ipc::MediaPlayerAction) -> Response {
+    use compass_ipc::MediaPlayerAction;
+    let failure = match action {
+        MediaPlayerAction::PlayPause => "Failed to toggle playback",
+        MediaPlayerAction::Next => "Failed to skip to the next track",
+        MediaPlayerAction::Previous => "Failed to skip to the previous track",
+    };
+    if !compass_media::is_player_name(player) {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "not a media player's bus name",
+        ));
+    }
+    let control = match zbus::Connection::session().await {
+        Ok(connection) => compass_media::MediaControl::new(connection),
+        Err(err) => {
+            tracing::warn!(%err, "media control failed");
+            return Response::Error(ProtocolError::new(ErrorKind::Internal, failure));
+        }
+    };
+    let done = match action {
+        MediaPlayerAction::PlayPause => control.play_pause(player).await,
+        MediaPlayerAction::Next => control.next(player).await,
+        MediaPlayerAction::Previous => control.previous(player).await,
+    };
+    match done {
+        Ok(()) => {
+            *LAST_PLAYER
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(player.to_owned());
+            Response::Ack
+        }
+        Err(err) => {
+            tracing::warn!(%err, "media control failed");
+            Response::Error(ProtocolError::new(ErrorKind::Internal, failure))
+        }
+    }
 }
 
 async fn run_extension_command(
@@ -2043,7 +2153,12 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
-        Request::RunMediaCommand { id } => run_media_command(&id).await,
+        Request::RunMediaCommand { id } => run_media_command(&id, None).await,
+        Request::RunMediaCommandWith { id, argument } => run_media_command(&id, argument).await,
+        Request::ListMediaPlayers => list_media_players().await,
+        Request::ControlMediaPlayer { player, action } => {
+            control_media_player(&player, action).await
+        }
 
         Request::SearchFiles { query, category } => {
             let files = Arc::clone(&state.read().await.files);
@@ -2157,6 +2272,21 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                     dmenus.choose(token, None);
                     refused
                 }
+            }
+        }
+        Request::OpenDeeplink { url } => {
+            match compass_core::store_listing::parse_extension_link(&url) {
+                Some(Ok(_)) => {
+                    let slot = state.read().await.window_slot();
+                    forward(&slot, WindowCommand::Deeplink(url), "open a deeplink").await
+                }
+                Some(Err(usage)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, usage))
+                }
+                None => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("Compass does not handle this deeplink yet: {url}"),
+                )),
             }
         }
         Request::DmenuFetch { token } => match state.read().await.dmenus.spec(token) {
@@ -2285,7 +2415,35 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 )),
             }
         }
+        Request::SetFont { family } => {
+            let family = family.trim().to_owned();
+            if family.is_empty() {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "a font family is needed",
+                ));
+            }
+            let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                let mut config = Config::load().unwrap_or_default();
+                config.set_font_family(&family);
+                config.save_to(compass_core::config::default_config_path()?)?;
+                Ok(())
+            })
+            .await;
+            match saved {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(error)) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("could not save the font: {error}"),
+                )),
+                Err(error) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("saving the font failed: {error}"),
+                )),
+            }
+        }
         Request::SetTheme { theme } => {
+            let _ = tokio::task::spawn_blocking(compass_ui::theme::load_default_user_themes).await;
             let Some(parsed) = compass_ui::theme::Theme::from_name(&theme) else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::BadRequest,
@@ -2518,6 +2676,31 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 state.views.close(session);
             }
             Response::Ack
+        }
+        Request::ListScriptGrants => {
+            let rhai = Arc::clone(&state.read().await.rhai);
+            match tokio::task::spawn_blocking(move || rhai.grants()).await {
+                Ok(grants) => Response::ScriptGrants { grants },
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("reading script permissions failed: {err}"),
+                )),
+            }
+        }
+        Request::RevokeScriptGrant { id } => {
+            let rhai = Arc::clone(&state.read().await.rhai);
+            match tokio::task::spawn_blocking(move || rhai.revoke(&id).map(|()| rhai.grants()))
+                .await
+            {
+                Ok(Ok(grants)) => Response::ScriptGrants { grants },
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("revoking script permissions failed: {err}"),
+                )),
+            }
         }
         Request::ListRhaiScripts => {
             // A rescan, as `ListScripts` does: the watcher is the fast path,

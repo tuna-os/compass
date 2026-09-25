@@ -25,6 +25,7 @@ fn to_ui(command: WindowCommand) -> UiCommand {
         WindowCommand::Toggle => UiCommand::Toggle,
         WindowCommand::Dmenu(token) => UiCommand::Dmenu(token),
         WindowCommand::Launch(token) => UiCommand::Launch(token),
+        WindowCommand::Deeplink(url) => UiCommand::Deeplink(url),
     }
 }
 
@@ -227,7 +228,9 @@ mod tests {
                     UiCommand::Show => UiOutcome::Shown,
                     UiCommand::Hide => UiOutcome::Hidden,
                     UiCommand::Toggle => UiOutcome::Failed("toggled".to_owned()),
-                    UiCommand::Dmenu(_) | UiCommand::Launch(_) => UiOutcome::Shown,
+                    UiCommand::Dmenu(_) | UiCommand::Launch(_) | UiCommand::Deeplink(_) => {
+                        UiOutcome::Shown
+                    }
                 };
                 if outcomes_tx.send(outcome).is_err() {
                     return;
@@ -243,7 +246,7 @@ mod tests {
                 WindowOutcome::Failed("toggled".to_owned()),
             ),
         ] {
-            let got = tokio::time::timeout(GUARD, link.push(command))
+            let got = tokio::time::timeout(GUARD, link.push(command.clone()))
                 .await
                 .expect("push answered in time")
                 .expect("push");
@@ -351,14 +354,16 @@ mod tests {
             WindowCommand::Toggle,
             WindowCommand::Dmenu(42),
             WindowCommand::Launch(7),
+            WindowCommand::Deeplink("vicinae://extensions/a/b".into()),
         ] {
-            let ui = to_ui(command);
+            let ui = to_ui(command.clone());
             let back = match ui {
                 UiCommand::Show => WindowCommand::Show,
                 UiCommand::Hide => WindowCommand::Hide,
                 UiCommand::Toggle => WindowCommand::Toggle,
                 UiCommand::Dmenu(token) => WindowCommand::Dmenu(token),
                 UiCommand::Launch(token) => WindowCommand::Launch(token),
+                UiCommand::Deeplink(url) => WindowCommand::Deeplink(url),
             };
             assert_eq!(back, command, "{command:?} did not survive the round trip");
         }

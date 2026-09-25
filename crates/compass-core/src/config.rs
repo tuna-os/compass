@@ -704,6 +704,16 @@ impl Config {
         }
     }
 
+    /// The fallback commands a query with no better answer offers: the
+    /// file's `fallbacks`, or the default file's `["files:search"]` when it
+    /// sets none. An empty list the user wrote stays empty.
+    #[must_use]
+    pub fn fallback_ids(&self) -> Vec<String> {
+        self.fallbacks
+            .clone()
+            .unwrap_or_else(|| vec![crate::commands::SEARCH_FILES_FALLBACK_ID.to_owned()])
+    }
+
     /// A provider's `preferences` object, as `providers.<id>.preferences`
     /// holds it; `None` when the file sets none, or sets something that is not
     /// an object.
@@ -775,6 +785,42 @@ impl Config {
     #[must_use]
     pub fn unknown_fields(&self) -> &BTreeMap<String, Value> {
         &self.unknown
+    }
+
+    /// `font.normal.family`, when it names a family: `auto` and `system`
+    /// (and no value) mean the launcher picks, which here is the desktop's
+    /// interface font.
+    #[must_use]
+    pub fn font_family(&self) -> Option<&str> {
+        let family = self
+            .unknown
+            .get("font")?
+            .get("normal")?
+            .get("family")?
+            .as_str()?
+            .trim();
+        (!family.is_empty() && family != "auto" && family != "system").then_some(family)
+    }
+
+    /// Sets `font.normal.family`, keeping the rest of the `font` object (its
+    /// `rendering` and `normal.size`), as "Set as vicinae font" merges it.
+    pub fn set_font_family(&mut self, family: &str) -> &mut Self {
+        if !matches!(self.unknown.get("font"), Some(Value::Object(_))) {
+            self.unknown
+                .insert("font".to_owned(), Value::Object(serde_json::Map::new()));
+        }
+        if let Some(Value::Object(font)) = self.unknown.get_mut("font") {
+            let normal = font
+                .entry("normal")
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            if !normal.is_object() {
+                *normal = Value::Object(serde_json::Map::new());
+            }
+            if let Some(normal) = normal.as_object_mut() {
+                normal.insert("family".to_owned(), Value::String(family.to_owned()));
+            }
+        }
+        self
     }
 
     /// Parses `data`. An empty or whitespace-only input yields the default configuration.

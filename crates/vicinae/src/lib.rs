@@ -27,6 +27,7 @@ pub mod extension_files;
 pub mod extension_runner;
 pub mod extension_wallpaper;
 pub mod extension_windows;
+pub mod file_manager;
 pub mod file_search;
 pub mod fonts;
 pub mod hotkey;
@@ -189,9 +190,13 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             color_scheme,
             theme_choice,
             root_config,
+            configured_font,
+            fallbacks,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
+                // A configured theme may be one of the user's theme files.
+                let _ = compass_ui::theme::load_default_user_themes();
                 (
                     config.launcher().keybinding_scheme(),
                     config.launcher().wrap_navigation(),
@@ -204,6 +209,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     appearance.color_scheme().to_owned(),
                     compass_ui::theme::Theme::from_name(appearance.theme()).unwrap_or_default(),
                     config.root_config(),
+                    config.font_family().map(str::to_owned),
+                    config.fallback_ids(),
                 )
             }
             Err(error) => {
@@ -216,6 +223,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_core::config::DEFAULT_COLOR_SCHEME.to_owned(),
                     compass_ui::theme::Theme::System,
                     compass_core::root_items::RootConfig::default(),
+                    None,
+                    compass_core::Config::default().fallback_ids(),
                 )
             }
         };
@@ -248,7 +257,12 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
 
         // The interface typeface: portal first, gsettings fallback, same
         // 250 ms budget as above so a wedged portal never blocks startup.
-        let (font_family, typography_link) = typography::follow();
+        // A family set in `font.normal.family` ("Set as vicinae font") wins
+        // over the desktop's, which is then not followed.
+        let (font_family, typography_link) = match configured_font {
+            Some(family) => (Some(family), None),
+            None => typography::follow(),
+        };
 
         // One adapter serves both: application search and clipboard history
         // go to the same engine over the same socket.
@@ -283,6 +297,9 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             appearance_link,
             font_family,
             typography_link,
+            theme_dirs: compass_core::theme_file::default_search_dirs(),
+            view_state_path: compass_ui::view_memory::default_path(),
+            fallbacks,
             ..compass_ui::AppFlags::default()
         };
 
@@ -444,14 +461,21 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         }
 
         Command::Deeplink { url } => {
-            // Only the OAuth redirect so far; every other deeplink the C++
-            // takes (extensions, themes, the store) is refused by name rather
-            // than silently dropped.
-            if compass_worker_host::oauth_service::Redirect::parse(&url).is_err() {
-                anyhow::bail!("Compass does not handle this deeplink yet: {url}");
+            // The OAuth redirect and the store's extensions links; every other
+            // deeplink the C++ takes (themes, commands) is refused by name
+            // rather than silently dropped.
+            if compass_worker_host::oauth_service::Redirect::parse(&url).is_ok() {
+                ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
+                return Ok(ExitCode::from(EXIT_OK));
             }
-            ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
-            Ok(ExitCode::from(EXIT_OK))
+            match compass_core::store_listing::parse_extension_link(&url) {
+                Some(Ok(_)) => {
+                    ipc::send_ack(&socket, compass_ipc::Request::OpenDeeplink { url }).await?;
+                    Ok(ExitCode::from(EXIT_OK))
+                }
+                Some(Err(usage)) => anyhow::bail!("{usage}"),
+                None => anyhow::bail!("Compass does not handle this deeplink yet: {url}"),
+            }
         }
 
         Command::Conformance {
@@ -594,6 +618,8 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
         ThemeCommand::List { json } => {
             let themes: Vec<_> = compass_ui::theme::Theme::ALL
                 .iter()
+                .copied()
+                .chain(compass_ui::theme::load_default_user_themes())
                 .map(|t| {
                     serde_json::json!({
                         "name": t.name(),
@@ -615,6 +641,7 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
             Ok(ExitCode::from(EXIT_OK))
         }
         ThemeCommand::Set { theme } => {
+            let _ = compass_ui::theme::load_default_user_themes();
             let parsed = compass_ui::theme::Theme::from_name(&theme).ok_or_else(|| {
                 anyhow::anyhow!("unknown theme {theme:?}; try `vicinae theme list`")
             })?;

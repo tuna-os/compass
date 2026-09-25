@@ -335,8 +335,11 @@ impl Stores {
         let readme = match &listing.readme_url {
             Some(url) => {
                 let url = compass_core::store_listing::readme_source_url(url);
-                match get(url, compass_core::store_listing::MAX_README_BYTES).await {
-                    Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+                match get(url.clone(), compass_core::store_listing::MAX_README_BYTES).await {
+                    Ok(bytes) => Some(html_images_as_markdown(&absolute_readme_images(
+                        &String::from_utf8_lossy(&bytes),
+                        &url,
+                    ))),
                     Err(err) => {
                         tracing::debug!(%err, "README not fetched");
                         None
@@ -456,7 +459,104 @@ fn entry(
             &listing.version,
         ),
         compat,
+        author_avatar: listing.author_avatar.clone(),
     }
+}
+
+/// A README with its relative image links made absolute against `base`
+/// (the URL it was fetched from), so the detail page can fetch them: the
+/// destinations of Markdown images, found with `pulldown-cmark`, and the
+/// `src` of HTML `<img>` tags. Absolute links, and anything `base` cannot
+/// resolve, are left as they are.
+#[must_use]
+pub fn absolute_readme_images(readme: &str, base: &str) -> String {
+    use pulldown_cmark::{Event, Parser, Tag};
+    let Ok(base) = url::Url::parse(base) else {
+        return readme.to_owned();
+    };
+    let resolve = |link: &str| -> Option<String> {
+        if link.is_empty() || url::Url::parse(link).is_ok() || link.starts_with('#') {
+            return None;
+        }
+        base.join(link).ok().map(|url| url.to_string())
+    };
+    // (start, end, replacement) for each relative destination.
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for (event, range) in Parser::new(readme).into_offset_iter() {
+        if let Event::Start(Tag::Image { dest_url, .. }) = event
+            && let Some(absolute) = resolve(&dest_url)
+            && let Some(at) = readme[range.clone()].rfind(dest_url.as_ref())
+        {
+            let start = range.start + at;
+            edits.push((start, start + dest_url.len(), absolute));
+        }
+    }
+    let mut search = 0;
+    while let Some(found) = readme[search..].find("<img") {
+        let tag_start = search + found;
+        let tag_end = readme[tag_start..]
+            .find('>')
+            .map_or(readme.len(), |end| tag_start + end);
+        let tag = &readme[tag_start..tag_end];
+        for quote in ['"', '\''] {
+            let key = format!("src={quote}");
+            if let Some(at) = tag.find(&key) {
+                let value_start = tag_start + at + key.len();
+                if let Some(len) = readme[value_start..tag_end].find(quote)
+                    && let Some(absolute) = resolve(&readme[value_start..value_start + len])
+                {
+                    edits.push((value_start, value_start + len, absolute));
+                }
+                break;
+            }
+        }
+        search = tag_end.max(tag_start + 4);
+    }
+    edits.sort_by_key(|edit| edit.0);
+    edits.dedup_by_key(|edit| edit.0);
+    let mut out = String::with_capacity(readme.len());
+    let mut cursor = 0;
+    for (start, end, replacement) in edits {
+        if start < cursor {
+            continue;
+        }
+        out.push_str(&readme[cursor..start]);
+        out.push_str(&replacement);
+        cursor = end;
+    }
+    out.push_str(&readme[cursor..]);
+    out
+}
+
+/// A Markdown document's `<img>` tags turned into Markdown images, so the
+/// launcher's renderer, which draws Markdown and not HTML, shows them.
+#[must_use]
+pub fn html_images_as_markdown(readme: &str) -> String {
+    let mut out = String::with_capacity(readme.len());
+    let mut rest = readme;
+    while let Some(found) = rest.find("<img") {
+        out.push_str(&rest[..found]);
+        let tag = &rest[found..];
+        let end = tag.find('>').map_or(tag.len(), |end| end + 1);
+        let attribute = |name: &str| {
+            ['"', '\''].iter().find_map(|quote| {
+                let key = format!("{name}={quote}");
+                let at = tag[..end].find(&key)? + key.len();
+                let len = tag[at..end].find(*quote)?;
+                Some(tag[at..at + len].to_owned())
+            })
+        };
+        match attribute("src") {
+            Some(src) => {
+                let alt = attribute("alt").unwrap_or_default();
+                out.push_str(&format!("\n\n![{alt}]({src})\n\n"));
+            }
+            None => out.push_str(&tag[..end]),
+        }
+        rest = &tag[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The installed extension `id`'s directory, if one is installed.
@@ -490,6 +590,40 @@ mod tests {
         assert!(!is_openable_url("javascript:alert(1)"));
         assert!(!is_openable_url("vicinae://launch/core/store"));
         assert!(!is_openable_url("not a url"));
+    }
+
+    #[test]
+    fn a_readme_s_relative_images_are_made_absolute_and_html_ones_drawable() {
+        let base = "https://raw.githubusercontent.com/o/r/main/extensions/clock/README.md";
+        let readme = "# Clock\n\n![shot](media/one.png) and ![abs](https://x.test/a.png)\n\n\
+                      See [docs](docs/x.md).\n\n<img src=\"./media/two.png\" alt=\"two\" width=\"300\">\n";
+        let fixed = absolute_readme_images(readme, base);
+        assert!(
+            fixed.contains(
+                "![shot](https://raw.githubusercontent.com/o/r/main/extensions/clock/media/one.png)"
+            ),
+            "{fixed}"
+        );
+        assert!(
+            fixed.contains("![abs](https://x.test/a.png)"),
+            "absolute kept"
+        );
+        assert!(fixed.contains("[docs](docs/x.md)"), "links are not images");
+        assert!(
+            fixed.contains(
+                "src=\"https://raw.githubusercontent.com/o/r/main/extensions/clock/media/two.png\""
+            ),
+            "{fixed}"
+        );
+        let drawable = html_images_as_markdown(&fixed);
+        assert!(
+            drawable.contains(
+                "![two](https://raw.githubusercontent.com/o/r/main/extensions/clock/media/two.png)"
+            ),
+            "{drawable}"
+        );
+        assert!(!drawable.contains("<img"));
+        assert_eq!(absolute_readme_images("x", "not a url"), "x");
     }
 
     #[test]

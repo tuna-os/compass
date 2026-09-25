@@ -906,6 +906,7 @@ dependencies = [
  "slug",
  "tempfile",
  "thiserror 2.0.20",
+ "toml",
  "tracing",
  "unicode-normalization",
  "zip",
@@ -1170,6 +1171,7 @@ dependencies = [
  "iced_winit",
  "image",
  "insta",
+ "jiff",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1238,6 +1240,7 @@ dependencies = [
  "roxmltree",
  "tempfile",
  "thiserror 2.0.20",
+ "xmlwriter",
 ]
 
 [[package]]
@@ -6493,6 +6496,7 @@ dependencies = [
  "notify",
  "notify-rust",
  "oo7",
+ "pulldown-cmark",
  "seccompiler",
  "serde",
  "serde_json",

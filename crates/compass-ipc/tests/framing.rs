@@ -230,6 +230,25 @@ fn all_requests() -> Vec<Request> {
         Request::ExtensionPreferences {
             id: "@zoë/notes:list".into(),
         },
+        Request::RunMediaCommandWith {
+            id: "play-pause".into(),
+            argument: Some("spötify".into()),
+        },
+        Request::ListMediaPlayers,
+        Request::SetFont {
+            family: "Noto Sans ไทย".into(),
+        },
+        Request::OpenDeeplink {
+            url: "vicinae://extensions/zoë/clock".into(),
+        },
+        Request::ListScriptGrants,
+        Request::RevokeScriptGrant {
+            id: "script.quick-notes".into(),
+        },
+        Request::ControlMediaPlayer {
+            player: "org.mpris.MediaPlayer2.spotify".into(),
+            action: compass_ipc::MediaPlayerAction::Next,
+        },
         Request::ListFonts,
         Request::FontSpecimen {
             name: "Noto Sans ไทย".into(),
@@ -267,6 +286,7 @@ fn store_entry() -> compass_ipc::StoreEntry {
         installed: true,
         update_available: true,
         compat: Some(1),
+        author_avatar: Some("https://example.com/zoë.png".into()),
     }
 }
 
@@ -329,6 +349,9 @@ fn all_responses() -> Vec<Response> {
         Response::Window(WindowCommand::Toggle),
         Response::Window(WindowCommand::Dmenu(u64::MAX)),
         Response::Window(WindowCommand::Launch(u64::MAX)),
+        Response::Window(WindowCommand::Deeplink(
+            "vicinae://extensions/zoë/clock".into(),
+        )),
         Response::ClipboardHistory { entries: vec![] },
         Response::ClipboardHistory {
             entries: vec![
@@ -579,6 +602,25 @@ fn all_responses() -> Vec<Response> {
         Response::ExtensionSubtitles {
             subtitles: vec![("@zoë/notes:list".into(), "3 unread 🚀".into())],
         },
+        Response::MediaPlayers {
+            players: vec![compass_ipc::MediaPlayerEntry {
+                id: "org.mpris.MediaPlayer2.spotify".into(),
+                identity: "Spotify".into(),
+                title: "Blue Monday".into(),
+                artist: "New Order".into(),
+                playing: true,
+                can_go_next: true,
+                ..Default::default()
+            }],
+        },
+        Response::ScriptGrants {
+            grants: vec![compass_ipc::ScriptGrantEntry {
+                id: "script.quick-notes".into(),
+                title: "Quick Notes".into(),
+                capabilities: vec!["clipboard.write".into()],
+                descriptions: vec!["copy to the clipboard".into()],
+            }],
+        },
         Response::Fonts {
             fonts: vec![compass_ipc::FontEntry {
                 name: "Noto Sans Thai".into(),
@@ -679,6 +721,13 @@ fn request_variants_are_exhaustive() {
             | Request::ExtensionLaunchFetch { .. }
             | Request::ExtensionSubtitles
             | Request::ExtensionPreferences { .. }
+            | Request::RunMediaCommandWith { .. }
+            | Request::ListMediaPlayers
+            | Request::SetFont { .. }
+            | Request::OpenDeeplink { .. }
+            | Request::ListScriptGrants
+            | Request::RevokeScriptGrant { .. }
+            | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -715,6 +764,8 @@ fn response_variants_are_exhaustive() {
             | Response::StoreListing { .. }
             | Response::StoreExtension { .. }
             | Response::StoreInstalled { .. }
+            | Response::MediaPlayers { .. }
+            | Response::ScriptGrants { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }

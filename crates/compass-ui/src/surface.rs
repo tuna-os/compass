@@ -86,6 +86,25 @@ pub(crate) fn open(settings: window::Settings) -> (window::Id, Task<Message>) {
     }
 }
 
+/// Resizes the launcher window: `window::resize` for a toplevel, a size
+/// change request for a layer surface, whose runtime ignores the former.
+pub(crate) fn resize(id: window::Id, size: iced::Size) -> Task<Message> {
+    match presentation() {
+        #[cfg(target_os = "linux")]
+        Presentation::LayerShell => {
+            use iced_layershell::actions::{LayerShellCustomAction, LayerShellCustomActionWithId};
+            Task::done(Message::Layer(LayerShellCustomActionWithId::new(
+                Some(id),
+                LayerShellCustomAction::SizeChange((
+                    size.width.round() as u32,
+                    size.height.round() as u32,
+                )),
+            )))
+        }
+        _ => window::resize(id, size),
+    }
+}
+
 /// `Opened` for layer surfaces, once they exist. Nothing under `iced::daemon`,
 /// where `window::open`'s own task reports it.
 pub(crate) fn opened_events() -> iced::Subscription<Message> {

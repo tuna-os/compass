@@ -27,6 +27,8 @@ unicode-normalization.workspace = true
 base64.workspace = true
 zip.workspace = true
 ignore.workspace = true
+# User theme files (`theme_file`); the same line compass-script reads manifests with.
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 
 [dev-dependencies]
 compass-testkit.workspace = true

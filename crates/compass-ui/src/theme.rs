@@ -1,8 +1,14 @@
-//! Curated color themes for #153.
+//! Curated color themes for #153, and the user's theme files.
 //!
-//! Each entry is a full [`Palette`] so the browser surrogate can render it
-//! from `states.json` without retyping colours. `system` is not a palette —
-//! it means "follow the portal appearance with Adwaita colours".
+//! Each curated entry is a full [`Palette`] so the browser surrogate can
+//! render it from `states.json` without retyping colours. `system` is not a
+//! palette — it means "follow the portal appearance with Adwaita colours".
+//!
+//! A theme file (`compass_core::theme_file`) becomes a [`Theme::User`]: it is
+//! read once per scan, resolved to a palette, and kept for the life of the
+//! process so the theme stays a `Copy` value the whole launcher can pass
+//! around. A file read again unchanged reuses its entry; an edited one adds a
+//! new entry, so what is kept grows only with edits.
 
 use crate::design::{Appearance, Palette, Rgb};
 
@@ -27,6 +33,86 @@ pub enum Theme {
     TokyoNight,
     /// Solarized — dark / light.
     Solarized,
+    /// A theme file from the user's or the system's theme directory.
+    #[serde(skip)]
+    User(&'static UserTheme),
+}
+
+/// A theme file, resolved to what the launcher draws with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserTheme {
+    /// The file's id, which the configuration stores.
+    pub id: String,
+    /// `meta.name`.
+    pub name: String,
+    /// `meta.description`.
+    pub description: String,
+    /// The file it was read from.
+    pub path: String,
+    /// Its palette, whatever the desktop's appearance: a theme file is dark
+    /// or light by its own `variant`.
+    pub palette: Palette,
+    /// The eight swatches a row shows.
+    pub swatches: [Rgb; 8],
+}
+
+// The palette's only float is its backdrop alpha, which is never NaN.
+impl Eq for UserTheme {}
+
+static USER_THEMES: std::sync::Mutex<Vec<&'static UserTheme>> = std::sync::Mutex::new(Vec::new());
+
+fn rgb(color: compass_core::theme_file::Rgba) -> Rgb {
+    Rgb::new(color.r, color.g, color.b)
+}
+
+/// Reads the theme files in `dirs` and returns them as themes, keeping each
+/// for [`Theme::from_name`] to find.
+pub fn load_user_themes(dirs: &[std::path::PathBuf]) -> Vec<Theme> {
+    use compass_core::theme_file;
+    let files = theme_file::scan(dirs);
+    let mut kept = USER_THEMES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    files
+        .iter()
+        .map(|file| {
+            let resolved = theme_file::resolve(file, &files);
+            let theme = UserTheme {
+                id: file.id.clone(),
+                name: file.name.clone(),
+                description: file.description.clone(),
+                path: file.path.to_string_lossy().into_owned(),
+                palette: Palette {
+                    surface: rgb(resolved.background),
+                    field: rgb(resolved.input_background),
+                    text: rgb(resolved.text),
+                    muted: rgb(resolved.muted),
+                    selection: rgb(resolved.selection),
+                    selection_text: rgb(resolved.selection_text),
+                    border: rgb(resolved.border),
+                    accent: rgb(resolved.accent),
+                    backdrop: Rgb::new(0, 0, 0),
+                    backdrop_alpha: if resolved.dark { 0.35 } else { 0.20 },
+                },
+                swatches: resolved.swatches.map(rgb),
+            };
+            let entry = match kept.iter().find(|entry| ***entry == theme) {
+                Some(entry) => *entry,
+                None => {
+                    let entry: &'static UserTheme = Box::leak(Box::new(theme));
+                    // The newest read of an id is the one `from_name` finds.
+                    kept.insert(0, entry);
+                    entry
+                }
+            };
+            Theme::User(entry)
+        })
+        .collect()
+}
+
+/// [`load_user_themes`] over this session's theme directories.
+pub fn load_default_user_themes() -> Vec<Theme> {
+    load_user_themes(&compass_core::theme_file::default_search_dirs())
 }
 
 impl Theme {
@@ -43,8 +129,9 @@ impl Theme {
 
     /// The persisted spelling.
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
+            Self::User(theme) => &theme.id,
             Self::System => "system",
             Self::Catppuccin => "catppuccin",
             Self::Dracula => "dracula",
@@ -57,8 +144,9 @@ impl Theme {
 
     /// What the picker calls it.
     #[must_use]
-    pub const fn title(self) -> &'static str {
+    pub fn title(self) -> &'static str {
         match self {
+            Self::User(theme) => &theme.name,
             Self::System => "System",
             Self::Catppuccin => "Catppuccin",
             Self::Dracula => "Dracula",
@@ -71,8 +159,9 @@ impl Theme {
 
     /// A line saying what it is, for the picker and `vicinae theme list`.
     #[must_use]
-    pub const fn description(self) -> &'static str {
+    pub fn description(self) -> &'static str {
         match self {
+            Self::User(theme) => &theme.description,
             Self::System => "Follow OS (Adwaita)",
             Self::Catppuccin => "Catppuccin (Mocha/Latte)",
             Self::Dracula => "Dracula",
@@ -94,6 +183,29 @@ impl Theme {
             "gruvbox" => Some(Self::Gruvbox),
             "tokyo-night" | "tokyonight" | "tokyo_night" => Some(Self::TokyoNight),
             "solarized" => Some(Self::Solarized),
+            _ => USER_THEMES
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .find(|theme| theme.id == name.trim())
+                .map(|theme| Self::User(theme)),
+        }
+    }
+
+    /// The file a user theme was read from.
+    #[must_use]
+    pub fn path(self) -> Option<&'static str> {
+        match self {
+            Self::User(theme) => Some(&theme.path),
+            _ => None,
+        }
+    }
+
+    /// The eight swatches a user theme's row shows.
+    #[must_use]
+    pub fn swatches(self) -> Option<&'static [Rgb; 8]> {
+        match self {
+            Self::User(theme) => Some(&theme.swatches),
             _ => None,
         }
     }
@@ -105,6 +217,7 @@ impl Theme {
     #[must_use]
     pub fn palette(self, appearance: Appearance) -> Palette {
         match self {
+            Self::User(theme) => theme.palette,
             Self::System => crate::design::palette(appearance),
             Self::Catppuccin => match appearance {
                 Appearance::Dark => Palette {
@@ -338,5 +451,27 @@ mod tests {
         // System is the default fallback
         assert_eq!(Theme::from_name("unknown"), None);
         assert_eq!(Theme::default(), Theme::System);
+    }
+
+    #[test]
+    fn a_theme_file_becomes_a_theme_found_by_its_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ocean-test.toml"),
+            "[meta]\nname = \"Ocean\"\ndescription = \"Deep\"\nvariant = \"dark\"\n\
+             [colors.core]\nbackground = \"#001122\"\nforeground = \"#eeeeee\"\n",
+        )
+        .unwrap();
+        let themes = load_user_themes(&[dir.path().to_path_buf()]);
+        assert_eq!(themes.len(), 1);
+        let theme = themes[0];
+        assert_eq!(theme.name(), "ocean-test");
+        assert_eq!(theme.title(), "Ocean");
+        assert_eq!(Theme::from_name("ocean-test"), Some(theme));
+        let palette = theme.palette(Appearance::Light);
+        assert_eq!(palette.surface, Rgb::new(0x00, 0x11, 0x22));
+        assert_eq!(palette.text, Rgb::new(0xee, 0xee, 0xee));
+        let again = load_user_themes(&[dir.path().to_path_buf()]);
+        assert_eq!(again, themes, "an unchanged file reuses its entry");
     }
 }

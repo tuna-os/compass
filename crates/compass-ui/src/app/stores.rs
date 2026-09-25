@@ -17,7 +17,197 @@ use crate::store_page::{self, Confirm, Status, StoreDetailPage, StorePage, actio
 
 const NEEDS_ENGINE: &str = "The extension stores need the Compass engine";
 
+/// The detail page's Markdown drawn with its images: those fetched are drawn,
+/// the rest keep the renderer's placeholder.
+struct StoreMarkdown<'b> {
+    images: &'b std::collections::HashMap<String, crate::extension_page::RowIcon>,
+}
+
+impl<'a> iced::widget::markdown::Viewer<'a, Message> for StoreMarkdown<'a> {
+    fn on_link_click(url: iced::widget::markdown::Uri) -> Message {
+        Message::ExtensionLinkClicked(url)
+    }
+
+    fn image(
+        &self,
+        settings: iced::widget::markdown::Settings,
+        url: &'a iced::widget::markdown::Uri,
+        title: &'a str,
+        alt: &iced::widget::markdown::Text,
+    ) -> Element<'a, Message> {
+        match self.images.get(url) {
+            Some(crate::extension_page::RowIcon::Art { art, .. }) => match art {
+                crate::icons::IconArt::Raster(path) => {
+                    image(path.clone()).width(Length::Shrink).into()
+                }
+                crate::icons::IconArt::Vector(path) => {
+                    iced::widget::svg(path.clone()).width(Length::Fill).into()
+                }
+            },
+            _ => {
+                let _ = (settings, title, alt);
+                container(text(if title.is_empty() { "Image" } else { title }).size(12))
+                    .padding(4)
+                    .into()
+            }
+        }
+    }
+}
+
 impl LauncherApp {
+    /// Opens the detail page a deeplink names (`vicinae://extensions/<author>/<name>`,
+    /// or the Raycast store's for `raycast://`), as the C++ pushes a detail
+    /// host over the root.
+    pub(super) fn open_deeplink(&mut self, url: &str) -> Task<Message> {
+        let Some(Ok(link)) = compass_core::store_listing::parse_extension_link(url) else {
+            tracing::warn!(%url, "a deeplink the launcher does not handle");
+            return Task::none();
+        };
+        let store = if link.raycast {
+            Store::Raycast
+        } else {
+            Store::Vicinae
+        };
+        self.panel = None;
+        let _ = self.close_extension_view();
+        self.parked_store = None;
+        let mut page = StorePage::new(store);
+        let Some(backend) = self.backend.clone() else {
+            page.status = Status::Failed(NEEDS_ENGINE.to_owned());
+            self.page = Page::Store(page);
+            return Task::none();
+        };
+        self.page = Page::Store(page);
+        Task::perform(
+            async move { backend.store_extension(store, link.author, link.name).await },
+            Message::StoreDetailLoaded,
+        )
+    }
+
+    /// A row's right side: installed and downloads, the compatibility tier
+    /// as a coloured dot and its name, and the author's avatar.
+    fn store_accessory<'a>(
+        &'a self,
+        entry: &'a crate::backend::StoreRow,
+        images: &'a store_page::Images,
+        selected: bool,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let colour = if selected {
+            palette.selection_text
+        } else {
+            palette.muted
+        }
+        .to_iced();
+        let size = f32::from(self.geometry.subtitle_size);
+        let mut line = row![].spacing(8).align_y(iced::Alignment::Center);
+        let status = store_page::status_text(entry);
+        if !status.is_empty() {
+            line = line.push(text(status).font(self.font()).size(size).color(colour));
+        }
+        if let Some(tier) = entry.compat {
+            let (r, g, b) = store_page::compat_colour(tier);
+            let dot = container(iced::widget::Space::new())
+                .width(Length::Fixed(8.0))
+                .height(Length::Fixed(8.0))
+                .style(move |_: &iced::Theme| container::Style {
+                    background: Some(iced::Color::from_rgb8(r, g, b).into()),
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                });
+            line = line.push(
+                row![
+                    dot,
+                    text(store_page::compat_label(tier))
+                        .font(self.font())
+                        .size(size)
+                        .color(colour)
+                ]
+                .spacing(4)
+                .align_y(iced::Alignment::Center),
+            );
+        }
+        if let Some(crate::extension_page::RowIcon::Art { art, .. }) = entry
+            .author_avatar
+            .as_ref()
+            .and_then(|url| images.art.get(url))
+        {
+            let avatar: Element<'a, Message> = match art {
+                crate::icons::IconArt::Raster(path) => image(path.clone())
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0))
+                    .into(),
+                crate::icons::IconArt::Vector(path) => iced::widget::svg(path.clone())
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0))
+                    .into(),
+            };
+            line = line.push(avatar);
+        }
+        line.into()
+    }
+
+    /// The uninstall question as a dialog over the page, with its two
+    /// buttons, as `UninstallExtensionAction`'s alert.
+    fn store_dialog<'a>(
+        &'a self,
+        content: Element<'a, Message>,
+        title: &'a str,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let button = |label: String, confirm: bool| {
+            iced::widget::button(text(label).font(self.font()).size(13))
+                .on_press(Message::StoreConfirmAnswered(confirm))
+                .padding(Padding::new(6.0).left(14).right(14))
+        };
+        let dialog = container(
+            column![
+                text(store_page::CONFIRM_TITLE)
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..self.font()
+                    })
+                    .size(15)
+                    .color(palette.text.to_iced()),
+                text(store_page::CONFIRM_MESSAGE)
+                    .font(self.font())
+                    .size(13)
+                    .color(palette.text.to_iced()),
+                row![
+                    iced::widget::Space::new().width(Length::Fill),
+                    button("Cancel".to_owned(), false),
+                    button(format!("Uninstall {title}"), true),
+                ]
+                .spacing(8),
+            ]
+            .spacing(10),
+        )
+        .max_width(420)
+        .padding(Padding::new(18.0))
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(palette.surface.to_iced().into()),
+            border: iced::Border {
+                color: palette.border.to_iced(),
+                width: 1.0,
+                radius: 10.0.into(),
+            },
+            ..container::Style::default()
+        });
+        let scrim = container(dialog)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center)
+            .style(|_: &iced::Theme| container::Style {
+                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35).into()),
+                ..container::Style::default()
+            });
+        iced::widget::stack![content, iced::widget::opaque(scrim)].into()
+    }
+
     /// Whether the theme is dark, which decides an extension's icon.
     fn store_prefers_dark(&self) -> bool {
         let surface = self.palette().surface.to_iced();
@@ -397,9 +587,31 @@ impl LauncherApp {
             Message::StoreDetailLoaded(Err(reason)) => {
                 if let Page::Store(page) = &mut self.page {
                     page.loading = false;
-                    page.notice = Some(reason);
+                    // A deeplink's page has no list under it to keep.
+                    if page.status == Status::Loading {
+                        page.status = Status::Failed(reason);
+                    } else {
+                        page.notice = Some(reason);
+                    }
                 }
                 Task::none()
+            }
+            Message::StoreConfirmAnswered(confirmed) => {
+                let id = match &mut self.page {
+                    Page::Store(page) => {
+                        let confirm = page.confirm.take();
+                        confirm.map(|confirm| confirm.id)
+                    }
+                    Page::StoreDetail(page) if page.confirm => {
+                        page.confirm = false;
+                        Some(page.detail.row.id.clone())
+                    }
+                    _ => None,
+                };
+                match id {
+                    Some(id) if confirmed => self.store_uninstall(id),
+                    _ => focus_search(),
+                }
             }
             Message::StoreInstalled(result) => {
                 if let Page::StoreDetail(page) = &mut self.page {
@@ -453,35 +665,14 @@ impl LauncherApp {
         true
     }
 
-    /// A banner under a page: the uninstall question, work in progress, or
-    /// what the last action said.
+    /// A banner under a page: work in progress, or what the last action
+    /// said.
     fn store_banner(
         &self,
-        confirm: Option<&str>,
         busy: Option<&str>,
         notice: Option<&str>,
     ) -> Option<Element<'_, Message>> {
         let palette = self.palette();
-        if let Some(title) = confirm {
-            return Some(
-                column![
-                    text(store_page::CONFIRM_TITLE)
-                        .font(iced::Font {
-                            weight: iced::font::Weight::Bold,
-                            ..self.font()
-                        })
-                        .size(15),
-                    text(store_page::CONFIRM_MESSAGE).font(self.font()).size(13),
-                    text(format!("Enter: Uninstall {title}    Esc: cancel"))
-                        .font(self.font())
-                        .size(12)
-                        .color(palette.muted.to_iced()),
-                ]
-                .spacing(6)
-                .padding(Padding::new(14.0))
-                .into(),
-            );
-        }
         let line = busy.or(notice)?;
         Some(
             container(
@@ -531,11 +722,11 @@ impl LauncherApp {
                     || self.initial_badge(&entry.title, selected),
                     |art| self.extension_icon(art, selected),
                 );
-            let item = self.list_row_with(
+            let item = self.list_row_parts(
                 icon,
                 entry.title.clone(),
                 self.subtitles.then(|| entry.description.clone()),
-                Some(store_page::accessory(entry)),
+                Some(self.store_accessory(entry, &page.images, selected)),
                 selected,
             );
             let item: Element<Message> = mouse_area(item)
@@ -551,13 +742,13 @@ impl LauncherApp {
         let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
-        match self.store_banner(
-            page.confirm.as_ref().map(|confirm| confirm.title.as_str()),
-            None,
-            page.notice.as_deref(),
-        ) {
+        let content: Element<'a, Message> = match self.store_banner(None, page.notice.as_deref()) {
             Some(banner) => column![rows, banner].into(),
             None => rows.into(),
+        };
+        match &page.confirm {
+            Some(confirm) => self.store_dialog(content, &confirm.title),
+            None => content,
         }
     }
 
@@ -596,11 +787,13 @@ impl LauncherApp {
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);
-        let markdown = iced::widget::markdown::view(
+        let markdown = iced::widget::markdown::view_with(
             &page.markdown,
             iced::widget::markdown::Settings::with_text_size(14, &theme),
-        )
-        .map(Message::ExtensionLinkClicked);
+            &StoreMarkdown {
+                images: &page.images.art,
+            },
+        );
         let mut body = column![header, markdown].spacing(12);
         for url in &page.detail.screenshots {
             if let Some(crate::extension_page::RowIcon::Art { art, .. }) = page.images.art.get(url)
@@ -619,13 +812,15 @@ impl LauncherApp {
         let content = scrollable(container(body).padding(Padding::new(14.0)))
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
-        match self.store_banner(
-            page.confirm.then_some(page.detail.row.title.as_str()),
-            page.busy.as_deref(),
-            page.notice.as_deref(),
-        ) {
-            Some(banner) => column![banner, content].into(),
-            None => content.into(),
+        let content: Element<'a, Message> =
+            match self.store_banner(page.busy.as_deref(), page.notice.as_deref()) {
+                Some(banner) => column![banner, content].into(),
+                None => content.into(),
+            };
+        if page.confirm {
+            self.store_dialog(content, &page.detail.row.title)
+        } else {
+            content
         }
     }
 }

@@ -231,6 +231,59 @@ pub fn readme_source_url(url: &str) -> String {
     url.to_owned()
 }
 
+/// A deeplink into a store extension's detail page:
+/// `vicinae://extensions/<author>/<name>`, or its `raycast://` and
+/// `com.raycast:` spellings, which open the Raycast store's page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionLink {
+    /// Whether the Raycast store is meant.
+    pub raycast: bool,
+    /// The author's handle.
+    pub author: String,
+    /// The extension's name in the store.
+    pub name: String,
+}
+
+/// The usage sentence the C++ answers a malformed extensions link with.
+pub const EXTENSION_LINK_USAGE: &str = "Usage: vicinae://extensions/<author>/<extension-name>";
+
+/// Reads an extensions deeplink, as `IpcCommandHandler` does for the
+/// `extensions` command: two path segments, percent-decoded. `None` for a
+/// URL that is not an extensions link at all; `Some(Err(..))` for one with
+/// the wrong number of segments.
+#[must_use]
+pub fn parse_extension_link(url: &str) -> Option<Result<ExtensionLink, &'static str>> {
+    let (scheme, rest) = url.split_once(':')?;
+    let raycast = match scheme {
+        "vicinae" => false,
+        "raycast" | "com.raycast" => true,
+        _ => return None,
+    };
+    let rest = rest.trim_start_matches('/');
+    let rest = rest.split(['?', '#']).next().unwrap_or_default();
+    let path = rest.strip_prefix("extensions")?;
+    if !(path.is_empty() || path.starts_with('/')) {
+        return None;
+    }
+    let segments: Vec<String> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            percent_encoding::percent_decode_str(segment)
+                .decode_utf8_lossy()
+                .into_owned()
+        })
+        .collect();
+    let [author, name] = segments.as_slice() else {
+        return Some(Err(EXTENSION_LINK_USAGE));
+    };
+    Some(Ok(ExtensionLink {
+        raycast,
+        author: author.clone(),
+        name: name.clone(),
+    }))
+}
+
 /// The largest README fetched, in bytes.
 pub const MAX_README_BYTES: u64 = 512 * 1024;
 
@@ -315,6 +368,39 @@ pub fn raycast_alert(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_extensions_link_names_the_store_author_and_extension() {
+        assert_eq!(
+            parse_extension_link("vicinae://extensions/zoë/clock"),
+            Some(Ok(ExtensionLink {
+                raycast: false,
+                author: "zoë".into(),
+                name: "clock".into()
+            }))
+        );
+        assert_eq!(
+            parse_extension_link("raycast://extensions/thomas/spotify-player?x=1"),
+            Some(Ok(ExtensionLink {
+                raycast: true,
+                author: "thomas".into(),
+                name: "spotify-player".into()
+            }))
+        );
+        assert_eq!(
+            parse_extension_link("com.raycast:/extensions/a%20b/c")
+                .and_then(Result::ok)
+                .map(|link| link.author),
+            Some("a b".into())
+        );
+        assert_eq!(
+            parse_extension_link("vicinae://extensions/x"),
+            Some(Err(EXTENSION_LINK_USAGE))
+        );
+        assert_eq!(parse_extension_link("raycast://oauth?code=c"), None);
+        assert_eq!(parse_extension_link("vicinae://extensionsfoo/a/b"), None);
+        assert_eq!(parse_extension_link("https://extensions/a/b"), None);
+    }
 
     #[test]
     fn a_github_readme_page_is_fetched_as_raw_text() {

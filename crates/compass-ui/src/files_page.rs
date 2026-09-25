@@ -36,6 +36,13 @@ pub struct FilesPage {
     pub generation: u64,
     /// Why the last open did not happen, until the next keystroke.
     pub notice: Option<String>,
+    /// The category filter's key (`compass_core::file_search::CATEGORY_FILTER_KEYS`);
+    /// `None` is "All".
+    pub category: Option<String>,
+    /// The selected file's preview, for the detail pane.
+    pub preview: Option<crate::file_preview::FilePreview>,
+    /// The file the preview was read from.
+    preview_path: Option<String>,
 }
 
 impl Default for FilesPage {
@@ -48,6 +55,9 @@ impl Default for FilesPage {
             status: Status::Loading,
             generation: 0,
             notice: None,
+            category: None,
+            preview: None,
+            preview_path: None,
         }
     }
 }
@@ -86,7 +96,36 @@ impl FilesPage {
                 self.status = Status::Failed(reason);
             }
         }
+        self.refresh_preview();
         true
+    }
+
+    /// Filters by the option `key`; `All` clears the filter. Returns the
+    /// generation the next answer must carry, since the list is asked again.
+    pub fn set_category(&mut self, key: &str) -> u64 {
+        self.category = (key != compass_core::file_search::CATEGORY_FILTER_KEYS[0]
+            && compass_core::file_search::category_for_key(key).is_some())
+        .then(|| key.to_owned());
+        self.generation = self.generation.wrapping_add(1);
+        self.generation
+    }
+
+    /// Reads the selected file's preview (`loadDetail`): name, the path with
+    /// home folded, type, modified time, and the image or text; nothing
+    /// when there is no selection.
+    pub fn refresh_preview(&mut self) {
+        let Some(path) = self.selected_row().map(|row| row.path.clone()) else {
+            self.preview = None;
+            self.preview_path = None;
+            return;
+        };
+        if self.preview_path.as_deref() == Some(path.as_str()) {
+            return;
+        }
+        let home = compass_core::xdg_dirs::home_dir();
+        self.preview =
+            crate::file_preview::load(std::path::Path::new(&path), home.as_deref(), true);
+        self.preview_path = Some(path);
     }
 }
 

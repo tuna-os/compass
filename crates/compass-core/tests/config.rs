@@ -50,6 +50,12 @@ fn root_settings_use_upstream_ids_and_preserve_provider_preferences() {
 fn absent_root_settings_stay_absent_and_malformed_settings_are_rejected() {
     assert_eq!(parse("{}").root_config(), Default::default());
     assert_eq!(
+        parse("{}").fallback_ids(),
+        ["files:search"],
+        "the default file's"
+    );
+    assert!(parse(r#"{"fallbacks": []}"#).fallback_ids().is_empty());
+    assert_eq!(
         serde_json::to_value(parse("{}")).unwrap(),
         serde_json::json!({})
     );
@@ -563,4 +569,21 @@ fn provider_preferences_are_read_from_the_provider_object() {
     assert!(config.provider_preferences("broken").is_none());
     assert!(config.provider_preferences("missing").is_none());
     assert!(parse("{}").provider_preferences("files").is_none());
+}
+
+#[test]
+fn set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font() {
+    let mut config =
+        parse(r#"{"font": {"rendering": "qt", "normal": {"family": "auto", "size": 10.5}}}"#);
+    assert_eq!(config.font_family(), None, "auto is not a family");
+    config.set_font_family("Fira Sans");
+    assert_eq!(config.font_family(), Some("Fira Sans"));
+    let written = config.to_json_pretty().unwrap();
+    assert_eq!(parse(&written).font_family(), Some("Fira Sans"));
+    assert!(written.contains("\"rendering\": \"qt\""), "{written}");
+    assert!(written.contains("10.5"), "{written}");
+
+    let mut empty = Config::default();
+    empty.set_font_family("Noto Serif");
+    assert_eq!(empty.font_family(), Some("Noto Serif"));
 }

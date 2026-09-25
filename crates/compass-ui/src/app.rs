@@ -28,7 +28,10 @@ use crate::resident::{EngineLink, UiCommand, UiOutcome};
 mod developer;
 mod dmenu;
 mod fonts;
+mod grants;
 mod launch;
+mod media;
+mod preview;
 mod programs;
 mod rhai;
 mod scripts;
@@ -192,6 +195,13 @@ impl Default for IconLookup {
 pub struct AppFlags {
     /// Curated color theme (#153), or System for Adwaita.
     pub theme: crate::theme::Theme,
+    /// Where Set Theme looks for theme files; none in tests.
+    pub theme_dirs: Vec<std::path::PathBuf>,
+    /// The file views' remembered filters are kept in; `None` keeps them in
+    /// memory, as tests do.
+    pub view_state_path: Option<std::path::PathBuf>,
+    /// The `fallbacks` entries a non-empty query offers, as ids.
+    pub fallbacks: Vec<String>,
     /// Window configuration.
     pub window_config: window::Settings,
     /// How to launch the selected application.
@@ -283,6 +293,9 @@ impl Default for AppFlags {
         let platform_specific = window::settings::PlatformSpecific::default();
         Self {
             theme: crate::theme::Theme::System,
+            theme_dirs: Vec::new(),
+            view_state_path: None,
+            fallbacks: Vec::new(),
             window_config: window::Settings {
                 size: iced::Size::new(
                     f32::from(GEOMETRY.card_width + 2 * design::SHADOW_PADDING),
@@ -462,6 +475,8 @@ pub enum RootRow {
     Script(usize),
     /// A Rhai script, as its index in `AppIndex::rhai_scripts`.
     RhaiScript(usize),
+    /// A fallback command offered for the query, under "Use "…" with...".
+    Fallback(&'static compass_core::commands::BuiltinCommand),
 }
 
 /// Which view the card shows.
@@ -499,6 +514,10 @@ enum Page {
     Store(crate::store_page::StorePage),
     /// One store extension's detail page.
     StoreDetail(Box<crate::store_page::StoreDetailPage>),
+    /// Now Playing.
+    NowPlaying(crate::media_page::NowPlayingPage),
+    /// Script Permissions.
+    Grants(crate::grants_page::GrantsPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -670,6 +689,14 @@ pub struct LauncherApp {
     window_config: window::Settings,
     /// Curated theme (#153).
     theme_choice: crate::theme::Theme,
+    /// Where Set Theme looks for theme files.
+    theme_dirs: Vec<std::path::PathBuf>,
+    /// What views remember between openings.
+    view_memory: crate::view_memory::ViewMemory,
+    /// The fallback commands a non-empty query offers.
+    fallbacks: Vec<&'static compass_core::commands::BuiltinCommand>,
+    /// Each Rhai script's manifest icon, resolved, by script id.
+    rhai_icons: std::collections::HashMap<String, crate::extension_page::RowIcon>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -764,6 +791,8 @@ pub struct LauncherApp {
     parked_fonts: Option<crate::fonts_page::FontsPage>,
     /// A store's list as it was when a detail page was opened over it.
     parked_store: Option<crate::store_page::StorePage>,
+    /// The card size a dmenu list resized the open window to, while it is.
+    resized_to: Option<(u32, u32)>,
     /// A compact or inline script run the root list is waiting on.
     following_script: Option<scripts::FollowedScript>,
     /// Subtitles extensions set for their commands (`updateCommandMetadata`),
@@ -900,6 +929,11 @@ impl LauncherApp {
         app.clipboard = flags.clipboard;
         app.windows = flags.windows;
         app.app_index.apply_root_config(&flags.root_config);
+        app.fallbacks = flags
+            .fallbacks
+            .iter()
+            .filter_map(|id| compass_core::commands::fallback(id))
+            .collect();
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
@@ -914,6 +948,8 @@ impl LauncherApp {
         app.link = flags.link;
         app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
         app.theme_choice = flags.theme;
+        app.theme_dirs = flags.theme_dirs;
+        app.view_memory = crate::view_memory::ViewMemory::load(flags.view_state_path);
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
         app.font_family = flags.font_family;
@@ -966,6 +1002,10 @@ impl LauncherApp {
             reopen_after_close: false,
             window_config: AppFlags::default().window_config,
             theme_choice: crate::theme::Theme::System,
+            theme_dirs: Vec::new(),
+            view_memory: crate::view_memory::ViewMemory::default(),
+            fallbacks: Vec::new(),
+            rhai_icons: std::collections::HashMap::new(),
             theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
@@ -990,6 +1030,7 @@ impl LauncherApp {
             parked_snippets: None,
             parked_fonts: None,
             parked_store: None,
+            resized_to: None,
             following_script: None,
             extension_subtitles: std::collections::HashMap::new(),
         }
@@ -1133,6 +1174,7 @@ impl LauncherApp {
             | RootRow::Shortcut(_)
             | RootRow::Script(_)
             | RootRow::RhaiScript(_)
+            | RootRow::Fallback(_)
             | RootRow::Calculator => None,
         }
     }
@@ -1233,6 +1275,9 @@ impl LauncherApp {
                     .get(index)
                     .map_or("", |script| script.title.as_str());
                 line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::Fallback(command)) => {
+                line.push_str(&format!(" selected_title={:?} fallback", command.title));
             }
             None => line.push_str(" selected_title=none"),
         }
@@ -1467,20 +1512,24 @@ impl LauncherApp {
         // one reply. Set before any branch so every path answers exactly once.
         self.awaiting = true;
 
-        let dmenu = match command {
-            UiCommand::Dmenu(token) => self.start_dmenu(token),
-            UiCommand::Launch(token) => self.start_launch(token),
+        let opened = match &command {
+            UiCommand::Dmenu(token) => self.start_dmenu(*token),
+            UiCommand::Launch(token) => self.start_launch(*token),
+            UiCommand::Deeplink(url) => self.open_deeplink(url),
             _ => Task::none(),
         };
-        let shown = self.obey_visibility(command);
-        Task::batch([dmenu, shown])
+        let shown = self.obey_visibility(&command);
+        Task::batch([opened, shown])
     }
 
     /// The visibility half of [`Self::obey`]: every command but `Hide`
     /// shows the window, `Toggle` depending on where it is.
-    fn obey_visibility(&mut self, command: UiCommand) -> Task<Message> {
+    fn obey_visibility(&mut self, command: &UiCommand) -> Task<Message> {
         let show = match command {
-            UiCommand::Show | UiCommand::Dmenu(_) | UiCommand::Launch(_) => true,
+            UiCommand::Show
+            | UiCommand::Dmenu(_)
+            | UiCommand::Launch(_)
+            | UiCommand::Deeplink(_) => true,
             UiCommand::Hide => false,
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
@@ -1709,6 +1758,7 @@ impl LauncherApp {
                             self.results = positions;
                             self.selected = 0;
                             self.apply_calculator();
+                            self.apply_fallbacks();
                             self.warm_icons();
                         } else {
                             self.error = Some(
@@ -1758,6 +1808,9 @@ impl LauncherApp {
                 }
                 if let Some(RootRow::RhaiScript(index)) = self.selected_row() {
                     return self.open_rhai_script_at(index);
+                }
+                if let Some(RootRow::Fallback(command)) = self.selected_row() {
+                    return self.open_fallback(command);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -1841,6 +1894,7 @@ impl LauncherApp {
                     self.refresh_scripts_task(),
                     self.refresh_rhai_scripts_task(),
                     self.refresh_subtitles_task(),
+                    self.apply_dmenu_size(),
                 ])
             }
             Message::Closed(id) => {
@@ -1850,6 +1904,7 @@ impl LauncherApp {
                 if self.window == Some(id) {
                     self.cancel_search();
                     self.window = None;
+                    self.resized_to = None;
                     self.closing = false;
                     if std::mem::take(&mut self.reopen_after_close) {
                         return self.open_window();
@@ -1878,6 +1933,12 @@ impl LauncherApp {
                 } else if let Some(task) = self.open_font_panel() {
                     return task;
                 } else if let Some(task) = self.open_store_panel() {
+                    return task;
+                } else if let Some(task) = self.open_media_panel() {
+                    return task;
+                } else if let Some(task) = self.open_theme_panel() {
+                    return task;
+                } else if let Some(task) = self.open_grants_panel() {
                     return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
@@ -1942,6 +2003,9 @@ impl LauncherApp {
                         .or_else(|| self.dmenu_panel_action(&id))
                         .or_else(|| self.font_panel_action(&id))
                         .or_else(|| self.store_panel_action(&id))
+                        .or_else(|| self.media_panel_action(&id))
+                        .or_else(|| self.theme_panel_action(&id))
+                        .or_else(|| self.grants_panel_action(&id))
                 {
                     return task;
                 }
@@ -2053,6 +2117,9 @@ impl LauncherApp {
                     return task;
                 }
                 if let Some(task) = self.submit_create_extension() {
+                    return task;
+                }
+                if let Some(task) = self.submit_media_form() {
                     return task;
                 }
                 let Page::Preferences(page) = &mut self.page else {
@@ -2346,6 +2413,14 @@ impl LauncherApp {
             Message::LaunchFetched(_)
             | Message::ExtensionSubtitlesLoaded(_)
             | Message::PreferencesOpened { .. } => self.launch_message(message),
+            Message::GrantsLoaded(_)
+            | Message::GrantsQueryChanged(_)
+            | Message::GrantSelected(_)
+            | Message::GrantRevoked(_) => self.grants_message(message),
+            Message::NowPlayingLoaded(_)
+            | Message::NowPlayingQueryChanged(_)
+            | Message::NowPlayingSelected(_)
+            | Message::NowPlayingActed(_) => self.media_message(message),
             Message::ProgramsLoaded(_)
             | Message::ProgramsQueryChanged(_)
             | Message::ProgramSelected(_)
@@ -2363,6 +2438,7 @@ impl LauncherApp {
             Message::FontsLoaded(_)
             | Message::FontsQueryChanged(_)
             | Message::FontsCategoryChanged(_)
+            | Message::FontSet(_)
             | Message::FontSelected(_)
             | Message::FontSpecimenLoaded { .. } => self.font_message(message),
             Message::StoreLoaded { .. }
@@ -2372,7 +2448,8 @@ impl LauncherApp {
             | Message::StoreDetailLoaded(_)
             | Message::StoreInstalled(_)
             | Message::StoreUninstalled { .. }
-            | Message::StoreUrlOpened(_) => self.store_message(message),
+            | Message::StoreUrlOpened(_)
+            | Message::StoreConfirmAnswered(_) => self.store_message(message),
             Message::Back => {
                 // Escape on a dmenu list dismisses it and the launcher, as the
                 // C++'s instant dismiss does.
@@ -2402,6 +2479,15 @@ impl LauncherApp {
                 self.files_query_task()
             }
             Message::FilesDebounced(generation) => self.files_search_task(generation),
+            Message::FilesCategoryChanged(key) => {
+                let Page::Files(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let generation = page.set_category(&key);
+                self.view_memory
+                    .set(crate::view_memory::FILE_CATEGORY, &key);
+                Task::batch([self.files_search_task(generation), focus_search()])
+            }
             Message::FilesLoaded { generation, result } => {
                 if let Page::Files(page) = &mut self.page {
                     page.apply(generation, result);
@@ -2413,6 +2499,7 @@ impl LauncherApp {
                     && position < page.rows.len()
                 {
                     page.selected = position;
+                    page.refresh_preview();
                 }
                 self.open_selected_file(false)
             }
@@ -2616,6 +2703,12 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Dmenu(_)) {
                     return self.dmenu_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Grants(_)) {
+                    return self.grants_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::NowPlaying(_)) {
+                    return self.now_playing_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::Themes(_)) {
                     return self.themes_page_key(key, modifiers);
                 }
@@ -2653,6 +2746,7 @@ impl LauncherApp {
                             direction,
                             self.wrap_navigation,
                         );
+                        page.refresh_preview();
                         return crate::scroll::reveal_root_selection();
                     }
                     return Task::none();
@@ -2880,6 +2974,16 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::DmenuQueryChanged as OnInput),
             ),
+            Page::Grants(page) => (
+                crate::grants_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::GrantsQueryChanged as OnInput),
+            ),
+            Page::NowPlaying(page) => (
+                crate::media_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::NowPlayingQueryChanged as OnInput),
+            ),
             Page::Themes(page) => (
                 compass_core::theme_picker::PLACEHOLDER,
                 &page.query,
@@ -2965,6 +3069,10 @@ impl LauncherApp {
             self.programs_body(page)
         } else if let Page::Dmenu(page) = &self.page {
             self.dmenu_body(page)
+        } else if let Page::Grants(page) = &self.page {
+            self.grants_body(page)
+        } else if let Page::NowPlaying(page) = &self.page {
+            self.now_playing_body(page)
         } else if let Page::Themes(page) = &self.page {
             self.themes_body(page)
         } else if let Page::Created(page) = &self.page {
@@ -3044,10 +3152,35 @@ impl LauncherApp {
                         let Some(script) = self.app_index.rhai_scripts().get(*index) else {
                             continue;
                         };
+                        let icon = match self.rhai_icons.get(&script.id) {
+                            Some(icon) => self.extension_icon(icon, selected),
+                            None => self.initial_badge(&script.title, selected),
+                        };
                         self.list_row(
-                            self.initial_badge(&script.title, selected),
+                            icon,
                             script.title.clone(),
                             self.subtitles.then(|| script.subtitle().to_owned()),
+                            selected,
+                        )
+                    }
+                    RootRow::Fallback(command) => {
+                        if position == 0
+                            || !matches!(self.results.get(position - 1), Some(RootRow::Fallback(_)))
+                        {
+                            list = list.push(
+                                container(
+                                    text(compass_core::root_items::fallback_heading(&self.query))
+                                        .font(self.font())
+                                        .size(12)
+                                        .color(palette.muted.to_iced()),
+                                )
+                                .padding(Padding::new(4.0).left(10)),
+                            );
+                        }
+                        self.list_row(
+                            self.initial_badge(command.title, selected),
+                            command.title.to_owned(),
+                            self.subtitles.then(|| command.subtitle.to_owned()),
                             selected,
                         )
                     }
@@ -3118,9 +3251,14 @@ impl LauncherApp {
 
         let card_background = card_background(palette.surface, self.tint);
 
+        let (card_width, card_height) = match self.dmenu_card_size() {
+            Some((width, height)) => (width as f32, Length::Fixed(height as f32)),
+            None => (f32::from(geometry.card_width), Length::Shrink),
+        };
         container(
             container(card_body)
-                .width(Length::Fixed(f32::from(geometry.card_width)))
+                .width(Length::Fixed(card_width))
+                .height(card_height)
                 .padding(geometry.card_padding)
                 .style(move |_: &Theme| container::Style {
                     background: Some(card_background.into()),
@@ -3277,11 +3415,32 @@ impl LauncherApp {
     fn files_body<'a>(&'a self, page: &'a crate::files_page::FilesPage) -> Element<'a, Message> {
         use crate::files_page::Status;
         let geometry = self.geometry;
-        match &page.status {
-            Status::Loading => return self.notice("Searching files…"),
-            Status::Failed(reason) => return self.notice(reason),
-            Status::Ready if page.rows.is_empty() => return self.notice("No files found"),
-            Status::Ready => {}
+        let key = page
+            .category
+            .clone()
+            .unwrap_or_else(|| compass_core::file_search::CATEGORY_FILTER_KEYS[0].to_owned());
+        let filter = container(
+            iced::widget::pick_list(
+                compass_core::file_search::CATEGORY_FILTER_KEYS
+                    .iter()
+                    .map(|key| (*key).to_owned())
+                    .collect::<Vec<_>>(),
+                Some(key),
+                Message::FilesCategoryChanged,
+            )
+            .text_size(12),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .padding(Padding::new(4.0).right(10));
+        let empty = match &page.status {
+            Status::Loading => Some("Searching files…"),
+            Status::Failed(reason) => Some(reason.as_str()),
+            Status::Ready if page.rows.is_empty() => Some("No files found"),
+            Status::Ready => None,
+        };
+        if let Some(empty) = empty {
+            return column![filter, self.notice(empty)].into();
         }
         let home =
             compass_core::xdg_dirs::home_dir().map(|home| home.to_string_lossy().into_owned());
@@ -3315,9 +3474,17 @@ impl LauncherApp {
         let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
-        match &page.notice {
-            Some(notice) => column![rows, self.notice(notice)].into(),
+        let rows: Element<Message> = match &page.preview {
+            Some(preview) => row![
+                container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
+                self.file_preview_pane(preview, true),
+            ]
+            .into(),
             None => rows.into(),
+        };
+        match &page.notice {
+            Some(notice) => column![filter, rows, self.notice(notice)].into(),
+            None => column![filter, rows].into(),
         }
     }
 
@@ -3540,6 +3707,30 @@ impl LauncherApp {
         accessory: Option<String>,
         selected: bool,
     ) -> Element<'a, Message> {
+        let colour = if selected {
+            self.palette().selection_text
+        } else {
+            self.palette().muted
+        };
+        let accessory = accessory.filter(|text| !text.is_empty()).map(|accessory| {
+            text(accessory)
+                .font(self.font())
+                .size(f32::from(self.geometry.subtitle_size))
+                .color(colour.to_iced())
+                .into()
+        });
+        self.list_row_parts(icon, title, subtitle, accessory, selected)
+    }
+
+    /// [`Self::list_row_with`], with any element at the row's right.
+    fn list_row_parts<'a>(
+        &'a self,
+        icon: Element<'a, Message>,
+        title: String,
+        subtitle: Option<String>,
+        accessory: Option<Element<'a, Message>>,
+        selected: bool,
+    ) -> Element<'a, Message> {
         let geometry = self.geometry;
         let palette = self.palette();
         let title_color = if selected {
@@ -3568,15 +3759,8 @@ impl LauncherApp {
             );
         }
 
-        let line = match accessory.filter(|text| !text.is_empty()) {
-            Some(accessory) => row![
-                icon,
-                labels.width(Length::Fill),
-                text(accessory)
-                    .font(self.font())
-                    .size(f32::from(geometry.subtitle_size))
-                    .color(subtitle_color.to_iced())
-            ],
+        let line = match accessory {
+            Some(accessory) => row![icon, labels.width(Length::Fill), accessory],
             None => row![icon, labels],
         }
         .spacing(12)
@@ -3926,6 +4110,7 @@ impl LauncherApp {
                 | crate::preferences_page::Purpose::SnippetArguments { .. }
                 | crate::preferences_page::Purpose::SnippetForm { .. }
                 | crate::preferences_page::Purpose::ScriptArguments
+                | crate::preferences_page::Purpose::MediaArguments
                 | crate::preferences_page::Purpose::CreateExtension => page.title.clone(),
             })
             .font(self.font())
@@ -4341,28 +4526,15 @@ impl LauncherApp {
                 }
                 Task::batch([record, self.run_power_command(power)])
             }
-            CommandKind::Media(id) => {
-                let Some(backend) = self.backend.clone() else {
-                    self.error = Some(format!(
-                        "{} needs the Compass engine, and this window is running without one",
-                        command.title
-                    ));
-                    return record;
-                };
-                let id = id.to_owned();
-                let run = Task::perform(
-                    async move { backend.run_media_command(id).await },
-                    Message::BuiltinCommandDone,
-                );
-                Task::batch([record, self.conceal(), run])
-            }
+            CommandKind::Media(id) => Task::batch([record, self.run_media(command, id, None)]),
+            CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
+            CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
             CommandKind::SearchEmojis => {
                 self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
                 Task::batch([record, focus_search()])
             }
             CommandKind::SearchFiles => {
-                self.page = Page::Files(crate::files_page::FilesPage::default());
-                Task::batch([record, self.files_query_task(), focus_search()])
+                Task::batch([record, self.open_search_files(String::new())])
             }
             CommandKind::CreateShortcut => Task::batch([
                 record,
@@ -4394,6 +4566,18 @@ impl LauncherApp {
                 Task::batch([record, self.list_windows_task(), focus_search()])
             }
         }
+    }
+
+    /// Opens Search Files with `query` typed, and the remembered category
+    /// (`restoreCategoryFilter`: anything but "All").
+    fn open_search_files(&mut self, query: String) -> Task<Message> {
+        let mut page = crate::files_page::FilesPage::default();
+        if let Some(key) = self.view_memory.get(crate::view_memory::FILE_CATEGORY) {
+            page.set_category(key);
+        }
+        page.set_query(query);
+        self.page = Page::Files(page);
+        Task::batch([self.files_query_task(), focus_search()])
     }
 
     /// Asks Search Files' query: at once, or once its debounce runs out.
@@ -4434,8 +4618,9 @@ impl LauncherApp {
             return Task::none();
         };
         let query = page.query.clone();
+        let category = page.category.clone();
         Task::perform(
-            async move { backend.search_files(query).await },
+            async move { backend.search_files(query, category).await },
             move |result| Message::FilesLoaded { generation, result },
         )
     }
@@ -4644,7 +4829,37 @@ impl LauncherApp {
         // unrelated application.
         self.selected = 0;
         self.apply_calculator();
+        self.apply_fallbacks();
         self.warm_icons();
+    }
+
+    /// Offers the fallback commands under the results for a non-empty query,
+    /// as `RootFallbackSection` does.
+    fn apply_fallbacks(&mut self) {
+        self.results
+            .retain(|row| !matches!(row, RootRow::Fallback(_)));
+        if self.query.trim().is_empty() {
+            return;
+        }
+        self.results
+            .extend(self.fallbacks.iter().copied().map(RootRow::Fallback));
+    }
+
+    /// Runs a fallback command with the query: Search Files opens searching
+    /// for it.
+    fn open_fallback(
+        &mut self,
+        command: &'static compass_core::commands::BuiltinCommand,
+    ) -> Task<Message> {
+        use compass_core::commands::CommandKind;
+        self.panel = None;
+        match command.kind {
+            CommandKind::SearchFiles => {
+                let query = self.query.clone();
+                self.open_search_files(query)
+            }
+            _ => self.open_command(command),
+        }
     }
 
     /// Puts the calculator's answer to the query first, when there is one.
@@ -4694,6 +4909,7 @@ impl LauncherApp {
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
                 | RootRow::Calculator => None,
             })
             .filter_map(AppItem::icon)
@@ -5006,8 +5222,17 @@ mod tests {
         toast: Option<crate::backend::ExtensionToast>,
         /// The power commands asked for.
         powered: std::sync::Mutex<Vec<String>>,
-        /// The media commands asked for.
+        /// The media commands asked for, each with its argument after a
+        /// space.
         played: std::sync::Mutex<Vec<String>>,
+        /// The players Now Playing lists.
+        players: std::sync::Mutex<Vec<crate::backend::MediaPlayerRow>>,
+        /// The families "Set as vicinae font" saved.
+        fonts_set: std::sync::Mutex<Vec<String>>,
+        /// What the user allowed their Rhai scripts.
+        grants: std::sync::Mutex<Vec<crate::backend::ScriptGrant>>,
+        /// What Now Playing asked the players to do.
+        controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
@@ -5079,19 +5304,54 @@ mod tests {
             })
         }
 
-        fn run_media_command(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+        fn run_media_command(
+            &self,
+            id: String,
+            argument: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
-                self.played.lock().unwrap().push(id);
+                self.played.lock().unwrap().push(match argument {
+                    Some(argument) => format!("{id} {argument}"),
+                    None => id,
+                });
                 Err("No media player is running".to_owned())
+            })
+        }
+
+        fn list_media_players(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::MediaPlayerRow>> {
+            Box::pin(async move { Ok(self.players.lock().unwrap().clone()) })
+        }
+
+        fn control_media_player(
+            &self,
+            player: String,
+            action: crate::backend::MediaAction,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let mut players = self.players.lock().unwrap();
+                if action == crate::backend::MediaAction::PlayPause
+                    && let Some(row) = players.iter_mut().find(|row| row.id == player)
+                {
+                    row.playing = !row.playing;
+                    row.paused = !row.playing;
+                }
+                self.controlled.lock().unwrap().push((player, action));
+                Ok(())
             })
         }
 
         fn search_files(
             &self,
             query: String,
+            category: Option<String>,
         ) -> crate::backend::BackendFuture<'_, crate::backend::FileResults> {
             Box::pin(async move {
-                self.file_queries.lock().unwrap().push(query.clone());
+                self.file_queries.lock().unwrap().push(match &category {
+                    Some(category) => format!("{query} [{category}]"),
+                    None => query.clone(),
+                });
                 Ok(crate::backend::FileResults {
                     heading: if query.is_empty() {
                         "Recently Accessed".to_owned()
@@ -5102,6 +5362,7 @@ mod tests {
                         .files
                         .iter()
                         .filter(|file| file.name.contains(&query))
+                        .filter(|file| category.as_ref().is_none_or(|c| &file.category == c))
                         .cloned()
                         .collect(),
                 })
@@ -5166,6 +5427,30 @@ mod tests {
                     ],
                     categories: vec!["Latin".into(), "Monospace".into()],
                 })
+            })
+        }
+
+        fn list_script_grants(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
+            Box::pin(async move { Ok(self.grants.lock().unwrap().clone()) })
+        }
+
+        fn revoke_script_grant(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
+            Box::pin(async move {
+                let mut grants = self.grants.lock().unwrap();
+                grants.retain(|grant| grant.id != id);
+                Ok(grants.clone())
+            })
+        }
+
+        fn set_font(&self, family: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.fonts_set.lock().unwrap().push(family);
+                Ok(())
             })
         }
 
@@ -7184,6 +7469,125 @@ mod tests {
     }
 
     #[test]
+    fn a_media_command_runs_with_the_player_chosen_in_its_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:play-pause".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("play pause".into()))) {
+            let _ = app.update(message);
+        }
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "play-pause"))
+            .expect("Play / Pause is in root search");
+        let _ = app.update(Message::TogglePanel);
+        let panel = app.panel.as_ref().expect("a media command has a panel");
+        let titles: Vec<&str> = panel.sections[0]
+            .actions
+            .iter()
+            .map(|a| a.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Play / Pause", "Choose player…"]);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let _ = app.update(Message::PanelActivate);
+        assert!(
+            matches!(&app.page, Page::Preferences(page)
+                if page.purpose == crate::preferences_page::Purpose::MediaArguments),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text(" spotify ".into()),
+        ));
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(
+            backend.played.lock().unwrap().as_slice(),
+            ["play-pause spotify"]
+        );
+    }
+
+    #[test]
+    fn now_playing_lists_the_players_and_controls_the_selected_one() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _entered = runtime.enter();
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:now-playing".to_owned()],
+            ..TestBackend::default()
+        });
+        *backend.players.lock().unwrap() = vec![
+            crate::backend::MediaPlayerRow {
+                id: "org.mpris.MediaPlayer2.firefox".into(),
+                identity: "Firefox".into(),
+                ..Default::default()
+            },
+            crate::backend::MediaPlayerRow {
+                id: "org.mpris.MediaPlayer2.spotify".into(),
+                identity: "Spotify".into(),
+                title: "Blue Monday".into(),
+                artist: "New Order".into(),
+                playing: true,
+                can_go_next: true,
+                ..Default::default()
+            },
+        ];
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("now playing".into()))) {
+            let _ = app.update(message);
+        }
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == "now-playing"))
+            .expect("Now Playing is in root search");
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        let Page::NowPlaying(page) = &app.page else {
+            panic!("Now Playing did not open: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+
+        for message in task_messages(app.update(Message::NowPlayingQueryChanged("order".into()))) {
+            let _ = app.update(message);
+        }
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app.panel.as_ref().expect("a player has a panel").sections[0]
+            .actions
+            .iter()
+            .map(|a| a.title.clone())
+            .collect();
+        assert_eq!(titles, ["Pause", "Next Track"]);
+        let _ = app.update(Message::TogglePanel);
+
+        let mut pending = task_messages(app.update(pressed(iced::keyboard::key::Named::Enter)));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        assert_eq!(
+            backend.controlled.lock().unwrap().as_slice(),
+            [(
+                "org.mpris.MediaPlayer2.spotify".to_owned(),
+                crate::backend::MediaAction::PlayPause
+            )]
+        );
+        let Page::NowPlaying(page) = &app.page else {
+            panic!("Now Playing closed: {}", app.state_line());
+        };
+        let row = page.selected_row().expect("still selected");
+        assert!(!row.playing && row.paused, "the list was reloaded");
+    }
+
+    #[test]
     fn the_emoji_picker_opens_from_root_search_and_filters() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app(dir.path());
@@ -7503,6 +7907,7 @@ mod tests {
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
                 | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
@@ -7653,6 +8058,98 @@ mod tests {
             backend.opened.lock().unwrap().as_slice(),
             [("/home/me/Documents/quarterly-report.pdf".to_owned(), true)]
         );
+    }
+
+    #[test]
+    fn search_files_filters_by_a_remembered_category_and_previews_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.txt");
+        std::fs::write(&notes, "remember the milk").unwrap();
+        let picture = dir.path().join("cat.png");
+        std::fs::write(&picture, b"png").unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![
+                file_row(&notes.to_string_lossy(), "Documents"),
+                file_row(&picture.to_string_lossy(), "Images"),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut app, "search files", "commands:search-files");
+        let page = files_page(&app);
+        let preview = page.preview.as_ref().expect("the selection is previewed");
+        assert_eq!(preview.name, "notes.txt");
+        assert_eq!(
+            preview.content,
+            crate::file_preview::Content::Text("remember the milk".into())
+        );
+        assert!(preview.modified.is_some());
+        let _ = app.view();
+
+        let task = app.update(Message::FilesCategoryChanged("Images".into()));
+        settle(&mut app, task);
+        let page = files_page(&app);
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            page.preview.as_ref().map(|p| p.content.clone()),
+            Some(crate::file_preview::Content::Image(picture.clone()))
+        );
+        assert_eq!(
+            backend
+                .file_queries
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some(" [Images]")
+        );
+
+        // A new opening, even in a new process, starts filtered.
+        let mut again = LauncherApp::with_index(index(dir.path()));
+        again.backend = Some(backend.clone());
+        again.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut again, "search files", "commands:search-files");
+        assert_eq!(files_page(&again).category.as_deref(), Some("Images"));
+    }
+
+    #[test]
+    fn a_query_offers_search_files_as_a_fallback_that_searches_for_it() {
+        // The typed query waits out the indexer's debounce on a timer.
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _entered = runtime.enter();
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![file_row("/home/me/zebra-notes.md", "Documents")],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.apply(AppFlags {
+            backend: Some(backend.clone()),
+            fallbacks: vec!["files:search".into()],
+            ..AppFlags::default()
+        });
+        app.query = "zebra".into();
+        app.search();
+        assert!(
+            matches!(app.results.last(), Some(RootRow::Fallback(c))
+                if c.kind == compass_core::commands::CommandKind::SearchFiles),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.view();
+        app.selected = app.results.len() - 1;
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let page = files_page(&app);
+        assert_eq!(page.query, "zebra");
+        assert_eq!(page.rows.len(), 1);
+        app.query.clear();
+        app.search();
+        assert!(app.results.is_empty(), "an empty query offers no fallback");
     }
 
     #[test]
@@ -8034,6 +8531,119 @@ mod tests {
         );
     }
 
+    #[test]
+    fn browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut app, "browse fonts", "commands:browse-fonts");
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowRight));
+        settle(&mut app, task);
+        let Page::Fonts(page) = &app.page else {
+            panic!("not Browse Fonts: {}", app.state_line());
+        };
+        assert_eq!(page.selected, 1, "Right moves along the row");
+        let _ = app.view();
+
+        let task = app.update(Message::FontsCategoryChanged("Monospace".into()));
+        settle(&mut app, task);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.fonts_set.lock().unwrap().as_slice(),
+            ["JetBrains Mono"]
+        );
+        assert_eq!(app.font_family.as_deref(), Some("JetBrains Mono"));
+
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        let mut reopened = LauncherApp::with_index(index(dir.path()));
+        reopened.backend = Some(backend);
+        reopened.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut reopened, "browse fonts", "commands:browse-fonts");
+        let Page::Fonts(page) = &reopened.page else {
+            panic!("not Browse Fonts: {}", reopened.state_line());
+        };
+        assert_eq!(
+            page.category.as_deref(),
+            Some("Monospace"),
+            "the category is remembered across processes"
+        );
+    }
+
+    #[test]
+    fn script_permissions_lists_what_was_allowed_and_revokes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        *backend.grants.lock().unwrap() = vec![
+            crate::backend::ScriptGrant {
+                id: "script.clip".into(),
+                title: "Clip Tool".into(),
+                capabilities: vec!["clipboard.write".into()],
+                descriptions: vec!["copy to the clipboard".into()],
+            },
+            crate::backend::ScriptGrant {
+                id: "script.notes".into(),
+                title: "Quick Notes".into(),
+                capabilities: vec!["storage.read".into()],
+                descriptions: vec!["read its saved data".into()],
+            },
+        ];
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(
+            &mut app,
+            "script permissions",
+            "commands:script-permissions",
+        );
+        let Page::Grants(page) = &app.page else {
+            panic!("not Script Permissions: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Copy to the clipboard").is_ok());
+        }
+        let _ = app.update(Message::GrantsQueryChanged("notes".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Grants(page) = &app.page else {
+            panic!("left Script Permissions");
+        };
+        assert_eq!(
+            page.all.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+            ["script.clip"]
+        );
+        assert_eq!(page.notice.as_deref(), Some(crate::grants_page::REVOKED));
+    }
+
+    #[test]
+    fn a_rhai_script_row_draws_its_manifest_icon_when_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        let _ = app.update(Message::RhaiScriptsLoaded(Ok(vec![
+            compass_core::rhai_scripts::RhaiScriptItem {
+                id: "script.no-icon".into(),
+                title: "No Icon".into(),
+                description: None,
+                icon: Some("not-a-builtin".into()),
+                keywords: Vec::new(),
+            },
+        ])));
+        assert!(
+            app.rhai_icons.is_empty(),
+            "an unknown name draws the initial"
+        );
+    }
+
     // ---- The extension stores ----
 
     fn store_backend(dir: &std::path::Path) -> Arc<TestBackend> {
@@ -8051,6 +8661,71 @@ mod tests {
             store_dir: Some(dir.to_path_buf()),
             ..TestBackend::default()
         })
+    }
+
+    #[test]
+    fn a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog() {
+        let dir = tempfile::tempdir().unwrap();
+        let extensions = dir.path().join("extensions");
+        fs::create_dir_all(&extensions).unwrap();
+        let backend = store_backend(&extensions);
+        {
+            let mut rows = backend.store_rows.lock().unwrap();
+            rows[1].installed = true;
+            rows[1].compat = Some(1);
+        }
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.window = Some(window::Id::unique());
+        let task = app.update(Message::Command(UiCommand::Deeplink(
+            "raycast://extensions/zoe/timer".into(),
+        )));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!(
+                "the deeplink did not open a detail page: {}",
+                app.state_line()
+            );
+        };
+        assert_eq!(detail.store, crate::backend::Store::Raycast);
+        assert_eq!(detail.detail.row.name, "timer");
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelActivate);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(detail.confirm, "the panel's uninstall asks first");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Are you sure?").is_ok());
+            assert!(ui.find("Uninstall Timer").is_ok(), "a dialog with buttons");
+        }
+        let task = app.update(Message::StoreConfirmAnswered(false));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(
+            !detail.confirm && detail.detail.row.installed,
+            "Cancel keeps it"
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Store(_) = &app.page else {
+            panic!("Escape did not go to the list: {}", app.state_line());
+        };
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Partial").is_ok(), "the tier beside its dot");
+        }
+
+        let bad = app.update(Message::Command(UiCommand::Deeplink(
+            "vicinae://extensions/only-one".into(),
+        )));
+        settle(&mut app, bad);
     }
 
     #[test]
@@ -8290,6 +8965,34 @@ mod tests {
             [(5, None)],
             "one dismissal, however the view went away"
         );
+    }
+
+    #[test]
+    fn a_dmenu_size_resizes_the_window_until_a_list_without_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = dmenu_app(dir.path());
+        assert_eq!(app.dmenu_card_size(), None);
+        assert_eq!(app.resized_to, None);
+        if let Page::Dmenu(page) = &mut app.page {
+            page.list.width = Some(400);
+            page.list.navigation_title = Some("Pick one".into());
+        }
+        let _ = app.apply_dmenu_size();
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "hello").unwrap();
+        if let Page::Dmenu(page) = &mut app.page {
+            page.entries.push(file.to_string_lossy().into_owned());
+            page.query = "notes".into();
+            page.refilter();
+            assert!(page.preview.is_some(), "quick look reads the file");
+        }
+        let _ = app.view();
+        let size = Some((400, u32::from(GEOMETRY.card_max_height)));
+        assert_eq!(app.dmenu_card_size(), size);
+        assert_eq!(app.resized_to, size);
+        let task = app.update(Message::Command(UiCommand::Dmenu(5)));
+        settle(&mut app, task);
+        assert_eq!(app.resized_to, None, "the next list puts the size back");
     }
 
     // ---- Run Terminal Program ----
@@ -9329,6 +10032,7 @@ mod quick_launch_tests {
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
                 | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
@@ -9477,6 +10181,7 @@ mod icon_tests {
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
                 | RootRow::Calculator => None,
             })
             .find(|item| item.name() == name)
