@@ -62,6 +62,8 @@ pub enum Purpose {
     /// A media command's optional argument (the player, or the volume
     /// step); `command_id` is the command's entrypoint.
     MediaArguments,
+    /// The emoji picker's keywords for one glyph; `command_id` is the glyph.
+    GlyphKeywords,
 }
 
 impl Purpose {
@@ -70,7 +72,7 @@ impl Purpose {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Preferences | Self::Arguments => "Enter: save and run    Esc: back",
-            Self::CommandPreferences => "Enter: save    Esc: back",
+            Self::CommandPreferences | Self::GlyphKeywords => "Enter: save    Esc: back",
             Self::ShortcutArguments => "Enter: open    Esc: back",
             Self::ShortcutForm { .. } => "Enter: save    Esc: back",
             Self::SnippetArguments { paste: false } => "Enter: copy    Esc: back",

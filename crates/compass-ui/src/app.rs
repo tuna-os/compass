@@ -28,6 +28,7 @@ use crate::resident::{EngineLink, UiCommand, UiOutcome};
 mod apps;
 mod developer;
 mod dmenu;
+mod emoji;
 mod fonts;
 mod grants;
 mod launch;
@@ -231,6 +232,12 @@ pub struct AppFlags {
     pub power_asks: std::collections::BTreeMap<String, bool>,
     /// Browse Apps' `showHidden` and `sortAlphabetically` preferences.
     pub browse_apps: compass_core::browse_apps::Options,
+    /// Where the emoji picker's visits, pins, tones and keywords are kept
+    /// (`compass_core::glyph_service::default_path`); `None` keeps them in
+    /// memory, as tests do.
+    pub glyph_path: Option<std::path::PathBuf>,
+    /// The emoji picker's `skinTone` preference, as a tone id.
+    pub emoji_skin_tone: Option<String>,
     /// When the process started, for the cold-start figure (#13).
     ///
     /// `None` in a test or anywhere nobody is timing, which simply means no
@@ -320,6 +327,8 @@ impl Default for AppFlags {
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
+            glyph_path: None,
+            emoji_skin_tone: None,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             appearance_preset: crate::preset::resolve(None, None, None),
@@ -390,6 +399,16 @@ impl PanelState {
     pub fn selected_action(&self) -> Option<&Action> {
         let row = self.rows.get(usize::try_from(self.selected).ok()?)?;
         self.sections.get(row.section)?.actions.get(row.action?)
+    }
+
+    /// The row of the action called `title`, for a test to click.
+    #[cfg(test)]
+    fn row_titled(&self, title: &str) -> Option<usize> {
+        self.rows.iter().position(|row| {
+            row.action
+                .and_then(|action| self.sections.get(row.section)?.actions.get(action))
+                .is_some_and(|action| action.title == title)
+        })
     }
 }
 
@@ -734,6 +753,12 @@ pub struct LauncherApp {
     power_asks: std::collections::BTreeMap<String, bool>,
     /// See [`AppFlags::browse_apps`].
     browse_apps: compass_core::browse_apps::Options,
+    /// See [`AppFlags::glyph_path`].
+    glyph_path: Option<std::path::PathBuf>,
+    /// See [`AppFlags::emoji_skin_tone`].
+    emoji_skin_tone: Option<String>,
+    /// The emoji picker while its keyword form is open.
+    parked_emoji: Option<crate::emoji_page::EmojiPage>,
     /// Sizes and spacing, from the resolved appearance preset (#84).
     ///
     /// Held rather than read from [`design::GEOMETRY`] at each draw: a preset
@@ -958,6 +983,8 @@ impl LauncherApp {
         app.quick_launch = flags.quick_launch;
         app.power_asks = flags.power_asks;
         app.browse_apps = flags.browse_apps;
+        app.glyph_path = flags.glyph_path;
+        app.emoji_skin_tone = flags.emoji_skin_tone;
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
@@ -1037,6 +1064,9 @@ impl LauncherApp {
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
+            glyph_path: None,
+            emoji_skin_tone: None,
+            parked_emoji: None,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
@@ -1966,6 +1996,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_apps_panel() {
                     return task;
+                } else if let Some(task) = self.open_emoji_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -2033,6 +2065,7 @@ impl LauncherApp {
                         .or_else(|| self.theme_panel_action(&id))
                         .or_else(|| self.grants_panel_action(&id))
                         .or_else(|| self.apps_panel_action(&id))
+                        .or_else(|| self.emoji_panel_action(&id))
                 {
                     return task;
                 }
@@ -2134,6 +2167,9 @@ impl LauncherApp {
                 Task::none()
             }
             Message::PreferencesSubmit => {
+                if let Some(task) = self.submit_emoji_keywords() {
+                    return task;
+                }
                 if let Some(task) = self.submit_shortcut_form() {
                     return task;
                 }
@@ -2492,6 +2528,9 @@ impl LauncherApp {
                 if matches!(self.page, Page::Dmenu(_)) {
                     return self.conceal();
                 }
+                if let Some(task) = self.back_from_emoji_keywords() {
+                    return task;
+                }
                 if let Some(task) = self.back_from_shortcut_form() {
                     return task;
                 }
@@ -2702,24 +2741,8 @@ impl LauncherApp {
                     }
                     return Task::none();
                 }
-                if let Page::Emoji(page) = &mut self.page {
-                    let direction = match key.as_ref() {
-                        Key::Named(Named::ArrowDown) => Some(Direction::Down),
-                        Key::Named(Named::ArrowUp) => Some(Direction::Up),
-                        Key::Named(Named::Escape) => return self.update(Message::Back),
-                        Key::Named(Named::Enter) => return self.copy_selected_emoji(),
-                        _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
-                    };
-                    if let Some(direction) = direction {
-                        page.selected = next_selection(
-                            page.shown.len(),
-                            page.selected,
-                            direction,
-                            self.wrap_navigation,
-                        );
-                        return crate::scroll::reveal_root_selection();
-                    }
-                    return Task::none();
+                if !panel_key && matches!(self.page, Page::Emoji(_)) {
+                    return self.emoji_page_key(key, modifiers);
                 }
                 if !panel_key && let Some(task) = self.shortcut_chord(key, modifiers) {
                     return task;
@@ -3330,6 +3353,19 @@ impl LauncherApp {
     }
 
     /// The window switcher's body: its state, or its rows.
+    /// A section's heading in a list: small, muted, indented to the rows'
+    /// text.
+    fn section_heading<'a>(&self, label: String) -> Element<'a, Message> {
+        container(
+            text(label)
+                .font(self.font())
+                .size(12)
+                .color(self.palette().muted.to_iced()),
+        )
+        .padding(Padding::new(4.0).left(10))
+        .into()
+    }
+
     /// The emoji picker's rows: the character in the icon slot, its name.
     fn emoji_body<'a>(&'a self, page: &'a crate::emoji_page::EmojiPage) -> Element<'a, Message> {
         let geometry = self.geometry;
@@ -3338,17 +3374,24 @@ impl LauncherApp {
         }
         let glyphs = compass_core::glyph::glyphs();
         let mut list = column![].spacing(f32::from(geometry.row_spacing));
+        if let Some(notice) = &page.notice {
+            list = list.push(self.section_heading(notice.clone()));
+        }
         for (position, &index) in page.shown.iter().enumerate() {
             let Some(glyph) = glyphs.get(index) else {
                 continue;
             };
+            if let Some(heading) = page.heading_at(position) {
+                list = list.push(self.section_heading(heading.to_owned()));
+            }
             let selected = position == page.selected;
-            let icon = container(text(glyph.character).size(f32::from(geometry.icon_size) * 0.75))
-                .width(Length::Fixed(f32::from(geometry.icon_size)))
-                .height(Length::Fixed(f32::from(geometry.icon_size)))
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .into();
+            let icon =
+                container(text(page.display(glyph)).size(f32::from(geometry.icon_size) * 0.75))
+                    .width(Length::Fixed(f32::from(geometry.icon_size)))
+                    .height(Length::Fixed(f32::from(geometry.icon_size)))
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into();
             let row = self.list_row(
                 icon,
                 glyph.name.to_owned(),
@@ -3391,19 +3434,6 @@ impl LauncherApp {
             Message::BuiltinCommandDone,
         );
         Task::batch([self.conceal(), run])
-    }
-
-    /// Copies the selected emoji and gets out of the way, so it can be
-    /// pasted where the person was.
-    fn copy_selected_emoji(&mut self) -> Task<Message> {
-        let Page::Emoji(page) = &self.page else {
-            return Task::none();
-        };
-        let Some(glyph) = page.selected_glyph() else {
-            return Task::none();
-        };
-        let copy = iced::clipboard::write(glyph.character.to_owned());
-        Task::batch([copy, self.conceal()])
     }
 
     fn windows_body<'a>(
@@ -4163,6 +4193,7 @@ impl LauncherApp {
                 | crate::preferences_page::Purpose::SnippetForm { .. }
                 | crate::preferences_page::Purpose::ScriptArguments
                 | crate::preferences_page::Purpose::MediaArguments
+                | crate::preferences_page::Purpose::GlyphKeywords
                 | crate::preferences_page::Purpose::CreateExtension => page.title.clone(),
             })
             .font(self.font())
@@ -4625,10 +4656,7 @@ impl LauncherApp {
                 record,
                 self.open_default_picker(crate::backend::DefaultApp::Terminal),
             ]),
-            CommandKind::SearchEmojis => {
-                self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
-                Task::batch([record, focus_search()])
-            }
+            CommandKind::SearchEmojis => Task::batch([record, self.open_emoji_picker()]),
             CommandKind::SearchFiles => {
                 Task::batch([record, self.open_search_files(String::new())])
             }
@@ -7805,6 +7833,83 @@ mod tests {
         assert_eq!(page.selected_glyph().map(|g| g.character), Some("👍"));
         let mut ui = iced_test::simulator(app.view());
         assert!(ui.find("thumbs up").is_ok());
+    }
+
+    #[test]
+    fn the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file() {
+        use iced::keyboard::key::Named;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("emojis").join("emojis.json");
+        let mut app = app(dir.path());
+        app.glyph_path = Some(path.clone());
+        app.emoji_skin_tone = Some("dark".to_owned());
+        let command = compass_core::commands::by_id("commands:search-emojis").expect("command");
+        let _ = app.open_command(command);
+
+        // A pick is copied in the picker's tone and counted.
+        let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+        let copied: Vec<String> =
+            iced_winit::runtime::task::into_stream(app.update(pressed(Named::Enter)))
+                .map(|stream| {
+                    iced::futures::executor::block_on(iced::futures::StreamExt::collect::<Vec<_>>(
+                        stream,
+                    ))
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|action| match action {
+                    iced_winit::runtime::Action::Clipboard(
+                        iced_winit::runtime::clipboard::Action::Write { contents, .. },
+                    ) => Some(contents),
+                    _ => None,
+                })
+                .collect();
+        assert_eq!(copied, ["👋\u{1F3FF}"]);
+        let _ = app.open_command(command);
+        let Page::Emoji(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.recent, 1, "the pick is recently used");
+
+        // Pin from the panel.
+        let _ = app.update(Message::EmojiQueryChanged("pizza".into()));
+        let _ = app.update(Message::TogglePanel);
+        let pin = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Pin emoji"))
+            .expect("the panel offers to pin");
+        let _ = app.update(Message::PanelClicked(pin));
+
+        // A keyword of one's own, through the form and back to the picker.
+        let _ = app.update(Message::TogglePanel);
+        let edit = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Edit keyword"))
+            .expect("the panel offers the keyword form");
+        let _ = app.update(Message::PanelClicked(edit));
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::GlyphKeywords),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("qqsupper".into()),
+        ));
+        let _ = app.update(Message::PreferencesSubmit);
+        let Page::Emoji(page) = &app.page else {
+            panic!("back in the picker: {}", app.state_line());
+        };
+        assert_eq!(page.query, "pizza", "the picker comes back as it was");
+
+        let stored = compass_core::glyph_service::GlyphService::load_file(&path);
+        let pizza = stored.find("🍕").expect("pizza is remembered");
+        assert!(pizza.pinned_at.is_some());
+        assert_eq!(pizza.keyword.as_deref(), Some("qqsupper"));
+        assert_eq!(stored.find("👋").map(|wave| wave.visit_count), Some(1));
     }
 
     #[test]

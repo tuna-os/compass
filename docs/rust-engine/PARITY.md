@@ -153,7 +153,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/input-server` | `vicinae::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -324,8 +324,6 @@ PLAN §12.0 sizes them and says what blocks each.
   one, a remote one) to a temporary PNG landed after it (see "Gaps closed after the truth pass").
 - `src/services/global-shortcuts`: Still C++-only: per-command global shortcuts from the
   configuration, the `vicinae-hotkey-v1` and X11 backends, and conflict detection.
-- `src/services/glyph-service`: Still C++-only: wiring its model into the emoji picker, so that
-  visits, pins, custom keywords and each glyph's tone are remembered.
 - `src/services/news`, `src/services/update`, `src/services/telemetry`: Still C++-only: fetching
   and showing the news notices, the update check, and sending the telemetry record, each ported as
   a model and waiting on a decision about what a fork fetches and sends.
@@ -372,6 +370,31 @@ What differs, by row:
 | `desktop-notification` | Every icon is rendered to a 128×128 PNG, with the theme's side of a themed image, and a file icon or `data:` URL drawn as the launcher would. | A PNG or JPEG file (on disk, an asset, or fetched) is passed as it is and scaled by the notification server; a themed image uses its light side (a notification has no theme); a file icon and a `data:` URL go without an icon. | `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` |
 | `extension-registry` | `QFileSystemWatcher` on each extension directory: an extension appearing is seen, a `package.json` written into it afterwards is not, so `vicinae develop` (which creates the directory before building) waits for the next change or its own deeplink. | Each extension's directory is watched too, for its `package.json` only; a bundle being written is not a rescan. | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` |
 | `app-service` | One process: `appsChanged` reloads the root items the window shows. | Two: the engine rescans on the watch; the window asks for the catalog generation on every summon and rescans its own index when it moved, so an open window catches up on its next summon. | `a_moved_catalog_generation_rescans_and_the_same_one_does_not` |
+
+### The gaps pass: glyphs, clipboard, root (2026-09-25)
+
+Three rows the truth pass left amber with nothing blocking them but the work. A cell flips only
+with a named module and named tests that fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/glyph-service` | Rust ✅ | `compass_core::glyph_service` (file I/O, `score`), `compass_ui::emoji_page`, `compass_ui::app::emoji` | `tests/glyph_service.rs` (`the_cpp_file_is_read_with_its_camel_case_keys`, `the_file_is_written_and_read_back_and_a_missing_one_is_empty`, `a_visit_raises_a_glyph_among_matches_and_a_keyword_makes_it_match`), `emoji_page::tests` (pins and visits head the empty query, keywords, per-glyph tones, the panel), `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
+
+**`src/services/glyph-service` → the emoji picker.** The picker reads and writes the C++'s own file,
+`$XDG_DATA_HOME/vicinae/emojis/emojis.json`, so both engines remember the same visits, pins, tones
+and keywords. That file turned up a bug: the port serialised `visit_count`, `pinned_at`,
+`last_visited_at` and `skin_tone`, where glaze writes the members as declared (`visitCount`,
+`pinnedAt`, …), so neither engine could read the other's file. The keys are camelCase now, and the
+snake_case spellings are still read so a file the earlier build wrote is not lost. The empty query
+shows the pinned glyphs, then the recently used, then the table under its category headings; a
+query ranks by the person's keyword (twice the name's weight), the name, the CLDR keywords and the
+category, plus the frecency boost of each glyph's visits. Copy registers a visit and copies the glyph
+in its own tone, else the picker's `skinTone` preference
+(`providers.core.entrypoints.search-emojis.preferences`). The panel is `buildEmojiActionPanel`'s:
+copy, copy name, codepoint and category, the keyword form (Ctrl+E), reset ranking, pin or unpin,
+and the skin-tone section. Not ported, and deliberately: the one-off migration from the legacy
+`visited_emoji` table of `omni.db`, which only a database from before the JSON file holds; and the
+picker's paste action, which the `src/builtins/vicinae` note carries.
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
@@ -636,8 +659,9 @@ would be showing switches that do nothing. The enabled list is ordered by the st
 rather than by relevance, because a fallback's position decides which of them answers a query first
 — any other order would show a ranking that is not the one in force.
 
-The emoji picker and both stores are in the launcher now (the picker without the remembered tones,
-pins and visits `glyph-service` keeps). Still C++-only: the installed-extensions list, the OAuth
+The emoji picker and both stores are in the launcher now, the picker with the visits, pins, tones
+and keywords `glyph-service` keeps. Still C++-only: the picker's paste action (it copies), the
+installed-extensions list, the OAuth
 token store and local-storage browser views, the tray search, the builtin-icon gallery, the fallback
 manager's view, and the small commands (report a bug, refresh apps, open the config file, the
 store's intro page).

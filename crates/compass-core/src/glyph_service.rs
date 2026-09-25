@@ -40,21 +40,34 @@ pub const CATEGORY_WEIGHT: f32 = 0.5;
 /// user data". The service now covers symbols as well as emoji, but renaming
 /// the key would make every existing file unreadable and silently reset
 /// everyone's pins and counts.
+///
+/// # The other keys are camelCase
+///
+/// Glaze writes a struct's members as they are declared, so the C++ file
+/// holds `visitCount`, `pinnedAt`, `lastVisitedAt` and `skinTone`. This port
+/// first wrote them snake_case, which made the two engines unable to read
+/// each other's file; the snake_case spellings are still accepted so a file
+/// that build wrote is not lost.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct SerializedEmojiMetadata {
     /// The character this is about.
     pub emoji: String,
     /// How many times it has been picked.
-    #[serde(default)]
+    #[serde(default, alias = "visit_count")]
     pub visit_count: u32,
     /// When it was pinned, in seconds since the epoch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "pinned_at", skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<u64>,
     /// When it was last picked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "last_visited_at",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub last_visited_at: Option<u64>,
     /// The skin tone chosen for it, by id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "skin_tone", skip_serializing_if = "Option::is_none")]
     pub skin_tone: Option<String>,
     /// The person's own keywords, space separated as one string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -96,6 +109,36 @@ impl GlyphService {
     #[must_use]
     pub fn from_json(text: &str) -> Self {
         serde_json::from_str(text).map_or_else(|_| Self::new(), Self::from_entries)
+    }
+
+    /// Reads the metadata file at `path`.
+    ///
+    /// A missing file is an empty store, and so is one that does not parse
+    /// (see [`Self::from_json`]). The C++ constructor creates the file when it
+    /// is missing; here it is created by the first [`Self::save_file`], which
+    /// is the first moment there is something to keep.
+    #[must_use]
+    pub fn load_file(path: &std::path::Path) -> Self {
+        std::fs::read_to_string(path)
+            .map(|text| Self::from_json(&text))
+            .unwrap_or_default()
+    }
+
+    /// Writes the store to `path`, creating its directory, through a
+    /// temporary file renamed over the old one so a crash mid-write cannot
+    /// leave half a file that would then load as nothing.
+    ///
+    /// # Errors
+    ///
+    /// The I/O error, when the directory or the file cannot be written.
+    pub fn save_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = self.to_json().map_err(std::io::Error::other)?;
+        let partial = path.with_extension("json.partial");
+        std::fs::write(&partial, text)?;
+        std::fs::rename(&partial, path)
     }
 
     /// The entries, for saving.
@@ -299,4 +342,57 @@ pub fn search_fields<'a>(
         weight: BUILTIN_KEYWORD_WEIGHT,
     }));
     fields
+}
+
+/// Where the C++ keeps the metadata: `$XDG_DATA_HOME/vicinae/emojis/emojis.json`
+/// (`Omnicast::dataDir() / "emojis" / "emojis.json"`). Shared with it, so a
+/// person moving between the engines keeps their pins and counts.
+#[must_use]
+pub fn default_path() -> Option<std::path::PathBuf> {
+    Some(
+        crate::xdg_dirs::data_home()?
+            .join("vicinae")
+            .join("emojis")
+            .join("emojis.json"),
+    )
+}
+
+/// One glyph's score for `query`, as `GlyphService::search` computes it: the
+/// weighted fields of [`search_fields`], then the frecency boost of the
+/// glyph's entry, if it has one. `None` when the glyph does not match.
+///
+/// The boost is added only to something that already matched, so a much-used
+/// glyph rises among the results and never appears in results it does not
+/// belong to.
+#[must_use]
+pub fn score(
+    glyph: &crate::glyph::Glyph,
+    entry: Option<&SerializedEmojiMetadata>,
+    query: &compass_search::Query,
+    now: i64,
+) -> Option<u32> {
+    let keyword = entry
+        .and_then(|entry| entry.keyword.as_deref())
+        .unwrap_or("");
+    let fields = search_fields(
+        keyword,
+        glyph.name,
+        glyph.category.label(),
+        glyph.keywords(),
+    );
+    let fields: Vec<compass_search::WeightedField<'_>> = fields
+        .iter()
+        .filter(|field| !field.text.is_empty())
+        .map(|field| compass_search::WeightedField::new(field.text, field.weight))
+        .collect();
+    let found = compass_search::score_weighted(&fields, query);
+    if found.quality < compass_search::MIN_QUALITY || found.score == 0 {
+        return None;
+    }
+    let boost = entry.map_or(0.0, |entry| {
+        compass_search::FRECENCY_WEIGHT
+            * compass_search::frecency(entry.visit_count, entry.last_visited_at, now)
+    });
+    // At most 100 plus a boost of at most `FRECENCY_WEIGHT`.
+    Some((f64::from(found.score) + boost).round() as u32)
 }

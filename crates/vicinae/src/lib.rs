@@ -196,6 +196,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             fallbacks,
             power_asks,
             browse_apps,
+            emoji_skin_tone,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -222,6 +223,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                             compass_core::browse_apps::ENTRYPOINT,
                         ),
                     ),
+                    emoji_skin_tone(&config),
                 )
             }
             Err(error) => {
@@ -238,6 +240,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_core::Config::default().fallback_ids(),
                     power_asks(&compass_core::Config::default()),
                     compass_core::browse_apps::Options::default(),
+                    None,
                 )
             }
         };
@@ -315,6 +318,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             fallbacks,
             power_asks,
             browse_apps,
+            glyph_path: compass_core::glyph_service::default_path(),
+            emoji_skin_tone,
             ..compass_ui::AppFlags::default()
         };
 
@@ -361,6 +366,18 @@ fn power_asks(config: &compass_core::Config) -> std::collections::BTreeMap<Strin
             (command.id.to_owned(), should_confirm(command, preferences))
         })
         .collect()
+}
+
+/// The emoji picker's `skinTone` preference
+/// (`providers.core.entrypoints.search-emojis.preferences.skinTone`, where the
+/// C++ `SearchEmojiCommand` keeps it). `default` and an absent value are the
+/// same: no modifier.
+fn emoji_skin_tone(config: &compass_core::Config) -> Option<String> {
+    config
+        .entrypoint_preferences("core", "search-emojis")?
+        .get("skinTone")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 fn launcher_surface() -> compass_wayland::SurfaceKind {
