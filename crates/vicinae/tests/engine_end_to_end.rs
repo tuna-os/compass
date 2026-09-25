@@ -1128,6 +1128,34 @@ fn each_command_reaches_the_window_as_itself() {
 }
 
 #[test]
+fn the_engines_hud_reaches_the_launchers_hud() {
+    use compass_ipc::{DefaultAppKind, Request, Response, WindowCommand};
+    let web = entry("Web", "MimeType=x-scheme-handler/https;\n");
+    let daemon = Daemon::start(&[("web.desktop", web.as_str())]);
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Hidden);
+    assert_eq!(
+        daemon.request(Request::SetDefaultApp {
+            kind: DefaultAppKind::Browser,
+            id: "web.desktop".to_owned(),
+        }),
+        Response::Ack
+    );
+    let expected = WindowCommand::Hud {
+        text: "Default browser changed".to_owned(),
+        icon: Some("globe-01".to_owned()),
+    };
+    let deadline = std::time::Instant::now() + STARTUP_TIMEOUT;
+    while !window.seen().contains(&expected) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no HUD reached the window: {:?}",
+            window.seen()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[test]
 fn a_window_that_refuses_is_reported_rather_than_acked() {
     let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
     let reason = "no compositor to present on";

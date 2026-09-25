@@ -529,6 +529,14 @@ fn all_responses() -> Vec<Response> {
             "vicinae://extensions/zoë/clock".into(),
         )),
         Response::Window(WindowCommand::Describe),
+        Response::Window(WindowCommand::Hud {
+            text: "Quit Fichiers ✓".into(),
+            icon: Some("copy-clipboard".into()),
+        }),
+        Response::Window(WindowCommand::Hud {
+            text: "Clipboard cleared".into(),
+            icon: None,
+        }),
         Response::Commands {
             commands: vec![compass_ipc::CommandInfo {
                 id: "@zoë/notes:new".into(),

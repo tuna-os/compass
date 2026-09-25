@@ -185,7 +185,7 @@ impl LauncherApp {
                     Message::FileOpened,
                 )
             }
-            Act::Copy(text) => Task::batch([iced::clipboard::write(text), self.conceal()]),
+            Act::Copy(text) => self.copy_with_hud(text),
             Act::Focus(window) => {
                 let Some(windows) = self.windows.clone() else {
                     return Task::none();

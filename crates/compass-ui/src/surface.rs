@@ -105,6 +105,21 @@ pub(crate) fn resize(id: window::Id, size: iced::Size) -> Task<Message> {
     }
 }
 
+/// Opens the HUD's surface under `id`: a layer surface on the `top` layer,
+/// centred, taking neither the keyboard nor the pointer, as
+/// `HudWindowLayerShell.qml`. Nothing on a toplevel presentation, which has
+/// no HUD (`crate::hud`).
+pub(crate) fn open_hud(id: window::Id) -> Task<Message> {
+    match presentation() {
+        #[cfg(target_os = "linux")]
+        Presentation::LayerShell => Task::done(Message::Layer(layer::new_hud_surface(id))),
+        _ => {
+            let _ = id;
+            Task::none()
+        }
+    }
+}
+
 /// `Opened` for layer surfaces, once they exist. Nothing under `iced::daemon`,
 /// where `window::open`'s own task reports it.
 pub(crate) fn opened_events() -> iced::Subscription<Message> {
@@ -150,6 +165,33 @@ pub(crate) mod layer {
             events_transparent: false,
             namespace: Some(NAMESPACE.to_owned()),
         }
+    }
+
+    /// The HUD as a layer surface: centred on the active output, above
+    /// windows, with no keyboard interactivity so the application the
+    /// launcher hid back to keeps its focus, and transparent to the pointer.
+    pub fn hud_settings() -> NewLayerShellSettings {
+        NewLayerShellSettings {
+            size: Some(crate::hud::SURFACE_SIZE),
+            layer: Layer::Top,
+            anchor: Anchor::empty(),
+            exclusive_zone: None,
+            margin: None,
+            keyboard_interactivity: KeyboardInteractivity::None,
+            output_option: OutputOption::Active,
+            events_transparent: true,
+            namespace: Some(crate::hud::NAMESPACE.to_owned()),
+        }
+    }
+
+    pub fn new_hud_surface(id: window::Id) -> LayerShellCustomActionWithId {
+        LayerShellCustomActionWithId::new(
+            None,
+            LayerShellCustomAction::NewLayerShell {
+                settings: hud_settings(),
+                id,
+            },
+        )
     }
 
     pub fn new_surface(
@@ -204,6 +246,25 @@ mod tests {
             KeyboardInteractivity::Exclusive
         );
         assert_eq!(settings.namespace.as_deref(), Some(layer::NAMESPACE));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_hud_surface_takes_no_keyboard_and_no_pointer() {
+        use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
+        let settings = layer::hud_settings();
+        assert_eq!(settings.size, Some(crate::hud::SURFACE_SIZE));
+        assert_eq!(settings.anchor, Anchor::empty(), "centred, as AnchorNone");
+        assert_eq!(settings.layer, Layer::Top);
+        assert_eq!(settings.keyboard_interactivity, KeyboardInteractivity::None);
+        assert!(settings.events_transparent);
+        assert_eq!(settings.namespace.as_deref(), Some("vicinae-hud"));
+    }
+
+    #[test]
+    fn a_toplevel_presentation_opens_no_hud_surface() {
+        assert_eq!(presentation(), Presentation::Toplevel);
+        assert_eq!(open_hud(window::Id::unique()).units(), 0);
     }
 
     #[cfg(target_os = "linux")]

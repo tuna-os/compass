@@ -520,4 +520,10 @@ pub enum Message {
     },
     /// Something in the settings view.
     Settings(crate::settings_page::SettingsMessage),
+    /// A tick while the HUD is up, at this time.
+    HudTick(std::time::Instant),
+    /// An action that hides the launcher finished: on success it hides,
+    /// with this HUD where there is one (`Quit Files`, `Wallpaper set`); on
+    /// failure the reason shows in the view.
+    ActionDone(Option<crate::hud::Hud>, Result<(), String>),
 }

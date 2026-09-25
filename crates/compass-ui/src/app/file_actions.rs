@@ -89,6 +89,18 @@ pub fn file_panel_sections(path: &str, info: &FileActions) -> Vec<PanelSection> 
     ]
 }
 
+/// What the HUD says once a file action the engine carries out succeeds:
+/// `SetAsWallpaperAction`'s "Wallpaper set" and the copy's "Copied to
+/// clipboard"; running and pasting hide without one.
+#[must_use]
+pub fn file_action_hud(id: &str) -> Option<crate::hud::Hud> {
+    match id {
+        WALLPAPER => Some(crate::hud::Hud::new("Wallpaper set").with_icon("image")),
+        COPY_FILE => Some(crate::hud::Hud::copied()),
+        _ => None,
+    }
+}
+
 impl LauncherApp {
     /// Asks what the selected file's panel depends on; the panel opens when
     /// the answer comes.
@@ -129,9 +141,7 @@ impl LauncherApp {
         self.panel = None;
         let backend = self.backend.clone();
         let hides = |task: Task<Message>| Task::batch([task, focus_search()]);
-        let copy = |this: &mut Self, text: String| {
-            Task::batch([iced::clipboard::write(text), this.conceal()])
-        };
+        let copy = |this: &mut Self, text: String| this.copy_with_hud(text);
         Some(match id {
             OPEN => self.open_selected_file(false),
             REVEAL => self.open_selected_file(true),
@@ -154,6 +164,7 @@ impl LauncherApp {
                     return Some(Task::none());
                 };
                 let action = id.to_owned();
+                let hud = file_action_hud(id);
                 hides(Task::perform(
                     async move {
                         match action.as_str() {
@@ -163,7 +174,7 @@ impl LauncherApp {
                             _ => backend.copy_file(path, false).await,
                         }
                     },
-                    Message::FileActionDone,
+                    move |result| Message::ActionDone(hud.clone(), result),
                 ))
             }
             _ => return None,

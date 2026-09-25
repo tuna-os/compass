@@ -29,6 +29,7 @@ pub mod file_preview;
 pub mod files_page;
 pub mod fonts_page;
 pub mod grants_page;
+pub mod hud;
 pub mod icons;
 pub mod media_page;
 pub mod message;
@@ -117,8 +118,8 @@ pub fn run_resident(flags: AppFlags) -> iced::Result {
     // Named functions rather than closures: `iced::daemon`'s view takes a
     // higher-ranked lifetime, and a closure's inferred signature is not general
     // enough to satisfy it.
-    fn view(app: &LauncherApp, _window: iced::window::Id) -> iced::Element<'_, Message> {
-        app.view()
+    fn view(app: &LauncherApp, window: iced::window::Id) -> iced::Element<'_, Message> {
+        app.view_for(window)
     }
     fn title(app: &LauncherApp, _window: iced::window::Id) -> String {
         app.title()
@@ -155,8 +156,8 @@ pub fn run_resident(flags: AppFlags) -> iced::Result {
 pub fn run_resident_layer_shell(flags: AppFlags) -> Result<(), iced_layershell::Error> {
     use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 
-    fn view(app: &LauncherApp, _window: iced::window::Id) -> iced::Element<'_, Message> {
-        app.view()
+    fn view(app: &LauncherApp, window: iced::window::Id) -> iced::Element<'_, Message> {
+        app.view_for(window)
     }
     fn title(app: &LauncherApp, _window: iced::window::Id) -> Option<String> {
         Some(app.title())

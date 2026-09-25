@@ -27,6 +27,12 @@ const REMOVE_ALL: &str = "calc.remove-all";
 const NEEDS_ENGINE: &str =
     "Calculator History needs the Compass engine, and this window is running without one";
 
+/// The calculator's own HUD, as `CopyCalculatorAnswerAction`.
+#[must_use]
+pub fn answer_copied() -> crate::hud::Hud {
+    crate::hud::Hud::new("Answer copied to clipboard").with_icon(crate::hud::COPY_ICON)
+}
+
 impl LauncherApp {
     /// Opens Calculator History and asks for the rows.
     pub(super) fn open_calculator_history(&mut self) -> Task<Message> {
@@ -97,11 +103,11 @@ impl LauncherApp {
             Some(CalcRow::Live(answer)) => {
                 let (question, answer) = (answer.question.clone(), answer.answer.clone());
                 let copy = self.copy_calculation(question, answer.clone(), answer);
-                Task::batch([copy, self.conceal()])
+                Task::batch([copy, self.show_hud(answer_copied())])
             }
             Some(CalcRow::Record(record)) => {
-                let copy = iced::clipboard::write(record.answer.clone());
-                Task::batch([copy, self.conceal()])
+                let answer = record.answer.clone();
+                self.copy_with_hud(answer)
             }
             None => Task::none(),
         }
@@ -177,14 +183,10 @@ impl LauncherApp {
             (COPY_ANSWER, _) => return Some(self.copy_selected_calculation()),
             (COPY_EXPRESSION, None) => {
                 let copy = self.copy_calculation(question, answer, expression);
-                Task::batch([copy, self.conceal()])
+                Task::batch([copy, self.show_hud(answer_copied())])
             }
-            (COPY_EXPRESSION, Some(_)) => {
-                Task::batch([iced::clipboard::write(expression), self.conceal()])
-            }
-            (COPY_QUESTION, Some(_)) => {
-                Task::batch([iced::clipboard::write(question), self.conceal()])
-            }
+            (COPY_EXPRESSION, Some(_)) => self.copy_with_hud(expression),
+            (COPY_QUESTION, Some(_)) => self.copy_with_hud(question),
             (PIN, Some(id)) => self.edit_calculator(CalculatorChange::Pin(id), "Entry pinned"),
             (UNPIN, Some(id)) => {
                 self.edit_calculator(CalculatorChange::Unpin(id), "Entry unpinned")

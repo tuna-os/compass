@@ -34,6 +34,7 @@ mod emoji;
 mod file_actions;
 mod fonts;
 mod grants;
+mod hud;
 mod launch;
 mod media;
 mod open_with;
@@ -1034,6 +1035,8 @@ pub struct LauncherApp {
     extension_subtitles: std::collections::HashMap<String, String>,
     /// Whether the application under the root panel runs, by its key.
     app_runtime: Option<(String, crate::backend::AppRuntimeInfo)>,
+    /// The HUD shown after an action hides the launcher (`crate::hud`).
+    hud: crate::hud::HudState,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -1316,6 +1319,9 @@ impl LauncherApp {
             following_script: None,
             extension_subtitles: std::collections::HashMap::new(),
             app_runtime: None,
+            hud: crate::hud::HudState::new(
+                crate::surface::presentation() == crate::surface::Presentation::LayerShell,
+            ),
         }
     }
 
@@ -1800,6 +1806,7 @@ impl LauncherApp {
                 iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::ClockTick),
             );
         }
+        streams.extend(self.hud_subscription());
         iced::Subscription::batch(streams)
     }
 
@@ -1824,6 +1831,24 @@ impl LauncherApp {
             return Task::none();
         }
 
+        if let UiCommand::Hud { text, icon } = &command {
+            let hud = crate::hud::Hud {
+                text: text.clone(),
+                icon: icon.clone(),
+            };
+            let (shown, task) = self.put_up_hud_for_engine(hud);
+            // The outcome names the launcher's state, which a HUD leaves alone.
+            let open = self.is_visible() && !self.closing;
+            self.answer(if shown && open {
+                UiOutcome::Shown
+            } else if shown {
+                UiOutcome::Hidden
+            } else {
+                UiOutcome::Failed("this session has no HUD".to_owned())
+            });
+            return task;
+        }
+
         let opened = match &command {
             UiCommand::Dmenu(token) => self.start_dmenu(*token),
             UiCommand::Launch(token) => self.start_launch(*token),
@@ -1844,7 +1869,7 @@ impl LauncherApp {
             | UiCommand::Deeplink(_) => true,
             UiCommand::Hide => false,
             // Answered in `obey` without touching the window.
-            UiCommand::Describe => return Task::none(),
+            UiCommand::Describe | UiCommand::Hud { .. } => return Task::none(),
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
                     || (self.pending_window.is_some() && !self.pending_hide)
@@ -2129,7 +2154,7 @@ impl LauncherApp {
                         answer.answer.clone(),
                         answer.answer.clone(),
                     );
-                    return Task::batch([copy, self.conceal()]);
+                    return Task::batch([copy, self.show_hud(calculator::answer_copied())]);
                 }
                 if let Some(RootRow::Command(command)) = self.selected_row() {
                     return self.open_command(command);
@@ -2208,6 +2233,15 @@ impl LauncherApp {
             }
             // Taken by `iced_layershell` before `update`; see `crate::surface`.
             Message::Layer(_) => Task::none(),
+            Message::Opened(id) if self.hud.owns(id) => Task::none(),
+            Message::Closed(id) if self.hud.closed(id) => Task::none(),
+            Message::HudTick(now) => self.hud_tick(now),
+            Message::ActionDone(Some(hud), Ok(())) => self.show_hud(hud),
+            Message::ActionDone(None, Ok(())) => self.conceal(),
+            Message::ActionDone(_, Err(reason)) => {
+                self.say(reason);
+                Task::none()
+            }
             Message::Opened(id) => {
                 if self.window.is_some_and(|current| current != id)
                     || self.pending_window.is_some_and(|pending| pending != id)
@@ -2785,7 +2819,8 @@ impl LauncherApp {
                         // Copy, then get out of the way: the user copied it
                         // to paste it somewhere else.
                         let copy = iced::clipboard::write(text);
-                        Task::batch([copy, self.conceal()])
+                        let hud = crate::hud::Hud::new("Selection copied to clipboard");
+                        Task::batch([copy, self.show_hud(hud)])
                     }
                     Err(reason) => {
                         page.notice = Some(reason);
@@ -13264,6 +13299,179 @@ mod tests {
         let task = choose(&mut app, "Quit Application");
         settle(&mut app, task);
         assert_eq!(app.error.as_deref(), Some("Failed to quit files.desktop"));
+    }
+
+    /// A resident launcher (dismissal hides) whose presentation has a HUD.
+    fn with_resident_hud(mut app: LauncherApp) -> LauncherApp {
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, outcomes) = tokio::sync::mpsc::unbounded_channel();
+        // Kept alive for the test's length: a dropped end is a disconnect.
+        std::mem::forget((commands, outcomes));
+        app.link = Some(EngineLink::new(receiver, sender));
+        app.with_hud(true)
+    }
+
+    #[test]
+    fn quit_and_force_quit_hide_with_the_cpps_hud() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: true,
+            windows: vec![window_row(31, "Files", "Files", 5)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("files.desktop".into(), running)],
+            ..FakeWindows::default()
+        });
+        let (app, _) = windows_app(dir.path(), Some(windows));
+        let mut app = with_resident_hud(app);
+        app.query = "Files".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Quit Application");
+        settle(&mut app, task);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::new("Quit Files")));
+        assert!(matches!(app.page, Page::Root), "the launcher hid");
+
+        app.query = "Files".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Force Quit Application");
+        settle(&mut app, task);
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Force quit Files")
+        );
+    }
+
+    #[test]
+    fn a_copied_answer_shows_the_calculators_hud_until_its_time_is_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.query = "6*7".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Calculator));
+        let shown_at = std::time::Instant::now();
+        let task = app.update(Message::LaunchSelected);
+        assert_eq!(settle(&mut app, task), ["42"]);
+        let hud = app.hud_content().expect("a HUD").clone();
+        assert_eq!(hud.text, "Answer copied to clipboard");
+        assert_eq!(hud.icon.as_deref(), Some(crate::hud::COPY_ICON));
+
+        let _ = app.update(Message::HudTick(shown_at));
+        assert!(app.hud_content().is_some(), "not yet");
+        let _ = app.update(Message::HudTick(
+            shown_at + crate::hud::DURATION + std::time::Duration::from_millis(100),
+        ));
+        assert!(app.hud_content().is_none(), "gone after 1.5 s");
+    }
+
+    #[test]
+    fn without_a_hud_a_copy_only_hides_and_an_exiting_launcher_shows_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path()))).with_hud(false);
+        app.query = "6*7".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        assert_eq!(settle(&mut app, task), ["42"]);
+        assert!(app.hud_content().is_none(), "GNOME's toplevel has no HUD");
+
+        let mut exiting = LauncherApp::with_index(index(dir.path())).with_hud(true);
+        exiting.query = "6*7".into();
+        exiting.search();
+        let task = exiting.update(Message::LaunchSelected);
+        settle(&mut exiting, task);
+        assert!(
+            exiting.hud_content().is_none(),
+            "no process left to show it"
+        );
+    }
+
+    #[test]
+    fn the_hud_surface_is_not_taken_for_the_launcher_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let launcher = window::Id::unique();
+        let _ = app.update(Message::Opened(launcher));
+        assert_eq!(app.window, Some(launcher));
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Paused".into(),
+            icon: Some("pause".into()),
+        }));
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Paused")
+        );
+        assert_eq!(app.window, Some(launcher), "the launcher stays up");
+        let hud = app.hud.window_id().expect("the HUD surface");
+        let _ = app.update(Message::Opened(hud));
+        assert_eq!(app.window, Some(launcher), "the HUD is not the launcher");
+        let _ = app.update(Message::Closed(hud));
+        assert_eq!(app.window, Some(launcher));
+        assert!(app.hud_content().is_none());
+    }
+
+    #[test]
+    fn the_engines_hud_is_refused_where_the_presentation_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path())).with_hud(false);
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Next Track".into(),
+            icon: None,
+        }));
+        assert!(matches!(outcomes.try_recv(), Ok(UiOutcome::Failed(_))));
+
+        app.hud.set_supported(true);
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Next Track".into(),
+            icon: Some("forward".into()),
+        }));
+        assert_eq!(outcomes.try_recv().ok(), Some(UiOutcome::Hidden));
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Next Track")
+        );
+    }
+
+    #[test]
+    fn a_refused_paste_copies_the_glyph_with_the_copy_hud() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let task = app.emoji_pasted("🙂".into(), Err("no paste here".into()));
+        assert_eq!(settle(&mut app, task), ["🙂"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+    }
+
+    #[test]
+    fn a_set_wallpaper_and_a_copied_file_say_so_and_running_does_not() {
+        assert_eq!(
+            file_actions::file_action_hud("file.wallpaper"),
+            Some(crate::hud::Hud::new("Wallpaper set").with_icon("image"))
+        );
+        assert_eq!(
+            file_actions::file_action_hud("file.copy"),
+            Some(crate::hud::Hud::copied())
+        );
+        assert_eq!(file_actions::file_action_hud("file.run"), None);
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let task = app.update(Message::ActionDone(
+            file_actions::file_action_hud("file.wallpaper"),
+            Ok(()),
+        ));
+        settle(&mut app, task);
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Wallpaper set")
+        );
+        let task = app.update(Message::ActionDone(None, Err("no backend".into())));
+        settle(&mut app, task);
+        assert_eq!(app.error.as_deref(), Some("no backend"));
     }
 
     #[test]

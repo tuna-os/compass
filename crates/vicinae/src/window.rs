@@ -27,6 +27,7 @@ fn to_ui(command: WindowCommand) -> UiCommand {
         WindowCommand::Launch(token) => UiCommand::Launch(token),
         WindowCommand::Deeplink(url) => UiCommand::Deeplink(url),
         WindowCommand::Describe => UiCommand::Describe,
+        WindowCommand::Hud { text, icon } => UiCommand::Hud { text, icon },
     }
 }
 
@@ -233,6 +234,7 @@ mod tests {
                         UiOutcome::Shown
                     }
                     UiCommand::Describe => UiOutcome::Hidden,
+                    UiCommand::Hud { .. } => UiOutcome::Failed("no HUD".to_owned()),
                 };
                 if outcomes_tx.send(outcome).is_err() {
                     return;
@@ -358,6 +360,10 @@ mod tests {
             WindowCommand::Launch(7),
             WindowCommand::Deeplink("vicinae://extensions/a/b".into()),
             WindowCommand::Describe,
+            WindowCommand::Hud {
+                text: "Quit Files".into(),
+                icon: Some("copy-clipboard".into()),
+            },
         ] {
             let ui = to_ui(command.clone());
             let back = match ui {
@@ -368,6 +374,7 @@ mod tests {
                 UiCommand::Launch(token) => WindowCommand::Launch(token),
                 UiCommand::Deeplink(url) => WindowCommand::Deeplink(url),
                 UiCommand::Describe => WindowCommand::Describe,
+                UiCommand::Hud { text, icon } => WindowCommand::Hud { text, icon },
             };
             assert_eq!(back, command, "{command:?} did not survive the round trip");
         }

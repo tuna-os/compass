@@ -79,7 +79,8 @@ use serde::{Deserialize, Serialize};
 /// ([`Request::PreviewSnippet`], [`Request::ScriptIcons`]), and the settings
 /// view's writes: one setting of `vicinae.json` ([`Request::SetSetting`]),
 /// a provider's switch ([`Request::SetProviderEnabled`]) and turning a root
-/// item back on ([`RootItemEdit::Enabled`]).
+/// item back on ([`RootItemEdit::Enabled`]), and the HUD the engine asks the
+/// window to show ([`WindowCommand::Hud`]).
 pub const PROTOCOL_VERSION: u16 = 19;
 
 /// A client-to-server frame.
@@ -1792,6 +1793,17 @@ pub enum WindowCommand {
     /// Change nothing; answer [`WindowOutcome::Shown`] if the window is on
     /// screen and [`WindowOutcome::Hidden`] if not. (v17.)
     Describe,
+    /// Show the HUD, the pill the C++ shows for a moment after an action
+    /// (`NavigationController::showHud`), leaving the launcher as it is.
+    /// Answered with the launcher's state when shown, and
+    /// [`WindowOutcome::Failed`] where the presentation has none (an
+    /// `xdg_toplevel` cannot appear without taking the focus). (v19.)
+    Hud {
+        /// The line of text.
+        text: String,
+        /// A builtin icon's name or an emoji.
+        icon: Option<String>,
+    },
 }
 
 /// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and

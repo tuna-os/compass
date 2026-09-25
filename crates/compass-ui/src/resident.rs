@@ -55,6 +55,15 @@ pub enum UiCommand {
     Deeplink(String),
     /// Change nothing; answer whether the window is on screen.
     Describe,
+    /// Show the HUD with this text and icon (a builtin icon name or an
+    /// emoji), leaving the launcher as it is. Answered with the launcher's
+    /// state when shown, `Failed` where the presentation has no HUD.
+    Hud {
+        /// The line of text.
+        text: String,
+        /// A builtin icon name or an emoji.
+        icon: Option<String>,
+    },
 }
 
 /// What the window reports back, as the state it ended in.

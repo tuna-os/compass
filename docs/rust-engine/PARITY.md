@@ -231,7 +231,7 @@ clicks, and restores search focus when closed. Copy actions emit native clipboar
 headless tests inspect those writes and exercise the widgets, but delivery to another application
 still needs a desktop check. Since then the launcher has grown a page per builtin, extension
 views (list, grid, detail, form) and dialogs, which is why no row here is ❌ any more (the ledger
-truth pass below). Onboarding, the HUD and the rest of the view layer are still ahead; `alert`,
+truth pass below). The HUD landed in "The gaps pass, HUD and onboarding"; `alert`,
 `action-panel` and, since the settings pass, `settings` are the rows fully green.
 
 Three things about this section are worth stating plainly, because a table of ❌s invited the wrong
@@ -333,14 +333,15 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/tray`: Still C++-only: Vicinae's own tray icon.
 - `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
   escape).
-- `ui/qml`, `ui/quick`: Still C++-only: the rest of the view layer — onboarding and the HUD.
+- `ui/qml`, `ui/quick`: Still C++-only: onboarding (the HUD closed in "The gaps pass, HUD and onboarding").
   `ui/views` closed in "The gaps pass, UI" below (match and Markdown highlighting, extension
   grids; the edit-keywords view had landed with clipboard history and the emoji picker, the
   app-selector in the views pass), the settings pages in "The gaps pass, settings"; dragging
   out of the window is a declared difference, Iced having no drag out of a window.
 - `ui/settings`: closed in "The gaps pass, settings" below.
 - `ui/windows`: the settings window is a view of the launcher since "The gaps pass, settings"
-  (declared there). Still C++-only: the onboarding window and the HUD.
+  (declared there). Still C++-only: the onboarding window (the HUD closed in "The gaps pass, HUD and
+  onboarding").
 - `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
   "The gaps pass, icons and tray"; masks, root rows' icons, favicons, `ImageURL(source)` and the
   tile's gradient and shadow since "The gaps pass, UI" below.
@@ -551,7 +552,6 @@ What differs, by row:
 | `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
 | `builtins/root` | A fallback row's panel is Open plus Manage Fallback Actions. | Enter opens it; the fallback manager's view is `builtins/vicinae`'s gap. | — |
 | `builtins/vicinae` | Where the platform cannot paste, the picker offers no paste action and `defaultAction` defaults to copy. | The window cannot know before asking, so paste is offered whenever an engine is attached, and a refusal copies; the result is the same glyph on the clipboard. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
-| `builtins/vicinae` | Copying shows the "Copied to clipboard" HUD. | No HUD (the `ui/qml` row's gap); the launcher hides. | — |
 | `builtins/vicinae` | The paste action is titled `Paste to <frontmost app>` with its icon. | `Paste to active window`, the C++'s title when no application is frontmost. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and binding it waits on `global-shortcuts`. | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
 | `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Neither: the engine binds only the launcher's toggle, and the inhibit protocol is `shortcut-inhibit`'s gap. | — |
@@ -610,7 +610,9 @@ Copying the calculator's answer, from the root list or the view's live result, r
 first under the C++'s `live_calc` gate and offers the C++ panel (pin or unpin, copy answer, question,
 or both, delete, delete all). Declared differences: a row's conversion flag comes from the question's
 `to`/`in`/`as`/`->` keyword, since fend reports no answer type; "Delete all entries" deletes, where
-the C++ action's `execute` is empty; success says so in the view rather than a toast or HUD.
+the C++ action's `execute` is empty; pinning and removing say so in the view rather than a toast.
+Copying shows the C++'s HUD ("Answer copied to clipboard", "Copied to clipboard"; see "The gaps pass,
+HUD and onboarding").
 Currency conversion and Refresh Exchange Rates stay unported, blocked on a rate source.
 
 **`src/services/app-runtime`.** `LinuxAppRuntime` over the engine's window providers (IPC v17
@@ -624,8 +626,8 @@ The root row's panel opens at once and gains Focus Window, Close Window, Quit Ap
 Ctrl+Q) and Force Quit Application when the engine says the application runs, as
 `AppRootItem::newActionPanel`; the window switcher gets the C++'s panel (Focus Window, Close Window
 on Ctrl+Q, and Quit and Force Quit for a window whose application is known). Neither asks first,
-as the C++ does not. Declared differences: success hides the launcher without the C++'s HUD
-("Quit Files"), which Compass does not have; Ctrl+Q is shown beside Quit but, as with every
+as the C++ does not; success hides the launcher with the C++'s HUD ("Quit Files", "Force quit
+Files"). Declared differences: Ctrl+Q is shown beside Quit but, as with every
 builtin panel here, the chord is not bound yet, so Quit runs from its row; the pin-window and bring-to-workspace actions are not offered, no provider here
 having the capability. `frontmost` is answered but nothing reads it yet: its C++ reader is the
 global-shortcut inhibition, which is that row's gap.
@@ -669,7 +671,7 @@ Declared differences:
   installed.
 - Paste is offered where the engine has its GNOME Shell client; a wlroots session copies over
   data-control (no synthetic paste there yet, `src/services/paste`'s gap).
-- Success hides the launcher without the C++'s HUD ("Wallpaper set", "Copied to clipboard");
+- Success hides the launcher with the C++'s HUD ("Wallpaper set", "Copied to clipboard");
   failures show under the list rather than as a toast.
 - Dragging a file out of the list: Iced offers no drag out of a window (`src/builtins/clipboard`
   shares this).
@@ -836,6 +838,49 @@ Declared differences:
   from a local build.
 - The file index, snippet and script preferences are read where they are used or when the engine
   next starts, as `vicinae.json` edited by hand is.
+
+### The gaps pass, HUD and onboarding (2026-09-25)
+
+The view layer's HUD and first-run flow and `src/builtins/vicinae`'s remaining views, from PLAN
+§12.0, against the C++ in `src/server/src/ui` and `builtins/vicinae` (IPC v19). A cell flips only
+with a named module and named tests that fail on a regression.
+
+**The HUD** (`ui/windows/hud-bridge.*`, `ui/qml/hud`). `compass_ui::hud` holds the pill's state:
+what it says (a line and a builtin icon or an emoji), which surface is its own, and its deadline,
+1.5 s after the last message, which a new message moves as `m_timer.start()` restarts the C++'s. The
+surface is a second layer surface (`crate::surface::open_hud`: namespace `vicinae-hud`, the `top`
+layer, unanchored so centred, on the active output, no keyboard interactivity and transparent to
+the pointer, as `HudWindowLayerShell.qml`), drawn by `LauncherApp::view_for` as `HudWindow.qml`'s
+pill: the background at 90%, the divider for its edge, a 16 px icon and a line elided at 270 px. It
+is offered where the C++ offers it on Linux, a layer-shell presentation
+(`Environment::isHudSupported`); on GNOME's toplevel `showHud` only hides, and so does Compass.
+`LauncherApp::show_hud` is `NavigationController::showHud`: it hides the launcher and puts up the
+pill. It is wired where the C++ calls it: Quit and Force Quit ("Quit Files", "Force quit Files"),
+the calculator's copies ("Answer copied to clipboard"), `CopyToClipboardAction`'s copies ("Copied to
+clipboard" with its icon: the emoji picker, including a refused paste's copy, Browse Apps, Run
+Terminal Program, Search Files, Calculator History's rows), clipboard history's copy ("Selection
+copied to clipboard"), a shortcut's and a snippet's copy, and Set as wallpaper ("Wallpaper set").
+The engine's own HUDs (the media commands, a `silent` script's line, a Rhai script's `hud`, Set
+Default Browser and Terminal) go to the window as IPC v19 `WindowCommand::Hud`, which the window
+answers `Failed` where it has no HUD; the engine then posts the transient notification it posted
+before.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `ui/qml`, `ui/quick`, `ui/windows` | — (the HUD is closed; the settings window keeps each amber) | `compass_ui::hud`, `compass_ui::app::hud` (`show_hud`, `copy_with_hud`, `view_for`), `compass_ui::surface::{open_hud, layer::hud_settings}`, `vicinae::serve::show_hud` over `WindowCommand::Hud` | `a_second_message_reuses_the_surface_and_restarts_the_timer`, `a_surface_closed_under_it_is_forgotten`, `the_hud_surface_takes_no_keyboard_and_no_pointer`, `a_toplevel_presentation_opens_no_hud_surface`, `quit_and_force_quit_hide_with_the_cpps_hud`, `a_copied_answer_shows_the_calculators_hud_until_its_time_is_up`, `without_a_hud_a_copy_only_hides_and_an_exiting_launcher_shows_none`, `the_hud_surface_is_not_taken_for_the_launcher_window`, `the_engines_hud_is_refused_where_the_presentation_has_none`, `a_refused_paste_copies_the_glyph_with_the_copy_hud`, `a_set_wallpaper_and_a_copied_file_say_so_and_running_does_not`, `the_engines_hud_reaches_the_launchers_hud` (a real engine and a fake window) |
+
+Declared differences:
+
+- The surface is a fixed 336×48 with the pill centred in it, rather than sized to the pill: a layer
+  surface's size is asked for before anything is laid out, and the rest of it is transparent and
+  takes no input.
+- An extension's `showHUD` is still a desktop notification: the extension host runs outside the
+  window's reach (`HeadlessShell`), and the launcher has hidden by then.
+- Where there is no HUD, the engine's HUDs become a transient notification rather than nothing.
+- Set Default Terminal's HUD has no icon (the C++'s is a green `$` symbol, which the builtin set does
+  not have).
+
+### Earlier row notes
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
@@ -2701,7 +2746,7 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`). | The launcher has hidden by then and has no HUD, so the engine posts the same sentence as a transient desktop notification (1.5 s, `transient` hint). Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
+| 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`); where there is no HUD (no layer shell) nothing is shown. | The engine sends the sentence to the launcher's HUD (IPC v19 `WindowCommand::Hud`), with the C++'s icon for the player commands; where the window has no HUD it posts a transient desktop notification (1.5 s, `transient` hint) instead of showing nothing. The volume commands' HUD has no icon. Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
 | 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players (title 1.0, artist 0.8, identity 0.6); Turn Volume Up/Down take an optional `step`. Both are typed inline beside the search field. | The same matching and the same refusals ("No media player matches …", "Invalid step value"), with no argument taking the default player (last acted on, else playing, else first) or ±5. The launcher has no inline argument fields, so Enter runs the command at once and the row's action panel offers "Choose player…" / "Choose step…", a one-field form. | `a_player_argument_picks_the_player_and_now_playing_lists_and_drives_them`, `a_media_command_runs_with_the_player_chosen_in_its_form`, `a_volume_command_runs_pactl_with_the_cpp_arguments` |
 | 3 | Volume goes through `pactl`. | The same `pactl` invocations, through `flatpak-spawn --host` inside the Flatpak, with the C++'s 3 s timeout. `libpulse-binding` was considered and not taken: a C build dependency and a threaded mainloop for five calls the ported `pactl` adapter already makes. | `a_volume_command_runs_pactl_with_the_cpp_arguments` |
 | 4 | Now Playing lists the players ("Players", fuzzy over title, artist and name), with Playing/Paused accessories, the player application's icon, and Play or Pause, Next Track and Previous Track; it reloads on `playersChanged`. | The same list, filter, accessories and actions (Enter is the first); a row shows the player's initial rather than its application's icon, and the list is asked again 300 ms after each action rather than on a bus signal, so a player changed from elsewhere shows when the view is next opened. | `now_playing_lists_the_players_and_controls_the_selected_one`, `a_player_is_found_by_track_artist_or_name_and_stays_selected` |
@@ -2857,7 +2902,7 @@ a script before running it, and runs it in its mode (IPC v13 `ListScripts`, `Run
 `ScriptOutput`, `StopScript`): `fullOutput` streams stdout and stderr with `FORCE_COLOR=1` to a view
 that colours them with the ported tokenizer; `compact` and `inline` take the first stdout line
 within 10 s, an inline line becoming the script's subtitle (kept in
-`compass-script-metadata.json`); `silent` says its line in a transient notification; `terminal` runs
+`compass-script-metadata.json`); `silent` says its line in the launcher's HUD (a transient notification where there is none); `terminal` runs
 in the terminal emulator with the header's options. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
@@ -2865,7 +2910,7 @@ in the terminal emulator with the header's options. What differs:
 | 1 | Every root is pushed on one stack, so the *last* directory is walked first and a packaged script shadows a custom one with the same id, although the preference promises the opposite. | Roots are walked in order, so a custom directory wins. | `the_scan_finds_scripts_ids_them_by_path_and_lets_custom_dirs_win`, `script_commands_are_scanned_searched_and_run_in_their_modes` |
 | 2 | Arguments are completion fields beside the search text; confirmation is an alert. | One form carries both: a field per argument (text, password, dropdown), and the confirmation sentence in its title when the header asks for one. | `a_script_asks_for_its_arguments_or_its_confirmation` |
 | 3 | The directories are watched (100 ms debounce) and rescanned every 15 minutes. | Rescanned at start and each time the launcher is summoned; no watcher. | — |
-| 4 | `compact` and `inline` results are toasts; the window is reopened with the title as search text if it had closed. | The result shows in the root list's notice line; the window is not reopened. `silent`'s HUD is a transient notification, as the media commands' is. | `a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher` |
+| 4 | `compact` and `inline` results are toasts; the window is reopened with the title as search text if it had closed. | The result shows in the root list's notice line; the window is not reopened. `silent`'s line goes to the launcher's HUD, or a transient notification where there is none, as the media commands' does. | `a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher` |
 | 5 | The full-output view's action panel runs the script again or kills it, and a toast counts the seconds. | The same two actions (Ctrl+R to run again), and the count is in the view's heading; Escape kills a running script, as leaving the view does. | `a_full_output_script_asks_for_its_argument_and_shows_its_output` |
 | 6 | The root row's panel opens the script in the text editor and its folder in the file browser. | Run and Copy path only. | — |
 | 7 | `refreshTime` (inline) is parsed and validated. | Parsed and validated, and not acted on — nor is it in the C++. | — |
