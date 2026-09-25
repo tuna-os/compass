@@ -1,0 +1,59 @@
+[package]
+name = "compass-wayland-foreign"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Turns a toolkit window's raw Wayland handles into wayland-client proxies, so the launcher can set protocol state on a surface it did not create."
+
+# DELIBERATELY NOT `[lints] workspace = true`.
+#
+# The workspace sets `unsafe_code = "forbid"`, and `forbid` cannot be lifted by
+# an inner `allow`. The launcher's `wl_surface` belongs to the toolkit's
+# connection (winit's under `xdg_toplevel`), which the toolkit hands out only
+# as raw `wl_display*` and `wl_surface*` pointers (raw-window-handle).
+# Background blur (`ext-background-effect-v1`, PARITY.md "The window-material
+# pass") has to name that surface in a request, and turning the pointers into
+# proxies is `wayland-backend`'s `Backend::from_foreign_display` and
+# `ObjectId::from_ptr`, both `unsafe`. ADR-0019 records the exception.
+#
+# `deny`, not `allow`, so that every line of this crate is still refused
+# `unsafe` except the one function that opts out by name (`adopt`, in
+# `src/lib.rs`) and the test that has to forge a window handle. The exception
+# is visible here, as a missing line in one manifest, rather than as an
+# `allow` buried in a source file. Every other workspace lint is restated below
+# so that opting out of one does not silently opt out of the rest.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[dependencies]
+thiserror.workspace = true
+# The same 0.31 / 0.3 / 0.6 the toolkits already link, so the proxies made here
+# are proxies of the one libwayland stack in the process.
+wayland-client = "0.31"
+# `client_system` is named here, not inherited: `from_foreign_display` and
+# `ObjectId::from_ptr` exist only in the system (libwayland) backend, and this
+# crate calls them through `wayland_backend::sys`, so without the feature it
+# does not compile rather than bridging into the pure-Rust backend.
+#
+# `dlopen`, as winit and `iced_layershell` build it: libwayland is loaded at
+# run time, so building this crate needs no libwayland headers, and the one
+# library the toolkit loaded is the one this crate's calls go to.
+wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
+# `is_lib_available`, so a process without libwayland gets an error, not the
+# backend's panic, and the raw pointer types the backend takes.
+wayland-sys = { version = "0.31", features = ["client", "dlopen"] }
+# `std` makes `HandleError` a `std::error::Error`, so it can be a source.
+raw-window-handle = { version = "0.6", features = ["std"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+# The headless-Sway harness (`compass-wayland/tests/support`) and the blur
+# client the bridge exists for.
+compass-wayland.workspace = true
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }

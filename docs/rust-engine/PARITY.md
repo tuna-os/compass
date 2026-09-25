@@ -181,7 +181,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/window-material` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/window-material` | `compass-core`, `compass_wayland::material`, `compass-wayland-foreign`, `vicinae::window_material`, `compass_ui::material` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 ## Builtins
 
@@ -337,9 +337,10 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/shortcut-inhibit`: the keyboard-shortcuts-inhibit client and the recorder's use of
   it closed in "The gaps pass, wlroots paste and inhibit".
 - `src/services/window-material`: the `ext-background-effect-v1` client is ported
-  (`compass_wayland::material`, "The gaps pass, HUD and onboarding"). Still C++-only: applying it
-  to the launcher's own surface, which the toolkits hand out only as a raw pointer (an `unsafe`
-  foreign-display bridge the workspace forbids).
+  (`compass_wayland::material`, "The gaps pass, HUD and onboarding") and applied to the launcher's
+  own surface under the `xdg_toplevel` presentation through an approved `unsafe` bridge
+  (`compass-wayland-foreign`, ADR-0019; "The window-material pass: an unsafe bridge"). The
+  layer-shell presentation is not blurred, a declared difference there.
 - `src/services/tray`: Compass's own tray icon closed in "The gaps pass, tray and sandbox".
 - `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
   escape).
@@ -1455,6 +1456,62 @@ probe tests; for `src/services/window-manager` the GNOME, wlroots, Hyprland, nir
 tests with `on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension`. What stays
 unverified here is VM-tier and declared in those sections: GNOME's portal grant and the extension's
 workspace calls on real GNOME, a compositor refusing a probe, and real KWin.
+
+### The window-material pass: an unsafe bridge (2026-09-25)
+
+The last amber cell, `src/services/window-material` `Rust ✓`, against `ExtBackgroundEffectV1Manager`,
+`WindowMaterialManager` and `WindowMaterialAttached`. The protocol client was ported in "The gaps
+pass, HUD and onboarding"; what was missing was the launcher's own `wl_surface`, which winit makes on
+its own connection and hands out only as raw `wl_display*` and `wl_surface*` pointers.
+
+**The exception, and why it is justified.** No maintained crate adopts a foreign Wayland surface
+safely (`CRATE-AUDIT.md`, "The window-material pass"), and winit, unlike `iced_layershell`, takes no
+connection of ours, so the inhibitor's trick (a shared connection and `wl_keyboard.enter`) is not
+available. The maintainer approved an `unsafe` exception, recorded as ADR-0019 and shaped like the
+SQLCipher one: a dedicated crate, `compass-wayland-foreign`, that does not inherit the workspace's
+`forbid`, sets `unsafe_code = "deny"`, restates the other lints, and allows `unsafe` in one function
+(`adopt`) holding two blocks, `Backend::from_foreign_display` and `ObjectId::from_ptr`. Its API,
+`bridge(&window)`, is safe: both handles are read from one window inside the toolkit's borrow; only
+Wayland handles are accepted; the pointer's interface is checked to be `wl_surface`; a surface that
+is not a `wayland-rs` proxy (whose destruction could not be followed) is refused; the
+`client_system` backend is named so the wrong backend does not compile; missing libwayland is an
+error; and one connection per display is kept for the process's life so its `Drop` never touches a
+closed display. The invariant the types cannot express, that winit's display outlives our
+connection, holds because the window is resident (ADR-0015) and the connection is used only inside
+`iced::window::run`.
+
+**Applying it.** `compass_platform::WindowMaterial` is the seam (`apply(window, region)`, the region
+`None` to take the blur away), implemented by `vicinae::window_material::LauncherMaterial` over the
+bridge and `compass_wayland::material::BackgroundEffects`, and handed to `compass_ui::run_resident`
+by the binary as the shortcut inhibitor is to the layer shell. `compass-ui` wraps the card in a
+sensor keyed on translucency and corner radius, so the card's size is reported when it is shown,
+resized, or its look changes (the C++'s `widthChanged`/`heightChanged` and a new surface), and asks
+through `iced::window::run` for the card's rectangle inside the shadow padding, rounded to the
+preset's `card_radius`, only while the card is translucent (`launcher.appearance.tint`, the
+`blurEnabled` gate); turning translucency off takes it away. A region equal to the last one asks
+nothing; each new window (a hide destroys the surface) is asked again. `BackgroundEffects` now drops
+the effects of destroyed surfaces before sending anything, since `set_blur_region` on one is
+`surface_destroyed`, which on winit's display would end the launcher.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/window-material` | Rust ✅ | `compass_wayland_foreign::bridge`, `vicinae::window_material::LauncherMaterial`, `compass_ui::material`, `LauncherApp::card_measured`, `compass_platform::WindowMaterial`, `compass_wayland::material::BackgroundEffects` | `a_toolkits_surface_is_bridged_into_a_usable_proxy`, `a_pointer_that_is_not_a_surface_is_refused`, `on_sway_the_bridged_connection_reports_no_blur_without_an_error` (headless Sway), `a_withheld_display_is_the_toolkits_error`, `a_display_of_another_platform_is_not_wayland`, `a_blurring_compositor_gets_the_region_once_per_change`, `a_destroyed_surface_is_never_sent_a_region`, `without_the_blur_capability_nothing_is_asked` (in-process compositor), `a_translucent_card_asks_for_blur_behind_itself_and_an_opaque_one_takes_it_away`, `a_closed_window_forgets_its_blur`, `a_translucent_card_is_blurred_where_it_is_drawn`, `a_window_that_is_not_wayland_is_unsupported_and_not_asked_again`, `what_the_client_did_is_what_the_window_is_told`, with the earlier `the_corners_are_cut_as_the_cpp_cuts_them` and `background_effect_is_bound_where_advertised_and_refused_by_name_where_not` |
+
+Declared differences:
+
+- **The layer-shell presentation is not blurred.** `iced_layershell` 0.19 drops `window::run`, so it
+  lends no handles. The C++ blurs its layer surface too (`LauncherWindowLayerShell.qml`). The way
+  there without `unsafe` is the inhibitor's: `BackgroundEffects` bound on the connection the binary
+  already shares with `iced_layershell`, learning the surface from `wl_keyboard.enter`.
+- **Real blur is VM tier.** Sway and Mutter have no `ext_background_effect_manager_v1`; KWin has it.
+  Here the bridge is proved on headless Sway and the region traffic on an in-process compositor.
+- **The gate is translucency.** The C++ blurs when `launcher_window.blur.enabled` and the compositor
+  can; Compass blurs behind a translucent card (`tint`), which is where there is anything to see,
+  and the C++'s opacity bump for blur (`BLUR_OPACITY`) is not copied: the card keeps `TINT_ALPHA`.
+- **The region takes effect on the surface's next commit**, which winit makes on its next frame (the
+  search field's caret blinks, so within about half a second); the C++'s Qt commits at once.
+- **The shortcut inhibitor stays layer-shell only.** The same bridge could give it the
+  `xdg_toplevel` surface; not done in this pass.
 
 ### Earlier row notes
 

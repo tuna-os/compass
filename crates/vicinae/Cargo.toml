@@ -57,6 +57,9 @@ compass-wayland.workspace = true
 # The launcher's Wayland connection, shared with `iced_layershell` and the
 # shortcut inhibitor (the same 0.31 the toolkit uses).
 wayland-client = "0.31"
+# The launcher's own `wl_surface` under winit, for background blur: the
+# workspace's one `unsafe` bridge, kept in a crate of its own (ADR-0019).
+compass-wayland-foreign.workspace = true
 compass-crypto.workspace = true
 compass-sqlcipher-sys.workspace = true
 getrandom.workspace = true

@@ -62,6 +62,7 @@ mod ui_instance;
 pub mod updates;
 pub mod vicinae_import;
 pub mod window;
+pub mod window_material;
 pub mod window_service;
 pub mod wlroots;
 
@@ -376,7 +377,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
             }
             compass_wayland::SurfaceKind::XdgToplevel => {
-                compass_ui::run_resident(flags)
+                compass_ui::run_resident(flags, Some(window_material::for_launcher()))
                     .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
             }
         }

@@ -10,13 +10,18 @@
 //! quarter circles, one pixel row at a time, so the blur does not show past
 //! a rounded card.
 //!
-//! The effect is set on a `wl_surface` of the *same* connection. The
+//! The effect is set on a `wl_surface` of the *same* display. The
 //! launcher's surface belongs to the toolkit's connection (winit or
-//! `iced_layershell`), which the toolkits expose only as raw pointers; turning
-//! those into a proxy needs `Backend::from_foreign_display`, which is
-//! `unsafe` and which this workspace forbids. So this module takes the
-//! surface as a safe proxy, and the launcher does not call it yet
-//! (`PARITY.md`, "The gaps pass, HUD and onboarding").
+//! `iced_layershell`), which the toolkits expose only as raw pointers; this
+//! module takes the surface as a safe proxy, and `compass-wayland-foreign`
+//! (the workspace's `unsafe` exception for it, ADR-0019) makes that proxy and
+//! a connection over the toolkit's display for the `vicinae` binary
+//! (`PARITY.md`, "The window-material pass").
+//!
+//! The toolkit destroys the launcher's surface each time it hides. Setting a
+//! blur region on an effect whose surface is gone is a protocol error, which
+//! on a shared display would end the toolkit's connection too, so effects of
+//! destroyed surfaces are dropped before anything is sent (`apply`).
 
 use std::collections::HashMap;
 
@@ -108,6 +113,8 @@ pub enum Applied {
     Unchanged,
     /// The compositor cannot blur.
     Unsupported,
+    /// The surface was destroyed, so nothing was sent.
+    SurfaceGone,
 }
 
 /// Why the manager could not be used.
@@ -126,13 +133,20 @@ struct State {
     capabilities: u32,
 }
 
+/// One surface's effect, and what it was set to.
+struct Effect {
+    surface: wl_surface::WlSurface,
+    effect: ExtBackgroundEffectSurfaceV1,
+    params: Params,
+}
+
 /// The background effect of every surface this client blurs.
 pub struct BackgroundEffects {
     queue: EventQueue<State>,
     state: State,
     manager: ExtBackgroundEffectManagerV1,
     compositor: wl_compositor::WlCompositor,
-    effects: HashMap<ObjectId, (ExtBackgroundEffectSurfaceV1, Params)>,
+    effects: HashMap<ObjectId, Effect>,
 }
 
 impl BackgroundEffects {
@@ -189,23 +203,34 @@ impl BackgroundEffects {
     /// Blurs behind `surface` in `params`' rounded region; the region takes
     /// effect at the surface's next commit, which the toolkit makes.
     pub fn apply(&mut self, surface: &wl_surface::WlSurface, params: Params) -> Applied {
+        self.forget_destroyed();
+        if !surface.is_alive() {
+            return Applied::SurfaceGone;
+        }
         if !self.supports_blur() {
             return Applied::Unsupported;
         }
         let qh = self.queue.handle();
         let applied = match self.effects.get_mut(&surface.id()) {
-            Some((_, current)) if *current == params => return Applied::Unchanged,
-            Some((_, current)) => {
-                *current = params;
+            Some(current) if current.params == params => return Applied::Unchanged,
+            Some(current) => {
+                current.params = params;
                 Applied::Updated
             }
             None => {
                 let effect = self.manager.get_background_effect(surface, &qh, ());
-                self.effects.insert(surface.id(), (effect, params));
+                self.effects.insert(
+                    surface.id(),
+                    Effect {
+                        surface: surface.clone(),
+                        effect,
+                        params,
+                    },
+                );
                 Applied::Created
             }
         };
-        if let Some((effect, _)) = self.effects.get(&surface.id()) {
+        if let Some(Effect { effect, .. }) = self.effects.get(&surface.id()) {
             let region = self.compositor.create_region(&qh, ());
             for op in rounded_region(params.region, params.radius) {
                 match op {
@@ -221,13 +246,38 @@ impl BackgroundEffects {
 
     /// Takes the effect away from `surface`; `false` when it had none.
     pub fn clear(&mut self, surface: &wl_surface::WlSurface) -> bool {
+        self.forget_destroyed();
         match self.effects.remove(&surface.id()) {
-            Some((effect, _)) => {
+            Some(Effect { effect, .. }) => {
                 effect.destroy();
                 true
             }
             None => false,
         }
+    }
+
+    /// Drops the effects of surfaces the toolkit has destroyed. Their effect
+    /// objects are inert; destroying one is allowed, setting its region is
+    /// not.
+    fn forget_destroyed(&mut self) {
+        self.effects.retain(|_, entry| {
+            let alive = entry.surface.is_alive();
+            if !alive {
+                entry.effect.destroy();
+            }
+            alive
+        });
+    }
+
+    /// Sends what was asked, rather than waiting for the toolkit to flush.
+    ///
+    /// # Errors
+    ///
+    /// When the connection failed.
+    pub fn flush(&self) -> Result<(), MaterialError> {
+        self.queue
+            .flush()
+            .map_err(|err| MaterialError::Connection(err.to_string()))
     }
 
     /// How many surfaces have an effect.

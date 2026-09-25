@@ -36,6 +36,7 @@ compass-ui = { path = "crates/compass-ui" }
 compass-crypto = { path = "crates/compass-crypto" }
 compass-clipboard = { path = "crates/compass-clipboard" }
 compass-sqlcipher-sys = { path = "crates/compass-sqlcipher-sys" }
+compass-wayland-foreign = { path = "crates/compass-wayland-foreign" }
 
 anyhow = "1"
 nucleo-matcher = "0.3.1"
