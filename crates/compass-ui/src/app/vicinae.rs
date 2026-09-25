@@ -437,12 +437,8 @@ impl LauncherApp {
         &'a self,
         page: &'a crate::vicinae_pages::StoreIntroPage,
     ) -> Element<'a, Message> {
-        let theme = self.theme();
-        let markdown = iced::widget::markdown::view(
-            &page.markdown,
-            iced::widget::markdown::Settings::with_text_size(14, &theme),
-        )
-        .map(Message::ExtensionLinkClicked);
+        let markdown = iced::widget::markdown::view(&page.markdown, self.markdown_settings())
+            .map(Message::ExtensionLinkClicked);
         let hint = iced::widget::text(format!(
             "Enter: {}    Esc: back",
             crate::vicinae_pages::CONTINUE_TO_STORE

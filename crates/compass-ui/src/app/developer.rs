@@ -101,12 +101,8 @@ impl LauncherApp {
 
     /// The success page's body.
     pub(super) fn created_body<'a>(&'a self, page: &'a CreatedPage) -> Element<'a, Message> {
-        let theme = self.theme();
-        let markdown = iced::widget::markdown::view(
-            &page.markdown,
-            iced::widget::markdown::Settings::with_text_size(14, &theme),
-        )
-        .map(Message::ExtensionLinkClicked);
+        let markdown = iced::widget::markdown::view(&page.markdown, self.markdown_settings())
+            .map(Message::ExtensionLinkClicked);
         let mut body = column![
             markdown,
             iced::widget::text("Enter: open the folder    Esc: back")

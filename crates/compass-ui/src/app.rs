@@ -9,9 +9,7 @@
 
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
-    widget::{
-        Space, column, container, image, mouse_area, row, scrollable, stack, svg, text, text_input,
-    },
+    widget::{Space, column, container, image, mouse_area, row, stack, svg, text, text_input},
     window,
 };
 
@@ -24,6 +22,7 @@ use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
 use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
+use crate::scroll::scrollable;
 
 mod apps;
 mod calculator;
@@ -1807,6 +1806,22 @@ impl LauncherApp {
             Some(family) => crate::typography::iced_font(family),
             None => iced::Font::DEFAULT,
         }
+    }
+
+    /// How every Markdown view is drawn: 14 px, in the launcher's own
+    /// [`font`](Self::font).
+    ///
+    /// Iced's `Style::from(&Theme)` leaves `style.font` at `Font::default()`,
+    /// the generic sans-serif, which cosmic-text maps to a hard-coded
+    /// "Open Sans" rather than to the desktop's interface font. Where that
+    /// family is missing — a stock GNOME install — every Markdown span went
+    /// through cosmic-text's fallback chain instead, and its bold spans
+    /// landed on whichever family happened to have a static bold face. Code
+    /// keeps iced's monospace.
+    fn markdown_settings(&self) -> iced::widget::markdown::Settings {
+        let mut style = iced::widget::markdown::Style::from(&self.theme());
+        style.font = self.font();
+        iced::widget::markdown::Settings::with_text_size(14, style)
     }
 
     /// The application theme.
@@ -5729,12 +5744,11 @@ impl LauncherApp {
             (Status::Loading, _) => return self.notice("Loading…"),
             (Status::Stopped(why), _) => return self.notice(why),
             (Status::Ready, Some(View::Detail(_))) => {
-                let theme = self.theme();
                 // Its images drawn once fetched, as the store page draws a
                 // README's.
                 let markdown = iced::widget::markdown::view_with(
                     &page.markdown,
-                    iced::widget::markdown::Settings::with_text_size(14, &theme),
+                    self.markdown_settings(),
                     &stores::StoreMarkdown {
                         images: &page.markdown_art,
                     },
@@ -12621,6 +12635,88 @@ mod tests {
             store_dir: Some(dir.to_path_buf()),
             ..TestBackend::default()
         })
+    }
+
+    /// Every span's font, through quotes and lists, as `rich_text` gets it.
+    fn markdown_span_fonts(
+        items: &[iced::widget::markdown::Item],
+        style: iced::widget::markdown::Style,
+        out: &mut Vec<(String, iced::Font)>,
+    ) {
+        use iced::widget::markdown::{Bullet, Item};
+        for item in items {
+            match item {
+                Item::Heading(_, text) | Item::Paragraph(text) => {
+                    for span in text.spans(style).iter() {
+                        out.push((
+                            span.text.to_string(),
+                            span.font.expect("markdown sets every span's font"),
+                        ));
+                    }
+                }
+                Item::Quote(inner) => markdown_span_fonts(inner, style, out),
+                Item::List { bullets, .. } => {
+                    for bullet in bullets {
+                        let (Bullet::Point { items } | Bullet::Task { items, .. }) = bullet;
+                        markdown_span_fonts(items, style, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn markdown_is_drawn_in_the_launchers_font() {
+        // The store detail page's Markdown as `detail_markdown` writes it:
+        // heading, description, compatibility quote, bold-label facts and
+        // the command list, plus inline code.
+        let markdown = "# Brew\n\nSearch and install Homebrew formulae.\n\n\
+            > **No compatibility data for this extension**\n\n\
+            **Author** nhojb · **Downloads** 12.3K\n\n\
+            ## Commands (2)\n\n\
+            - **Search** — Search formulae and casks\n\
+            - **Installed** — List `brew list`\n";
+        let items: Vec<_> = iced::widget::markdown::parse(markdown).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+
+        for family in [None, Some("Cantarell")] {
+            app.font_family = family.map(str::to_owned);
+            let launcher = app.font();
+            let settings = app.markdown_settings();
+            let mut spans = Vec::new();
+            markdown_span_fonts(&items, settings.style, &mut spans);
+            assert!(spans.len() > 10, "the walk found the spans: {spans:?}");
+            for (text, font) in &spans {
+                if text == "brew list" {
+                    assert_eq!(
+                        font.family,
+                        iced::font::Family::Monospace,
+                        "inline code stays monospace"
+                    );
+                    continue;
+                }
+                assert_eq!(
+                    font.family, launcher.family,
+                    "{text:?} is drawn in {font:?}, not the launcher's {launcher:?}"
+                );
+                assert_eq!(
+                    font.style,
+                    iced::font::Style::Normal,
+                    "{text:?} has no emphasis and must not be italic"
+                );
+            }
+            let bold: Vec<_> = spans
+                .iter()
+                .filter(|(_, font)| font.weight == iced::font::Weight::Bold)
+                .map(|(text, _)| text.as_str())
+                .collect();
+            assert!(
+                bold.contains(&"Author") && bold.contains(&"Search"),
+                "the labels stay bold: {bold:?}"
+            );
+        }
     }
 
     #[test]

@@ -45,10 +45,14 @@ impl<'a> iced::widget::markdown::Viewer<'a, Message> for StoreMarkdown<'a> {
                 }
             },
             _ => {
-                let _ = (settings, title, alt);
-                container(text(if title.is_empty() { "Image" } else { title }).size(12))
-                    .padding(4)
-                    .into()
+                let _ = alt;
+                container(
+                    text(if title.is_empty() { "Image" } else { title })
+                        .font(settings.style.font)
+                        .size(12),
+                )
+                .padding(4)
+                .into()
             }
         }
     }
@@ -764,7 +768,6 @@ impl LauncherApp {
         &'a self,
         page: &'a StoreDetailPage,
     ) -> Element<'a, Message> {
-        let theme = self.theme();
         let palette = self.palette();
         let dark = self.store_prefers_dark();
         let icon = store_page::icon_url(&page.detail.row, dark)
@@ -795,7 +798,7 @@ impl LauncherApp {
         .align_y(iced::Alignment::Center);
         let markdown = iced::widget::markdown::view_with(
             &page.markdown,
-            iced::widget::markdown::Settings::with_text_size(14, &theme),
+            self.markdown_settings(),
             &StoreMarkdown {
                 images: &page.images.art,
             },
