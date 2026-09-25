@@ -9,9 +9,7 @@
 
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
-    widget::{
-        Space, column, container, image, mouse_area, row, scrollable, stack, svg, text, text_input,
-    },
+    widget::{Space, column, container, image, mouse_area, row, stack, svg, text, text_input},
     window,
 };
 
@@ -24,6 +22,7 @@ use crate::action_panel::{self, Action, PanelSection, Row, RowKind, Step};
 use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
+use crate::scroll::scrollable;
 
 mod apps;
 mod calculator;
