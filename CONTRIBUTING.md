@@ -18,13 +18,11 @@ Less is more: each new line of code represents additional maintenance for the pr
 
 All submitted code needs to be locally tested. `make check-rust` runs what Rust CI runs: formatting, Clippy with warnings denied, and the workspace tests. [AGENTS.md](AGENTS.md) has the coding rules, and [RENDER-HARNESSES.md](docs/rust-engine/RENDER-HARNESSES.md) explains how to see the launcher without a desktop.
 
-Port work should preserve observable behaviour or update the [parity ledger](docs/rust-engine/PARITY.md) with evidence for an intentional difference. A C++ test may only be removed in the same change that adds its Rust replacement.
+Behaviour inherited from Vicinae should match the pinned upstream release, which is the reference now that the C++ engine is gone ([ADR-0021](docs/rust-engine/adr/0021-remove-the-cpp-engine.md)). An intentional difference is recorded in the [parity ledger](docs/rust-engine/PARITY.md) with its rationale.
 
 ### Formatting and linting
 
-Rust code is formatted with `cargo fmt --all` and must pass `cargo clippy --workspace --all-targets -- -D warnings`.
-
-The inherited C++ tree under `src/` is formatted with `clang-format`, as prescribed by the `.clang-format` file at the root of the repository; `make format` applies it. New C++ code must be checked against the `.clang-tidy` rules.
+Rust code is formatted with `cargo fmt --all` and must pass `cargo clippy --workspace --all-targets -- -D warnings`. The TypeScript under `src/typescript` is formatted with Biome. `make format` applies both.
 
 Keep the number of comments to a strict minimum, good code shouldn't need many comments. There are good use cases for comments though: if you feel like your solution to a given problem is not ideal, could be improved, or relies on a weird hack, using a comment to document it is encouraged.
 

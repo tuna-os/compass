@@ -4,16 +4,7 @@ self: {
   lib,
   ...
 }: let
-  cfg = config.programs.vicinae;
-
-  inherit (pkgs.stdenv.hostPlatform) system;
-  soulverVicinaePkg = self.packages.${system}.with-soulver or null;
-  vicinaePkg =
-    if cfg.package != null
-    then cfg.package
-    else if cfg.enableSoulver && soulverVicinaePkg != null
-    then soulverVicinaePkg
-    else self.packages.${system}.default;
+  cfg = config.programs.compass;
 
   jsonFormat = pkgs.formats.json {};
   tomlFormat = pkgs.formats.toml {};
@@ -29,96 +20,70 @@ self: {
         else "0"
       )
     else toString val;
+
+  # Upstream Vicinae's option names, kept so an existing configuration still
+  # evaluates after switching to this flake.
+  renamedOptions = [
+    "enable"
+    "package"
+    "extensions"
+    "themes"
+    "settings"
+  ];
+  renamedSystemdOptions = [
+    "enable"
+    "autoStart"
+    "environment"
+    "target"
+  ];
+
+  # Options with no Compass equivalent. The calculator is fend-core, the
+  # browser bridge is out of scope (ADR-0008) and the engine is Linux only.
+  removedOptions = {
+    enableSoulver = "Compass's calculator is fend-core; there is no SoulverCore backend.";
+    enableNumen = "Compass's calculator is fend-core; there is no Numen backend.";
+    enableFirefoxIntegration = "Compass has no browser native messaging host (ADR-0008).";
+    enableChromeIntegration = "Compass has no browser native messaging host (ADR-0008).";
+    settingOverrides = "Compass reads a single compass.json; use programs.compass.settings.";
+    launchd = "Compass runs on Linux only.";
+  };
 in {
   disabledModules = ["programs/vicinae"];
 
-  # backwards compatibility: services.vicinae -> programs.vicinae
   imports = lib.flatten [
-    (
-      map (x: lib.mkRenamedOptionModule ["services" "vicinae" x] ["programs" "vicinae" x]) [
-        "enable"
-        "package"
-        "enableFirefoxIntegration"
-        "extensions"
-        "themes"
-        "settingOverrides"
-        "settings"
-      ]
-    )
-    (
-      map (x: lib.mkRenamedOptionModule ["services" "vicinae" "systemd" x] ["programs" "vicinae" "systemd" x]) [
-        "enable"
-        "autoStart"
-        "environment"
-        "target"
-      ]
-    )
+    (map (x: lib.mkRenamedOptionModule ["programs" "vicinae" x] ["programs" "compass" x]) renamedOptions)
+    (map (x: lib.mkRenamedOptionModule ["services" "vicinae" x] ["programs" "compass" x]) renamedOptions)
+    (map (x: lib.mkRenamedOptionModule ["programs" "vicinae" "systemd" x] ["programs" "compass" "systemd" x]) renamedSystemdOptions)
+    (map (x: lib.mkRenamedOptionModule ["services" "vicinae" "systemd" x] ["programs" "compass" "systemd" x]) renamedSystemdOptions)
+    (lib.mapAttrsToList (x: why: lib.mkRemovedOptionModule ["programs" "vicinae" x] why) removedOptions)
   ];
 
-  options.programs.vicinae = {
-    enable = lib.mkEnableOption "vicinae launcher daemon";
+  options.programs.compass = {
+    enable = lib.mkEnableOption "the Compass launcher";
 
     package = lib.mkOption {
-      type = lib.types.nullOr lib.types.package;
-      default = null;
-      defaultText = lib.literalExpression "vicinae.packages.\${system}.default, or vicinae.packages.\${system}.with-soulver when enableSoulver is true";
-      description = ''
-        The vicinae package to use. When null, this will default to the flake's
-        `default` package, or `with-soulver` when `enableSoulver` is true.
-      '';
-    };
-
-    enableSoulver = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = ''
-        Whether to enable the SoulverCore calculator backend.
-        SoulverCore is considered unfree software, therefore disabled by default.
-        Uses the flake's `with-soulver` package.
-        Ignored when `package` is set, wrap your own package if absolutely needed.
-      '';
-    };
-
-    enableNumen = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = ''
-        Whether to select the Numen calculator backend.
-        Numen is bundled in the flake's `default` package.
-      '';
-    };
-
-    enableFirefoxIntegration = lib.mkOption {
-      default = true;
-      description = ''
-        Whether to install the messaging host so that the firefox extension <https://addons.mozilla.org/en-US/firefox/addon/vicinae/> works.
-      '';
-    };
-
-    enableChromeIntegration = lib.mkOption {
-      default = true;
-      description = ''
-        Whether to install the messaging host so that the chrome extension <https://chromewebstore.google.com/detail/vicinae-integration/kcmipingpfbohfjckomimmahknoddnke> works.
-      '';
+      type = lib.types.package;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.compass;
+      defaultText = lib.literalExpression "compass.packages.\${system}.compass";
+      description = "The Compass package to install.";
     };
 
     systemd = {
-      enable = lib.mkEnableOption "vicinae systemd integration";
+      enable = lib.mkEnableOption "the compass.service systemd user unit";
 
       autoStart = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "If the vicinae daemon should be started automatically";
+        description = "Whether the Compass engine starts with the session target.";
       };
 
       environment = lib.mkOption {
         type = envVarType;
         default = {};
-        description = "Environment variables for the vicinae daemon. See <https://docs.vicinae.com/launcher-window#wayland-layer-shell>";
+        description = "Environment variables for the Compass engine.";
         example = lib.literalExpression ''
           {
-            USE_LAYER_SHELL=1;
-            QT_SCALE_FACTOR=1.5;
+            COMPASS_LAYER_SHELL = 0;
           }
         '';
       };
@@ -127,31 +92,7 @@ in {
         type = lib.types.str;
         default = "graphical-session.target";
         example = "sway-session.target";
-        description = ''
-          The systemd target that will automatically start the vicinae service.
-        '';
-      };
-    };
-
-    launchd = {
-      enable = lib.mkEnableOption "vicinae launchd integration (macOS)";
-
-      autoStart = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = "Whether to start the vicinae daemon automatically at login on macOS.";
-      };
-
-      environment = lib.mkOption {
-        type = envVarType;
-        default = {};
-        description = "Environment variables to pass to the vicinae daemon on macOS.";
-        example = lib.literalExpression ''
-          {
-            QT_SCALE_FACTOR = 1.5;
-            VICINAE_NODE_BIN = "/opt/homebrew/bin/node";
-          }
-        '';
+        description = "The systemd target that starts and stops compass.service.";
       };
     };
 
@@ -159,8 +100,8 @@ in {
       type = lib.types.listOf lib.types.package;
       default = [];
       description = ''
-        List of Vicinae extensions to install.
-        You can use the `mkVicinaeExtension` function from the overlay to create extensions.
+        Extensions to install into `~/.local/share/compass/extensions`.
+        The flake's `mkVicinaeExtension` and `mkRayCastExtension` build them.
       '';
     };
 
@@ -168,63 +109,27 @@ in {
       inherit (tomlFormat) type;
       default = {};
       description = ''
-        Theme settings to add to the themes folder in `~/.local/share/vicinae/themes`. See <https://docs.vicinae.com/theming/getting-started> for supported values.
-
-        The attribute name of the theme will be the name of theme file,
+        Themes written to `~/.local/share/compass/themes/<name>.toml`, where Set Theme offers
+        them beside the built-in ones. The attribute name is the file name.
       '';
-      example =
-        lib.literalExpression # nix
-        
-        ''
-          {
-            catppuccin-mocha = {
-              meta = {
-                version = 1;
-                name = "Catppuccin Mocha";
-                description = "Cozy feeling with color-rich accents";
-                variant = "dark";
-                icon = "icons/catppuccin-mocha.png";
-                inherits = "vicinae-dark";
-              };
-
-              colors = {
-                core = {
-                  background = "#1E1E2E";
-                  foreground = "#CDD6F4";
-                  secondary_background = "#181825";
-                  border = "#313244";
-                  accent = "#89B4FA";
-                };
-                accents = {
-                  blue = "#89B4FA";
-                  green = "#A6E3A1";
-                  magenta = "#F5C2E7";
-                  orange = "#FAB387";
-                  purple = "#CBA6F7";
-                  red = "#F38BA8";
-                  yellow = "#F9E2AF";
-                  cyan = "#94E2D5";
-                };
-              };
+      example = lib.literalExpression ''
+        {
+          catppuccin-mocha = {
+            meta = {
+              name = "Catppuccin Mocha";
+              description = "Cozy feeling with color-rich accents";
+              variant = "dark";
+              inherits = "vicinae-dark";
             };
-          }
-        '';
-    };
-
-    settingOverrides = lib.mkOption {
-      type = lib.types.listOf lib.types.path;
-      default = [];
-      example =
-        lib.literalExpression # nix
-        
-        ''
-          [
-            ${config.xdg.configHome}/vicinae/override.json
-            /run/secrets/vicinae-secrets.json
-          ]
-        '';
-      description = ''
-        Allows you to specify additional JSON files that will be merged with the imperative settings and take precedence.
+            colors.core = {
+              background = "#1E1E2E";
+              foreground = "#CDD6F4";
+              secondary_background = "#181825";
+              border = "#313244";
+              accent = "#89B4FA";
+            };
+          };
+        }
       '';
     };
 
@@ -232,145 +137,65 @@ in {
       inherit (jsonFormat) type;
       default = {};
       description = ''
-        Settings written as JSON to `~/.config/vicinae/nix.json`.
-        This is will override any settings from the default settings.json.
-        The easiest way to configure this is first configuring your settings in the app,
-        then copying the generated `~/.config/vicinae/settings.json` to `~/.config/vicinae/nix.json` and then modifying it as needed.
-        If you want to set secrets you should import these files using the settingOverrides option.
+        Configuration written as JSON to `~/.config/compass/compass.json`. When it is set, the
+        file is managed by Home Manager: a change made in the settings view replaces the link
+        and is overwritten at the next activation. `compass config schema` prints the schema.
       '';
       example = lib.literalExpression ''
         {
           close_on_focus_loss = true;
-          consider_preedit = true;
           pop_to_root_on_close = true;
-          favicon_service = "twenty";
-          search_files_in_root = true;
-          font = {
-            normal = {
-              size = 12;
-              family = "Maple Nerd Font";
-            };
-          };
-          theme = {
-            light = {
-              name = "vicinae-light";
-              icon_theme = "default";
-            };
-            dark = {
-              name = "vicinae-dark";
-              icon_theme = "default";
-            };
-          };
-          launcher_window = {
-            opacity = 0.98;
-          };
+          font.normal.size = 12;
         }
       '';
     };
   };
 
-  config = let
-    settingsFile = jsonFormat.generate "vicinae-settings.json" cfg.settings;
+  config = lib.mkIf cfg.enable {
+    home.packages = [cfg.package];
 
-    wrappedVicinae = pkgs.symlinkJoin {
-      name = "${vicinaePkg.name}-configured";
-      paths = [vicinaePkg];
-      nativeBuildInputs = [pkgs.makeWrapper];
-      postBuild = let
-        allOverrides = (lib.optional (cfg.settings != {}) settingsFile) ++ cfg.settingOverrides;
-        overrideString = lib.concatStringsSep ":" allOverrides;
-      in ''
-        wrapProgram $out/bin/vicinae \
-          ${lib.optionalString (allOverrides != []) ''--set VICINAE_OVERRIDES "${overrideString}"''}
-      '';
+    xdg.configFile."compass/compass.json" = lib.mkIf (cfg.settings != {}) {
+      source = jsonFormat.generate "compass.json" cfg.settings;
+      force = true;
     };
-  in
-    lib.mkIf cfg.enable {
-      assertions = [
-        {
-          assertion = !(cfg.enableSoulver && cfg.enableNumen);
-          message = "programs.vicinae.enableSoulver and programs.vicinae.enableNumen are mutually exclusive";
-        }
-        {
-          assertion = cfg.enableSoulver -> (cfg.package != null || soulverVicinaePkg != null);
-          message = "programs.vicinae.enableSoulver: the soulver backend is not available on ${system}";
-        }
-      ];
 
-      warnings = lib.optional (cfg.enableSoulver && cfg.package != null) "programs.vicinae.enableSoulver is ignored because programs.vicinae.package is set; wrap your package with soulver-cpp yourself";
+    xdg.dataFile =
+      builtins.listToAttrs (
+        map (item: {
+          name = "compass/extensions/${item.name}";
+          value.source = item;
+        })
+        cfg.extensions
+      )
+      // lib.mapAttrs' (
+        name: theme:
+          lib.nameValuePair "compass/themes/${name}.toml" {
+            source = tomlFormat.generate "compass-${name}-theme" theme;
+          }
+      )
+      cfg.themes;
 
-      home.packages = [wrappedVicinae];
-
-      programs.vicinae.settings = lib.mkIf (cfg.enableSoulver || cfg.enableNumen) {
-        providers.calculator.preferences.backend = lib.mkDefault (
-          if cfg.enableSoulver
-          then "soulver-core"
-          else "numen"
-        );
+    # packaging/systemd/compass.service, with the store path and the target.
+    systemd.user.services.compass = lib.mkIf cfg.systemd.enable {
+      Unit = {
+        Description = "Compass launcher";
+        Documentation = ["https://github.com/tuna-os/compass"];
+        After = [cfg.systemd.target];
+        Requires = ["dbus.socket"];
+        PartOf = [cfg.systemd.target];
       };
-
-      xdg = let
-        themeFiles =
-          lib.mapAttrs' (
-            name: theme:
-              lib.nameValuePair "vicinae/themes/${name}.toml" {
-                source = tomlFormat.generate "vicinae-${name}-theme" theme;
-              }
-          )
-          cfg.themes;
-      in {
-        dataFile =
-          builtins.listToAttrs (
-            map (item: {
-              name = "vicinae/extensions/${item.name}";
-              value.source = item;
-            })
-            cfg.extensions
-          )
-          // themeFiles;
+      Service = {
+        Environment =
+          lib.mapAttrsToList (key: val: "${key}=${envValueToString val}")
+          cfg.systemd.environment;
+        Type = "simple";
+        ExecStart = "${lib.getExe cfg.package} start --hidden";
+        Restart = "on-failure";
+        RestartSec = 5;
       };
-
-      programs.firefox.nativeMessagingHosts = lib.mkIf (cfg.enableFirefoxIntegration) [vicinaePkg];
-
-      programs.google-chrome.nativeMessagingHosts = lib.mkIf (cfg.enableChromeIntegration) [vicinaePkg];
-
-      systemd.user.services.vicinae = lib.mkIf (cfg.systemd.enable) {
-        Unit = {
-          Description = "Vicinae server daemon";
-          Documentation = ["https://docs.vicinae.com"];
-          After = [cfg.systemd.target];
-          PartOf = [cfg.systemd.target];
-        };
-        Service = {
-          Environment =
-            lib.mapAttrsToList (key: val: "${key}=${envValueToString val}")
-            cfg.systemd.environment;
-          Type = "simple";
-          ExecStart = "${lib.getExe' wrappedVicinae "vicinae"} server";
-          Restart = "always";
-          RestartSec = 5;
-          KillMode = "process";
-        };
-        Install = lib.mkIf cfg.systemd.autoStart {
-          WantedBy = [cfg.systemd.target];
-        };
-      };
-
-      launchd.agents.vicinae = lib.mkIf cfg.launchd.enable {
-        enable = true;
-        config = {
-          ProgramArguments = [
-            "${lib.getExe' wrappedVicinae "vicinae"}"
-            "server"
-          ];
-          EnvironmentVariables = lib.mapAttrs (_: envValueToString) cfg.launchd.environment;
-          RunAtLoad = cfg.launchd.autoStart;
-          KeepAlive = {
-            Crashed = true;
-            SuccessfulExit = false;
-          };
-          ProcessType = "Interactive";
-        };
+      Install = lib.mkIf cfg.systemd.autoStart {
+        WantedBy = [cfg.systemd.target];
       };
     };
+  };
 }

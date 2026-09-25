@@ -17,9 +17,9 @@ Columns:
 - **parity test ✓** — covered by a Suite 0 differential case (#12) or, where a differential is not
   meaningful, by ported tests from the C++ suite (`PLAN.md` §8.3). A checked box here means a test
   would *fail* if the two engines diverged.
-- **C++ deleted ✓** — the C++ source is gone. `⏳` means "green, but the C++ engine still needs this
-  code because it is still the shipping engine". **Deletion cannot happen before the Phase 7
-  cutover, no matter how green the row is** — see the note below.
+- **C++ deleted ✓** — the C++ source is gone. Every row reads ✅: the whole C++ tree left the
+  repository with ADR-0021, including the out-of-scope rows that were once marked `never`. The C++
+  paths in the left-hand column are history; upstream Vicinae releases are the reference now.
 
 A row may go green with a **declared divergence** instead of exact parity: record it in the
 Divergences section below with a rationale. Divergences are declared, never discovered.
@@ -116,94 +116,94 @@ whether a real GNOME session grants the shortcut we ask for.
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
-| `src/lib/crypto` | `compass-crypto` | Phase 3 | ✅ | ✅ | ✅ | ⏳ |
-| `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/lib/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ✅ | ✅ | ⏳ |
-| `src/lib/figura` | `compass-ipc` | Phase 2 | ✅ | n/a | n/a | ⏳ |
-| `src/lib/common` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
-| `src/lib/linux-utils` | `compass-platform-linux` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
-| `src/lib/soulver` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
-| `src/cli` | `crates/compass` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
-| `src/file-indexer` | `compass-db`, `compass-file-indexer` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/snippet` | `compass-input-server` (`vicinae-input-server`), `compass-core::snippet` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
+| `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | ✅ | ✅ | ✅ |
+| `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ✅ | ✅ | ✅ |
+| `src/lib/crypto` | `compass-crypto` | Phase 3 | ✅ | ✅ | ✅ | ✅ |
+| `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/lib/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ✅ | ✅ | ✅ |
+| `src/lib/figura` | `compass-ipc` | Phase 2 | ✅ | n/a | n/a | ✅ |
+| `src/lib/common` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ✅ |
+| `src/lib/linux-utils` | `compass-platform-linux` | Phase 2 | ✅ | ✅ | ✅ | ✅ |
+| `src/lib/soulver` | `—` | n/a (macOS) | ✅ | n/a | n/a | ✅ |
+| `src/cli` | `crates/compass` | Phase 2 | ✅ | ✅ | ✅ | ✅ |
+| `src/file-indexer` | `compass-db`, `compass-file-indexer` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/snippet` | `compass-input-server` (`vicinae-input-server`), `compass-core::snippet` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | ✅ |
 
 ## Services
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/services/app-runtime` | `compass-core`, `compass::serve::app_runtime` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/app-service` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
-| `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
-| `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
-| `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/calculator-service` | `compass-local-storage`, `compass-core::exchange_rates`, `compass::exchange_rates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/global-shortcuts` | `compass-core::global_shortcuts`, `compass-wayland::hotkey`, `compass-portals`, `compass::global_shortcuts` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/input-server` | `compass::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/media-control` | `compass-media` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/menu-bar` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
-| `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/news` | `—` | n/a (decision) | ✅ | n/a | n/a | ❌ |
-| `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/paste` | `compass-core`, `compass::paste`, `compass-wayland::virtual_keyboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
-| `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ⏳ |
-| `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/selection` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/shortcut-inhibit` | `compass-core`, `compass-wayland::keyboard_inhibit` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/telemetry` | `—` | n/a (decision) | ✅ | n/a | n/a | ❌ |
-| `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/tray` | `compass-core`, `compass::tray_icon` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/tray-host` | `compass-core`, `compass::tray_host` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/update` | `compass-core::update`, `compass::updates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
-| `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/window-material` | `compass-core`, `compass_wayland::material`, `compass-wayland-foreign`, `compass::window_material`, `compass_ui::material` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/app-runtime` | `compass-core`, `compass::serve::app_runtime` | Phase 1 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/app-service` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ✅ |
+| `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | ✅ |
+| `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/calculator-service` | `compass-local-storage`, `compass-core::exchange_rates`, `compass::exchange_rates` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/global-shortcuts` | `compass-core::global_shortcuts`, `compass-wayland::hotkey`, `compass-portals`, `compass::global_shortcuts` | Phase 1 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/input-server` | `compass::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/media-control` | `compass-media` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/menu-bar` | `—` | n/a (macOS) | ✅ | n/a | n/a | ✅ |
+| `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/news` | `—` | n/a (decision) | ✅ | n/a | n/a | ✅ |
+| `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/paste` | `compass-core`, `compass::paste`, `compass-wayland::virtual_keyboard` | Phase 3 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ✅ |
+| `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/selection` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/shortcut-inhibit` | `compass-core`, `compass-wayland::keyboard_inhibit` | Phase 3 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/telemetry` | `—` | n/a (decision) | ✅ | n/a | n/a | ✅ |
+| `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/tray` | `compass-core`, `compass::tray_icon` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/tray-host` | `compass-core`, `compass::tray_host` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/update` | `compass-core::update`, `compass::updates` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ✅ |
+| `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ✅ |
+| `src/services/window-material` | `compass-core`, `compass_wayland::material`, `compass-wayland-foreign`, `compass::window_material`, `compass_ui::material` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
 
 ## Builtins
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
-| `src/builtins/calculator` | `compass-core`, `compass_ui::calculator_page` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/vicinae` | `compass-core`, `compass_ui::app::vicinae` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | ✅ |
+| `src/builtins/calculator` | `compass-core`, `compass_ui::calculator_page` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/vicinae` | `compass-core`, `compass_ui::app::vicinae` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
 
 ## The window
 
@@ -214,15 +214,15 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 
 | C++ source | lines | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|--:|---|---|:-:|:-:|:-:|:-:|
-| `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | ✅ | ✅ | ✅ |
+| `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
+| `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ✅ | ✅ | ✅ |
+| `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ✅ |
 
 `compass-ui` opens a window, searches applications, moves the selection, launches on Enter and
 dismisses on Escape. It also draws themed application icons and an action panel. The panel now
@@ -244,7 +244,7 @@ reading:
 - **`bridges` is Phase 4, not Phase 5**, because it is the seam the extension host renders through
   rather than chrome. `compass-extension-api` already models the view tree and its diff; what is
   missing is the half that turns a diff into pixels.
-- **No line of this can be deleted before the Phase 7 cutover**, like every other row.
+- **No line of this could be deleted before the Phase 7 cutover**, like every other row; all of it went with ADR-0021.
 - **The pointer on lists.** A click selects the row and activates it, as the C++ does with
   `activate_on_single_click` (Compass has only that mode; the C++ default selects on the first
   click and activates on a double one). Hover never moves the selection, as `SelectableDelegate.qml`.

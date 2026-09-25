@@ -1,5 +1,5 @@
 # compass-input-server reads /dev/input and writes /dev/uinput for snippet
-# keyword expansion. Like the C++ helper (`make postbuild`), it gets
+# keyword expansion. Like upstream Vicinae's helper, it gets
 # cap_dac_override rather than the user joining the input group: the
 # capability is on one small program that talks only to its parent.
 

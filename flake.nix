@@ -88,7 +88,8 @@
     });
 
     overlays.default = final: prev: {
-      vicinae = self.packages.${final.stdenv.hostPlatform.system}.default;
+      compass = self.packages.${final.stdenv.hostPlatform.system}.compass;
+      vicinae = self.packages.${final.stdenv.hostPlatform.system}.compass;
       mkVicinaeExtension = prev.callPackage ./nix/mkVicinaeExtension.nix {};
       mkRayCastExtension = prev.callPackage ./nix/mkRayCastExtension.nix {};
     };

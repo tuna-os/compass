@@ -34,16 +34,21 @@ the distribution's.
 that touches the engine. Both end in the same `smoke.sh`: installed layout, `--version`,
 `config schema`, `doctor` detecting the missing session, and a started engine answering `ping`.
 
+The flake also exports two modules. `homeManagerModules.default` (`nix/home-manager-module.nix`)
+is `programs.compass`: the package, `compass.json` settings, themes, extensions and a
+`compass.service` user unit. `nixosModules.default` (`nix/nixos-module.nix`) is
+`programs.compass.input-server`, described below. Both accept upstream's `programs.vicinae` names.
+
 The distribution packages install `compass` and `org.tunaos.compass` files only, so they sit beside
-the C++ engine's `vicinae` packages rather than conflicting with them.
+upstream's `vicinae` packages rather than conflicting with them.
 
 ## The input server
 
 `compass-input-server` (`crates/compass-input-server`) reads every keyboard under `/dev/input` to
 notice a snippet keyword being typed, and creates a virtual keyboard through `/dev/uinput` to erase
 the keyword and paste the expansion. It opens devices read-only and never grabs them. Both device
-paths are root-only by default, so it needs `CAP_DAC_OVERRIDE` — the same model as the C++ helper,
-which `make postbuild` and the NixOS module's `security.wrappers` grant. The capability sits on this
+paths are root-only by default, so it needs `CAP_DAC_OVERRIDE` — the same model as upstream's
+helper. The capability sits on this
 one small program, which speaks only JSON-RPC to its parent over stdin and stdout; the launcher
 itself runs unprivileged. Adding the user to the `input` group instead would hand every program
 they run the keyboard, and still leave `/dev/uinput` closed on most distributions.
@@ -51,7 +56,7 @@ they run the keyboard, and still leave `/dev/uinput` closed on most distribution
 | Output | How the helper gets its capability |
 |---|---|
 | Arch | `arch/compass.install`: `setcap cap_dac_override+ep /usr/lib/compass/compass-input-server` after install and upgrade |
-| Nix | the store cannot hold file capabilities. On NixOS, wrap it as the C++ module does: `security.wrappers.compass-input-server = { source = "${compass}/libexec/compass/compass-input-server"; capabilities = "cap_dac_override+ep"; owner = "root"; group = "root"; }`, and set `COMPASS_INPUT_SERVER_BIN=/run/wrappers/bin/compass-input-server` for the engine |
+| Nix | the store cannot hold file capabilities. On NixOS, import the flake's `nixosModules.default`: `programs.compass.input-server.enable` (on by default) wraps it with `security.wrappers` and sets `COMPASS_INPUT_SERVER_BIN=/run/wrappers/bin/compass-input-server` for the session |
 | AppImage | cannot carry capabilities from inside the image; run `sudo setcap cap_dac_override+ep` on an extracted copy and point `COMPASS_INPUT_SERVER_BIN` at it |
 | Flatpak | **not shipped.** The sandbox has no `/dev/input` or `/dev/uinput` and no finish-arg grants them (`--device=all` exposes `/dev` nodes but the helper would still need a capability no Flatpak can hold). The engine does not start it there, and `compass doctor` says so; snippets are still copied and pasted from the launcher |
 | From source | `cargo build -p compass-input-server`, then `sudo setcap cap_dac_override+ep target/debug/compass-input-server` |
@@ -72,7 +77,7 @@ COMPASS_UPDATE_SCHEMA=1 cargo test -p compass-core --test config_schema
 `scripts/packaging/check-config-schema.py` validates it, `schema/example.compass.json` and a set of
 negative cases with the `jsonschema` package, which is what an editor would do with it.
 
-The C++ engine's `settings.json` is migrated with `compass config migrate` (dry run) and
+Upstream Vicinae's `settings.json` is migrated with `compass config migrate` (dry run) and
 `compass config migrate --write`; until a `compass.json` exists the engine migrates it in memory at
 every start. See `crates/compass-core/src/config_migration.rs` for what maps and what is reported
 as left behind.
