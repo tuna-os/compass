@@ -151,6 +151,8 @@ async fn echo_handler(request: Request) -> Response {
             Response::ScriptGrants { grants: vec![] }
         }
         Request::CatalogGeneration => Response::CatalogGeneration { generation: 0 },
+        Request::ListDefaultApps { .. } => Response::DefaultApps { apps: vec![] },
+        Request::SetDefaultApp { .. } => Response::Ack,
         Request::ListFonts => Response::Fonts {
             fonts: vec![],
             categories: vec![],

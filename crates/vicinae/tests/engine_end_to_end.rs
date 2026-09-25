@@ -331,6 +331,87 @@ fn an_application_installed_while_the_engine_runs_is_found_without_a_restart() {
     }
 }
 
+/// Set Default Browser and Set Default Terminal against a real engine: the
+/// candidates with the current default first, and a choice written to the
+/// user's `mimeapps.list` or `xdg-terminals.list` under the temp config home.
+#[test]
+fn the_default_browser_and_terminal_are_listed_and_set_in_the_users_files() {
+    use compass_ipc::{DefaultAppKind, Request, Response};
+    let web = entry("Web", "MimeType=x-scheme-handler/https;text/html;\n");
+    let surf = entry(
+        "Surf",
+        "Comment=A small browser\nMimeType=x-scheme-handler/https;\n",
+    );
+    let editor = entry("Editor", "MimeType=text/plain;\n");
+    let xterm = entry("XTerm", "Categories=System;TerminalEmulator;\n");
+    let kitty = entry("Kitty", "Categories=System;TerminalEmulator;\n");
+    let daemon = Daemon::start(&[
+        ("web.desktop", web.as_str()),
+        ("surf.desktop", surf.as_str()),
+        ("editor.desktop", editor.as_str()),
+        ("xterm.desktop", xterm.as_str()),
+        ("kitty.desktop", kitty.as_str()),
+    ]);
+    let listed = |kind| match daemon.request(Request::ListDefaultApps { kind }) {
+        Response::DefaultApps { apps } => apps
+            .into_iter()
+            .map(|app| (app.id, app.is_default))
+            .collect::<Vec<_>>(),
+        other => panic!("unexpected answer: {other:?}"),
+    };
+    let set = |kind, id: &str| {
+        daemon.request(Request::SetDefaultApp {
+            kind,
+            id: id.to_owned(),
+        })
+    };
+    let config = daemon._dirs.path().join("config");
+
+    let browsers = listed(DefaultAppKind::Browser);
+    assert_eq!(
+        browsers.len(),
+        2,
+        "what opens https, not the editor: {browsers:?}"
+    );
+    assert_eq!(
+        browsers[0],
+        ("surf.desktop".to_owned(), true),
+        "the first opener"
+    );
+    assert_eq!(set(DefaultAppKind::Browser, "web.desktop"), Response::Ack);
+    let written = std::fs::read_to_string(config.join("mimeapps.list")).unwrap();
+    assert!(
+        written.contains("x-scheme-handler/http=web.desktop"),
+        "{written}"
+    );
+    assert!(
+        written.contains("application/xhtml+xml=web.desktop"),
+        "{written}"
+    );
+    assert_eq!(
+        listed(DefaultAppKind::Browser)[0],
+        ("web.desktop".to_owned(), true)
+    );
+
+    let terminals = listed(DefaultAppKind::Terminal);
+    let mut ids: Vec<&str> = terminals.iter().map(|(id, _)| id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["kitty.desktop", "xterm.desktop"]);
+    assert_eq!(
+        set(DefaultAppKind::Terminal, "xterm.desktop"),
+        Response::Ack
+    );
+    let written = std::fs::read_to_string(config.join("xdg-terminals.list")).unwrap();
+    assert!(
+        written.lines().any(|line| line == "xterm.desktop"),
+        "{written}"
+    );
+    assert_eq!(
+        listed(DefaultAppKind::Terminal)[0],
+        ("xterm.desktop".to_owned(), true)
+    );
+}
+
 #[test]
 fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() {
     use compass_ipc::{Request, Response};

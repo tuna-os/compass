@@ -25,6 +25,7 @@ use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
+mod apps;
 mod developer;
 mod dmenu;
 mod fonts;
@@ -228,6 +229,8 @@ pub struct AppFlags {
     /// preference resolves (`compass_core::power_commands::should_confirm`).
     /// A command missing here asks by its own default.
     pub power_asks: std::collections::BTreeMap<String, bool>,
+    /// Browse Apps' `showHidden` and `sortAlphabetically` preferences.
+    pub browse_apps: compass_core::browse_apps::Options,
     /// When the process started, for the cold-start figure (#13).
     ///
     /// `None` in a test or anywhere nobody is timing, which simply means no
@@ -316,6 +319,7 @@ impl Default for AppFlags {
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             power_asks: std::collections::BTreeMap::new(),
+            browse_apps: compass_core::browse_apps::Options::default(),
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             appearance_preset: crate::preset::resolve(None, None, None),
@@ -523,6 +527,8 @@ enum Page {
     NowPlaying(crate::media_page::NowPlayingPage),
     /// Script Permissions.
     Grants(crate::grants_page::GrantsPage),
+    /// Browse Apps, Set Default Browser or Set Default Terminal.
+    Apps(crate::apps_page::AppsPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -726,6 +732,8 @@ pub struct LauncherApp {
     quick_launch: bool,
     /// See [`AppFlags::power_asks`].
     power_asks: std::collections::BTreeMap<String, bool>,
+    /// See [`AppFlags::browse_apps`].
+    browse_apps: compass_core::browse_apps::Options,
     /// Sizes and spacing, from the resolved appearance preset (#84).
     ///
     /// Held rather than read from [`design::GEOMETRY`] at each draw: a preset
@@ -949,6 +957,7 @@ impl LauncherApp {
         app.wrap_navigation = flags.wrap_navigation;
         app.quick_launch = flags.quick_launch;
         app.power_asks = flags.power_asks;
+        app.browse_apps = flags.browse_apps;
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
@@ -1027,6 +1036,7 @@ impl LauncherApp {
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             power_asks: std::collections::BTreeMap::new(),
+            browse_apps: compass_core::browse_apps::Options::default(),
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
@@ -1954,6 +1964,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_grants_panel() {
                     return task;
+                } else if let Some(task) = self.open_apps_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -2020,6 +2032,7 @@ impl LauncherApp {
                         .or_else(|| self.media_panel_action(&id))
                         .or_else(|| self.theme_panel_action(&id))
                         .or_else(|| self.grants_panel_action(&id))
+                        .or_else(|| self.apps_panel_action(&id))
                 {
                     return task;
                 }
@@ -2427,6 +2440,10 @@ impl LauncherApp {
             Message::LaunchFetched(_)
             | Message::ExtensionSubtitlesLoaded(_)
             | Message::PreferencesOpened { .. } => self.launch_message(message),
+            Message::AppsQueryChanged(_)
+            | Message::AppsSelected(_)
+            | Message::DefaultAppsLoaded(_)
+            | Message::DefaultAppSet(_) => self.apps_message(message),
             Message::CatalogGeneration(Ok(generation)) => self.catalog_moved(generation),
             Message::CatalogGeneration(Err(error)) => {
                 tracing::debug!(%error, "no catalog generation");
@@ -2725,6 +2742,9 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Grants(_)) {
                     return self.grants_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Apps(_)) {
+                    return self.apps_page_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::NowPlaying(_)) {
                     return self.now_playing_key(key, modifiers);
                 }
@@ -2998,6 +3018,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::GrantsQueryChanged as OnInput),
             ),
+            Page::Apps(page) => (
+                page.placeholder(),
+                &page.query,
+                Some(Message::AppsQueryChanged as OnInput),
+            ),
             Page::NowPlaying(page) => (
                 crate::media_page::PLACEHOLDER,
                 &page.query,
@@ -3090,6 +3115,8 @@ impl LauncherApp {
             self.dmenu_body(page)
         } else if let Page::Grants(page) = &self.page {
             self.grants_body(page)
+        } else if let Page::Apps(page) = &self.page {
+            self.apps_body(page)
         } else if let Page::NowPlaying(page) = &self.page {
             self.now_playing_body(page)
         } else if let Page::Themes(page) = &self.page {
@@ -3582,8 +3609,21 @@ impl LauncherApp {
     /// proportions and the title's position exactly where the others are, and
     /// the VM tier's window box does not move when the option is turned on.
     fn result_row(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
+        let icon = self.app_icon(item, selected);
+        // `subtitles` gates this, not just the presence of a comment: the dense
+        // preset's row is one line tall and a second would overflow it.
+        let subtitle = self
+            .subtitles
+            .then(|| item.comment().map(str::to_owned))
+            .flatten();
+        self.list_row(icon, item.name().to_owned(), subtitle, selected)
+    }
+
+    /// An application's icon slot: its themed icon when icons are on and it
+    /// resolved, its initial otherwise. See [`Self::result_row`].
+    fn app_icon(&self, item: &AppItem, selected: bool) -> Element<'_, Message> {
         let geometry = self.geometry;
-        let icon: Element<Message> = match self.row_art(item) {
+        match self.row_art(item) {
             Some(crate::icons::IconArt::Raster(path)) => {
                 container(image(path).width(Length::Fill).height(Length::Fill))
                     .width(Length::Fixed(f32::from(geometry.icon_size)))
@@ -3597,14 +3637,7 @@ impl LauncherApp {
                     .into()
             }
             None => self.initial_badge(item.name(), selected),
-        };
-        // `subtitles` gates this, not just the presence of a comment: the dense
-        // preset's row is one line tall and a second would overflow it.
-        let subtitle = self
-            .subtitles
-            .then(|| item.comment().map(str::to_owned))
-            .flatten();
-        self.list_row(icon, item.name().to_owned(), subtitle, selected)
+        }
     }
 
     /// An extension row's icon: its art, a builtin tinted to read on the
@@ -4583,6 +4616,15 @@ impl LauncherApp {
             CommandKind::Media(id) => Task::batch([record, self.run_media(command, id, None)]),
             CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
             CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
+            CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
+            CommandKind::SetDefaultBrowser => Task::batch([
+                record,
+                self.open_default_picker(crate::backend::DefaultApp::Browser),
+            ]),
+            CommandKind::SetDefaultTerminal => Task::batch([
+                record,
+                self.open_default_picker(crate::backend::DefaultApp::Terminal),
+            ]),
             CommandKind::SearchEmojis => {
                 self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
                 Task::batch([record, focus_search()])
@@ -5290,6 +5332,10 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct TestBackend {
+        /// What the default pickers offer.
+        default_apps: Vec<crate::backend::DefaultAppRow>,
+        /// The defaults set: `(kind, id)`.
+        defaults_set: std::sync::Mutex<Vec<(crate::backend::DefaultApp, String)>>,
         keys: Vec<String>,
         recorded: std::sync::Mutex<Vec<String>>,
         fail_history: bool,
@@ -5369,6 +5415,27 @@ mod tests {
     impl crate::backend::ApplicationBackend for TestBackend {
         fn search(&self, _query: String) -> crate::backend::BackendFuture<'_, Vec<String>> {
             Box::pin(async { Ok(self.keys.clone()) })
+        }
+
+        fn list_default_apps(
+            &self,
+            _kind: crate::backend::DefaultApp,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::DefaultAppRow>> {
+            Box::pin(async move { Ok(self.default_apps.clone()) })
+        }
+
+        fn set_default_app(
+            &self,
+            kind: crate::backend::DefaultApp,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if id == "broken.desktop" {
+                    return Err(compass_core::default_app::BROWSER_FAILURE.to_owned());
+                }
+                self.defaults_set.lock().unwrap().push((kind, id));
+                Ok(())
+            })
         }
 
         fn record_launch(&self, key: String) -> crate::backend::BackendFuture<'_, ()> {
@@ -6944,7 +7011,17 @@ mod tests {
         let launcher = Arc::new(RecordingLaunchTarget::default());
         let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
         let _ = app.update(Message::QueryChanged("Webbrowser".to_owned()));
-        assert_eq!(app.results.len(), 1, "actions are not duplicate root rows");
+        // Set Default Browser's subtitle matches too; only the application
+        // rows are in question here.
+        assert_eq!(
+            app.results
+                .iter()
+                .filter(|row| matches!(row, RootRow::App(_)))
+                .count(),
+            1,
+            "actions are not duplicate root rows"
+        );
+        assert!(matches!(app.results[0], RootRow::App(_)));
         let backend = Arc::new(TestBackend::default());
         app.backend = Some(backend.clone());
         let _ = app.update(Message::TogglePanel);
@@ -8698,6 +8775,178 @@ mod tests {
             page.category.as_deref(),
             Some("Monospace"),
             "the category is remembered across processes"
+        );
+    }
+
+    /// Browse Apps, once enabled (`isDefaultDisabled`): every application,
+    /// the hidden ones with `showHidden`, the name, comment and keyword
+    /// filter, Enter to open, `control+shift+1` for the first desktop action
+    /// and the copy actions from the panel.
+    #[test]
+    fn browse_apps_lists_filters_opens_and_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        drop(index(dir.path()));
+        fs::write(
+            dir.path().join("editor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Editor\nComment=Write prose\n\
+             Exec=/bin/true\nActions=new;\n[Desktop Action new]\nName=New Window\nExec=/bin/true -n\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("probe.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Probe\nExec=/bin/true\nNoDisplay=true\n",
+        )
+        .unwrap();
+        let launcher = Arc::new(RecordingLaunchTarget::default());
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build())
+            .with_launcher(launcher.clone());
+        app.query = "browse apps".into();
+        app.search();
+        assert!(
+            !matches!(app.selected_row(), Some(RootRow::Command(c)) if c.entrypoint == "browse-apps"),
+            "disabled until the configuration enables it"
+        );
+        let config = compass_core::Config::parse(
+            r#"{"providers":{"commands":{"entrypoints":{"browse-apps":{"enabled":true}}}}}"#,
+            std::path::Path::new("config.json"),
+        )
+        .unwrap();
+        app.app_index.apply_root_config(&config.root_config());
+        app.browse_apps.show_hidden = true;
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let Page::Apps(page) = &app.page else {
+            panic!("not Browse Apps: {}", app.state_line());
+        };
+        assert_eq!(page.heading(), "Applications (5)");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Probe").is_ok());
+            assert!(ui.find("Hidden").is_ok(), "the NoDisplay entry says so");
+        }
+
+        let _ = app.update(Message::AppsQueryChanged("prose".into()));
+        let task = app.update(chord(
+            "!",
+            iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT,
+        ));
+        settle(&mut app, task);
+        assert_eq!(*launcher.0.lock().unwrap(), [Some("new".to_owned())]);
+
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let _ = app.update(Message::AppsQueryChanged("prose".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            launcher.0.lock().unwrap().last(),
+            Some(&None),
+            "Open Application"
+        );
+
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let _ = app.update(Message::AppsQueryChanged("editor".into()));
+        let _ = app.open_apps_panel().expect("a panel");
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Open Application",
+                "New Window",
+                "Copy App ID",
+                "Copy App Location"
+            ],
+            "no Open Location without an engine to open it"
+        );
+        let writes = {
+            let task = app.apps_panel_action("apps.action.2").expect("copy id");
+            settle(&mut app, task)
+        };
+        assert_eq!(writes, ["editor.desktop"]);
+    }
+
+    /// Set Default Browser and Set Default Terminal: the engine's list with
+    /// the default marked, Enter to choose, back to the root on success and
+    /// the picker's sentence on failure.
+    #[test]
+    fn a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one() {
+        use crate::backend::{DefaultApp, DefaultAppRow};
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            default_apps: vec![
+                DefaultAppRow {
+                    id: "firefox.desktop".into(),
+                    name: "Firefox".into(),
+                    description: "Browse the web".into(),
+                    is_default: true,
+                },
+                DefaultAppRow {
+                    id: "broken.desktop".into(),
+                    name: "Broken".into(),
+                    ..DefaultAppRow::default()
+                },
+                DefaultAppRow {
+                    id: "files.desktop".into(),
+                    name: "Files".into(),
+                    ..DefaultAppRow::default()
+                },
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(
+            &mut app,
+            "set default browser",
+            "commands:set-default-browser",
+        );
+        let Page::Apps(page) = &app.page else {
+            panic!("not the picker: {}", app.state_line());
+        };
+        assert_eq!(page.placeholder(), "Select a web browser...");
+        assert_eq!(page.shown.len(), 3);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Available web browsers").is_ok());
+            assert!(ui.find("✓ Default").is_ok());
+        }
+
+        let _ = app.update(Message::AppsQueryChanged("broken".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Apps(page) = &app.page else {
+            panic!("a failure stays on the picker");
+        };
+        assert_eq!(
+            page.notice.as_deref(),
+            Some(compass_core::default_app::BROWSER_FAILURE)
+        );
+
+        let _ = app.update(Message::AppsQueryChanged("files".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Root), "popToRoot");
+        assert_eq!(
+            *backend.defaults_set.lock().unwrap(),
+            [(DefaultApp::Browser, "files.desktop".to_owned())]
+        );
+
+        open_builtin(
+            &mut app,
+            "set default terminal",
+            "commands:set-default-terminal",
+        );
+        let Page::Apps(page) = &app.page else {
+            panic!("not the terminal picker");
+        };
+        assert_eq!(page.heading(), "Available terminal emulators");
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.defaults_set.lock().unwrap().last(),
+            Some(&(DefaultApp::Terminal, "firefox.desktop".to_owned()))
         );
     }
 

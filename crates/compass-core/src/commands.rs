@@ -72,6 +72,12 @@ pub enum CommandKind {
     ScriptPermissions,
     /// A media command, by its id in [`crate::media_commands`].
     Media(&'static str),
+    /// Browse every installed application, hidden ones included on request.
+    BrowseApps,
+    /// Choose the web browser links open in.
+    SetDefaultBrowser,
+    /// Choose the terminal commands run in.
+    SetDefaultTerminal,
 }
 
 /// Every builtin command, in the order an empty query lists them. The power
@@ -375,6 +381,32 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &["audio", "sound", "volume", "mute", "unmute"],
         icon: "speaker-off",
     },
+    // The system extension's other three (`system-extension.hpp`). Browse
+    // Apps is `isDefaultDisabled`: see `BuiltinCommand::default_disabled`.
+    BuiltinCommand {
+        kind: CommandKind::BrowseApps,
+        entrypoint: "browse-apps",
+        title: "Browse Apps",
+        subtitle: "Browse all applications that are installed on the system",
+        keywords: &[],
+        icon: "box",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SetDefaultTerminal,
+        entrypoint: "set-default-terminal",
+        title: "Set Default Terminal",
+        subtitle: "Change the default system terminal",
+        keywords: &[],
+        icon: "terminal",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SetDefaultBrowser,
+        entrypoint: "set-default-browser",
+        title: "Set Default Browser",
+        subtitle: "Change the default system web browser",
+        keywords: &[],
+        icon: "globe-01",
+    },
 ];
 
 impl BuiltinCommand {
@@ -383,6 +415,13 @@ impl BuiltinCommand {
     #[must_use]
     pub fn id(&self) -> String {
         entrypoint_id(COMMANDS_PROVIDER_ID, self.entrypoint)
+    }
+
+    /// Whether the command is left out of the root list until the user
+    /// enables it: `isDefaultDisabled`, which only Browse Apps sets.
+    #[must_use]
+    pub fn default_disabled(&self) -> bool {
+        self.kind == CommandKind::BrowseApps
     }
 
     /// Its root-list row.
@@ -396,7 +435,7 @@ impl BuiltinCommand {
             keywords: self.keywords.iter().map(|&k| k.to_owned()).collect(),
             meta: RootItemMeta {
                 provider_id: COMMANDS_PROVIDER_ID.to_owned(),
-                enabled: true,
+                enabled: !self.default_disabled(),
                 ..RootItemMeta::default()
             },
         }

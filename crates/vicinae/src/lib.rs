@@ -194,6 +194,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             configured_font,
             fallbacks,
             power_asks,
+            browse_apps,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -214,6 +215,12 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     config.font_family().map(str::to_owned),
                     config.fallback_ids(),
                     power_asks(&config),
+                    compass_core::browse_apps::Options::from_preferences(
+                        config.entrypoint_preferences(
+                            compass_core::commands::COMMANDS_PROVIDER_ID,
+                            compass_core::browse_apps::ENTRYPOINT,
+                        ),
+                    ),
                 )
             }
             Err(error) => {
@@ -229,6 +236,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     None,
                     compass_core::Config::default().fallback_ids(),
                     power_asks(&compass_core::Config::default()),
+                    compass_core::browse_apps::Options::default(),
                 )
             }
         };
@@ -305,6 +313,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             view_state_path: compass_ui::view_memory::default_path(),
             fallbacks,
             power_asks,
+            browse_apps,
             ..compass_ui::AppFlags::default()
         };
 

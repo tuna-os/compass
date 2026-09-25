@@ -15,6 +15,7 @@ pub const APP_ID: &str = "com.vicinae.Vicinae";
 pub mod action_panel;
 pub mod app;
 pub mod appearance;
+pub mod apps_page;
 pub mod backend;
 pub mod clipboard_page;
 pub mod design;

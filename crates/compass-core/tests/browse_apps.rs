@@ -264,3 +264,105 @@ fn the_main_section_comes_before_the_utils_section() {
         "{sections:?}"
     );
 }
+
+/// `BrowseAppsViewHost::reload`: the list, its two preferences, and what a
+/// `NoDisplay` entry becomes. Over desktop files in a temp directory.
+#[test]
+fn the_list_hides_no_display_entries_unless_asked_and_sorts_on_request() {
+    use compass_core::browse_apps::{Options, from_item, listed};
+    let dir = tempfile::tempdir().unwrap();
+    let write = |file: &str, body: &str| {
+        std::fs::write(
+            dir.path().join(file),
+            format!("[Desktop Entry]\nType=Application\nExec=x\n{body}"),
+        )
+        .unwrap();
+    };
+    write(
+        "b-zed.desktop",
+        "Name=zed\nComment=Code\nKeywords=editor;\nActions=new;\n\n[Desktop Action new]\nName=New Window\nExec=zed -n\n",
+    );
+    write("a-yak.desktop", "Name=Yak\n");
+    write("c-helper.desktop", "Name=Helper\nNoDisplay=true\n");
+    write("d-gone.desktop", "Name=Gone\nHidden=true\n");
+    write("e-kde.desktop", "Name=Kate\nOnlyShowIn=KDE;\n");
+    let index = compass_core::AppIndex::builder()
+        .dir(dir.path())
+        .desktops(["GNOME"])
+        .build();
+    let names = |options: Options| -> Vec<(String, bool)> {
+        listed(&index, options)
+            .into_iter()
+            .map(|(item, shown)| (item.display_name(), shown))
+            .collect()
+    };
+
+    assert_eq!(Options::default(), Options::from_preferences(None));
+    assert_eq!(
+        names(Options::default()),
+        [("Yak".to_owned(), true), ("zed".to_owned(), true)],
+        "case-insensitive, hidden ones left out"
+    );
+    let all = Options::from_preferences(
+        serde_json::json!({"showHidden": true, "sortAlphabetically": false}).as_object(),
+    );
+    assert_eq!(
+        names(all),
+        [
+            ("Yak".to_owned(), true),
+            ("zed".to_owned(), true),
+            ("Helper".to_owned(), false),
+            ("Kate".to_owned(), false),
+        ],
+        "Hidden=true is a deletion, not a hidden app"
+    );
+    assert!(
+        index.search_root("Helper", None).is_empty(),
+        "never in the root"
+    );
+
+    let (zed, _) = listed(&index, Options::default())[1];
+    let model = from_item(zed, true);
+    assert_eq!(model.id, "b-zed.desktop");
+    assert_eq!(model.description, "Code");
+    assert_eq!(model.keywords, ["editor"]);
+    assert_eq!(model.actions.len(), 1);
+    assert_eq!(model.actions[0].display_name, "New Window");
+    assert!(model.path.ends_with("b-zed.desktop"));
+    let (helper, shown) = listed(&index, all)[2];
+    assert_eq!(accessories(&from_item(helper, shown)), [HIDDEN_ACCESSORY]);
+}
+
+/// `SystemBrowseApps::isDefaultDisabled`: out of the root until enabled.
+#[test]
+fn browse_apps_is_disabled_until_the_configuration_enables_it() {
+    let mut index = compass_core::AppIndex::builder().build();
+    let found = |index: &compass_core::AppIndex| {
+        index
+            .search_root_all("Browse Apps", None)
+            .iter()
+            .any(|hit| matches!(hit, compass_core::RootHit::Command { command, .. } if command.entrypoint == "browse-apps"))
+    };
+    assert!(!found(&index));
+    index.apply_root_config(&Default::default());
+    assert!(!found(&index));
+    let config = compass_core::Config::parse(
+        r#"{"providers":{"commands":{"entrypoints":{"browse-apps":{"enabled":true}}}}}"#,
+        std::path::Path::new("config.json"),
+    )
+    .unwrap();
+    index.apply_root_config(&config.root_config());
+    assert!(found(&index));
+    for title in ["Set Default Browser", "Set Default Terminal"] {
+        assert!(
+            index
+                .search_root_all(title, None)
+                .iter()
+                .any(|hit| matches!(
+                    hit,
+                    compass_core::RootHit::Command { command, .. } if command.title == title
+                )),
+            "{title}"
+        );
+    }
+}

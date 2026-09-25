@@ -2482,7 +2482,7 @@ subsystem. "None" under *blocked by* means only the work.
 | `src/builtins/file` | the rest of the action panel (Open with…, Run executable, Set as wallpaper, Create shortcut, Paste, four copies), the scan indicator, drag | medium (each action small) | drag, as above |
 | `src/builtins/shortcut` | Open with…, the detail pane, shortcuts as fallback rows | medium | none |
 | `src/builtins/snippet` | the detail pane; the `\{` escape | small (escape) and medium (pane) | the escape changes the shared placeholder parser's grammar, which needs its own look |
-| `src/builtins/system` | Browse Apps' view (model ported), Set Default Browser and Set Default Terminal (writers ported) | small to medium each | none |
+| ~~`src/builtins/system`~~ | **Done** (Browse Apps, Set Default Browser, Set Default Terminal; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/builtins/vicinae` | installed extensions, the OAuth token and local-storage browsers, tray search, builtin-icon gallery, fallback manager view, report bug, refresh apps, open config, the store intro | large (many small views) | tray search waits on `tray-host` |
 | `ui/image` | drawing the builtin icon set and file-type icons (commands, windows, files and clipboard rows show an initial), masks, tints, badges, `ImageURL(source)` for a bare string | medium | none (`is_emoji` now exists for the last) |
 | `ui/bridges` | images inside an extension's Markdown detail | small (the store page's fetch-and-draw can be reused) | none |

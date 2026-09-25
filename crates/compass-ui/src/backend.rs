@@ -61,6 +61,19 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// What a default picker offers, the current default first.
+    fn list_default_apps(&self, kind: DefaultApp) -> BackendFuture<'_, Vec<DefaultAppRow>> {
+        let _ = kind;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Makes `id` the default browser or terminal. An error is the sentence
+    /// to show.
+    fn set_default_app(&self, kind: DefaultApp, id: String) -> BackendFuture<'_, ()> {
+        let _ = (kind, id);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The running media players, for Now Playing.
     fn list_media_players(&self) -> BackendFuture<'_, Vec<MediaPlayerRow>> {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
@@ -375,6 +388,28 @@ const FILES_NEED_ENGINE: &str =
 
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
+
+/// Which system default a picker sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultApp {
+    /// Set Default Browser.
+    Browser,
+    /// Set Default Terminal.
+    Terminal,
+}
+
+/// One application a default picker offers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefaultAppRow {
+    /// The desktop file id.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// Its comment.
+    pub description: String,
+    /// Whether it is the current default.
+    pub is_default: bool,
+}
 
 /// What the user has allowed one Rhai script.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -194,6 +194,14 @@ pub enum Message {
     FontSet(Result<String, String>),
     /// Script Permissions' list arrived.
     GrantsLoaded(Result<Vec<crate::backend::ScriptGrant>, String>),
+    /// Browse Apps' or a default picker's filter changed.
+    AppsQueryChanged(String),
+    /// A row of Browse Apps or a default picker was clicked.
+    AppsSelected(usize),
+    /// A default picker's candidates arrived.
+    DefaultAppsLoaded(Result<Vec<crate::backend::DefaultAppRow>, String>),
+    /// A default picker's choice was written, or could not be.
+    DefaultAppSet(Result<(), String>),
     /// The engine's catalog generation, asked on every summon: when it moved,
     /// applications or extensions were installed or removed.
     CatalogGeneration(Result<u64, String>),

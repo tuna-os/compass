@@ -54,6 +54,13 @@ fn script_grant(entry: compass_ipc::ScriptGrantEntry) -> compass_ui::backend::Sc
     }
 }
 
+fn default_app_kind(kind: compass_ui::backend::DefaultApp) -> compass_ipc::DefaultAppKind {
+    match kind {
+        compass_ui::backend::DefaultApp::Browser => compass_ipc::DefaultAppKind::Browser,
+        compass_ui::backend::DefaultApp::Terminal => compass_ipc::DefaultAppKind::Terminal,
+    }
+}
+
 /// Uses the same engine/socket as the resident window link.
 #[derive(Debug)]
 pub struct DaemonBackend {
@@ -127,6 +134,56 @@ impl ApplicationBackend for DaemonBackend {
                 compass_ipc::Response::ScriptGrants { grants } => {
                     Ok(grants.into_iter().map(script_grant).collect())
                 }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_default_apps(
+        &self,
+        kind: compass_ui::backend::DefaultApp,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::DefaultAppRow>> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ListDefaultApps {
+                        kind: default_app_kind(kind),
+                    },
+                    "Listing the applications",
+                )
+                .await?
+            {
+                compass_ipc::Response::DefaultApps { apps } => Ok(apps
+                    .into_iter()
+                    .map(|app| compass_ui::backend::DefaultAppRow {
+                        id: app.id,
+                        name: app.name,
+                        description: app.description,
+                        is_default: app.is_default,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_default_app(
+        &self,
+        kind: compass_ui::backend::DefaultApp,
+        id: String,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::SetDefaultApp {
+                        kind: default_app_kind(kind),
+                        id,
+                    },
+                    "Setting the default",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })

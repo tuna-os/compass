@@ -425,6 +425,7 @@ impl AppIndexBuilder {
         // check, so a higher-precedence Hidden entry really does delete the lower-precedence one.
         let mut claimed: HashMap<String, PathBuf> = HashMap::new();
         let mut by_key: HashMap<String, usize> = HashMap::new();
+        let mut hidden: Vec<AppItem> = Vec::new();
 
         for dir in &self.dirs {
             let scan = scan_desktop_files(dir);
@@ -448,7 +449,14 @@ impl AppIndexBuilder {
                 }
                 claimed.insert(id.to_owned(), path.to_path_buf());
 
-                self.index_file(&file, &self.desktops, &mut items, &mut by_key, &mut skipped);
+                self.index_file(
+                    &file,
+                    &self.desktops,
+                    &mut items,
+                    &mut by_key,
+                    &mut skipped,
+                    &mut hidden,
+                );
             }
         }
 
@@ -507,6 +515,7 @@ impl AppIndexBuilder {
             root_config: crate::root_items::RootConfig::default(),
             extension_dirs: self.extension_dirs,
             scan,
+            hidden,
         }
     }
 
@@ -517,6 +526,7 @@ impl AppIndexBuilder {
         items: &mut Vec<AppItem>,
         by_key: &mut HashMap<String, usize>,
         skipped: &mut Vec<SkippedEntry>,
+        hidden: &mut Vec<AppItem>,
     ) {
         let id = file.id();
         let path = file.path();
@@ -559,6 +569,25 @@ impl AppIndexBuilder {
                 path: path.to_path_buf(),
                 reason: SkipReason::NotShown,
             });
+            // `NoDisplay` or another desktop's: not in the root, but still an
+            // installed application, which Browse Apps lists as "Hidden".
+            // `Hidden=true` is a deletion, as the C++ scan's `deleted()`.
+            if !entry.hidden() && entry.is_application() && entry.exec().is_some() {
+                let launchable = entry
+                    .try_exec()
+                    .is_none_or(|try_exec| self.resolves(try_exec));
+                let name = entry.name().to_owned();
+                hidden.push(AppItem {
+                    key: id.to_owned(),
+                    desktop_id: id.to_owned(),
+                    action_id: None,
+                    action_index: None,
+                    name: name.clone(),
+                    app_name: name,
+                    entry: Arc::new(entry),
+                    launchable,
+                });
+            }
             return;
         }
 
@@ -697,6 +726,9 @@ pub struct AppIndex {
     /// ([`AppIndex::application_scan`]); without the extension directories,
     /// which [`AppIndex::rescan_extensions`] covers.
     scan: AppIndexBuilder,
+    /// Applications installed but not shown (`NoDisplay`, or for another
+    /// desktop), in scan order; never in the root.
+    hidden: Vec<AppItem>,
 }
 
 /// One row of a root search over applications and commands.
@@ -772,7 +804,9 @@ impl AppIndex {
             // removed setting cannot survive a subsequent configuration merge.
             root.meta.alias = None;
             root.meta.shortcut = None;
-            root.merge_config(config, false);
+            let default_disabled = crate::commands::by_id(&root.id)
+                .is_some_and(crate::commands::BuiltinCommand::default_disabled);
+            root.merge_config(config, default_disabled);
         }
     }
 
@@ -1063,6 +1097,15 @@ impl AppIndex {
         self.items = fresh.items;
         self.by_key = fresh.by_key;
         self.skipped = fresh.skipped;
+        self.hidden = fresh.hidden;
+    }
+
+    /// Installed applications the root does not show: `NoDisplay`, or
+    /// meant for another desktop. What `displayable()` is false for, and
+    /// what Browse Apps' `showHidden` adds.
+    #[must_use]
+    pub fn hidden_applications(&self) -> &[AppItem] {
+        &self.hidden
     }
 
     /// Scans the extension directories the index was built with again and

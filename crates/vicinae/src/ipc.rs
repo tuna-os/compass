@@ -152,6 +152,8 @@ fn describe(request: &Request) -> &'static str {
         Request::ListScriptGrants => "ListScriptGrants",
         Request::RevokeScriptGrant { .. } => "RevokeScriptGrant",
         Request::CatalogGeneration => "CatalogGeneration",
+        Request::ListDefaultApps { .. } => "ListDefaultApps",
+        Request::SetDefaultApp { .. } => "SetDefaultApp",
         Request::Dmenu { .. } => "Dmenu",
         Request::DmenuFetch { .. } => "DmenuFetch",
         Request::DmenuChoose { .. } => "DmenuChoose",

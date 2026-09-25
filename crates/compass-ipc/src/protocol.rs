@@ -48,7 +48,9 @@ use serde::{Deserialize, Serialize};
 /// Now Playing, the launcher's font, store avatars, extension deeplinks and
 /// reviewing Rhai script permissions; version 17, the catalog generation a
 /// window compares to know that applications or extensions were installed or
-/// removed while it ran ([`Request::CatalogGeneration`]).
+/// removed while it ran ([`Request::CatalogGeneration`]), and the default
+/// browser and terminal pickers ([`Request::ListDefaultApps`],
+/// [`Request::SetDefaultApp`]).
 pub const PROTOCOL_VERSION: u16 = 17;
 
 /// A client-to-server frame.
@@ -640,6 +642,21 @@ pub enum Request {
     /// Answered with [`Response::CatalogGeneration`]; a window whose last
     /// answer differs scans its own copy again.
     CatalogGeneration,
+    /// The applications Set Default Browser or Set Default Terminal offers,
+    /// the current default first. Answered with [`Response::DefaultApps`].
+    ListDefaultApps {
+        /// Which choice.
+        kind: DefaultAppKind,
+    },
+    /// Make `id` the default browser (`mimeapps.list`) or terminal
+    /// (`xdg-terminals.list`). Answered with [`Response::Ack`], or an error
+    /// carrying the sentence to show.
+    SetDefaultApp {
+        /// Which choice.
+        kind: DefaultAppKind,
+        /// The desktop file id.
+        id: String,
+    },
 }
 
 /// What the engine answers.
@@ -874,6 +891,33 @@ pub enum Response {
         /// Starts at zero and goes up by one per rescan.
         generation: u64,
     },
+    /// Answer to [`Request::ListDefaultApps`], in the order offered.
+    DefaultApps {
+        /// The candidates.
+        apps: Vec<DefaultAppEntry>,
+    },
+}
+
+/// Which system default a picker sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DefaultAppKind {
+    /// The web browser.
+    Browser,
+    /// The terminal emulator.
+    Terminal,
+}
+
+/// One application a default picker offers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefaultAppEntry {
+    /// The desktop file id.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// Its comment.
+    pub description: String,
+    /// Whether it is the current default.
+    pub is_default: bool,
 }
 
 /// What the user has allowed one Rhai script.

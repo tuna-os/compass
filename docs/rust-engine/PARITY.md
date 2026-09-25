@@ -200,7 +200,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -355,6 +355,7 @@ named Rust module and named tests that fail on a regression.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
+| `src/builtins/system` | Rust ✅ | Browse Apps (`compass_ui::apps_page` over `compass_core::browse_apps`, with `AppIndex::hidden_applications` for `showHidden` and `BuiltinCommand::default_disabled` for `isDefaultDisabled`); Set Default Browser and Set Default Terminal (`compass_core::default_app`'s pickers, served by the engine over `Request::{ListDefaultApps, SetDefaultApp}`, IPC v17, writing through `compass_xdg::{mimeapps_writer, terminal}`) | `browse_apps_lists_filters_opens_and_copies`, `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one`, `the_default_browser_and_terminal_are_listed_and_set_in_the_users_files` (a real engine, temp XDG dirs), `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request`, `browse_apps_is_disabled_until_the_configuration_enables_it`, `apps_page::tests` |
 | `src/services/app-service` | Rust ✅ | `vicinae::catalog_watch` (the directory watch, debounced 500 ms as `m_rescanDebounce`), `AppIndex::{rescan_applications, replace_applications}`, `EngineApps::{web_browser, file_browser, text_editor, terminal_emulator, set_web_browser}`; the window rescans its own copy when `Request::CatalogGeneration` (IPC v17) moves | `an_application_installed_while_the_engine_runs_is_found_without_a_restart` (a real engine over temp XDG dirs), `a_rescan_takes_installed_and_removed_applications_and_keeps_the_rest`, `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none`, `a_moved_catalog_generation_rescans_and_the_same_one_does_not`, `the_browser_file_manager_and_editor_are_the_defaults_then_the_category_then_a_claim` |
 
 What differs, by row:
@@ -362,6 +363,10 @@ What differs, by row:
 | Row | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | `app-service` | `QFileSystemWatcher` on each application directory itself, so a file added in a subdirectory (`applications/kde4/`) waits for the next change at the top. | The watch is recursive, as the scan it triggers is. | `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none` |
+| `builtins/system` | Browse Apps' panel starts with Focus Window when the application has a window open. | Not offered: the launcher has no per-application window lookup yet (Switch Windows is its own view). | — |
+| `builtins/system` | Browse Apps reads `showHidden` and `sortAlphabetically` each time it opens. | Read when the window starts, like the power commands' preferences; a change applies after a restart of the window. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
+| `builtins/system` | Unsorted, the list is `m_apps` in scan order, hidden entries among the rest. | Unsorted, the shown applications in scan order, then the hidden ones. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
+| `builtins/system` | The current default carries a green check icon. | A `✓ Default` accessory in text, the drawn icon set being `ui/image`'s gap. | `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one` |
 | `app-service` | One process: `appsChanged` reloads the root items the window shows. | Two: the engine rescans on the watch; the window asks for the catalog generation on every summon and rescans its own index when it moved, so an open window catches up on its next summon. | `a_moved_catalog_generation_rescans_and_the_same_one_does_not` |
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
@@ -375,8 +380,7 @@ the `xdg-terminal-exec` list, its `X-TerminalArg*` table and its writer, `setDef
 `tests/terminal.rs`); and `env` (`compass_xdg::xdg_dirs`, the runtime directory being
 `compass-ipc`'s). `special.cpp`'s four real-world files — Wine's escaped path, single quotes, empty
 values, a locale with no translation of its own — are `tests/special.rs`. The two writers were the
-last of it; nothing calls them yet, because Set Default Browser and Set Default Terminal are not
-built (see `src/builtins/system`).
+last of it; Set Default Browser and Set Default Terminal call them (see `src/builtins/system`).
 
 
 #### An unresolved disagreement: two desktop file id schemes
@@ -502,8 +506,8 @@ list's 0.6), the `Hidden` accessory for a `NoDisplay` entry, and the action pane
 first open window if there is one, open (clearing the search), each desktop action with
 `control+shift+1..9` for the first nine only, then open-location behind the `action.open` keybind,
 copy id, copy location. Run Terminal Program is in the launcher ("System: Run Terminal Program"
-below). Still C++-only: the Browse Apps view over this model, Set Default Browser and Set Default
-Terminal (whose file writers are now `compass-xdg`'s).
+below). Since the truth pass the row is green: the Browse Apps view over this model, Set Default
+Browser and Set Default Terminal are in the launcher (see "Gaps closed after the truth pass").
 
 **`src/services/shortcut` → `compass-core::shortcut`** — `Shortcut::parseLink`'s state machine and
 `insertPlaceholder`'s argument rules are ported: literal text and placeholders in order, reserved
@@ -2405,7 +2409,7 @@ What differs:
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | The command takes an optional `command` argument in root search and runs it without opening the view. | The view always opens. | — |
-| 2 | Browse Apps, Set Default Browser and Set Default Terminal are also in the system extension. | Not yet. | — |
+| 2 | Browse Apps, Set Default Browser and Set Default Terminal are also in the system extension. | So they are here ("Gaps closed after the truth pass"). | `browse_apps_lists_filters_opens_and_copies`, `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one` |
 | 3 | Programs are scanned once per view in the background, with a loading state. | Scanned by the engine on each opening (a blocking task), the view showing "Looking for programs…" until then. | `run_terminal_program_lists_path_and_runs_directly_or_refuses` |
 | 4 | Inside the Flatpak, `PATH` is the host's through the portal's environment. | The engine's own `PATH` (the sandbox's inside the Flatpak); runs go through `flatpak-spawn --host`. | — |
 

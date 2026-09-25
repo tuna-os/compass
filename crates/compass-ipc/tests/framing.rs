@@ -246,6 +246,13 @@ fn all_requests() -> Vec<Request> {
             id: "script.quick-notes".into(),
         },
         Request::CatalogGeneration,
+        Request::ListDefaultApps {
+            kind: compass_ipc::DefaultAppKind::Browser,
+        },
+        Request::SetDefaultApp {
+            kind: compass_ipc::DefaultAppKind::Terminal,
+            id: "org.gnome.Ptyxis.desktop".into(),
+        },
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -615,6 +622,14 @@ fn all_responses() -> Vec<Response> {
             }],
         },
         Response::CatalogGeneration { generation: 3 },
+        Response::DefaultApps {
+            apps: vec![compass_ipc::DefaultAppEntry {
+                id: "firefox.desktop".into(),
+                name: "Firefox".into(),
+                description: "Browse the Wörld Wide Web".into(),
+                is_default: true,
+            }],
+        },
         Response::ScriptGrants {
             grants: vec![compass_ipc::ScriptGrantEntry {
                 id: "script.quick-notes".into(),
@@ -730,6 +745,8 @@ fn request_variants_are_exhaustive() {
             | Request::ListScriptGrants
             | Request::RevokeScriptGrant { .. }
             | Request::CatalogGeneration
+            | Request::ListDefaultApps { .. }
+            | Request::SetDefaultApp { .. }
             | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }
@@ -770,6 +787,7 @@ fn response_variants_are_exhaustive() {
             | Response::MediaPlayers { .. }
             | Response::ScriptGrants { .. }
             | Response::CatalogGeneration { .. }
+            | Response::DefaultApps { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }
