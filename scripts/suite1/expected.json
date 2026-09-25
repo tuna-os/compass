@@ -173,7 +173,11 @@
   },
   "store.vicinae.fuzzy-files:find": {
     "verdict": "rendered-empty",
-    "why": "only ever drew an empty frame: it searches through `gf` (goldfish), which the runner lacks, and says so only after a keystroke"
+    "why": "only ever drew an empty frame: it searches through `gf` (goldfish), which the runner lacks, and says so only after a keystroke",
+    "flatpak": {
+      "verdict": "crashed",
+      "why": "Find Files crashed: UnhandledPromiseRejection: it runs `gf` (goldfish), absent inside the sandbox too, and the rejection is not caught there"
+    }
   },
   "store.vicinae.gentoo-explorer:browse-categories": {
     "verdict": "rendered"
@@ -365,7 +369,11 @@
     "verdict": "rendered"
   },
   "store.vicinae.systemd:services": {
-    "verdict": "rendered"
+    "verdict": "rendered",
+    "flatpak": {
+      "verdict": "error-toast",
+      "why": "Failed to list services: org.freedesktop.DBus.Error.ServiceUnknown: the Flatpak does not talk to systemd on the system bus"
+    }
   },
   "store.vicinae.timer:index": {
     "verdict": "rendered"
