@@ -27,6 +27,9 @@ pub const WLR_DATA_CONTROL: &str = "zwlr_data_control_manager_v1";
 /// `xx_hotkey_manager_v1`, experimental global hotkeys.
 pub const XX_HOTKEY: &str = "xx_hotkey_manager_v1";
 
+/// `vicinae_hotkey_manager_v1`, Vicinae's own global hotkeys.
+pub const VICINAE_HOTKEY: &str = "vicinae_hotkey_manager_v1";
+
 /// The globals a compositor advertised: interface name to highest version.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Globals {
@@ -192,7 +195,7 @@ impl Capabilities {
             toplevel_management: globals.has(WLR_FOREIGN_TOPLEVEL),
             toplevel_list: globals.has(EXT_FOREIGN_TOPLEVEL_LIST),
             data_control: globals.has(EXT_DATA_CONTROL) || globals.has(WLR_DATA_CONTROL),
-            hotkey: globals.has(XX_HOTKEY),
+            hotkey: globals.has(XX_HOTKEY) || globals.has(VICINAE_HOTKEY),
         }
     }
 

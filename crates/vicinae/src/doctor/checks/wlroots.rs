@@ -89,7 +89,7 @@ pub async fn wlroots<B: BusProbe>(
     };
     let mut detail = format!(
         "layer-shell: {}; foreign-toplevel: {toplevel}; data-control: {}; \
-         xx-hotkey: {}; portal GlobalShortcuts: {}; compositor IPC: {ipc}",
+         hotkey protocol: {}; portal GlobalShortcuts: {}; compositor IPC: {ipc}",
         yes_no(caps.layer_shell),
         yes_no(caps.data_control),
         yes_no(caps.hotkey),
@@ -159,7 +159,7 @@ mod tests {
             "layer-shell: yes",
             "zwlr_foreign_toplevel_manager_v1",
             "data-control: yes",
-            "xx-hotkey: yes",
+            "hotkey protocol: yes",
             "portal GlobalShortcuts: no",
             "Hyprland (answering",
         ] {

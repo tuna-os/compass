@@ -66,6 +66,7 @@ pub mod file_walk;
 pub mod font_browser;
 pub mod font_service;
 pub mod frecency;
+pub mod global_shortcuts;
 pub mod glyph;
 pub mod glyph_service;
 pub mod image_url;

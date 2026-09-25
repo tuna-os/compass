@@ -30,6 +30,7 @@ zip.workspace = true
 ignore.workspace = true
 # User theme files (`theme_file`); the same line compass-script reads manifests with.
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
+xkeysym = "0.2"
 
 [dev-dependencies]
 compass-testkit.workspace = true

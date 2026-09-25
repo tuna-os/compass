@@ -85,6 +85,9 @@ async fn set_setting(state: &Arc<RwLock<EngineState>>, key: String, value_json: 
         Err(response) => return response,
     };
     apply_live(state, &config, &setting.key).await;
+    // The launcher hotkey, or an item's shortcut or switch: the service
+    // rebinds only what changed.
+    state.read().await.global_shortcuts().reload();
     Response::Ack
 }
 

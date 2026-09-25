@@ -255,6 +255,19 @@ impl GlobalShortcutsIface {
         }
 
         let conn = emitter.connection().clone();
+        // The session object, so a client can close it.
+        if let Err(err) = conn
+            .object_server()
+            .at(
+                session.as_str(),
+                SessionIface {
+                    state: Arc::clone(&self.state),
+                },
+            )
+            .await
+        {
+            eprintln!("mock portal failed to export a session: {err}");
+        }
         dispatch(
             conn,
             request.clone(),
@@ -383,6 +396,32 @@ impl GlobalShortcutsIface {
         timestamp: u64,
         options: HashMap<String, OwnedValue>,
     ) -> zbus::Result<()>;
+}
+
+/// Mock `org.freedesktop.portal.Session`, one per `CreateSession`.
+pub struct SessionIface {
+    pub state: SharedState,
+}
+
+#[interface(name = "org.freedesktop.portal.Session")]
+impl SessionIface {
+    #[zbus(property, name = "version")]
+    fn version(&self) -> u32 {
+        1
+    }
+
+    async fn close(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+        #[zbus(object_server)] server: &zbus::ObjectServer,
+    ) -> zbus::fdo::Result<()> {
+        lock(&self.state).calls.push("Session.Close");
+        if let Some(path) = header.path() {
+            let path = path.to_owned();
+            let _ = server.remove::<SessionIface, _>(path).await;
+        }
+        Ok(())
+    }
 }
 
 /// `xdg-desktop-portal-gnome` renders a trigger for display; mimic that so
@@ -778,14 +817,21 @@ impl MockPortal {
         lock(&self.state).sessions.first().cloned()
     }
 
-    /// Emit `Activated` for `shortcut_id` on the first session.
+    /// The session path handed out by the latest `CreateSession`.
+    pub fn latest_session_path(&self) -> Option<OwnedObjectPath> {
+        lock(&self.state).sessions.last().cloned()
+    }
+
+    /// Emit `Activated` for `shortcut_id` on the latest session.
     pub async fn emit_activated(
         &self,
         shortcut_id: &str,
         timestamp: u64,
         activation_token: Option<&str>,
     ) -> zbus::Result<()> {
-        let session = self.session_path().expect("a session must exist first");
+        let session = self
+            .latest_session_path()
+            .expect("a session must exist first");
         let emitter = SignalEmitter::new(&self.conn, DESKTOP_PATH)?;
         let mut options: HashMap<String, OwnedValue> = HashMap::new();
         if let Some(token) = activation_token {

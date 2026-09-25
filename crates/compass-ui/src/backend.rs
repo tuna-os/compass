@@ -61,6 +61,14 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(crate::settings_page::NEEDS_ENGINE.to_owned()) })
     }
 
+    /// The shortcut recorder started or stopped capturing: the engine
+    /// releases the global shortcuts meanwhile, so the combination reaches
+    /// the recorder. Nothing without an engine, which binds none.
+    fn set_shortcut_capture(&self, capturing: bool) -> BackendFuture<'_, ()> {
+        let _ = capturing;
+        Box::pin(async { Ok(()) })
+    }
+
     /// Turns a whole provider's items on or off in root search.
     fn set_provider_enabled(&self, provider: String, enabled: bool) -> BackendFuture<'_, ()> {
         let _ = (provider, enabled);

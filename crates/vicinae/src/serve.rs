@@ -142,6 +142,9 @@ pub struct EngineState {
     calculator: Arc<tokio::sync::Mutex<Option<crate::extension_runner::Storage>>>,
     /// Other applications' tray icons (`SniTrayHost`).
     tray: Arc<crate::tray_host::TrayHost>,
+    /// The global shortcuts' service: rebinding them, and the recorder's
+    /// capture.
+    global_shortcuts: Arc<crate::global_shortcuts::Control>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -264,6 +267,7 @@ impl EngineState {
             catalog_generation: 0,
             calculator: Arc::default(),
             tray: Arc::default(),
+            global_shortcuts: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -332,6 +336,7 @@ impl EngineState {
             catalog_generation: 0,
             calculator: Arc::default(),
             tray: Arc::default(),
+            global_shortcuts: Arc::default(),
         }
     }
 
@@ -436,6 +441,18 @@ impl EngineState {
     #[must_use]
     pub fn window_slot(&self) -> WindowSlot {
         Arc::clone(&self.window)
+    }
+
+    /// The global shortcuts' service control.
+    #[must_use]
+    pub fn global_shortcuts(&self) -> Arc<crate::global_shortcuts::Control> {
+        Arc::clone(&self.global_shortcuts)
+    }
+
+    /// The application and root item index.
+    #[must_use]
+    pub fn index(&self) -> &AppIndex {
+        &self.index
     }
 
     /// Number of indexed applications.
@@ -1038,6 +1055,12 @@ async fn run_script(state: &Arc<RwLock<EngineState>>, id: &str, arguments: &[Str
     }
 }
 
+/// A root item launched as `cmd launch` launches it, with no arguments: what
+/// a command's global shortcut does.
+pub(crate) async fn launch_entrypoint(state: &Arc<RwLock<EngineState>>, id: String) -> Response {
+    launch::launch_command(state, id, &[], None, None).await
+}
+
 /// The snippet list as the wire carries it.
 /// Applies what the root row's panel changed: forgets the launch history,
 /// or writes the configuration and applies it to root search, as the C++
@@ -1102,6 +1125,7 @@ fn edit_root_item(
         }
     }
     state.index.apply_root_config(&config.root_config());
+    state.global_shortcuts.reload();
     Response::Ack
 }
 
@@ -2744,6 +2768,14 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         request @ (Request::SetSetting { .. } | Request::SetProviderEnabled { .. }) => {
             settings::handle(state, request).await
         }
+        Request::ShortcutCapture { capturing } => {
+            state
+                .read()
+                .await
+                .global_shortcuts()
+                .set_capturing(capturing);
+            Response::Ack
+        }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => {
@@ -3577,9 +3609,9 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     }
 
     if hotkey {
-        tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
+        tokio::spawn(crate::global_shortcuts::run(Arc::clone(&state)));
     } else {
-        tracing::info!("not binding the launcher hotkey (--no-hotkey)");
+        tracing::info!("not binding the global shortcuts (--no-hotkey)");
     }
 
     let serving = {

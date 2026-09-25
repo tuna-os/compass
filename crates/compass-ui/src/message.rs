@@ -574,4 +574,9 @@ pub enum Message {
     TokenSetsLoaded(Result<Vec<crate::backend::TokenSetRow>, String>),
     /// A token set was removed, or why not.
     TokenSetRemoved(Result<(), String>),
+    /// The launcher window gained (`true`) or lost the keyboard focus.
+    WindowFocusChanged(bool),
+    /// The engine's answer to the recorder suspending or resuming the
+    /// global shortcuts.
+    ShortcutCaptureSet(Result<(), String>),
 }

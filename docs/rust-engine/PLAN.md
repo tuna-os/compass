@@ -2456,7 +2456,7 @@ where it is.
 
 #### Remaining parity work (after the ledger truth pass)
 
-The ledger is at **145 of 156 (93%)** after the truth pass, the gaps passes, the UI pass and the settings pass of 2026-09-25 (§11.4, and `PARITY.md`,
+The ledger is at **146 of 156 (94%)** after the truth pass, the gaps passes (global shortcuts the latest), the UI pass and the settings pass of 2026-09-25 (§11.4, and `PARITY.md`,
 "The ledger truth pass"). The gaps pass that followed (`PARITY.md`, "The gaps pass") closes rows
 from this table one at a time and strikes them through here; `scripts/ci/parity-score.py` has the
 current figure. These are the 40 cells still amber, by row, and nothing else: each is what
@@ -2473,7 +2473,7 @@ subsystem. "None" under *blocked by* means only the work.
 | ~~`src/builtins/clipboard`~~ | **Done in the views pass**: Open and Open with… (the rest landed in the gaps pass); drag stays a declared difference, Iced having no drag out of a window | — | — |
 | ~~`src/services/desktop-notification`~~ | **Done** (`vicinae::notification_icon`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | ~~`src/services/extension-registry`~~ | **Done** (`vicinae::catalog_watch::watch_extensions`; PARITY.md, "Gaps closed after the truth pass") | — | — |
-| `src/services/global-shortcuts` | per-command global shortcuts from the config, conflict detection, `vicinae-hotkey-v1`, X11 | medium (X11 large) | a compositor: GNOME's portal grant is VM-tier only, no released compositor has the hotkey protocols; X11 needs a decision on whether it is supported |
+| `src/services/global-shortcuts` | ~~per-command global shortcuts from the config, conflict detection, `vicinae-hotkey-v1`~~ (**done in the gaps pass**, `PARITY.md`, "The gaps pass, global shortcuts": `vicinae::global_shortcuts` over `xx-hotkey-v1`, `vicinae-hotkey-v1` and the portal, the launcher hotkey from `launcher.hotkey`, close on focus loss, the recorder's conflicts and capture, IPC v20), X11, `inhibitApps`, `probeBind` | medium (X11 large) | GNOME's portal grant is VM-tier only, no released compositor has the hotkey protocols; X11 needs a decision on whether it is supported |
 | ~~`src/builtins/vicinae` (picker half)~~ | **Done**: the paste action, over IPC v18 `PasteText` (`PARITY.md`, "The gaps pass, root and actions") | — | — |
 | `src/services/news`, `update`, `telemetry` | fetching and showing notices, the update check, sending the record | medium each | a design decision: what a hard fork fetches and reports, and from where (the models are ported) |
 | `src/services/paste` | synthetic paste on wlroots through the input server's `injectPaste` | medium | a compositor to verify, and the helper, which cannot run inside the Flatpak |

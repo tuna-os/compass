@@ -210,6 +210,7 @@ fn describe(request: &Request) -> &'static str {
         Request::LocalStorageItems { .. } => "LocalStorageItems",
         Request::OAuthTokenSets => "OAuthTokenSets",
         Request::RemoveOAuthTokenSet { .. } => "RemoveOAuthTokenSet",
+        Request::ShortcutCapture { .. } => "ShortcutCapture",
     }
 }
 

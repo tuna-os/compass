@@ -152,7 +152,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/services/global-shortcuts` | `compass-core::global_shortcuts`, `compass-wayland::hotkey`, `compass-portals`, `vicinae::global_shortcuts` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/input-server` | `vicinae::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -321,8 +321,10 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/desktop-notification`: the urgency and an icon that is a file are passed since this
   pass (`a_notification_carries_the_urgency_and_an_icon_file`); rendering any other icon (a builtin
   one, a remote one) to a temporary PNG landed after it (see "Gaps closed after the truth pass").
-- `src/services/global-shortcuts`: Still C++-only: per-command global shortcuts from the
-  configuration, the `vicinae-hotkey-v1` and X11 backends, and conflict detection.
+- `src/services/global-shortcuts`: per-command global shortcuts, `vicinae-hotkey-v1`, the
+  launcher hotkey from the configuration, close on focus loss and conflict detection landed in "The
+  gaps pass, global shortcuts". Still C++-only: the X11 backend (the X11 decision),
+  `globalShortcuts.inhibitApps`, and the recorder's `probeBind`.
 - `src/services/news`, `src/services/update`, `src/services/telemetry`: Still C++-only: fetching
   and showing the news notices, the update check, and sending the telemetry record, each ported as
   a model and waiting on a decision about what a fork fetches and sends.
@@ -556,9 +558,9 @@ What differs, by row:
 | `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
 | `builtins/vicinae` | Where the platform cannot paste, the picker offers no paste action and `defaultAction` defaults to copy. | The window cannot know before asking, so paste is offered whenever an engine is attached, and a refusal copies; the result is the same glyph on the clipboard. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `builtins/vicinae` | The paste action is titled `Paste to <frontmost app>` with its icon. | `Paste to active window`, the C++'s title when no application is frontmost. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
-| `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and binding it waits on `global-shortcuts`. | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
-| `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Neither: the engine binds only the launcher's toggle, and the inhibit protocol is `shortcut-inhibit`'s gap. | — |
-| `ui/action-panel` | "Already bound" also checks the launcher's own keybinds (`KeybindManager`). | Only other root items' shortcuts: the launcher's keybinds are not configurable here. | `a_combination_needs_a_modifier_and_must_not_be_anothers` |
+| `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and the engine binds it where it has a backend ("The gaps pass, global shortcuts"). | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
+| `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | The global shortcuts are suspended (IPC v20 `ShortcutCapture`); the compositor's are not, the inhibit protocol being `shortcut-inhibit`'s gap. | `the_recorder_suspends_the_global_shortcuts_while_it_captures` |
+| `ui/action-panel` | "Already bound" also checks the launcher's own keybinds (`KeybindManager`). | Checked, as far as Compass has them: its keys are fixed (Toggle action panel, Open settings, Quick launch), and the launcher hotkey with them. | `the_recorder_refuses_the_launchers_own_keys`, `the_launchers_own_keys_and_its_hotkey_are_taken` |
 | `root-item-manager` | Clearing a shortcut writes `""`, which comes back as an empty shortcut after a restart. | Cleared as absent, and an empty stored one reads as none (see "`compass-core::root_items`"). | `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
 
 ### The gaps pass (2026-09-25)
@@ -829,8 +831,9 @@ Declared differences:
 - **Settings only Compass has are offered beside them**: quick launch, the result count, the clock,
   the colour scheme, the layout preset, application icons and translucency.
 - The launcher hotkey and Close on focus loss are written to `launcher.hotkey` and
-  `launcher.close_on_focus_loss`, the schema's keys; the engine still binds Super+Space and the
-  window does not yet hide on focus loss (`src/services/global-shortcuts`' gap).
+  `launcher.close_on_focus_loss`, the schema's keys; the engine binds the hotkey from the file and
+  rebinds it when it changes, and the window hides on focus loss when the switch is on ("The gaps
+  pass, global shortcuts").
 - The font is a text field (empty for the desktop's interface font), where the C++ has a list of
   the installed families; Browse Fonts' "Set as vicinae font" remains the way to pick from them.
 - A folder list is one field with `:` between folders, where the C++ has a file picker per entry.
@@ -969,9 +972,9 @@ Declared differences:
   one surface, and a second toplevel would be a second window for the compositor to place. Finishing
   hides the card, as finishing hides the C++'s window.
 - The global hotkey row takes the C++'s branch for a platform without global shortcuts ("Bind a key
-  to "vicinae toggle"" and Open Docs): the engine binds its toggle through the portal, with no
-  recorder to change it from here (`src/services/global-shortcuts`' gap). The last step's sentence
-  follows.
+  to "vicinae toggle"" and Open Docs): the window cannot know whether the engine found a backend,
+  and the hotkey is changed from Settings, General (`launcher.hotkey`, bound as it changes since
+  "The gaps pass, global shortcuts"). The last step's sentence follows.
 - The macOS permissions step and Launch at login are not offered, as on the C++'s Linux build.
 
 **`src/builtins/vicinae`'s remaining views** (`VicinaeExtension`). Each command is a builtin under
@@ -1051,6 +1054,85 @@ top of the resident window and paint tier tests. What stays different is declare
 lands: the settings and onboarding drawn in the launcher card rather than windows of their own,
 drag out of the window, which Iced cannot do, and blur behind the launcher
 (`src/services/window-material`, still amber).
+
+### The gaps pass, global shortcuts (2026-09-25)
+
+`src/services/global-shortcuts` from PLAN §12.0, against `GlobalShortcutService`, its backends and
+`shortcut_conflict::validate` (IPC v20). A cell flips only with a named module and named tests that
+fail on a regression.
+
+**What is bound.** `compass_core::global_shortcuts::desired` reads the configuration as
+`reconcile` does: the launcher hotkey (`launcher.hotkey`, `super+space` unless set, nothing when
+set empty), and every entrypoint's `providers.<p>.entrypoints.<e>.shortcut` that is not empty, not
+turned off and reads as a combination, each described by its item's title. A `Reconciler` keeps
+what is bound and what each bound id does (`m_appliedTriggers`, `m_actions`): a shortcut no longer
+asked for, or asked for with another trigger, is released; a new one is bound; one the desktop
+refused counts as applied, so it is not asked for again until it changes, and does nothing when
+pressed. `vicinae::global_shortcuts::Service` runs that against a backend, from the engine's start
+and again on each `SetSetting` and root-item edit (`configChanged`), so the settings view's
+hotkey recorder and the action panel's Set Global Shortcut take effect at once.
+
+**Pressing one** (`onActivated`). The launcher hotkey toggles the attached window; a command's
+launches it as `cmd launch` launches it (`launch_command`, the path `activateEntrypoint` shares with
+root search: an application is launched and its launch recorded, anything else is handed to the
+window as a launch).
+
+**The backends**, in the C++ factory's order and then the portal the C++ does not have:
+`xx-hotkey-v1`, then `vicinae-hotkey-v1`, over one Wayland connection
+(`compass_wayland::hotkey::HotkeyClient`, ports of `XxHotkeyGlobalShortcutBackend` and
+`VicinaeHotkeyGlobalShortcutBackend`: one hotkey object per shortcut, the bind waiting for `bound`
+or `denied`, the C++'s sentence for a denial without a message, a revocation logged, the hotkey
+destroyed on unbind) on any compositor but GNOME's; then the GlobalShortcuts portal
+(`compass_portals::ShortcutBinder`), which binds a set at a time, so the binds of one reconcile are
+bound together on a fresh session after the last one is closed. Keys become keysyms as
+`xkbKeysymForQtKey` makes them and the protocols' modifier mask as `fromQtMods`
+(`compass_core::global_shortcuts::{keysym, modifier_mask}`); the portal is asked in the "shortcuts"
+specification's spelling (`portal_trigger`: `LOGO+space`, `CTRL+ALT+SHIFT+LOGO+a`).
+
+**The recorder** (`setCapturing`, `shortcut_conflict::validate`). While either recorder captures
+(the action panel's and the settings view's), the window says so to the engine (IPC v20
+`Request::ShortcutCapture`), which releases every global shortcut and binds them again after, so
+the combination reaches the recorder rather than the desktop. The check is the C++'s order: a
+modifier (unless a function key or modifiers alone), then the launcher's own keys (`KeybindManager`:
+Toggle action panel, Open settings, Quick launch), then the global shortcuts (`findConflict`: the
+launcher hotkey as "the launcher hotkey", except when recording the hotkey itself, and any other
+item's shortcut by its title, or "another command").
+
+**Close on focus loss** (`setWindowActivated`). With `launcher.close_on_focus_loss` on, the window
+hides when it loses a focus it had, and not when the focus goes to the file chooser it opened
+(`m_pendingLauncherFileChoice`); the settings view's switch applies at once.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/global-shortcuts` | `parity test ✓` 🟡 → ✅ (`Rust ✓` stays 🟡: X11, `inhibitApps`, `probeBind`) | `compass_core::global_shortcuts` (`desired`, `Reconciler`, `validate`, `find_conflict`, `launcher_keybind`, `keysym`, `modifier_mask`, `portal_trigger`), `compass_wayland::hotkey::HotkeyClient`, `compass_wayland_protocols::vicinae_hotkey_v1`, `compass_portals::ShortcutBinder`, `vicinae::global_shortcuts` (`Service`, `WaylandBackend`, `PortalBackend`, `activate`, `serve`, `Control`), `compass_ui::app::global_shortcuts`, `compass_ui::shortcut_recorder` | `the_launcher_and_every_enabled_items_shortcut_are_desired`, `the_launcher_hotkey_defaults_to_super_space_and_an_empty_one_binds_nothing`, `reconciling_binds_what_is_new_rebinds_what_changed_and_keeps_the_rest`, `a_refused_bind_does_nothing_when_pressed_and_is_not_asked_for_again`, `a_bound_shortcut_runs_its_action`, `the_recorder_refuses_the_launchers_own_keys`, `the_recorder_refuses_the_launcher_hotkey_except_for_itself`, `the_recorder_refuses_another_items_shortcut_by_its_title`, `keys_become_the_keysyms_the_cpp_asks_for`, `modifiers_become_the_protocols_mask`, `the_portal_is_asked_in_the_specifications_spelling`; `vicinae_hotkey_binds_presses_refuses_and_releases`, `xx_hotkey_is_preferred_and_speaks_its_own_requests`, `a_compositor_with_neither_protocol_is_unsupported` (a fake compositor over `wayland-server`); `the_binder_binds_a_changed_set_on_a_new_session_and_closes_the_old_one`, `the_binder_delivers_the_current_sessions_activations`, `an_empty_set_closes_the_session_and_binds_nothing`, `a_denied_set_is_reported_as_denied` (a private `dbus-daemon` and a fake GlobalShortcuts portal); `the_launcher_hotkey_and_a_commands_shortcut_are_bound_and_rebound_when_changed`, `a_refused_shortcut_does_nothing_when_pressed`, `capturing_releases_everything_and_binds_it_again_after`, `pressing_the_launcher_hotkey_reaches_the_window`, `pressing_a_commands_shortcut_launches_it_as_cmd_launch_does`, `a_reload_binds_what_the_configuration_now_says`, `the_recorders_capture_reaches_the_service_over_ipc`, `the_portal_is_asked_for_the_configured_trigger`, `a_release_is_not_a_press`; `losing_the_focus_hides_the_launcher_when_close_on_focus_loss_is_on`, `losing_the_focus_keeps_the_launcher_when_close_on_focus_loss_is_off`, `only_losing_a_focus_the_launcher_had_hides_it`, `the_recorder_suspends_the_global_shortcuts_while_it_captures`, `the_launchers_own_keys_and_its_hotkey_are_taken`, `recording_the_launcher_hotkey_does_not_conflict_with_itself` |
+
+Declared differences:
+
+- The launcher hotkey is `launcher.hotkey` (the C++'s `globalShortcuts.toggle`), and its id is
+  `toggle` (the C++'s `@toggle-launcher`): Compass has bound its launcher under `toggle` since its
+  first release, and the portal keeps the user's trigger against that id.
+- The portal is a backend here and not in the C++, which has none on GNOME. It binds a set at a
+  time, so a changed set is bound on a new session; the trigger asked for is a preference the
+  desktop may override, and GNOME keeps the one the user chose in its own settings. Suspending
+  for the recorder closes the portal session, and the set is bound on a new one after.
+- A configuration edited by hand is bound at the next start or the next change made through the
+  settings view or the action panel: the engine does not watch `vicinae.json` as `config::Manager`
+  does.
+- The recorder cannot tell the compositor refused a combination (`probeBind`): the engine logs the
+  refusal when it binds, and the shortcut stays in the configuration.
+- `globalShortcuts.inhibitApps` (suspending every shortcut while a listed application is frontmost)
+  is not in Compass's configuration and not ported.
+- The conflict check does not know whether the desktop has a backend: the C++ reports no conflict
+  where global shortcuts are unsupported, Compass always checks.
+- A command whose arguments are required is refused by name, as `cmd launch` refuses it, where the
+  C++ opens its arguments form.
+- X11 has no backend: no X11 path exists in the tree (`x11rb` is only winit's), and whether Compass
+  supports X11 at all is the open X11 decision (PLAN §12.0).
+
+VM tier (declared, not verifiable in a container): GNOME's portal grant dialog on the first bind and
+whether `xdg-desktop-portal-gnome` honours the preferred trigger; a real compositor carrying
+`xx-hotkey-v1` or `vicinae-hotkey-v1` (none released does); focus loss on a real compositor,
+where a layer surface with exclusive keyboard focus may never report it.
 
 ### Earlier row notes
 

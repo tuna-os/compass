@@ -295,15 +295,8 @@ impl LauncherApp {
     /// kept for the item and closes the panel, Escape goes back to the
     /// actions (`SetRootItemShortcutAction`'s accept handler, `setShortcut`).
     pub(super) fn recorder_event(&mut self, event: &iced::keyboard::Event) -> Task<Message> {
-        let bound: Vec<(String, String, String)> = self
-            .app_index
-            .roots()
-            .iter()
-            .filter_map(|root| {
-                let shortcut = root.meta.shortcut.clone()?;
-                Some((root.id.clone(), root.title.clone(), shortcut))
-            })
-            .collect();
+        let bound = self.recorder_bound();
+        let launcher_hotkey = self.launcher_hotkey.clone();
         let Some(recorder) = self
             .panel
             .as_mut()
@@ -313,6 +306,7 @@ impl LauncherApp {
         };
         let outcome = recorder.key(
             event,
+            Some(&launcher_hotkey),
             bound
                 .iter()
                 .map(|(id, title, shortcut)| (id.as_str(), title.as_str(), shortcut.as_str())),

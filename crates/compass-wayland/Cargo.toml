@@ -25,4 +25,6 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wl-clipboard-rs = "0.9"
 
 [dev-dependencies]
+compass-wayland-protocols = { path = "../compass-wayland-protocols", features = ["server"] }
 tempfile.workspace = true
+wayland-server = "0.31"

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Client bindings for Wayland protocols no published crate carries yet (xx-hotkey-v1)"
+description = "Client bindings for Wayland protocols no published crate carries yet (xx-hotkey-v1, vicinae-hotkey-v1)"
 
 # Not `workspace = true`: `wayland_scanner::generate_interfaces!` always emits
 # the C interface tables, which contain `unsafe`, and the workspace sets
@@ -24,3 +24,9 @@ wayland-backend = "0.3"
 wayland-scanner = "0.31"
 # Named by the generated code for bitfield enums (`modifiers`).
 bitflags = "2"
+# The compositor side of the hotkey protocols, for tests that stand a fake
+# compositor up in-process (`server` feature).
+wayland-server = { version = "0.31", optional = true }
+
+[features]
+server = ["dep:wayland-server"]

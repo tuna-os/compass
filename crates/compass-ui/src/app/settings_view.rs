@@ -114,15 +114,8 @@ impl LauncherApp {
         &mut self,
         event: &iced::keyboard::Event,
     ) -> Task<Message> {
-        let bound: Vec<(String, String, String)> = self
-            .app_index
-            .roots()
-            .iter()
-            .filter_map(|root| {
-                let shortcut = root.meta.shortcut.clone()?;
-                Some((root.id.clone(), root.title.clone(), shortcut))
-            })
-            .collect();
+        let bound = self.recorder_bound();
+        let launcher_hotkey = self.launcher_hotkey.clone();
         let Page::Settings(page) = &mut self.page else {
             return Task::none();
         };
@@ -131,6 +124,7 @@ impl LauncherApp {
         };
         let outcome = recorder.key(
             event,
+            Some(&launcher_hotkey),
             bound
                 .iter()
                 .map(|(id, title, shortcut)| (id.as_str(), title.as_str(), shortcut.as_str())),
@@ -392,6 +386,10 @@ impl LauncherApp {
             "launcher.wrap_navigation" => self.wrap_navigation = launcher.wrap_navigation(),
             "launcher.keybinding" => self.keybinding = launcher.keybinding_scheme(),
             "launcher.quick_launch" => self.quick_launch = launcher.quick_launch(),
+            "launcher.close_on_focus_loss" => {
+                self.close_on_focus_loss = launcher.close_on_focus_loss();
+            }
+            "launcher.hotkey" => self.launcher_hotkey = launcher.hotkey().to_owned(),
             "launcher.clock.enabled" | "launcher.clock.format" | "launcher.clock.interval" => {
                 let clock = launcher.clock();
                 self.clock = clock.enabled().then(|| super::ClockSettings {

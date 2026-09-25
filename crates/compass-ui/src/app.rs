@@ -33,6 +33,7 @@ mod dmenu;
 mod emoji;
 mod file_actions;
 mod fonts;
+mod global_shortcuts;
 mod grants;
 mod hud;
 mod launch;
@@ -108,6 +109,8 @@ fn keyboard_events(
 ) -> Option<Message> {
     match event {
         iced::Event::Keyboard(event) => Some(Message::Keyboard(event)),
+        iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocusChanged(true)),
+        iced::Event::Window(window::Event::Unfocused) => Some(Message::WindowFocusChanged(false)),
         _ => None,
     }
 }
@@ -263,6 +266,12 @@ pub struct AppFlags {
     pub wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result, from `launcher.quick_launch`.
     pub quick_launch: bool,
+    /// Whether the window hides when it loses focus, from
+    /// `launcher.close_on_focus_loss`.
+    pub close_on_focus_loss: bool,
+    /// The launcher hotkey as stored (`launcher.hotkey`), for the shortcut
+    /// recorder's conflict check.
+    pub launcher_hotkey: String,
     /// Whether each power command asks first, by id, as its `confirm`
     /// preference resolves (`compass_core::power_commands::should_confirm`).
     /// A command missing here asks by its own default.
@@ -391,6 +400,8 @@ impl Default for AppFlags {
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
+            close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+            launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
             config_path: None,
@@ -939,6 +950,18 @@ pub struct LauncherApp {
     wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result. See [`AppFlags::quick_launch`].
     quick_launch: bool,
+    /// See [`AppFlags::close_on_focus_loss`].
+    close_on_focus_loss: bool,
+    /// Whether the window has had the focus since it was last shown: losing
+    /// it hides the window only after it had it (`setWindowActivated`).
+    window_focused: bool,
+    /// See [`AppFlags::launcher_hotkey`].
+    launcher_hotkey: String,
+    /// Whether the engine was last told the recorder is capturing.
+    capture_reported: bool,
+    /// Whether an extension's file chooser is open, which takes the focus
+    /// without the user leaving the launcher.
+    choosing_files: bool,
     /// See [`AppFlags::power_asks`].
     power_asks: std::collections::BTreeMap<String, bool>,
     /// See [`AppFlags::browse_apps`].
@@ -1208,6 +1231,8 @@ impl LauncherApp {
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
         app.quick_launch = flags.quick_launch;
+        app.close_on_focus_loss = flags.close_on_focus_loss;
+        app.launcher_hotkey = flags.launcher_hotkey;
         app.power_asks = flags.power_asks;
         app.browse_apps = flags.browse_apps;
         app.config_path = flags.config_path;
@@ -1312,6 +1337,11 @@ impl LauncherApp {
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
+            close_on_focus_loss: compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+            window_focused: false,
+            launcher_hotkey: compass_core::config::DEFAULT_HOTKEY.to_owned(),
+            capture_reported: false,
+            choosing_files: false,
             power_asks: std::collections::BTreeMap::new(),
             config_path: None,
             browse_apps: compass_core::browse_apps::Options::default(),
@@ -1439,6 +1469,7 @@ impl LauncherApp {
     /// Hides or exits after [`Self::conceal`] has reset the view.
     fn hide_window(&mut self) -> Task<Message> {
         self.reopen_after_close = false;
+        self.window_focused = false;
         if self.on_dismiss() == Dismissal::Exit {
             return iced::exit();
         }
@@ -1954,7 +1985,14 @@ impl LauncherApp {
     /// a line per keystroke is what makes a failure readable afterwards and is
     /// not what someone running the launcher wants in their terminal.
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if matches!(message, Message::ExtensionFilesChosen { .. }) {
+            self.choosing_files = false;
+        }
         let task = self.update_inner(message);
+        let task = match self.report_shortcut_capture() {
+            Some(report) => Task::batch([task, report]),
+            None => task,
+        };
         tracing::debug!(target: "compass_ui::state", "{}", self.state_line());
         if self.remote_pending.is_empty() {
             return task;
@@ -2813,6 +2851,7 @@ impl LauncherApp {
                 let Some(backend) = self.backend.clone() else {
                     return Task::none();
                 };
+                self.choosing_files = true;
                 Task::perform(
                     async move {
                         let result = backend.choose_files(choice).await;
@@ -2919,6 +2958,13 @@ impl LauncherApp {
                 Task::none()
             }
             Message::AppRuntimeLoaded { .. } | Message::AppQuit(_) => self.runtime_message(message),
+            Message::WindowFocusChanged(focused) => self.window_focus_changed(focused),
+            Message::ShortcutCaptureSet(result) => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "the engine did not suspend the global shortcuts");
+                }
+                Task::none()
+            }
             Message::WindowCapabilities(_)
             | Message::WorkspacesQueryChanged(_)
             | Message::WorkspacesLoaded(_)
@@ -7071,6 +7117,8 @@ mod tests {
         tray_calls: std::sync::Mutex<Vec<String>>,
         /// What the default pickers offer.
         default_apps: Vec<crate::backend::DefaultAppRow>,
+        /// The recorder's capture, as the engine was told it.
+        captures: std::sync::Mutex<Vec<bool>>,
         /// The defaults set: `(kind, id)`.
         defaults_set: std::sync::Mutex<Vec<(crate::backend::DefaultApp, String)>>,
         keys: Vec<String>,
@@ -7170,6 +7218,11 @@ mod tests {
     impl crate::backend::ApplicationBackend for TestBackend {
         fn search(&self, _query: String) -> crate::backend::BackendFuture<'_, Vec<String>> {
             Box::pin(async { Ok(self.keys.clone()) })
+        }
+
+        fn set_shortcut_capture(&self, capturing: bool) -> crate::backend::BackendFuture<'_, ()> {
+            self.captures.lock().unwrap().push(capturing);
+            Box::pin(async { Ok(()) })
         }
 
         fn edit_root_item(
@@ -10373,6 +10426,122 @@ mod tests {
                 modifiers,
             }
         })
+    }
+
+    /// Whether `task` asks for the window `id` to close.
+    fn closes(task: Task<Message>, id: window::Id) -> bool {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_winit::runtime::{Action, task, window as runtime_window};
+        let Some(stream) = task::into_stream(task) else {
+            return false;
+        };
+        let actions: Vec<_> = block_on(stream.collect());
+        actions.iter().any(|action| {
+            matches!(action, Action::Window(runtime_window::Action::Close(closed)) if *closed == id)
+        })
+    }
+
+    /// A launcher on screen, attached to an engine.
+    /// The engine's ends of the link come back with it, to keep it open.
+    fn shown(dir: &std::path::Path) -> (LauncherApp, window::Id, Box<dyn std::any::Any>) {
+        let mut app = app(dir);
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.open_window();
+        let id = app.pending_window.unwrap();
+        let _ = app.update(Message::Opened(id));
+        assert!(app.is_visible());
+        (app, id, Box::new((commands, outcomes)))
+    }
+
+    #[test]
+    fn losing_the_focus_hides_the_launcher_when_close_on_focus_loss_is_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        app.close_on_focus_loss = true;
+        let _ = app.update(Message::WindowFocusChanged(true));
+        assert!(closes(app.update(Message::WindowFocusChanged(false)), id));
+        let _ = app.update(Message::Closed(id));
+        assert!(!app.is_visible());
+    }
+
+    #[test]
+    fn losing_the_focus_keeps_the_launcher_when_close_on_focus_loss_is_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        assert!(!app.closes_on_focus_loss(), "off by default, as in the C++");
+        let _ = app.update(Message::WindowFocusChanged(true));
+        assert!(!closes(app.update(Message::WindowFocusChanged(false)), id));
+        assert!(app.is_visible());
+    }
+
+    #[test]
+    fn only_losing_a_focus_the_launcher_had_hides_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, id, _engine) = shown(dir.path());
+        app.close_on_focus_loss = true;
+        assert!(
+            !closes(app.update(Message::WindowFocusChanged(false)), id),
+            "never focused: the compositor did not hand it over"
+        );
+        let _ = app.update(Message::WindowFocusChanged(true));
+        app.choosing_files = true;
+        assert!(
+            !closes(app.update(Message::WindowFocusChanged(false)), id),
+            "the file chooser the launcher opened took it"
+        );
+        assert!(app.is_visible());
+    }
+
+    #[test]
+    fn the_recorder_suspends_the_global_shortcuts_while_it_captures() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = Arc::new(TestBackend::default());
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let _ = app.update(Message::TogglePanel);
+        let row = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+            .expect("the panel offers a shortcut");
+        // Attached from here: the fake engine searches nothing.
+        app.backend = Some(backend.clone());
+        let task = app.update(Message::PanelClicked(row));
+        settle(&mut app, task);
+        assert!(app.capture_reported());
+        assert_eq!(backend.captures.lock().unwrap().as_slice(), [true]);
+
+        // The launcher hotkey and the launcher's own keys are taken.
+        let task = app.update(key_event(true, Key::Named(Named::Space), Modifiers::LOGO));
+        settle(&mut app, task);
+        let status = |app: &LauncherApp| {
+            app.panel
+                .as_ref()
+                .and_then(|p| p.recorder.as_ref())
+                .map(|r| r.status.clone())
+        };
+        assert_eq!(
+            status(&app).as_deref(),
+            Some("Already bound to \"the launcher hotkey\"")
+        );
+        let task = app.update(key_event(true, Key::Character("b".into()), Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            status(&app).as_deref(),
+            Some("Already bound to \"Toggle action panel\"")
+        );
+
+        let task = app.update(key_event(
+            true,
+            Key::Named(Named::Escape),
+            Modifiers::empty(),
+        ));
+        settle(&mut app, task);
+        assert!(!app.capture_reported());
+        assert_eq!(backend.captures.lock().unwrap().as_slice(), [true, false]);
     }
 
     #[test]

@@ -465,7 +465,7 @@ fn on_sway_doctor_reports_the_wlroots_protocols_it_found() {
         "layer-shell: yes",
         "zwlr_foreign_toplevel_manager_v1",
         "data-control: yes",
-        "xx-hotkey: no",
+        "hotkey protocol: no",
         "portal GlobalShortcuts: no",
         "compositor IPC: none",
         "no global hotkey",

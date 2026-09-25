@@ -32,7 +32,7 @@ pub mod extension_windows;
 pub mod file_manager;
 pub mod file_search;
 pub mod fonts;
-pub mod hotkey;
+pub mod global_shortcuts;
 pub mod indexer_client;
 pub mod indexer_service;
 pub mod indexer_watch;
@@ -212,6 +212,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             emoji_default_action,
             clock,
             favicon_service,
+            close_on_focus_loss,
+            launcher_hotkey,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -244,6 +246,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_core::favicon::Service::from_config(
                         config.unknown_fields().get("favicon_service"),
                     ),
+                    config.launcher().close_on_focus_loss(),
+                    config.launcher().hotkey().to_owned(),
                 )
             }
             Err(error) => {
@@ -264,6 +268,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     emoji_default_action(&compass_core::Config::default()),
                     clock(&compass_core::Config::default()),
                     compass_core::favicon::Service::default(),
+                    compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+                    compass_core::config::DEFAULT_HOTKEY.to_owned(),
                 )
             }
         };
@@ -329,6 +335,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             keybinding,
             wrap_navigation,
             quick_launch,
+            close_on_focus_loss,
+            launcher_hotkey,
             icons: appearance_preset.icons,
             appearance_preset,
             started_at: Some(started_at),
