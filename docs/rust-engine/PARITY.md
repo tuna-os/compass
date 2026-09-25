@@ -167,7 +167,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
+| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ⏳ |
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -197,7 +197,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -220,7 +220,7 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 | `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
-| `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
@@ -342,7 +342,7 @@ PLAN §12.0 sizes them and says what blocks each.
   "The gaps pass, icons and tray". Still C++-only: circle and rounded-rectangle masks, the icons of
   extension, script and shortcut rows in root search (they show an initial), favicons, and reading
   a bare icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
-- `ui/action-panel`: Still C++-only: the shortcut recorder panel.
+- `ui/action-panel`: closed in "The gaps pass, root and actions" below.
 - `ui/bridges`: Still C++-only: images inside an extension's Markdown detail, which are not fetched.
 
 ### Gaps closed after the truth pass (2026-09-25)
@@ -477,7 +477,8 @@ and named tests that fail on a regression.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/builtins/root` | — (per-item shortcuts land in the next commit) | `compass_core::root_items::{parse_launch_link, LaunchLink::target}`, `AppIndex::{search_root_with, has_provider, provider_title}`, `compass_ui::app::{Fallback, ProviderScope}`, `compass_ui::app::root::{open_launch_link, open_provider_search, has_completer}`, `vicinae::serve::launch::open_launch_link` | `a_launch_link_names_a_provider_or_an_item_with_its_text`, `a_launch_deeplink_to_a_provider_searches_its_items_alone`, `a_launch_deeplink_to_an_item_launches_it_with_its_text`, `fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query`, `an_alias_and_a_space_open_an_items_arguments` |
+| `src/builtins/root`, `src/services/root-item-manager` | Rust ✅ (the per-item shortcut in the row below) | `compass_core::root_items::{parse_launch_link, LaunchLink::target}`, `AppIndex::{search_root_with, has_provider, provider_title}`, `compass_ui::app::{Fallback, ProviderScope}`, `compass_ui::app::root::{open_launch_link, open_provider_search, has_completer}`, `vicinae::serve::launch::open_launch_link` | `a_launch_link_names_a_provider_or_an_item_with_its_text`, `a_launch_deeplink_to_a_provider_searches_its_items_alone`, `a_launch_deeplink_to_an_item_launches_it_with_its_text`, `fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query`, `an_alias_and_a_space_open_an_items_arguments` |
+| `ui/action-panel`, and the per-item shortcuts of `src/builtins/root` and `src/services/root-item-manager` | Rust ✅ | `compass_core::key_combo` (`Keyboard::Shortcut`'s spelling and parser, the capture's chord tracking, `shortcut_conflict::validate`), `compass_ui::shortcut_recorder`, `compass_ui::app::root::recorder_event`, `RootEdit::Shortcut` over IPC v18 `RootItemEdit::Shortcut`, `Config::apply_root_edit`, `RootItem::merge_config` | `a_combination_is_stored_in_the_cpps_spelling_and_read_back`, `a_recording_is_a_key_with_modifiers_or_modifiers_released_alone`, `a_combination_needs_a_modifier_and_must_not_be_anothers`, `the_badge_names_the_modifiers_then_the_key`, `shortcut_recorder::tests` (four), `the_root_panel_records_an_items_shortcut_and_backspace_removes_it`, `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
 
 **The provider search view (`ProviderSearchViewHost`).** `vicinae://launch/<provider>` — the link
 `vicinae deeplink` sends and a desktop shortcut can carry — opens root search over that provider's
@@ -501,6 +502,17 @@ extension command or a script command with any) opens its arguments form when it
 and then a space, where the C++ focuses the search bar's completer; with nothing yet typed into the
 form, which is the C++'s "every completion value empty" condition.
 
+**The shortcut recorder (`SetRootItemShortcutAction`, `ShortcutRecorderPanelView`).** The root
+row's panel offers Set Global Shortcut after Set alias. It turns the panel into the recorder: the
+item's title, the shortcut it has (or the chord being held), and a status line. A key with a
+modifier, a function key, or modifiers pressed and let go on their own is a combination
+(`handleKey`); a bare key is refused with "Modifier required", and one another root item has with
+`Already bound to "<title>"`. An accepted one is written as `Shortcut::toString` spells it
+(`super+control+alt+shift+KEY`) to `providers.<p>.entrypoints.<e>.shortcut` in `vicinae.json`, and
+the panel closes; Escape goes back to the actions; Backspace, while the item has a shortcut,
+removes it. Binding the shortcut to the desktop is `src/services/global-shortcuts`' row, which is
+where it stays: the configuration is written as the C++ writes it, so either engine binds it.
+
 **A regression found on the way.** The root row's panel (the first gaps pass) had taken over the
 panel an application's row opens, so Quit, Force Quit, Focus Window and Close Window (the
 app-runtime commit) never joined it. The engine is asked again when the root panel opens over an
@@ -514,6 +526,10 @@ What differs, by row:
 | `builtins/root` | The provider view ranks by visits as root search does. | It ranks in the window, without the engine's launch history: matches by score, the empty query in index order. | `a_launch_deeplink_to_a_provider_searches_its_items_alone` |
 | `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
 | `builtins/root` | A fallback row's panel is Open plus Manage Fallback Actions. | Enter opens it; the fallback manager's view is `builtins/vicinae`'s gap. | — |
+| `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and binding it waits on `global-shortcuts`. | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
+| `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Neither: the engine binds only the launcher's toggle, and the inhibit protocol is `shortcut-inhibit`'s gap. | — |
+| `ui/action-panel` | "Already bound" also checks the launcher's own keybinds (`KeybindManager`). | Only other root items' shortcuts: the launcher's keybinds are not configurable here. | `a_combination_needs_a_modifier_and_must_not_be_anothers` |
+| `root-item-manager` | Clearing a shortcut writes `""`, which comes back as an empty shortcut after a restart. | Cleared as absent, and an empty stored one reads as none (see "`compass-core::root_items`"). | `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
 
 ### The gaps pass (2026-09-25)
 

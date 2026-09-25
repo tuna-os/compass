@@ -2477,7 +2477,7 @@ subsystem. "None" under *blocked by* means only the work.
 | `src/builtins/vicinae` (picker half) | the picker's paste action (visits, pins, keywords and per-glyph tones landed in the gaps pass) | small | a paste of text the engine did not store |
 | `src/services/news`, `update`, `telemetry` | fetching and showing notices, the update check, sending the record | medium each | a design decision: what a hard fork fetches and reports, and from where (the models are ported) |
 | `src/services/paste` | synthetic paste on wlroots through the input server's `injectPaste` | medium | a compositor to verify, and the helper, which cannot run inside the Flatpak |
-| `src/services/root-item-manager`, `src/builtins/root` | per-item keyboard shortcuts (favourites, the clock, the space-bar alias and its completer branch, up-arrow history, the alias form, the root row's panel, the provider search view and every fallback landed in the gaps passes) | small | none |
+| ~~`src/services/root-item-manager`, `src/builtins/root`~~ | **Done in the gaps passes** (`PARITY.md`, "The gaps pass, root and actions"): the provider search view, every fallback, the alias completer, per-item shortcuts (IPC v18) | — | — |
 | `src/services/shortcut-inhibit`, `window-material` | the two Wayland protocols (the manager is a stub) | medium | a compositor that advertises them (VM tier) |
 | `src/services/tray` (~~`tray-host`~~) | Vicinae's own tray icon (~~the StatusNotifierWatcher plumbing and the tray search view~~: **done in the gaps pass**, `vicinae::tray_host` over `system-tray`, IPC v18; `PARITY.md`, "The gaps pass, icons and tray") | medium | the tray icon needs a decision (a launcher that lives in a tray or not) |
 | `src/services/window-manager`, `src/builtins/wm` | the KDE and X11 providers; Switch Workspaces; toggle-floating, -fullscreen and -overview | medium (X11 large) | KDE needs KWin (VM tier); X11 needs the supported-or-not decision; workspaces exist only on Hyprland and niri |
@@ -2488,7 +2488,7 @@ subsystem. "None" under *blocked by* means only the work.
 | `src/builtins/vicinae` | installed extensions, the OAuth token and local-storage browsers, ~~tray search~~ (done with `tray-host`), builtin-icon gallery, fallback manager view, report bug, refresh apps, open config, the store intro | large (many small views) | none |
 | `ui/image` | ~~the builtin icon set, file-type icons, command tiles and badges~~ (**done in the gaps pass**, `PARITY.md`, "The gaps pass, icons and tray"); masks, extension, script and shortcut row icons in root search, favicons, `ImageURL(source)` for a bare string | small each | none (`is_emoji` now exists for the last) |
 | `ui/bridges` | images inside an extension's Markdown detail | small (the store page's fetch-and-draw can be reused) | none |
-| `ui/action-panel` | the shortcut recorder | medium | none |
+| ~~`ui/action-panel`~~ | **Done** (`compass_ui::shortcut_recorder` over `compass_core::key_combo`; `PARITY.md`, "The gaps pass, root and actions") | — | — |
 | `ui/qml`, `ui/quick`, `ui/views`, `ui/settings`, `ui/windows` | the settings window and its pages, onboarding, the HUD, match and Markdown highlighting, the edit-keywords and app-selector views, drag and drop | large | a design decision on the settings window (the config file is the interface today); drag as above; the VM tier for anything drawn |
 
 Closed in the truth pass rather than listed: the `xdgpp` writers (`setDefaultApplication`,

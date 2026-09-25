@@ -289,6 +289,14 @@ fn all_requests() -> Vec<Request> {
             id: "commands:clipboard-history".into(),
             edit: compass_ipc::RootItemEdit::ResetRanking,
         },
+        Request::RootItemEdit {
+            id: "@zoë/notes:list".into(),
+            edit: compass_ipc::RootItemEdit::Shortcut("super+control+alt+shift+Ö".into()),
+        },
+        Request::RootItemEdit {
+            id: "scripts:hello".into(),
+            edit: compass_ipc::RootItemEdit::Shortcut(String::new()),
+        },
         Request::ListCommands,
         Request::LaunchCommand {
             id: "@zoë/notes:new".into(),

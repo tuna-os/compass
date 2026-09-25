@@ -67,7 +67,8 @@ use serde::{Deserialize, Serialize};
 /// [`Request::EditCalculatorHistory`]); version 18, other applications'
 /// tray icons, as the StatusNotifierItem host sees them
 /// ([`Request::TrayItems`], [`Request::TrayActivate`], [`Request::TrayMenu`],
-/// [`Request::TrayTriggerMenu`]).
+/// [`Request::TrayTriggerMenu`]), and a root item's keyboard shortcut from the
+/// action panel's recorder ([`RootItemEdit::Shortcut`]).
 pub const PROTOCOL_VERSION: u16 = 18;
 
 /// A client-to-server frame.
@@ -902,6 +903,9 @@ pub enum RootItemEdit {
     Disable,
     /// Forget its launch history.
     ResetRanking,
+    /// Give it a keyboard shortcut (`control+shift+A`), or clear it with an
+    /// empty one. Version 18.
+    Shortcut(String),
 }
 
 /// What the engine answers.

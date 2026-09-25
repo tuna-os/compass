@@ -664,3 +664,40 @@ fn the_clock_is_on_every_minute_in_hh_mm_unless_set() {
         "hh:mm:ss"
     );
 }
+
+#[test]
+fn a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared() {
+    use compass_core::root_items::{RootEdit, RootItem, RootItemMeta};
+    let mut config = parse(r#"{"launcher": {"max_results": 9}}"#);
+    assert!(config.apply_root_edit(
+        "applications:firefox",
+        &RootEdit::Shortcut("control+shift+F".into())
+    ));
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert_eq!(
+        written["providers"]["applications"]["entrypoints"]["firefox"]["shortcut"],
+        "control+shift+F"
+    );
+    let mut firefox = RootItem {
+        id: "applications:firefox".into(),
+        title: "Firefox".into(),
+        unlocalized_title: None,
+        subtitle: String::new(),
+        keywords: Vec::new(),
+        meta: RootItemMeta::default(),
+    };
+    firefox.merge_config(&config.root_config(), false);
+    assert_eq!(firefox.meta.shortcut.as_deref(), Some("control+shift+F"));
+
+    // Cleared, it is gone from the file and from the item at the next merge.
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Shortcut(String::new())));
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert!(
+        written["providers"]["applications"]["entrypoints"]["firefox"]
+            .get("shortcut")
+            .is_none_or(serde_json::Value::is_null),
+        "{written}"
+    );
+    firefox.merge_config(&config.root_config(), false);
+    assert_eq!(firefox.meta.shortcut, None);
+}

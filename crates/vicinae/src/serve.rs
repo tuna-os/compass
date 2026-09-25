@@ -1035,6 +1035,7 @@ fn edit_root_item(
         compass_ipc::RootItemEdit::Alias(alias) => RootEdit::Alias(alias),
         compass_ipc::RootItemEdit::Disable => RootEdit::Disable,
         compass_ipc::RootItemEdit::ResetRanking => RootEdit::ResetRanking,
+        compass_ipc::RootItemEdit::Shortcut(shortcut) => RootEdit::Shortcut(shortcut),
     };
     let mut state = state.blocking_write();
     if state.index.root(id).is_none() {

@@ -13,6 +13,7 @@ use super::{
 use crate::action_panel::Action;
 use crate::backend::{PreferenceInput, PreferenceInputKind};
 use crate::preferences_page::{FieldValue, PreferencesPage, Purpose};
+use crate::shortcut_recorder::{Outcome as RecorderOutcome, ShortcutRecorder};
 
 const OPEN: &str = "root.open";
 const COPY_DEEPLINK: &str = "root.copy-deeplink";
@@ -23,6 +24,7 @@ const FAVORITE_DOWN: &str = "root.favorite-down";
 const FAVORITE_UP: &str = "root.favorite-up";
 const ALIAS: &str = "root.alias";
 const COPY_ID: &str = "root.copy-id";
+const SHORTCUT: &str = "root.shortcut";
 const DISABLE: &str = "root.disable";
 
 /// The heading over the favourites.
@@ -195,6 +197,7 @@ impl LauncherApp {
             }
         }
         item.push(Action::new("Set alias").with_id(ALIAS));
+        item.push(Action::new("Set Global Shortcut").with_id(SHORTCUT));
         item.push(Action::new("Copy ID").with_id(COPY_ID));
         item.push(
             Action::new("Disable item")
@@ -263,10 +266,63 @@ impl LauncherApp {
                 self.panel = None;
                 return Some(self.open_alias_form(row, id));
             }
+            SHORTCUT => {
+                let title = self.root_title(row).unwrap_or_default();
+                let current = self
+                    .app_index
+                    .root(&id)
+                    .and_then(|root| root.meta.shortcut.clone());
+                if let Some(panel) = self.panel.as_mut() {
+                    panel.recorder = Some(ShortcutRecorder::new(id, title, current));
+                }
+                return Some(Task::none());
+            }
             _ => return None,
         };
         self.panel = None;
         Some(task)
+    }
+
+    /// A key event while the shortcut recorder shows: an accepted chord is
+    /// kept for the item and closes the panel, Escape goes back to the
+    /// actions (`SetRootItemShortcutAction`'s accept handler, `setShortcut`).
+    pub(super) fn recorder_event(&mut self, event: &iced::keyboard::Event) -> Task<Message> {
+        let bound: Vec<(String, String, String)> = self
+            .app_index
+            .roots()
+            .iter()
+            .filter_map(|root| {
+                let shortcut = root.meta.shortcut.clone()?;
+                Some((root.id.clone(), root.title.clone(), shortcut))
+            })
+            .collect();
+        let Some(recorder) = self
+            .panel
+            .as_mut()
+            .and_then(|panel| panel.recorder.as_mut())
+        else {
+            return Task::none();
+        };
+        let outcome = recorder.key(
+            event,
+            bound
+                .iter()
+                .map(|(id, title, shortcut)| (id.as_str(), title.as_str(), shortcut.as_str())),
+        );
+        match outcome {
+            RecorderOutcome::Recording => Task::none(),
+            RecorderOutcome::Back => {
+                if let Some(panel) = self.panel.as_mut() {
+                    panel.recorder = None;
+                }
+                iced::widget::operation::focus(super::PANEL_INPUT)
+            }
+            RecorderOutcome::Save(shortcut) => {
+                let id = recorder.id.clone();
+                self.panel = None;
+                self.edit_root_item(id, RootEdit::Shortcut(shortcut))
+            }
+        }
     }
 
     /// Applies `edit` to this window's root settings at once, and asks the

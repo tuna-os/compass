@@ -389,6 +389,8 @@ pub struct PanelState {
     pub rows: Vec<Row>,
     /// The selected row, or -1.
     pub selected: isize,
+    /// The shortcut recorder, when it has taken the panel's place.
+    pub recorder: Option<crate::shortcut_recorder::ShortcutRecorder>,
 }
 
 impl PanelState {
@@ -402,6 +404,7 @@ impl PanelState {
             filter: String::new(),
             rows,
             selected,
+            recorder: None,
         }
     }
 
@@ -2861,6 +2864,15 @@ impl LauncherApp {
                 }
                 self.list_windows_task()
             }
+            // The shortcut recorder takes every key, releases included.
+            Message::Keyboard(event)
+                if self
+                    .panel
+                    .as_ref()
+                    .is_some_and(|panel| panel.recorder.is_some()) =>
+            {
+                self.recorder_event(&event)
+            }
             Message::Keyboard(iced::keyboard::Event::KeyPressed {
                 ref key, modifiers, ..
             }) => {
@@ -4417,9 +4429,12 @@ impl LauncherApp {
     /// A floating card at the bottom right, the way Raycast's sits. Headers
     /// and dividers are drawn as themselves rather than as indented text, and
     /// the selection is the same filled rectangle the result list uses.
-    fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
+    fn view_panel<'a>(&'a self, panel: &'a PanelState) -> Element<'a, Message> {
         let geometry = self.geometry;
         let palette = self.palette();
+        if let Some(recorder) = &panel.recorder {
+            return self.view_recorder(recorder);
+        }
         let filter = text_input("Search…", &panel.filter)
             .id(PANEL_INPUT)
             .font(self.font())
@@ -4515,6 +4530,79 @@ impl LauncherApp {
             ..container::Style::default()
         })
         .into()
+    }
+
+    /// The shortcut recorder in the panel's place (`ShortcutRecorderPanel`):
+    /// the item's title, then the chord or the current shortcut, the status
+    /// line and, while the item has a shortcut, how to remove it.
+    fn view_recorder<'a>(
+        &'a self,
+        recorder: &'a crate::shortcut_recorder::ShortcutRecorder,
+    ) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        let palette = self.palette();
+        let small = f32::from(geometry.subtitle_size);
+        let title = container(
+            text(recorder.title.clone())
+                .font(self.font())
+                .size(f32::from(geometry.title_size))
+                .color(palette.text.to_iced()),
+        )
+        .height(design::panel_metric("filter-height"))
+        .align_y(Alignment::Center)
+        .padding(Padding::new(0.0).left(design::panel_metric("inset")));
+        let divider = container(Space::new().height(Length::Fixed(1.0)))
+            .width(Length::Fill)
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.border.to_iced().into()),
+                ..container::Style::default()
+            });
+        let mut capture = column![].spacing(5).align_x(Alignment::Center);
+        if !recorder.tokens.is_empty() {
+            capture = capture.push(
+                text(recorder.tokens.join(" "))
+                    .font(self.font())
+                    .size(f32::from(geometry.title_size))
+                    .color(palette.text.to_iced()),
+            );
+        }
+        let status = if recorder.error {
+            iced::Color::from_rgb8(0xe5, 0x48, 0x4d)
+        } else {
+            palette.text.to_iced()
+        };
+        capture = capture.push(
+            text(recorder.status.clone())
+                .font(self.font())
+                .size(small)
+                .color(status),
+        );
+        if recorder.current.is_some() {
+            capture = capture.push(
+                text(crate::shortcut_recorder::REMOVE_HINT)
+                    .font(self.font())
+                    .size(small)
+                    .color(palette.muted.to_iced()),
+            );
+        }
+        let capture = container(capture)
+            .width(Length::Fill)
+            .height(Length::Fixed(130.0))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+        container(column![title, divider, capture])
+            .width(Length::Fixed(design::panel_metric("width")))
+            .padding(design::panel_metric("padding"))
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.surface.to_iced().into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
     }
 
     /// One action row, with its shortcut right-aligned.
@@ -8900,6 +8988,111 @@ mod tests {
 
     const FAVORITES_HEADING_FOR_TESTS: &str = "Favorites";
 
+    fn key_event(
+        pressed: bool,
+        key: iced::keyboard::Key,
+        modifiers: iced::keyboard::Modifiers,
+    ) -> Message {
+        let physical = iced::keyboard::key::Physical::Unidentified(
+            iced::keyboard::key::NativeCode::Unidentified,
+        );
+        Message::Keyboard(if pressed {
+            iced::keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: physical,
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            }
+        } else {
+            iced::keyboard::Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: physical,
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+            }
+        })
+    }
+
+    #[test]
+    fn the_root_panel_records_an_items_shortcut_and_backspace_removes_it() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let id = app.root_id(app.selected_row().unwrap()).unwrap();
+        let open_recorder = |app: &mut LauncherApp| {
+            let _ = app.update(Message::TogglePanel);
+            let row = app
+                .panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .expect("the panel offers a shortcut");
+            let _ = app.update(Message::PanelClicked(row));
+            assert!(
+                app.panel.as_ref().is_some_and(|p| p.recorder.is_some()),
+                "the recorder takes the panel's place"
+            );
+        };
+        open_recorder(&mut app);
+
+        // A bare letter is refused and typed nowhere; Control, then K.
+        let _ = app.update(key_event(
+            true,
+            Key::Character("k".into()),
+            Modifiers::empty(),
+        ));
+        let recorder = app
+            .panel
+            .as_ref()
+            .and_then(|p| p.recorder.as_ref())
+            .unwrap();
+        assert_eq!(recorder.status, compass_core::key_combo::MODIFIER_REQUIRED);
+        assert_eq!(app.query, "firefox");
+        let _ = app.update(key_event(true, Key::Named(Named::Control), Modifiers::CTRL));
+        let _ = app.update(key_event(true, Key::Character("k".into()), Modifiers::CTRL));
+        assert!(app.panel.is_none(), "an accepted shortcut closes the panel");
+        let shortcut = |app: &LauncherApp| {
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.shortcut.clone())
+        };
+        assert_eq!(shortcut(&app).as_deref(), Some("control+K"));
+        let (provider, entrypoint) = compass_core::root_items::split_entrypoint_id(&id).unwrap();
+        assert_eq!(
+            app.root_config.providers[provider].entrypoints[entrypoint]
+                .shortcut
+                .as_deref(),
+            Some("control+K")
+        );
+
+        // Escape goes back to the actions; Backspace removes the shortcut.
+        let _ = app.update(key_event(
+            false,
+            Key::Named(Named::Control),
+            Modifiers::empty(),
+        ));
+        open_recorder(&mut app);
+        let _ = app.update(key_event(
+            true,
+            Key::Named(Named::Escape),
+            Modifiers::empty(),
+        ));
+        assert!(app.panel.as_ref().is_some_and(|p| p.recorder.is_none()));
+        let _ = app.update(Message::TogglePanel);
+        open_recorder(&mut app);
+        let _ = app.update(key_event(
+            true,
+            Key::Named(Named::Backspace),
+            Modifiers::empty(),
+        ));
+        assert!(app.panel.is_none());
+        assert_eq!(shortcut(&app), None);
+    }
+
     #[test]
     fn a_launch_deeplink_to_a_provider_searches_its_items_alone() {
         let dir = tempfile::tempdir().unwrap();
@@ -11828,6 +12021,7 @@ mod tests {
                 "Reset ranking",
                 "Add to favorites",
                 "Set alias",
+                "Set Global Shortcut",
                 "Copy ID",
                 "Disable item"
             ]

@@ -830,6 +830,24 @@ impl Config {
                 true
             }
             RootEdit::ResetRanking => false,
+            // Cleared as `None` rather than the C++'s `""` (see
+            // `root_items::set_shortcut`).
+            RootEdit::Shortcut(shortcut) => {
+                let Some((provider, entrypoint)) = crate::root_items::split_entrypoint_id(id)
+                else {
+                    return false;
+                };
+                self.providers
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry(provider.to_owned())
+                    .or_default()
+                    .entrypoints
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry(entrypoint.to_owned())
+                    .or_default()
+                    .shortcut = (!shortcut.is_empty()).then(|| shortcut.clone());
+                true
+            }
         }
     }
 

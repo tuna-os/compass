@@ -110,6 +110,7 @@ impl ApplicationBackend for DaemonBackend {
             RootEdit::Alias(alias) => compass_ipc::RootItemEdit::Alias(alias),
             RootEdit::Disable => compass_ipc::RootItemEdit::Disable,
             RootEdit::ResetRanking => compass_ipc::RootItemEdit::ResetRanking,
+            RootEdit::Shortcut(shortcut) => compass_ipc::RootItemEdit::Shortcut(shortcut),
         };
         Box::pin(async move {
             match self

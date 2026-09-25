@@ -475,6 +475,9 @@ impl RootItem {
         // favourites keeps dropping it. Clearing it first is the fix.
         self.meta.favorite_idx = config.favorites.iter().position(|fav| *fav == id);
         self.meta.fallback = config.fallbacks.contains(&id);
+        // Cleared first for the same reason: a shortcut taken off an item
+        // must not survive until a restart.
+        self.meta.shortcut = None;
 
         if let Some(item) = item_config {
             if let Some(enabled) = item.enabled {
@@ -483,7 +486,7 @@ impl RootItem {
             if let Some(alias) = &item.alias {
                 self.meta.alias = Some(alias.clone());
             }
-            if let Some(shortcut) = &item.shortcut {
+            if let Some(shortcut) = item.shortcut.as_ref().filter(|s| !s.is_empty()) {
                 self.meta.shortcut = Some(shortcut.clone());
             }
         }
@@ -638,6 +641,9 @@ pub enum RootEdit {
     Disable,
     /// Forget its visits (`resetRanking`); nothing in the configuration.
     ResetRanking,
+    /// Give it a keyboard shortcut, in `KeyCombo::to_config_string`'s
+    /// spelling, or take it away with an empty one (`setShortcut`).
+    Shortcut(String),
 }
 
 /// Applies `edit` to `config` for the item `id`, as the C++ root item
@@ -702,6 +708,20 @@ pub fn apply_edit(config: &mut RootConfig, id: &str, edit: &RootEdit) -> bool {
             true
         }
         RootEdit::ResetRanking => false,
+        RootEdit::Shortcut(shortcut) => {
+            let Some((provider, entrypoint)) = split_entrypoint_id(id) else {
+                return false;
+            };
+            let entry = config
+                .providers
+                .entry(provider.to_owned())
+                .or_default()
+                .entrypoints
+                .entry(entrypoint.to_owned())
+                .or_default();
+            entry.shortcut = (!shortcut.is_empty()).then(|| shortcut.clone());
+            true
+        }
     }
 }
 
