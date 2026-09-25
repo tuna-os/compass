@@ -550,8 +550,34 @@ pub enum RootRow {
     Script(usize),
     /// A Rhai script, as its index in `AppIndex::rhai_scripts`.
     RhaiScript(usize),
-    /// A fallback command offered for the query, under "Use "…" with...".
-    Fallback(&'static compass_core::commands::BuiltinCommand),
+    /// A fallback offered for the query, under "Use "…" with...".
+    Fallback(Fallback),
+}
+
+/// A root item offered as a fallback for the query (`RootFallbackSection`):
+/// an entry of `fallbacks` that `isSuitableForFallback`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fallback {
+    /// A builtin command that can take the query: Search Files.
+    Command(&'static compass_core::commands::BuiltinCommand),
+    /// An extension's command, opened with the query as its fallback text,
+    /// as its index in `AppIndex::extensions`.
+    Extension(usize),
+    /// A quicklink with exactly one argument, opened with the query as it,
+    /// as its index in `AppIndex::shortcuts`.
+    Shortcut(usize),
+}
+
+/// The provider search view (`ProviderSearchViewHost`): root search over one
+/// provider's items, opened by a `vicinae://launch/<provider>` deeplink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderScope {
+    /// The provider's id.
+    pub id: String,
+    /// Its display name, the view's title.
+    pub title: String,
+    /// `Search <title>`.
+    pub placeholder: String,
 }
 
 /// Which view the card shows.
@@ -781,8 +807,10 @@ pub struct LauncherApp {
     theme_dirs: Vec<std::path::PathBuf>,
     /// What views remember between openings.
     view_memory: crate::view_memory::ViewMemory,
-    /// The fallback commands a non-empty query offers.
-    fallbacks: Vec<&'static compass_core::commands::BuiltinCommand>,
+    /// The `fallbacks` entries a non-empty query offers, as ids.
+    fallbacks: Vec<String>,
+    /// The provider search view, when root search is showing one provider.
+    provider_scope: Option<ProviderScope>,
     /// Each Rhai script's manifest icon, resolved, by script id.
     rhai_icons: std::collections::HashMap<String, crate::extension_page::RowIcon>,
     /// Previously persisted theme for live-preview cancellation (#153).
@@ -1059,11 +1087,7 @@ impl LauncherApp {
             .unwrap_or_default();
         app.search_history_path = flags.search_history_path;
         app.clock = flags.clock;
-        app.fallbacks = flags
-            .fallbacks
-            .iter()
-            .filter_map(|id| compass_core::commands::fallback(id))
-            .collect();
+        app.fallbacks = flags.fallbacks;
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
@@ -1143,6 +1167,7 @@ impl LauncherApp {
             theme_dirs: Vec::new(),
             view_memory: crate::view_memory::ViewMemory::default(),
             fallbacks: Vec::new(),
+            provider_scope: None,
             rhai_icons: std::collections::HashMap::new(),
             theme_preview: None,
             appearance: Appearance::Light,
@@ -1260,6 +1285,7 @@ impl LauncherApp {
         }
         self.parked_fonts = None;
         self.parked_store = None;
+        self.provider_scope = None;
         let dismissed = self.cancel_dmenu();
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
@@ -1430,8 +1456,9 @@ impl LauncherApp {
                     .map_or("", |script| script.title.as_str());
                 line.push_str(&format!(" selected_title={title:?}"));
             }
-            Some(RootRow::Fallback(command)) => {
-                line.push_str(&format!(" selected_title={:?} fallback", command.title));
+            Some(RootRow::Fallback(fallback)) => {
+                let title = self.fallback_title(fallback).unwrap_or_default();
+                line.push_str(&format!(" selected_title={title:?} fallback"));
             }
             None => line.push_str(" selected_title=none"),
         }
@@ -2002,8 +2029,8 @@ impl LauncherApp {
                 if let Some(RootRow::RhaiScript(index)) = self.selected_row() {
                     return self.open_rhai_script_at(index);
                 }
-                if let Some(RootRow::Fallback(command)) = self.selected_row() {
-                    return self.open_fallback(command);
+                if let Some(RootRow::Fallback(fallback)) = self.selected_row() {
+                    return self.open_fallback(fallback);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -3202,7 +3229,9 @@ impl LauncherApp {
     fn search_field(&self) -> (&str, &str, Option<OnInput>) {
         match &self.page {
             Page::Root => (
-                "Search…",
+                self.provider_scope
+                    .as_ref()
+                    .map_or("Search…", |scope| scope.placeholder.as_str()),
                 &self.query,
                 self.panel
                     .is_none()
@@ -3505,7 +3534,10 @@ impl LauncherApp {
                             selected,
                         )
                     }
-                    RootRow::Fallback(command) => {
+                    RootRow::Fallback(fallback) => {
+                        let Some(title) = self.fallback_title(*fallback) else {
+                            continue;
+                        };
                         if position == 0
                             || !matches!(self.results.get(position - 1), Some(RootRow::Fallback(_)))
                         {
@@ -3519,10 +3551,18 @@ impl LauncherApp {
                                 .padding(Padding::new(4.0).left(10)),
                             );
                         }
+                        let subtitle = match fallback {
+                            Fallback::Command(command) => command.subtitle.to_owned(),
+                            Fallback::Extension(_) => "Command".to_owned(),
+                            Fallback::Shortcut(_) => "Shortcut".to_owned(),
+                        };
                         self.list_row(
-                            self.command_icon(command, selected),
-                            command.title.to_owned(),
-                            self.subtitles.then(|| command.subtitle.to_owned()),
+                            match fallback {
+                                Fallback::Command(command) => self.command_icon(command, selected),
+                                _ => self.initial_badge(&title, selected),
+                            },
+                            title,
+                            self.subtitles.then_some(subtitle),
                             selected,
                         )
                     }
@@ -4550,7 +4590,11 @@ impl LauncherApp {
     fn search_task(&mut self) -> Task<Message> {
         self.cancel_search();
         self.error = None;
-        if let Some(backend) = self.backend.clone() {
+        // The provider search view ranks here: the engine's search is the
+        // whole root list.
+        if let Some(backend) = self.backend.clone()
+            && self.provider_scope.is_none()
+        {
             self.results.clear();
             self.selected = 0;
             let query = self.query.clone();
@@ -4608,6 +4652,24 @@ impl LauncherApp {
                 title: title.clone(),
                 result,
             },
+        )
+    }
+
+    /// An extension command offered as a fallback: launched through the
+    /// engine with the query as its fallback text, which comes back as a
+    /// launch like any other (`OpenBuiltinCommandAction` forwarding the
+    /// search text).
+    fn run_extension_fallback(&mut self, index: usize, query: String) -> Task<Message> {
+        let Some(command) = self.app_index.extensions().get(index) else {
+            return Task::none();
+        };
+        let Some(backend) = self.backend.clone() else {
+            return self.run_extension_command(index);
+        };
+        let id = command.id.clone();
+        Task::perform(
+            async move { backend.launch_command(id, Some(query)).await },
+            Message::BuiltinCommandDone,
         )
     }
 
@@ -5420,7 +5482,12 @@ impl LauncherApp {
 
     /// Re-rank locally when no daemon backend is attached.
     fn search(&mut self) {
-        if self.query.trim().is_empty() {
+        let options = compass_core::root_items::SearchOptions {
+            provider_id: self.provider_scope.as_ref().map(|scope| scope.id.clone()),
+            ..compass_core::root_items::SearchOptions::default()
+        };
+        self.favorites_len = 0;
+        if self.query.trim().is_empty() && options.provider_id.is_none() {
             self.results.clear();
             self.selected = 0;
             self.apply_favorites();
@@ -5429,7 +5496,7 @@ impl LauncherApp {
 
         self.results = self
             .app_index
-            .search_root_all(&self.query, None)
+            .search_root_with(&self.query, None, &options)
             .into_iter()
             .map(|hit| match hit {
                 compass_core::RootHit::App(app) => RootRow::App(app.index),
@@ -5468,37 +5535,89 @@ impl LauncherApp {
         // different list, and keeping its position would silently select an
         // unrelated application.
         self.selected = 0;
-        self.apply_calculator();
-        self.apply_fallbacks();
+        if self.provider_scope.is_none() {
+            self.apply_calculator();
+            self.apply_fallbacks();
+        }
         self.warm_icons();
     }
 
-    /// Offers the fallback commands under the results for a non-empty query,
-    /// as `RootFallbackSection` does.
+    /// Offers the fallbacks under the results for a non-empty query, as
+    /// `RootFallbackSection` does.
     fn apply_fallbacks(&mut self) {
         self.results
             .retain(|row| !matches!(row, RootRow::Fallback(_)));
-        if self.query.trim().is_empty() {
+        if self.query.trim().is_empty() || self.provider_scope.is_some() {
             return;
         }
-        self.results
-            .extend(self.fallbacks.iter().copied().map(RootRow::Fallback));
+        let fallbacks: Vec<RootRow> = self
+            .fallbacks
+            .iter()
+            .filter_map(|id| self.resolve_fallback(id))
+            .map(RootRow::Fallback)
+            .collect();
+        self.results.extend(fallbacks);
     }
 
-    /// Runs a fallback command with the query: Search Files opens searching
-    /// for it.
-    fn open_fallback(
-        &mut self,
-        command: &'static compass_core::commands::BuiltinCommand,
-    ) -> Task<Message> {
+    /// The fallback a `fallbacks` entry names here, when it names an item
+    /// that can be one (`isSuitableForFallback`): Search Files, any
+    /// extension command, or a quicklink with exactly one argument.
+    fn resolve_fallback(&self, id: &str) -> Option<Fallback> {
+        if let Some(command) = compass_core::commands::fallback(id) {
+            return Some(Fallback::Command(command));
+        }
+        if let Some(index) = self
+            .app_index
+            .extensions()
+            .iter()
+            .position(|command| command.id == id)
+        {
+            return Some(Fallback::Extension(index));
+        }
+        let shortcut = self.app_index.shortcut_by_entrypoint(id)?;
+        if shortcut.link.arguments.len() != 1 {
+            return None;
+        }
+        self.app_index
+            .shortcuts()
+            .iter()
+            .position(|known| known.id == shortcut.id)
+            .map(Fallback::Shortcut)
+    }
+
+    /// What a fallback row says.
+    fn fallback_title(&self, fallback: Fallback) -> Option<String> {
+        Some(match fallback {
+            Fallback::Command(command) => command.title.to_owned(),
+            Fallback::Extension(index) => self.app_index.extensions().get(index)?.title.clone(),
+            Fallback::Shortcut(index) => {
+                crate::shortcuts_page::display_name(self.app_index.shortcuts().get(index)?)
+                    .to_owned()
+            }
+        })
+    }
+
+    /// Runs a fallback with the query: Search Files opens searching for it,
+    /// an extension command opens with it as its fallback text
+    /// (`OpenBuiltinCommandAction::setForwardSearchText`), and a quicklink
+    /// opens with it as its argument (`OpenShortcutFromSearchText`).
+    fn open_fallback(&mut self, fallback: Fallback) -> Task<Message> {
         use compass_core::commands::CommandKind;
         self.panel = None;
-        match command.kind {
-            CommandKind::SearchFiles => {
-                let query = self.query.clone();
-                self.open_search_files(query)
+        let query = self.query.clone();
+        match fallback {
+            Fallback::Command(command) => match command.kind {
+                CommandKind::SearchFiles => self.open_search_files(query),
+                _ => self.open_command(command),
+            },
+            Fallback::Extension(index) => self.run_extension_fallback(index, query),
+            Fallback::Shortcut(index) => {
+                let Some(shortcut) = self.app_index.shortcuts().get(index) else {
+                    return Task::none();
+                };
+                let id = shortcut.id.clone();
+                self.send_open_shortcut(id, vec![query])
             }
-            _ => self.open_command(command),
         }
     }
 
@@ -6091,6 +6210,8 @@ mod tests {
         shortcuts: std::sync::Mutex<Vec<crate::backend::Shortcut>>,
         /// The shortcuts opened, with their arguments.
         opened_shortcuts: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// The root items launched through the engine, with their text.
+        launched: std::sync::Mutex<Vec<(String, Option<String>)>>,
         /// The shortcuts saved, as the form sent them.
         drafts: std::sync::Mutex<Vec<crate::backend::ShortcutDraft>>,
         /// The snippet store.
@@ -6746,6 +6867,17 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened_shortcuts.lock().unwrap().push((id, arguments));
+                Ok(())
+            })
+        }
+
+        fn launch_command(
+            &self,
+            id: String,
+            query: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.launched.lock().unwrap().push((id, query));
                 Ok(())
             })
         }
@@ -8769,6 +8901,158 @@ mod tests {
     const FAVORITES_HEADING_FOR_TESTS: &str = "Favorites";
 
     #[test]
+    fn a_launch_deeplink_to_a_provider_searches_its_items_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = extension_app(dir.path(), Arc::new(TestBackend::default()));
+
+        let task = app.open_deeplink("vicinae://launch/@someone/hello?fallbackText=wri");
+        settle(&mut app, task);
+        assert_eq!(app.search_field().0, "Search Hello");
+        assert_eq!(app.query, "wri");
+        assert_eq!(app.results, [RootRow::Extension(0)], "{}", app.state_line());
+
+        // The empty query lists every item of the provider, and nothing else:
+        // no favourites, no calculator, no fallbacks.
+        let task = app.open_deeplink("vicinae://launch/applications/");
+        settle(&mut app, task);
+        assert_eq!(app.search_field().0, "Search Applications");
+        assert_eq!(app.results.len(), 3, "{}", app.state_line());
+        assert!(app.results.iter().all(|row| matches!(row, RootRow::App(_))));
+        let _ = app.update(Message::QueryChanged("fire".into()));
+        assert!(
+            app.results.iter().all(|row| matches!(row, RootRow::App(_))),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(app.results.len(), 1);
+
+        // Leaving closes it: the next summon is the root again.
+        let _ = app.update(Message::Dismiss);
+        assert_eq!(app.provider_scope, None);
+        assert_eq!(app.search_field().0, "Search…");
+
+        let _ = app.open_deeplink("vicinae://launch/nothing");
+        assert_eq!(
+            app.error.as_deref(),
+            Some(compass_core::root_items::INVALID_LAUNCH_LINK)
+        );
+    }
+
+    #[test]
+    fn a_launch_deeplink_to_an_item_launches_it_with_its_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        let task = app.open_deeplink("vicinae://launch/@someone/hello/write?fallbackText=hi+there");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.launched.lock().unwrap().as_slice(),
+            [(
+                "@someone/hello:write".to_owned(),
+                Some("hi there".to_owned())
+            )]
+        );
+        assert_eq!(app.provider_scope, None);
+    }
+
+    #[test]
+    fn fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.fallbacks = vec![
+            "shortcuts:sct-news".into(),
+            "shortcuts:sct-docs".into(),
+            "files:search".into(),
+        ];
+        app.query = "serde".into();
+        app.search();
+        let fallbacks: Vec<RootRow> = app
+            .results
+            .iter()
+            .copied()
+            .filter(|row| matches!(row, RootRow::Fallback(_)))
+            .collect();
+        let docs = app
+            .app_index
+            .shortcuts()
+            .iter()
+            .position(|shortcut| shortcut.id == "sct-docs")
+            .unwrap();
+        assert!(
+            matches!(
+                fallbacks.as_slice(),
+                [
+                    RootRow::Fallback(Fallback::Shortcut(at)),
+                    RootRow::Fallback(Fallback::Command(_)),
+                ] if *at == docs
+            ),
+            "a shortcut without exactly one argument is no fallback: {fallbacks:?}"
+        );
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| *row == fallbacks[0])
+            .unwrap();
+        assert!(
+            app.state_line()
+                .contains("selected_title=\"Crate Docs\" fallback")
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().last(),
+            Some(&("sct-docs".to_owned(), vec!["serde".to_owned()]))
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.fallbacks = vec!["@someone/hello:write".into()];
+        app.query = "zzzz".into();
+        app.search();
+        assert_eq!(
+            app.results.last(),
+            Some(&RootRow::Fallback(Fallback::Extension(0)))
+        );
+        app.selected = app.results.len() - 1;
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.launched.lock().unwrap().as_slice(),
+            [("@someone/hello:write".to_owned(), Some("zzzz".to_owned()))]
+        );
+    }
+
+    #[test]
+    fn an_alias_and_a_space_open_an_items_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        compass_core::root_items::apply_edit(
+            &mut app.root_config,
+            "shortcuts:sct-docs",
+            &compass_core::root_items::RootEdit::Alias("cd".into()),
+        );
+        app.app_index.apply_root_config(&app.root_config);
+        app.query = "cd".into();
+        app.search();
+        assert!(
+            matches!(app.selected_row(), Some(RootRow::Shortcut(_))),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::QueryChanged("cd ".into()));
+        settle(&mut app, task);
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::ShortcutArguments),
+            "the space opens the arguments rather than being typed: {}",
+            app.state_line()
+        );
+        assert_eq!(app.query, "cd");
+        assert!(backend.opened_shortcuts.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn a_calculation_that_matches_nothing_is_answered_first() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app(dir.path());
@@ -9295,7 +9579,7 @@ mod tests {
         app.query = "zebra".into();
         app.search();
         assert!(
-            matches!(app.results.last(), Some(RootRow::Fallback(c))
+            matches!(app.results.last(), Some(RootRow::Fallback(Fallback::Command(c)))
                 if c.kind == compass_core::commands::CommandKind::SearchFiles),
             "{}",
             app.state_line()

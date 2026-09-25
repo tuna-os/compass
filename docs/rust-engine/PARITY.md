@@ -437,9 +437,9 @@ wrapping) walks back through past searches, kept in the C++'s own file,
 `$XDG_DATA_HOME/vicinae/search-history.json` (`{"entries":[{"q","ts"}]}`, one of each, newest
 first, 1000 at most), which a search is added to when a row runs from it. The clock shows under the
 list in `launcher.clock`'s format (`hh:mm` unless set; `settings.json`'s
-`launcher_window.clock` migrates to it), redrawn on multiples of its interval. Still C++-only: the
-provider search view (`searchGroupedByProvider` is ported, the view over it is not), and the
-completer branch of the space shortcut, as root rows have no argument completer here yet.
+`launcher_window.clock` migrates to it), redrawn on multiples of its interval. The provider search
+view, the other fallbacks and the completer branch of the space shortcut landed after it (see "The
+gaps pass, root and actions").
 
 **`src/builtins/clipboard` → the rest of the view.** The kind filter is a dropdown above the list;
 it asks the engine for one kind (`ClipboardHistoryOfKind`, the query's `kind` filter), clears the
@@ -467,6 +467,53 @@ copy, copy name, codepoint and category, the keyword form (Ctrl+E), reset rankin
 and the skin-tone section. Not ported, and deliberately: the one-off migration from the legacy
 `visited_emoji` table of `omni.db`, which only a database from before the JSON file holds; and the
 picker's paste action, which the `src/builtins/vicinae` note carries.
+
+### The gaps pass, root and actions (2026-09-25)
+
+The rest of the root view, the action panel's shortcut recorder, the emoji picker's paste action
+and Browse Apps' Focus Window, one commit each against `src/server/src/builtins/root`,
+`ui/action-panel`, `builtins/vicinae` and `builtins/system`. A cell flips only with a named module
+and named tests that fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/builtins/root` | — (per-item shortcuts land in the next commit) | `compass_core::root_items::{parse_launch_link, LaunchLink::target}`, `AppIndex::{search_root_with, has_provider, provider_title}`, `compass_ui::app::{Fallback, ProviderScope}`, `compass_ui::app::root::{open_launch_link, open_provider_search, has_completer}`, `vicinae::serve::launch::open_launch_link` | `a_launch_link_names_a_provider_or_an_item_with_its_text`, `a_launch_deeplink_to_a_provider_searches_its_items_alone`, `a_launch_deeplink_to_an_item_launches_it_with_its_text`, `fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query`, `an_alias_and_a_space_open_an_items_arguments` |
+
+**The provider search view (`ProviderSearchViewHost`).** `vicinae://launch/<provider>` — the link
+`vicinae deeplink` sends and a desktop shortcut can carry — opens root search over that provider's
+items alone (`search(text, {.providerId})`), every one of them for the empty query, with no
+favourites, calculator or fallbacks, the field reading `Search <provider>` and the link's
+`fallbackText` typed in. Leaving it closes the window, as the deeplink's `setInstantDismiss` does.
+`vicinae://launch/<provider>/<entrypoint>` launches the item as `cmd launch` does, with
+`fallbackText` as its query; `toggle=true` hides an open window instead; a path that names no
+provider and has no `/` is refused with the C++'s "Invalid format for launch deeplink". The engine
+reads the link (`Request::OpenDeeplink`, no new variant) and hands the window only what is the
+window's.
+
+**Fallbacks (`RootFallbackSection`).** Every `fallbacks` entry the C++ would offer
+(`isSuitableForFallback`): Search Files, any extension command, and a quicklink with exactly one
+argument. An extension command is launched through the engine with the query as its fallback text
+(`OpenBuiltinCommandAction::setForwardSearchText`), the way `cmd launch --query` reaches it; a
+quicklink opens with the query as its argument (`OpenShortcutFromSearchText`).
+
+**The completer branch of the space shortcut.** An item that takes arguments (a quicklink, an
+extension command or a script command with any) opens its arguments form when its alias is typed
+and then a space, where the C++ focuses the search bar's completer; with nothing yet typed into the
+form, which is the C++'s "every completion value empty" condition.
+
+**A regression found on the way.** The root row's panel (the first gaps pass) had taken over the
+panel an application's row opens, so Quit, Force Quit, Focus Window and Close Window (the
+app-runtime commit) never joined it. The engine is asked again when the root panel opens over an
+application, and the running-only actions are added to the panel as it is, root actions and all
+(`a_running_applications_panel_offers_quit_and_force_quit_and_they_reach_the_engine`).
+
+What differs, by row:
+
+| Row | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| `builtins/root` | The provider view ranks by visits as root search does. | It ranks in the window, without the engine's launch history: matches by score, the empty query in index order. | `a_launch_deeplink_to_a_provider_searches_its_items_alone` |
+| `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
+| `builtins/root` | A fallback row's panel is Open plus Manage Fallback Actions. | Enter opens it; the fallback manager's view is `builtins/vicinae`'s gap. | — |
 
 ### The gaps pass (2026-09-25)
 
@@ -841,10 +888,10 @@ would make every press of space over an empty search box activate whatever was s
 test for it now.
 
 Root search now ranks applications, builtin commands, extension commands, scripts, shortcuts and
-Rhai scripts, with the calculator and the Search Files fallback. Still C++-only: favourites in the
-list, the title-bar clock, the space-bar alias and the up-arrow history this module models, the
-provider search view, the alias form, and the root row's panel beyond opening (favourite, alias,
-disable, reset ranking, quit).
+Rhai scripts, with the calculator and the fallbacks. Favourites, the clock, the space-bar alias,
+the up-arrow history, the alias form, the row's panel, the provider search view and every kind of
+fallback have landed since (see "The gaps pass: glyphs, clipboard, root" and "The gaps pass, root
+and actions").
 
 **`src/builtins/clipboard` → `compass-clipboard::history_view`** — the history command's own
 decisions. The ledger had this row down for `compass-core`; it landed in `compass-clipboard`

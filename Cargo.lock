@@ -909,6 +909,7 @@ dependencies = [
  "toml",
  "tracing",
  "unicode-normalization",
+ "url",
  "zip",
 ]
 

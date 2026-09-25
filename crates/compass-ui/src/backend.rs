@@ -180,6 +180,20 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
     }
 
+    /// Launches a root item through the engine, as `vicinae cmd launch`
+    /// does: an extension command comes back to the window as a launch, with
+    /// `query` as its fallback text.
+    fn launch_command(&self, id: String, query: Option<String>) -> BackendFuture<'_, ()> {
+        let _ = (id, query);
+        Box::pin(async {
+            Err(
+                "Launching a command needs the Compass engine, and this window is \
+                 running without one"
+                    .to_owned(),
+            )
+        })
+    }
+
     /// Opens a shortcut with its arguments. An error is the sentence to show.
     fn open_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, ()> {
         let _ = (id, arguments);

@@ -2755,6 +2755,9 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
         Request::OpenDeeplink { url } => {
+            if let Some(link) = compass_core::root_items::parse_launch_link(&url) {
+                return launch::open_launch_link(state, url, link).await;
+            }
             match compass_core::store_listing::parse_extension_link(&url) {
                 Some(Ok(_)) => {
                     let slot = state.read().await.window_slot();

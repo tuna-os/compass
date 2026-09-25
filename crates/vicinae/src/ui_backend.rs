@@ -987,6 +987,21 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn launch_command(&self, id: String, query: Option<String>) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let request = Request::LaunchCommand {
+                id,
+                args: Vec::new(),
+                cwd: None,
+                query,
+            };
+            match self.ask(request, "Launching the command").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn open_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self

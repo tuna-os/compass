@@ -158,7 +158,11 @@ impl LauncherApp {
     }
 
     /// Asks the engine to open a shortcut, and counts the use in root search.
-    fn send_open_shortcut(&mut self, id: String, arguments: Vec<String>) -> Task<Message> {
+    pub(super) fn send_open_shortcut(
+        &mut self,
+        id: String,
+        arguments: Vec<String>,
+    ) -> Task<Message> {
         let Some(backend) = self.backend.clone() else {
             self.shortcut_notice(
                 "Shortcuts need the Compass engine, and this window is running without one"
