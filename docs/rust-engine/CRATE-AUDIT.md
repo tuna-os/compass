@@ -150,3 +150,12 @@ code in the extension, so the host never speaks OAuth itself.
 | Comparing the release's tag with the running version | `compass_core::semver` (the existing port); `semver` 1 considered | **Kept the port, no crate added.** The comparison was already present and is load-bearing in the way the crate is not: a tag with a suffix (`v1.2.0-rc1`) does not parse at all, which keeps release candidates from ever being offered, and `1.0` equals `1.0.0`; `semver` would accept the first (as a prerelease that orders below `1.2.0`) and refuse the second. GitHub's `releases/latest` already leaves out drafts and prereleases; the gates stay for a feed that does not. |
 | Throttling and caching the check | `serde_json` (already in the tree) | **Hand-written** (`compass_core::update::CheckCache`, ~50 lines): a timestamp and the last release in one JSON file under the cache directory. |
 | A local feed for the tests | `tiny_http` 0.12 (dev only, already used for the stores) | **Used**: `the_github_feed_reads_the_release_from_its_url` and the engine's end-to-end tests serve the release from `127.0.0.1:0`; no test reaches the network. |
+
+## The gaps pass, currency (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Currency conversion in the calculator | `fend-core` 1.5.8 (already the calculator) | **Used**: its own currency units and `Context::set_exchange_rate_handler_v2` (`ExchangeRateFnV2`), fed the ECB's rates per euro (`compass_core::calculator::RateHandler`, ten lines). Only gap handled around it: fend reads `€5` as one unknown word (it takes `£8` and `$5`), so a `€` right before a number is moved after it before evaluating. |
+| Reading the ECB's `eurofxref-daily.xml` | `roxmltree` 0.20 (already a workspace dependency, through `compass-xdg` and `compass-shell`); `quick-xml` also locked | **Used** (`compass_core::exchange_rates::parse_ecb`): a read-only DOM over a two-kilobyte file is what `roxmltree` is for; `quick-xml`'s streaming reader would be more code for no gain. No package added to `Cargo.lock`, only the edge to `compass-core`, so the Flatpak sources are unchanged. |
+| Fetching the file | `ureq` 3 (the engine's HTTP client, `vicinae::stores::get`) | **Used**: the same agent, timeout and TLS roots as the stores. |
+| The cache file | `serde_json` (already) | **Used**: the rates, the ECB's date and the fetch time as JSON under `$XDG_CACHE_HOME/compass`, written through a partial file and a rename. |

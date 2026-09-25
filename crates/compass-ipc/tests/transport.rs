@@ -166,6 +166,9 @@ async fn echo_handler(request: Request) -> Response {
             current: "v0.1.0".into(),
             available: None,
         },
+        Request::ExchangeRates | Request::RefreshExchangeRates => {
+            Response::ExchangeRates { rates: None }
+        }
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
         Request::FileActions { .. } => {

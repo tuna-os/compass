@@ -147,6 +147,8 @@ pub struct EngineState {
     /// The global shortcuts' service: rebinding them, and the recorder's
     /// capture.
     global_shortcuts: Arc<crate::global_shortcuts::Control>,
+    /// The calculator's exchange rates.
+    exchange_rates: Arc<crate::exchange_rates::ExchangeRateService>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -271,6 +273,9 @@ impl EngineState {
             calculator: Arc::default(),
             tray: Arc::default(),
             global_shortcuts: Arc::default(),
+            exchange_rates: Arc::new(
+                crate::exchange_rates::ExchangeRateService::from_environment(),
+            ),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -341,6 +346,7 @@ impl EngineState {
             calculator: Arc::default(),
             tray: Arc::default(),
             global_shortcuts: Arc::default(),
+            exchange_rates: Arc::default(),
         }
     }
 
@@ -2794,6 +2800,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 Err(message) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
             }
         }
+        request @ (Request::ExchangeRates | Request::RefreshExchangeRates) => {
+            let rates = Arc::clone(&state.read().await.exchange_rates);
+            rates.answer(request).await
+        }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => {
@@ -3553,6 +3563,11 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
             installed_fonts(&fonts).await;
         });
     }
+
+    // The calculator's exchange rates: fetched when stale, then daily.
+    tokio::spawn(crate::exchange_rates::run(Arc::clone(
+        &state.read().await.exchange_rates,
+    )));
 
     // Rhai scripts' hot reload.
     tokio::spawn(crate::rhai_scripts::watch(Arc::clone(&state)));

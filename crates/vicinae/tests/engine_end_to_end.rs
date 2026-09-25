@@ -61,6 +61,7 @@ fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
         .arg(socket.as_path())
         .args(["serve", "--no-hotkey"])
         .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+        .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
         .env("XDG_DATA_HOME", dir.path().join("data"))
         .env("XDG_DATA_DIRS", dir.path().join("empty"))
         .env("XDG_CONFIG_HOME", dir.path().join("config"))
@@ -223,6 +224,13 @@ impl Daemon {
             .env_remove("https_proxy")
             .env_remove("all_proxy")
             .env("NO_PROXY", "127.0.0.1,localhost")
+            // Nor the ECB: no exchange rates are fetched unless a test
+            // serves its own and turns the refresh back on.
+            .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
+            .env(
+                "COMPASS_EXCHANGE_RATES_URL",
+                "http://127.0.0.1:9/no-network",
+            )
             // Nor the machine's keyboards: a helper that exits at once
             // stands in for vicinae-input-server unless a test brings its
             // own fake.
@@ -943,6 +951,7 @@ fn a_second_engine_on_the_same_socket_refuses_to_start() {
         .arg(&daemon.socket)
         .arg("serve")
         .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+        .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
         .env("HOME", daemon._dirs.path())
         .env_remove("XDG_STATE_HOME")
         .output()
@@ -6561,4 +6570,151 @@ fn with_update_checks_off_the_feed_is_never_asked() {
     let daemon = feed.start_engine(r#"{"launcher": {"check_for_updates": false}}"#);
     assert_eq!(update_status(&daemon).1, None);
     assert_eq!(feed.asked(), 0);
+}
+
+// ---- The calculator's exchange rates, against a local fake ECB ----
+
+const ECB_FIXTURE: &str = include_str!("../../compass-core/tests/fixtures/eurofxref-daily.xml");
+
+/// A local stand-in for the ECB's daily file, which can be made to fail.
+struct FakeEcb {
+    url: String,
+    failing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    fetches: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    _server: std::sync::Arc<tiny_http::Server>,
+}
+
+impl FakeEcb {
+    fn start() -> FakeEcb {
+        use std::sync::atomic::Ordering;
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("fake ECB"));
+        let port = server.server_addr().to_ip().expect("ip").port();
+        let failing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fetches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (thread_server, thread_failing, thread_fetches) = (
+            std::sync::Arc::clone(&server),
+            std::sync::Arc::clone(&failing),
+            std::sync::Arc::clone(&fetches),
+        );
+        std::thread::spawn(move || {
+            for request in thread_server.incoming_requests() {
+                thread_fetches.fetch_add(1, Ordering::SeqCst);
+                let response = if thread_failing.load(Ordering::SeqCst) {
+                    tiny_http::Response::from_data(b"unavailable".to_vec()).with_status_code(503)
+                } else {
+                    tiny_http::Response::from_data(ECB_FIXTURE.as_bytes().to_vec())
+                };
+                let _ = request.respond(response);
+            }
+        });
+        FakeEcb {
+            url: format!("http://127.0.0.1:{port}/stats/eurofxref/eurofxref-daily.xml"),
+            failing,
+            fetches,
+            _server: server,
+        }
+    }
+}
+
+fn exchange_rates(daemon: &Daemon) -> Option<compass_ipc::ExchangeRateTable> {
+    match daemon.request(compass_ipc::Request::ExchangeRates) {
+        compass_ipc::Response::ExchangeRates { rates } => rates,
+        other => panic!("unexpected answer: {other:?}"),
+    }
+}
+
+#[test]
+fn the_engine_fetches_the_ecb_rates_at_start_caches_them_and_keeps_them_when_a_refresh_fails() {
+    use std::sync::atomic::Ordering;
+    let ecb = FakeEcb::start();
+    let url = ecb.url.clone();
+    let daemon = Daemon::start_prepared(&[], "{}", move |_| {
+        vec![
+            ("VICINAE_DISABLE_AUTO_RATE_REFRESH", "".into()),
+            ("COMPASS_EXCHANGE_RATES_URL", url.into()),
+        ]
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let rates = loop {
+        if let Some(rates) = exchange_rates(&daemon) {
+            break rates;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the rates were never fetched at start"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(rates.date, "2026-09-24");
+    assert!(
+        rates
+            .rates
+            .contains(&("USD".to_owned(), "1.1367".to_owned()))
+    );
+    assert!(rates.rates.contains(&("EUR".to_owned(), "1".to_owned())));
+    let cache = daemon
+        ._dirs
+        .path()
+        .join(".cache/compass/exchange-rates.json");
+    assert!(
+        cache.is_file(),
+        "the rates are cached under Compass's cache dir"
+    );
+
+    match daemon.request(compass_ipc::Request::RefreshExchangeRates) {
+        compass_ipc::Response::ExchangeRates { rates: Some(fresh) } => {
+            assert_eq!(fresh.date, "2026-09-24");
+            assert!(fresh.fetched_at >= rates.fetched_at);
+        }
+        other => panic!("unexpected answer: {other:?}"),
+    }
+    assert_eq!(
+        ecb.fetches.load(Ordering::SeqCst),
+        2,
+        "start, then the forced refresh"
+    );
+
+    ecb.failing.store(true, Ordering::SeqCst);
+    match daemon.request(compass_ipc::Request::RefreshExchangeRates) {
+        compass_ipc::Response::Error(error) => {
+            assert!(
+                error
+                    .message
+                    .contains("could not refresh the exchange rates"),
+                "{error:?}"
+            );
+        }
+        other => panic!("a failed refresh must say so: {other:?}"),
+    }
+    assert_eq!(
+        exchange_rates(&daemon).map(|rates| rates.date),
+        Some("2026-09-24".to_owned()),
+        "the rates held survive a failed refresh"
+    );
+}
+
+#[test]
+fn an_offline_engine_answers_with_the_cached_rates_or_none() {
+    let cached = compass_core::exchange_rates::parse_ecb(ECB_FIXTURE, 1).unwrap();
+    let daemon = Daemon::start_prepared(&[], "{}", move |root| {
+        let path = compass_core::exchange_rates::cache_path(&root.join(".cache"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&cached).unwrap()).unwrap();
+        Vec::new()
+    });
+    let rates = exchange_rates(&daemon).expect("the cached rates");
+    assert_eq!(rates.date, "2026-09-24");
+    assert_eq!(rates.fetched_at, 1);
+
+    let empty = Daemon::start(&[]);
+    assert_eq!(
+        exchange_rates(&empty),
+        None,
+        "no cache and no network: no rates"
+    );
+    assert!(matches!(
+        empty.request(compass_ipc::Request::RefreshExchangeRates),
+        compass_ipc::Response::Error(_)
+    ));
 }

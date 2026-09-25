@@ -56,6 +56,7 @@ impl Engine {
             .arg(&socket)
             .args(["serve", "--no-hotkey"])
             .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+            .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
             .env("XDG_DATA_DIRS", dirs.path().join("empty"))
             .env("XDG_DATA_HOME", dirs.path().join("data"))
             .env("XDG_CONFIG_HOME", dirs.path().join("config"))

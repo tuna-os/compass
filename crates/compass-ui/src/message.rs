@@ -423,6 +423,10 @@ pub enum Message {
     CalculatorSelected(usize),
     /// A pin, unpin or removal finished, with what to say.
     CalculatorEdited(Result<&'static str, String>),
+    /// The engine's exchange rates arrived, for currency conversions.
+    ExchangeRatesLoaded(Result<Option<compass_core::exchange_rates::ExchangeRates>, String>),
+    /// Refresh Exchange Rates finished.
+    ExchangeRatesRefreshed(Result<compass_core::exchange_rates::ExchangeRates, String>),
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must

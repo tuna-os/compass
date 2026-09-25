@@ -664,8 +664,13 @@ impl Flavour {
     /// `dbus-run-session`. The Rust engine needs nothing.
     fn env(self) -> &'static [(&'static str, &'static str)] {
         match self {
-            Self::Cpp => &[("QT_QPA_PLATFORM", "offscreen")],
-            Self::Rust => &[],
+            // Neither engine fetches exchange rates: a parity run never
+            // reaches the network.
+            Self::Cpp => &[
+                ("QT_QPA_PLATFORM", "offscreen"),
+                ("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1"),
+            ],
+            Self::Rust => &[("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")],
         }
     }
 

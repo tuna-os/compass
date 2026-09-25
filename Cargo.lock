@@ -909,6 +909,7 @@ dependencies = [
  "jsonc-parser",
  "percent-encoding",
  "proptest",
+ "roxmltree",
  "schemars",
  "serde",
  "serde_json",

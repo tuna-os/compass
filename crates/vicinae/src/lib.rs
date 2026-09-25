@@ -22,6 +22,7 @@ pub mod developer;
 pub mod dmenu;
 pub mod doctor;
 pub mod engine;
+pub mod exchange_rates;
 pub mod extension_apps;
 pub mod extension_browser;
 pub mod extension_commands;

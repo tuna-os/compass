@@ -443,6 +443,8 @@ fn all_requests() -> Vec<Request> {
         Request::SkipUpdate {
             tag: "v1.2.0-ü".into(),
         },
+        Request::ExchangeRates,
+        Request::RefreshExchangeRates,
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -624,6 +626,14 @@ fn all_responses() -> Vec<Response> {
                 key: "draft ✍".into(),
                 value: "{\"n\":1}".into(),
             }],
+        },
+        Response::ExchangeRates { rates: None },
+        Response::ExchangeRates {
+            rates: Some(compass_ipc::ExchangeRateTable {
+                date: "2026-09-24".into(),
+                fetched_at: 1_790_000_000,
+                rates: vec![("EUR".into(), "1".into()), ("USD".into(), "1.1367".into())],
+            }),
         },
         Response::OAuthTokenSets {
             sets: vec![compass_ipc::OAuthTokenSetEntry {
@@ -1147,6 +1157,8 @@ fn request_variants_are_exhaustive() {
             | Request::ShortcutCapture { .. }
             | Request::UpdateStatus
             | Request::SkipUpdate { .. }
+            | Request::ExchangeRates
+            | Request::RefreshExchangeRates
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1212,6 +1224,7 @@ fn response_variants_are_exhaustive() {
             | Response::LocalStorageItems { .. }
             | Response::OAuthTokenSets { .. }
             | Response::UpdateStatus { .. }
+            | Response::ExchangeRates { .. }
             | Response::Window(_) => {}
         }
     }

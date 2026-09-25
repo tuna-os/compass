@@ -213,6 +213,8 @@ fn describe(request: &Request) -> &'static str {
         Request::ShortcutCapture { .. } => "ShortcutCapture",
         Request::UpdateStatus => "UpdateStatus",
         Request::SkipUpdate { .. } => "SkipUpdate",
+        Request::ExchangeRates => "ExchangeRates",
+        Request::RefreshExchangeRates => "RefreshExchangeRates",
     }
 }
 

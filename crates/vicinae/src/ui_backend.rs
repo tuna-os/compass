@@ -209,6 +209,40 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn exchange_rates(
+        &self,
+    ) -> BackendFuture<'_, Option<compass_core::exchange_rates::ExchangeRates>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ExchangeRates, "Asking for the exchange rates")
+                .await?
+            {
+                compass_ipc::Response::ExchangeRates { rates } => Ok(rates.map(exchange_rates)),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn refresh_exchange_rates(
+        &self,
+    ) -> BackendFuture<'_, compass_core::exchange_rates::ExchangeRates> {
+        Box::pin(async move {
+            match self
+                .ask_within(
+                    Request::RefreshExchangeRates,
+                    "Refreshing the exchange rates",
+                    STORE_TIMEOUT,
+                )
+                .await?
+            {
+                compass_ipc::Response::ExchangeRates { rates: Some(rates) } => {
+                    Ok(exchange_rates(rates))
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn edit_calculator_history(
         &self,
         change: compass_ui::backend::CalculatorChange,
@@ -1566,6 +1600,22 @@ impl DaemonBackend {
             Ok(Ok(compass_ipc::Response::Error(error))) => Err(sentence(&error.message)),
             Ok(Ok(response)) => Ok(response),
         }
+    }
+}
+
+/// Exchange rates as the calculator holds them, from the wire. A rate that
+/// does not read back is left out, so that currency answers nothing.
+fn exchange_rates(
+    table: compass_ipc::ExchangeRateTable,
+) -> compass_core::exchange_rates::ExchangeRates {
+    compass_core::exchange_rates::ExchangeRates {
+        date: table.date,
+        fetched_at: table.fetched_at,
+        rates: table
+            .rates
+            .into_iter()
+            .filter_map(|(code, rate)| Some((code, rate.parse::<f64>().ok()?)))
+            .collect(),
     }
 }
 

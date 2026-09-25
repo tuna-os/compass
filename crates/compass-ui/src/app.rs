@@ -2395,6 +2395,7 @@ impl LauncherApp {
                     self.refresh_subtitles_task(),
                     self.refresh_update_task(),
                     self.catalog_task(),
+                    self.exchange_rates_task(),
                     self.window_capabilities_task(),
                     self.apply_dmenu_size(),
                 ])
@@ -3029,7 +3030,9 @@ impl LauncherApp {
             Message::CalculatorQueryChanged(_)
             | Message::CalculatorLoaded { .. }
             | Message::CalculatorSelected(_)
-            | Message::CalculatorEdited(_) => self.calculator_message(message),
+            | Message::CalculatorEdited(_)
+            | Message::ExchangeRatesLoaded(_)
+            | Message::ExchangeRatesRefreshed(_) => self.calculator_message(message),
             Message::GrantsLoaded(_)
             | Message::GrantsQueryChanged(_)
             | Message::GrantSelected(_)
@@ -5957,6 +5960,9 @@ impl LauncherApp {
             CommandKind::OpenSettings => Task::batch([record, self.open_settings(None)]),
             CommandKind::Vicinae(id) => Task::batch([record, self.open_vicinae_command(id)]),
             CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
+            CommandKind::RefreshExchangeRates => {
+                Task::batch([record, self.refresh_exchange_rates(command)])
+            }
             CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
             CommandKind::SetDefaultBrowser => Task::batch([
                 record,
@@ -7272,6 +7278,10 @@ mod tests {
         update: std::sync::Mutex<Option<crate::backend::UpdateOffer>>,
         /// The releases skipped.
         skipped: std::sync::Mutex<Vec<String>>,
+        /// The exchange rates the fake engine holds and refreshes to, and
+        /// why a refresh fails when it does.
+        rates: Option<compass_core::exchange_rates::ExchangeRates>,
+        refuse_rates: Option<String>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -7586,6 +7596,26 @@ mod tests {
                     .unwrap()
                     .push(format!("trigger {key} {id}"));
                 Ok(())
+            })
+        }
+
+        fn exchange_rates(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Option<compass_core::exchange_rates::ExchangeRates>>
+        {
+            Box::pin(async move { Ok(self.rates.clone()) })
+        }
+
+        fn refresh_exchange_rates(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, compass_core::exchange_rates::ExchangeRates>
+        {
+            Box::pin(async move {
+                match (&self.refuse_rates, &self.rates) {
+                    (Some(reason), _) => Err(reason.clone()),
+                    (None, Some(rates)) => Ok(rates.clone()),
+                    (None, None) => Err("there is no exchange rate source".to_owned()),
+                }
             })
         }
 
@@ -14224,6 +14254,48 @@ mod tests {
         std::mem::forget((commands, outcomes));
         app.link = Some(EngineLink::new(receiver, sender));
         app.with_hud(true)
+    }
+
+    #[test]
+    fn refresh_exchange_rates_installs_the_fresh_rates_and_says_so_or_why_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let rates = compass_core::exchange_rates::ExchangeRates {
+            date: "2026-09-24".into(),
+            fetched_at: 7,
+            rates: [("EUR".to_owned(), 1.0), ("USD".to_owned(), 1.25)].into(),
+        };
+        let backend = Arc::new(TestBackend {
+            rates: Some(rates.clone()),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend);
+        open_builtin(&mut app, "refresh exchange rates", "commands:refresh-rates");
+        let installed = compass_core::calculator::exchange_rates();
+        let answer = compass_core::calculator::compute("10 usd to eur").map(|a| a.answer);
+        compass_core::calculator::set_exchange_rates(None);
+        assert_eq!(installed.as_deref(), Some(&rates));
+        assert_eq!(answer.as_deref(), Some("8 EUR"));
+        assert_eq!(
+            app.hud_content(),
+            Some(&crate::app::calculator::rates_refreshed())
+        );
+
+        let failing = Arc::new(TestBackend {
+            refuse_rates: Some("Could not refresh the exchange rates: offline".into()),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(failing);
+        open_builtin(&mut app, "refresh exchange rates", "commands:refresh-rates");
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Could not refresh the exchange rates: offline")
+        );
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Could not refresh the exchange rates: offline")
+        );
     }
 
     #[test]

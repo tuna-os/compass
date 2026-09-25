@@ -78,7 +78,7 @@ fn get_blocking(url: &str, limit: u64) -> Result<Vec<u8>, String> {
 }
 
 /// GETs `url` on the blocking pool.
-async fn get(url: String, limit: u64) -> Result<Vec<u8>, String> {
+pub(crate) async fn get(url: String, limit: u64) -> Result<Vec<u8>, String> {
     tokio::task::spawn_blocking(move || get_blocking(&url, limit))
         .await
         .unwrap_or_else(|err| Err(format!("the request failed: {err}")))

@@ -143,7 +143,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/calculator-service` | `compass-local-storage` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/calculator-service` | `compass-local-storage`, `compass-core::exchange_rates`, `vicinae::exchange_rates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -315,9 +315,9 @@ PLAN §12.0 sizes them and says what blocks each.
 
 - `src/cli`: closed in the gaps pass below.
 - `src/services/app-runtime`: closed in the gaps pass below.
-- `src/services/calculator-service`: the history is served since the gaps pass. Still C++-only:
-  currency conversion and Refresh Exchange Rates, **blocked on a rate source** (fend has none, and
-  what a fork fetches exchange rates from is undecided).
+- `src/services/calculator-service`: the history is served since the gaps pass; currency
+  conversion and Refresh Exchange Rates closed in "The gaps pass, currency" below, over the ECB's
+  daily reference rates.
 - `src/services/desktop-notification`: the urgency and an icon that is a file are passed since this
   pass (`a_notification_carries_the_urgency_and_an_icon_file`); rendering any other icon (a builtin
   one, a remote one) to a temporary PNG landed after it (see "Gaps closed after the truth pass").
@@ -1236,6 +1236,70 @@ VM tier (declared, not verifiable in a container): GNOME's portal grant dialog o
 whether `xdg-desktop-portal-gnome` honours the preferred trigger; a real compositor carrying
 `xx-hotkey-v1` or `vicinae-hotkey-v1` (none released does); focus loss on a real compositor,
 where a layer surface with exclusive keyboard focus may never report it.
+
+### The gaps pass, currency (2026-09-25)
+
+`src/services/calculator-service`'s last amber cell, against `NumenVicinaeCurrencyProvider`,
+`NumenCalculatorBackend`'s refresh timer and `CalculatorRefreshRatesCommand` (IPC v21). The rate
+source is the maintainer's decision: the European Central Bank's daily reference rates
+(`eurofxref-daily.xml`, free and keyless, about thirty currencies against the euro).
+
+**The rates** (`compass_core::exchange_rates`). `parse_ecb` reads the ECB's file with `roxmltree`
+into the reference date and each currency's units per euro, the euro included at 1; a file that is
+not the ECB's shape is refused by name. `RateCache` holds what was fetched and caches it as JSON at
+`$XDG_CACHE_HOME/compass/exchange-rates.json` with the date and the fetch time; `refresh` takes
+the fetch as a closure, keeps and caches a good answer and leaves the rates in hand after a failed
+fetch or an unreadable answer. Rates are stale a day after they were fetched.
+
+**The engine** (`vicinae::exchange_rates::ExchangeRateService`). It reads the cache the first time
+the rates are asked for, fetches through the engine's HTTP client (`vicinae::stores::get`, the
+stores' `ureq` agent) at start when there are none or they are stale, and looks hourly after that,
+as the C++'s hourly timer; `VICINAE_DISABLE_AUTO_RATE_REFRESH` turns the automatic refresh off, as
+`Environment::isAutoRateRefreshDisabled`. `COMPASS_EXCHANGE_RATES_URL` points it at another copy
+of the file (tests, mirrors). It answers IPC v21 `Request::ExchangeRates` with what it holds and
+`Request::RefreshExchangeRates` with a fresh fetch or the reason it failed, both as
+`Response::ExchangeRates`.
+
+**The calculator** (`compass_core::calculator`). The launcher asks for the engine's rates each time
+its window opens and after Refresh Exchange Rates, and installs them (`set_exchange_rates`); every
+evaluation, in root search and in Calculator History's live result, hands them to fend through its
+exchange-rate handler (`ExchangeRateFnV2`), so `10 usd to eur`, `€5 in gbp` and `£8 to usd` are
+answered, and copied ones are remembered as conversions (`is_conversion`). Without rates a currency
+expression answers nothing, as the C++ does when its provider has none.
+
+**Refresh Exchange Rates** (`commands:refresh-rates`, `compass_ui::app::calculator`). The command
+asks the engine to fetch now and says how it went: "Refreshing rates...", then "Rates successfully
+refreshed" or the error.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/calculator-service` | `Rust ✓` 🟡 → ✅ | `compass_core::exchange_rates` (`parse_ecb`, `ExchangeRates`, `RateCache`, `cache_path`, `source_url`), `compass_core::calculator` (`set_exchange_rates`, `compute_with_rates`, `RateHandler`), `vicinae::exchange_rates` (`ExchangeRateService`, `run`), `compass_ui::app::calculator` (`exchange_rates_task`, `refresh_exchange_rates`), `CommandKind::RefreshExchangeRates` | `the_ecb_daily_file_is_read_with_its_date_and_the_euro`, `a_file_that_is_not_the_ecbs_is_refused_by_name`, `currency_expressions_are_answered_with_the_rates`, `a_currency_the_rates_do_not_list_answers_nothing`, `without_rates_currency_expressions_answer_nothing`, `the_fixture_s_rates_convert_through_the_euro`, `the_process_rates_reach_root_search`, `rates_go_stale_after_a_day_or_when_the_clock_goes_back`, `a_refresh_keeps_and_caches_the_rates_and_a_restart_reads_them_back`, `a_failed_refresh_keeps_the_rates_in_hand`, `an_unreadable_cache_is_no_rates` (`compass-core/tests/exchange_rates.rs`, over a checked-in ECB file and fake fetches); `the_engine_fetches_the_ecb_rates_at_start_caches_them_and_keeps_them_when_a_refresh_fails`, `an_offline_engine_answers_with_the_cached_rates_or_none` (a real engine against a local fake ECB); `refresh_exchange_rates_installs_the_fresh_rates_and_says_so_or_why_not` |
+
+Declared differences:
+
+- The source is the ECB, not the Vicinae API: about thirty fiat currencies, and no crypto
+  (`$SOL` and the other `$`-tickers answer nothing), nor any currency the ECB does not quote.
+- The C++ refetches when its cache file is 30 minutes old; Compass when its rates are a day old,
+  the ECB publishing once a working day. Both look hourly. The age is the fetch time kept in the
+  file, not the file's modification time.
+- The C++'s Refresh Exchange Rates reports success as soon as the fetch is started
+  (`NumenCalculatorBackend::refreshExchangeRates` returns a ready future); Compass waits for the
+  fetch and reports a failure by its reason.
+- The C++ keeps the window open, clears the search text and shows toasts; Compass hides the window
+  and shows the HUD, and a failure is also the launcher's error line when it next opens. Where the
+  presentation has no HUD (GNOME's `xdg_toplevel`), only that error line says so.
+- The launcher computes, so it learns rates the engine fetched in the background the next time its
+  window opens.
+- `€` before a number is moved after it before fend evaluates (`€5` is asked as `5€`), since fend
+  reads `€5` as a word; the question remembered is the one typed.
+- `VICINAE_DISABLE_AUTO_RATE_REFRESH` set to the empty string does not disable the refresh (the C++
+  counts any value); the tests use this to turn it back on for one engine.
+- As in the C++, remembered conversions are not re-evaluated after a refresh:
+  `CalculatorService::updateConversionRecords` exists there but nothing calls it.
+
+Tests never reach the ECB: the parser and fend read a checked-in copy of the file, the refresh
+rules use closures, and the engine tests serve the file from a local `tiny_http` server; every other
+engine a test starts has the automatic refresh turned off.
 
 ### Earlier row notes
 
@@ -2230,8 +2294,8 @@ the behaviour changes, so a future fix is loud rather than silent.
 The C++ calculator is Numen, an in-tree library; porting it was not the job, so root search uses
 [`fend-core`](https://crates.io/crates/fend-core), an existing Rust calculator with no dependencies
 of its own. The two engines therefore format some answers differently (fend writes `approx.` before
-an inexact result), and **currency conversion is not available yet**: fend needs exchange rates and
-Compass has no source for them. When to try is the C++ rule (a leading `=` always; otherwise at
+an inexact result). Currency conversion is fend's own, fed the ECB's daily rates since "The gaps
+pass, currency". When to try is the C++ rule (a leading `=` always; otherwise at
 least three characters and nothing else matched), plus one: without the `=`, the query must contain
 a digit, because fend reads almost any word as something (`a` is one ampere).
 

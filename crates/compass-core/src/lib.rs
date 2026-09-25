@@ -54,6 +54,7 @@ pub mod create_extension;
 pub mod default_app;
 pub mod emoji_grid;
 pub mod entry_filter;
+pub mod exchange_rates;
 pub mod extension_commands;
 pub mod extension_install;
 pub mod extension_store;

@@ -88,7 +88,9 @@ use serde::{Deserialize, Serialize};
 /// suspending the global shortcuts while it captures
 /// ([`Request::ShortcutCapture`]); version 21, the update check: whether a
 /// newer Compass release is out ([`Request::UpdateStatus`],
-/// [`Response::UpdateStatus`]) and skipping it ([`Request::SkipUpdate`]).
+/// [`Response::UpdateStatus`]) and skipping it ([`Request::SkipUpdate`]), and currency conversion's exchange rates
+/// ([`Request::ExchangeRates`], [`Request::RefreshExchangeRates`], both
+/// answered with [`Response::ExchangeRates`]).
 pub const PROTOCOL_VERSION: u16 = 21;
 
 /// A client-to-server frame.
@@ -1016,6 +1018,14 @@ pub enum Request {
         /// The release's tag, as [`UpdateOffer::tag`] gave it.
         tag: String,
     },
+    /// The exchange rates the engine holds, for the calculator's currency
+    /// conversions. Answered with [`Response::ExchangeRates`]. (v21.)
+    ExchangeRates,
+    /// Refresh Exchange Rates: fetch the rates now, whatever their age.
+    /// Answered with [`Response::ExchangeRates`] holding the fresh rates, or
+    /// an error saying why the fetch failed (the rates held are kept).
+    /// (v21.)
+    RefreshExchangeRates,
 }
 
 /// A newer Compass release, in a [`Response::UpdateStatus`]. (v21.)
@@ -1027,6 +1037,18 @@ pub struct UpdateOffer {
     pub version: String,
     /// The release page.
     pub release_url: String,
+}
+
+/// Currency exchange rates: one day of the ECB's reference rates. (v21.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExchangeRateTable {
+    /// The ECB's reference date, `YYYY-MM-DD`.
+    pub date: String,
+    /// When the engine fetched them, in seconds since the epoch.
+    pub fetched_at: i64,
+    /// `(ISO 4217 code, units per euro)`, the rate as decimal text that
+    /// reads back to the same `f64`, so the table stays `Eq`.
+    pub rates: Vec<(String, String)>,
 }
 
 /// Answer to [`Request::FileActions`]. (v18.)
@@ -1513,6 +1535,13 @@ pub enum Response {
         /// The newer release, or `None`: up to date, checking off, or the
         /// feed not reached.
         available: Option<UpdateOffer>,
+    },
+    /// Answer to [`Request::ExchangeRates`] and
+    /// [`Request::RefreshExchangeRates`]: `None` when the engine has none,
+    /// neither cached nor fetched. (v21.)
+    ExchangeRates {
+        /// The rates.
+        rates: Option<ExchangeRateTable>,
     },
 }
 

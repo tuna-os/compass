@@ -172,6 +172,22 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// The exchange rates the engine holds, for currency conversions; `None`
+    /// when it has none.
+    fn exchange_rates(
+        &self,
+    ) -> BackendFuture<'_, Option<compass_core::exchange_rates::ExchangeRates>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Refresh Exchange Rates: the engine fetches them now. An error is the
+    /// sentence to show.
+    fn refresh_exchange_rates(
+        &self,
+    ) -> BackendFuture<'_, compass_core::exchange_rates::ExchangeRates> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The calculator's history matching `query`, in its non-empty groups.
     fn calculator_history(&self, query: String) -> BackendFuture<'_, Vec<CalculatorGroupRow>> {
         let _ = query;
