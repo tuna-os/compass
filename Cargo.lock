@@ -1172,6 +1172,7 @@ dependencies = [
  "image",
  "insta",
  "jiff",
+ "mime_guess",
  "serde",
  "serde_json",
  "sha2 0.11.0",

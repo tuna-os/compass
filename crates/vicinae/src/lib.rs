@@ -333,6 +333,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             power_asks,
             browse_apps,
             glyph_path: compass_core::glyph_service::default_path(),
+            builtin_icons: compass_core::builtin_icon::directory(),
             emoji_skin_tone,
             search_history_path: compass_core::root_view::default_history_path(),
             clock,

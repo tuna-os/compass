@@ -331,13 +331,32 @@ impl LauncherApp {
                 .subtitles
                 .then(|| row.app.description.clone())
                 .filter(|description| !description.is_empty());
-            let item = self.list_row_with(
-                icon,
-                row.app.display_name.clone(),
-                subtitle,
-                apps_page::accessory(row),
-                selected,
-            );
+            let mark = row
+                .is_default
+                .then(|| {
+                    self.glyph(
+                        &crate::icons::default_mark(),
+                        selected,
+                        f32::from(self.geometry.subtitle_size) + 4.0,
+                    )
+                })
+                .flatten();
+            let item = match mark {
+                Some(mark) => self.list_row_parts(
+                    icon,
+                    row.app.display_name.clone(),
+                    subtitle,
+                    Some(mark),
+                    selected,
+                ),
+                None => self.list_row_with(
+                    icon,
+                    row.app.display_name.clone(),
+                    subtitle,
+                    apps_page::accessory(row),
+                    selected,
+                ),
+            };
             let item: Element<Message> = mouse_area(item)
                 .on_press(Message::AppsSelected(position))
                 .into();

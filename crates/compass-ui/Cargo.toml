@@ -35,6 +35,8 @@ serde = { workspace = true }
 ureq.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+# A file's MIME type, for its file-type icon (already in the tree through compass-xdg).
+mime_guess.workspace = true
 # The local time for a file preview's modified date (already in the tree through `vicinae`).
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 

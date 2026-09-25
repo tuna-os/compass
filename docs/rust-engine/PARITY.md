@@ -338,9 +338,10 @@ PLAN §12.0 sizes them and says what blocks each.
   views, and drag and drop.
 - `ui/settings`, `ui/windows`: Still C++-only: the settings window and its pages (general,
   appearance, keybinds, extensions) beyond the sidebar model and the preferences form.
-- `ui/image`: Still C++-only: drawing the builtin icon set and file-type icons (builtin commands,
-  windows, files and clipboard entries show an initial), masks, tints and badges, and reading a bare
-  icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
+- `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
+  "The gaps pass, icons and tray". Still C++-only: circle and rounded-rectangle masks, the icons of
+  extension, script and shortcut rows in root search (they show an initial), favicons, and reading
+  a bare icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
 - `ui/action-panel`: Still C++-only: the shortcut recorder panel.
 - `ui/bridges`: Still C++-only: images inside an extension's Markdown detail, which are not fetched.
 
@@ -365,10 +366,29 @@ What differs, by row:
 | `builtins/system` | Browse Apps' panel starts with Focus Window when the application has a window open. | Not offered: the launcher has no per-application window lookup yet (Switch Windows is its own view). | — |
 | `builtins/system` | Browse Apps reads `showHidden` and `sortAlphabetically` each time it opens. | Read when the window starts, like the power commands' preferences; a change applies after a restart of the window. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
 | `builtins/system` | Unsorted, the list is `m_apps` in scan order, hidden entries among the rest. | Unsorted, the shown applications in scan order, then the hidden ones. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
-| `builtins/system` | The current default carries a green check icon. | A `✓ Default` accessory in text, the drawn icon set being `ui/image`'s gap. | `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one` |
+| `builtins/system` | The current default carries a green check icon. | The same icon (`CheckCircle` in green) since "The gaps pass, icons and tray"; the `✓ Default` text only where the builtin icon set is not installed. | `the_default_pickers_mark_is_the_green_check_icon` |
 | `desktop-notification` | Every icon is rendered to a 128×128 PNG, with the theme's side of a themed image, and a file icon or `data:` URL drawn as the launcher would. | A PNG or JPEG file (on disk, an asset, or fetched) is passed as it is and scaled by the notification server; a themed image uses its light side (a notification has no theme); a file icon and a `data:` URL go without an icon. | `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` |
 | `extension-registry` | `QFileSystemWatcher` on each extension directory: an extension appearing is seen, a `package.json` written into it afterwards is not, so `vicinae develop` (which creates the directory before building) waits for the next change or its own deeplink. | Each extension's directory is watched too, for its `package.json` only; a bundle being written is not a rescan. | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` |
 | `app-service` | One process: `appsChanged` reloads the root items the window shows. | Two: the engine rescans on the watch; the window asks for the catalog generation on every summon and rescans its own index when it moved, so an open window catches up on its next summon. | `a_moved_catalog_generation_rescans_and_the_same_one_does_not` |
+
+### The gaps pass, icons and tray (2026-09-25)
+
+Three gaps from PLAN §12.0, ported from `src/server/src/ui/image`, `services/ui` and
+`services/tray-host`, one commit each (IPC v18 for the tray). The rule is the truth pass's: a cell
+flips only with a named Rust module and named tests that would fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `ui/image` | none (see its note) | `compass_ui::icons::{Glyph, command_glyph, file_glyph, clipboard_glyph, default_mark, FileGlyphCache, tile_tone, on_tile}`; `compass_core::commands::{Tile, CommandKind::tile, CommandKind::badge}`; `LauncherApp::glyph` draws a builtin in the row's colour, or on the command's tile (`applyBackdrop`'s rounded square, the glyph inset 19% in `getTonalContrastColor(tile, 5, 0.1)`) with `applyBadge`'s black disc | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial`, `search_files_rows_draw_their_file_type_icons`, `a_window_row_draws_its_applications_icon_or_the_app_window_builtin`, `the_default_pickers_mark_is_the_green_check_icon`, `clipboard_rows_draw_the_builtin_for_their_kind`, `icons::tests::{a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin, a_command_is_drawn_on_its_tile_with_a_light_glyph, a_grey_tile_stays_grey_and_accent_follows_the_palette, clipboard_rows_and_the_default_mark_use_the_cpps_builtins, file_glyphs_are_resolved_once_per_path}`, `each_command_keeps_the_cpps_tile_and_badge` |
+
+What differs, by row:
+
+| Row | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| `ui/image` | `renderFileIcon` asks `QMimeDatabase` (`MatchDefault`: the name's globs, then the content's magic) and the type's `iconName` and `genericIconName`, which the shared-mime-info database may override per type. | The type by extension (`mime_guess`, already in the tree), `inode/directory` for a directory; the icon names by shared-mime-info's defaults (`image/png` → `image-png`, generic `image-x-generic`; a directory's generic `folder`). An extensionless file is `application/octet-stream` rather than sniffed, and a type's own `<generic-icon>` is not read. | `a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin`, `mime_icon_names_follow_the_shared_mime_info_defaults` |
+| `ui/image` | A tile is a vertical gradient with a hairline and a drop shadow under the glyph, the tile colour from the theme's semantic colours. | A flat tile with the hairline, in the Vicinae dark theme's accents (the launcher's own palette carries only an accent), clamped into `clampTileTone`'s band; no gradient or shadow. | `a_command_is_drawn_on_its_tile_with_a_light_glyph` |
+| `ui/image` | A clipboard link row shows the site's favicon. | The builtin link icon: favicons are fetched from the network, which the launcher does not do for clipboard rows yet. | `clipboard_rows_and_the_default_mark_use_the_cpps_builtins` |
+| `ui/image` | Builtin icons are compiled into the binary as Qt resources. | Read from the installed `vicinae/builtin-icons` directory (`compass_core::builtin_icon::directory`); where it is missing a row keeps its initial, as before. | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial` |
 
 ### The gaps pass: glyphs, clipboard, root (2026-09-25)
 

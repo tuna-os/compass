@@ -419,6 +419,68 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
 ];
 
+/// The colour a builtin command's icon tile is filled with: the C++ command's
+/// `setBackgroundTint`, a theme accent or the literal grey `(128, 132, 138)`
+/// the media and default-app commands use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tile {
+    /// `SemanticColor::Red`.
+    Red,
+    /// `SemanticColor::Orange`.
+    Orange,
+    /// `SemanticColor::Yellow`.
+    Yellow,
+    /// `SemanticColor::Green`.
+    Green,
+    /// `SemanticColor::Cyan`.
+    Cyan,
+    /// `SemanticColor::Blue`.
+    Blue,
+    /// `SemanticColor::Purple`.
+    Purple,
+    /// `SemanticColor::Accent` (`Omnicast::ACCENT_COLOR`).
+    Accent,
+    /// `QColor(128, 132, 138)`.
+    Gray,
+}
+
+impl CommandKind {
+    /// The tile behind the command's icon, as its C++ `iconUrl()` sets it.
+    #[must_use]
+    pub fn tile(self) -> Tile {
+        match self {
+            Self::ClipboardHistory | Self::RaycastStore => Tile::Red,
+            Self::SearchFiles => Tile::Yellow,
+            Self::SwitchWindows | Self::CalculatorHistory => Tile::Blue,
+            Self::CreateShortcut | Self::ManageShortcuts | Self::SetTheme => Tile::Purple,
+            Self::CreateSnippet | Self::ManageSnippets | Self::BrowseFonts => Tile::Orange,
+            Self::CreateExtension => Tile::Green,
+            Self::RunProgram | Self::BrowseApps => Tile::Cyan,
+            Self::SearchEmojis | Self::ExtensionStore | Self::ScriptPermissions => Tile::Accent,
+            Self::NowPlaying
+            | Self::Media(_)
+            | Self::SetDefaultBrowser
+            | Self::SetDefaultTerminal => Tile::Gray,
+            Self::Power(id) => match id {
+                "power-off" | "logout" => Tile::Red,
+                "soft-reboot" => Tile::Cyan,
+                _ => Tile::Accent,
+            },
+        }
+    }
+
+    /// The small builtin icon drawn in the tile's corner, as the C++'s
+    /// `setBadge`: a plus on the create commands, an arrow on the stores.
+    #[must_use]
+    pub fn badge(self) -> Option<&'static str> {
+        match self {
+            Self::CreateShortcut | Self::CreateSnippet | Self::CreateExtension => Some("plus"),
+            Self::ExtensionStore | Self::RaycastStore => Some("arrow-down"),
+            _ => None,
+        }
+    }
+}
+
 impl BuiltinCommand {
     /// The `commands:<entrypoint>` id that addresses it in root search, on the
     /// wire, and as its frecency key.
@@ -582,6 +644,28 @@ mod tests {
             Some(CommandKind::ClipboardHistory)
         );
         assert!(by_id("applications:clipboard-history").is_none());
+    }
+
+    #[test]
+    fn each_command_keeps_the_cpps_tile_and_badge() {
+        let tile = |id: &str| by_id(id).map(|c| c.kind.tile());
+        assert_eq!(tile("commands:clipboard-history"), Some(Tile::Red));
+        assert_eq!(tile("commands:search-files"), Some(Tile::Yellow));
+        assert_eq!(tile("commands:manage-snippets"), Some(Tile::Orange));
+        assert_eq!(tile("commands:set-theme"), Some(Tile::Purple));
+        assert_eq!(tile("commands:browse-apps"), Some(Tile::Cyan));
+        assert_eq!(tile("commands:set-default-browser"), Some(Tile::Gray));
+        assert_eq!(CommandKind::Power("power-off").tile(), Tile::Red);
+        assert_eq!(CommandKind::Power("lock").tile(), Tile::Accent);
+        assert_eq!(CommandKind::Power("soft-reboot").tile(), Tile::Cyan);
+        assert_eq!(CommandKind::CreateSnippet.badge(), Some("plus"));
+        assert_eq!(CommandKind::ExtensionStore.badge(), Some("arrow-down"));
+        assert_eq!(CommandKind::ManageSnippets.badge(), None);
+        for command in BUILTIN_COMMANDS {
+            if let Some(badge) = command.kind.badge() {
+                assert!(crate::builtin_icon::is_builtin(badge), "{badge}");
+            }
+        }
     }
 
     #[test]

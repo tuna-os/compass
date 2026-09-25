@@ -240,6 +240,10 @@ pub struct AppFlags {
     /// (`compass_core::glyph_service::default_path`); `None` keeps them in
     /// memory, as tests do.
     pub glyph_path: Option<std::path::PathBuf>,
+    /// Where the builtin icon set is installed
+    /// ([`compass_core::builtin_icon::directory`]); `None` draws initials
+    /// where a builtin icon would go.
+    pub builtin_icons: Option<std::path::PathBuf>,
     /// The emoji picker's `skinTone` preference, as a tone id.
     pub emoji_skin_tone: Option<String>,
     /// Where the root search's history is kept
@@ -338,6 +342,7 @@ impl Default for AppFlags {
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
             glyph_path: None,
+            builtin_icons: None,
             emoji_skin_tone: None,
             search_history_path: None,
             clock: None,
@@ -862,6 +867,10 @@ pub struct LauncherApp {
     /// Warmed from `update`, never from `view`: resolving a name walks the
     /// theme directories, which is disk work that does not belong in a draw.
     icon_cache: crate::icons::IconCache,
+    /// Where the builtin icon set is installed, read once at startup.
+    builtin_icons: Option<std::path::PathBuf>,
+    /// File-type icons for file rows, by path, warmed as `icon_cache` is.
+    file_glyphs: crate::icons::FileGlyphCache,
     /// Which navigation chords are in force. See [`compass_core::keybinding`].
     ///
     /// Held rather than read per keystroke because it comes from the user's
@@ -1059,6 +1068,7 @@ impl LauncherApp {
         app.power_asks = flags.power_asks;
         app.browse_apps = flags.browse_apps;
         app.glyph_path = flags.glyph_path;
+        app.builtin_icons = flags.builtin_icons;
         app.emoji_skin_tone = flags.emoji_skin_tone;
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
@@ -1155,6 +1165,8 @@ impl LauncherApp {
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
+            builtin_icons: None,
+            file_glyphs: crate::icons::FileGlyphCache::default(),
             geometry: design::GEOMETRY,
             field_rule: false,
             tint: false,
@@ -2420,6 +2432,7 @@ impl LauncherApp {
                         .extension(&id)
                         .map(|command| command.extension_dir.join("assets"));
                     page.leaves_on_end = compass_core::rhai_scripts::script_id(&id).is_some();
+                    page.icon_lookup = Some(self.icon_lookup.clone());
                     let surface = self.palette().surface.to_iced();
                     page.prefers_dark =
                         0.299 * surface.r + 0.587 * surface.g + 0.114 * surface.b < 0.5;
@@ -2737,6 +2750,7 @@ impl LauncherApp {
                 if let Page::Files(page) = &mut self.page {
                     page.apply(generation, result);
                 }
+                self.warm_file_icons();
                 crate::scroll::reveal_root_selection()
             }
             Message::FilesSelected(position) => {
@@ -2782,6 +2796,7 @@ impl LauncherApp {
                 if let Page::Windows(page) = &mut self.page {
                     page.apply(result, std::process::id());
                 }
+                self.warm_window_icons();
                 crate::scroll::reveal_root_selection()
             }
             Message::WindowSelected(position) => {
@@ -3407,7 +3422,7 @@ impl LauncherApp {
                         self.result_row(item, selected)
                     }
                     RootRow::Command(command) => self.list_row(
-                        self.initial_badge(command.title, selected),
+                        self.command_icon(command, selected),
                         command.title.to_owned(),
                         self.subtitles.then(|| command.subtitle.to_owned()),
                         selected,
@@ -3480,7 +3495,7 @@ impl LauncherApp {
                             );
                         }
                         self.list_row(
-                            self.initial_badge(command.title, selected),
+                            self.command_icon(command, selected),
                             command.title.to_owned(),
                             self.subtitles.then(|| command.subtitle.to_owned()),
                             selected,
@@ -3711,7 +3726,7 @@ impl LauncherApp {
                 window.title.clone()
             };
             let row = self.list_row(
-                self.initial_badge(&window.app, selected),
+                self.window_icon(window, selected),
                 title,
                 self.subtitles.then(|| window.app.clone()),
                 selected,
@@ -3780,7 +3795,13 @@ impl LauncherApp {
                 .subtitles
                 .then(|| crate::files_page::subtitle(file, home.as_deref()));
             let row = self.list_row(
-                self.initial_badge(&file.category, selected),
+                self.glyph_or_initial(
+                    self.icons
+                        .then(|| self.file_glyphs.cached(&file.path))
+                        .flatten(),
+                    &file.name,
+                    selected,
+                ),
                 file.name.clone(),
                 subtitle,
                 selected,
@@ -3845,7 +3866,13 @@ impl LauncherApp {
                 .subtitles
                 .then(|| crate::clipboard_page::subtitle(entry));
             let row = self.list_row(
-                self.initial_badge(crate::clipboard_page::subtitle(entry).as_str(), selected),
+                self.glyph_or_initial(
+                    self.icons
+                        .then(|| crate::icons::clipboard_glyph(entry.kind))
+                        .as_ref(),
+                    crate::clipboard_page::subtitle(entry).as_str(),
+                    selected,
+                ),
                 entry.preview.clone(),
                 subtitle,
                 selected,
@@ -3989,6 +4016,189 @@ impl LauncherApp {
             }
         };
         container(art).width(size).height(size).into()
+    }
+
+    /// A builtin command's icon slot: its icon on its C++ tile when icons are
+    /// on and the builtin set is installed, its initial otherwise.
+    fn command_icon(
+        &self,
+        command: &compass_core::commands::BuiltinCommand,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = self
+            .icons
+            .then(|| crate::icons::command_glyph(command, self.palette().accent));
+        self.glyph_or_initial(glyph.as_ref(), command.title, selected)
+    }
+
+    /// A window's icon slot: its application's icon, else `AppWindow`
+    /// (`SwitchWindowsSection::displayIcon`).
+    fn window_icon(
+        &self,
+        window: &crate::backend::WindowRow,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = self.icons.then(|| {
+            self.window_app(window)
+                .and_then(|item| self.row_art(item))
+                .cloned()
+                .map_or_else(
+                    || crate::icons::Glyph::builtin("app-window"),
+                    crate::icons::Glyph::Art,
+                )
+        });
+        self.glyph_or_initial(glyph.as_ref(), &window.app, selected)
+    }
+
+    /// The application a window belongs to, when the engine recognised it.
+    fn window_app(&self, window: &crate::backend::WindowRow) -> Option<&AppItem> {
+        if !window.app_known {
+            return None;
+        }
+        self.app_index
+            .items()
+            .iter()
+            .find(|item| item.name() == window.app)
+    }
+
+    /// `glyph` drawn in the row's icon slot, or `title`'s initial when there
+    /// is none or it cannot be drawn (a builtin with no installed icon set).
+    fn glyph_or_initial(
+        &self,
+        glyph: Option<&crate::icons::Glyph>,
+        title: &str,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        glyph
+            .and_then(|glyph| self.glyph(glyph, selected, f32::from(self.geometry.icon_size)))
+            .unwrap_or_else(|| self.initial_badge(title, selected))
+    }
+
+    /// The builtin icon `name` as an SVG of `size`, drawn in `color`.
+    fn builtin_svg(
+        &self,
+        name: &str,
+        color: Color,
+        size: f32,
+    ) -> Option<Element<'static, Message>> {
+        let file = self
+            .builtin_icons
+            .as_ref()?
+            .join(compass_core::builtin_icon::file_name(name)?);
+        Some(
+            svg(file)
+                .width(Length::Fixed(size))
+                .height(Length::Fixed(size))
+                .style(move |_: &Theme, _| iced::widget::svg::Style { color: Some(color) })
+                .into(),
+        )
+    }
+
+    /// A [`crate::icons::Glyph`] drawn in a square of `size`.
+    ///
+    /// A tile is `applyBackdrop`'s rounded square (a quarter of the side),
+    /// with the glyph inset by 19% of it as `backdropContentSize`; a badge is
+    /// `applyBadge`'s black disc, 44% of the side, 4% in from the corner,
+    /// carrying the badge glyph in white.
+    fn glyph(
+        &self,
+        glyph: &crate::icons::Glyph,
+        selected: bool,
+        size: f32,
+    ) -> Option<Element<'static, Message>> {
+        use crate::icons::Glyph;
+        let square = Length::Fixed(size);
+        match glyph {
+            Glyph::Art(art) => {
+                let drawn: Element<'static, Message> = match art {
+                    crate::icons::IconArt::Raster(path) => image(path.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into(),
+                    crate::icons::IconArt::Vector(path) => svg(path.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into(),
+                };
+                Some(container(drawn).width(square).height(square).into())
+            }
+            Glyph::Builtin {
+                name,
+                fill,
+                tile,
+                badge,
+            } => {
+                let palette = self.palette();
+                let text_color = if selected {
+                    palette.selection_text
+                } else {
+                    palette.text
+                };
+                let base: Element<'static, Message> = match tile {
+                    None => container(self.builtin_svg(
+                        name,
+                        fill.unwrap_or(text_color).to_iced(),
+                        size * 0.8,
+                    )?)
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    Some(tile) => {
+                        let tile = tile.to_iced();
+                        let inner = size * (1.0 - 2.0 * 0.19);
+                        container(
+                            self.builtin_svg(
+                                name,
+                                fill.unwrap_or(crate::design::Rgb::new(255, 255, 255))
+                                    .to_iced(),
+                                inner,
+                            )?,
+                        )
+                        .width(square)
+                        .height(square)
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center)
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(tile.into()),
+                            border: Border {
+                                color: Color::from_rgba8(255, 255, 255, 30.0 / 255.0),
+                                width: (size / 32.0).max(1.0),
+                                radius: (size * 0.25).into(),
+                            },
+                            ..container::Style::default()
+                        })
+                        .into()
+                    }
+                };
+                let Some(badge) = badge else {
+                    return Some(base);
+                };
+                let diameter = size * 0.44;
+                let disc = container(self.builtin_svg(badge, Color::WHITE, diameter * 0.56)?)
+                    .width(Length::Fixed(diameter))
+                    .height(Length::Fixed(diameter))
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Color::BLACK.into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: (diameter / 2.0).into(),
+                        },
+                        ..container::Style::default()
+                    });
+                let corner = container(disc)
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::End)
+                    .padding(size * 0.04);
+                Some(iced::widget::stack![base, corner].into())
+            }
+        }
     }
 
     /// The first letter of `title` in a tinted square, for a row with no art.
@@ -5320,6 +5530,39 @@ impl LauncherApp {
             .collect();
         let find = self.icon_lookup.clone();
         self.icon_cache.warm(names, &|name| find.find(name));
+    }
+
+    /// Resolve the file-type icons of Search Files' rows.
+    fn warm_file_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Files(page) = &self.page else {
+            return;
+        };
+        let find = self.icon_lookup.clone();
+        self.file_glyphs
+            .warm(page.rows.iter().map(|file| file.path.as_str()), &|name| {
+                find.find(name)
+            });
+    }
+
+    /// Resolve the icons of the windows' applications.
+    fn warm_window_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Windows(page) = &self.page else {
+            return;
+        };
+        let names: Vec<String> = page
+            .all
+            .iter()
+            .filter_map(|window| self.window_app(window)?.icon().map(str::to_owned))
+            .collect();
+        let find = self.icon_lookup.clone();
+        self.icon_cache
+            .warm(names.iter().map(String::as_str), &|name| find.find(name));
     }
 }
 
@@ -11391,6 +11634,171 @@ mod tests {
         assert!(matches!(app.results.first(), Some(RootRow::Command(_))));
         assert!(matches!(app.results.get(1), Some(RootRow::App(_))));
     }
+    use super::icon_tests::{app_with_icons, asked, recording};
+    use crate::icons::IconArt;
+    use std::path::{Path, PathBuf};
+
+    fn repo_builtin_icons() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/server/icons")
+            .canonicalize()
+            .expect("the builtin icon set is in the repository")
+    }
+
+    #[test]
+    fn a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.query = "clipboard history".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Command(_))));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(
+                ui.find("C").is_ok(),
+                "with no builtin icon set installed the row keeps its initial"
+            );
+        }
+        app.builtin_icons = Some(repo_builtin_icons());
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Clipboard History").is_ok());
+        assert!(
+            ui.find("C").is_err(),
+            "the builtin icon replaces the initial"
+        );
+    }
+
+    #[test]
+    fn search_files_rows_draw_their_file_type_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = tempfile::tempdir().unwrap();
+        let photo = files.path().join("photo.png");
+        fs::write(&photo, b"x").unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        let (log, lookup) = recording(&["image-png"]);
+        app.icon_lookup = lookup;
+        let page = crate::files_page::FilesPage::default();
+        let generation = page.generation;
+        app.page = Page::Files(page);
+        let row = |path: &Path, category: &str| crate::backend::FileRow {
+            path: path.to_string_lossy().into_owned(),
+            name: path.file_name().unwrap().to_string_lossy().into_owned(),
+            category: category.into(),
+        };
+        let _ = app.update(Message::FilesLoaded {
+            generation,
+            result: Ok(crate::backend::FileResults {
+                heading: "Files".into(),
+                files: vec![row(&photo, "Images"), row(files.path(), "Folders")],
+            }),
+        });
+        assert_eq!(
+            app.file_glyphs.cached(&photo.to_string_lossy()),
+            Some(&crate::icons::Glyph::Art(IconArt::Vector(PathBuf::from(
+                "/i/image-png.svg"
+            ))))
+        );
+        assert_eq!(
+            app.file_glyphs.cached(&files.path().to_string_lossy()),
+            Some(&crate::icons::Glyph::builtin("folder")),
+            "a folder no theme has an icon for draws the builtin folder"
+        );
+        assert!(asked(&log).contains(&"inode-directory".to_owned()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("photo.png").is_ok());
+        assert!(ui.find("P").is_err(), "no initial on a file row");
+    }
+
+    #[test]
+    fn a_window_row_draws_its_applications_icon_or_the_app_window_builtin() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![
+                window_row(7, "Downloads", "Firefox", 1),
+                crate::backend::WindowRow {
+                    app_known: false,
+                    ..window_row(9, "xterm", "XTerm", 2)
+                },
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        let fresh = app_with_icons(dir.path());
+        app.app_index = fresh.app_index;
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        open_windows(&mut app);
+        assert!(asked(&log).contains(&"firefox".to_owned()));
+        let Page::Windows(page) = &app.page else {
+            panic!("not the window switcher: {}", app.state_line());
+        };
+        let firefox = page.all.iter().find(|w| w.id == 7).unwrap();
+        let xterm = page.all.iter().find(|w| w.id == 9).unwrap();
+        assert_eq!(
+            app.window_app(firefox).and_then(|item| app.row_art(item)),
+            Some(&IconArt::Vector(PathBuf::from("/i/firefox.svg")))
+        );
+        assert!(app.window_app(xterm).is_none());
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("X").is_err(), "the unknown window draws AppWindow");
+        assert!(ui.find("F").is_err());
+    }
+
+    #[test]
+    fn the_default_pickers_mark_is_the_green_check_icon() {
+        use crate::backend::DefaultAppRow;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            default_apps: vec![DefaultAppRow {
+                id: "firefox.desktop".into(),
+                name: "Firefox".into(),
+                description: "Browse the web".into(),
+                is_default: true,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        app.builtin_icons = Some(repo_builtin_icons());
+        open_builtin(
+            &mut app,
+            "set default browser",
+            "commands:set-default-browser",
+        );
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Firefox").is_ok());
+        assert!(
+            ui.find("✓ Default").is_err(),
+            "the check icon replaces the text mark"
+        );
+    }
+
+    #[test]
+    fn clipboard_rows_draw_the_builtin_for_their_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.builtin_icons = Some(repo_builtin_icons());
+        let page = crate::clipboard_page::ClipboardPage {
+            rows: vec![crate::backend::ClipboardRow {
+                id: "1".into(),
+                preview: "hello".into(),
+                kind: crate::backend::ClipboardRowKind::Text,
+                pinned: false,
+                url_host: None,
+            }],
+            status: crate::clipboard_page::Status::Ready,
+            ..crate::clipboard_page::ClipboardPage::default()
+        };
+        app.page = Page::Clipboard(page);
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("hello").is_ok());
+        assert!(ui.find("T").is_err(), "the text builtin, not an initial");
+    }
 }
 
 #[cfg(test)]
@@ -11576,7 +11984,7 @@ mod icon_tests {
     use crate::icons::IconArt;
 
     /// Three entries, two of which name an icon.
-    fn app_with_icons(dir: &std::path::Path) -> LauncherApp {
+    pub(super) fn app_with_icons(dir: &std::path::Path) -> LauncherApp {
         for (file, name, icon) in [
             ("firefox.desktop", "Firefox", Some("firefox")),
             ("files.desktop", "Files", Some("system-file-manager")),
@@ -11595,7 +12003,7 @@ mod icon_tests {
     }
 
     /// A lookup that answers for `hits` and records every name it is asked.
-    fn recording(hits: &[&str]) -> (Arc<Mutex<Vec<String>>>, IconLookup) {
+    pub(super) fn recording(hits: &[&str]) -> (Arc<Mutex<Vec<String>>>, IconLookup) {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&asked);
         let hits: Vec<String> = hits.iter().map(|hit| (*hit).to_owned()).collect();
@@ -11608,7 +12016,7 @@ mod icon_tests {
         (asked, lookup)
     }
 
-    fn asked(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+    pub(super) fn asked(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
         log.lock().expect("lock").clone()
     }
 
