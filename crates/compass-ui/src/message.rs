@@ -328,6 +328,15 @@ pub enum Message {
     WindowActivated(Result<(), String>),
     /// Closing a window finished; the list is reloaded either way.
     ShellWindowClosed(Result<(), String>),
+    /// Whether the application under the root row's panel runs, by its key.
+    AppRuntimeLoaded {
+        /// The application's key, so a late answer for another row is dropped.
+        key: String,
+        /// Whether it runs, and its windows.
+        result: Result<crate::backend::AppRuntimeInfo, String>,
+    },
+    /// Quit, Force Quit, or a root row's Focus or Close Window finished.
+    AppQuit(Result<(), String>),
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must

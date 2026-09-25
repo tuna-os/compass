@@ -134,11 +134,7 @@ pub async fn launch_app(
             .map(|item| {
                 (
                     item.entry().clone(),
-                    AppIdentity {
-                        desktop_id: item.desktop_id().to_owned(),
-                        startup_wm_class: item.entry().startup_wm_class().map(str::to_owned),
-                        display_name: item.display_name(),
-                    },
+                    compass_core::app_service::identity(item),
                 )
             })
     };

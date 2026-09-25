@@ -38,6 +38,7 @@ mod preview;
 mod programs;
 mod rhai;
 mod root;
+mod runtime;
 mod scripts;
 mod shortcuts;
 mod snippets;
@@ -902,6 +903,8 @@ pub struct LauncherApp {
     /// Subtitles extensions set for their commands (`updateCommandMetadata`),
     /// by command id, shown in place of the extension's title.
     extension_subtitles: std::collections::HashMap<String, String>,
+    /// Whether the application under the root panel runs, by its key.
+    app_runtime: Option<(String, crate::backend::AppRuntimeInfo)>,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -1165,6 +1168,7 @@ impl LauncherApp {
             resized_to: None,
             following_script: None,
             extension_subtitles: std::collections::HashMap::new(),
+            app_runtime: None,
         }
     }
 
@@ -2113,6 +2117,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_clipboard_panel() {
                     return task;
+                } else if let Some(task) = self.open_windows_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -2125,8 +2131,15 @@ impl LauncherApp {
                 } else if let Some(item) = self.selected_item() {
                     // Only over a selected row. A panel of actions for nothing
                     // would be a panel whose every action fails.
-                    self.panel = Some(PanelState::new(actions_for_app(item)));
-                    return iced::widget::operation::focus(PANEL_INPUT);
+                    let (sections, key, desktop_id) = (
+                        actions_for_app(item),
+                        item.key().to_owned(),
+                        item.desktop_id().to_owned(),
+                    );
+                    self.panel = Some(PanelState::new(sections));
+                    self.app_runtime = None;
+                    let running = self.app_runtime_task(key, desktop_id);
+                    return Task::batch([iced::widget::operation::focus(PANEL_INPUT), running]);
                 }
                 Task::none()
             }
@@ -2185,6 +2198,8 @@ impl LauncherApp {
                         .or_else(|| self.emoji_panel_action(&id))
                         .or_else(|| self.clipboard_panel_action(&id))
                         .or_else(|| self.root_panel_action(&id))
+                        .or_else(|| self.windows_panel_action(&id))
+                        .or_else(|| self.app_runtime_action(&id))
                 {
                     return task;
                 }
@@ -2618,6 +2633,7 @@ impl LauncherApp {
                 tracing::debug!(%error, "no catalog generation");
                 Task::none()
             }
+            Message::AppRuntimeLoaded { .. } | Message::AppQuit(_) => self.runtime_message(message),
             Message::GrantsLoaded(_)
             | Message::GrantsQueryChanged(_)
             | Message::GrantSelected(_)
@@ -5530,7 +5546,8 @@ mod tests {
                 root_config: config.root_config(),
                 ..AppFlags::default()
             });
-            let _ = app.update(Message::QueryChanged("Firefox".into()));
+            app.query = "Firefox".into();
+            app.search();
             assert!(app.results.is_empty());
             let _ = app.update(Message::QueryChanged("shellwork".into()));
             assert_eq!(app.results.len(), usize::from(provider_enabled));
@@ -5563,7 +5580,8 @@ mod tests {
             app.results.is_empty(),
             "clearing settings removes the alias"
         );
-        let _ = app.update(Message::QueryChanged("Firefox".into()));
+        app.query = "Firefox".into();
+        app.search();
         assert_eq!(app.results.len(), 1);
     }
 
@@ -10818,6 +10836,11 @@ mod tests {
         activated: std::sync::Mutex<Vec<u32>>,
         closed: std::sync::Mutex<Vec<u32>>,
         listed: std::sync::atomic::AtomicUsize,
+        /// The applications running, by desktop id.
+        running: Vec<(String, crate::backend::AppRuntimeInfo)>,
+        quits: std::sync::Mutex<Vec<(String, bool)>>,
+        window_quits: std::sync::Mutex<Vec<(u32, bool)>>,
+        fail_quit: bool,
     }
 
     impl crate::backend::WindowBackend for FakeWindows {
@@ -10845,6 +10868,193 @@ mod tests {
                 Ok(())
             })
         }
+        fn app_runtime(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::AppRuntimeInfo> {
+            Box::pin(async move {
+                Ok(self
+                    .running
+                    .iter()
+                    .find(|(known, _)| *known == id)
+                    .map(|(_, info)| info.clone())
+                    .unwrap_or_default())
+            })
+        }
+        fn quit_app(&self, id: String, force: bool) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if self.fail_quit {
+                    return Err(format!("Failed to quit {id}"));
+                }
+                self.quits.lock().unwrap().push((id, force));
+                Ok(())
+            })
+        }
+        fn quit_window_app(
+            &self,
+            window: u32,
+            force: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.window_quits.lock().unwrap().push((window, force));
+                Ok(())
+            })
+        }
+    }
+
+    fn panel_titles(app: &LauncherApp) -> Vec<String> {
+        app.panel
+            .as_ref()
+            .map(|panel| {
+                panel
+                    .sections
+                    .iter()
+                    .flat_map(|section| section.actions.iter().map(|a| a.title.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn choose(app: &mut LauncherApp, title: &str) -> Task<Message> {
+        let _ = app.update(Message::PanelFilterChanged(title.to_owned()));
+        assert_eq!(
+            app.panel
+                .as_ref()
+                .and_then(PanelState::selected_action)
+                .map(|a| a.title.as_str()),
+            Some(title)
+        );
+        app.update(Message::PanelActivate)
+    }
+
+    #[test]
+    fn a_running_applications_panel_offers_quit_and_force_quit_and_they_reach_the_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: false,
+            windows: vec![window_row(31, "Mozilla Firefox", "Firefox", 5)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("firefox.desktop".into(), running)],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+
+        // Not running: the panel is the plain one, and stays so.
+        app.query = "Terminal".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(!panel_titles(&app).iter().any(|t| t.contains("Quit")));
+        let _ = app.update(Message::TogglePanel);
+
+        app.query = "Firefox".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Open",
+                "Focus Window",
+                "Close Window",
+                "Copy name",
+                "Copy path",
+                "Quit Application",
+                "Force Quit Application"
+            ]
+        );
+        let quit_row = app.panel.as_ref().unwrap().sections.last().unwrap();
+        assert_eq!(quit_row.actions[0].shortcut.as_deref(), Some("ctrl+q"));
+
+        let task = choose(&mut app, "Force Quit Application");
+        settle(&mut app, task);
+        assert_eq!(
+            windows.quits.lock().unwrap().as_slice(),
+            [("firefox.desktop".to_owned(), true)]
+        );
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Quit Application");
+        settle(&mut app, task);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Focus Window");
+        settle(&mut app, task);
+        assert_eq!(
+            windows.quits.lock().unwrap().last(),
+            Some(&("firefox.desktop".to_owned(), false))
+        );
+        assert_eq!(windows.activated.lock().unwrap().as_slice(), [31]);
+    }
+
+    #[test]
+    fn a_quit_that_does_nothing_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: true,
+            windows: vec![window_row(31, "Files", "Files", 5)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("files.desktop".into(), running)],
+            fail_quit: true,
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        app.query = "Files".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Quit Application");
+        settle(&mut app, task);
+        assert_eq!(app.error.as_deref(), Some("Failed to quit files.desktop"));
+    }
+
+    #[test]
+    fn the_window_switchers_panel_quits_a_known_windows_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![
+                window_row(7, "Downloads", "Files", 1),
+                crate::backend::WindowRow {
+                    app_known: false,
+                    ..window_row(9, "xterm", "XTerm", 2)
+                },
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+        open_windows(&mut app);
+        let _ = app.update(Message::WindowsQueryChanged("Downloads".into()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Focus Window",
+                "Close Window",
+                "Quit Application",
+                "Force Quit Application"
+            ]
+        );
+        let task = choose(&mut app, "Force Quit Application");
+        settle(&mut app, task);
+        assert_eq!(windows.window_quits.lock().unwrap().as_slice(), [(7, true)]);
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_windows(&mut app);
+        let _ = app.update(Message::WindowsQueryChanged("xterm".into()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            ["Focus Window", "Close Window"],
+            "no application to quit"
+        );
+        let task = choose(&mut app, "Close Window");
+        settle(&mut app, task);
+        assert_eq!(windows.closed.lock().unwrap().as_slice(), [9]);
     }
 
     fn window_row(id: u32, title: &str, app: &str, pid: u32) -> crate::backend::WindowRow {
@@ -10855,6 +11065,7 @@ mod tests {
             wm_class: app.to_lowercase(),
             pid: Some(pid),
             can_close: true,
+            app_known: true,
         }
     }
 

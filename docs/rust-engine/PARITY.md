@@ -136,7 +136,7 @@ whether a real GNOME session grants the shortcut we ask for.
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/services/app-runtime` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/app-runtime` | `compass-core`, `vicinae::serve::app_runtime` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/app-service` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
 | `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -314,8 +314,7 @@ shortcuts, the power commands' two preferences, and a notification's urgency and
 PLAN §12.0 sizes them and says what blocks each.
 
 - `src/cli`: closed in the gaps pass below.
-- `src/services/app-runtime`: Still C++-only: Quit and Force Quit for a running application, and the
-  running and frontmost answers the root row would use for them.
+- `src/services/app-runtime`: closed in the gaps pass below.
 - `src/services/calculator-service`: see `src/builtins/calculator` above.
 - `src/services/desktop-notification`: the urgency and an icon that is a file are passed since this
   pass (`a_notification_carries_the_urgency_and_an_icon_file`); rendering any other icon (a builtin
@@ -450,6 +449,7 @@ and the tests that fail on a regression (IPC v17).
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
+| `src/services/app-runtime` | Rust ✅ | `vicinae::serve::app_runtime` (`isRunning`, `frontmostApp`, `quit`, `forceQuit`), `compass_ui::app::runtime` (the root row's and the window switcher's actions) | `quit_closes_an_applications_windows_and_force_quit_kills_their_processes` (a private `dbus-daemon`, the mock Shell extension, and `sleep`s the test started), `force_quit_kills_each_process_once_and_closes_the_windows_that_name_none`, `killing_a_process_this_test_started_ends_it_with_sigkill`, `a_running_applications_panel_offers_quit_and_force_quit_and_they_reach_the_engine`, `the_window_switchers_panel_quits_a_known_windows_application`, `a_quit_that_does_nothing_says_so` |
 | `src/cli` | Rust ✅ | `vicinae::{cli, cli_commands, logs}`, `serve::launch`; `compass_core::{script_template, extension_commands::launch_arguments, config::default_document, file_search::CLI_CATEGORY_NAMES}` | `cmd_ls_lists_every_root_item_by_id_and_cmd_launch_hands_the_window_a_launch`, `app_launch_and_cmd_launch_start_the_application_with_its_arguments`, `state_open_asks_the_window_and_exits_by_the_answer`, `the_engine_keeps_a_log_file_and_logs_prints_its_last_lines`, `fs_query_asks_the_index_alone_and_names_categories_as_the_cpp_does`, `server_refuses_a_running_engine_and_replace_kills_it_and_serves_in_its_place`, `config_cli::{script_template_*, theme_template_check_and_paths, config_default_*, version_*}`, `positional_launch_arguments_are_checked_as_the_cpp_checks_them`, `a_command_line_launch_opens_the_builtin_and_types_its_fallback_text`, `describe_answers_whether_the_window_is_open_and_changes_nothing` |
 
 **`src/cli`.** Every subcommand `CommandLineInterface::execute` registers now has a counterpart:
@@ -482,6 +482,23 @@ and launches it with its arguments otherwise. Declared differences:
 - `theme check` and `theme paths` are registered in the C++ but commented out; here they work.
 - `version`'s commit and provenance come from `COMPASS_GIT_COMMIT` and `COMPASS_PROVENANCE` at build
   time, `unknown` and `local` without them.
+
+**`src/services/app-runtime`.** `LinuxAppRuntime` over the engine's window providers (IPC v17
+`AppRuntime`, `QuitApp`, `QuitWindowApp`): an application is running when `findAppWindows` finds it
+a window (by `StartupWMClass` or desktop id, or a title that is its name), frontmost when one of
+those has focus; Quit closes every one of its windows; Force Quit sends `SIGKILL` once to each
+process that owns one and closes the windows that name no process; either is refused ("Failed to
+quit Files") only when it did nothing. The pids come from the GNOME Shell extension and, on
+wlroots, from Hyprland's or niri's IPC; a toplevel with no pid is closed instead, as the C++ does.
+The root row's panel opens at once and gains Focus Window, Close Window, Quit Application (shown as
+Ctrl+Q) and Force Quit Application when the engine says the application runs, as
+`AppRootItem::newActionPanel`; the window switcher gets the C++'s panel (Focus Window, Close Window
+on Ctrl+Q, and Quit and Force Quit for a window whose application is known). Neither asks first,
+as the C++ does not. Declared differences: success hides the launcher without the C++'s HUD
+("Quit Files"), which Compass does not have; Ctrl+Q is shown beside Quit but, as with every
+builtin panel here, the chord is not bound yet, so Quit runs from its row; the pin-window and bring-to-workspace actions are not offered, no provider here
+having the capability. `frontmost` is answered but nothing reads it yet: its C++ reader is the
+global-shortcut inhibition, which is that row's gap.
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer

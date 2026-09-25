@@ -181,6 +181,9 @@ fn describe(request: &Request) -> &'static str {
         Request::LaunchApp { .. } => "LaunchApp",
         Request::DescribeWindow => "DescribeWindow",
         Request::FsQuery { .. } => "FsQuery",
+        Request::AppRuntime { .. } => "AppRuntime",
+        Request::QuitApp { .. } => "QuitApp",
+        Request::QuitWindowApp { .. } => "QuitWindowApp",
     }
 }
 

@@ -140,7 +140,14 @@ async fn echo_handler(request: Request) -> Response {
         | Request::RunProgram { .. }
         | Request::DmenuChoose { .. }
         | Request::LaunchCommand { .. }
+        | Request::QuitApp { .. }
+        | Request::QuitWindowApp { .. }
         | Request::SetTheme { .. } => Response::Ack,
+        Request::AppRuntime { .. } => Response::AppRuntime {
+            running: false,
+            frontmost: false,
+            windows: vec![],
+        },
         Request::ListCommands => Response::Commands { commands: vec![] },
         Request::LaunchApp { .. } => Response::AppLaunched {
             focused_window_title: None,

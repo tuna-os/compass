@@ -60,7 +60,9 @@ use serde::{Deserialize, Serialize};
 /// ([`Request::ListCommands`], [`Request::LaunchCommand`]), launching or
 /// focusing an application ([`Request::LaunchApp`]), whether the window is
 /// open ([`Request::DescribeWindow`], [`WindowCommand::Describe`]) and the
-/// file index's own query ([`Request::FsQuery`]).
+/// file index's own query ([`Request::FsQuery`]); and Quit and Force Quit
+/// for a running application ([`Request::AppRuntime`], [`Request::QuitApp`],
+/// [`Request::QuitWindowApp`]).
 pub const PROTOCOL_VERSION: u16 = 17;
 
 /// A client-to-server frame.
@@ -763,6 +765,31 @@ pub enum Request {
         /// spells it.
         category: Option<String>,
     },
+    /// Whether an application is running, which is whether it has a
+    /// window, and whether one of them has focus. Answered with
+    /// [`Response::AppRuntime`]; an unknown id is a bad request. (v17.)
+    AppRuntime {
+        /// The application's desktop id, e.g. `firefox.desktop`.
+        id: String,
+    },
+    /// Quit an application, as the C++ `LinuxAppRuntime` does: close every
+    /// window it has, or with `force`, `SIGKILL` every process that owns one
+    /// and close the windows that name none. Answered with
+    /// [`Response::Ack`] when something was done; refused otherwise. (v17.)
+    QuitApp {
+        /// The application's desktop id.
+        id: String,
+        /// Force Quit rather than Quit.
+        force: bool,
+    },
+    /// [`Request::QuitApp`] for the application a window belongs to, as the
+    /// window switcher offers it. (v17.)
+    QuitWindowApp {
+        /// The window's [`WindowInfo::id`].
+        window: u32,
+        /// Force Quit rather than Quit.
+        force: bool,
+    },
 }
 
 /// One change [`Request::RootItemEdit`] makes (`RootSearchActionGenerator`).
@@ -1046,6 +1073,15 @@ pub enum Response {
     WindowState {
         /// Whether the launcher window is on screen.
         open: bool,
+    },
+    /// Answer to [`Request::AppRuntime`]. (v17.)
+    AppRuntime {
+        /// It has at least one window.
+        running: bool,
+        /// One of its windows has focus.
+        frontmost: bool,
+        /// Its windows, the first the one to focus.
+        windows: Vec<WindowInfo>,
     },
     /// Answer to [`Request::ExtensionLaunchFetch`] for a launch that carries
     /// fallback text (`vicinae cmd launch --query`). (v17.)

@@ -15,6 +15,15 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+/// compass-shell's private `dbus-daemon` and mock GNOME Shell extension, for
+/// the tests that need the extension's windows.
+#[path = "../../compass-shell/tests/support/bus.rs"]
+#[allow(dead_code)]
+mod shell_bus;
+#[path = "../../compass-shell/tests/support/mock.rs"]
+#[allow(dead_code)]
+mod shell_mock;
+
 /// A session bus address with nothing behind it, for every engine this file
 /// starts. The engine opens clipboard history through the login keyring on
 /// the session bus; pointed at a real one, running these tests would create a
@@ -5471,7 +5480,12 @@ fn the_engine_keeps_a_log_file_and_logs_prints_its_last_lines() {
     assert!(out.status.success(), "{}", stderr_of(&out));
     let printed = String::from_utf8(out.stdout).unwrap();
     assert_eq!(printed.lines().count(), 1, "{printed}");
-    assert!(written.contains(printed.trim_end()), "{printed}");
+    // Read again: the engine may have written more since.
+    let now = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        now.lines().any(|line| line == printed.trim_end()),
+        "{printed}"
+    );
 }
 
 #[test]
@@ -5593,4 +5607,189 @@ fn server_refuses_a_running_engine_and_replace_kills_it_and_serves_in_its_place(
 
     let _ = server.kill();
     let _ = server.wait();
+}
+
+/// A `sleep` this test owns, to stand behind a window: the only processes
+/// Force Quit may ever be pointed at here.
+fn sleeper() -> Child {
+    Command::new("sleep")
+        .arg("600")
+        .spawn()
+        .expect("spawn sleep")
+}
+
+/// Whether `child` was ended by `SIGKILL`, waiting for it to be.
+fn killed(child: &mut Child) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            return status.signal() == Some(9);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
+#[test]
+fn quit_closes_an_applications_windows_and_force_quit_kills_their_processes() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use shell_mock::{MockOptions, MockShell, MockWindow};
+    let Some(bus) = shell_bus::start_or_skip(
+        "quit_closes_an_applications_windows_and_force_quit_kills_their_processes",
+    ) else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let shell = runtime
+        .block_on(MockShell::start(bus.address(), MockOptions::default()))
+        .expect("the mock shell");
+    let (mut first, mut second, mut bystander) = (sleeper(), sleeper(), sleeper());
+    let window = |id: u32, class: &str, title: &str, pid: Option<u32>| MockWindow {
+        pid,
+        ..MockWindow::new(id, class, title)
+    };
+    let windows = vec![
+        window(1, "recorder", "Recording one", Some(first.id())),
+        window(2, "recorder", "Recording two", Some(first.id())),
+        window(3, "recorder", "A pidless recording", None),
+        window(4, "Recorder", "Recording three", Some(second.id())),
+        window(5, "bystander", "Not this one", Some(bystander.id())).focused(),
+    ];
+    shell.set_windows(windows.clone());
+
+    let bin = TempDir::new().unwrap();
+    let (recorder, _) = logging_app(bin.path(), "recorder");
+    let (other, _) = logging_app(bin.path(), "other");
+    let address = bus.address().to_owned();
+    let daemon = Daemon::start_prepared(
+        &[("recorder.desktop", &recorder), ("other.desktop", &other)],
+        "{}",
+        move |_| vec![("DBUS_SESSION_BUS_ADDRESS", address.into())],
+    );
+
+    // The engine reaches the extension in the background.
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let (running, frontmost, listed) = loop {
+        if let Response::AppRuntime {
+            running,
+            frontmost,
+            windows,
+        } = daemon.request(Request::AppRuntime {
+            id: "recorder.desktop".into(),
+        }) && running
+        {
+            break (running, frontmost, windows);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the engine never saw the windows"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(running);
+    assert!(!frontmost, "the focused window is the bystander's");
+    assert_eq!(
+        listed.iter().map(|w| w.id).collect::<Vec<_>>(),
+        [1, 2, 3, 4],
+        "every window of its class, and only those"
+    );
+    let Response::AppRuntime { running, .. } = daemon.request(Request::AppRuntime {
+        id: "other.desktop".into(),
+    }) else {
+        panic!("expected an answer");
+    };
+    assert!(!running);
+
+    // Quit: every window closed, no process touched.
+    assert_eq!(
+        daemon.request(Request::QuitApp {
+            id: "recorder.desktop".into(),
+            force: false,
+        }),
+        Response::Ack
+    );
+    let mut closed: Vec<u32> = shell
+        .calls()
+        .into_iter()
+        .filter(|(call, _)| *call == "CloseWindow")
+        .map(|(_, id)| id)
+        .collect();
+    closed.sort_unstable();
+    assert_eq!(closed, [1, 2, 3, 4]);
+    for child in [&mut first, &mut second, &mut bystander] {
+        assert!(child.try_wait().unwrap().is_none(), "Quit killed nothing");
+    }
+
+    // Force Quit: each owning process killed once, the pidless window closed,
+    // the bystander left alone.
+    shell.set_windows(windows.clone());
+    assert_eq!(
+        daemon.request(Request::QuitApp {
+            id: "recorder.desktop".into(),
+            force: true,
+        }),
+        Response::Ack
+    );
+    assert!(killed(&mut first), "the first window's process");
+    assert!(killed(&mut second), "the other window's process");
+    assert_eq!(
+        shell
+            .calls()
+            .into_iter()
+            .filter(|(call, _)| *call == "CloseWindow")
+            .map(|(_, id)| id)
+            .skip(4)
+            .collect::<Vec<_>>(),
+        [3],
+        "only the window with no process is closed"
+    );
+    assert!(
+        bystander.try_wait().unwrap().is_none(),
+        "the bystander lives"
+    );
+
+    // From the window switcher: the application the window belongs to.
+    let mut third = sleeper();
+    shell.set_windows(vec![
+        window(6, "recorder", "Again", Some(third.id())),
+        window(5, "bystander", "Not this one", Some(bystander.id())),
+    ]);
+    assert_eq!(
+        daemon.request(Request::QuitWindowApp {
+            window: 6,
+            force: true
+        }),
+        Response::Ack
+    );
+    assert!(killed(&mut third));
+    let Response::Error(err) = daemon.request(Request::QuitWindowApp {
+        window: 5,
+        force: true,
+    }) else {
+        panic!("a window of no known application was quit");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    assert!(bystander.try_wait().unwrap().is_none());
+
+    // Nothing to quit, and nothing by that name, are both said.
+    let Response::Error(err) = daemon.request(Request::QuitApp {
+        id: "other.desktop".into(),
+        force: false,
+    }) else {
+        panic!("quitting what does not run succeeded");
+    };
+    assert_eq!(err.message, "Failed to quit other");
+    let Response::Error(err) = daemon.request(Request::QuitApp {
+        id: "missing.desktop".into(),
+        force: true,
+    }) else {
+        panic!("an unknown application was quit");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+
+    let _ = bystander.kill();
+    let _ = bystander.wait();
+    drop(daemon);
+    runtime.block_on(shell.shutdown());
 }

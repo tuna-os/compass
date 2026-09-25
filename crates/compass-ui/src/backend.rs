@@ -972,6 +972,20 @@ pub struct WindowRow {
     pub pid: Option<u32>,
     /// Whether it can be closed.
     pub can_close: bool,
+    /// Whether the engine recognised its application, which is what Quit
+    /// and Force Quit act on.
+    pub app_known: bool,
+}
+
+/// Whether an application is running, as its root row's panel asks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppRuntimeInfo {
+    /// It has a window.
+    pub running: bool,
+    /// One of its windows has focus.
+    pub frontmost: bool,
+    /// Its windows, the first the one Focus Window raises.
+    pub windows: Vec<WindowRow>,
 }
 
 /// Window switching, which only the engine can do (through the Shell
@@ -985,4 +999,23 @@ pub trait WindowBackend: std::fmt::Debug + Send + Sync {
 
     /// Ask a window to close.
     fn close_window(&self, id: u32) -> BackendFuture<'_, ()>;
+
+    /// Whether the application with this desktop id is running.
+    fn app_runtime(&self, id: String) -> BackendFuture<'_, AppRuntimeInfo> {
+        let _ = id;
+        Box::pin(async { Err("Quitting applications needs the engine".to_owned()) })
+    }
+
+    /// Quit (or with `force`, Force Quit) the application with this
+    /// desktop id.
+    fn quit_app(&self, id: String, force: bool) -> BackendFuture<'_, ()> {
+        let _ = (id, force);
+        Box::pin(async { Err("Quitting applications needs the engine".to_owned()) })
+    }
+
+    /// Quit (or Force Quit) the application a window belongs to.
+    fn quit_window_app(&self, window: u32, force: bool) -> BackendFuture<'_, ()> {
+        let _ = (window, force);
+        Box::pin(async { Err("Quitting applications needs the engine".to_owned()) })
+    }
 }

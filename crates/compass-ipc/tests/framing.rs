@@ -308,6 +308,17 @@ fn all_requests() -> Vec<Request> {
             new_instance: true,
         },
         Request::DescribeWindow,
+        Request::AppRuntime {
+            id: "org.gnome.Nautilus.desktop".into(),
+        },
+        Request::QuitApp {
+            id: "firefox.desktop".into(),
+            force: true,
+        },
+        Request::QuitWindowApp {
+            window: u32::MAX,
+            force: false,
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -434,6 +445,21 @@ fn all_responses() -> Vec<Response> {
             focused_window_title: None,
         },
         Response::WindowState { open: true },
+        Response::AppRuntime {
+            running: true,
+            frontmost: false,
+            windows: vec![compass_ipc::WindowInfo {
+                id: 7,
+                title: "Téléchargements".into(),
+                wm_class: "org.gnome.Nautilus".into(),
+                app_name: Some("Files".into()),
+                app_icon: None,
+                pid: Some(4242),
+                workspace: Some(1),
+                focused: false,
+                can_close: true,
+            }],
+        },
         Response::CommandLaunch {
             id: "commands:search-files".into(),
             arguments_json: Some(r#"{"a":"ü"}"#.into()),
@@ -855,6 +881,9 @@ fn request_variants_are_exhaustive() {
             | Request::LaunchApp { .. }
             | Request::DescribeWindow
             | Request::FsQuery { .. }
+            | Request::AppRuntime { .. }
+            | Request::QuitApp { .. }
+            | Request::QuitWindowApp { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -907,6 +936,7 @@ fn response_variants_are_exhaustive() {
             | Response::AppLaunched { .. }
             | Response::WindowState { .. }
             | Response::CommandLaunch { .. }
+            | Response::AppRuntime { .. }
             | Response::Window(_) => {}
         }
     }

@@ -2467,7 +2467,7 @@ subsystem. "None" under *blocked by* means only the work.
 | Row | Missing | Size | Blocked by |
 |---|---|---|---|
 | ~~`src/cli`~~ | **Done in the gaps pass** (`PARITY.md`, "The gaps pass"): every C++ subcommand, over IPC v17 | — | — |
-| `src/services/app-runtime` | Quit and Force Quit, and the running/frontmost answers they use | medium | none on GNOME, wlroots, Hyprland, niri (close exists; a pid only on the last two) |
+| ~~`src/services/app-runtime`~~ | **Done in the gaps pass**: Quit, Force Quit, running and frontmost (IPC v17) | — | — |
 | ~~`src/services/app-service`~~ | **Done** (`vicinae::catalog_watch`, `EngineApps`' lookups and `set_web_browser`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/calculator-service`, `src/builtins/calculator` | the history view (model and store ported), currency conversion, refresh-rates | medium | currency needs a decision on a rate source (fend has none); the backend dropdown is not wanted (fend by design) |
 | `src/builtins/clipboard` | the open actions (Open, Open with…) and the drag payload (eviction and its timer, monitoring, the preferences, the kind filter, keywords, remove-all and the detail pane landed in the gaps pass) | small (Open) and medium (Open with…, which needs the app-selector view) | drag needs drag-and-drop out of an Iced window, which Iced does not offer |
