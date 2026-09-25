@@ -40,6 +40,9 @@ pub enum Message {
     },
     /// A result was selected (by keyboard navigation).
     ResultSelected(usize),
+    /// A root row was clicked, by position: select it and do what Enter on
+    /// it does.
+    ResultClicked(usize),
     /// Move the selection one row, wrapping at both ends.
     MoveSelection(Direction),
     /// Launch the selected result.

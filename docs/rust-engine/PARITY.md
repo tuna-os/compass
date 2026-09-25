@@ -245,6 +245,11 @@ reading:
   rather than chrome. `compass-extension-api` already models the view tree and its diff; what is
   missing is the half that turns a diff into pixels.
 - **No line of this can be deleted before the Phase 7 cutover**, like every other row.
+- **The pointer on lists.** A click selects the row and activates it, as the C++ does with
+  `activate_on_single_click` (Compass has only that mode; the C++ default selects on the first
+  click and activates on a double one). Hover never moves the selection, as `SelectableDelegate.qml`.
+  Not ported: the C++'s hover tint (`list.item.hover.background`, shown only once the pointer has
+  moved since the list last changed, `HoverActivation`).
 
 ## Not-yet-ported scope
 

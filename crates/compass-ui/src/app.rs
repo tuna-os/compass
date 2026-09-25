@@ -1853,6 +1853,19 @@ impl LauncherApp {
         )
     }
 
+    /// The surface's own style: what the runtime clears the window to before
+    /// the view is drawn. Transparent, so only the card and its shadow are on
+    /// screen. Left to the theme it is the palette's background (the card's
+    /// surface colour), and the whole window, shadow padding included,
+    /// paints as an opaque rectangle behind the card.
+    #[must_use]
+    pub fn style(&self, theme: &Theme) -> iced::theme::Style {
+        iced::theme::Style {
+            background_color: Color::TRANSPARENT,
+            text_color: theme.palette().text,
+        }
+    }
+
     /// Every keyboard event, consumed by a widget or not.
     ///
     /// THIS DELIBERATELY DOES NOT USE `iced::keyboard::listen`, and the reason
@@ -2256,6 +2269,19 @@ impl LauncherApp {
                     self.selected = index;
                 }
                 crate::scroll::reveal_root_selection()
+            }
+            // A click activates, as `activate_on_single_click` (the Rust
+            // port's only mode, `settings_catalog`). The press took focus
+            // from the search field, so it is handed back for whatever the
+            // row opens, or for the next query if it opened nothing.
+            Message::ResultClicked(position) => {
+                if position >= self.results.len() {
+                    return Task::none();
+                }
+                self.panel = None;
+                self.selected = position;
+                let activated = self.update(Message::LaunchSelected);
+                Task::batch([activated, focus_search()])
             }
             Message::MoveSelection(direction) => {
                 self.selected = next_selection(
@@ -4128,6 +4154,9 @@ impl LauncherApp {
                         )
                     }
                 };
+                let row: Element<Message> = mouse_area(row)
+                    .on_press(Message::ResultClicked(position))
+                    .into();
                 let row: Element<Message> = if selected {
                     container(row).id(crate::scroll::ROOT_SELECTION).into()
                 } else {
@@ -7226,6 +7255,161 @@ mod tests {
     #[test]
     fn selecting_an_application_still_dispatches_the_parent() {
         assert_eq!(recorded_launch(false), [None]);
+    }
+
+    // ---- The pointer ----
+
+    /// What clicking the text `label` in the current view produces.
+    fn click(app: &LauncherApp, label: &str) -> Vec<Message> {
+        let mut ui = iced_test::simulator(app.view());
+        ui.click(label)
+            .unwrap_or_else(|_| panic!("{label:?} is not on screen: {}", app.state_line()));
+        ui.into_messages().collect()
+    }
+
+    fn deliver(app: &mut LauncherApp, messages: Vec<Message>) {
+        for message in messages {
+            let task = app.update(message);
+            settle(app, task);
+        }
+    }
+
+    /// The desktop entries launched, by name.
+    /// Four applications, all matching "Application", the first selected.
+    fn four_applications(dir: &std::path::Path) -> LauncherApp {
+        for i in 0..4 {
+            fs::write(
+                dir.join(format!("app-{i:02}.desktop")),
+                format!(
+                    "[Desktop Entry]\nType=Application\nName=Application {i:02}\nExec=/bin/true\n"
+                ),
+            )
+            .expect("write entry");
+        }
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir).build());
+        app.query = "Application".into();
+        app.search();
+        assert!(app.results.len() >= 4, "{}", app.state_line());
+        assert_eq!(app.selected, 0);
+        app
+    }
+
+    #[derive(Debug, Default)]
+    struct LaunchedEntries(std::sync::Mutex<Vec<String>>);
+
+    impl AppLauncher for LaunchedEntries {
+        fn launch<'a>(
+            &'a self,
+            entry: &'a compass_xdg::DesktopEntry,
+            _uris: &'a [&'a str],
+        ) -> compass_platform::LaunchFuture<'a> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(entry.name().to_owned());
+                Ok(compass_platform::LaunchMethod::Direct)
+            })
+        }
+
+        fn launch_action<'a>(
+            &'a self,
+            entry: &'a compass_xdg::DesktopEntry,
+            _action_id: &'a str,
+            uris: &'a [&'a str],
+        ) -> compass_platform::LaunchFuture<'a> {
+            self.launch(entry, uris)
+        }
+    }
+
+    #[test]
+    fn clicking_a_root_row_launches_that_row_not_the_selected_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let launcher = Arc::new(LaunchedEntries::default());
+        let mut app = four_applications(dir.path()).with_launcher(launcher.clone());
+        let (position, name) = app
+            .results
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(position, row)| match row {
+                RootRow::App(index) => {
+                    Some((position, app.app_index.items()[*index].name().to_owned()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no application below the first row: {}", app.state_line()));
+
+        let messages = click(&app, &name);
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::ResultClicked(p) if *p == position)),
+            "{messages:?}"
+        );
+        deliver(&mut app, messages);
+        assert_eq!(launcher.0.lock().unwrap().as_slice(), [name]);
+    }
+
+    #[test]
+    fn clicking_a_root_command_opens_it_and_a_store_row_opens_that_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = store_backend(dir.path());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        app.view_memory.set(
+            crate::vicinae_pages::intro_key(crate::backend::Store::Vicinae),
+            "true",
+        );
+        app.query = "extension store".into();
+        app.search();
+        let title = app
+            .results
+            .iter()
+            .find_map(|row| match row {
+                RootRow::Command(command) if command.id() == "commands:store" => {
+                    Some(command.title)
+                }
+                _ => None,
+            })
+            .expect("the store is a root result");
+
+        let messages = click(&app, title);
+        deliver(&mut app, messages);
+        let Page::Store(page) = &app.page else {
+            panic!("the click did not open the store: {}", app.state_line());
+        };
+        assert_eq!(page.selected, 0);
+        assert_eq!(page.rows[1].title, "Timer");
+
+        let messages = click(&app, "Timer");
+        deliver(&mut app, messages);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("the click did not open the row: {}", app.state_line());
+        };
+        assert_eq!(detail.title, "Extension Store - Timer");
+    }
+
+    /// Hovering sends nothing and selects nothing: the C++ list moves its
+    /// selection only on a click or a key (`SelectableDelegate.qml`).
+    #[test]
+    fn hovering_a_root_row_does_not_move_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = four_applications(dir.path());
+        let RootRow::App(index) = app.results[1] else {
+            panic!("the second row is not an application: {}", app.state_line())
+        };
+        let name = app.app_index.items()[index].name().to_owned();
+        let mut ui = iced_test::simulator(app.view());
+        let centre = ui
+            .find(name.as_str())
+            .expect("the row is drawn")
+            .bounds()
+            .center();
+        ui.point_at(centre);
+        ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position: centre,
+        })]);
+        let messages = ui.into_messages().collect::<Vec<_>>();
+        assert!(messages.is_empty(), "{messages:?}");
+        assert_eq!(app.selected, 0);
     }
 
     /// A snippet the fake expanded or pasted: `(id, arguments, pasted)`.

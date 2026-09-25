@@ -85,6 +85,7 @@ pub fn run(flags: AppFlags) -> iced::Result {
         LauncherApp::view,
     )
     .theme(LauncherApp::theme)
+    .style(LauncherApp::style)
     .subscription(LauncherApp::subscription)
     .window(window)
     .run()
@@ -150,6 +151,7 @@ pub fn run_resident(
     )
     .title(title)
     .theme(theme)
+    .style(LauncherApp::style)
     .subscription(LauncherApp::subscription)
     .run()
 }
@@ -217,6 +219,7 @@ pub fn run_resident_layer_shell(
     )
     .title(title)
     .theme(theme)
+    .style(LauncherApp::style)
     .subscription(LauncherApp::subscription)
     .settings(Settings {
         id: Some(APP_ID.to_owned()),
