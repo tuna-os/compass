@@ -526,6 +526,21 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn set_shortcut_capture(&self, capturing: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ShortcutCapture { capturing },
+                    "Suspending the global shortcuts",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn set_provider_enabled(&self, provider: String, enabled: bool) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self

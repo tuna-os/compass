@@ -437,6 +437,8 @@ fn all_requests() -> Vec<Request> {
             extension_id: "linear".into(),
             provider_id: None,
         },
+        Request::ShortcutCapture { capturing: true },
+        Request::ShortcutCapture { capturing: false },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -1126,6 +1128,7 @@ fn request_variants_are_exhaustive() {
             | Request::LocalStorageItems { .. }
             | Request::OAuthTokenSets
             | Request::RemoveOAuthTokenSet { .. }
+            | Request::ShortcutCapture { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

@@ -142,6 +142,9 @@ pub struct EngineState {
     calculator: Arc<tokio::sync::Mutex<Option<crate::extension_runner::Storage>>>,
     /// Other applications' tray icons (`SniTrayHost`).
     tray: Arc<crate::tray_host::TrayHost>,
+    /// The global shortcuts' service: rebinding them, and the recorder's
+    /// capture.
+    global_shortcuts: Arc<crate::global_shortcuts::Control>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -264,6 +267,7 @@ impl EngineState {
             catalog_generation: 0,
             calculator: Arc::default(),
             tray: Arc::default(),
+            global_shortcuts: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -332,6 +336,7 @@ impl EngineState {
             catalog_generation: 0,
             calculator: Arc::default(),
             tray: Arc::default(),
+            global_shortcuts: Arc::default(),
         }
     }
 
@@ -423,6 +428,12 @@ impl EngineState {
         &self.index
     }
 
+    /// Keyword expansion and its input server, once started.
+    #[must_use]
+    pub fn expander(&self) -> Option<Arc<crate::snippet_expansion::Expander>> {
+        self.expander.clone()
+    }
+
     /// Makes keyword expansion reachable from requests.
     pub fn set_expander(&mut self, expander: Arc<crate::snippet_expansion::Expander>) {
         self.expander = Some(expander);
@@ -436,6 +447,18 @@ impl EngineState {
     #[must_use]
     pub fn window_slot(&self) -> WindowSlot {
         Arc::clone(&self.window)
+    }
+
+    /// The global shortcuts' service control.
+    #[must_use]
+    pub fn global_shortcuts(&self) -> Arc<crate::global_shortcuts::Control> {
+        Arc::clone(&self.global_shortcuts)
+    }
+
+    /// The application and root item index.
+    #[must_use]
+    pub fn index(&self) -> &AppIndex {
+        &self.index
     }
 
     /// Number of indexed applications.
@@ -1038,6 +1061,12 @@ async fn run_script(state: &Arc<RwLock<EngineState>>, id: &str, arguments: &[Str
     }
 }
 
+/// A root item launched as `cmd launch` launches it, with no arguments: what
+/// a command's global shortcut does.
+pub(crate) async fn launch_entrypoint(state: &Arc<RwLock<EngineState>>, id: String) -> Response {
+    launch::launch_command(state, id, &[], None, None).await
+}
+
 /// The snippet list as the wire carries it.
 /// Applies what the root row's panel changed: forgets the launch history,
 /// or writes the configuration and applies it to root search, as the C++
@@ -1102,35 +1131,21 @@ fn edit_root_item(
         }
     }
     state.index.apply_root_config(&config.root_config());
+    state.global_shortcuts.reload();
     Response::Ack
 }
 
 /// `PasteService::pasteContent` for text the engine did not store (the
 /// emoji picker's glyph): on the clipboard, then pasted into the window that
-/// takes focus. Without the Shell extension there is no paste, and the
+/// takes focus ([`crate::paste`]). Where nothing can press the paste, the
 /// window copies instead.
 async fn paste_text(state: &Arc<RwLock<EngineState>>, text: String) -> Response {
-    const WHAT: &str = "Pasting";
-    let (shell, terminals) = {
-        let state = state.read().await;
-        (
-            state.shell.clone(),
-            compass_core::app_service::AppService::new(&state.index).terminal_window_classes(),
-        )
-    };
-    let Some(shell) = shell else {
-        return Response::Error(crate::window_service::no_bus(WHAT));
-    };
-    let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
-    let content = compass_shell::ClipboardContent::text(text);
-    let pasted = match shell.set_clipboard(&content).await {
-        Ok(()) => shell.paste(&terminals).await,
-        Err(err) => Err(err),
-    };
-    match pasted {
-        Ok(()) => Response::Ack,
-        Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
-    }
+    crate::paste::paste(
+        state,
+        compass_shell::ClipboardContent::text(text),
+        "Pasting",
+    )
+    .await
 }
 
 fn clipboard_unavailable() -> Response {
@@ -2411,9 +2426,15 @@ pub(crate) async fn forward(slot: &WindowSlot, command: WindowCommand, what: &st
     }
 }
 
-/// `ListWindows`: over Wayland on a wlroots compositor, through the Shell
-/// extension everywhere else.
+/// `ListWindows`: from KWin's tracker on Plasma, over Wayland on a wlroots
+/// compositor, through the Shell extension everywhere else.
 pub(crate) async fn list_windows(state: &Arc<RwLock<EngineState>>) -> Response {
+    {
+        let state = state.read().await;
+        if let Some(response) = crate::window_service::kwin_list(&state.index).await {
+            return response;
+        }
+    }
     // wlroots compositors list windows over Wayland; never on GNOME.
     if crate::wlroots::detect().await.is_some() {
         let state = state.read().await;
@@ -2450,6 +2471,9 @@ pub(crate) async fn act_on_window(
     } else {
         "Switching to a window"
     };
+    if let Some(response) = crate::window_service::kwin_act(id, close, what).await {
+        return response;
+    }
     if let Some(response) = crate::window_service::wlroots_act(id, close, what).await {
         return response;
     }
@@ -2734,6 +2758,14 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         | Request::SetWallpaper { .. }) => files::handle(state, request).await,
         request @ (Request::SetSetting { .. } | Request::SetProviderEnabled { .. }) => {
             settings::handle(state, request).await
+        }
+        Request::ShortcutCapture { capturing } => {
+            state
+                .read()
+                .await
+                .global_shortcuts()
+                .set_capturing(capturing);
+            Response::Ack
         }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
@@ -3149,23 +3181,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 Ok(text) => text,
                 Err(response) => return response,
             };
-            let Some(shell) = state.read().await.shell.clone() else {
-                return Response::Error(crate::window_service::no_bus(WHAT));
-            };
-            let terminals = {
-                let state = state.read().await;
-                compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
-            };
-            let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
-            let content = compass_shell::ClipboardContent::text(text);
-            let pasted = match shell.set_clipboard(&content).await {
-                Ok(()) => shell.paste(&terminals).await,
-                Err(err) => Err(err),
-            };
-            match pasted {
-                Ok(()) => Response::Ack,
-                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
-            }
+            crate::paste::paste(state, compass_shell::ClipboardContent::text(text), WHAT).await
         }
         Request::PasteText { text } => paste_text(state, text).await,
         Request::ExpandShortcut { id, arguments } => {
@@ -3384,13 +3400,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
 
         Request::ClipboardPaste { id } => {
             const WHAT: &str = "Pasting";
-            let (shell, store) = {
-                let state = state.read().await;
-                (state.shell.clone(), state.clipboard.clone())
-            };
-            let Some(shell) = shell else {
-                return Response::Error(crate::window_service::no_bus(WHAT));
-            };
+            if let Some(refused) = crate::paste::no_clipboard(state, WHAT).await {
+                return refused;
+            }
+            let store = state.read().await.clipboard.clone();
             let Some(store) = store else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::Unsupported,
@@ -3420,20 +3433,8 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                         ));
                     }
                 };
-            let terminals = {
-                let state = state.read().await;
-                compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
-            };
-            let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
             let content = compass_shell::ClipboardContent::binary(data, mime_type);
-            let pasted = match shell.set_clipboard(&content).await {
-                Ok(()) => shell.paste(&terminals).await,
-                Err(err) => Err(err),
-            };
-            match pasted {
-                Ok(()) => Response::Ack,
-                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
-            }
+            crate::paste::paste(state, content, WHAT).await
         }
 
         // Handled by the serve loop, which owns the shutdown signal; reaching
@@ -3548,6 +3549,11 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
             .unwrap_or(compass_core::config::DEFAULT_INPUT_SERVER_ENABLED);
         tokio::spawn(crate::snippet_expansion::run(Arc::clone(&state), enabled));
     }
+    crate::paste::install(&state);
+
+    // KWin's tracker, for window switching on Plasma: detached, like the
+    // Shell client, so a slow KWin never holds up the socket.
+    tokio::spawn(crate::wlroots::start_kwin());
 
     // The Shell extension, for window switching. Connecting only fails with
     // no session bus at all; an absent extension is reported per request.
@@ -3564,9 +3570,9 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     }
 
     if hotkey {
-        tokio::spawn(crate::hotkey::run(Arc::clone(&state)));
+        tokio::spawn(crate::global_shortcuts::run(Arc::clone(&state)));
     } else {
-        tracing::info!("not binding the launcher hotkey (--no-hotkey)");
+        tracing::info!("not binding the global shortcuts (--no-hotkey)");
     }
 
     let serving = {
@@ -3604,7 +3610,9 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
         )
     };
 
-    serving.await.context("serving the engine socket")?;
+    let served = serving.await.context("serving the engine socket");
+    crate::wlroots::stop_kwin().await;
+    served?;
     tracing::info!("engine stopped");
     Ok(())
 }

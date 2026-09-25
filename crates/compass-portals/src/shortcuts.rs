@@ -516,6 +516,94 @@ impl Drop for GlobalShortcutsSession {
     }
 }
 
+/// Keeps a whole set of shortcuts bound through the portal, replacing the
+/// set when it changes.
+///
+/// The portal binds a session's shortcuts once: `BindShortcuts` has no way
+/// to take one back or to change a trigger. So a new set is bound on a new
+/// session, after the old one is closed, which is how the configuration's
+/// global shortcuts follow it as the launcher's `reconcile` does with a
+/// backend that binds one at a time. Events from whichever session is
+/// current arrive on the channel the binder was built with.
+pub struct ShortcutBinder {
+    portals: crate::Portals,
+    session: Option<GlobalShortcutsSession>,
+    forwarder: Option<tokio::task::JoinHandle<()>>,
+    events: tokio::sync::mpsc::UnboundedSender<ShortcutEvent>,
+}
+
+impl fmt::Debug for ShortcutBinder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ShortcutBinder")
+            .field("session", &self.session)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ShortcutBinder {
+    /// A binder over `portals`, delivering every session's events to
+    /// `events`. Nothing is bound until [`Self::apply`].
+    #[must_use]
+    pub fn new(
+        portals: crate::Portals,
+        events: tokio::sync::mpsc::UnboundedSender<ShortcutEvent>,
+    ) -> Self {
+        Self {
+            portals,
+            session: None,
+            forwarder: None,
+            events,
+        }
+    }
+
+    /// Whether a session is open.
+    #[must_use]
+    pub fn is_bound(&self) -> bool {
+        self.session.is_some()
+    }
+
+    /// Binds exactly `shortcuts`, closing the session that held the last
+    /// set first. An empty set only closes it.
+    ///
+    /// # Errors
+    ///
+    /// A session that could not be created or a bind that failed, as
+    /// [`GlobalShortcutsSession::bind`].
+    pub async fn apply(&mut self, shortcuts: &[ShortcutDescriptor]) -> Result<ShortcutsOutcome> {
+        self.clear().await;
+        if shortcuts.is_empty() {
+            return Ok(ShortcutsOutcome::Granted {
+                shortcuts: Vec::new(),
+            });
+        }
+        let session = self.portals.global_shortcuts().await?;
+        let mut subscription = session.subscribe();
+        let events = self.events.clone();
+        self.forwarder = Some(tokio::spawn(async move {
+            while let Some(event) = subscription.recv().await {
+                if events.send(event).is_err() {
+                    break;
+                }
+            }
+        }));
+        let outcome = session.bind(shortcuts).await;
+        self.session = Some(session);
+        outcome
+    }
+
+    /// Closes the current session, releasing its shortcuts.
+    pub async fn clear(&mut self) {
+        if let Some(forwarder) = self.forwarder.take() {
+            forwarder.abort();
+        }
+        if let Some(session) = self.session.take()
+            && let Err(err) = session.close().await
+        {
+            tracing::debug!(error = %err, "closing the previous shortcuts session");
+        }
+    }
+}
+
 fn activation_token(options: &HashMap<String, OwnedValue>) -> Option<String> {
     options
         .get("activation_token")

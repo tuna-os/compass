@@ -331,10 +331,15 @@ fn the_hotkey_is_recorded_into_the_launcher_section() {
         &mut app,
         SettingsMessage::Record(RecordTarget::Setting("launcher.hotkey".into())),
     );
+    assert!(
+        app.shortcuts_inhibited(),
+        "the compositor's shortcuts reach the recorder"
+    );
     let _ = app.update(key(Key::Named(Named::Alt), Modifiers::ALT));
     let task = app.update(key(Key::Named(Named::Space), Modifiers::ALT));
     settle(&mut app, task);
     assert!(page(&app).recorder.is_none());
+    assert!(!app.shortcuts_inhibited(), "and are given back after");
     let hotkey = saved(&app).launcher().hotkey().to_owned();
     assert!(
         compass_core::key_combo::KeyCombo::parse(&hotkey).is_some(),

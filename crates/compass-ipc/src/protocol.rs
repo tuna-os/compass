@@ -84,8 +84,10 @@ use serde::{Deserialize, Serialize};
 /// ([`RootItemEdit::Fallback`]), and Inspect Local Storage's and Manage OAuth
 /// Token Sets' reads ([`Request::LocalStorageNamespaces`],
 /// [`Request::LocalStorageItems`], [`Request::OAuthTokenSets`],
-/// [`Request::RemoveOAuthTokenSet`]).
-pub const PROTOCOL_VERSION: u16 = 19;
+/// [`Request::RemoveOAuthTokenSet`]); version 20, the shortcut recorder
+/// suspending the global shortcuts while it captures
+/// ([`Request::ShortcutCapture`]).
+pub const PROTOCOL_VERSION: u16 = 20;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -990,6 +992,15 @@ pub enum Request {
         extension_id: String,
         /// The provider.
         provider_id: Option<String>,
+    },
+    /// The shortcut recorder started (`true`) or stopped capturing: the
+    /// engine releases every global shortcut while it captures, so the
+    /// combination reaches the recorder rather than the desktop, and binds
+    /// them again after (`GlobalShortcutService::setCapturing`). Answered
+    /// with [`Response::Ack`]. (v20.)
+    ShortcutCapture {
+        /// Whether the recorder is capturing.
+        capturing: bool,
     },
 }
 

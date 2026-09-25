@@ -62,14 +62,12 @@ pub(super) async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -
     match request {
         Request::FileActions { .. } => {
             use compass_worker_host::application_service::Apps as _;
-            let (has_opener, can_paste) = {
+            let has_opener = {
                 let state = state.read().await;
                 let apps = super::engine_apps_now(&state);
-                (
-                    apps.default_opener(&path.to_string_lossy()).is_some(),
-                    state.shell.is_some(),
-                )
+                apps.default_opener(&path.to_string_lossy()).is_some()
             };
+            let can_paste = crate::paste::can_paste(state).await;
             let handle = tokio::runtime::Handle::current();
             let can_set_wallpaper = tokio::task::spawn_blocking(move || {
                 crate::extension_wallpaper::EngineWallpaper::new(Some(handle)).can_set()
@@ -122,12 +120,16 @@ pub(super) async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -
     }
 }
 
-/// Puts the file on the clipboard as a file: over data-control on wlroots
-/// (where there is no synthetic paste yet, so a paste copies), through the
-/// Shell extension elsewhere.
+/// Puts the file on the clipboard as a file: over data-control on wlroots,
+/// through the Shell extension elsewhere; a paste goes through
+/// [`crate::paste`].
 async fn copy_file(state: &Arc<RwLock<EngineState>>, path: &Path, paste: bool) -> Response {
     const WHAT: &str = "Copying the file";
     let payload = uri_list(path);
+    if paste {
+        let content = compass_shell::ClipboardContent::binary(payload, "text/uri-list");
+        return crate::paste::paste(state, content, "Pasting the file").await;
+    }
     if crate::wlroots::detect()
         .await
         .is_some_and(|wlroots| wlroots.capabilities.data_control)
@@ -148,16 +150,7 @@ async fn copy_file(state: &Arc<RwLock<EngineState>>, path: &Path, paste: bool) -
         return Response::Error(crate::window_service::no_bus(WHAT));
     };
     let content = compass_shell::ClipboardContent::binary(payload, "text/uri-list");
-    let mut done = shell.set_clipboard(&content).await;
-    if paste && done.is_ok() {
-        let terminals = {
-            let state = state.read().await;
-            compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
-        };
-        let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
-        done = shell.paste(&terminals).await;
-    }
-    match done {
+    match shell.set_clipboard(&content).await {
         Ok(()) => Response::Ack,
         Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
     }

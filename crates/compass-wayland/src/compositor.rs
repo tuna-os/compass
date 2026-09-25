@@ -26,6 +26,14 @@ pub const EXT_DATA_CONTROL: &str = "ext_data_control_manager_v1";
 pub const WLR_DATA_CONTROL: &str = "zwlr_data_control_manager_v1";
 /// `xx_hotkey_manager_v1`, experimental global hotkeys.
 pub const XX_HOTKEY: &str = "xx_hotkey_manager_v1";
+/// `zwp_virtual_keyboard_manager_v1`: synthetic key events, for pasting.
+pub const VIRTUAL_KEYBOARD: &str = "zwp_virtual_keyboard_manager_v1";
+/// `zwp_keyboard_shortcuts_inhibit_manager_v1`: a focused surface takes the
+/// compositor's own shortcuts.
+pub const SHORTCUTS_INHIBIT: &str = "zwp_keyboard_shortcuts_inhibit_manager_v1";
+
+/// `vicinae_hotkey_manager_v1`, Vicinae's own global hotkeys.
+pub const VICINAE_HOTKEY: &str = "vicinae_hotkey_manager_v1";
 
 /// The globals a compositor advertised: interface name to highest version.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -181,6 +189,10 @@ pub struct Capabilities {
     pub data_control: bool,
     /// A global hotkey can be bound over Wayland.
     pub hotkey: bool,
+    /// Key events can be synthesised, so a paste can be pressed.
+    pub virtual_keyboard: bool,
+    /// The launcher can take the compositor's shortcuts while it records one.
+    pub shortcuts_inhibit: bool,
 }
 
 impl Capabilities {
@@ -192,7 +204,9 @@ impl Capabilities {
             toplevel_management: globals.has(WLR_FOREIGN_TOPLEVEL),
             toplevel_list: globals.has(EXT_FOREIGN_TOPLEVEL_LIST),
             data_control: globals.has(EXT_DATA_CONTROL) || globals.has(WLR_DATA_CONTROL),
-            hotkey: globals.has(XX_HOTKEY),
+            hotkey: globals.has(XX_HOTKEY) || globals.has(VICINAE_HOTKEY),
+            virtual_keyboard: globals.has(VIRTUAL_KEYBOARD),
+            shortcuts_inhibit: globals.has(SHORTCUTS_INHIBIT),
         }
     }
 
@@ -248,6 +262,8 @@ mod tests {
             (LAYER_SHELL, 4),
             (WLR_FOREIGN_TOPLEVEL, 3),
             (WLR_DATA_CONTROL, 2),
+            (VIRTUAL_KEYBOARD, 1),
+            (SHORTCUTS_INHIBIT, 1),
         ])
     }
 
@@ -297,6 +313,7 @@ mod tests {
         assert!(caps.layer_shell && caps.toplevel_management && caps.data_control);
         assert!(!caps.toplevel_list && !caps.hotkey);
         assert!(caps.windows());
+        assert!(caps.virtual_keyboard && caps.shortcuts_inhibit);
 
         let ext_only = Capabilities::of(&Globals::from_pairs([
             (EXT_FOREIGN_TOPLEVEL_LIST, 1),
@@ -304,6 +321,7 @@ mod tests {
         ]));
         assert!(ext_only.windows() && !ext_only.toplevel_management);
         assert!(ext_only.data_control);
+        assert!(!ext_only.virtual_keyboard && !ext_only.shortcuts_inhibit);
     }
 
     #[test]

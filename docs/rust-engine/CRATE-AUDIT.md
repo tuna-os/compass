@@ -59,6 +59,13 @@ code in the extension, so the host never speaks OAuth itself.
 | niri's socket: `Windows`, `Workspaces`, `FocusedWindow`, the focus/close/workspace actions | `niri-ipc` 26.4 (niri's own crate, GPL-3.0-or-later; serde and serde_json only, default features off) | **Used** for every type: the requests are its `Request`/`Action`, the replies its `Reply`, `Window` and `Workspace`. The one gap is taken around it: `niri_ipc::socket::Socket` sets no timeout, so `compass_platform_linux::compositor::niri` opens the `UnixStream` itself, writes the crate's serialisation and reads one line under a 2 s timeout. Its structs require the fields niri 25.08+ sends (`layout`, `focus_timestamp`); an older niri answers in a shape it cannot read, which is reported and treated as no windows (PARITY "wlroots" #3). |
 | Hyprland's request socket: `clients`, `workspaces`, `activeworkspace`, `activewindow`, `dispatch` | `hyprland` 0.4.0-beta.3 (hyprland-rs) | **Hand-rolled** (`compass_platform_linux::compositor::hyprland`, ~300 lines incl. docs). The wire is "connect, write one command, read to EOF", so what a crate would bring is the data types and dispatchers, and both regress the C++: its `Client` is strict and narrow — `at`/`size` as `i16`, `focusHistoryID` as `i8`, a required `fullscreen` enum and `swallowing` address — where the C++ reads eight fields leniently, so a Hyprland release that adds or retypes a field fails the whole list; and its dispatchers speak the classic `dispatch focuswindow address:…` while the C++ dispatches Hyprland's Lua expressions (`hl.dsp.focus({ window = … })`). It is also a beta, pulling `tokio`, `async-stream`, `derive_more` and a proc-macro crate. The replies here are `serde` structs with every field optional and unknown ones ignored. |
 
+### The gaps pass, KDE: KWin (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| KWin's scripting interface, its virtual desktops, kglobalaccel, and serving the tracker's callbacks | `zbus` 5 (already in the tree) | **Used** for all of it: dynamic `zbus::Proxy` calls to `org.kde.kwin.Scripting`/`org.kde.kwin.Script`, `org.kde.KWin.VirtualDesktopManager`'s properties and `org.kde.kglobalaccel.Component`, and a `#[zbus::interface]` object for `org.vicinae.WindowTracker`; the name watch is `zbus::fdo::DBusProxy`'s `NameOwnerChanged`. No KWin client crate exists on crates.io (the KDE-side crates are Qt bindings); what is hand-written (`compass_platform_linux::compositor::kwin`) is the tracker's cache and the two scripts, which are the C++'s JavaScript. |
+| The script file KWin reads | `tempfile` 3 (already a workspace dependency) | **Used**, as `QTemporaryFile` in the C++. |
+
 ## Phase 5 Track A: the extension stores (2026-09-24)
 
 | Need | Crate | Decision |
@@ -116,3 +123,21 @@ code in the extension, so the host never speaks OAuth itself.
 | `/etc/os-release`'s `PRETTY_NAME` and `VERSION`, for the bug report | `os-release` 0.1, `etc-os-release` 0.1 | **Hand-read** (`compass_core::bug_report::parse_os_release`, ~20 lines): two `KEY=value` lines unquoted, where either crate adds a file reader and error types this does not need and a new package to the Flatpak's sources. |
 | The bug-report link's query | `url` 2 (already in `compass-core`) | **Used**: `Url::parse_with_params`. |
 | `ext-background-effect-v1` (window-material) | `wayland-protocols` 0.32 `staging` (already in `compass-wayland`) | **Used** (`compass_wayland::material`): the generated client; only the rounded region (`createRoundedRegion`'s loop) is ours. Reaching the launcher's own `wl_surface` would need `wayland-backend`'s `client_system` foreign-display bridge, which is `unsafe`; not done. |
+
+## The gaps pass, global shortcuts (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| The GlobalShortcuts portal, rebinding the whole set as the configuration changes | `ashpd` 0.13 (already the portal client) | **Used** (`compass_portals::ShortcutBinder`): a set is bound on a fresh `CreateSession` after `Session.Close` on the last, since `BindShortcuts` cannot take a shortcut back or change a trigger. The binder is ~70 lines of session bookkeeping around the crate's calls. |
+| `vicinae-hotkey-v1` bindings | no crate carries Vicinae's own protocol | **Generated, not written**: `wayland-scanner` over the checked-in XML in `compass-wayland-protocols`, as for `xx-hotkey-v1`. The client (`compass_wayland::hotkey::HotkeyClient`, both protocols over one connection) is hand-written on the generated code, as `compass_wayland::toplevel` is on `wayland-protocols`: there is nothing else to use. |
+| A fake compositor for the hotkey clients' tests | `wayland-server` 0.31 (Smithay's; the server half of the `wayland-client` stack already locked, one new package) | **Used, tests only**: `compass-wayland-protocols`' `server` feature generates the compositor side of both protocols, and `compass-wayland/tests/hotkey_protocols.rs` drives the real client against it over a socket pair. |
+| A key's XKB keysym, and its name for the portal's trigger | `xkeysym` 0.2 (already locked through `smithay-client-toolkit`; no dependencies); `xkbcommon` considered | **Used** (`compass_core::global_shortcuts::{keysym, portal_trigger}`): its constants and `from_char` for the keysym, `Keysym::name` for the XKB name the "shortcuts" specification wants. The table from the recorder's key names to keysyms is the C++'s `xkbKeysymForQtKey`, 20 lines. `xkbcommon` would link libxkbcommon into `compass-core` for the same two lookups. |
+| Diffing what is bound against what the configuration asks for (`reconcile`) | none needed | **Hand-written** (`compass_core::global_shortcuts::Reconciler`, ~60 lines over two `BTreeMap`s), the C++'s own two-map diff. |
+
+## The gaps pass, wlroots paste and inhibit (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Pressing the paste chord without the input server | `wayland-protocols-misc` 0.3 (`zwp_virtual_keyboard_v1`; already in the tree through `layershellev` and smithay-client-toolkit) | **Used** (`compass_wayland::virtual_keyboard`): the generated client. The keymap is a fixed three-key xkb string, as `wtype` sends; compiling one with `xkbcommon` would add a C library to link for three keys. `wtype`/`ydotool` as programs were not taken: a runtime dependency to install for what is six requests. |
+| The paste's focus wait | `compass_core::paste::PasteService` (ours, ported earlier) | **Used**: driven on one blocking thread per paste. |
+| keyboard-shortcuts-inhibit | `wayland-protocols` 0.32 `unstable` (already in `compass-wayland`) | **Used** (`compass_wayland::keyboard_inhibit`). The launcher's `wl_surface` is reached without `unsafe` by sharing a `wayland-client` `Connection` with `iced_layershell` (`Settings::with_connection`) and reading `wl_keyboard.enter`, rather than `wayland-backend`'s foreign-display bridge. winit 0.30 takes no connection, so the `xdg_toplevel` presentation has none. |

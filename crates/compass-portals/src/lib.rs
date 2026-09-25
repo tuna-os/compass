@@ -107,8 +107,8 @@ pub use file_chooser::{FileChooserOutcome, FileChooserPortal, FileChooserRequest
 pub use open_uri::{OpenOutcome, OpenUriPortal};
 pub use settings::{ColorScheme, SettingsPortal};
 pub use shortcuts::{
-    BoundShortcut, GlobalShortcutsSession, Modifiers, ShortcutDescriptor, ShortcutEvent,
-    ShortcutEvents, ShortcutsOutcome, Trigger, TriggerParseError,
+    BoundShortcut, GlobalShortcutsSession, Modifiers, ShortcutBinder, ShortcutDescriptor,
+    ShortcutEvent, ShortcutEvents, ShortcutsOutcome, Trigger, TriggerParseError,
 };
 
 /// Where to find the bus, and how long to wait.

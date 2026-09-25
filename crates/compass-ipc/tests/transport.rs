@@ -156,6 +156,7 @@ async fn echo_handler(request: Request) -> Response {
         | Request::SetSetting { .. }
         | Request::SetProviderEnabled { .. }
         | Request::RemoveOAuthTokenSet { .. }
+        | Request::ShortcutCapture { .. }
         | Request::SetTheme { .. } => Response::Ack,
         Request::LocalStorageNamespaces => Response::LocalStorageNamespaces { namespaces: vec![] },
         Request::LocalStorageItems { .. } => Response::LocalStorageItems { items: vec![] },

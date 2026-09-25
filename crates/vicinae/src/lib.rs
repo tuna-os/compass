@@ -32,7 +32,7 @@ pub mod extension_windows;
 pub mod file_manager;
 pub mod file_search;
 pub mod fonts;
-pub mod hotkey;
+pub mod global_shortcuts;
 pub mod indexer_client;
 pub mod indexer_service;
 pub mod indexer_watch;
@@ -40,6 +40,7 @@ pub mod input_server;
 pub mod ipc;
 pub mod logs;
 pub mod notification_icon;
+pub(crate) mod paste;
 pub mod programs;
 pub mod rhai_host;
 pub mod rhai_scripts;
@@ -212,6 +213,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             emoji_default_action,
             clock,
             favicon_service,
+            close_on_focus_loss,
+            launcher_hotkey,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -244,6 +247,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_core::favicon::Service::from_config(
                         config.unknown_fields().get("favicon_service"),
                     ),
+                    config.launcher().close_on_focus_loss(),
+                    config.launcher().hotkey().to_owned(),
                 )
             }
             Err(error) => {
@@ -264,6 +269,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     emoji_default_action(&compass_core::Config::default()),
                     clock(&compass_core::Config::default()),
                     compass_core::favicon::Service::default(),
+                    compass_core::config::DEFAULT_CLOSE_ON_FOCUS_LOSS,
+                    compass_core::config::DEFAULT_HOTKEY.to_owned(),
                 )
             }
         };
@@ -329,6 +336,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             keybinding,
             wrap_navigation,
             quick_launch,
+            close_on_focus_loss,
+            launcher_hotkey,
             icons: appearance_preset.icons,
             appearance_preset,
             started_at: Some(started_at),
@@ -359,7 +368,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         match launcher_surface() {
             compass_wayland::SurfaceKind::LayerShell => {
                 tracing::info!("presenting the launcher as a wlr-layer-shell surface");
-                compass_ui::run_resident_layer_shell(flags)
+                compass_ui::run_resident_layer_shell(flags, layer_shell_connection())
                     .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
             }
             compass_wayland::SurfaceKind::XdgToplevel => {
@@ -931,6 +940,31 @@ fn init_tracing(verbose: u8, log_file: Option<logs::LogFile>) {
         .with(stderr.with_filter(filter))
         .with(file)
         .try_init();
+}
+
+/// The launcher's own Wayland connection, shared with `iced_layershell`, and
+/// the shortcut inhibitor bound on it, so the inhibitor is told which of the
+/// launcher's surfaces holds the keyboard. Without a connection the toolkit
+/// connects itself and reports why it could not.
+fn layer_shell_connection() -> compass_ui::LayerShellConnection {
+    let connection = match wayland_client::Connection::connect_to_env() {
+        Ok(connection) => connection,
+        Err(error) => {
+            tracing::info!(%error, "no Wayland connection to share with the layer shell");
+            return compass_ui::LayerShellConnection::default();
+        }
+    };
+    let inhibitor = match compass_wayland::ShortcutInhibit::bind(&connection) {
+        Ok(inhibit) => Some(Box::new(inhibit) as Box<dyn compass_platform::ShortcutInhibitor>),
+        Err(error) => {
+            tracing::info!(%error, "the shortcut recorder cannot inhibit shortcuts");
+            None
+        }
+    };
+    compass_ui::LayerShellConnection {
+        connection: Some(connection.into()),
+        inhibitor,
+    }
 }
 
 #[cfg(test)]

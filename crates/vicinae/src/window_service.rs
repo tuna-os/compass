@@ -10,6 +10,7 @@ use compass_core::{AppIndex, app_service::AppService};
 use std::sync::Arc;
 
 use compass_ipc::{ErrorKind, ProtocolError, WindowInfo};
+use compass_platform_linux::compositor::{Provider, WmWindow, WmWorkspace};
 use compass_shell::{ShellError, Window};
 
 /// A window as the extension reported it: the fields rows are built from.
@@ -160,6 +161,73 @@ pub fn enrich(
                 .or_else(|| id.parse().ok())
         });
     }
+}
+
+/// `ListWindows` on KWin, or `None` when this session's compositor is not
+/// KWin. The tracker's cache is the window list; the desktops are asked for
+/// to number each window's desktop as a person counts them.
+pub async fn kwin_list(index: &AppIndex) -> Option<compass_ipc::Response> {
+    let Some(Provider::Kwin(kwin)) = crate::wlroots::compositor() else {
+        return None;
+    };
+    let desktops = kwin.desktops().await.unwrap_or_else(|err| {
+        tracing::info!(error = %err, "no virtual desktops from KWin");
+        Vec::new()
+    });
+    Some(compass_ipc::Response::Windows {
+        windows: rows(kwin_windows(kwin.windows(), &desktops), index),
+    })
+}
+
+/// KWin's tracked windows as switcher windows: the launcher's own left out
+/// (by pid, else by class), each desktop id turned into its number.
+#[must_use]
+pub fn kwin_windows(windows: Vec<WmWindow>, desktops: &[WmWorkspace]) -> Vec<ShellWindow> {
+    let own = compass_platform_linux::compositor::OwnWindows {
+        pids: vec![std::process::id()],
+        classes: vec![compass_ui::APP_ID.to_owned()],
+    };
+    windows
+        .into_iter()
+        .filter(|window| !own.contains(window))
+        .filter_map(|window| {
+            Some(ShellWindow {
+                id: window.id.parse().ok()?,
+                workspace: window.workspace.as_deref().and_then(|id| {
+                    desktops
+                        .iter()
+                        .find(|desktop| desktop.id == id)
+                        .and_then(|desktop| desktop.number)
+                }),
+                title: window.title,
+                wm_class: window.wm_class,
+                pid: window.pid,
+                focused: window.focused,
+                can_close: true,
+            })
+        })
+        .collect()
+}
+
+/// `ActivateWindow` / `CloseWindow` on KWin, or `None` when this session's
+/// compositor is not KWin.
+pub async fn kwin_act(id: u32, close: bool, what: &str) -> Option<compass_ipc::Response> {
+    use compass_platform_linux::compositor::{IpcError, kwin::Action};
+    let Some(Provider::Kwin(kwin)) = crate::wlroots::compositor() else {
+        return None;
+    };
+    let action = if close { Action::Close } else { Action::Focus };
+    Some(match kwin.act(&id.to_string(), action).await {
+        Ok(()) => compass_ipc::Response::Ack,
+        Err(err) => {
+            let kind = if matches!(err, IpcError::Refused(_)) {
+                ErrorKind::BadRequest
+            } else {
+                ErrorKind::Internal
+            };
+            compass_ipc::Response::Error(ProtocolError::new(kind, format!("{what} failed: {err}")))
+        }
+    })
 }
 
 /// `ActivateWindow` / `CloseWindow` on a wlroots compositor, or `None` when
@@ -332,6 +400,47 @@ mod tests {
                 (2, Some(3120), Some(1)),
                 (3, None, None)
             ]
+        );
+    }
+
+    #[test]
+    fn kwin_windows_leave_out_the_launcher_and_number_their_desktop() {
+        let window = |id: &str, class: &str, pid: u32, desktop: Option<&str>| WmWindow {
+            id: id.into(),
+            title: format!("window {id}"),
+            wm_class: class.into(),
+            pid: Some(pid),
+            workspace: desktop.map(str::to_owned),
+            ..WmWindow::default()
+        };
+        let desktops = [
+            WmWorkspace {
+                id: "0b1c".into(),
+                number: Some(1),
+                ..WmWorkspace::default()
+            },
+            WmWorkspace {
+                id: "9f2e".into(),
+                number: Some(2),
+                ..WmWorkspace::default()
+            },
+        ];
+        let windows = kwin_windows(
+            vec![
+                window("1", "firefox", 100, Some("9f2e")),
+                window("2", "konsole", std::process::id(), None),
+                window("3", compass_ui::APP_ID, 7, None),
+                window("4", "dolphin", 300, None),
+                window("5", "kate", 400, Some("gone")),
+            ],
+            &desktops,
+        );
+        assert_eq!(
+            windows
+                .iter()
+                .map(|w| (w.id, w.workspace, w.can_close))
+                .collect::<Vec<_>>(),
+            [(1, Some(2), true), (4, None, true), (5, None, true)]
         );
     }
 

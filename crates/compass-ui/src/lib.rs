@@ -46,6 +46,7 @@ pub mod script_page;
 mod scroll;
 pub mod settings;
 pub mod settings_page;
+mod shortcut_inhibit;
 pub mod shortcut_recorder;
 pub mod shortcuts_page;
 pub mod snippets_page;
@@ -142,6 +143,19 @@ pub fn run_resident(flags: AppFlags) -> iced::Result {
     .run()
 }
 
+/// What the `vicinae` binary hands [`run_resident_layer_shell`]: the
+/// Wayland connection it made for the launcher, and the shortcut inhibitor it
+/// bound on that connection. Either may be missing; the toolkit then connects
+/// itself, and the shortcut recorder does not inhibit.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+pub struct LayerShellConnection {
+    /// The connection `iced_layershell` is to use.
+    pub connection: Option<iced_layershell::reexport::WithConnection>,
+    /// The inhibitor bound on it.
+    pub inhibitor: Option<Box<dyn compass_platform::ShortcutInhibitor>>,
+}
+
 /// [`run_resident`], presenting the launcher as a `wlr-layer-shell`
 /// surface through `iced_layershell` instead of an `xdg_toplevel`.
 ///
@@ -156,7 +170,10 @@ pub fn run_resident(flags: AppFlags) -> iced::Result {
 /// `iced_layershell`'s error when the compositor has no layer shell or the
 /// event loop cannot start.
 #[cfg(target_os = "linux")]
-pub fn run_resident_layer_shell(flags: AppFlags) -> Result<(), iced_layershell::Error> {
+pub fn run_resident_layer_shell(
+    flags: AppFlags,
+    shared: LayerShellConnection,
+) -> Result<(), iced_layershell::Error> {
     use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 
     fn view(app: &LauncherApp, window: iced::window::Id) -> iced::Element<'_, Message> {
@@ -170,6 +187,17 @@ pub fn run_resident_layer_shell(flags: AppFlags) -> Result<(), iced_layershell::
     }
 
     surface::set_presentation(surface::Presentation::LayerShell);
+    // The launcher's own connection, shared with `iced_layershell`, so the
+    // shortcut inhibitor is told which of its surfaces holds the keyboard.
+    // Without one `iced_layershell` connects itself and reports why it could
+    // not.
+    let LayerShellConnection {
+        connection: with_connection,
+        inhibitor,
+    } = shared;
+    if let Some(inhibitor) = inhibitor {
+        shortcut_inhibit::install(inhibitor);
+    }
     iced_layershell::build_pattern::daemon(
         move || LauncherApp::boot(flags.clone()),
         surface::layer::NAMESPACE,
@@ -188,6 +216,7 @@ pub fn run_resident_layer_shell(flags: AppFlags) -> Result<(), iced_layershell::
             start_mode: StartMode::Background,
             ..LayerShellSettings::default()
         },
+        with_connection,
         ..Settings::default()
     })
     .run()

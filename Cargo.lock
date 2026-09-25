@@ -919,6 +919,7 @@ dependencies = [
  "tracing",
  "unicode-normalization",
  "url",
+ "xkeysym",
  "zip",
 ]
 
@@ -1043,6 +1044,7 @@ dependencies = [
  "compass-portals",
  "compass-testkit",
  "compass-xdg",
+ "futures-util",
  "niri-ipc",
  "notify",
  "serde",
@@ -1051,6 +1053,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "zbus",
 ]
 
 [[package]]
@@ -1201,6 +1204,7 @@ dependencies = [
 name = "compass-wayland"
 version = "0.1.0"
 dependencies = [
+ "compass-platform",
  "compass-wayland-protocols",
  "tempfile",
  "thiserror 2.0.20",
@@ -1208,7 +1212,9 @@ dependencies = [
  "tracing",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-misc",
  "wayland-protocols-wlr",
+ "wayland-server",
  "wl-clipboard-rs",
 ]
 
@@ -1220,6 +1226,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-scanner",
+ "wayland-server",
 ]
 
 [[package]]
@@ -6875,6 +6882,19 @@ dependencies = [
  "proc-macro2",
  "quick-xml 0.41.0",
  "quote",
+]
+
+[[package]]
+name = "wayland-server"
+version = "0.31.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dde9c29be0f723a573977de51ee455bf3dfa03652730a74f9dd3b337e374d75"
+dependencies = [
+ "bitflags 2.13.2",
+ "downcast-rs",
+ "rustix 1.1.4",
+ "wayland-backend",
+ "wayland-scanner",
 ]
 
 [[package]]

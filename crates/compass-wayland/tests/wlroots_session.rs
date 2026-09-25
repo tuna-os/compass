@@ -15,7 +15,7 @@ use std::time::Duration;
 use compass_wayland::clipboard::{self, SelectionChange};
 use compass_wayland::compositor::{self, Family};
 use compass_wayland::data_control::{Offer, PASSWORD_HINT_MIME_TYPE};
-use compass_wayland::hotkey::{self, Hotkey, HotkeyError, HotkeyRequest};
+use compass_wayland::hotkey::{self, HotkeyClient, HotkeyError};
 use compass_wayland::toplevel::{Source, ToplevelError, Toplevels};
 use support::{Sway, TestWindow, child_role, eventually};
 
@@ -284,15 +284,9 @@ fn a_compositor_without_xx_hotkey_says_so_and_the_fallback_names_the_command() {
         return;
     };
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let request = HotkeyRequest {
-        app_id: "com.vicinae.Vicinae".to_owned(),
-        description: "Open the launcher".to_owned(),
-        keysym: hotkey::KEYSYM_SPACE,
-        modifiers: hotkey::modifiers::SUPER,
-    };
-    match Hotkey::bind_on(sway.connect(), &request, tx) {
+    match HotkeyClient::connect_on(sway.connect(), "com.vicinae.Vicinae", tx) {
         Err(HotkeyError::Unsupported) => {}
-        other => panic!("Sway 1.x has no xx-hotkey-v1, got {other:?}"),
+        other => panic!("Sway 1.x has neither hotkey protocol, got {other:?}"),
     }
     assert!(hotkey::manual_binding_hint(Some("sway")).contains("vicinae toggle"));
 }

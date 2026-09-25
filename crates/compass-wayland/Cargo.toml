@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+compass-platform.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -23,6 +24,13 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # Writing and reading the selection over wlr/ext data-control. It has no way to
 # *watch* the selection, so `clipboard::monitor` does that part itself.
 wl-clipboard-rs = "0.9"
+# `zwp_virtual_keyboard_v1`, to press the paste chord. Already in the tree
+# through `layershellev` and smithay-client-toolkit.
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+# The virtual keyboard's keymap is handed over as a file.
+tempfile.workspace = true
 
 [dev-dependencies]
+compass-wayland-protocols = { path = "../compass-wayland-protocols", features = ["server"] }
 tempfile.workspace = true
+wayland-server = "0.31"

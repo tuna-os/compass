@@ -465,11 +465,194 @@ fn on_sway_doctor_reports_the_wlroots_protocols_it_found() {
         "layer-shell: yes",
         "zwlr_foreign_toplevel_manager_v1",
         "data-control: yes",
-        "xx-hotkey: no",
+        "hotkey protocol: no",
+        "virtual-keyboard: yes",
+        "shortcuts-inhibit: yes",
         "portal GlobalShortcuts: no",
         "compositor IPC: none",
         "no global hotkey",
     ] {
         assert!(detail.contains(part), "{part:?} not in {detail}");
     }
+}
+
+/// Child role: print the regular selection's text, as a paste would read it.
+#[test]
+fn child_prints_the_clipboard() {
+    if support::child_role().is_none() {
+        return;
+    }
+    match compass_wayland::clipboard::read("text/plain;charset=utf-8") {
+        Ok(bytes) => println!(
+            "CLIPBOARD:{}",
+            String::from_utf8_lossy(&bytes.unwrap_or_default())
+        ),
+        Err(err) => println!("CLIPBOARD-ERROR:{err}"),
+    }
+}
+
+fn clipboard_text(sway: &Sway) -> String {
+    let child = sway.run_child("child_prints_the_clipboard", "read", &[]);
+    let output = child.wait_with_output().expect("the reader ran");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .find_map(|line| {
+            line.split_once("CLIPBOARD:")
+                .map(|(_, text)| text.to_owned())
+        })
+        .unwrap_or_else(|| format!("<no clipboard: {stdout}>"))
+}
+
+/// The chord a window was sent: each key with the modifier mask at it.
+fn chord(window: &TestWindow) -> Vec<(u32, bool, u32)> {
+    let mut mask = 0;
+    let mut chord = Vec::new();
+    for event in window.presses() {
+        match event {
+            support::KeyEvent::Modifiers(now) => mask = now,
+            support::KeyEvent::Key(code, pressed) => chord.push((code, pressed, mask)),
+            _ => {}
+        }
+    }
+    chord
+}
+
+const NO_HELPER: &str = "/nonexistent/compass-test-no-input-server";
+
+#[test]
+fn on_sway_a_paste_is_copied_and_pressed_into_the_focused_window() {
+    use compass_wayland::virtual_keyboard::{CONTROL_MASK, KEY_LEFTCTRL, KEY_V};
+    let Some(sway) = Sway::start("on_sway_a_paste_is_copied_and_pressed") else {
+        return;
+    };
+    let _seat = support::seat_keyboard(&sway);
+    let editor = TestWindow::open(&sway, "Editor", "test.Editor");
+    assert!(eventually(WAIT, || editor
+        .keys()
+        .contains(&support::KeyEvent::Enter)));
+    let engine = Engine::start_with(&sway, "sway", |_| {
+        vec![("VICINAE_INPUT_SERVER_BIN", NO_HELPER.into())]
+    });
+
+    // Before, a wlroots session only copied, and the window was told so.
+    assert_eq!(
+        engine.request(Request::PasteText {
+            text: "pasted words".into()
+        }),
+        Response::Ack
+    );
+    let want = vec![
+        (KEY_LEFTCTRL, true, 0),
+        (KEY_V, true, CONTROL_MASK),
+        (KEY_V, false, CONTROL_MASK),
+        (KEY_LEFTCTRL, false, CONTROL_MASK),
+    ];
+    assert!(
+        eventually(WAIT, || chord(&editor) == want),
+        "{:?}",
+        editor.keys()
+    );
+    assert_eq!(clipboard_text(&sway), "pasted words");
+
+    // A file's panel offers the paste, and pasting a file presses it too.
+    let file = sway.runtime_dir().join("note.txt");
+    std::fs::write(&file, "x").unwrap();
+    let path = file.to_string_lossy().into_owned();
+    let Response::FileActions(info) = engine.request(Request::FileActions { path: path.clone() })
+    else {
+        panic!("no file actions");
+    };
+    assert!(info.can_paste, "{info:?}");
+    assert_eq!(
+        engine.request(Request::CopyFile { path, paste: true }),
+        Response::Ack
+    );
+    assert!(
+        eventually(WAIT, || chord(&editor).len() == 2 * want.len()),
+        "{:?}",
+        editor.keys()
+    );
+}
+
+#[test]
+fn on_sway_a_terminal_is_pasted_into_with_ctrl_shift_v() {
+    use compass_wayland::virtual_keyboard::{CONTROL_MASK, KEY_LEFTSHIFT, KEY_V, SHIFT_MASK};
+    let Some(sway) = Sway::start("on_sway_a_terminal_is_pasted_into") else {
+        return;
+    };
+    let _seat = support::seat_keyboard(&sway);
+    let terminal = TestWindow::open(&sway, "Terminal", "test.Terminal");
+    let engine = Engine::start_with(&sway, "sway", |root| {
+        let apps = root.join("data/applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::fs::write(
+            apps.join("test.Terminal.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Test Terminal\nExec=true\n\
+             Categories=System;TerminalEmulator;\n",
+        )
+        .unwrap();
+        vec![("VICINAE_INPUT_SERVER_BIN", NO_HELPER.into())]
+    });
+
+    assert_eq!(
+        engine.request(Request::PasteText { text: "ls".into() }),
+        Response::Ack
+    );
+    let both = CONTROL_MASK | SHIFT_MASK;
+    assert!(
+        eventually(WAIT, || chord(&terminal).contains(&(KEY_V, true, both))),
+        "the terminal was not sent Ctrl+Shift+V: {:?}",
+        terminal.keys()
+    );
+    assert!(chord(&terminal).contains(&(KEY_LEFTSHIFT, true, CONTROL_MASK)));
+}
+
+#[test]
+fn on_sway_the_input_server_presses_the_paste_when_it_runs() {
+    let Some(sway) = Sway::start("on_sway_the_input_server_presses_the_paste") else {
+        return;
+    };
+    let _seat = support::seat_keyboard(&sway);
+    let editor = TestWindow::open(&sway, "Editor", "test.Editor");
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_input_server.py");
+    let log = std::sync::Arc::new(std::sync::Mutex::new(PathBuf::new()));
+    let log_path = std::sync::Arc::clone(&log);
+    let engine = Engine::start_with(&sway, "sway", move |root| {
+        let file = root.join("input-server.log");
+        *log_path.lock().unwrap() = file.clone();
+        vec![
+            ("VICINAE_INPUT_SERVER_BIN", script.into_os_string()),
+            ("FAKE_INPUT_LOG", file.into_os_string()),
+        ]
+    });
+    let log = log.lock().unwrap().clone();
+    let calls = || std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        eventually(WAIT, || matches!(
+            engine.request(Request::InputServerStatus),
+            Response::InputServerStatus(status) if status.running && status.injection
+        )),
+        "the helper never ran"
+    );
+
+    assert_eq!(
+        engine.request(Request::PasteText {
+            text: "through the helper".into()
+        }),
+        Response::Ack
+    );
+    assert!(
+        eventually(WAIT, || calls().contains("Snippet/injectPaste")),
+        "the helper was not asked to paste: {}",
+        calls()
+    );
+    assert!(calls().contains(r#""terminal": false"#), "{}", calls());
+    assert!(
+        chord(&editor).is_empty(),
+        "the virtual keyboard pressed it as well: {:?}",
+        editor.keys()
+    );
+    assert_eq!(clipboard_text(&sway), "through the helper");
 }

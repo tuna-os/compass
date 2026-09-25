@@ -21,7 +21,7 @@ use futures_util::StreamExt;
 use compass_portals::{
     Availability, ColorScheme, DegradedFeature, FileChooserOutcome, FileChooserRequest,
     GLOBAL_SHORTCUTS, Modifiers, NotQueryable, OpenOutcome, PortalConfig, PortalError, Portals,
-    ShortcutDescriptor, ShortcutEvent, ShortcutsOutcome, Trigger, Unavailable,
+    ShortcutBinder, ShortcutDescriptor, ShortcutEvent, ShortcutsOutcome, Trigger, Unavailable,
 };
 use support::bus::{TestBus, start_or_skip};
 use support::mock::{Behaviour, MockOptions, MockPortal, start_unresponsive_portal};
@@ -572,6 +572,145 @@ async fn configure_shortcuts_is_gated_on_interface_v2() {
     assert!(err.is_unavailable());
 }
 
+// ---------------------------------------------------------------------------
+// The shortcut binder: the configuration's whole set, rebound as it changes
+// ---------------------------------------------------------------------------
+
+fn command(id: &str, trigger: &str) -> ShortcutDescriptor {
+    ShortcutDescriptor::new(id, id).with_trigger(Trigger::parse(trigger).expect("valid"))
+}
+
+#[tokio::test]
+async fn the_binder_binds_a_changed_set_on_a_new_session_and_closes_the_old_one() {
+    let Some(bus) = start_or_skip("the_binder_binds_a_changed_set") else {
+        return;
+    };
+    let mock = MockPortal::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut binder = ShortcutBinder::new(deadline("connect", portals(&bus)).await, tx);
+
+    let first = deadline(
+        "first set",
+        binder.apply(&[
+            command("toggle", "LOGO+space"),
+            command("clipboard:history", "CTRL+SHIFT+v"),
+        ]),
+    )
+    .await
+    .expect("bind");
+    assert!(first.is_granted());
+    let second = deadline(
+        "second set",
+        binder.apply(&[command("toggle", "ALT+space")]),
+    )
+    .await
+    .expect("rebind");
+    assert_eq!(second.shortcuts().len(), 1);
+    assert!(binder.is_bound());
+
+    assert_eq!(
+        mock.calls(),
+        vec![
+            "CreateSession",
+            "BindShortcuts",
+            "Session.Close",
+            "CreateSession",
+            "BindShortcuts"
+        ]
+    );
+    assert_eq!(
+        mock.bound().last(),
+        Some(&(
+            "toggle".to_owned(),
+            "toggle".to_owned(),
+            Some("ALT+space".to_owned())
+        ))
+    );
+}
+
+#[tokio::test]
+async fn the_binder_delivers_the_current_sessions_activations() {
+    let Some(bus) = start_or_skip("the_binder_delivers_activations") else {
+        return;
+    };
+    let mock = MockPortal::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut binder = ShortcutBinder::new(deadline("connect", portals(&bus)).await, tx);
+    deadline(
+        "first set",
+        binder.apply(&[command("toggle", "LOGO+space")]),
+    )
+    .await
+    .expect("bind");
+    deadline(
+        "second set",
+        binder.apply(&[
+            command("toggle", "LOGO+space"),
+            command("clipboard:history", "CTRL+SHIFT+v"),
+        ]),
+    )
+    .await
+    .expect("rebind");
+
+    deadline(
+        "emit",
+        mock.emit_activated("clipboard:history", 1_700_000_000, None),
+    )
+    .await
+    .expect("emit activated");
+    let event = deadline("activation", rx.recv()).await.expect("open");
+    assert!(
+        matches!(event, ShortcutEvent::Activated { ref id, .. } if id == "clipboard:history"),
+        "{event:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_set_closes_the_session_and_binds_nothing() {
+    let Some(bus) = start_or_skip("an_empty_set_closes_the_session") else {
+        return;
+    };
+    let mock = MockPortal::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut binder = ShortcutBinder::new(deadline("connect", portals(&bus)).await, tx);
+    deadline("set", binder.apply(&[command("toggle", "LOGO+space")]))
+        .await
+        .expect("bind");
+    let outcome = deadline("empty set", binder.apply(&[]))
+        .await
+        .expect("empty");
+    assert!(outcome.is_granted() && outcome.shortcuts().is_empty());
+    assert!(!binder.is_bound());
+    assert_eq!(
+        mock.calls(),
+        vec!["CreateSession", "BindShortcuts", "Session.Close"]
+    );
+}
+
+#[tokio::test]
+async fn a_denied_set_is_reported_as_denied() {
+    let Some(bus) = start_or_skip("a_denied_set_is_reported") else {
+        return;
+    };
+    let _mock = MockPortal::start(
+        bus.address(),
+        MockOptions::default().behaving(Behaviour::Deny),
+    )
+    .await
+    .expect("mock");
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut binder = ShortcutBinder::new(deadline("connect", portals(&bus)).await, tx);
+    let outcome = deadline("set", binder.apply(&[command("toggle", "LOGO+space")]))
+        .await
+        .expect("an outcome");
+    assert_eq!(outcome, ShortcutsOutcome::Denied);
+}
 // ---------------------------------------------------------------------------
 // OpenURI
 // ---------------------------------------------------------------------------

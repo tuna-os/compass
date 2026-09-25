@@ -8335,6 +8335,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/wayland-server/wayland-server-0.31.14.crate",
+        "sha256": "0dde9c29be0f723a573977de51ee455bf3dfa03652730a74f9dd3b337e374d75",
+        "dest": "cargo/vendor/wayland-server-0.31.14"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"0dde9c29be0f723a573977de51ee455bf3dfa03652730a74f9dd3b337e374d75\", \"files\": {}}",
+        "dest": "cargo/vendor/wayland-server-0.31.14",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/wayland-sys/wayland-sys-0.31.11.crate",
         "sha256": "d8eab23fefc9e41f8e841df4a9c707e8a8c4ed26e944ef69297184de2785e3be",
         "dest": "cargo/vendor/wayland-sys-0.31.11"

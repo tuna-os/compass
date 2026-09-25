@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface,
+    wl_buffer, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -205,6 +205,22 @@ pub fn eventually(timeout: Duration, mut condition: impl FnMut() -> bool) -> boo
 /// well-behaved application does.
 pub struct TestWindow {
     closed: Arc<Mutex<bool>>,
+    keys: Arc<Mutex<Vec<KeyEvent>>>,
+}
+
+/// What a window's keyboard was sent, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyEvent {
+    /// `keymap`: the keymap's text, up to its terminator.
+    Keymap(String),
+    /// `enter`: the window took the keyboard.
+    Enter,
+    /// `leave`.
+    Leave,
+    /// `key`: an evdev code, pressed or released.
+    Key(u32, bool),
+    /// `modifiers`: the depressed mask.
+    Modifiers(u32),
 }
 
 struct WindowState {
@@ -214,19 +230,28 @@ struct WindowState {
     buffer: wl_buffer::WlBuffer,
     configured: bool,
     closed: Arc<Mutex<bool>>,
+    keys: Arc<Mutex<Vec<KeyEvent>>>,
 }
 
 impl TestWindow {
     /// Maps a 64×64 window with `title` and `app_id`.
     pub fn open(sway: &Sway, title: &str, app_id: &str) -> Self {
-        let connection = sway.connect();
+        Self::open_on(&sway.connect(), title, app_id)
+    }
+
+    /// [`Self::open`], on `connection` (so a test can bind something else on
+    /// the same client). Every window records its keyboard events.
+    pub fn open_on(connection: &Connection, title: &str, app_id: &str) -> Self {
         let (globals, mut queue): (_, EventQueue<WindowState>) =
-            registry_queue_init(&connection).expect("registry");
+            registry_queue_init(connection).expect("registry");
         let qh = queue.handle();
         let compositor: wl_compositor::WlCompositor =
             globals.bind(&qh, 1..=4, ()).expect("wl_compositor");
         let shm: wl_shm::WlShm = globals.bind(&qh, 1..=1, ()).expect("wl_shm");
         let wm_base: xdg_wm_base::XdgWmBase = globals.bind(&qh, 1..=2, ()).expect("xdg_wm_base");
+        // The keyboard is asked for when the seat says it has one; a
+        // headless Sway has none until a test makes a virtual one.
+        let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=5, ()).expect("wl_seat");
 
         let (width, height) = (64_i32, 64_i32);
         let stride = width * 4;
@@ -245,6 +270,7 @@ impl TestWindow {
         surface.commit();
 
         let closed = Arc::new(Mutex::new(false));
+        let keys = Arc::new(Mutex::new(Vec::new()));
         let mut state = WindowState {
             wm_base,
             surface,
@@ -252,6 +278,7 @@ impl TestWindow {
             buffer,
             configured: false,
             closed: Arc::clone(&closed),
+            keys: Arc::clone(&keys),
         };
         while !state.configured {
             queue
@@ -263,10 +290,23 @@ impl TestWindow {
         // either order — and Sway focuses the one mapped last.
         queue.roundtrip(&mut state).expect("mapping the window");
         std::thread::spawn(move || {
-            let _keep = (file, pool, xdg);
+            let _keep = (file, pool, xdg, seat);
             while queue.blocking_dispatch(&mut state).is_ok() {}
         });
-        Self { closed }
+        Self { closed, keys }
+    }
+
+    /// Every keyboard event the window has had.
+    pub fn keys(&self) -> Vec<KeyEvent> {
+        self.keys.lock().unwrap().clone()
+    }
+
+    /// The `key` and `modifiers` events alone.
+    pub fn presses(&self) -> Vec<KeyEvent> {
+        self.keys()
+            .into_iter()
+            .filter(|event| matches!(event, KeyEvent::Key(..) | KeyEvent::Modifiers(..)))
+            .collect()
     }
 
     /// Whether the compositor asked it to close, and it did.
@@ -345,6 +385,47 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WindowState {
     }
 }
 
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState {
+    fn event(
+        state: &mut Self,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let recorded = match event {
+            wl_keyboard::Event::Keymap { fd, size, .. } => {
+                use std::io::Read as _;
+                let mut text = Vec::new();
+                let _ = std::fs::File::from(fd)
+                    .take(u64::from(size))
+                    .read_to_end(&mut text);
+                let end = text
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(text.len());
+                KeyEvent::Keymap(String::from_utf8_lossy(&text[..end]).into_owned())
+            }
+            wl_keyboard::Event::Enter { .. } => KeyEvent::Enter,
+            wl_keyboard::Event::Leave { .. } => KeyEvent::Leave,
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => KeyEvent::Key(
+                key,
+                key_state == wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed),
+            ),
+            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
+                KeyEvent::Modifiers(mods_depressed)
+            }
+            _ => return,
+        };
+        state.keys.lock().unwrap().push(recorded);
+    }
+}
+
 macro_rules! ignore_events {
     ($($ty:ty),*) => {$(
         impl Dispatch<$ty, ()> for WindowState {
@@ -368,3 +449,29 @@ ignore_events!(
     wl_buffer::WlBuffer,
     wl_surface::WlSurface
 );
+
+impl Dispatch<wl_seat::WlSeat, ()> for WindowState {
+    fn event(
+        _: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities {
+            capabilities: wayland_client::WEnum::Value(capabilities),
+        } = event
+            && capabilities.contains(wl_seat::Capability::Keyboard)
+        {
+            seat.get_keyboard(qh, ());
+        }
+    }
+}
+
+/// A keyboard for the seat: headless Sway starts with none, and without one
+/// no window is sent keyboard focus. Keep it for the test's length.
+pub fn seat_keyboard(sway: &Sway) -> compass_wayland::virtual_keyboard::VirtualKeyboard {
+    compass_wayland::virtual_keyboard::VirtualKeyboard::bind(&sway.connect())
+        .expect("a virtual keyboard for the seat")
+}

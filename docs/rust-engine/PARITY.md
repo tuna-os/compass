@@ -152,7 +152,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/services/global-shortcuts` | `compass-core::global_shortcuts`, `compass-wayland::hotkey`, `compass-portals`, `vicinae::global_shortcuts` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/input-server` | `vicinae::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -163,7 +163,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/news` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/paste` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/paste` | `compass-core`, `vicinae::paste`, `compass-wayland::virtual_keyboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -171,7 +171,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/shortcut-inhibit` | `compass-core`, `compass-wayland::keyboard_inhibit` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -293,7 +293,7 @@ shortcuts, the power commands' two preferences, and a notification's urgency and
 | `src/services/selection` | Rust ✅ | data-control on wlroots, the Shell extension on GNOME | `the_primary_selection_is_its_text_or_nothing`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `on_sway_a_shortcut_expands_the_selected_text` |
 | `src/services/snippet` | Rust ✅ | `compass_core::{snippet_store, snippet_expander}`, `compass-input-server` | `snippets_are_imported_created_expanded_edited_and_removed`, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
 | `src/services/wallpaper` | Rust ✅ | `compass_core::wallpaper`, `vicinae::extension_wallpaper` (all six Linux backends) | `compass-core/tests/wallpaper.rs`, `a_failing_command_says_its_stderr_else_its_code` |
-| `src/services/window-manager` | Rust 🟡, parity ✅ | dispatch plus GNOME, wlroots, Hyprland and niri; not KDE or X11 | `compass-core/tests/window_manager.rs`, `compositor_ipc.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
+| `src/services/window-manager` | Rust 🟡, parity ✅ | dispatch plus GNOME, wlroots, Hyprland, niri and KDE (KWin, "The gaps pass, KDE"); not X11, nor GNOME's workspace list | `compass-core/tests/window_manager.rs`, `compositor_ipc.rs`, `compass-platform-linux/tests/kwin.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
 | `src/builtins/developer` | both ✅ | Create Extension end to end | `a_valid_form_writes_the_boilerplate_and_an_invalid_one_says_why`, `create_extension_sends_the_form_and_shows_where_it_went` |
 | `src/builtins/font` | parity ✅ | Browse Fonts | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font` |
 | `src/builtins/power-management` | both ✅ | the plan, both preferences, the dialog | `the_confirm_preference_decides_whether_a_power_command_asks`, `a_power_command_with_a_custom_program_runs_it_instead` |
@@ -321,15 +321,17 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/desktop-notification`: the urgency and an icon that is a file are passed since this
   pass (`a_notification_carries_the_urgency_and_an_icon_file`); rendering any other icon (a builtin
   one, a remote one) to a temporary PNG landed after it (see "Gaps closed after the truth pass").
-- `src/services/global-shortcuts`: Still C++-only: per-command global shortcuts from the
-  configuration, the `vicinae-hotkey-v1` and X11 backends, and conflict detection.
+- `src/services/global-shortcuts`: per-command global shortcuts, `vicinae-hotkey-v1`, the
+  launcher hotkey from the configuration, close on focus loss and conflict detection landed in "The
+  gaps pass, global shortcuts". Still C++-only: the X11 backend (the X11 decision),
+  `globalShortcuts.inhibitApps`, and the recorder's `probeBind`.
 - `src/services/news`, `src/services/update`, `src/services/telemetry`: Still C++-only: fetching
   and showing the news notices, the update check, and sending the telemetry record, each ported as
   a model and waiting on a decision about what a fork fetches and sends.
-- `src/services/paste`: Still C++-only: synthetic paste on wlroots through the input server's
-  `injectPaste`.
-- `src/services/shortcut-inhibit`: Still C++-only: the keyboard-shortcuts-inhibit Wayland plumbing,
-  which is a stub.
+- `src/services/paste`: synthetic paste on wlroots closed in "The gaps pass, wlroots paste and
+  inhibit" (the input server's `injectPaste`, else `zwp_virtual_keyboard_v1`).
+- `src/services/shortcut-inhibit`: the keyboard-shortcuts-inhibit client and the recorder's use of
+  it closed in "The gaps pass, wlroots paste and inhibit".
 - `src/services/window-material`: the `ext-background-effect-v1` client is ported
   (`compass_wayland::material`, "The gaps pass, HUD and onboarding"). Still C++-only: applying it
   to the launcher's own surface, which the toolkits hand out only as a raw pointer (an `unsafe`
@@ -529,7 +531,8 @@ with paste in it: Paste to active window and Copy, in the order the `defaultActi
 Enter. Pasting counts a visit, as copying does, and hands the glyph in its tone to the engine
 (`Request::PasteText`), which puts it on the clipboard and pastes it through the Shell extension
 into the window the launcher hides back to, as it pastes a clipboard entry or a snippet. Where the
-engine cannot paste (no Shell extension: the wlroots family, a missing session bus) it refuses by
+engine cannot paste (no Shell extension and, on wlroots, neither the input server nor a virtual
+keyboard; or a missing session bus) it refuses by
 name and the window copies the glyph instead, which is where the C++'s `pasteContent` leaves it too:
 copied first, then "the current platform cannot paste".
 
@@ -556,9 +559,9 @@ What differs, by row:
 | `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
 | `builtins/vicinae` | Where the platform cannot paste, the picker offers no paste action and `defaultAction` defaults to copy. | The window cannot know before asking, so paste is offered whenever an engine is attached, and a refusal copies; the result is the same glyph on the clipboard. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `builtins/vicinae` | The paste action is titled `Paste to <frontmost app>` with its icon. | `Paste to active window`, the C++'s title when no application is frontmost. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
-| `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and binding it waits on `global-shortcuts`. | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
-| `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Neither: the engine binds only the launcher's toggle, and the inhibit protocol is `shortcut-inhibit`'s gap. | — |
-| `ui/action-panel` | "Already bound" also checks the launcher's own keybinds (`KeybindManager`). | Only other root items' shortcuts: the launcher's keybinds are not configurable here. | `a_combination_needs_a_modifier_and_must_not_be_anothers` |
+| `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and the engine binds it where it has a backend ("The gaps pass, global shortcuts"). | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
+| `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Both: the global shortcuts are suspended (IPC v20 `ShortcutCapture`, "The gaps pass, global shortcuts") and the compositor's inhibited under the layer-shell presentation ("The gaps pass, wlroots paste and inhibit"); under `xdg_toplevel` the compositor's are not inhibited. | `the_recorder_suspends_the_global_shortcuts_while_it_captures`, `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
+| `ui/action-panel` | "Already bound" also checks the launcher's own keybinds (`KeybindManager`). | Checked, as far as Compass has them: its keys are fixed (Toggle action panel, Open settings, Quick launch), and the launcher hotkey with them. | `the_recorder_refuses_the_launchers_own_keys`, `the_launchers_own_keys_and_its_hotkey_are_taken` |
 | `root-item-manager` | Clearing a shortcut writes `""`, which comes back as an empty shortcut after a restart. | Cleared as absent, and an empty stored one reads as none (see "`compass-core::root_items`"). | `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
 
 ### The gaps pass (2026-09-25)
@@ -672,8 +675,8 @@ Declared differences:
 
 - The file browser action is always offered; the C++ offers it only when a file browser is
   installed.
-- Paste is offered where the engine has its GNOME Shell client; a wlroots session copies over
-  data-control (no synthetic paste there yet, `src/services/paste`'s gap).
+- Paste is offered where the engine can press it: the GNOME Shell client, or on wlroots the input
+  server or a virtual keyboard ("The gaps pass, wlroots paste and inhibit").
 - Success hides the launcher with the C++'s HUD ("Wallpaper set", "Copied to clipboard");
   failures show under the list rather than as a toast.
 - Dragging a file out of the list: Iced offers no drag out of a window (`src/builtins/clipboard`
@@ -829,8 +832,9 @@ Declared differences:
 - **Settings only Compass has are offered beside them**: quick launch, the result count, the clock,
   the colour scheme, the layout preset, application icons and translucency.
 - The launcher hotkey and Close on focus loss are written to `launcher.hotkey` and
-  `launcher.close_on_focus_loss`, the schema's keys; the engine still binds Super+Space and the
-  window does not yet hide on focus loss (`src/services/global-shortcuts`' gap).
+  `launcher.close_on_focus_loss`, the schema's keys; the engine binds the hotkey from the file and
+  rebinds it when it changes, and the window hides on focus loss when the switch is on ("The gaps
+  pass, global shortcuts").
 - The font is a text field (empty for the desktop's interface font), where the C++ has a list of
   the installed families; Browse Fonts' "Set as vicinae font" remains the way to pick from them.
 - A folder list is one field with `:` between folders, where the C++ has a file picker per entry.
@@ -841,6 +845,69 @@ Declared differences:
   from a local build.
 - The file index, snippet and script preferences are read where they are used or when the engine
   next starts, as `vicinae.json` edited by hand is.
+
+### The gaps pass, KDE (2026-09-25)
+
+The KDE window-manager provider, from PLAN §12.0's `src/services/window-manager` row, against the
+C++ in `src/server/src/services/window-manager/kde/`. No IPC change: KWin's windows reach the
+switcher, Switch Workspaces, the toggles and `WindowManagement` through the existing requests.
+
+**How it works, as the C++.** KWin has no socket and no D-Bus call that lists windows, so the engine
+owns `org.vicinae.WindowTracker` on the session bus and loads a tracker script into KWin over
+`org.kde.kwin.Scripting` (`loadScript` of a temporary file, then `run` on `/Scripting/Script<n>`,
+the file kept until `run` answers because KWin opens it then). The script walks
+`workspace.stackingOrder` once and forwards `windowAdded`, `windowRemoved`, `windowActivated` and
+each window's `captionChanged` with `callDBus`; the engine answers from what it has been told. A
+tracker left by an earlier run is unloaded first, the tracker is reloaded whenever `org.kde.KWin`
+gets an owner (KWin restarted) and its windows forgotten when it loses one, and it is unloaded when
+the engine stops. Focusing a window is a one-shot script (`workspace.activeWindow = w`) loaded, run
+and unloaded under a unique plugin name. Chosen as the C++ chooses it: `kde` in
+`$XDG_CURRENT_DESKTOP` on a Wayland session (`Environment::isWaylandPlasmaDesktop`).
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/window-manager` | — (stays `Rust ✓` 🟡: the X11 provider and GNOME's workspace list remain) | `compass_platform_linux::compositor::kwin` (`Kwin`, the tracker object, the scripts), `Provider::Kwin`, `vicinae::wlroots::{start_kwin, stop_kwin}`, `vicinae::window_service::{kwin_list, kwin_windows, kwin_act}`, the `kde.kwin` doctor check | `the_tracker_lists_kwins_normal_windows_and_which_is_active`, `focus_close_and_fullscreen_are_one_shot_scripts_unloaded_after`, `virtual_desktops_are_the_workspaces_and_the_overview_is_kwins_shortcut`, `a_kwin_restart_forgets_its_windows_and_reloads_the_tracker`, `a_second_tracker_is_refused_the_name_and_stop_gives_it_up`, `plasma_on_wayland_is_a_kde_entry_and_a_display`, `a_one_shot_script_quotes_its_target`, `handles_are_numbered_once_and_never_reused`, `kwin_windows_leave_out_the_launcher_and_number_their_desktop`, `kwin_with_its_desktops_passes_and_counts_them`, `kwin_absent_on_plasma_warns_and_elsewhere_is_not_asked`, `kwin_without_virtual_desktops_warns_that_there_are_no_workspaces` |
+
+The tests run against a private `dbus-daemon` with a fake `org.kde.KWin`
+(`compass-platform-linux/tests/kwin.rs`): it answers the scripting interface as KWin does (a number
+from `loadScript`, a `run` that reads the file it was given) and, having no JavaScript engine,
+replays what KWin would do running each script — the tracker's `add`/`activated` calls, a one-shot's
+change and the signal it causes. That the scripts themselves are correct JavaScript against KWin's
+API is **VM tier**: real KWin (Plasma 6) is the only proof, and no KWin runs in CI.
+
+Declared differences, beyond the C++:
+
+- **More than the C++ offers.** The C++ provider lists and focuses windows and declares no
+  capabilities (`canClose` is false, no workspaces). Compass also closes windows (`closeWindow()`),
+  toggles fullscreen (`fullScreen`), lists and switches virtual desktops as workspaces through KWin's
+  own `org.kde.KWin.VirtualDesktopManager` (`desktops`, `current`), and opens the overview through
+  kglobalaccel's `invokeShortcut("Overview")` on `/component/kwin`. The tracker's `add` therefore
+  carries two more arguments than the C++'s (the window's first desktop id, empty on all desktops,
+  and whether it is fullscreen) and is re-sent on `desktopsChanged` and `fullScreenChanged`.
+- **No floating toggle.** KWin floats every window already; `ToggleFloating` is refused by name and
+  the capability is off.
+- **Window handles.** KWin's ids are UUIDs and the engine's window requests carry a `u32`, so each
+  UUID is numbered the first time it is seen and the number is never reused in the process, across
+  KWin restarts included.
+- **"The window the person was in"** for the toggles is the most recently activated window, not the
+  launcher's, on the current desktop (or on all desktops), from the tracker's activation order.
+- **No geometry.** The tracker does not follow `frameGeometryChanged` (it fires on every step of a
+  drag), so KWin windows report no bounds to `WindowManagement`.
+- **Start-up is detached.** The C++ starts the provider synchronously; Compass starts it on a task
+  after the socket is bound (bounded to 10 s), so a KWin that never answers costs window switching,
+  never the engine. Until it is up, window requests go the non-KDE way.
+- **The tracker trusts its callers**, as the C++'s does: any session-bus client may call
+  `org.vicinae.WindowTracker`. And the script file is written to the temporary directory, as the
+  C++ writes it; inside the Flatpak that is the sandbox's own `/tmp`, which KWin cannot read, so
+  KDE window management there needs a path KWin can see (VM tier, with the Flatpak).
+- `vicinae doctor` gains `kde.kwin` (the C++ has no doctor): whether KWin owns its name and how many
+  virtual desktops it reports, a warning without either, and a warning for KDE on X11.
+
+**X11 is not implemented** (the decision whether X11 is supported is the user's). What it would
+take is recorded in PLAN §12.0: the C++ `x11/` provider is 1,163 lines over XCB and EWMH
+(`_NET_CLIENT_LIST`, `_NET_ACTIVE_WINDOW`, `_NET_WM_DESKTOP`, `_NET_CURRENT_DESKTOP`,
+`_NET_DESKTOP_NAMES`, `WM_DELETE_WINDOW`, `_NET_WM_STATE_STICKY`) with a `PropertyNotify` listener
+on the root window.
 
 ### The gaps pass, HUD and onboarding (2026-09-25)
 
@@ -906,9 +973,9 @@ Declared differences:
   one surface, and a second toplevel would be a second window for the compositor to place. Finishing
   hides the card, as finishing hides the C++'s window.
 - The global hotkey row takes the C++'s branch for a platform without global shortcuts ("Bind a key
-  to "vicinae toggle"" and Open Docs): the engine binds its toggle through the portal, with no
-  recorder to change it from here (`src/services/global-shortcuts`' gap). The last step's sentence
-  follows.
+  to "vicinae toggle"" and Open Docs): the window cannot know whether the engine found a backend,
+  and the hotkey is changed from Settings, General (`launcher.hotkey`, bound as it changes since
+  "The gaps pass, global shortcuts"). The last step's sentence follows.
 - The macOS permissions step and Launch at login are not offered, as on the C++'s Linux build.
 
 **`src/builtins/vicinae`'s remaining views** (`VicinaeExtension`). Each command is a builtin under
@@ -976,6 +1043,68 @@ rest.
 |---|---|---|---|
 | `src/services/window-material` | — (the launcher's surface is not reachable safely) | `compass_wayland::material::{BackgroundEffects, rounded_region, supports_blur}` | `the_corners_are_cut_as_the_cpp_cuts_them`, `a_region_off_the_origin_is_cut_where_it_is`, `a_square_region_has_nothing_taken_away`, `blur_is_the_capability_bit`, `background_effect_is_bound_where_advertised_and_refused_by_name_where_not` (headless Sway) |
 
+### The gaps pass, wlroots paste and inhibit (2026-09-25)
+
+The last two compositor rows of PLAN §12.0 that need no product decision, against
+`src/server/src/services/paste` and `services/shortcut-inhibit`. Both are proved on headless Sway,
+where a test window records every keyboard event it is sent; no real device or session is touched.
+No IPC change: the existing requests (`PasteText`, `PasteSnippet`, `ClipboardPaste`, `CopyFile`,
+`FileActions.can_paste`) now succeed on wlroots where they were refused.
+
+**Paste** (`LinuxPasteService`, `PasteService`). `vicinae::paste` is the engine's one paste path, and
+the emoji picker, snippets, clipboard history, a file's Paste and an extension's `Clipboard.paste`
+all go through it. On GNOME it is the Shell extension's, as before. On a wlroots compositor with
+data-control the content goes on the clipboard, and `compass_core::paste::PasteService` (the C++'s
+state machine, ported earlier and now driven) waits for focus and presses the chord into the window
+that has it: Ctrl+Shift+V when that window's `app_id` is a `TerminalEmulator` application in the app
+index, Ctrl+V elsewhere. The chord is pressed by the input server's `injectPaste` (uinput, what the
+C++ uses) when the helper runs with injection, else on a `zwp_virtual_keyboard_v1` keyboard
+(`compass_wayland::virtual_keyboard`, over `wayland-protocols-misc`), which needs no device node or
+capability: its own three-key keymap, Control and Shift with the modifier masks the protocol asks
+the client to send, released in reverse. With neither the content is copied and the request refused
+by name ("the content was copied instead"), which the launcher already answers by copying, as the
+C++ copies first and then says the platform cannot paste. A newer paste cancels one still waiting.
+`vicinae doctor` names `virtual-keyboard` and `shortcuts-inhibit` in `wlroots.capabilities`.
+
+**Shortcut inhibit** (`WaylandShortcutInhibitManager`, `ShortcutInhibitorAttached`).
+`compass_wayland::keyboard_inhibit::ShortcutInhibit` is the protocol client, replacing the stub. The
+launcher's surface belongs to `iced_layershell`, which hands it out only as a raw pointer this
+workspace may not use (`unsafe`), so the launcher now makes its own Wayland connection, gives it to
+`iced_layershell` (`Settings::with_connection`) and binds the inhibitor and a `wl_keyboard` of its
+own on the same connection: the compositor's `enter` names the launcher surface that took the
+keyboard, as a proxy on that connection. While a shortcut recorder records (the action panel's or
+the settings'; `ShortcutInhibitor.enabled: capture.capturing`) the focused launcher surface gets an
+inhibitor; it is destroyed when recording ends or the keyboard leaves. `LauncherApp::update` says
+when, from the recorder state (`shortcuts_inhibited`). The inhibitor never reads the socket: the
+toolkit does, and each update dispatches what was read for the inhibitor's queue (a second reader
+on one connection can take the toolkit's events and leave its event loop waiting, which the first
+version of the Sway test caught as a hang).
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/paste` | Rust ✅ | `vicinae::paste` (`paste`, `can_paste`, `injector`, `paste_blocking`), `compass_core::paste::PasteService`, `compass_wayland::virtual_keyboard::{VirtualKeyboard, paste_steps}`, `compass_wayland::compositor::Capabilities::virtual_keyboard` | `on_sway_a_paste_is_copied_and_pressed_into_the_focused_window`, `on_sway_a_terminal_is_pasted_into_with_ctrl_shift_v`, `on_sway_the_input_server_presses_the_paste_when_it_runs` (engine on Sway), `on_sway_the_paste_chord_reaches_the_focused_window`, `on_sway_a_terminal_is_sent_ctrl_shift_v`, `ctrl_v_holds_control_around_the_v`, `a_terminal_gets_shift_as_well_released_in_reverse`, `the_keymap_names_the_codes_the_steps_press` |
+| `src/services/shortcut-inhibit` | Rust ✅ | `compass_wayland::keyboard_inhibit::{ShortcutInhibit, InhibitHandle, InhibitState}`, `compass_ui::shortcut_inhibit`, `LauncherApp::recording_shortcut` | `on_sway_shortcuts_are_inhibited_on_the_focused_surface_while_wanted` (created, active, destroyed, created again without a protocol error), `on_sway_the_inhibitor_goes_with_the_keyboard`, `the_root_panel_records_an_items_shortcut_and_backspace_removes_it`, `the_hotkey_is_recorded_into_the_launcher_section` |
+
+Declared differences:
+
+- The input server is preferred, as the C++ has only it; the virtual keyboard is the fallback for a
+  session without the helper (not installed with its capability, a Flatpak). Its keymap is the
+  chord's own, so a layout without a V key on that position still pastes; the focused window is
+  sent that small keymap with the chord and the seat's own again with the next real key.
+- Focus handoff is watched on the foreign-toplevel list only where the launcher is itself a toplevel
+  (`VICINAE_LAYER_SHELL=0`, or no layer shell). A layer-shell launcher is not in the list, so the
+  window under it reads as focused before the launcher closes; there the C++'s blind delay (150 ms)
+  is used instead of the poll.
+- The clipboard is not restored after a wlroots paste (`scheduleClipboardRestore`), as on the GNOME
+  path; the pasted content stays on it.
+- The inhibitor is made when a launcher surface takes the keyboard and destroyed when it leaves,
+  rather than kept for the window's life and deactivated by the compositor; the person's keyboard
+  is the same. It needs the layer-shell presentation: under the `xdg_toplevel` one (GNOME, KDE,
+  `VICINAE_LAYER_SHELL=0`) winit makes its connection itself and offers no way to share it, and a
+  raw-pointer bridge is `unsafe`, so the recorder does not inhibit there. The C++ inhibits on any
+  Wayland session.
+- An extension host run without the engine (none today) copies rather than pastes.
+
 ### The view layer, closed (2026-09-25)
 
 The HUD and onboarding tables above each left `ui/qml`, `ui/quick` and `ui/windows` amber for the
@@ -988,6 +1117,85 @@ top of the resident window and paint tier tests. What stays different is declare
 lands: the settings and onboarding drawn in the launcher card rather than windows of their own,
 drag out of the window, which Iced cannot do, and blur behind the launcher
 (`src/services/window-material`, still amber).
+
+### The gaps pass, global shortcuts (2026-09-25)
+
+`src/services/global-shortcuts` from PLAN §12.0, against `GlobalShortcutService`, its backends and
+`shortcut_conflict::validate` (IPC v20). A cell flips only with a named module and named tests that
+fail on a regression.
+
+**What is bound.** `compass_core::global_shortcuts::desired` reads the configuration as
+`reconcile` does: the launcher hotkey (`launcher.hotkey`, `super+space` unless set, nothing when
+set empty), and every entrypoint's `providers.<p>.entrypoints.<e>.shortcut` that is not empty, not
+turned off and reads as a combination, each described by its item's title. A `Reconciler` keeps
+what is bound and what each bound id does (`m_appliedTriggers`, `m_actions`): a shortcut no longer
+asked for, or asked for with another trigger, is released; a new one is bound; one the desktop
+refused counts as applied, so it is not asked for again until it changes, and does nothing when
+pressed. `vicinae::global_shortcuts::Service` runs that against a backend, from the engine's start
+and again on each `SetSetting` and root-item edit (`configChanged`), so the settings view's
+hotkey recorder and the action panel's Set Global Shortcut take effect at once.
+
+**Pressing one** (`onActivated`). The launcher hotkey toggles the attached window; a command's
+launches it as `cmd launch` launches it (`launch_command`, the path `activateEntrypoint` shares with
+root search: an application is launched and its launch recorded, anything else is handed to the
+window as a launch).
+
+**The backends**, in the C++ factory's order and then the portal the C++ does not have:
+`xx-hotkey-v1`, then `vicinae-hotkey-v1`, over one Wayland connection
+(`compass_wayland::hotkey::HotkeyClient`, ports of `XxHotkeyGlobalShortcutBackend` and
+`VicinaeHotkeyGlobalShortcutBackend`: one hotkey object per shortcut, the bind waiting for `bound`
+or `denied`, the C++'s sentence for a denial without a message, a revocation logged, the hotkey
+destroyed on unbind) on any compositor but GNOME's; then the GlobalShortcuts portal
+(`compass_portals::ShortcutBinder`), which binds a set at a time, so the binds of one reconcile are
+bound together on a fresh session after the last one is closed. Keys become keysyms as
+`xkbKeysymForQtKey` makes them and the protocols' modifier mask as `fromQtMods`
+(`compass_core::global_shortcuts::{keysym, modifier_mask}`); the portal is asked in the "shortcuts"
+specification's spelling (`portal_trigger`: `LOGO+space`, `CTRL+ALT+SHIFT+LOGO+a`).
+
+**The recorder** (`setCapturing`, `shortcut_conflict::validate`). While either recorder captures
+(the action panel's and the settings view's), the window says so to the engine (IPC v20
+`Request::ShortcutCapture`), which releases every global shortcut and binds them again after, so
+the combination reaches the recorder rather than the desktop. The check is the C++'s order: a
+modifier (unless a function key or modifiers alone), then the launcher's own keys (`KeybindManager`:
+Toggle action panel, Open settings, Quick launch), then the global shortcuts (`findConflict`: the
+launcher hotkey as "the launcher hotkey", except when recording the hotkey itself, and any other
+item's shortcut by its title, or "another command").
+
+**Close on focus loss** (`setWindowActivated`). With `launcher.close_on_focus_loss` on, the window
+hides when it loses a focus it had, and not when the focus goes to the file chooser it opened
+(`m_pendingLauncherFileChoice`); the settings view's switch applies at once.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/global-shortcuts` | `parity test ✓` 🟡 → ✅ (`Rust ✓` stays 🟡: X11, `inhibitApps`, `probeBind`) | `compass_core::global_shortcuts` (`desired`, `Reconciler`, `validate`, `find_conflict`, `launcher_keybind`, `keysym`, `modifier_mask`, `portal_trigger`), `compass_wayland::hotkey::HotkeyClient`, `compass_wayland_protocols::vicinae_hotkey_v1`, `compass_portals::ShortcutBinder`, `vicinae::global_shortcuts` (`Service`, `WaylandBackend`, `PortalBackend`, `activate`, `serve`, `Control`), `compass_ui::app::global_shortcuts`, `compass_ui::shortcut_recorder` | `the_launcher_and_every_enabled_items_shortcut_are_desired`, `the_launcher_hotkey_defaults_to_super_space_and_an_empty_one_binds_nothing`, `reconciling_binds_what_is_new_rebinds_what_changed_and_keeps_the_rest`, `a_refused_bind_does_nothing_when_pressed_and_is_not_asked_for_again`, `a_bound_shortcut_runs_its_action`, `the_recorder_refuses_the_launchers_own_keys`, `the_recorder_refuses_the_launcher_hotkey_except_for_itself`, `the_recorder_refuses_another_items_shortcut_by_its_title`, `keys_become_the_keysyms_the_cpp_asks_for`, `modifiers_become_the_protocols_mask`, `the_portal_is_asked_in_the_specifications_spelling`; `vicinae_hotkey_binds_presses_refuses_and_releases`, `xx_hotkey_is_preferred_and_speaks_its_own_requests`, `a_compositor_with_neither_protocol_is_unsupported` (a fake compositor over `wayland-server`); `the_binder_binds_a_changed_set_on_a_new_session_and_closes_the_old_one`, `the_binder_delivers_the_current_sessions_activations`, `an_empty_set_closes_the_session_and_binds_nothing`, `a_denied_set_is_reported_as_denied` (a private `dbus-daemon` and a fake GlobalShortcuts portal); `the_launcher_hotkey_and_a_commands_shortcut_are_bound_and_rebound_when_changed`, `a_refused_shortcut_does_nothing_when_pressed`, `capturing_releases_everything_and_binds_it_again_after`, `pressing_the_launcher_hotkey_reaches_the_window`, `pressing_a_commands_shortcut_launches_it_as_cmd_launch_does`, `a_reload_binds_what_the_configuration_now_says`, `the_recorders_capture_reaches_the_service_over_ipc`, `the_portal_is_asked_for_the_configured_trigger`, `a_release_is_not_a_press`; `losing_the_focus_hides_the_launcher_when_close_on_focus_loss_is_on`, `losing_the_focus_keeps_the_launcher_when_close_on_focus_loss_is_off`, `only_losing_a_focus_the_launcher_had_hides_it`, `the_recorder_suspends_the_global_shortcuts_while_it_captures`, `the_launchers_own_keys_and_its_hotkey_are_taken`, `recording_the_launcher_hotkey_does_not_conflict_with_itself` |
+
+Declared differences:
+
+- The launcher hotkey is `launcher.hotkey` (the C++'s `globalShortcuts.toggle`), and its id is
+  `toggle` (the C++'s `@toggle-launcher`): Compass has bound its launcher under `toggle` since its
+  first release, and the portal keeps the user's trigger against that id.
+- The portal is a backend here and not in the C++, which has none on GNOME. It binds a set at a
+  time, so a changed set is bound on a new session; the trigger asked for is a preference the
+  desktop may override, and GNOME keeps the one the user chose in its own settings. Suspending
+  for the recorder closes the portal session, and the set is bound on a new one after.
+- A configuration edited by hand is bound at the next start or the next change made through the
+  settings view or the action panel: the engine does not watch `vicinae.json` as `config::Manager`
+  does.
+- The recorder cannot tell the compositor refused a combination (`probeBind`): the engine logs the
+  refusal when it binds, and the shortcut stays in the configuration.
+- `globalShortcuts.inhibitApps` (suspending every shortcut while a listed application is frontmost)
+  is not in Compass's configuration and not ported.
+- The conflict check does not know whether the desktop has a backend: the C++ reports no conflict
+  where global shortcuts are unsupported, Compass always checks.
+- A command whose arguments are required is refused by name, as `cmd launch` refuses it, where the
+  C++ opens its arguments form.
+- X11 has no backend: no X11 path exists in the tree (`x11rb` is only winit's), and whether Compass
+  supports X11 at all is the open X11 decision (PLAN §12.0).
+
+VM tier (declared, not verifiable in a container): GNOME's portal grant dialog on the first bind and
+whether `xdg-desktop-portal-gnome` honours the preferred trigger; a real compositor carrying
+`xx-hotkey-v1` or `vicinae-hotkey-v1` (none released does); focus loss on a real compositor,
+where a layer surface with exclusive keyboard focus may never report it.
 
 ### Earlier row notes
 
@@ -2298,7 +2506,8 @@ crate has no harness for. Recorded rather than left looking covered.
 have since landed — GNOME through the Shell extension (`compass-shell`), the wlroots
 foreign-toplevel list (`compass_wayland::toplevel`), and Hyprland and niri over their own IPC
 (`compass_platform_linux::compositor`) — so the row is `Rust ✓` 🟡 and `parity test ✓` ✅.
-Still C++-only: the KDE and X11 providers. The section below is kept as the record of the dispatch port.
+Still C++-only: the X11 provider (the KDE provider landed in "The gaps pass, KDE (2026-09-25)").
+The section below is kept as the record of the dispatch port.
 
 `compass-core::window_manager` is a complete port of `window-manager.cpp` — which backend gets
 picked, and the focus bookkeeping that lets the launcher act on the window the user was in *before*
@@ -2998,7 +3207,7 @@ registers every keyword on ready and diffs them on each save or removal, and car
 | 8 | The focused application comes from the window manager, nulled while Vicinae itself is focused without focus-handoff detection. | The focused window from the Shell extension (GNOME) or the foreign-toplevel list (wlroots), recognised in the app index by `WM_CLASS`/`app_id`. With neither, the app is unknown: keywords limited to apps do not expand, terminals paste with Ctrl+V. | `a_keyword_limited_to_apps_expands_only_in_them` |
 | 9 | Focus changes reset the typed text and the undo. | The same, from the Shell extension's window signal or the toplevel list's changes; without either, nothing resets it. | — |
 | 10 | The Snippets extension's preferences (`enabled`, `undo`, `layout`, `prePasteDelay`, `keyDelay`) apply when changed in settings. | Read from `providers.snippets.preferences` in `vicinae.json` on every trigger (layout and key delay are pushed to the helper when they change); there is no settings page to edit them yet. | `preferences_are_read_and_clamped` |
-| 11 | Clipboard-history and extension paste inject Ctrl+V through the input server (`LinuxPasteService`). | Unchanged: GNOME pastes through the Shell extension, wlroots copies only. `injectPaste` is implemented in the helper and not yet used for them. | — |
+| 11 | Clipboard-history and extension paste inject Ctrl+V through the input server (`LinuxPasteService`). | On wlroots the same, through `injectPaste` when the helper runs with injection, else a `zwp_virtual_keyboard_v1` keyboard; GNOME pastes through the Shell extension. | `on_sway_the_input_server_presses_the_paste_when_it_runs`, `on_sway_a_paste_is_copied_and_pressed_into_the_focused_window` |
 | 12 | Without a clipboard there is no case to handle: the C++ always has Qt's. | With neither the Shell extension nor data-control, a typed keyword is logged and not expanded. | — |
 | 13 | — | Inside a Flatpak the helper is not started (no `/dev/input` or `/dev/uinput` there) and `doctor` says so; the C++ has no Flatpak. | `a_flatpak_is_told_keyword_expansion_cannot_work_there` |
 
@@ -3308,10 +3517,12 @@ socket (`on_sway_with_a_hyprland_socket_windows_learn_their_pid_and_workspace`).
    (image, then `text/uri-list`, UTF-8 text, plain text, HTML). A selection carrying
    `x-kde-passwordManagerHint` or `vicinae/concealed` is **not recorded at all**. The primary
    selection is not recorded. The source application is unknown (data-control does not say).
-5. **Paste.** The C++ injects Ctrl+V through its uinput input server. The Rust engine has **no
-   synthetic paste on wlroots**: `ClipboardPaste` is refused and the launcher copies instead, and
-   an extension's `Clipboard.paste` copies. Copy, read and clear work, over `wl-clipboard-rs`; an
-   HTML copy keeps its plain-text alternative, which the GNOME path cannot.
+5. **Paste.** The C++ injects Ctrl+V through its uinput input server. The Rust engine does too
+   when the helper runs with injection, and otherwise presses the chord on a
+   `zwp_virtual_keyboard_v1` keyboard (`vicinae::paste`, "The gaps pass, wlroots paste and
+   inhibit"); with neither, the content is copied and the launcher told so. Copy, read and clear
+   work, over `wl-clipboard-rs`; an HTML copy keeps its plain-text alternative, which the GNOME
+   path cannot.
 6. **Global hotkey.** The C++ tries `xx-hotkey-v1` and then `vicinae-hotkey-v1`. The Rust engine
    tries `xx-hotkey-v1` (fixed `Super+Space`), then the GlobalShortcuts portal, and otherwise logs
    how to bind `vicinae toggle` in the running compositor's config. `vicinae-hotkey-v1` is not

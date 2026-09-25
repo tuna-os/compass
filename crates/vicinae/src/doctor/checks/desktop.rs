@@ -44,6 +44,83 @@ pub fn is_gnome(env: &Env) -> bool {
         .any(|name| name.eq_ignore_ascii_case("GNOME"))
 }
 
+/// KWin's bus name, which its scripting interface and virtual desktops are
+/// reached at.
+pub const KWIN_BUS_NAME: &str = compass_platform_linux::compositor::kwin::KWIN_SERVICE;
+
+/// Whether the environment claims a KDE session (`Environment::isPlasmaDesktop`).
+#[must_use]
+pub fn is_kde(env: &Env) -> bool {
+    env.list("XDG_CURRENT_DESKTOP")
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case("KDE"))
+}
+
+/// Whether KWin is there for the KDE window-management provider: its name on
+/// the bus, and its virtual desktops.
+pub async fn kwin<B: BusProbe>(env: &Env, bus: &B) -> DoctorCheck {
+    use compass_platform_linux::compositor::kwin::{DESKTOPS_INTERFACE, DESKTOPS_PATH};
+    const NAME: &str = "kde.kwin";
+
+    if !is_kde(env) {
+        return check(
+            NAME,
+            DoctorStatus::Ok,
+            "not a KDE session, so KWin scripting is not used here",
+        );
+    }
+    if env.get("WAYLAND_DISPLAY").is_none() {
+        return check(
+            NAME,
+            DoctorStatus::Warn,
+            "KDE without a Wayland display: window switching on X11 is not ported, so windows              and workspaces are unavailable",
+        );
+    }
+    match bus.name_has_owner(KWIN_BUS_NAME).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return check(
+                NAME,
+                DoctorStatus::Warn,
+                format!(
+                    "nobody owns {KWIN_BUS_NAME} on the session bus, so window switching,                      workspaces and the window toggles are unavailable until KWin is running"
+                ),
+            );
+        }
+        Err(err) => {
+            return check(
+                NAME,
+                DoctorStatus::Warn,
+                format!("could not ask whether KWin is on the session bus: {err}"),
+            );
+        }
+    }
+    match bus
+        .property(KWIN_BUS_NAME, DESKTOPS_PATH, DESKTOPS_INTERFACE, "count")
+        .await
+    {
+        Ok(Some(count)) => check(
+            NAME,
+            DoctorStatus::Ok,
+            format!(
+                "KWin is on the session bus: windows through its scripting interface,                  {count} virtual desktop(s) as workspaces"
+            ),
+        ),
+        Ok(None) => check(
+            NAME,
+            DoctorStatus::Warn,
+            format!(
+                "KWin is on the session bus but has no {DESKTOPS_INTERFACE}, so windows can be                  switched but there are no workspaces"
+            ),
+        ),
+        Err(err) => check(
+            NAME,
+            DoctorStatus::Warn,
+            format!("KWin is on the session bus but its desktops could not be read: {err}"),
+        ),
+    }
+}
+
 /// Which desktop this is, and GNOME Shell's version when it will tell us.
 pub async fn desktop_environment<B: BusProbe>(env: &Env, bus: &B) -> DoctorCheck {
     const NAME: &str = "desktop.environment";
@@ -66,10 +143,11 @@ pub async fn desktop_environment<B: BusProbe>(env: &Env, bus: &B) -> DoctorCheck
             DoctorStatus::Warn,
             format!(
                 "XDG_CURRENT_DESKTOP={current} — not a GNOME session. The Rust engine targets \
-                 GNOME 50/51 and the wlroots compositors (Sway, Hyprland, niri: see \
-                 wlroots.capabilities for what this one offers); KDE support is Phase 5 work, so \
-                 elsewhere window switching, clipboard history and the global hotkey may all be \
-                 unavailable"
+                 GNOME 50/51, the wlroots compositors (Sway, Hyprland, niri: see \
+                 wlroots.capabilities for what this one offers) and, for windows and \
+                 workspaces, KDE Plasma (see kde.kwin); the rest of Phase 5 is still to come, \
+                 so elsewhere window switching, clipboard history and the global hotkey may all \
+                 be unavailable"
             ),
         );
     }
@@ -290,6 +368,57 @@ mod tests {
         let c = desktop_environment(&gnome_env(), &FakeBus::failing_queries("Timeout")).await;
         assert_eq!(c.status, DoctorStatus::Warn);
         assert!(detail(&c).contains("could not be read"));
+    }
+
+    // ----- kde.kwin -------------------------------------------------------
+
+    fn plasma_env() -> Env {
+        Env::from_pairs([
+            ("XDG_CURRENT_DESKTOP", "KDE"),
+            ("WAYLAND_DISPLAY", "wayland-0"),
+        ])
+    }
+
+    #[tokio::test]
+    async fn kwin_with_its_desktops_passes_and_counts_them() {
+        use compass_platform_linux::compositor::kwin::{DESKTOPS_INTERFACE, DESKTOPS_PATH};
+        let bus = FakeBus::new().with_name(KWIN_BUS_NAME).with_property(
+            KWIN_BUS_NAME,
+            DESKTOPS_PATH,
+            DESKTOPS_INTERFACE,
+            "count",
+            "4",
+        );
+        let c = kwin(&plasma_env(), &bus).await;
+        assert_eq!(c.status, DoctorStatus::Ok);
+        assert!(
+            detail(&c).contains("4 virtual desktop(s)"),
+            "{}",
+            detail(&c)
+        );
+    }
+
+    #[tokio::test]
+    async fn kwin_absent_on_plasma_warns_and_elsewhere_is_not_asked() {
+        let c = kwin(&plasma_env(), &FakeBus::new()).await;
+        assert_eq!(c.status, DoctorStatus::Warn);
+        assert!(detail(&c).contains("nobody owns org.kde.KWin"));
+
+        let c = kwin(&gnome_env(), &FakeBus::failing_queries("Timeout")).await;
+        assert_eq!(c.status, DoctorStatus::Ok, "{}", detail(&c));
+
+        let x11 = Env::from_pairs([("XDG_CURRENT_DESKTOP", "KDE")]);
+        let c = kwin(&x11, &FakeBus::new().with_name(KWIN_BUS_NAME)).await;
+        assert_eq!(c.status, DoctorStatus::Warn);
+        assert!(detail(&c).contains("X11 is not ported"));
+    }
+
+    #[tokio::test]
+    async fn kwin_without_virtual_desktops_warns_that_there_are_no_workspaces() {
+        let bus = FakeBus::new().with_name(KWIN_BUS_NAME);
+        let c = kwin(&plasma_env(), &bus).await;
+        assert_eq!(c.status, DoctorStatus::Warn);
+        assert!(detail(&c).contains("no workspaces"));
     }
 
     // ----- gnome.shell-extension ------------------------------------------

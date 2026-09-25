@@ -6,7 +6,11 @@
 //! [`compass_core::key_combo`]'s; this is the part that knows Iced's key
 //! events and what the panel shows.
 
-use compass_core::key_combo::{self, Key, KeyCombo, Modifier, Modifiers, Recorded, Recorder};
+use compass_core::global_shortcuts;
+use compass_core::key_combo::{Key, KeyCombo, Modifier, Modifiers, Recorded, Recorder};
+
+/// The launcher hotkey's setting, which the settings view records.
+pub const LAUNCHER_HOTKEY_SETTING: &str = "launcher.hotkey";
 
 /// The status line while nothing has been captured yet.
 pub const RECORDING: &str = "Recording...";
@@ -68,11 +72,13 @@ impl ShortcutRecorder {
         }
     }
 
-    /// Takes one key event; `bound` is every root item's id, title and
-    /// stored shortcut, for the conflict check.
+    /// Takes one key event; `launcher_hotkey` (as stored) and `bound`
+    /// (every root item's id, title and stored shortcut) are for the
+    /// conflict check, [`compass_core::global_shortcuts::validate`].
     pub fn key<'a>(
         &mut self,
         event: &iced::keyboard::Event,
+        launcher_hotkey: Option<&str>,
         bound: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
     ) -> Outcome {
         use iced::keyboard::Event;
@@ -113,7 +119,14 @@ impl ShortcutRecorder {
             }
             Recorded::Captured(combo) => {
                 self.tokens = combo.display_tokens();
-                match key_combo::validate(&combo, &self.id, bound) {
+                // The settings view records the launcher hotkey under its
+                // setting's key; the conflict check knows it by its id.
+                let exclude = if self.id == LAUNCHER_HOTKEY_SETTING {
+                    global_shortcuts::LAUNCHER_ID
+                } else {
+                    self.id.as_str()
+                };
+                match global_shortcuts::validate(&combo, exclude, launcher_hotkey, bound) {
                     Ok(()) => {
                         self.status = UPDATED.to_owned();
                         self.error = false;
@@ -259,13 +272,18 @@ mod tests {
         assert_eq!(
             recorder.key(
                 &press(IcedKey::Named(Named::Control), IcedModifiers::CTRL),
+                None,
                 NONE
             ),
             Outcome::Recording
         );
         assert_eq!(recorder.tokens, ["Ctrl"]);
         assert_eq!(
-            recorder.key(&press(IcedKey::Character("k".into()), ctrl_shift), NONE),
+            recorder.key(
+                &press(IcedKey::Character("k".into()), ctrl_shift),
+                None,
+                NONE
+            ),
             Outcome::Save("control+shift+K".into())
         );
         assert_eq!(recorder.tokens, ["Ctrl", "Shift", "K"]);
@@ -278,16 +296,18 @@ mod tests {
         assert_eq!(
             recorder.key(
                 &press(IcedKey::Character("k".into()), IcedModifiers::empty()),
+                None,
                 NONE
             ),
             Outcome::Recording
         );
-        assert_eq!(recorder.status, key_combo::MODIFIER_REQUIRED);
+        assert_eq!(recorder.status, compass_core::key_combo::MODIFIER_REQUIRED);
         assert!(recorder.error);
         let bound = [("apps:files", "Files", "super+F")];
         assert_eq!(
             recorder.key(
                 &press(IcedKey::Character("f".into()), IcedModifiers::LOGO),
+                None,
                 bound
             ),
             Outcome::Recording
@@ -296,6 +316,7 @@ mod tests {
         assert_eq!(
             recorder.key(
                 &press(IcedKey::Named(Named::F5), IcedModifiers::empty()),
+                None,
                 bound
             ),
             Outcome::Save("F5".into())
@@ -307,11 +328,13 @@ mod tests {
         let mut recorder = ShortcutRecorder::new("apps:firefox".into(), "Firefox".into(), None);
         let _ = recorder.key(
             &press(IcedKey::Named(Named::Super), IcedModifiers::LOGO),
+            None,
             NONE,
         );
         assert_eq!(
             recorder.key(
                 &release(IcedKey::Named(Named::Super), IcedModifiers::empty()),
+                None,
                 NONE
             ),
             Outcome::Save("SUPER".into())
@@ -329,6 +352,7 @@ mod tests {
         assert_eq!(
             recorder.key(
                 &press(IcedKey::Named(Named::Escape), IcedModifiers::empty()),
+                None,
                 NONE
             ),
             Outcome::Back
@@ -336,6 +360,7 @@ mod tests {
         assert_eq!(
             recorder.key(
                 &press(IcedKey::Named(Named::Backspace), IcedModifiers::empty()),
+                None,
                 NONE
             ),
             Outcome::Save(String::new())
@@ -344,9 +369,60 @@ mod tests {
         assert_eq!(
             empty.key(
                 &press(IcedKey::Named(Named::Backspace), IcedModifiers::empty()),
+                None,
                 NONE
             ),
             Outcome::Back
+        );
+    }
+
+    #[test]
+    fn the_launchers_own_keys_and_its_hotkey_are_taken() {
+        let mut recorder = ShortcutRecorder::new("apps:firefox".into(), "Firefox".into(), None);
+        assert_eq!(
+            recorder.key(
+                &press(IcedKey::Character("b".into()), IcedModifiers::CTRL),
+                Some("super+SPACE"),
+                NONE
+            ),
+            Outcome::Recording
+        );
+        assert_eq!(recorder.status, "Already bound to \"Toggle action panel\"");
+        assert_eq!(
+            recorder.key(
+                &press(IcedKey::Named(Named::Space), IcedModifiers::LOGO),
+                Some("super+SPACE"),
+                NONE
+            ),
+            Outcome::Recording
+        );
+        assert_eq!(recorder.status, "Already bound to \"the launcher hotkey\"");
+        assert!(recorder.error);
+    }
+
+    #[test]
+    fn recording_the_launcher_hotkey_does_not_conflict_with_itself() {
+        let mut recorder = ShortcutRecorder::new(
+            LAUNCHER_HOTKEY_SETTING.into(),
+            "Launcher hotkey".into(),
+            Some("super+SPACE".into()),
+        );
+        assert_eq!(
+            recorder.key(
+                &press(IcedKey::Named(Named::Space), IcedModifiers::LOGO),
+                Some("super+SPACE"),
+                [("apps:files", "Files", "super+F")]
+            ),
+            Outcome::Save("super+SPACE".into())
+        );
+        assert_eq!(
+            recorder.key(
+                &press(IcedKey::Character("f".into()), IcedModifiers::LOGO),
+                Some("super+SPACE"),
+                [("apps:files", "Files", "super+F")]
+            ),
+            Outcome::Recording,
+            "an item's shortcut is still taken"
         );
     }
 }
