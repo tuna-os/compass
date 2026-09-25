@@ -8,9 +8,9 @@ Before opening an issue, do a quick search to make sure you are not creating a d
 
 Make sure to follow the issue template that is provided. In particular, bug issues should be submitted using the "Report Bug" command from vicinae directly, unless the bug results in the vicinae server not being able to start.
 
-If you want to report a bug relative to an extension published in the official vicinae store, you should open the issue in the [extension repository](https://github.com/vicinaehq/extensions), not in the main vicinae repository.
+If you want to report a bug relative to an extension published in the official vicinae store, you should open the issue in the upstream [extension repository](https://github.com/vicinaehq/extensions), not in the main repository.
 
-If you think you've found a severe security issue, you should contact the email address listed as the contact address for the [vicinaehq organization](https://github.com/vicinaehq).
+If you think you've found a severe security issue, you should contact the email address listed as the contact address for the upstream [vicinaehq organization](https://github.com/vicinaehq).
 
 ## Contributing code
 
