@@ -52,6 +52,7 @@ pub mod tray_page;
 pub mod typography;
 pub mod view_memory;
 pub mod windows_page;
+pub mod workspaces_page;
 
 pub use app::{AppFlags, ClockSettings, Dismissal, LauncherApp, next_selection};
 pub use appearance::{AppearanceLink, AppearanceSender};

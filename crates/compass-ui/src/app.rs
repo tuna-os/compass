@@ -46,6 +46,7 @@ mod snippets;
 mod stores;
 mod themes;
 mod tray;
+mod workspaces;
 
 /// The search field's widget id.
 ///
@@ -600,6 +601,8 @@ enum Page {
     Clipboard(crate::clipboard_page::ClipboardPage),
     /// The window switcher.
     Windows(crate::windows_page::WindowsPage),
+    /// Switch Workspaces.
+    Workspaces(crate::workspaces_page::WorkspacesPage),
     /// The emoji and symbol picker.
     Emoji(crate::emoji_page::EmojiPage),
     /// Search Files.
@@ -1537,6 +1540,14 @@ impl LauncherApp {
                 page.selected
             ));
         }
+        if let Page::Workspaces(page) = &self.page {
+            line.push_str(&format!(
+                " page=workspaces workspaces_query={:?} workspaces_shown={} workspaces_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
+        }
         if let Page::Clipboard(page) = &self.page {
             line.push_str(&format!(
                 " page=clipboard clipboard_query={:?} clipboard_rows={} clipboard_selected={}",
@@ -2134,6 +2145,7 @@ impl LauncherApp {
                     self.refresh_rhai_scripts_task(),
                     self.refresh_subtitles_task(),
                     self.catalog_task(),
+                    self.window_capabilities_task(),
                     self.apply_dmenu_size(),
                 ])
             }
@@ -2191,6 +2203,8 @@ impl LauncherApp {
                 } else if let Some(task) = self.open_windows_panel() {
                     return task;
                 } else if let Some(task) = self.open_calculator_panel() {
+                    return task;
+                } else if let Some(task) = self.open_workspaces_panel() {
                     return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
@@ -2274,6 +2288,7 @@ impl LauncherApp {
                         .or_else(|| self.root_panel_action(&id))
                         .or_else(|| self.windows_panel_action(&id))
                         .or_else(|| self.calculator_panel_action(&id))
+                        .or_else(|| self.workspaces_panel_action(&id))
                         .or_else(|| self.app_runtime_action(&id))
                 {
                     return task;
@@ -2712,6 +2727,12 @@ impl LauncherApp {
                 Task::none()
             }
             Message::AppRuntimeLoaded { .. } | Message::AppQuit(_) => self.runtime_message(message),
+            Message::WindowCapabilities(_)
+            | Message::WorkspacesQueryChanged(_)
+            | Message::WorkspacesLoaded(_)
+            | Message::WorkspaceSelected(_)
+            | Message::WorkspaceFocused(_)
+            | Message::WindowToggled(_) => self.workspaces_message(message),
             Message::CalculatorQueryChanged(_)
             | Message::CalculatorLoaded { .. }
             | Message::CalculatorSelected(_)
@@ -3037,6 +3058,9 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Calculator(_)) {
                     return self.calculator_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Workspaces(_)) {
+                    return self.workspaces_page_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::NowPlaying(_)) {
                     return self.now_playing_key(key, modifiers);
                 }
@@ -3282,6 +3306,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::WindowsQueryChanged as OnInput),
             ),
+            Page::Workspaces(page) => (
+                crate::workspaces_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::WorkspacesQueryChanged as OnInput),
+            ),
             Page::Files(page) => (
                 "Search for files…",
                 &page.query,
@@ -3449,6 +3478,8 @@ impl LauncherApp {
             self.emoji_body(page)
         } else if let Page::Windows(page) = &self.page {
             self.windows_body(page)
+        } else if let Page::Workspaces(page) = &self.page {
+            self.workspaces_body(page)
         } else if let Page::Files(page) = &self.page {
             self.files_body(page)
         } else if let Page::Shortcuts(page) = &self.page {
@@ -5360,6 +5391,19 @@ impl LauncherApp {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
             }
+            CommandKind::SwitchWorkspaces => Task::batch([record, self.open_switch_workspaces()]),
+            CommandKind::ToggleFullscreen => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Fullscreen),
+            ]),
+            CommandKind::ToggleFloating => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Floating),
+            ]),
+            CommandKind::ToggleOverview => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Overview),
+            ]),
         }
     }
 
@@ -11990,9 +12034,45 @@ mod tests {
         quits: std::sync::Mutex<Vec<(String, bool)>>,
         window_quits: std::sync::Mutex<Vec<(u32, bool)>>,
         fail_quit: bool,
+        /// What the window manager can do.
+        caps: compass_core::window_switcher::Capabilities,
+        workspaces: Vec<crate::backend::WorkspaceRow>,
+        focused_workspaces: std::sync::Mutex<Vec<String>>,
+        toggles: std::sync::Mutex<Vec<crate::backend::WindowToggle>>,
+        /// What a toggle answers when it fails.
+        toggle_refusal: Option<&'static str>,
     }
 
     impl crate::backend::WindowBackend for FakeWindows {
+        fn window_manager_capabilities(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, compass_core::window_switcher::Capabilities>
+        {
+            Box::pin(async move { Ok(self.caps) })
+        }
+        fn list_workspaces(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::WorkspaceRow>> {
+            Box::pin(async move { Ok(self.workspaces.clone()) })
+        }
+        fn focus_workspace(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.focused_workspaces.lock().unwrap().push(id);
+                Ok(())
+            })
+        }
+        fn toggle_window_state(
+            &self,
+            toggle: crate::backend::WindowToggle,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if let Some(refusal) = self.toggle_refusal {
+                    return Err(refusal.to_owned());
+                }
+                self.toggles.lock().unwrap().push(toggle);
+                Ok(())
+            })
+        }
         fn list_windows(
             &self,
         ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::WindowRow>> {
@@ -12354,6 +12434,115 @@ mod tests {
         );
         let task = app.update(Message::LaunchSelected);
         settle(app, task);
+    }
+
+    #[test]
+    fn workspaces_and_the_toggles_are_offered_where_the_compositor_has_them() {
+        use compass_core::window_switcher::Capabilities;
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = |id: &str, name: &str, apps: &[&str]| crate::backend::WorkspaceRow {
+            id: id.into(),
+            name: name.into(),
+            monitor: Some("DP-1".into()),
+            window_count: apps.len(),
+            apps: apps.iter().map(|a| ((*a).to_owned(), None)).collect(),
+            active: false,
+        };
+        let windows = Arc::new(FakeWindows {
+            caps: Capabilities {
+                workspaces: true,
+                fullscreen: true,
+                toggle_floating: true,
+                ..Capabilities::default()
+            },
+            workspaces: vec![
+                workspace("1", "1", &["Firefox"]),
+                workspace("3", "music", &["Spotify"]),
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+        let is_command = |app: &LauncherApp, entrypoint: &str| matches!(app.selected_row(), Some(RootRow::Command(c)) if c.entrypoint == entrypoint);
+
+        // Until the engine says what the compositor can do, none is offered.
+        app.query = "switch workspaces".into();
+        app.search();
+        assert!(
+            !is_command(&app, "switch-workspaces"),
+            "{}",
+            app.state_line()
+        );
+        let task = app.window_capabilities_task();
+        settle(&mut app, task);
+        app.search();
+        assert!(
+            is_command(&app, "switch-workspaces"),
+            "{}",
+            app.state_line()
+        );
+        app.query = "toggle overview".into();
+        app.search();
+        assert!(
+            !is_command(&app, "toggle-overview"),
+            "no overview on this compositor"
+        );
+
+        // Switch Workspaces lists them, filters by an application on one,
+        // and Enter switches to it, then hides.
+        app.query = "switch workspaces".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Workspaces(page) = &app.page else {
+            panic!("not on Switch Workspaces: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        let _ = app.update(Message::WorkspacesQueryChanged("spotify".into()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(panel_titles(&app), ["Switch to workspace"]);
+        let task = choose(&mut app, "Switch to workspace");
+        settle(&mut app, task);
+        assert_eq!(windows.focused_workspaces.lock().unwrap().as_slice(), ["3"]);
+        assert!(
+            !matches!(app.page, Page::Workspaces(_)),
+            "hidden, and back at the root next time"
+        );
+
+        // A toggle runs from root search.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        app.query = "toggle floating".into();
+        app.search();
+        assert!(is_command(&app, "toggle-floating"));
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            windows.toggles.lock().unwrap().as_slice(),
+            [crate::backend::WindowToggle::Floating]
+        );
+    }
+
+    #[test]
+    fn a_refused_toggle_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            caps: compass_core::window_switcher::Capabilities {
+                fullscreen: true,
+                ..Default::default()
+            },
+            toggle_refusal: Some("Active window is not on the current workspace"),
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        let task = app.window_capabilities_task();
+        settle(&mut app, task);
+        app.query = "toggle fullscreen".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Active window is not on the current workspace")
+        );
     }
 
     #[test]

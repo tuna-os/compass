@@ -43,6 +43,7 @@ use crate::engine::Engine;
 mod app_runtime;
 mod calculator;
 mod launch;
+mod workspaces;
 
 /// The at-most-one launcher window this engine drives.
 ///
@@ -2660,6 +2661,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let tray = Arc::clone(&state.read().await.tray);
             tray_request(&tray, request).await
         }
+        request @ (Request::WindowManagerCapabilities
+        | Request::ListWorkspaces
+        | Request::FocusWorkspace { .. }
+        | Request::ToggleWindowState { .. }) => workspaces::handle(state, request).await,
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id, None).await,

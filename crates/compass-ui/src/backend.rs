@@ -1158,4 +1158,62 @@ pub trait WindowBackend: std::fmt::Debug + Send + Sync {
         let _ = (window, force);
         Box::pin(async { Err("Quitting applications needs the engine".to_owned()) })
     }
+
+    /// What the compositor's window manager can do, which decides the
+    /// window-management commands root search offers.
+    fn window_manager_capabilities(
+        &self,
+    ) -> BackendFuture<'_, compass_core::window_switcher::Capabilities> {
+        Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// The workspaces, for Switch Workspaces.
+    fn list_workspaces(&self) -> BackendFuture<'_, Vec<WorkspaceRow>> {
+        Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Switch to a workspace, by its id.
+    fn focus_workspace(&self, id: String) -> BackendFuture<'_, ()> {
+        let _ = id;
+        Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Toggle fullscreen or floating on the window the person was in, or
+    /// the overview. An error is the sentence to show.
+    fn toggle_window_state(&self, toggle: WindowToggle) -> BackendFuture<'_, ()> {
+        let _ = toggle;
+        Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
+    }
+}
+
+/// What a window-management request says without an engine.
+pub const WORKSPACES_NEED_ENGINE: &str =
+    "Window management needs the Compass engine, and this window is running without one";
+
+/// What a window-management toggle acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowToggle {
+    /// The window in and out of fullscreen.
+    Fullscreen,
+    /// The window between floating and tiled.
+    Floating,
+    /// The compositor's overview.
+    Overview,
+}
+
+/// One workspace, as Switch Workspaces draws it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspaceRow {
+    /// The compositor's id, to switch to it.
+    pub id: String,
+    /// What it is called.
+    pub name: String,
+    /// The monitor it is on.
+    pub monitor: Option<String>,
+    /// How many windows are on it.
+    pub window_count: usize,
+    /// The applications with a window on it, as (name, icon).
+    pub apps: Vec<(String, Option<String>)>,
+    /// Whether it is the active one.
+    pub active: bool,
 }

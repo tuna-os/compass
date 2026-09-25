@@ -192,6 +192,10 @@ fn describe(request: &Request) -> &'static str {
         Request::TrayMenu { .. } => "TrayMenu",
         Request::TrayTriggerMenu { .. } => "TrayTriggerMenu",
         Request::PasteText { .. } => "PasteText",
+        Request::WindowManagerCapabilities => "WindowManagerCapabilities",
+        Request::ListWorkspaces => "ListWorkspaces",
+        Request::FocusWorkspace { .. } => "FocusWorkspace",
+        Request::ToggleWindowState { .. } => "ToggleWindowState",
     }
 }
 

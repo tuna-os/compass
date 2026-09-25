@@ -39,6 +39,15 @@ pub enum CommandKind {
     ClipboardHistory,
     /// Focus an open window.
     SwitchWindows,
+    /// Switch to another workspace. Offered only where the compositor has
+    /// workspaces (see [`crate::window_switcher::command_offered`]).
+    SwitchWorkspaces,
+    /// Toggle fullscreen on the window the person was in.
+    ToggleFullscreen,
+    /// Float the window the person was in, or tile it again.
+    ToggleFloating,
+    /// Open or close the compositor's overview.
+    ToggleOverview,
     /// Find an emoji or symbol and copy it.
     SearchEmojis,
     /// Search the file index and open a file.
@@ -105,6 +114,38 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             "windows", "window", "switch", "focus", "alt tab", "switcher",
         ],
         icon: "switch-windows",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SwitchWorkspaces,
+        entrypoint: "switch-workspaces",
+        title: "Switch Workspaces",
+        subtitle: "Go to another workspace",
+        keywords: crate::window_switcher::SWITCH_WORKSPACES_KEYWORDS,
+        icon: "carousel",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleFullscreen,
+        entrypoint: "toggle-fullscreen",
+        title: "Toggle Fullscreen",
+        subtitle: "Make the active window fullscreen, or not",
+        keywords: &["fullscreen", "window", "maximize"],
+        icon: "fullscreen",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleFloating,
+        entrypoint: "toggle-floating",
+        title: "Toggle Floating",
+        subtitle: "Float the active window, or tile it",
+        keywords: &["floating", "float", "tile", "window"],
+        icon: "floating-window",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleOverview,
+        entrypoint: "toggle-overview",
+        title: "Toggle Overview",
+        subtitle: "Open or close the overview",
+        keywords: &["overview", "expose", "workspaces"],
+        icon: "overview",
     },
     BuiltinCommand {
         kind: CommandKind::SearchEmojis,
@@ -462,7 +503,12 @@ impl CommandKind {
         match self {
             Self::ClipboardHistory | Self::RaycastStore => Tile::Red,
             Self::SearchFiles => Tile::Yellow,
-            Self::SwitchWindows | Self::CalculatorHistory => Tile::Blue,
+            Self::SwitchWindows
+            | Self::SwitchWorkspaces
+            | Self::ToggleFullscreen
+            | Self::ToggleFloating
+            | Self::ToggleOverview
+            | Self::CalculatorHistory => Tile::Blue,
             Self::CreateShortcut | Self::ManageShortcuts | Self::SetTheme => Tile::Purple,
             Self::CreateSnippet | Self::ManageSnippets | Self::BrowseFonts => Tile::Orange,
             Self::CreateExtension => Tile::Green,
@@ -583,7 +629,14 @@ pub fn canonical_id(id: &str) -> String {
 /// nothing to show for it.
 #[must_use]
 pub const fn opens_a_view(kind: CommandKind) -> bool {
-    !matches!(kind, CommandKind::Power(_) | CommandKind::Media(_))
+    !matches!(
+        kind,
+        CommandKind::Power(_)
+            | CommandKind::Media(_)
+            | CommandKind::ToggleFullscreen
+            | CommandKind::ToggleFloating
+            | CommandKind::ToggleOverview
+    )
 }
 
 #[cfg(test)]

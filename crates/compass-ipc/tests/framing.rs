@@ -362,6 +362,18 @@ fn all_requests() -> Vec<Request> {
         Request::PasteText {
             text: "👍🏽 zoë".into(),
         },
+        Request::WindowManagerCapabilities,
+        Request::ListWorkspaces,
+        Request::FocusWorkspace { id: "ä-3".into() },
+        Request::ToggleWindowState {
+            toggle: compass_ipc::WindowToggle::Fullscreen,
+        },
+        Request::ToggleWindowState {
+            toggle: compass_ipc::WindowToggle::Floating,
+        },
+        Request::ToggleWindowState {
+            toggle: compass_ipc::WindowToggle::Overview,
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -498,6 +510,25 @@ fn all_responses() -> Vec<Response> {
                     conversion: false,
                     pinned: true,
                 }],
+            }],
+        },
+        Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities {
+            workspaces: true,
+            fullscreen: true,
+            floating: false,
+            overview: true,
+        }),
+        Response::Workspaces {
+            workspaces: vec![compass_ipc::WorkspaceEntry {
+                id: "3".into(),
+                name: "müsic".into(),
+                monitor: Some("HDMI-A-1".into()),
+                window_count: 2,
+                apps: vec![compass_ipc::WorkspaceApp {
+                    name: "Spotify".into(),
+                    icon: None,
+                }],
+                active: false,
             }],
         },
         Response::AppRuntime {
@@ -968,6 +999,10 @@ fn request_variants_are_exhaustive() {
             | Request::TrayMenu { .. }
             | Request::TrayTriggerMenu { .. }
             | Request::PasteText { .. }
+            | Request::WindowManagerCapabilities
+            | Request::ListWorkspaces
+            | Request::FocusWorkspace { .. }
+            | Request::ToggleWindowState { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1024,6 +1059,8 @@ fn response_variants_are_exhaustive() {
             | Response::CalculatorHistory { .. }
             | Response::TrayItems { .. }
             | Response::TrayMenu { .. }
+            | Response::WindowManagerCapabilities(_)
+            | Response::Workspaces { .. }
             | Response::Window(_) => {}
         }
     }

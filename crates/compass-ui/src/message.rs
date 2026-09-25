@@ -358,6 +358,19 @@ pub enum Message {
     WindowActivated(Result<(), String>),
     /// Closing a window finished; the list is reloaded either way.
     ShellWindowClosed(Result<(), String>),
+    /// What the window manager can do, which decides the window-management
+    /// commands root search offers.
+    WindowCapabilities(Result<compass_core::window_switcher::Capabilities, String>),
+    /// Switch Workspaces' filter changed.
+    WorkspacesQueryChanged(String),
+    /// The workspaces arrived, or why they could not be listed.
+    WorkspacesLoaded(Result<Vec<crate::backend::WorkspaceRow>, String>),
+    /// A workspace row was clicked, by position.
+    WorkspaceSelected(usize),
+    /// Switching to a workspace finished.
+    WorkspaceFocused(Result<(), String>),
+    /// A fullscreen, floating or overview toggle finished.
+    WindowToggled(Result<(), String>),
     /// Whether the application under the root row's panel runs, by its key.
     AppRuntimeLoaded {
         /// The application's key, so a late answer for another row is dropped.

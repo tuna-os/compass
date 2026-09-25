@@ -147,10 +147,16 @@ async fn echo_handler(request: Request) -> Response {
         | Request::TrayActivate { .. }
         | Request::TrayTriggerMenu { .. }
         | Request::PasteText { .. }
+        | Request::FocusWorkspace { .. }
+        | Request::ToggleWindowState { .. }
         | Request::SetTheme { .. } => Response::Ack,
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
         Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
+        Request::WindowManagerCapabilities => {
+            Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities::default())
+        }
+        Request::ListWorkspaces => Response::Workspaces { workspaces: vec![] },
         Request::AppRuntime { .. } => Response::AppRuntime {
             running: false,
             frontmost: false,

@@ -224,6 +224,37 @@ impl Niri {
         })
     }
 
+    /// `FullscreenWindow`, which niri toggles.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::focus_window`].
+    pub fn toggle_fullscreen(&self, id: &str) -> Result<(), IpcError> {
+        self.action(Action::FullscreenWindow {
+            id: Some(parse_id(id)?),
+        })
+    }
+
+    /// `ToggleWindowFloating`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::focus_window`].
+    pub fn toggle_floating(&self, id: &str) -> Result<(), IpcError> {
+        self.action(Action::ToggleWindowFloating {
+            id: Some(parse_id(id)?),
+        })
+    }
+
+    /// `ToggleOverview`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::request`].
+    pub fn toggle_overview(&self) -> Result<(), IpcError> {
+        self.action(Action::ToggleOverview {})
+    }
+
     /// `Version`, as the C++ `ping`.
     #[must_use]
     pub fn ping(&self) -> bool {

@@ -516,6 +516,7 @@ impl AppIndexBuilder {
             extension_dirs: self.extension_dirs,
             scan,
             hidden,
+            window_capabilities: crate::window_switcher::Capabilities::default(),
         }
     }
 
@@ -729,6 +730,9 @@ pub struct AppIndex {
     /// Applications installed but not shown (`NoDisplay`, or for another
     /// desktop), in scan order; never in the root.
     hidden: Vec<AppItem>,
+    /// What the compositor's window manager can do, which decides the
+    /// window-management commands root search offers; none until told.
+    window_capabilities: crate::window_switcher::Capabilities,
 }
 
 /// One row of a root search over applications and commands.
@@ -796,6 +800,19 @@ pub struct ApplicationRootHit<'a> {
 }
 
 impl AppIndex {
+    /// Sets what the window manager can do: root search offers Switch
+    /// Workspaces and the toggles only where the C++
+    /// `WindowManagementExtension` registers them.
+    pub fn set_window_capabilities(&mut self, caps: crate::window_switcher::Capabilities) {
+        self.window_capabilities = caps;
+    }
+
+    /// What [`Self::set_window_capabilities`] last set.
+    #[must_use]
+    pub const fn window_capabilities(&self) -> crate::window_switcher::Capabilities {
+        self.window_capabilities
+    }
+
     /// Applies user settings without changing catalog positions or launch keys.
     pub fn apply_root_config(&mut self, config: &crate::root_items::RootConfig) {
         self.root_config = config.clone();
@@ -943,6 +960,12 @@ impl AppIndex {
                         match_score,
                     })),
                     None => crate::commands::by_id(entrypoint_id)
+                        .filter(|command| {
+                            crate::window_switcher::command_offered(
+                                command.kind,
+                                self.window_capabilities,
+                            )
+                        })
                         .map(|command| RootHit::Command {
                             command,
                             match_score,

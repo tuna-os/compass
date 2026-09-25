@@ -69,7 +69,11 @@ use serde::{Deserialize, Serialize};
 /// ([`Request::TrayItems`], [`Request::TrayActivate`], [`Request::TrayMenu`],
 /// [`Request::TrayTriggerMenu`]), and a root item's keyboard shortcut from the
 /// action panel's recorder ([`RootItemEdit::Shortcut`]),
-/// and pasting text the engine did not store ([`Request::PasteText`]).
+/// and pasting text the engine did not store ([`Request::PasteText`]), and the
+/// window-management commands' capabilities, Switch Workspaces and the
+/// fullscreen, floating and overview toggles
+/// ([`Request::WindowManagerCapabilities`], [`Request::ListWorkspaces`],
+/// [`Request::FocusWorkspace`], [`Request::ToggleWindowState`]).
 pub const PROTOCOL_VERSION: u16 = 18;
 
 /// A client-to-server frame.
@@ -856,6 +860,28 @@ pub enum Request {
         /// What to paste.
         text: String,
     },
+    /// What the compositor's window manager can do, which decides the
+    /// window-management commands root search offers. Answered with
+    /// [`Response::WindowManagerCapabilities`]; all `false` off a compositor
+    /// the engine drives. (v18.)
+    WindowManagerCapabilities,
+    /// The workspaces, for Switch Workspaces. Answered with
+    /// [`Response::Workspaces`], or refused as [`ErrorKind::Unsupported`]
+    /// where the engine has no workspaces to list. (v18.)
+    ListWorkspaces,
+    /// Switch to the workspace `id` (a [`WorkspaceEntry::id`]). Answered
+    /// with [`Response::Ack`]. (v18.)
+    FocusWorkspace {
+        /// The compositor's own id.
+        id: String,
+    },
+    /// Toggle fullscreen or floating on the window the person was in, or the
+    /// overview. Answered with [`Response::Ack`], or refused with the
+    /// sentence to show. (v18.)
+    ToggleWindowState {
+        /// What to toggle.
+        toggle: WindowToggle,
+    },
 }
 
 /// One application's tray icon (`TrayItem`), as the tray view lists it.
@@ -894,6 +920,56 @@ pub struct TrayMenuEntry {
     pub toggled: Option<bool>,
     /// Its icon's theme name.
     pub icon_name: Option<String>,
+}
+
+/// What [`Request::ToggleWindowState`] toggles. (v18.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WindowToggle {
+    /// The window in and out of fullscreen.
+    Fullscreen,
+    /// The window between floating and tiled.
+    Floating,
+    /// The compositor's overview.
+    Overview,
+}
+
+/// Answer to [`Request::WindowManagerCapabilities`]. (v18.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WindowManagerCapabilities {
+    /// It has workspaces to switch between.
+    pub workspaces: bool,
+    /// A window can be made fullscreen.
+    pub fullscreen: bool,
+    /// A window can be floated.
+    pub floating: bool,
+    /// It has an overview.
+    pub overview: bool,
+}
+
+/// One workspace in a [`Response::Workspaces`]. (v18.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceEntry {
+    /// The compositor's own id, for [`Request::FocusWorkspace`].
+    pub id: String,
+    /// What it is called: its name, else its number.
+    pub name: String,
+    /// The monitor it is on, when known.
+    pub monitor: Option<String>,
+    /// How many windows are on it.
+    pub window_count: u32,
+    /// The applications with a window on it, once each, in window order.
+    pub apps: Vec<WorkspaceApp>,
+    /// Whether it is the active one.
+    pub active: bool,
+}
+
+/// An application on a [`WorkspaceEntry`]. (v18.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceApp {
+    /// Its display name.
+    pub name: String,
+    /// Its icon name.
+    pub icon: Option<String>,
 }
 
 /// One change [`Request::RootItemEdit`] makes (`RootSearchActionGenerator`).
@@ -1216,6 +1292,14 @@ pub enum Response {
     TrayMenu {
         /// The clickable entries, flattened.
         entries: Vec<TrayMenuEntry>,
+    },
+    /// Answer to [`Request::WindowManagerCapabilities`]. (v18.)
+    WindowManagerCapabilities(WindowManagerCapabilities),
+    /// Answer to [`Request::ListWorkspaces`], in the compositor's order.
+    /// (v18.)
+    Workspaces {
+        /// Every workspace.
+        workspaces: Vec<WorkspaceEntry>,
     },
 }
 

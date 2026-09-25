@@ -203,7 +203,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 ## The window
 
@@ -626,6 +626,42 @@ as the C++ does not. Declared differences: success hides the launcher without th
 builtin panel here, the chord is not bound yet, so Quit runs from its row; the pin-window and bring-to-workspace actions are not offered, no provider here
 having the capability. `frontmost` is answered but nothing reads it yet: its C++ reader is the
 global-shortcut inhibition, which is that row's gap.
+
+### The gaps pass, views (2026-09-25)
+
+The builtins' remaining views, from PLAN §12.0, one commit each against the C++ in
+`src/server/src/builtins` (IPC v18). A cell flips only with a named module and named tests that
+fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/builtins/wm` | Rust ✅ | `compass_platform_linux::compositor` (`Provider::{capabilities, toggle_fullscreen, toggle_floating, toggle_overview}`), `vicinae::serve::workspaces`, `compass_core::window_switcher::command_offered`, `AppIndex::set_window_capabilities`, `compass_ui::{workspaces_page, app::workspaces}` | `niri_toggles_fullscreen_floating_and_the_overview`, `hyprland_toggles_a_window_and_has_no_overview` (fake sockets replaying captured replies), `workspaces_count_their_windows_and_name_their_applications_once`, `a_toggle_acts_on_the_active_window_and_refuses_one_elsewhere`, `a_window_on_another_workspace_is_not_on_the_active_one`, `without_a_compositor_everything_is_refused_and_nothing_is_offered`, `a_window_command_is_offered_only_where_it_is_registered`, `workspaces_page::tests`, `workspaces_and_the_toggles_are_offered_where_the_compositor_has_them`, `a_refused_toggle_says_why` |
+
+**`src/builtins/wm`.** Switch Workspaces, Toggle Fullscreen, Toggle Floating and Toggle Overview
+are builtins, offered in root search only where `WindowManagementExtension` registers them: the
+window asks the engine what the compositor can do (IPC v18 `WindowManagerCapabilities`) each time
+it opens, and until it hears, offers none of them, as the C++'s dummy window manager does. Hyprland
+has workspaces, fullscreen and floating; niri those and the overview. Switch Workspaces lists the
+compositor's workspaces (`ListWorkspaces`) under "Open Workspaces", each with its window count and
+monitor (`3 windows - DP-1`, `empty`) and the applications with a window on it, searchable by name,
+monitor and application at the C++'s weights; Enter or the panel's "Switch to workspace" switches
+(`FocusWorkspace`) and hides. A toggle (`ToggleWindowState`) acts on the window the person was in,
+the launcher's own left out, and is refused with the C++'s sentences ("No window to fullscreen",
+"No window to toggle", "Active window is not on the current workspace"); on success the launcher
+hides. Declared differences:
+
+- The C++ toggles `getFocusedWindowSync()`; here the target is the provider's frontmost window
+  skipping the launcher (on Hyprland the most recent on the active workspace, on niri the focused
+  one else the most recent), since niri reports no focused window while a layer surface has focus.
+- An unnamed niri workspace is called by its number; the C++ shows an empty title.
+- The monitor is shown whenever the compositor names one; the C++ shows it only when it matches a
+  Qt screen's name.
+- The applications on a workspace are its accessory as names, not icons (`ui/image`'s gap).
+- On GNOME the C++ lists workspaces through its Shell extension's `ListWorkspaces`; Compass's Shell
+  extension has no such call, so GNOME offers Switch Windows only. That is a gap in the GNOME
+  provider (`src/services/window-manager`), not in this view.
+- Hyprland's classic dispatcher fallback for fullscreen is `fullscreen 0`, which acts on the active
+  window: the classic form has no window argument.
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
@@ -1177,8 +1213,9 @@ port writes `1 window` and `3 windows`: what every translated locale already doe
 would do if the entry existed. A test pins it.
 
 Switch Windows runs end to end over the ported providers (GNOME through the Shell extension, the
-wlroots foreign-toplevel list, Hyprland and niri). Still C++-only: Switch Workspaces, and the
-toggle-floating, toggle-fullscreen and toggle-overview commands.
+wlroots foreign-toplevel list, Hyprland and niri). Switch Workspaces and the toggle-floating,
+toggle-fullscreen and toggle-overview commands landed in the views pass (see "The gaps pass,
+views").
 
 **`src/builtins/calculator` → `compass-core::calculator_history`, and the grouping in
 `compass-local-storage::calculator`** — the view's own decisions and the half of `CalculatorService`

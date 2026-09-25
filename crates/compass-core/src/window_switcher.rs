@@ -80,6 +80,22 @@ pub fn registered_commands(caps: Capabilities) -> Vec<&'static str> {
     out
 }
 
+/// Whether root search offers `kind` under `caps`: a window-management
+/// command only when [`registered_commands`] registers it, every other
+/// command always.
+#[must_use]
+pub fn command_offered(kind: crate::commands::CommandKind, caps: Capabilities) -> bool {
+    use crate::commands::CommandKind;
+    let entrypoint = match kind {
+        CommandKind::SwitchWorkspaces => "switch-workspaces",
+        CommandKind::ToggleFullscreen => "toggle-fullscreen",
+        CommandKind::ToggleFloating => "toggle-floating",
+        CommandKind::ToggleOverview => "toggle-overview",
+        _ => return true,
+    };
+    registered_commands(caps).contains(&entrypoint)
+}
+
 /// What the workspace switcher is called.
 ///
 /// Windows calls them desktops and everyone else calls them workspaces, and
@@ -475,6 +491,45 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(registered_commands(sticky_only), vec!["switch-windows"]);
+    }
+
+    #[test]
+    fn a_window_command_is_offered_only_where_it_is_registered() {
+        use crate::commands::{BUILTIN_COMMANDS, CommandKind};
+        let none = Capabilities::default();
+        assert!(command_offered(CommandKind::SwitchWindows, none));
+        assert!(command_offered(CommandKind::ClipboardHistory, none));
+        for kind in [
+            CommandKind::SwitchWorkspaces,
+            CommandKind::ToggleFullscreen,
+            CommandKind::ToggleFloating,
+            CommandKind::ToggleOverview,
+        ] {
+            assert!(!command_offered(kind, none), "{kind:?}");
+        }
+        let hyprland = Capabilities {
+            workspaces: true,
+            fullscreen: true,
+            toggle_floating: true,
+            ..Capabilities::default()
+        };
+        assert!(command_offered(CommandKind::SwitchWorkspaces, hyprland));
+        assert!(command_offered(CommandKind::ToggleFloating, hyprland));
+        assert!(!command_offered(CommandKind::ToggleOverview, hyprland));
+        // Every registrable entrypoint is a builtin command with that kind.
+        for entrypoint in registered_commands(Capabilities {
+            workspaces: true,
+            fullscreen: true,
+            toggle_floating: true,
+            toggle_overview: true,
+            ..Capabilities::default()
+        }) {
+            let command = BUILTIN_COMMANDS
+                .iter()
+                .find(|c| c.entrypoint == entrypoint)
+                .expect(entrypoint);
+            assert!(!command_offered(command.kind, none) || entrypoint == "switch-windows");
+        }
     }
 
     #[test]
