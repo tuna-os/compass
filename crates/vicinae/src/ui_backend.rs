@@ -444,6 +444,10 @@ impl ApplicationBackend for DaemonBackend {
                     query: spec.query,
                     no_section: spec.no_section,
                     no_quick_look: spec.no_quick_look,
+                    width: spec.width,
+                    height: spec.height,
+                    no_metadata: spec.no_metadata,
+                    no_footer: spec.no_footer,
                 }),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }

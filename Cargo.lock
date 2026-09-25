@@ -1170,6 +1170,7 @@ dependencies = [
  "iced_winit",
  "image",
  "insta",
+ "jiff",
  "serde",
  "serde_json",
  "sha2 0.11.0",

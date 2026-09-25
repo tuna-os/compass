@@ -30,6 +30,7 @@ mod dmenu;
 mod fonts;
 mod launch;
 mod media;
+mod preview;
 mod programs;
 mod rhai;
 mod scripts;
@@ -767,6 +768,8 @@ pub struct LauncherApp {
     parked_fonts: Option<crate::fonts_page::FontsPage>,
     /// A store's list as it was when a detail page was opened over it.
     parked_store: Option<crate::store_page::StorePage>,
+    /// The card size a dmenu list resized the open window to, while it is.
+    resized_to: Option<(u32, u32)>,
     /// A compact or inline script run the root list is waiting on.
     following_script: Option<scripts::FollowedScript>,
     /// Subtitles extensions set for their commands (`updateCommandMetadata`),
@@ -993,6 +996,7 @@ impl LauncherApp {
             parked_snippets: None,
             parked_fonts: None,
             parked_store: None,
+            resized_to: None,
             following_script: None,
             extension_subtitles: std::collections::HashMap::new(),
         }
@@ -1844,6 +1848,7 @@ impl LauncherApp {
                     self.refresh_scripts_task(),
                     self.refresh_rhai_scripts_task(),
                     self.refresh_subtitles_task(),
+                    self.apply_dmenu_size(),
                 ])
             }
             Message::Closed(id) => {
@@ -1853,6 +1858,7 @@ impl LauncherApp {
                 if self.window == Some(id) {
                     self.cancel_search();
                     self.window = None;
+                    self.resized_to = None;
                     self.closing = false;
                     if std::mem::take(&mut self.reopen_after_close) {
                         return self.open_window();
@@ -3141,9 +3147,14 @@ impl LauncherApp {
 
         let card_background = card_background(palette.surface, self.tint);
 
+        let (card_width, card_height) = match self.dmenu_card_size() {
+            Some((width, height)) => (width as f32, Length::Fixed(height as f32)),
+            None => (f32::from(geometry.card_width), Length::Shrink),
+        };
         container(
             container(card_body)
-                .width(Length::Fixed(f32::from(geometry.card_width)))
+                .width(Length::Fixed(card_width))
+                .height(card_height)
                 .padding(geometry.card_padding)
                 .style(move |_: &Theme| container::Style {
                     background: Some(card_background.into()),
@@ -8456,6 +8467,34 @@ mod tests {
             [(5, None)],
             "one dismissal, however the view went away"
         );
+    }
+
+    #[test]
+    fn a_dmenu_size_resizes_the_window_until_a_list_without_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _) = dmenu_app(dir.path());
+        assert_eq!(app.dmenu_card_size(), None);
+        assert_eq!(app.resized_to, None);
+        if let Page::Dmenu(page) = &mut app.page {
+            page.list.width = Some(400);
+            page.list.navigation_title = Some("Pick one".into());
+        }
+        let _ = app.apply_dmenu_size();
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "hello").unwrap();
+        if let Page::Dmenu(page) = &mut app.page {
+            page.entries.push(file.to_string_lossy().into_owned());
+            page.query = "notes".into();
+            page.refilter();
+            assert!(page.preview.is_some(), "quick look reads the file");
+        }
+        let _ = app.view();
+        let size = Some((400, u32::from(GEOMETRY.card_max_height)));
+        assert_eq!(app.dmenu_card_size(), size);
+        assert_eq!(app.resized_to, size);
+        let task = app.update(Message::Command(UiCommand::Dmenu(5)));
+        settle(&mut app, task);
+        assert_eq!(app.resized_to, None, "the next list puts the size back");
     }
 
     // ---- Run Terminal Program ----

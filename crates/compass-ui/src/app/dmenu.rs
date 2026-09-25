@@ -9,9 +9,10 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 
 use super::{
     Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
-    Task, chord_direction, column, container, mouse_area, next_selection, scrollable, text,
+    Task, chord_direction, column, container, mouse_area, next_selection, row, scrollable, text,
 };
 use crate::action_panel::Action;
+use crate::design::{GEOMETRY, SHADOW_PADDING};
 use crate::dmenu_page::{self, DmenuPage, Status};
 
 const SELECT: &str = "dmenu.select";
@@ -19,6 +20,40 @@ const PASS_TEXT: &str = "dmenu.pass-text";
 const SELECT_AND_COPY: &str = "dmenu.select-copy";
 
 impl LauncherApp {
+    /// The card size the dmenu list showing asks for with `--width` and
+    /// `--height`, the side not given keeping the launcher's own.
+    pub(super) fn dmenu_card_size(&self) -> Option<(u32, u32)> {
+        let Page::Dmenu(page) = &self.page else {
+            return None;
+        };
+        page.window_size((
+            u32::from(GEOMETRY.card_width),
+            u32::from(GEOMETRY.card_max_height),
+        ))
+    }
+
+    /// Resizes the open window to what the dmenu list asks for, or back to
+    /// the launcher's own size after a list that asked (`requestWindowSize`).
+    pub(super) fn apply_dmenu_size(&mut self) -> Task<Message> {
+        let Some(id) = self.window else {
+            return Task::none();
+        };
+        let wanted = self.dmenu_card_size();
+        if wanted == self.resized_to {
+            return Task::none();
+        }
+        self.resized_to = wanted;
+        let (width, height) = wanted.unwrap_or((
+            u32::from(GEOMETRY.card_width),
+            u32::from(GEOMETRY.card_max_height),
+        ));
+        let pad = 2 * u32::from(SHADOW_PADDING);
+        crate::surface::resize(
+            id,
+            iced::Size::new((width + pad) as f32, (height + pad) as f32),
+        )
+    }
+
     /// Puts up the dmenu view for `token` and asks the engine for its list.
     pub(super) fn start_dmenu(&mut self, token: u64) -> Task<Message> {
         self.panel = None;
@@ -92,6 +127,7 @@ impl LauncherApp {
                 direction,
                 self.wrap_navigation,
             );
+            page.refresh_preview();
             return crate::scroll::reveal_root_selection();
         }
         Task::none()
@@ -156,7 +192,10 @@ impl LauncherApp {
                 {
                     page.apply(result);
                 }
-                crate::scroll::reveal_root_selection()
+                Task::batch([
+                    self.apply_dmenu_size(),
+                    crate::scroll::reveal_root_selection(),
+                ])
             }
             Message::DmenuQueryChanged(query) => {
                 if let Page::Dmenu(page) = &mut self.page {
@@ -184,8 +223,35 @@ impl LauncherApp {
         }
     }
 
-    /// The view's body.
+    /// The view's body: the list, quick look beside it when the selected
+    /// entry is a file, and the footer unless `--no-footer`.
     pub(super) fn dmenu_body<'a>(&'a self, page: &'a DmenuPage) -> Element<'a, Message> {
+        let list = self.dmenu_list(page);
+        let body: Element<'a, Message> = match &page.preview {
+            Some(preview) => row![
+                container(list).width(Length::FillPortion(super::preview::LIST_PORTION)),
+                self.file_preview_pane(preview, !page.list.no_metadata),
+            ]
+            .into(),
+            None => list,
+        };
+        if page.list.no_footer || page.status != Status::Ready {
+            return body;
+        }
+        let primary = match (page.selected_entry(), page.list.output_index) {
+            (None, _) => "Pass search text",
+            (Some(_), false) => "Select entry",
+            (Some(_), true) => "Select entry (index)",
+        };
+        column![
+            body,
+            self.footer(page.list.navigation_title.as_deref(), primary)
+        ]
+        .into()
+    }
+
+    /// The list itself.
+    fn dmenu_list<'a>(&'a self, page: &'a DmenuPage) -> Element<'a, Message> {
         match &page.status {
             Status::Loading => return self.notice("Loading entries…"),
             Status::Failed(reason) => return self.notice(reason),

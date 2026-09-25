@@ -498,8 +498,16 @@ pub struct DmenuList {
     pub query: Option<String>,
     /// `--no-section`.
     pub no_section: bool,
-    /// `--no-quick-look`.
+    /// `--no-quick-look`, or a width under 500.
     pub no_quick_look: bool,
+    /// `--width`.
+    pub width: Option<u32>,
+    /// `--height`.
+    pub height: Option<u32>,
+    /// `--no-metadata`.
+    pub no_metadata: bool,
+    /// `--no-footer`, or a width under 500.
+    pub no_footer: bool,
 }
 
 const PROGRAMS_NEED_ENGINE: &str =

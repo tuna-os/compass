@@ -23,6 +23,7 @@ pub mod dmenu_page;
 pub mod emoji_page;
 pub mod extension_fields;
 pub mod extension_page;
+pub mod file_preview;
 pub mod files_page;
 pub mod fonts_page;
 pub mod icons;

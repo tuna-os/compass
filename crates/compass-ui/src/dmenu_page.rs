@@ -45,6 +45,9 @@ pub struct DmenuPage {
     pub status: Status,
     /// Whether the choice has been sent, so dismissing does not send another.
     pub answered: bool,
+    /// Quick look: the selected entry's preview, when it is a file that
+    /// exists and quick look is on.
+    pub preview: Option<crate::file_preview::FilePreview>,
 }
 
 impl DmenuPage {
@@ -60,6 +63,7 @@ impl DmenuPage {
             selected: 0,
             status: Status::Loading,
             answered: false,
+            preview: None,
         }
     }
 
@@ -101,6 +105,41 @@ impl DmenuPage {
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0));
         self.shown = scored.into_iter().map(|(_, index)| index).collect();
+        self.refresh_preview();
+    }
+
+    /// Reads the selected entry's preview when it is a path that exists and
+    /// quick look is on (`setOnFileHighlighted`), and clears it otherwise.
+    pub fn refresh_preview(&mut self) {
+        let path = self
+            .selected_entry()
+            .filter(|entry| !self.list.no_quick_look && entry.starts_with('/'))
+            .map(std::path::PathBuf::from);
+        let Some(path) = path else {
+            self.preview = None;
+            return;
+        };
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|preview| std::path::Path::new(&preview.path) == path)
+        {
+            return;
+        }
+        self.preview = crate::file_preview::load(&path, None, false);
+    }
+
+    /// The window size `--width`/`--height` ask for, when either is given:
+    /// the other side keeps the launcher's own.
+    #[must_use]
+    pub fn window_size(&self, default: (u32, u32)) -> Option<(u32, u32)> {
+        if self.list.width.is_none() && self.list.height.is_none() {
+            return None;
+        }
+        Some((
+            self.list.width.unwrap_or(default.0),
+            self.list.height.unwrap_or(default.1),
+        ))
     }
 
     /// What choosing the selected entry prints: the entry, or its index in
@@ -149,7 +188,8 @@ impl DmenuPage {
 }
 
 /// An entry's title and second line: a path shows its last component, and
-/// the folder it is in when it exists and quick look is on.
+/// the folder it is in when it exists and quick look is off; with quick look
+/// on, the preview pane names the folder instead (`itemSubtitle`).
 #[must_use]
 pub fn entry_text(entry: &str, quick_look: bool) -> (String, Option<String>) {
     if !entry.starts_with('/') {
@@ -160,7 +200,7 @@ pub fn entry_text(entry: &str, quick_look: bool) -> (String, Option<String>) {
         || entry.to_owned(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let subtitle = (quick_look && path.exists())
+    let subtitle = (!quick_look && path.exists())
         .then(|| path.parent().map(|p| p.to_string_lossy().into_owned()))
         .flatten();
     (title, subtitle)
@@ -211,10 +251,34 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("notes.md");
         std::fs::write(&file, "x").unwrap();
-        let (title, subtitle) = entry_text(&file.to_string_lossy(), true);
+        let (title, subtitle) = entry_text(&file.to_string_lossy(), false);
         assert_eq!(title, "notes.md");
         assert_eq!(subtitle.as_deref(), Some(&*dir.path().to_string_lossy()));
-        assert_eq!(entry_text(&file.to_string_lossy(), false).1, None);
-        assert_eq!(entry_text("plain", true), ("plain".to_owned(), None));
+        assert_eq!(entry_text(&file.to_string_lossy(), true).1, None);
+        assert_eq!(entry_text("plain", false), ("plain".to_owned(), None));
+    }
+
+    #[test]
+    fn quick_look_previews_a_selected_file_and_the_size_is_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.md");
+        std::fs::write(&file, "hello").unwrap();
+        let mut list = page(&format!("plain\n{}", file.display()), false);
+        assert!(list.preview.is_none(), "a plain entry has none");
+        list.selected = 1;
+        list.refresh_preview();
+        let preview = list.preview.clone().expect("the file is previewed");
+        assert_eq!(preview.name, "notes.md");
+        assert_eq!(
+            preview.content,
+            crate::file_preview::Content::Text("hello".into())
+        );
+        list.list.no_quick_look = true;
+        list.refresh_preview();
+        assert!(list.preview.is_none(), "--no-quick-look has none");
+
+        assert_eq!(list.window_size((720, 560)), None);
+        list.list.width = Some(400);
+        assert_eq!(list.window_size((720, 560)), Some((400, 560)));
     }
 }
