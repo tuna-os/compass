@@ -81,7 +81,10 @@ use serde::{Deserialize, Serialize};
 /// a provider's switch ([`Request::SetProviderEnabled`]) and turning a root
 /// item back on ([`RootItemEdit::Enabled`]), and the HUD the engine asks the
 /// window to show ([`WindowCommand::Hud`]), and the fallback manager's switch
-/// ([`RootItemEdit::Fallback`]).
+/// ([`RootItemEdit::Fallback`]), and Inspect Local Storage's and Manage OAuth
+/// Token Sets' reads ([`Request::LocalStorageNamespaces`],
+/// [`Request::LocalStorageItems`], [`Request::OAuthTokenSets`],
+/// [`Request::RemoveOAuthTokenSet`]).
 pub const PROTOCOL_VERSION: u16 = 19;
 
 /// A client-to-server frame.
@@ -968,6 +971,26 @@ pub enum Request {
         /// Whether its items are offered.
         enabled: bool,
     },
+    /// Inspect Local Storage's list: every namespace that holds an item.
+    /// Answered with [`Response::LocalStorageNamespaces`]. (v19.)
+    LocalStorageNamespaces,
+    /// One namespace's items. Answered with [`Response::LocalStorageItems`].
+    /// (v19.)
+    LocalStorageItems {
+        /// The namespace.
+        namespace: String,
+    },
+    /// Manage OAuth Token Sets' list. Answered with
+    /// [`Response::OAuthTokenSets`]. (v19.)
+    OAuthTokenSets,
+    /// Remove one extension's token set for one provider (`None` for its
+    /// unnamed one). Answered with [`Response::Ack`]. (v19.)
+    RemoveOAuthTokenSet {
+        /// The extension.
+        extension_id: String,
+        /// The provider.
+        provider_id: Option<String>,
+    },
 }
 
 /// Answer to [`Request::FileActions`]. (v18.)
@@ -1432,6 +1455,51 @@ pub enum Response {
         /// One per script command.
         icons: Vec<(String, String)>,
     },
+    /// Answer to [`Request::LocalStorageNamespaces`], sorted. (v19.)
+    LocalStorageNamespaces {
+        /// The namespaces.
+        namespaces: Vec<String>,
+    },
+    /// Answer to [`Request::LocalStorageItems`], by key. (v19.)
+    LocalStorageItems {
+        /// The items.
+        items: Vec<LocalStorageEntry>,
+    },
+    /// Answer to [`Request::OAuthTokenSets`]. (v19.)
+    OAuthTokenSets {
+        /// The token sets.
+        sets: Vec<OAuthTokenSetEntry>,
+    },
+}
+
+/// One item of a [`Response::LocalStorageItems`]. (v19.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalStorageEntry {
+    /// Its key.
+    pub key: String,
+    /// Its value as text: a string as it is, anything else as JSON.
+    pub value: String,
+}
+
+/// One token set of a [`Response::OAuthTokenSets`]. (v19.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthTokenSetEntry {
+    /// The extension it belongs to.
+    pub extension_id: String,
+    /// The provider, or `None` for the unnamed one.
+    pub provider_id: Option<String>,
+    /// The bearer token.
+    pub access_token: String,
+    /// The refresh token.
+    pub refresh_token: Option<String>,
+    /// The id token.
+    pub id_token: Option<String>,
+    /// The granted scope.
+    pub scope: Option<String>,
+    /// When it expires, in seconds since the epoch, when it does.
+    pub expires_at: Option<i64>,
+    /// Whether it has expired.
+    pub expired: bool,
 }
 
 /// Which system default a picker sets.

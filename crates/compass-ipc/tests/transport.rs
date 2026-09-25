@@ -155,7 +155,11 @@ async fn echo_handler(request: Request) -> Response {
         | Request::SetWallpaper { .. }
         | Request::SetSetting { .. }
         | Request::SetProviderEnabled { .. }
+        | Request::RemoveOAuthTokenSet { .. }
         | Request::SetTheme { .. } => Response::Ack,
+        Request::LocalStorageNamespaces => Response::LocalStorageNamespaces { namespaces: vec![] },
+        Request::LocalStorageItems { .. } => Response::LocalStorageItems { items: vec![] },
+        Request::OAuthTokenSets => Response::OAuthTokenSets { sets: vec![] },
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
         Request::FileActions { .. } => {

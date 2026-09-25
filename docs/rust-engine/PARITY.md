@@ -202,7 +202,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/vicinae` | `compass-core`, `compass_ui::app::vicinae` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 ## The window
@@ -550,7 +550,6 @@ What differs, by row:
 |---|---|---|---|
 | `builtins/root` | The provider view ranks by visits as root search does. | It ranks in the window, without the engine's launch history: matches by score, the empty query in index order. | `a_launch_deeplink_to_a_provider_searches_its_items_alone` |
 | `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
-| `builtins/root` | A fallback row's panel is Open plus Manage Fallback Actions. | Enter opens it; the fallback manager's view is `builtins/vicinae`'s gap. | — |
 | `builtins/vicinae` | Where the platform cannot paste, the picker offers no paste action and `defaultAction` defaults to copy. | The window cannot know before asking, so paste is offered whenever an engine is attached, and a refusal copies; the result is the same glyph on the clipboard. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `builtins/vicinae` | The paste action is titled `Paste to <frontmost app>` with its icon. | `Paste to active window`, the C++'s title when no application is frontmost. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and binding it waits on `global-shortcuts`. | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
@@ -907,6 +906,54 @@ Declared differences:
   recorder to change it from here (`src/services/global-shortcuts`' gap). The last step's sentence
   follows.
 - The macOS permissions step and Launch at login are not offered, as on the C++'s Linux build.
+
+**`src/builtins/vicinae`'s remaining views** (`VicinaeExtension`). Each command is a builtin under
+its C++ id (`commands:<id>`, and `core:<id>` names it too), as `CommandKind::Vicinae`, dispatched by
+`compass_ui::app::vicinae`:
+
+- **Configure Fallback Commands** (`ManageFallbackViewHost`): the items `isSuitableForFallback`
+  admits (Search Files, every extension command, every quicklink with one argument) in "Enabled", in
+  the configured order (`bug_report::order_enabled`), and "Available"; fuzzy over the title and, at
+  0.3, the keywords. Enter or the panel's one action enables an item first in `fallbacks` or disables
+  it, at once in the window and in `vicinae.json` through IPC v19 `RootItemEdit::Fallback`
+  (`compass_core::root_items::set_fallback`, as `enableFallback` and `disableFallback`). Search Files
+  is written by the C++'s id, `files:search`, and disabled by whichever id names it. A root fallback
+  row's panel is Open (command) and Manage Fallback Actions (`fallbackActionPanel`).
+- **Show Installed Extensions**: every installed extension's manifest, with its provenance badge
+  (Raycast, Vicinae, Local), Uninstall (asking first, as `UninstallExtensionAction`, through the
+  store's uninstall) and Copy Name, ID, Path and Author.
+- **Search Builtin Icons**: every builtin icon, drawn, with Copy Icon Name.
+- **Inspect Local Storage** and **Manage OAuth Token Sets**: the encrypted database's namespaces,
+  then a namespace's keys with Show value; the token sets with "Expired", Remove token set (asking
+  first) and the copies (access, refresh and ID token, scopes, expiration date), over IPC v19
+  `LocalStorageNamespaces`, `LocalStorageItems`, `OAuthTokenSets` and `RemoveOAuthTokenSet`
+  (`vicinae::serve::storage`), refused by name without a keyring as calculator history is.
+- **Refresh Apps**, **Reload Script Directories**: rescan and say so, with the C++'s sentences.
+- **Report a Vicinae Bug**, **Donate to Vicinae**, **Join the Discord Server**: open the link and
+  hide with "Opened in browser"; the report is pre-filled from this build and `/etc/os-release`
+  (`bug_report::{report_url, parse_os_release}`).
+- **Open Config File**, **Open Default Config File** (this engine's defaults written read-only to the
+  runtime directory), **Show Log File** (`compass.log`, in the file browser).
+- **The store intros** (`StoreIntroViewHost`): the Vicinae and Raycast stores open on their intro
+  until "Continue to store", or always with `alwaysShowIntro`.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/builtins/vicinae` | Rust ✅ | `compass_ui::{app::vicinae, fallbacks_page, vicinae_pages}`, `compass_core::commands::CommandKind::Vicinae`, `compass_core::root_items::set_fallback`, `compass_core::bug_report::{report_url, parse_os_release}`, `vicinae::serve::storage` | `configure_fallback_commands_moves_items_between_its_sections`, `enabled_come_first_in_the_configured_order_then_the_available`, `the_filter_narrows_both_sections_and_an_available_row_enables`, `a_fallback_is_enabled_first_and_disabled_as_the_cpp_writes_them`, `the_fallback_manager_writes_the_users_fallbacks` (a real engine), `installed_extensions_are_listed_copied_and_uninstalled_after_asking`, `search_builtin_icons_copies_the_name`, `inspect_local_storage_browses_a_namespace_and_shows_a_value`, `manage_oauth_token_sets_copies_and_removes_after_asking`, `local_storage_lists_its_namespaces_and_their_items_as_text`, `token_sets_are_listed_with_their_expiry_and_removed`, `the_link_and_refresh_commands_do_what_their_cpp_ones_do`, `the_default_config_is_written_read_only_and_replaced`, `the_vicinae_extensions_commands_keep_their_cpp_ids`, `os_release_gives_the_pretty_name_and_version_unquoted`, `the_report_link_carries_the_title_body_and_type`, `the_extension_store_installs_into_root_search_and_uninstalls_after_asking` (the intro) |
+
+Declared differences:
+
+- Open Vicinae Settings is not offered: the settings window is `ui/settings`' gap. Forget Past
+  Vicinae Telemetry is not offered: sending anything is `src/services/telemetry`'s open decision.
+- Report a Vicinae Bug's optional title argument is not asked for; the issue opens untitled. Its
+  "QT Platform" line says `wayland`.
+- The Available section lists Search Files, then the extensions, then the quicklinks, rather than in
+  root search's empty-query order; a filter orders it by score as the C++'s does.
+- A store intro's continuation is remembered in the view memory (`compass-view-state.json`) rather
+  than the command's local storage, and the intro's Markdown has no icon above it.
+- Show Installed Extensions shows each extension's initial rather than its `assets` icon
+  (`ui/image`'s gap).
+- Show value says the value under the list rather than in a toast.
 
 ### Earlier row notes
 
@@ -2868,7 +2915,7 @@ visits. What differs:
 | 5 | Open with… lists the link's openers in a submenu, and opens the link expanded with the completer's argument values. | An app-selector view (`compass_ui::open_with_page`, IPC v18 `ListOpeners`/`OpenWith`) lists the openers of the stored link, the default first, and opens it expanded; arguments are not asked for first, so a placeholder argument expands empty. | `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application` |
 | 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link), the link re-expanded as the completer's values change. | The pane (`shortcuts_page::detail_fields`) follows the selection; the link is expanded with no arguments, Manage Shortcuts having no completer. | `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `the_pane_lists_what_load_detail_lists_in_its_order` |
 | 7 | The form's link field offers placeholder completions (Selected Text, Clipboard Text, Argument, UUID) and the app list updates to the link's default opener on blur; the default icon previews the favicon. | The field's help text names the placeholders; `default` app and icon are resolved by the engine when saving (favicon for `http*`, else the opener's icon, else the link glyph). | `the_default_icon_is_the_favicon_then_the_opener_then_the_link_glyph` |
-| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text; its fallback panel adds Manage Fallback Actions. | Ranked like every other root item. A `shortcuts:<id>` entry in `fallbacks` whose link takes one argument is a fallback row, in the configured order, opening with the query; Enter only, there is no fallback panel or manager view (`src/builtins/vicinae`'s gap). | `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query` |
+| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text; its fallback panel adds Manage Fallback Actions. | Ranked like every other root item. A `shortcuts:<id>` entry in `fallbacks` whose link takes one argument is a fallback row, in the configured order, opening with the query; its panel is Open and Manage Fallback Actions, which opens Configure Fallback Commands. | `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `configure_fallback_commands_moves_items_between_its_sections` |
 | 9 | The migration from the pre-JSON SQLite `shortcut` table. | Not run: the one-shot import is from Vicinae's JSON file, which already holds a migrated list. | — |
 | 10 | A removal toast ("Removed link") and success toasts after saving. | The list updates in place; failures show in the view. | `manage_shortcuts_filters_edits_and_removes` |
 

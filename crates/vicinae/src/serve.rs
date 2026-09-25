@@ -46,6 +46,7 @@ mod files;
 mod launch;
 mod openers;
 mod settings;
+mod storage;
 mod workspaces;
 
 /// The at-most-one launcher window this engine drives.
@@ -2702,6 +2703,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         request @ (Request::CalculatorHistory { .. }
         | Request::AddCalculatorRecord { .. }
         | Request::EditCalculatorHistory { .. }) => calculator::handle(state, request).await,
+        request @ (Request::LocalStorageNamespaces
+        | Request::LocalStorageItems { .. }
+        | Request::OAuthTokenSets
+        | Request::RemoveOAuthTokenSet { .. }) => storage::handle(state, request).await,
         request @ (Request::TrayItems
         | Request::TrayActivate { .. }
         | Request::TrayMenu { .. }

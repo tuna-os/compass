@@ -557,4 +557,21 @@ pub enum Message {
         /// Whether it went.
         result: Result<(), String>,
     },
+    /// Inspect Local Storage's filter changed.
+    StorageQueryChanged(String),
+    /// Manage OAuth Token Sets' filter changed.
+    TokensQueryChanged(String),
+    /// Inspect Local Storage's namespaces arrived, or why not.
+    StorageNamespacesLoaded(Result<Vec<String>, String>),
+    /// A namespace's items arrived, or why not.
+    StorageItemsLoaded {
+        /// The namespace.
+        namespace: String,
+        /// Its items.
+        result: Result<Vec<crate::backend::StorageItemRow>, String>,
+    },
+    /// Manage OAuth Token Sets' list arrived, or why not.
+    TokenSetsLoaded(Result<Vec<crate::backend::TokenSetRow>, String>),
+    /// A token set was removed, or why not.
+    TokenSetRemoved(Result<(), String>),
 }

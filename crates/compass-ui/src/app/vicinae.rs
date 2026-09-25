@@ -13,7 +13,7 @@ use super::{
 };
 use crate::action_panel::Action;
 use crate::fallbacks_page::{Candidate, FallbacksPage};
-use crate::vicinae_pages::{ExtensionsPage, IconsPage, provenance_badge};
+use crate::vicinae_pages::{ExtensionsPage, IconsPage, StoragePage, TokensPage, provenance_badge};
 use compass_core::root_items::RootEdit;
 
 /// The fallback manager's one action.
@@ -31,6 +31,20 @@ const EXTENSION_COPY_PATH: &str = "extension.copy-path";
 const EXTENSION_COPY_AUTHOR: &str = "extension.copy-author";
 /// Search Builtin Icons' action.
 const ICON_COPY_NAME: &str = "icon.copy-name";
+/// Inspect Local Storage's actions.
+const STORAGE_BROWSE: &str = "storage.browse";
+const STORAGE_SHOW_VALUE: &str = "storage.show-value";
+/// Manage OAuth Token Sets' actions.
+const TOKEN_REMOVE: &str = "token.remove";
+const TOKEN_COPY_ACCESS: &str = "token.copy-access";
+const TOKEN_COPY_REFRESH: &str = "token.copy-refresh";
+const TOKEN_COPY_ID: &str = "token.copy-id";
+const TOKEN_COPY_SCOPES: &str = "token.copy-scopes";
+const TOKEN_COPY_EXPIRY: &str = "token.copy-expiry";
+
+/// The question before a token set is removed.
+pub const TOKEN_REMOVE_MESSAGE: &str = "You will need to go through the OAuth login flow again \
+                                        the next time you want to use this service";
 
 /// What Reload Script Directories says (`ReloadScriptDirectoriesCommand`).
 pub const SCRIPTS_RESCANNED: &str = "New scan triggered, index will update shortly";
@@ -263,8 +277,182 @@ impl LauncherApp {
                 self.panel = None;
                 Some(self.copy_with_hud(text))
             }
+            STORAGE_BROWSE => {
+                self.panel = None;
+                Some(self.browse_selected_namespace())
+            }
+            STORAGE_SHOW_VALUE => {
+                let Page::Storage(page) = &mut self.page else {
+                    return None;
+                };
+                let value = page.selected_item()?.value.clone();
+                page.notice = Some(value);
+                self.panel = None;
+                Some(focus_search())
+            }
+            TOKEN_REMOVE | TOKEN_COPY_ACCESS | TOKEN_COPY_REFRESH | TOKEN_COPY_ID
+            | TOKEN_COPY_SCOPES | TOKEN_COPY_EXPIRY => {
+                let Page::Tokens(page) = &self.page else {
+                    return None;
+                };
+                let set = page.selected_set()?;
+                let text = match id {
+                    TOKEN_REMOVE => {
+                        let (extension, provider) =
+                            (set.extension_id.clone(), set.provider_id.clone());
+                        self.panel = None;
+                        self.confirm = Some(super::Confirm {
+                            title: "Are you sure?".to_owned(),
+                            message: TOKEN_REMOVE_MESSAGE.to_owned(),
+                            confirm_text: "Remove".to_owned(),
+                            action: super::ConfirmAction::RemoveTokenSet(extension, provider),
+                        });
+                        return Some(Task::none());
+                    }
+                    TOKEN_COPY_ACCESS => set.access_token.clone(),
+                    TOKEN_COPY_REFRESH => set.refresh_token.clone()?,
+                    TOKEN_COPY_ID => set.id_token.clone()?,
+                    TOKEN_COPY_SCOPES => set.scope.clone()?,
+                    _ => expiry_text(set.expires_at?)?,
+                };
+                self.panel = None;
+                Some(self.copy_with_hud(text))
+            }
             _ => self.fallbacks_panel_action(id),
         }
+    }
+
+    /// Asks the engine for the namespaces or the token sets.
+    fn load_storage_view(&self) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::done(match &self.page {
+                Page::Tokens(_) => {
+                    Message::TokenSetsLoaded(Err(crate::backend::STORAGE_NEEDS_ENGINE.to_owned()))
+                }
+                _ => Message::StorageNamespacesLoaded(Err(
+                    crate::backend::STORAGE_NEEDS_ENGINE.to_owned()
+                )),
+            });
+        };
+        match &self.page {
+            Page::Storage(_) => Task::perform(
+                async move { backend.local_storage_namespaces().await },
+                Message::StorageNamespacesLoaded,
+            ),
+            Page::Tokens(_) => Task::perform(
+                async move { backend.oauth_token_sets().await },
+                Message::TokenSetsLoaded,
+            ),
+            _ => Task::none(),
+        }
+    }
+
+    /// "Browse namespace": asks for the selected namespace's items.
+    fn browse_selected_namespace(&mut self) -> Task<Message> {
+        let Page::Storage(page) = &self.page else {
+            return Task::none();
+        };
+        let Some(namespace) = page.selected_namespace().map(str::to_owned) else {
+            return Task::none();
+        };
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            {
+                let namespace = namespace.clone();
+                async move { backend.local_storage_items(namespace).await }
+            },
+            move |result| Message::StorageItemsLoaded {
+                namespace: namespace.clone(),
+                result,
+            },
+        )
+    }
+
+    /// Removes a token set through the engine, after the question.
+    pub(super) fn remove_token_set(
+        &mut self,
+        extension_id: String,
+        provider_id: Option<String>,
+    ) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move {
+                backend
+                    .remove_oauth_token_set(extension_id, provider_id)
+                    .await
+            },
+            Message::TokenSetRemoved,
+        )
+    }
+
+    /// Opens a store, on its intro the first time or whenever its
+    /// `alwaysShowIntro` preference asks (`VicinaeStoreCommand`,
+    /// `RaycastStoreCommand`).
+    pub(super) fn open_store_or_intro(&mut self, store: crate::backend::Store) -> Task<Message> {
+        let entrypoint = match store {
+            crate::backend::Store::Vicinae => "store",
+            crate::backend::Store::Raycast => "raycast-store",
+        };
+        let always = self
+            .config_path
+            .as_deref()
+            .and_then(|path| compass_core::Config::load_from(path).ok())
+            .and_then(|config| {
+                config
+                    .entrypoint_preferences(
+                        compass_core::commands::COMMANDS_PROVIDER_ID,
+                        entrypoint,
+                    )?
+                    .get("alwaysShowIntro")?
+                    .as_bool()
+            })
+            .unwrap_or(false);
+        let completed = self.view_memory.get(crate::vicinae_pages::intro_key(store));
+        if crate::vicinae_pages::shows_intro(always, completed) {
+            self.panel = None;
+            self.page = Page::StoreIntro(crate::vicinae_pages::StoreIntroPage::new(store));
+            return focus_search();
+        }
+        self.open_store(store)
+    }
+
+    /// "Continue to store": remembers the intro was seen and opens the store.
+    pub(super) fn continue_to_store(&mut self) -> Task<Message> {
+        let Page::StoreIntro(page) = &self.page else {
+            return Task::none();
+        };
+        let store = page.store;
+        self.panel = None;
+        self.view_memory
+            .set(crate::vicinae_pages::intro_key(store), "true");
+        self.open_store(store)
+    }
+
+    /// The intro's body: its Markdown, then how to go on.
+    pub(super) fn store_intro_body<'a>(
+        &'a self,
+        page: &'a crate::vicinae_pages::StoreIntroPage,
+    ) -> Element<'a, Message> {
+        let theme = self.theme();
+        let markdown = iced::widget::markdown::view(
+            &page.markdown,
+            iced::widget::markdown::Settings::with_text_size(14, &theme),
+        )
+        .map(Message::ExtensionLinkClicked);
+        let hint = iced::widget::text(format!(
+            "Enter: {}    Esc: back",
+            crate::vicinae_pages::CONTINUE_TO_STORE
+        ))
+        .font(self.font())
+        .size(12);
+        scrollable(container(column![markdown, hint].spacing(10)).padding(Padding::new(14.0)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink)
+            .into()
     }
 
     /// Opens one of the inspection views, by its C++ id.
@@ -275,6 +463,14 @@ impl LauncherApp {
                 self.page = Page::Extensions(ExtensionsPage::new(self.installed_extensions()));
             }
             "search-builtin-icons" => self.page = Page::Icons(IconsPage::new()),
+            "inspect-local-storage" => {
+                self.page = Page::Storage(StoragePage::default());
+                return Task::batch([self.load_storage_view(), focus_search()]);
+            }
+            "oauth-token-store" => {
+                self.page = Page::Tokens(TokensPage::default());
+                return Task::batch([self.load_storage_view(), focus_search()]);
+            }
             _ => return Task::none(),
         }
         focus_search()
@@ -342,6 +538,48 @@ impl LauncherApp {
                     ],
                 }]
             }
+            Page::Storage(page) => {
+                let (title, id) = if page.selected_item().is_some() {
+                    ("Show value", STORAGE_SHOW_VALUE)
+                } else {
+                    page.selected_namespace()?;
+                    ("Browse namespace", STORAGE_BROWSE)
+                };
+                vec![PanelSection {
+                    name: String::new(),
+                    actions: vec![Action::new(title).with_id(id).with_shortcut("enter")],
+                }]
+            }
+            Page::Tokens(page) => {
+                let set = page.selected_set()?;
+                let mut copies = vec![Action::new("Copy Access Token").with_id(TOKEN_COPY_ACCESS)];
+                if set.refresh_token.is_some() {
+                    copies.push(Action::new("Copy Refresh Token").with_id(TOKEN_COPY_REFRESH));
+                }
+                if set.id_token.is_some() {
+                    copies.push(Action::new("Copy ID Token").with_id(TOKEN_COPY_ID));
+                }
+                if set.scope.is_some() {
+                    copies.push(Action::new("Copy Scopes").with_id(TOKEN_COPY_SCOPES));
+                }
+                if set.expires_at.is_some() {
+                    copies.push(Action::new("Copy Expiration Date").with_id(TOKEN_COPY_EXPIRY));
+                }
+                vec![
+                    PanelSection {
+                        name: String::new(),
+                        actions: vec![
+                            Action::new("Remove token set")
+                                .with_id(TOKEN_REMOVE)
+                                .with_shortcut("enter"),
+                        ],
+                    },
+                    PanelSection {
+                        name: "Copy".to_owned(),
+                        actions: copies,
+                    },
+                ]
+            }
             Page::Extensions(page) => {
                 let extension = page.selected_extension()?;
                 let mut copies = vec![
@@ -376,9 +614,17 @@ impl LauncherApp {
     /// The inspection views' keys: the arrows, Escape back, Enter for the
     /// first action.
     pub(super) fn vicinae_view_key(&mut self, key: &Key, modifiers: Modifiers) -> Task<Message> {
+        if key.as_ref() == Key::Named(Named::Escape)
+            && let Page::Storage(page) = &mut self.page
+            && page.back()
+        {
+            return focus_search();
+        }
         let (len, selected) = match &mut self.page {
             Page::Icons(page) => (page.shown.len(), &mut page.selected),
             Page::Extensions(page) => (page.shown.len(), &mut page.selected),
+            Page::Storage(page) => (page.shown.len(), &mut page.selected),
+            Page::Tokens(page) => (page.shown.len(), &mut page.selected),
             _ => return Task::none(),
         };
         let direction = match key.as_ref() {
@@ -400,6 +646,9 @@ impl LauncherApp {
         let id = match &self.page {
             Page::Icons(_) => ICON_COPY_NAME,
             Page::Extensions(_) => EXTENSION_UNINSTALL,
+            Page::Storage(page) if page.browsing.is_some() => STORAGE_SHOW_VALUE,
+            Page::Storage(_) => STORAGE_BROWSE,
+            Page::Tokens(_) => TOKEN_REMOVE,
             _ => return Task::none(),
         };
         self.vicinae_panel_action(id).unwrap_or_else(Task::none)
@@ -428,9 +677,71 @@ impl LauncherApp {
                     Page::Extensions(page) if position < page.shown.len() => {
                         page.selected = position;
                     }
+                    Page::Storage(page) if position < page.shown.len() => {
+                        page.selected = position;
+                    }
+                    Page::Tokens(page) if position < page.shown.len() => page.selected = position,
                     _ => return Task::none(),
                 }
                 self.vicinae_view_primary()
+            }
+            Message::StorageQueryChanged(query) => {
+                if let Page::Storage(page) = &mut self.page {
+                    page.query = query;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::TokensQueryChanged(query) => {
+                if let Page::Tokens(page) = &mut self.page {
+                    page.query = query;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::StorageNamespacesLoaded(result) => {
+                if let Page::Storage(page) = &mut self.page {
+                    match result {
+                        Ok(namespaces) => page.set_namespaces(namespaces),
+                        Err(reason) => page.notice = Some(reason),
+                    }
+                }
+                Task::none()
+            }
+            Message::StorageItemsLoaded { namespace, result } => {
+                if let Page::Storage(page) = &mut self.page
+                    && page.selected_namespace() == Some(namespace.as_str())
+                {
+                    match result {
+                        Ok(items) => page.browse(namespace, items),
+                        Err(reason) => page.notice = Some(reason),
+                    }
+                }
+                focus_search()
+            }
+            Message::TokenSetsLoaded(result) => {
+                if let Page::Tokens(page) = &mut self.page {
+                    match result {
+                        Ok(sets) => page.set_sets(sets),
+                        Err(reason) => page.notice = Some(reason),
+                    }
+                }
+                Task::none()
+            }
+            Message::TokenSetRemoved(result) => {
+                let Page::Tokens(page) = &mut self.page else {
+                    return Task::none();
+                };
+                match result {
+                    Ok(()) => {
+                        page.notice = Some("Token set removed".to_owned());
+                        self.load_storage_view()
+                    }
+                    Err(reason) => {
+                        page.notice = Some(reason);
+                        Task::none()
+                    }
+                }
             }
             Message::ExtensionUninstalled { id, result } => {
                 if let Page::Extensions(page) = &mut self.page {
@@ -473,6 +784,51 @@ impl LauncherApp {
                     ));
                 }
                 None
+            }
+            Page::Storage(page) => {
+                if page.shown.is_empty() {
+                    return Some(self.notice(page.notice.as_deref().unwrap_or(
+                        if page.browsing.is_some() {
+                            "No items"
+                        } else {
+                            "No namespaces"
+                        },
+                    )));
+                }
+                for (position, title) in page.titles().into_iter().enumerate() {
+                    let selected = position == page.selected;
+                    let glyph = crate::icons::Glyph::builtin("coin");
+                    let icon = self.glyph_or_initial(Some(&glyph), title, selected);
+                    list = list.push(self.vicinae_row(
+                        self.list_row(icon, title.to_owned(), None, selected),
+                        position,
+                        selected,
+                    ));
+                }
+                page.notice.as_deref()
+            }
+            Page::Tokens(page) => {
+                if page.shown.is_empty() {
+                    return Some(self.notice(page.notice.as_deref().unwrap_or("No token sets")));
+                }
+                for (position, &index) in page.shown.iter().enumerate() {
+                    let Some(set) = page.sets.get(index) else {
+                        continue;
+                    };
+                    let selected = position == page.selected;
+                    let glyph = crate::icons::Glyph::builtin("key");
+                    let icon = self.glyph_or_initial(Some(&glyph), &set.extension_id, selected);
+                    let row = self.list_row_with(
+                        icon,
+                        set.extension_id.clone(),
+                        self.subtitles
+                            .then(|| set.provider_id.clone().unwrap_or_default()),
+                        set.expired.then(|| "Expired".to_owned()),
+                        selected,
+                    );
+                    list = list.push(self.vicinae_row(row, position, selected));
+                }
+                page.notice.as_deref()
             }
             Page::Extensions(page) => {
                 if page.all.is_empty() {
@@ -642,6 +998,14 @@ impl LauncherApp {
             None => rows.into(),
         }
     }
+}
+
+/// A token set's expiry as `QDateTime::toString()` writes it.
+fn expiry_text(at: i64) -> Option<String> {
+    let seconds = u64::try_from(at).ok()?;
+    crate::file_preview::qt_text_date(
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds),
+    )
 }
 
 /// The log file under the state directory (`vicinae::logs::FILE_NAME`).

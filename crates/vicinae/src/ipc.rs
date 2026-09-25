@@ -206,6 +206,10 @@ fn describe(request: &Request) -> &'static str {
         Request::ScriptIcons => "ScriptIcons",
         Request::SetSetting { .. } => "SetSetting",
         Request::SetProviderEnabled { .. } => "SetProviderEnabled",
+        Request::LocalStorageNamespaces => "LocalStorageNamespaces",
+        Request::LocalStorageItems { .. } => "LocalStorageItems",
+        Request::OAuthTokenSets => "OAuthTokenSets",
+        Request::RemoveOAuthTokenSet { .. } => "RemoveOAuthTokenSet",
     }
 }
 

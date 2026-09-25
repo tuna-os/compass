@@ -573,6 +573,22 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &[],
         icon: "box",
     },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("oauth-token-store"),
+        entrypoint: "oauth-token-store",
+        title: "Manage OAuth Token Sets",
+        subtitle: "Manage OAuth token sets that have been saved by extensions providing OAuth integrations.",
+        keywords: &[],
+        icon: "key",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("inspect-local-storage"),
+        entrypoint: "inspect-local-storage",
+        title: "Inspect Local Storage",
+        subtitle: "Browse data stored in Vicinae's local storage. This includes data stored for builtin extensions as well as third-party extensions making use of the LocalStorage API.",
+        keywords: &[],
+        icon: "coin",
+    },
 ];
 
 /// The colour a builtin command's icon tile is filled with: the C++ command's
@@ -751,6 +767,14 @@ pub const CPP_BUILTIN_IDS: &[(&str, CommandKind)] = &[
         "core:search-builtin-icons",
         CommandKind::Vicinae("search-builtin-icons"),
     ),
+    (
+        "core:oauth-token-store",
+        CommandKind::Vicinae("oauth-token-store"),
+    ),
+    (
+        "core:inspect-local-storage",
+        CommandKind::Vicinae("inspect-local-storage"),
+    ),
 ];
 
 /// The id Compass knows an entrypoint by: a C++ builtin's id becomes its
@@ -911,6 +935,8 @@ mod tests {
             "reload-scripts",
             "show-logs",
             "search-builtin-icons",
+            "oauth-token-store",
+            "inspect-local-storage",
         ] {
             let command = by_id(&format!("commands:{id}")).expect(id);
             assert_eq!(command.kind, CommandKind::Vicinae(id));
@@ -918,11 +944,13 @@ mod tests {
             assert_eq!(command.kind.tile(), Tile::Accent);
             assert_eq!(opens_a_view(command.kind), VICINAE_VIEWS.contains(&id));
         }
-        assert!(
-            by_id("commands:search-builtin-icons")
-                .unwrap()
-                .default_disabled()
-        );
+        for id in [
+            "commands:search-builtin-icons",
+            "commands:oauth-token-store",
+            "commands:inspect-local-storage",
+        ] {
+            assert!(by_id(id).unwrap().default_disabled(), "{id}");
+        }
         assert!(
             !by_id("commands:manage-fallback")
                 .unwrap()

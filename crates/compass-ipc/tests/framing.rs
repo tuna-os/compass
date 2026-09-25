@@ -424,6 +424,19 @@ fn all_requests() -> Vec<Request> {
             arguments: vec![("name".into(), "Zoë".into())],
         },
         Request::ScriptIcons,
+        Request::LocalStorageNamespaces,
+        Request::LocalStorageItems {
+            namespace: "@zoë/notes".into(),
+        },
+        Request::OAuthTokenSets,
+        Request::RemoveOAuthTokenSet {
+            extension_id: "github".into(),
+            provider_id: Some("GitHub ✓".into()),
+        },
+        Request::RemoveOAuthTokenSet {
+            extension_id: "linear".into(),
+            provider_id: None,
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -595,6 +608,27 @@ fn all_responses() -> Vec<Response> {
                 name: "Image Viewer".into(),
                 icon: Some("org.gnome.Loupe".into()),
                 default: true,
+            }],
+        },
+        Response::LocalStorageNamespaces {
+            namespaces: vec!["@zoë/notes".into(), "core".into()],
+        },
+        Response::LocalStorageItems {
+            items: vec![compass_ipc::LocalStorageEntry {
+                key: "draft ✍".into(),
+                value: "{\"n\":1}".into(),
+            }],
+        },
+        Response::OAuthTokenSets {
+            sets: vec![compass_ipc::OAuthTokenSetEntry {
+                extension_id: "github".into(),
+                provider_id: Some("GitHub".into()),
+                access_token: "gho_ä".into(),
+                refresh_token: None,
+                id_token: Some("eyJ".into()),
+                scope: Some("repo read:user".into()),
+                expires_at: Some(i64::MAX),
+                expired: false,
             }],
         },
         Response::FileActions(compass_ipc::FileActionInfo {
@@ -1088,6 +1122,10 @@ fn request_variants_are_exhaustive() {
             | Request::ScriptIcons
             | Request::SetSetting { .. }
             | Request::SetProviderEnabled { .. }
+            | Request::LocalStorageNamespaces
+            | Request::LocalStorageItems { .. }
+            | Request::OAuthTokenSets
+            | Request::RemoveOAuthTokenSet { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1149,6 +1187,9 @@ fn response_variants_are_exhaustive() {
             | Response::Openers { .. }
             | Response::FileActions(_)
             | Response::ScriptIcons { .. }
+            | Response::LocalStorageNamespaces { .. }
+            | Response::LocalStorageItems { .. }
+            | Response::OAuthTokenSets { .. }
             | Response::Window(_) => {}
         }
     }

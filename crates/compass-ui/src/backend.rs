@@ -100,6 +100,32 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(OPEN_WITH_NEEDS_ENGINE.to_owned()) })
     }
 
+    /// Inspect Local Storage: the namespaces that hold something.
+    fn local_storage_namespaces(&self) -> BackendFuture<'_, Vec<String>> {
+        Box::pin(async { Err(STORAGE_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Inspect Local Storage: one namespace's items, by key.
+    fn local_storage_items(&self, namespace: String) -> BackendFuture<'_, Vec<StorageItemRow>> {
+        let _ = namespace;
+        Box::pin(async { Err(STORAGE_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Manage OAuth Token Sets: every stored token set.
+    fn oauth_token_sets(&self) -> BackendFuture<'_, Vec<TokenSetRow>> {
+        Box::pin(async { Err(STORAGE_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Manage OAuth Token Sets: removes one. An error is the sentence to show.
+    fn remove_oauth_token_set(
+        &self,
+        extension_id: String,
+        provider_id: Option<String>,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (extension_id, provider_id);
+        Box::pin(async { Err(STORAGE_NEEDS_ENGINE.to_owned()) })
+    }
+
     /// What a file's action panel depends on.
     fn file_actions(&self, path: String) -> BackendFuture<'_, FileActions> {
         let _ = path;
@@ -529,6 +555,9 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
 }
 
 const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine";
+
+/// What the storage views say without an engine.
+pub const STORAGE_NEEDS_ENGINE: &str = "Reading extension storage needs the Compass engine";
 
 const FILES_NEED_ENGINE: &str =
     "Search Files needs the Compass engine, and this window is running without one";
@@ -1253,6 +1282,36 @@ pub trait WindowBackend: std::fmt::Debug + Send + Sync {
         let _ = toggle;
         Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
     }
+}
+
+/// One item of a local storage namespace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageItemRow {
+    /// Its key.
+    pub key: String,
+    /// Its value as text.
+    pub value: String,
+}
+
+/// One stored OAuth token set (`OAuth::TokenSet`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TokenSetRow {
+    /// The extension it belongs to.
+    pub extension_id: String,
+    /// The provider, or `None` for the unnamed one.
+    pub provider_id: Option<String>,
+    /// The bearer token.
+    pub access_token: String,
+    /// The refresh token.
+    pub refresh_token: Option<String>,
+    /// The id token.
+    pub id_token: Option<String>,
+    /// The granted scope.
+    pub scope: Option<String>,
+    /// When it expires, in seconds since the epoch.
+    pub expires_at: Option<i64>,
+    /// Whether it has expired.
+    pub expired: bool,
 }
 
 /// What a file's action panel depends on (`FileActions::actionPanel`).

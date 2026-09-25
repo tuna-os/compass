@@ -279,6 +279,88 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn local_storage_namespaces(&self) -> BackendFuture<'_, Vec<String>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::LocalStorageNamespaces, "Reading local storage")
+                .await?
+            {
+                compass_ipc::Response::LocalStorageNamespaces { namespaces } => Ok(namespaces),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn local_storage_items(
+        &self,
+        namespace: String,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::StorageItemRow>> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::LocalStorageItems { namespace },
+                    "Reading local storage",
+                )
+                .await?
+            {
+                compass_ipc::Response::LocalStorageItems { items } => Ok(items
+                    .into_iter()
+                    .map(|item| compass_ui::backend::StorageItemRow {
+                        key: item.key,
+                        value: item.value,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn oauth_token_sets(&self) -> BackendFuture<'_, Vec<compass_ui::backend::TokenSetRow>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::OAuthTokenSets, "Reading the token sets")
+                .await?
+            {
+                compass_ipc::Response::OAuthTokenSets { sets } => Ok(sets
+                    .into_iter()
+                    .map(|set| compass_ui::backend::TokenSetRow {
+                        extension_id: set.extension_id,
+                        provider_id: set.provider_id,
+                        access_token: set.access_token,
+                        refresh_token: set.refresh_token,
+                        id_token: set.id_token,
+                        scope: set.scope,
+                        expires_at: set.expires_at,
+                        expired: set.expired,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn remove_oauth_token_set(
+        &self,
+        extension_id: String,
+        provider_id: Option<String>,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::RemoveOAuthTokenSet {
+                        extension_id,
+                        provider_id,
+                    },
+                    "Removing the token set",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn file_actions(&self, path: String) -> BackendFuture<'_, compass_ui::backend::FileActions> {
         Box::pin(async move {
             match self

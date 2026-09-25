@@ -582,6 +582,9 @@ enum ConfirmAction {
     RootEdit(String, compass_core::root_items::RootEdit),
     /// Uninstall an extension, from Show Installed Extensions.
     UninstallExtension(String),
+    /// Remove an extension's token set for a provider, from Manage OAuth
+    /// Token Sets.
+    RemoveTokenSet(String, Option<String>),
 }
 
 /// The root search's clock (`launcher.clock`), when it is shown.
@@ -704,6 +707,12 @@ enum Page {
     Extensions(crate::vicinae_pages::ExtensionsPage),
     /// Search Builtin Icons.
     Icons(crate::vicinae_pages::IconsPage),
+    /// Inspect Local Storage.
+    Storage(crate::vicinae_pages::StoragePage),
+    /// Manage OAuth Token Sets.
+    Tokens(crate::vicinae_pages::TokensPage),
+    /// A store's intro, before its list.
+    StoreIntro(crate::vicinae_pages::StoreIntroPage),
 }
 
 /// A key press as an extension shortcut: its modifiers and the key's name
@@ -2264,7 +2273,13 @@ impl LauncherApp {
             Message::ExtensionsQueryChanged(_)
             | Message::IconsQueryChanged(_)
             | Message::VicinaeRowSelected(_)
-            | Message::ExtensionUninstalled { .. } => self.vicinae_view_message(message),
+            | Message::ExtensionUninstalled { .. }
+            | Message::StorageQueryChanged(_)
+            | Message::TokensQueryChanged(_)
+            | Message::StorageNamespacesLoaded(_)
+            | Message::StorageItemsLoaded { .. }
+            | Message::TokenSetsLoaded(_)
+            | Message::TokenSetRemoved(_) => self.vicinae_view_message(message),
             Message::OnboardingContinue
             | Message::OnboardingBack
             | Message::OnboardingJump(_)
@@ -3141,6 +3156,13 @@ impl LauncherApp {
                 if matches!(self.page, Page::Onboarding(_)) {
                     return self.onboarding_key(key);
                 }
+                if !panel_key && matches!(self.page, Page::StoreIntro(_)) {
+                    return match key.as_ref() {
+                        Key::Named(Named::Enter) => self.continue_to_store(),
+                        Key::Named(Named::Escape) => self.update(Message::Back),
+                        _ => Task::none(),
+                    };
+                }
                 if let Page::Preferences(page) = &self.page {
                     return match key.as_ref() {
                         // A text area's Enter is a newline; the form submits
@@ -3276,7 +3298,12 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Fallbacks(_)) {
                     return self.fallbacks_page_key(key, modifiers);
                 }
-                if !panel_key && matches!(self.page, Page::Extensions(_) | Page::Icons(_)) {
+                if !panel_key
+                    && matches!(
+                        self.page,
+                        Page::Extensions(_) | Page::Icons(_) | Page::Storage(_) | Page::Tokens(_)
+                    )
+                {
                     return self.vicinae_view_key(key, modifiers);
                 }
                 if !panel_key && matches!(self.page, Page::Workspaces(_)) {
@@ -3568,7 +3595,7 @@ impl LauncherApp {
                 Some(Message::SnippetsQueryChanged as OnInput),
             ),
             Page::ScriptOutput(page) => ("", &page.title, None),
-            Page::Onboarding(_) => ("", "", None),
+            Page::Onboarding(_) | Page::StoreIntro(_) => ("", "", None),
             Page::Fallbacks(page) => (
                 crate::fallbacks_page::PLACEHOLDER,
                 &page.query,
@@ -3583,6 +3610,20 @@ impl LauncherApp {
                 crate::vicinae_pages::ICONS_PLACEHOLDER,
                 &page.query,
                 Some(Message::IconsQueryChanged as OnInput),
+            ),
+            Page::Storage(page) => (
+                if page.browsing.is_some() {
+                    crate::vicinae_pages::ITEMS_PLACEHOLDER
+                } else {
+                    crate::vicinae_pages::NAMESPACES_PLACEHOLDER
+                },
+                &page.query,
+                Some(Message::StorageQueryChanged as OnInput),
+            ),
+            Page::Tokens(page) => (
+                crate::vicinae_pages::TOKENS_PLACEHOLDER,
+                &page.query,
+                Some(Message::TokensQueryChanged as OnInput),
             ),
             Page::Programs(page) => (
                 "Search for a program to execute...",
@@ -3774,6 +3815,8 @@ impl LauncherApp {
             self.fallbacks_body(page)
         } else if let Some(body) = self.vicinae_view_body() {
             body
+        } else if let Page::StoreIntro(page) = &self.page {
+            self.store_intro_body(page)
         } else if let Page::NowPlaying(page) = &self.page {
             self.now_playing_body(page)
         } else if let Page::Themes(page) = &self.page {
@@ -5843,11 +5886,17 @@ impl LauncherApp {
             CommandKind::CreateExtension => Task::batch([record, self.open_create_extension()]),
             CommandKind::ExtensionStore => {
                 self.parked_store = None;
-                Task::batch([record, self.open_store(crate::backend::Store::Vicinae)])
+                Task::batch([
+                    record,
+                    self.open_store_or_intro(crate::backend::Store::Vicinae),
+                ])
             }
             CommandKind::RaycastStore => {
                 self.parked_store = None;
-                Task::batch([record, self.open_store(crate::backend::Store::Raycast)])
+                Task::batch([
+                    record,
+                    self.open_store_or_intro(crate::backend::Store::Raycast),
+                ])
             }
             CommandKind::BrowseFonts => {
                 self.parked_fonts = None;
@@ -5982,6 +6031,9 @@ impl LauncherApp {
             ConfirmAction::ClipboardRemoveAll => self.remove_all_clipboard_entries(),
             ConfirmAction::RootEdit(id, edit) => self.edit_root_item(id, edit),
             ConfirmAction::UninstallExtension(id) => self.uninstall_extension(id),
+            ConfirmAction::RemoveTokenSet(extension, provider) => {
+                self.remove_token_set(extension, provider)
+            }
         };
         Task::batch([task, focus_search()])
     }
@@ -7007,6 +7059,10 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct TestBackend {
+        /// Local storage, by namespace.
+        storage: Vec<(String, Vec<crate::backend::StorageItemRow>)>,
+        /// Stored token sets.
+        token_sets: std::sync::Mutex<Vec<crate::backend::TokenSetRow>>,
         /// The root edits the engine was asked for.
         root_edits: std::sync::Mutex<Vec<(String, compass_core::root_items::RootEdit)>>,
         /// Other applications' tray icons.
@@ -7123,6 +7179,43 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.root_edits.lock().unwrap().push((id, edit));
+                Ok(())
+            })
+        }
+
+        fn local_storage_namespaces(&self) -> crate::backend::BackendFuture<'_, Vec<String>> {
+            Box::pin(async move { Ok(self.storage.iter().map(|(ns, _)| ns.clone()).collect()) })
+        }
+
+        fn local_storage_items(
+            &self,
+            namespace: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::StorageItemRow>> {
+            Box::pin(async move {
+                Ok(self
+                    .storage
+                    .iter()
+                    .find(|(ns, _)| *ns == namespace)
+                    .map(|(_, items)| items.clone())
+                    .unwrap_or_default())
+            })
+        }
+
+        fn oauth_token_sets(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TokenSetRow>> {
+            Box::pin(async move { Ok(self.token_sets.lock().unwrap().clone()) })
+        }
+
+        fn remove_oauth_token_set(
+            &self,
+            extension_id: String,
+            provider_id: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.token_sets.lock().unwrap().retain(|set| {
+                    set.extension_id != extension_id || set.provider_id != provider_id
+                });
                 Ok(())
             })
         }
@@ -8099,6 +8192,123 @@ mod tests {
         let task = app.update(pressed(iced::keyboard::key::Named::Enter));
         assert_eq!(settle(&mut app, task), ["copy-clipboard"]);
         assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+    }
+
+    /// Turns on the default-disabled Vicinae commands named.
+    fn enable_commands(app: &mut LauncherApp, entrypoints: &[&str]) {
+        let entries: Vec<String> = entrypoints
+            .iter()
+            .map(|id| format!("\"{id}\":{{\"enabled\":true}}"))
+            .collect();
+        let config = compass_core::Config::parse(
+            &format!(
+                "{{\"providers\":{{\"commands\":{{\"entrypoints\":{{{}}}}}}}}}",
+                entries.join(",")
+            ),
+            std::path::Path::new("config.json"),
+        )
+        .unwrap();
+        app.root_config = config.root_config();
+        app.app_index.apply_root_config(&app.root_config);
+    }
+
+    #[test]
+    fn inspect_local_storage_browses_a_namespace_and_shows_a_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            storage: vec![
+                (
+                    "@a/notes".to_owned(),
+                    vec![crate::backend::StorageItemRow {
+                        key: "draft".into(),
+                        value: "hello".into(),
+                    }],
+                ),
+                ("core".to_owned(), Vec::new()),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        enable_commands(&mut app, &["inspect-local-storage"]);
+        open_builtin(
+            &mut app,
+            "inspect local storage",
+            "commands:inspect-local-storage",
+        );
+        let Page::Storage(page) = &app.page else {
+            panic!("not local storage: {}", app.state_line());
+        };
+        assert_eq!(page.titles(), ["@a/notes", "core"]);
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(panel_titles(&app), ["Browse namespace"]);
+        let task = choose(&mut app, "Browse namespace");
+        settle(&mut app, task);
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let Page::Storage(page) = &app.page else {
+            panic!("left local storage");
+        };
+        assert_eq!(page.titles(), ["draft"]);
+        assert_eq!(page.notice.as_deref(), Some("hello"), "Show value");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        let Page::Storage(page) = &app.page else {
+            panic!("Escape left the view instead of the namespace");
+        };
+        assert!(page.browsing.is_none());
+    }
+
+    #[test]
+    fn manage_oauth_token_sets_copies_and_removes_after_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            token_sets: std::sync::Mutex::new(vec![crate::backend::TokenSetRow {
+                extension_id: "github".into(),
+                provider_id: Some("GitHub".into()),
+                access_token: "gho_token".into(),
+                scope: Some("repo".into()),
+                expires_at: Some(0),
+                expired: true,
+                ..crate::backend::TokenSetRow::default()
+            }]),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        enable_commands(&mut app, &["oauth-token-store"]);
+        open_builtin(
+            &mut app,
+            "manage oauth token sets",
+            "commands:oauth-token-store",
+        );
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Remove token set",
+                "Copy Access Token",
+                "Copy Scopes",
+                "Copy Expiration Date"
+            ]
+        );
+        let task = choose(&mut app, "Copy Access Token");
+        assert_eq!(settle(&mut app, task), ["gho_token"]);
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(
+            &mut app,
+            "manage oauth token sets",
+            "commands:oauth-token-store",
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.confirm.is_some(), "asks first");
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(backend.token_sets.lock().unwrap().is_empty());
+        let Page::Tokens(page) = &app.page else {
+            panic!("left the view");
+        };
+        assert!(page.sets.is_empty(), "listed again");
+        assert_eq!(page.notice.as_deref(), Some("Token set removed"));
     }
 
     #[test]
@@ -12075,6 +12285,27 @@ mod tests {
         );
         app.backend = Some(backend.clone());
         open_builtin(&mut app, "extension store", "commands:store");
+        // The first time, the intro (`StoreIntroViewHost`); Enter goes on,
+        // and it is not shown again.
+        assert!(
+            matches!(app.page, Page::StoreIntro(_)),
+            "{}",
+            app.state_line()
+        );
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Enter: Continue to store    Esc: back").is_ok());
+        }
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            app.view_memory.get(crate::vicinae_pages::intro_key(
+                crate::backend::Store::Vicinae
+            )),
+            Some("true")
+        );
+        let _ = app.update(Message::Back);
+        open_builtin(&mut app, "extension store", "commands:store");
         let Page::Store(page) = &app.page else {
             panic!("not the store: {}", app.state_line());
         };
@@ -12169,6 +12400,10 @@ mod tests {
         let backend = store_backend(dir.path());
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend.clone());
+        app.view_memory.set(
+            crate::vicinae_pages::intro_key(crate::backend::Store::Raycast),
+            "true",
+        );
         open_builtin(&mut app, "raycast store", "commands:raycast-store");
         // The Raycast store waits for typing to settle; the wait itself
         // needs a runtime, so the test delivers its end.
