@@ -102,6 +102,42 @@ pub fn lookup(character: &str) -> Option<&'static Glyph> {
     GLYPHS.iter().find(|glyph| glyph.character == character)
 }
 
+/// Whether a code point only changes how the one before it is drawn: a
+/// variation selector or a skin-tone modifier.
+fn is_presentation_mark(c: char) -> bool {
+    matches!(c, '\u{FE0E}' | '\u{FE0F}' | '\u{1F3FB}'..='\u{1F3FF}')
+}
+
+/// Whether `text` is exactly one emoji, as `emoji::isUtf8EncodedEmoji`
+/// answers it — which is how an icon string an extension or a script header
+/// gives is told apart from a file name or a URL.
+///
+/// **A declared divergence in how, not in what.** The C++ runs Google's emoji
+/// segmenter over the text and its own copy of the Unicode emoji properties.
+/// This compares against the emoji in [`glyphs`] — every fully-qualified
+/// sequence of the Emoji release the table was generated from — with the
+/// variation selectors and skin tones taken out of both sides, so a toned or
+/// text-presentation spelling of a listed emoji is still one. What differs is
+/// the edge: a ZWJ sequence no vendor ships is two emoji to this and one to
+/// the segmenter, and a bare text-default symbol such as `☺` counts here.
+#[must_use]
+pub fn is_emoji(text: &str) -> bool {
+    let bare = || text.chars().filter(|c| !is_presentation_mark(*c));
+    if bare().next().is_none() {
+        return false;
+    }
+    GLYPHS
+        .iter()
+        .filter(|glyph| glyph.kind == Kind::Emoji)
+        .any(|glyph| {
+            glyph
+                .character
+                .chars()
+                .filter(|c| !is_presentation_mark(*c))
+                .eq(bare())
+        })
+}
+
 impl Category {
     /// The heading the C++ `categoryLabel` returns.
     #[must_use]
