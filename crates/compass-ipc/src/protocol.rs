@@ -45,7 +45,8 @@ use serde::{Deserialize, Serialize};
 /// [`Request::ExtensionLaunchFetch`]), its subtitle override in root search
 /// ([`Request::ExtensionSubtitles`]), and a command's preferences form without
 /// running it ([`Request::ExtensionPreferences`]); version 16, media arguments,
-/// Now Playing, the launcher's font, store avatars and extension deeplinks.
+/// Now Playing, the launcher's font, store avatars, extension deeplinks and
+/// reviewing Rhai script permissions.
 pub const PROTOCOL_VERSION: u16 = 16;
 
 /// A client-to-server frame.
@@ -622,6 +623,16 @@ pub enum Request {
         /// The URL.
         url: String,
     },
+    /// What the user has allowed their own Rhai scripts to do. Answered
+    /// with [`Response::ScriptGrants`].
+    ListScriptGrants,
+    /// Withdraw everything the user allowed a Rhai script. Answered with
+    /// [`Response::ScriptGrants`], the list after the change; an id with
+    /// nothing recorded is a bad request.
+    RevokeScriptGrant {
+        /// The script's id, `script.<folder name>`.
+        id: String,
+    },
 }
 
 /// What the engine answers.
@@ -845,6 +856,25 @@ pub enum Response {
         /// The players.
         players: Vec<MediaPlayerEntry>,
     },
+    /// Answer to [`Request::ListScriptGrants`] and
+    /// [`Request::RevokeScriptGrant`], in id order.
+    ScriptGrants {
+        /// One per script with something allowed.
+        grants: Vec<ScriptGrantEntry>,
+    },
+}
+
+/// What the user has allowed one Rhai script.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptGrantEntry {
+    /// The script's id.
+    pub id: String,
+    /// Its title, or its id when it is no longer installed.
+    pub title: String,
+    /// The capabilities allowed, e.g. `clipboard.write`.
+    pub capabilities: Vec<String>,
+    /// The same, in the consent prompt's words.
+    pub descriptions: Vec<String>,
 }
 
 /// The keyboard helper behind snippet keyword expansion, as the engine sees

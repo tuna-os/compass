@@ -241,6 +241,10 @@ fn all_requests() -> Vec<Request> {
         Request::OpenDeeplink {
             url: "vicinae://extensions/zoë/clock".into(),
         },
+        Request::ListScriptGrants,
+        Request::RevokeScriptGrant {
+            id: "script.quick-notes".into(),
+        },
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -609,6 +613,14 @@ fn all_responses() -> Vec<Response> {
                 ..Default::default()
             }],
         },
+        Response::ScriptGrants {
+            grants: vec![compass_ipc::ScriptGrantEntry {
+                id: "script.quick-notes".into(),
+                title: "Quick Notes".into(),
+                capabilities: vec!["clipboard.write".into()],
+                descriptions: vec!["copy to the clipboard".into()],
+            }],
+        },
         Response::Fonts {
             fonts: vec![compass_ipc::FontEntry {
                 name: "Noto Sans Thai".into(),
@@ -713,6 +725,8 @@ fn request_variants_are_exhaustive() {
             | Request::ListMediaPlayers
             | Request::SetFont { .. }
             | Request::OpenDeeplink { .. }
+            | Request::ListScriptGrants
+            | Request::RevokeScriptGrant { .. }
             | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }
@@ -751,6 +765,7 @@ fn response_variants_are_exhaustive() {
             | Response::StoreExtension { .. }
             | Response::StoreInstalled { .. }
             | Response::MediaPlayers { .. }
+            | Response::ScriptGrants { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }

@@ -42,6 +42,18 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// What the user has allowed their own Rhai scripts.
+    fn list_script_grants(&self) -> BackendFuture<'_, Vec<ScriptGrant>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Withdraws what a Rhai script was allowed, answering with the list
+    /// after the change.
+    fn revoke_script_grant(&self, id: String) -> BackendFuture<'_, Vec<ScriptGrant>> {
+        let _ = id;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The running media players, for Now Playing.
     fn list_media_players(&self) -> BackendFuture<'_, Vec<MediaPlayerRow>> {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
@@ -356,6 +368,19 @@ const FILES_NEED_ENGINE: &str =
 
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
+
+/// What the user has allowed one Rhai script.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScriptGrant {
+    /// The script's id.
+    pub id: String,
+    /// Its title, or its id when it is no longer installed.
+    pub title: String,
+    /// The capabilities allowed.
+    pub capabilities: Vec<String>,
+    /// The same, in the consent prompt's words.
+    pub descriptions: Vec<String>,
+}
 
 /// One running media player, as Now Playing lists it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

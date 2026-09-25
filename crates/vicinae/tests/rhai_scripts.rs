@@ -414,6 +414,81 @@ async fn a_user_script_asks_before_it_gets_a_capability_and_the_answer_is_kept()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn script_permissions_are_listed_and_revoking_asks_again() {
+    let fx = fixture(|user, _| {
+        script(
+            user,
+            "copier",
+            "title = \"Copier\"\ncapabilities = [\"clipboard.write\"]",
+            COPIER,
+        );
+    })
+    .await;
+    assert_eq!(
+        fx.ask(Request::ListScriptGrants).await,
+        Response::ScriptGrants { grants: vec![] },
+        "nothing allowed yet"
+    );
+    let session = fx.open("script.copier").await;
+    fx.wait(session, |s| s.alert.is_some()).await;
+    assert_eq!(
+        fx.ask(Request::ExtensionAlertAnswer {
+            session,
+            confirmed: true,
+        })
+        .await,
+        Response::Ack
+    );
+    fx.wait(session, |s| !s.rows().is_empty()).await;
+    let Response::ScriptGrants { grants } = fx.ask(Request::ListScriptGrants).await else {
+        panic!("no permissions listed");
+    };
+    assert_eq!(
+        grants,
+        [compass_ipc::ScriptGrantEntry {
+            id: "script.copier".into(),
+            title: "Copier".into(),
+            capabilities: vec!["clipboard.write".into()],
+            descriptions: vec!["copy to the clipboard".into()],
+        }]
+    );
+
+    // Revoking empties the file's entry, ends the open view, and the next
+    // open asks again.
+    assert_eq!(
+        fx.ask(Request::RevokeScriptGrant {
+            id: "script.copier".into()
+        })
+        .await,
+        Response::ScriptGrants { grants: vec![] }
+    );
+    let ended = fx.wait(session, |s| s.ended).await;
+    assert!(
+        ended
+            .problem
+            .as_deref()
+            .is_some_and(|p| p.contains("revoked")),
+        "{ended:?}"
+    );
+    let kept: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fx.consent_file()).unwrap()).unwrap();
+    assert_eq!(kept["scripts"], serde_json::json!({}));
+    let session = fx.open("script.copier").await;
+    let asked = fx.wait(session, |s| s.alert.is_some()).await;
+    assert_eq!(asked.alert.as_deref(), Some("Allow Copier to:"));
+
+    let Response::Error(err) = fx
+        .ask(Request::RevokeScriptGrant {
+            id: "script.copier".into(),
+        })
+        .await
+    else {
+        panic!("revoking what is not recorded was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_capability_that_is_not_granted_is_refused_by_name() {
     let fx = fixture(|user, packaged| {
         // Uses the clipboard without declaring it: the function does not

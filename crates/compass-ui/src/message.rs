@@ -192,6 +192,14 @@ pub enum Message {
     FontsCategoryChanged(String),
     /// "Set as vicinae font" was saved, with the family, or could not be.
     FontSet(Result<String, String>),
+    /// Script Permissions' list arrived.
+    GrantsLoaded(Result<Vec<crate::backend::ScriptGrant>, String>),
+    /// Script Permissions' filter changed.
+    GrantsQueryChanged(String),
+    /// A script row was clicked, by position in the shown list.
+    GrantSelected(usize),
+    /// A revoke was done, with the list after it, or could not be.
+    GrantRevoked(Result<Vec<crate::backend::ScriptGrant>, String>),
     /// The uninstall dialog was answered: `true` uninstalls.
     StoreConfirmAnswered(bool),
     /// A Browse Fonts row was clicked, by position.

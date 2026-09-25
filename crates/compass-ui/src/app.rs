@@ -28,6 +28,7 @@ use crate::resident::{EngineLink, UiCommand, UiOutcome};
 mod developer;
 mod dmenu;
 mod fonts;
+mod grants;
 mod launch;
 mod media;
 mod preview;
@@ -515,6 +516,8 @@ enum Page {
     StoreDetail(Box<crate::store_page::StoreDetailPage>),
     /// Now Playing.
     NowPlaying(crate::media_page::NowPlayingPage),
+    /// Script Permissions.
+    Grants(crate::grants_page::GrantsPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -692,6 +695,8 @@ pub struct LauncherApp {
     view_memory: crate::view_memory::ViewMemory,
     /// The fallback commands a non-empty query offers.
     fallbacks: Vec<&'static compass_core::commands::BuiltinCommand>,
+    /// Each Rhai script's manifest icon, resolved, by script id.
+    rhai_icons: std::collections::HashMap<String, crate::extension_page::RowIcon>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -1000,6 +1005,7 @@ impl LauncherApp {
             theme_dirs: Vec::new(),
             view_memory: crate::view_memory::ViewMemory::default(),
             fallbacks: Vec::new(),
+            rhai_icons: std::collections::HashMap::new(),
             theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
@@ -1932,6 +1938,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_theme_panel() {
                     return task;
+                } else if let Some(task) = self.open_grants_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1997,6 +2005,7 @@ impl LauncherApp {
                         .or_else(|| self.store_panel_action(&id))
                         .or_else(|| self.media_panel_action(&id))
                         .or_else(|| self.theme_panel_action(&id))
+                        .or_else(|| self.grants_panel_action(&id))
                 {
                     return task;
                 }
@@ -2404,6 +2413,10 @@ impl LauncherApp {
             Message::LaunchFetched(_)
             | Message::ExtensionSubtitlesLoaded(_)
             | Message::PreferencesOpened { .. } => self.launch_message(message),
+            Message::GrantsLoaded(_)
+            | Message::GrantsQueryChanged(_)
+            | Message::GrantSelected(_)
+            | Message::GrantRevoked(_) => self.grants_message(message),
             Message::NowPlayingLoaded(_)
             | Message::NowPlayingQueryChanged(_)
             | Message::NowPlayingSelected(_)
@@ -2690,6 +2703,9 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Dmenu(_)) {
                     return self.dmenu_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Grants(_)) {
+                    return self.grants_page_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::NowPlaying(_)) {
                     return self.now_playing_key(key, modifiers);
                 }
@@ -2958,6 +2974,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::DmenuQueryChanged as OnInput),
             ),
+            Page::Grants(page) => (
+                crate::grants_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::GrantsQueryChanged as OnInput),
+            ),
             Page::NowPlaying(page) => (
                 crate::media_page::PLACEHOLDER,
                 &page.query,
@@ -3048,6 +3069,8 @@ impl LauncherApp {
             self.programs_body(page)
         } else if let Page::Dmenu(page) = &self.page {
             self.dmenu_body(page)
+        } else if let Page::Grants(page) = &self.page {
+            self.grants_body(page)
         } else if let Page::NowPlaying(page) = &self.page {
             self.now_playing_body(page)
         } else if let Page::Themes(page) = &self.page {
@@ -3129,8 +3152,12 @@ impl LauncherApp {
                         let Some(script) = self.app_index.rhai_scripts().get(*index) else {
                             continue;
                         };
+                        let icon = match self.rhai_icons.get(&script.id) {
+                            Some(icon) => self.extension_icon(icon, selected),
+                            None => self.initial_badge(&script.title, selected),
+                        };
                         self.list_row(
-                            self.initial_badge(&script.title, selected),
+                            icon,
                             script.title.clone(),
                             self.subtitles.then(|| script.subtitle().to_owned()),
                             selected,
@@ -4501,6 +4528,7 @@ impl LauncherApp {
             }
             CommandKind::Media(id) => Task::batch([record, self.run_media(command, id, None)]),
             CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
+            CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
             CommandKind::SearchEmojis => {
                 self.page = Page::Emoji(crate::emoji_page::EmojiPage::new());
                 Task::batch([record, focus_search()])
@@ -5201,6 +5229,8 @@ mod tests {
         players: std::sync::Mutex<Vec<crate::backend::MediaPlayerRow>>,
         /// The families "Set as vicinae font" saved.
         fonts_set: std::sync::Mutex<Vec<String>>,
+        /// What the user allowed their Rhai scripts.
+        grants: std::sync::Mutex<Vec<crate::backend::ScriptGrant>>,
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
@@ -5397,6 +5427,23 @@ mod tests {
                     ],
                     categories: vec!["Latin".into(), "Monospace".into()],
                 })
+            })
+        }
+
+        fn list_script_grants(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
+            Box::pin(async move { Ok(self.grants.lock().unwrap().clone()) })
+        }
+
+        fn revoke_script_grant(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
+            Box::pin(async move {
+                let mut grants = self.grants.lock().unwrap();
+                grants.retain(|grant| grant.id != id);
+                Ok(grants.clone())
             })
         }
 
@@ -8529,6 +8576,71 @@ mod tests {
             page.category.as_deref(),
             Some("Monospace"),
             "the category is remembered across processes"
+        );
+    }
+
+    #[test]
+    fn script_permissions_lists_what_was_allowed_and_revokes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        *backend.grants.lock().unwrap() = vec![
+            crate::backend::ScriptGrant {
+                id: "script.clip".into(),
+                title: "Clip Tool".into(),
+                capabilities: vec!["clipboard.write".into()],
+                descriptions: vec!["copy to the clipboard".into()],
+            },
+            crate::backend::ScriptGrant {
+                id: "script.notes".into(),
+                title: "Quick Notes".into(),
+                capabilities: vec!["storage.read".into()],
+                descriptions: vec!["read its saved data".into()],
+            },
+        ];
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(
+            &mut app,
+            "script permissions",
+            "commands:script-permissions",
+        );
+        let Page::Grants(page) = &app.page else {
+            panic!("not Script Permissions: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Copy to the clipboard").is_ok());
+        }
+        let _ = app.update(Message::GrantsQueryChanged("notes".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Grants(page) = &app.page else {
+            panic!("left Script Permissions");
+        };
+        assert_eq!(
+            page.all.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+            ["script.clip"]
+        );
+        assert_eq!(page.notice.as_deref(), Some(crate::grants_page::REVOKED));
+    }
+
+    #[test]
+    fn a_rhai_script_row_draws_its_manifest_icon_when_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        let _ = app.update(Message::RhaiScriptsLoaded(Ok(vec![
+            compass_core::rhai_scripts::RhaiScriptItem {
+                id: "script.no-icon".into(),
+                title: "No Icon".into(),
+                description: None,
+                icon: Some("not-a-builtin".into()),
+                keywords: Vec::new(),
+            },
+        ])));
+        assert!(
+            app.rhai_icons.is_empty(),
+            "an unknown name draws the initial"
         );
     }
 

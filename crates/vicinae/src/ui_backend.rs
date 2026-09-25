@@ -45,6 +45,15 @@ fn store_row(entry: compass_ipc::StoreEntry) -> compass_ui::backend::StoreRow {
     }
 }
 
+fn script_grant(entry: compass_ipc::ScriptGrantEntry) -> compass_ui::backend::ScriptGrant {
+    compass_ui::backend::ScriptGrant {
+        id: entry.id,
+        title: entry.title,
+        capabilities: entry.capabilities,
+        descriptions: entry.descriptions,
+    }
+}
+
 /// Uses the same engine/socket as the resident window link.
 #[derive(Debug)]
 pub struct DaemonBackend {
@@ -104,6 +113,37 @@ impl ApplicationBackend for DaemonBackend {
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_script_grants(&self) -> BackendFuture<'_, Vec<compass_ui::backend::ScriptGrant>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ListScriptGrants, "Reading script permissions")
+                .await?
+            {
+                compass_ipc::Response::ScriptGrants { grants } => {
+                    Ok(grants.into_iter().map(script_grant).collect())
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn revoke_script_grant(
+        &self,
+        id: String,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::ScriptGrant>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::RevokeScriptGrant { id }, "Revoking permissions")
+                .await?
+            {
+                compass_ipc::Response::ScriptGrants { grants } => {
+                    Ok(grants.into_iter().map(script_grant).collect())
+                }
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })

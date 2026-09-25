@@ -2677,6 +2677,31 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
             Response::Ack
         }
+        Request::ListScriptGrants => {
+            let rhai = Arc::clone(&state.read().await.rhai);
+            match tokio::task::spawn_blocking(move || rhai.grants()).await {
+                Ok(grants) => Response::ScriptGrants { grants },
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("reading script permissions failed: {err}"),
+                )),
+            }
+        }
+        Request::RevokeScriptGrant { id } => {
+            let rhai = Arc::clone(&state.read().await.rhai);
+            match tokio::task::spawn_blocking(move || rhai.revoke(&id).map(|()| rhai.grants()))
+                .await
+            {
+                Ok(Ok(grants)) => Response::ScriptGrants { grants },
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("revoking script permissions failed: {err}"),
+                )),
+            }
+        }
         Request::ListRhaiScripts => {
             // A rescan, as `ListScripts` does: the watcher is the fast path,
             // this the one that cannot miss (a full inotify queue, a

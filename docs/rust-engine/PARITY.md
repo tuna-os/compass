@@ -2296,7 +2296,13 @@ is a divergence from the C++ so much as a boundary of it. Their root entries use
 the C++ engine has no item for and ignores. They are opened as extension view sessions over IPC
 v14 (`ListRhaiScripts`, then the v8 `RunExtensionCommand` / `ExtensionView` / `ExtensionEvent`
 requests); a v13 launcher does not list them. A script's `paste` on a wlroots compositor copies
-and does not type, as an extension's paste does there ("wlroots" below).
+and does not type, as an extension's paste does there ("wlroots" below). A script's root row draws
+its manifest `icon` (a builtin icon's name) when that icon is installed, and its initial otherwise.
+What a user allowed their own scripts is reviewed and revoked in the launcher's **Script
+Permissions** command (IPC v16 `ListScriptGrants`, `RevokeScriptGrant`), which rewrites
+`script-grants.json`, rebuilds the script without the grant and ends a view open on it, so the next
+opening asks again (`script_permissions_are_listed_and_revoking_asks_again`,
+`script_permissions_lists_what_was_allowed_and_revokes_it`).
 
 ### Extension Store and Raycast Store — what the port does not have yet
 

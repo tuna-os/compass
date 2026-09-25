@@ -548,6 +548,74 @@ impl RhaiScripts {
         Ok(())
     }
 
+    /// What the user has allowed, script by script, from the consent file:
+    /// each recorded script's id, its title when it is still installed (its
+    /// id otherwise), and what it may do, by capability and in the consent
+    /// prompt's words. In id order.
+    #[must_use]
+    pub fn grants(&self) -> Vec<compass_ipc::ScriptGrantEntry> {
+        let consents = Consents::load(self.config.consent_file.as_deref());
+        let scripts = self.lock();
+        consents
+            .scripts
+            .iter()
+            .filter(|(_, capabilities)| !capabilities.is_empty())
+            .map(|(id, capabilities)| {
+                let title = scripts
+                    .set
+                    .get(&ExtensionId::new(id.clone()))
+                    .map_or_else(|| id.clone(), |s| s.manifest.title.clone());
+                compass_ipc::ScriptGrantEntry {
+                    id: id.clone(),
+                    title,
+                    capabilities: capabilities.iter().cloned().collect(),
+                    descriptions: capabilities
+                        .iter()
+                        .map(|name| describe(&Capability::new(name.clone())))
+                        .collect(),
+                }
+            })
+            .collect()
+    }
+
+    /// Withdraws everything the user allowed `id`: its entry leaves the
+    /// consent file, the script is rebuilt without the grant, and a view open
+    /// on it renders again (and asks again when next opened).
+    ///
+    /// # Errors
+    ///
+    /// A sentence: nothing is recorded for `id`, or the file could not be
+    /// written.
+    pub fn revoke(&self, id: &str) -> Result<(), String> {
+        let mut consents = Consents::load(self.config.consent_file.as_deref());
+        if consents.scripts.remove(id).is_none() {
+            return Err(format!("No permissions are recorded for {id}"));
+        }
+        if let Some(path) = &self.config.consent_file {
+            consents
+                .save(path)
+                .map_err(|err| format!("Compass could not change the permissions: {err}"))?;
+        }
+        let script = ExtensionId::new(id.to_owned());
+        {
+            let mut scripts = self.lock();
+            scripts.consents = consents;
+            let origin = scripts
+                .loaded
+                .get(&script)
+                .map_or(Origin::User, |loaded| loaded.origin);
+            self.refresh(&mut scripts, &script, origin, false);
+        }
+        tracing::info!(%script, "Rhai script permissions revoked");
+        for session in self.sessions_of(&script) {
+            session.end(Some(format!(
+                "{}'s permissions were revoked. Open it again to be asked.",
+                session.title
+            )));
+        }
+        Ok(())
+    }
+
     /// Closes `session`. `false` when it is not a script's view.
     pub fn close(&self, session: u64) -> bool {
         self.lock_sessions().remove(&session).is_some()

@@ -147,6 +147,9 @@ async fn echo_handler(request: Request) -> Response {
             fields: vec![],
         },
         Request::ListMediaPlayers => Response::MediaPlayers { players: vec![] },
+        Request::ListScriptGrants | Request::RevokeScriptGrant { .. } => {
+            Response::ScriptGrants { grants: vec![] }
+        }
         Request::ListFonts => Response::Fonts {
             fonts: vec![],
             categories: vec![],

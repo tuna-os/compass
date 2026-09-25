@@ -68,6 +68,8 @@ pub enum CommandKind {
     Power(&'static str),
     /// Browse and control the running media players.
     NowPlaying,
+    /// Review and revoke what the user's Rhai scripts were allowed.
+    ScriptPermissions,
     /// A media command, by its id in [`crate::media_commands`].
     Media(&'static str),
 }
@@ -261,6 +263,21 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: power_commands::COMMANDS[7].description,
         keywords: power_commands::COMMANDS[7].keywords,
         icon: "rotate-clockwise",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ScriptPermissions,
+        entrypoint: "script-permissions",
+        title: "Script Permissions",
+        subtitle: "Review and revoke what your Rhai scripts may do",
+        keywords: &[
+            "rhai",
+            "scripts",
+            "permissions",
+            "consent",
+            "grants",
+            "revoke",
+        ],
+        icon: "key",
     },
     BuiltinCommand {
         kind: CommandKind::NowPlaying,
