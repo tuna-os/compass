@@ -26,6 +26,7 @@ use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
 mod apps;
+mod clipboard;
 mod developer;
 mod dmenu;
 mod emoji;
@@ -485,6 +486,23 @@ enum ClipboardChange {
     Remove,
 }
 
+/// A question asked before an action that cannot be undone, as the C++
+/// `CallbackAlertWidget`s ask it: Enter confirms, Escape cancels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Confirm {
+    title: String,
+    message: String,
+    confirm_text: String,
+    action: ConfirmAction,
+}
+
+/// What a [`Confirm`] runs when it is confirmed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConfirmAction {
+    /// Remove every clipboard history entry.
+    ClipboardRemoveAll,
+}
+
 /// One row of the root list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootRow {
@@ -692,6 +710,10 @@ pub struct LauncherApp {
     calculator: Option<compass_core::calculator::Answer>,
     /// A power command waiting on the person's yes.
     power_confirm: Option<&'static compass_core::power_commands::PowerCommand>,
+    /// A question waiting on Enter or Escape before an action runs.
+    confirm: Option<Confirm>,
+    /// Clipboard History while its keyword form is open.
+    parked_clipboard: Option<crate::clipboard_page::ClipboardPage>,
     /// Which view is showing. See [`Page`].
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
@@ -1031,6 +1053,8 @@ impl LauncherApp {
             results: Vec::new(),
             calculator: None,
             power_confirm: None,
+            confirm: None,
+            parked_clipboard: None,
             page: Page::Root,
             clipboard: None,
             windows: None,
@@ -1998,6 +2022,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_emoji_panel() {
                     return task;
+                } else if let Some(task) = self.open_clipboard_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -2066,6 +2092,7 @@ impl LauncherApp {
                         .or_else(|| self.grants_panel_action(&id))
                         .or_else(|| self.apps_panel_action(&id))
                         .or_else(|| self.emoji_panel_action(&id))
+                        .or_else(|| self.clipboard_panel_action(&id))
                 {
                     return task;
                 }
@@ -2141,8 +2168,16 @@ impl LauncherApp {
                 if let Page::Clipboard(page) = &mut self.page {
                     page.apply(generation, result);
                 }
-                crate::scroll::reveal_root_selection()
+                Task::batch([
+                    crate::scroll::reveal_root_selection(),
+                    self.clipboard_detail_task(),
+                ])
             }
+            Message::ClipboardKindChanged(_)
+            | Message::ClipboardDetailLoaded { .. }
+            | Message::ClipboardDetailContent { .. }
+            | Message::ClipboardKeywordsLoaded(_)
+            | Message::ClipboardMonitoringLoaded(_) => self.clipboard_message(message),
             Message::ClipboardSelected(index) => {
                 if let Page::Clipboard(page) = &mut self.page
                     && index < page.rows.len()
@@ -2168,6 +2203,9 @@ impl LauncherApp {
             }
             Message::PreferencesSubmit => {
                 if let Some(task) = self.submit_emoji_keywords() {
+                    return task;
+                }
+                if let Some(task) = self.submit_clipboard_keywords() {
                     return task;
                 }
                 if let Some(task) = self.submit_shortcut_form() {
@@ -2531,6 +2569,9 @@ impl LauncherApp {
                 if let Some(task) = self.back_from_emoji_keywords() {
                     return task;
                 }
+                if let Some(task) = self.back_from_clipboard_keywords() {
+                    return task;
+                }
                 if let Some(task) = self.back_from_shortcut_form() {
                     return task;
                 }
@@ -2648,6 +2689,16 @@ impl LauncherApp {
                 // one key undoes opening the wrong command.
                 let panel_key = self.panel.is_some()
                     || (modifiers.control() && key.as_ref() == Key::Character("b"));
+                if self.confirm.is_some() {
+                    return match key.as_ref() {
+                        Key::Named(Named::Enter) => self.run_confirmed(),
+                        Key::Named(Named::Escape) => {
+                            self.confirm = None;
+                            focus_search()
+                        }
+                        _ => Task::none(),
+                    };
+                }
                 if let Some(power) = self.power_confirm {
                     return match key.as_ref() {
                         Key::Named(Named::Enter) => self.run_power_command(power),
@@ -2835,7 +2886,7 @@ impl LauncherApp {
                     }
                     return Task::none();
                 }
-                if let Page::Clipboard(page) = &mut self.page {
+                if !panel_key && matches!(self.page, Page::Clipboard(_)) {
                     // The C++ defaults: `action.pin` is Ctrl+Shift+P and
                     // `action.remove` is Ctrl+X.
                     if let Key::Character(c) = key.as_ref()
@@ -2851,6 +2902,12 @@ impl LauncherApp {
                             return self.change_selected_clipboard_entry(ClipboardChange::Remove);
                         }
                     }
+                    if let Some(task) = self.clipboard_chord(key, modifiers) {
+                        return task;
+                    }
+                    let Page::Clipboard(page) = &mut self.page else {
+                        return Task::none();
+                    };
                     let direction = match key.as_ref() {
                         Key::Named(Named::ArrowDown) => Some(Direction::Down),
                         Key::Named(Named::ArrowUp) => Some(Direction::Up),
@@ -2865,7 +2922,10 @@ impl LauncherApp {
                             direction,
                             self.wrap_navigation,
                         );
-                        return crate::scroll::reveal_root_selection();
+                        return Task::batch([
+                            crate::scroll::reveal_root_selection(),
+                            self.clipboard_detail_task(),
+                        ]);
                     }
                     return Task::none();
                 }
@@ -3100,7 +3160,23 @@ impl LauncherApp {
                 ..container::Style::default()
             });
 
-        let body: Element<Message> = if let Some(power) = self.power_confirm {
+        let body: Element<Message> = if let Some(confirm) = &self.confirm {
+            column![
+                text(confirm.title.as_str())
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..self.font()
+                    })
+                    .size(16),
+                text(confirm.message.as_str()).font(self.font()),
+                text(format!("Enter: {}    Esc: cancel", confirm.confirm_text))
+                    .font(self.font())
+                    .size(12),
+            ]
+            .spacing(8)
+            .padding(Padding::new(18.0))
+            .into()
+        } else if let Some(power) = self.power_confirm {
             column![
                 text(compass_core::power_commands::CONFIRM_TITLE)
                     .font(iced::Font {
@@ -3571,14 +3647,24 @@ impl LauncherApp {
     ) -> Element<'a, Message> {
         use crate::clipboard_page::Status;
         let geometry = self.geometry;
-        match &page.status {
-            Status::Loading => return self.notice("Loading clipboard history…"),
-            Status::Failed(reason) => return self.notice(reason),
-            Status::Ready if page.rows.is_empty() && page.query.is_empty() => {
-                return self.notice("Nothing copied yet");
+        let filter = self.clipboard_filter(page);
+        let status = page
+            .monitoring
+            .and_then(crate::clipboard_page::monitoring_notice)
+            .map(|line| self.section_heading(line.to_owned()));
+        let empty = match &page.status {
+            Status::Loading => Some("Loading clipboard history…"),
+            Status::Failed(reason) => Some(reason.as_str()),
+            Status::Ready
+                if page.rows.is_empty() && page.query.is_empty() && page.kind.is_none() =>
+            {
+                Some("Nothing copied yet")
             }
-            Status::Ready if page.rows.is_empty() => return self.notice("No matching entries"),
-            Status::Ready => {}
+            Status::Ready if page.rows.is_empty() => Some("No matching entries"),
+            Status::Ready => None,
+        };
+        if let Some(empty) = empty {
+            return column![filter].push(status).push(self.notice(empty)).into();
         }
         let mut list = column![].spacing(f32::from(geometry.row_spacing));
         for (position, entry) in page.rows.iter().enumerate() {
@@ -3605,9 +3691,18 @@ impl LauncherApp {
         let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
-        match &page.notice {
-            Some(notice) => column![rows, self.notice(notice)].into(),
+        let rows: Element<Message> = match &page.detail {
+            Some(detail) => row![
+                container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
+                self.clipboard_detail_pane(detail),
+            ]
+            .into(),
             None => rows.into(),
+        };
+        let body = column![filter].push(status).push(rows);
+        match &page.notice {
+            Some(notice) => body.push(self.notice(notice)).into(),
+            None => body.into(),
         }
     }
 
@@ -4194,6 +4289,7 @@ impl LauncherApp {
                 | crate::preferences_page::Purpose::ScriptArguments
                 | crate::preferences_page::Purpose::MediaArguments
                 | crate::preferences_page::Purpose::GlyphKeywords
+                | crate::preferences_page::Purpose::ClipboardKeywords
                 | crate::preferences_page::Purpose::CreateExtension => page.title.clone(),
             })
             .font(self.font())
@@ -4625,10 +4721,7 @@ impl LauncherApp {
             None => Task::none(),
         };
         match command.kind {
-            CommandKind::ClipboardHistory => {
-                self.page = Page::Clipboard(crate::clipboard_page::ClipboardPage::default());
-                Task::batch([record, self.clipboard_search_task(), focus_search()])
-            }
+            CommandKind::ClipboardHistory => Task::batch([record, self.open_clipboard_history()]),
             CommandKind::Power(id) => {
                 let Some(power) = compass_core::power_commands::command(id) else {
                     return record;
@@ -4781,15 +4874,26 @@ impl LauncherApp {
             );
             return Task::none();
         };
-        let query = page.query.clone();
+        let (query, kind) = (page.query.clone(), page.kind);
         Task::perform(
             async move {
                 clipboard
-                    .clipboard_history(query, crate::clipboard_page::PAGE_SIZE)
+                    .clipboard_history_of_kind(query, crate::clipboard_page::PAGE_SIZE, kind)
                     .await
             },
             move |result| Message::ClipboardLoaded { generation, result },
         )
+    }
+
+    /// Runs what the open question asked about, once Enter confirms it.
+    fn run_confirmed(&mut self) -> Task<Message> {
+        let Some(confirm) = self.confirm.take() else {
+            return Task::none();
+        };
+        let task = match confirm.action {
+            ConfirmAction::ClipboardRemoveAll => self.remove_all_clipboard_entries(),
+        };
+        Task::batch([task, focus_search()])
     }
 
     /// Asks the engine for the open windows.
@@ -9849,9 +9953,101 @@ mod tests {
         pasted: std::sync::Mutex<Vec<String>>,
         changes: std::sync::Mutex<Vec<String>>,
         fail_changes: bool,
+        /// Each entry's keywords, as set.
+        keywords: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+        /// Whether copies are being recorded; `None` is never asked.
+        monitoring: std::sync::Mutex<Option<bool>>,
+        /// The kinds history was asked for.
+        kinds: std::sync::Mutex<Vec<Option<crate::backend::ClipboardRowKind>>>,
     }
 
     impl crate::backend::ClipboardBackend for FakeClipboard {
+        fn clipboard_history_of_kind(
+            &self,
+            query: String,
+            _limit: u32,
+            kind: Option<crate::backend::ClipboardRowKind>,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ClipboardRow>> {
+            Box::pin(async move {
+                self.queries.lock().unwrap().push(query.clone());
+                self.kinds.lock().unwrap().push(kind);
+                Ok(self
+                    .rows
+                    .iter()
+                    .filter(|row| row.preview.contains(&query))
+                    .filter(|row| kind.is_none_or(|kind| row.kind == kind))
+                    .cloned()
+                    .collect())
+            })
+        }
+
+        fn clipboard_detail(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ClipboardDetail> {
+            Box::pin(async move {
+                let row = self
+                    .rows
+                    .iter()
+                    .find(|row| row.id == id)
+                    .ok_or_else(|| "gone".to_owned())?;
+                Ok(crate::backend::ClipboardDetail {
+                    id: id.clone(),
+                    mime_type: "text/plain".into(),
+                    kind: row.kind,
+                    size: 1536,
+                    md5: "abc".into(),
+                    updated_at: 1_700_000_000_000,
+                    encrypted: true,
+                    keywords: self
+                        .keywords
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_default(),
+                })
+            })
+        }
+
+        fn clipboard_set_keywords(
+            &self,
+            id: String,
+            keywords: String,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.changes
+                    .lock()
+                    .unwrap()
+                    .push(format!("keywords {id} {keywords}"));
+                self.keywords.lock().unwrap().insert(id, keywords);
+                Ok(())
+            })
+        }
+
+        fn clipboard_remove_all(&self) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.changes.lock().unwrap().push("remove-all".to_owned());
+                Ok(())
+            })
+        }
+
+        fn clipboard_monitoring(
+            &self,
+            enabled: Option<bool>,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ClipboardMonitoring> {
+            Box::pin(async move {
+                let mut state = self.monitoring.lock().unwrap();
+                if let Some(enabled) = enabled {
+                    *state = Some(enabled);
+                }
+                Ok(crate::backend::ClipboardMonitoring {
+                    supported: true,
+                    enabled: state.unwrap_or(true),
+                })
+            })
+        }
+
         fn clipboard_history(
             &self,
             query: String,
@@ -10001,6 +10197,137 @@ mod tests {
             app.state_line().contains("page=clipboard"),
             "{}",
             app.state_line()
+        );
+    }
+
+    #[test]
+    fn the_kind_filter_the_pane_keywords_remove_all_and_monitoring() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut image = clip_row("2", "Image");
+        image.kind = crate::backend::ClipboardRowKind::Image;
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "some text"), image],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"some text".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard.clone()));
+        app.view_memory = crate::view_memory::ViewMemory::load(None);
+        open_clipboard(&mut app);
+
+        // The pane shows the selected entry, its text and its metadata.
+        {
+            let Page::Clipboard(page) = &app.page else {
+                unreachable!()
+            };
+            let detail = page.detail.as_ref().expect("the pane is loaded");
+            assert_eq!(detail.id, "1");
+            assert_eq!(
+                detail.pane,
+                Some(crate::clipboard_page::DetailContent::Text(
+                    "some text".into()
+                ))
+            );
+            assert!(matches!(&detail.info, Some(Ok(info)) if info.size == 1536));
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("1.50 KB").is_ok(), "the size is in the pane");
+        }
+
+        // The filter asks the engine for one kind, and is remembered.
+        let task = app.update(Message::ClipboardKindChanged("Images".into()));
+        settle(&mut app, task);
+        let Page::Clipboard(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            clipboard.kinds.lock().unwrap().last(),
+            Some(&Some(crate::backend::ClipboardRowKind::Image))
+        );
+        assert_eq!(
+            app.view_memory
+                .get(crate::clipboard_page::FILTER_MEMORY_KEY),
+            Some("image")
+        );
+        let task = app.update(Message::ClipboardKindChanged("All".into()));
+        settle(&mut app, task);
+
+        // Ctrl+E opens the keyword form with what is stored; saving it goes
+        // back to the history.
+        let task = app.update(chord("e", iced::keyboard::Modifiers::CTRL));
+        settle(&mut app, task);
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::ClipboardKeywords
+                    && form.command_id == "1"),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("invoice".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert!(app.showing_clipboard());
+        assert!(
+            clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"keywords 1 invoice".to_owned())
+        );
+
+        // Remove-all asks first; Escape leaves everything, Enter removes.
+        let _ = app.update(Message::TogglePanel);
+        let remove_all = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Remove all"))
+            .expect("the panel offers remove-all");
+        let _ = app.update(Message::PanelClicked(remove_all));
+        assert!(app.confirm.is_some());
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(app.confirm.is_none());
+        assert!(
+            !clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"remove-all".to_owned())
+        );
+        let _ = app.update(chord(
+            "x",
+            iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::SHIFT,
+        ));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            clipboard
+                .changes
+                .lock()
+                .unwrap()
+                .contains(&"remove-all".to_owned())
+        );
+
+        // The panel pauses recording, and then offers to resume it.
+        let _ = app.update(Message::TogglePanel);
+        let pause = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Pause clipboard"))
+            .expect("recording can be paused");
+        let task = app.update(Message::PanelClicked(pause));
+        settle(&mut app, task);
+        assert_eq!(*clipboard.monitoring.lock().unwrap(), Some(false));
+        let _ = app.update(Message::TogglePanel);
+        assert!(
+            app.panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Resume clipboard"))
+                .is_some()
         );
     }
 

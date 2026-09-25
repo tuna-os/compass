@@ -91,7 +91,27 @@ async fn echo_handler(request: Request) -> Response {
                 }
             }
         }
-        Request::ClipboardHistory { .. } => Response::ClipboardHistory { entries: vec![] },
+        Request::ClipboardHistory { .. } | Request::ClipboardHistoryOfKind { .. } => {
+            Response::ClipboardHistory { entries: vec![] }
+        }
+        Request::ClipboardDetail { .. } => Response::ClipboardDetail {
+            detail: compass_ipc::ClipboardDetail {
+                id: String::new(),
+                mime_type: String::new(),
+                kind: compass_ipc::ClipboardKind::Text,
+                size: 0,
+                md5: String::new(),
+                updated_at: 0,
+                encrypted: false,
+                keywords: String::new(),
+                pinned: false,
+            },
+        },
+        Request::ClipboardMonitoring { .. } => Response::ClipboardMonitoring {
+            supported: false,
+            enabled: false,
+        },
+        Request::ClipboardSetKeywords { .. } | Request::ClipboardRemoveAll => Response::Ack,
         Request::ListWindows => Response::Windows { windows: vec![] },
         Request::ActivateWindow { .. }
         | Request::CloseWindow { .. }

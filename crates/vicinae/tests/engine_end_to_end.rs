@@ -1185,6 +1185,17 @@ fn clipboard_history_without_a_keyring_is_refused_by_name() {
             pinned: true,
         },
         compass_ipc::Request::ClipboardRemove { id: "1".into() },
+        compass_ipc::Request::ClipboardHistoryOfKind {
+            query: String::new(),
+            limit: 10,
+            kind: Some(compass_ipc::ClipboardKind::Image),
+        },
+        compass_ipc::Request::ClipboardDetail { id: "1".into() },
+        compass_ipc::Request::ClipboardSetKeywords {
+            id: "1".into(),
+            keywords: "x".into(),
+        },
+        compass_ipc::Request::ClipboardRemoveAll,
     ] {
         let response = daemon.request(request.clone());
         let compass_ipc::Response::Error(err) = response else {
@@ -1193,6 +1204,46 @@ fn clipboard_history_without_a_keyring_is_refused_by_name() {
         assert_eq!(err.kind, compass_ipc::ErrorKind::Unsupported, "{request:?}");
         assert!(err.message.contains("keyring"), "{}", err.message);
     }
+}
+
+#[test]
+fn pausing_the_clipboard_is_answered_and_kept_as_the_monitoring_preference() {
+    use compass_ipc::{Request, Response};
+    let config = serde_json::json!({
+        "launcher": {"max_results": 7},
+        "providers": {"clipboard": {"preferences": {"evictionThreshold": "3600"}}}
+    });
+    let daemon =
+        Daemon::start_with_config(&[("a.desktop", &entry("Alpha", ""))], &config.to_string());
+    let asked = daemon.request(Request::ClipboardMonitoring { enabled: None });
+    assert_eq!(
+        asked,
+        Response::ClipboardMonitoring {
+            // No session bus: nothing watches the selection here.
+            supported: false,
+            enabled: true,
+        }
+    );
+    let paused = daemon.request(Request::ClipboardMonitoring {
+        enabled: Some(false),
+    });
+    assert_eq!(
+        paused,
+        Response::ClipboardMonitoring {
+            supported: false,
+            enabled: false,
+        }
+    );
+    let written: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(daemon._dirs.path().join("config/vicinae/vicinae.json"))
+            .expect("the config"),
+    )
+    .expect("json");
+    assert_eq!(
+        written["providers"]["clipboard"]["preferences"],
+        serde_json::json!({"evictionThreshold": "3600", "monitoring": false})
+    );
+    assert_eq!(written["launcher"]["max_results"], 7, "the rest is kept");
 }
 
 #[test]

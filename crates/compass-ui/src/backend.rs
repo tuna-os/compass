@@ -869,6 +869,79 @@ pub trait ClipboardBackend: std::fmt::Debug + Send + Sync {
 
     /// Remove one entry and its stored content.
     fn clipboard_remove(&self, id: String) -> BackendFuture<'_, ()>;
+
+    /// [`Self::clipboard_history`] restricted to one kind, the view's filter;
+    /// `None` is every kind.
+    fn clipboard_history_of_kind(
+        &self,
+        query: String,
+        limit: u32,
+        kind: Option<ClipboardRowKind>,
+    ) -> BackendFuture<'_, Vec<ClipboardRow>> {
+        match kind {
+            None => self.clipboard_history(query, limit),
+            Some(_) => Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) }),
+        }
+    }
+
+    /// What the detail pane shows about one entry besides its content.
+    fn clipboard_detail(&self, id: String) -> BackendFuture<'_, ClipboardDetail> {
+        let _ = id;
+        Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Set the words an entry is also found by; empty clears them.
+    fn clipboard_set_keywords(&self, id: String, keywords: String) -> BackendFuture<'_, ()> {
+        let _ = (id, keywords);
+        Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Remove every entry (sparing tagged ones when the preference says so).
+    fn clipboard_remove_all(&self) -> BackendFuture<'_, ()> {
+        Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Whether copies are being recorded, after turning recording on or off
+    /// when `enabled` is given.
+    fn clipboard_monitoring(
+        &self,
+        enabled: Option<bool>,
+    ) -> BackendFuture<'_, ClipboardMonitoring> {
+        let _ = enabled;
+        Box::pin(async { Err(CLIPBOARD_NEEDS_ENGINE.to_owned()) })
+    }
+}
+
+const CLIPBOARD_NEEDS_ENGINE: &str = "Clipboard history needs the Compass engine";
+
+/// What the detail pane shows about one entry besides its content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardDetail {
+    /// The entry.
+    pub id: String,
+    /// The MIME type of what was copied.
+    pub mime_type: String,
+    /// What kind of thing it is.
+    pub kind: ClipboardRowKind,
+    /// Its size in bytes.
+    pub size: i64,
+    /// Its MD5.
+    pub md5: String,
+    /// When it was last copied, in milliseconds since the epoch.
+    pub updated_at: i64,
+    /// Whether it is encrypted at rest.
+    pub encrypted: bool,
+    /// The words it is also found by.
+    pub keywords: String,
+}
+
+/// Whether copies are being recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClipboardMonitoring {
+    /// Whether the engine can record copies on this desktop at all.
+    pub supported: bool,
+    /// Whether it is recording them.
+    pub enabled: bool,
 }
 
 /// One open window, as the switcher draws it.

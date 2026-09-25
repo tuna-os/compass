@@ -144,7 +144,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/calculator-service` | `compass-local-storage` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -379,6 +379,34 @@ with a named module and named tests that fail on a regression.
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/services/glyph-service` | Rust ✅ | `compass_core::glyph_service` (file I/O, `score`), `compass_ui::emoji_page`, `compass_ui::app::emoji` | `tests/glyph_service.rs` (`the_cpp_file_is_read_with_its_camel_case_keys`, `the_file_is_written_and_read_back_and_a_missing_one_is_empty`, `a_visit_raises_a_glyph_among_matches_and_a_keyword_makes_it_match`), `emoji_page::tests` (pins and visits head the empty query, keywords, per-glyph tones, the panel), `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
+| `src/services/clipboard` | Rust ✅ | `compass_clipboard::retention`, `compass_clipboard::store::entry`, `vicinae::clipboard_service::{Settings, Control, run_eviction}`, `ClipboardStore::{evict, remove_all, detail, set_keywords, history_of_kind}` | `retention::tests`, `eviction_removes_what_is_older_than_the_threshold_and_reports_the_next`, `remove_all_spares_tagged_entries_when_asked_and_unlinks_the_rest`, `nothing_is_recorded_while_monitoring_is_off`, `the_preferences_are_read_with_the_cpp_defaults`, `pausing_the_clipboard_is_answered_and_kept_as_the_monitoring_preference` |
+| `src/builtins/clipboard` | — (open actions and drag remain) | `compass_ui::clipboard_page`, `compass_ui::app::clipboard` | `clipboard_page::tests` (filter vocabulary, `format_size`, the pane's content, stale answers), `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
+
+**`src/services/clipboard` → retention and monitoring.** The clipboard extension's preferences
+(`providers.clipboard.preferences`) are read with the C++ defaults: `monitoring`,
+`ignorePasswords` and `preserveTagged` on, `evictionThreshold` never, `eraseOnStartup` off. With a
+threshold the engine sweeps after the C++'s one-minute misconfiguration grace, then each time the
+oldest evictable entry comes due (`next_delay`: that entry plus the threshold plus a second, clamped
+to one second and six hours), and — with nothing evictable — a threshold after the next copy, which
+is when `armEvictionTimer(now)` re-arms in the C++. Each pass unlinks the payloads it removed. The
+monitoring switch is the history view's status button (in the panel here); turning it off stops
+recording rather than stopping the watcher, which is the same to anyone copying, and the choice is
+written back as the `monitoring` preference, as `toggleMonitoring` patches it. `ignorePasswords`
+decides whether a selection a password manager marked is left out (data-control; the GNOME path has
+no such mark in either engine). `store-all-offerings` has no effect in the C++ (below).
+Remove-all spares pinned and keyworded entries when `preserveTagged` is on, as
+`removeAllSelections` does.
+
+**`src/builtins/clipboard` → the rest of the view.** The kind filter is a dropdown above the list;
+it asks the engine for one kind (`ClipboardHistoryOfKind`, the query's `kind` filter), clears the
+search text as `setKindFilter` does, and is remembered as `clipboard.filter` in the launcher's view
+memory with the stored vocabulary (`image`, not `Images`). The detail pane beside the list follows
+the selection; a late answer for an entry no longer selected is dropped. It shows a single local
+file that exists as Search Files previews it, an image as copied, text and URI lists up to 10 KiB,
+and the metadata `loadDetail` shows (type, MIME type, size in `formatSize`'s units, copied at, MD5,
+encryption and keywords). Keyword editing is a one-field form over the entry's stored keywords
+(Ctrl+E); remove-all asks first ("Are you sure?", Enter to delete all, Escape to keep); the panel
+is `actionPanel`'s paste/copy, pin/unpin, edit keywords, remove, remove all, plus pause/resume.
 
 **`src/services/glyph-service` → the emoji picker.** The picker reads and writes the C++'s own file,
 `$XDG_DATA_HOME/vicinae/emojis/emojis.json`, so both engines remember the same visits, pins, tones
@@ -741,8 +769,10 @@ let a mangled path through, so splitting the URI list on the wrong separator —
 carriage return — looked correct. The stub now names the paths it knows.
 
 Clipboard History is in the launcher: search, copy, paste, pin and remove
-(`compass-ui::clipboard_page`). Still C++-only: the kind filter, the detail pane, keyword editing,
-the open actions, remove-all and the drag payload.
+(`compass-ui::clipboard_page`), and since the gaps pass the kind filter, the detail pane, keyword
+editing, remove-all and the monitoring switch (see "The gaps pass"). Still C++-only: the open
+actions (Open, Open with…), and the drag payload — blocked rather than pending, because Iced has no
+drag-and-drop out of its window.
 
 **`src/builtins/raycast` → `compass-core::raycast_store_view`** — the store's two views. Its API
 client was already ported (`compass-core::raycast_store`); this is what the views do with what it
@@ -1302,9 +1332,10 @@ so both engines read and write the same encrypted files with the same tokenizer.
 The layer above the database is the engine's now (`vicinae::clipboard_service`): the selection is
 watched through the Shell extension on GNOME and over data-control on wlroots, and payloads are
 stored on disk encrypted under Compass's own keyring key (`a_recorded_copy_is_listed_and_found`, the
-encrypted-at-rest assertions beside it). Still C++-only: eviction by age and its timer (the caller
-that would unlink the blobs `evict_older_than` reports), the monitoring switch, and the
-ignore-passwords and record-all-offers preferences.
+encrypted-at-rest assertions beside it). Eviction by age and its timer, the monitoring switch and
+the extension's preferences landed in the gaps pass (see there). `store-all-offerings` is not
+ported because there is nothing to port: the C++ reads it into `m_recordAllOffers` and never reads
+that member again.
 
 Four C++ bugs are fixed rather than reproduced, each pinned by a control that fails when the
 original shape is put back: the eviction blob leak, `tryBubbleUpSelection` answering from a

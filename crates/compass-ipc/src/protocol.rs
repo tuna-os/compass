@@ -48,9 +48,13 @@ use serde::{Deserialize, Serialize};
 /// Now Playing, the launcher's font, store avatars, extension deeplinks and
 /// reviewing Rhai script permissions; version 17, the catalog generation a
 /// window compares to know that applications or extensions were installed or
-/// removed while it ran ([`Request::CatalogGeneration`]), and the default
+/// removed while it ran ([`Request::CatalogGeneration`]), the default
 /// browser and terminal pickers ([`Request::ListDefaultApps`],
-/// [`Request::SetDefaultApp`]).
+/// [`Request::SetDefaultApp`]), and clipboard history's kind filter, detail
+/// pane, keywords, remove-all and monitoring switch
+/// ([`Request::ClipboardHistoryOfKind`], [`Request::ClipboardDetail`],
+/// [`Request::ClipboardSetKeywords`], [`Request::ClipboardRemoveAll`],
+/// [`Request::ClipboardMonitoring`]).
 pub const PROTOCOL_VERSION: u16 = 17;
 
 /// A client-to-server frame.
@@ -657,6 +661,43 @@ pub enum Request {
         /// The desktop file id.
         id: String,
     },
+    /// [`Request::ClipboardHistory`] restricted to one kind of entry, the
+    /// history view's filter; `None` is every kind. Answered with
+    /// [`Response::ClipboardHistory`].
+    ClipboardHistoryOfKind {
+        /// Text to filter by; empty lists everything.
+        query: String,
+        /// At most this many entries; zero is a bad request.
+        limit: u32,
+        /// The kind to keep.
+        kind: Option<ClipboardKind>,
+    },
+    /// What the detail pane shows about one entry besides its content.
+    /// Answered with [`Response::ClipboardDetail`]; an unknown id is not
+    /// found.
+    ClipboardDetail {
+        /// [`ClipboardEntry::id`].
+        id: String,
+    },
+    /// Set the words an entry is also found by; empty clears them.
+    /// Answered with [`Response::Ack`]; an unknown id is not found.
+    ClipboardSetKeywords {
+        /// [`ClipboardEntry::id`].
+        id: String,
+        /// Space-separated keywords.
+        keywords: String,
+    },
+    /// Remove every entry, sparing pinned and keyworded ones when the
+    /// `preserveTagged` preference says so. Answered with [`Response::Ack`].
+    ClipboardRemoveAll,
+    /// Whether copies are being recorded, turning it on or off first when
+    /// `enabled` is given (and keeping the choice in the configuration, as
+    /// the `monitoring` preference). Answered with
+    /// [`Response::ClipboardMonitoring`].
+    ClipboardMonitoring {
+        /// The new state, or `None` to ask.
+        enabled: Option<bool>,
+    },
 }
 
 /// What the engine answers.
@@ -896,6 +937,18 @@ pub enum Response {
         /// The candidates.
         apps: Vec<DefaultAppEntry>,
     },
+    /// Answer to [`Request::ClipboardDetail`].
+    ClipboardDetail {
+        /// What the pane shows.
+        detail: ClipboardDetail,
+    },
+    /// Answer to [`Request::ClipboardMonitoring`].
+    ClipboardMonitoring {
+        /// Whether the engine can record copies at all on this desktop.
+        supported: bool,
+        /// Whether it is recording them.
+        enabled: bool,
+    },
 }
 
 /// Which system default a picker sets.
@@ -918,6 +971,30 @@ pub struct DefaultAppEntry {
     pub description: String,
     /// Whether it is the current default.
     pub is_default: bool,
+}
+
+/// What the clipboard detail pane shows about one entry besides its content
+/// (`ClipboardHistoryViewHost::loadDetail`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipboardDetail {
+    /// [`ClipboardEntry::id`].
+    pub id: String,
+    /// The preferred offer's MIME type.
+    pub mime_type: String,
+    /// What kind of thing it is.
+    pub kind: ClipboardKind,
+    /// The payload's size in bytes.
+    pub size: i64,
+    /// Its MD5, as the store keeps it.
+    pub md5: String,
+    /// When it was last copied, in milliseconds since the Unix epoch.
+    pub updated_at: i64,
+    /// Whether the payload is encrypted at rest.
+    pub encrypted: bool,
+    /// The words it is also found by; empty for none.
+    pub keywords: String,
+    /// Whether it is pinned.
+    pub pinned: bool,
 }
 
 /// What the user has allowed one Rhai script.

@@ -97,6 +97,26 @@ pub enum Message {
     ClipboardEntryChanged(Result<(), String>),
     /// A clipboard row was clicked.
     ClipboardSelected(usize),
+    /// The clipboard kind filter was changed, to this label.
+    ClipboardKindChanged(String),
+    /// The detail pane's metadata for entry `id` arrived.
+    ClipboardDetailLoaded {
+        /// Which entry.
+        id: String,
+        /// What the engine answered.
+        result: Result<crate::backend::ClipboardDetail, String>,
+    },
+    /// The detail pane's content for entry `id` arrived.
+    ClipboardDetailContent {
+        /// Which entry.
+        id: String,
+        /// What the engine answered.
+        result: Result<crate::backend::ClipboardContent, String>,
+    },
+    /// An entry's keywords arrived, to open the keyword form with.
+    ClipboardKeywordsLoaded(Result<crate::backend::ClipboardDetail, String>),
+    /// Whether copies are being recorded, as the engine answered.
+    ClipboardMonitoringLoaded(Result<crate::backend::ClipboardMonitoring, String>),
     /// Leave a command's view for the root list.
     Back,
     /// The window switcher's filter changed.

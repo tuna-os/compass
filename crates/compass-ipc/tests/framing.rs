@@ -253,6 +253,22 @@ fn all_requests() -> Vec<Request> {
             kind: compass_ipc::DefaultAppKind::Terminal,
             id: "org.gnome.Ptyxis.desktop".into(),
         },
+        Request::ClipboardHistoryOfKind {
+            query: "café".into(),
+            limit: 100,
+            kind: Some(compass_ipc::ClipboardKind::Image),
+        },
+        Request::ClipboardDetail {
+            id: "c0ffee".into(),
+        },
+        Request::ClipboardSetKeywords {
+            id: "c0ffee".into(),
+            keywords: "reçu facture".into(),
+        },
+        Request::ClipboardRemoveAll,
+        Request::ClipboardMonitoring {
+            enabled: Some(false),
+        },
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -638,6 +654,23 @@ fn all_responses() -> Vec<Response> {
                 descriptions: vec!["copy to the clipboard".into()],
             }],
         },
+        Response::ClipboardDetail {
+            detail: compass_ipc::ClipboardDetail {
+                id: "c0ffee".into(),
+                mime_type: "text/plain;charset=utf-8".into(),
+                kind: ClipboardKind::Text,
+                size: 12,
+                md5: "d41d8cd98f00b204e9800998ecf8427e".into(),
+                updated_at: 1_700_000_000_000,
+                encrypted: true,
+                keywords: "reçu".into(),
+                pinned: false,
+            },
+        },
+        Response::ClipboardMonitoring {
+            supported: true,
+            enabled: false,
+        },
         Response::Fonts {
             fonts: vec![compass_ipc::FontEntry {
                 name: "Noto Sans Thai".into(),
@@ -747,6 +780,11 @@ fn request_variants_are_exhaustive() {
             | Request::CatalogGeneration
             | Request::ListDefaultApps { .. }
             | Request::SetDefaultApp { .. }
+            | Request::ClipboardHistoryOfKind { .. }
+            | Request::ClipboardDetail { .. }
+            | Request::ClipboardSetKeywords { .. }
+            | Request::ClipboardRemoveAll
+            | Request::ClipboardMonitoring { .. }
             | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }
@@ -788,6 +826,8 @@ fn response_variants_are_exhaustive() {
             | Response::ScriptGrants { .. }
             | Response::CatalogGeneration { .. }
             | Response::DefaultApps { .. }
+            | Response::ClipboardDetail { .. }
+            | Response::ClipboardMonitoring { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }

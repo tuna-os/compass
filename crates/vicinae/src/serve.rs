@@ -90,6 +90,9 @@ pub struct EngineState {
     /// Clipboard history, once [`crate::clipboard_service::run`] has opened
     /// it. `None` until then, and for good when there is no keyring.
     clipboard: Option<Arc<crate::clipboard_service::ClipboardStore>>,
+    /// The clipboard service's switch and preferences, shared with its
+    /// recording loop and eviction timer.
+    clipboard_control: Arc<crate::clipboard_service::Control>,
     /// The GNOME Shell extension's client, once the session bus answered.
     /// `None` until then, and for good without a session bus.
     shell: Option<Arc<compass_shell::ShellClient>>,
@@ -226,6 +229,11 @@ impl EngineState {
             max_results,
             window: WindowSlot::default(),
             clipboard: None,
+            clipboard_control: Arc::new(crate::clipboard_service::Control::new(
+                &crate::clipboard_service::Settings::from_preferences(
+                    config.provider_preferences(crate::clipboard_service::PROVIDER_ID),
+                ),
+            )),
             shell: None,
             views: Arc::default(),
             files: Arc::new(files),
@@ -288,6 +296,9 @@ impl EngineState {
             max_results,
             window: WindowSlot::default(),
             clipboard: None,
+            clipboard_control: Arc::new(crate::clipboard_service::Control::new(
+                &crate::clipboard_service::Settings::default(),
+            )),
             shell: None,
             views: Arc::default(),
             files: Arc::default(),
@@ -369,6 +380,12 @@ impl EngineState {
     /// Makes clipboard history available to requests.
     pub fn set_clipboard(&mut self, store: Arc<crate::clipboard_service::ClipboardStore>) {
         self.clipboard = Some(store);
+    }
+
+    /// The clipboard service's switch and preferences.
+    #[must_use]
+    pub fn clipboard_control(&self) -> Arc<crate::clipboard_service::Control> {
+        Arc::clone(&self.clipboard_control)
     }
 
     /// The snippet store, when there is a data directory for one.
@@ -991,6 +1008,41 @@ async fn run_script(state: &Arc<RwLock<EngineState>>, id: &str, arguments: &[Str
 }
 
 /// The snippet list as the wire carries it.
+fn clipboard_unavailable() -> Response {
+    Response::Error(ProtocolError::new(
+        ErrorKind::Unsupported,
+        "clipboard history is unavailable: no keyring, or the store would not open \
+         (the engine log says which)",
+    ))
+}
+
+/// Clipboard history for `query`, of one kind or of every kind.
+async fn clipboard_history(
+    state: &Arc<RwLock<EngineState>>,
+    query: String,
+    limit: u32,
+    kind: Option<compass_ipc::ClipboardKind>,
+) -> Response {
+    if limit == 0 {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "a clipboard history request must ask for at least one entry",
+        ));
+    }
+    let Some(store) = state.read().await.clipboard.clone() else {
+        return clipboard_unavailable();
+    };
+    // SQLite is blocking I/O; keep it off the executor.
+    match tokio::task::spawn_blocking(move || store.history_of_kind(&query, limit, kind)).await {
+        Ok(Ok(entries)) => Response::ClipboardHistory { entries },
+        Ok(Err(err)) => Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string())),
+        Err(err) => Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!("clipboard history task failed: {err}"),
+        )),
+    }
+}
+
 fn snippets_response(snippets: &compass_core::snippet_store::SnippetStore) -> Response {
     Response::Snippets {
         snippets: snippets
@@ -2273,29 +2325,102 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
 
         Request::ClipboardHistory { query, limit } => {
-            if limit == 0 {
-                return Response::Error(ProtocolError::new(
-                    ErrorKind::BadRequest,
-                    "a clipboard history request must ask for at least one entry",
-                ));
-            }
+            clipboard_history(state, query, limit, None).await
+        }
+
+        Request::ClipboardHistoryOfKind { query, limit, kind } => {
+            clipboard_history(state, query, limit, kind).await
+        }
+
+        Request::ClipboardDetail { id } => {
             let Some(store) = state.read().await.clipboard.clone() else {
-                return Response::Error(ProtocolError::new(
-                    ErrorKind::Unsupported,
-                    "clipboard history is unavailable: no keyring, or the store would not open \
-                     (the engine log says which)",
-                ));
+                return clipboard_unavailable();
             };
-            // SQLite is blocking I/O; keep it off the executor.
-            match tokio::task::spawn_blocking(move || store.history(&query, limit)).await {
-                Ok(Ok(entries)) => Response::ClipboardHistory { entries },
+            match tokio::task::spawn_blocking(move || store.detail(&id)).await {
+                Ok(Ok(Some(detail))) => Response::ClipboardDetail { detail },
+                Ok(Ok(None)) => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no clipboard history entry has that id",
+                )),
                 Ok(Err(err)) => {
                     Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
                 }
                 Err(err) => Response::Error(ProtocolError::new(
                     ErrorKind::Internal,
-                    format!("clipboard history task failed: {err}"),
+                    format!("clipboard detail task failed: {err}"),
                 )),
+            }
+        }
+
+        Request::ClipboardSetKeywords { id, keywords } => {
+            let Some(store) = state.read().await.clipboard.clone() else {
+                return clipboard_unavailable();
+            };
+            match tokio::task::spawn_blocking(move || store.set_keywords(&id, &keywords)).await {
+                Ok(Ok(true)) => Response::Ack,
+                Ok(Ok(false)) => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no clipboard history entry has that id",
+                )),
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard keywords task failed: {err}"),
+                )),
+            }
+        }
+
+        Request::ClipboardRemoveAll => {
+            let (store, control) = {
+                let state = state.read().await;
+                (state.clipboard.clone(), state.clipboard_control())
+            };
+            let Some(store) = store else {
+                return clipboard_unavailable();
+            };
+            let preserve = control.preserve_tagged();
+            match tokio::task::spawn_blocking(move || store.remove_all(preserve)).await {
+                Ok(Ok(_)) => Response::Ack,
+                Ok(Err(err)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, err.to_string()))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("clipboard remove-all task failed: {err}"),
+                )),
+            }
+        }
+
+        Request::ClipboardMonitoring { enabled } => {
+            let control = state.read().await.clipboard_control();
+            if let Some(enabled) = enabled {
+                control.set_monitoring(enabled);
+                // Kept as the preference, as `toggleMonitoring` patches it,
+                // so the choice outlives the engine.
+                let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    // A file that does not parse is left alone rather than
+                    // replaced by one holding only this choice.
+                    let mut config = Config::load()?;
+                    config.set_provider_preference(
+                        crate::clipboard_service::PROVIDER_ID,
+                        "monitoring",
+                        serde_json::Value::Bool(enabled),
+                    );
+                    config.save_to(compass_core::config::default_config_path()?)?;
+                    Ok(())
+                })
+                .await;
+                match saved {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => tracing::warn!(error = %err, "monitoring choice not saved"),
+                    Err(err) => tracing::warn!(error = %err, "the monitoring save task failed"),
+                }
+            }
+            Response::ClipboardMonitoring {
+                supported: control.supported(),
+                enabled: control.monitoring(),
             }
         }
 

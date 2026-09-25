@@ -2468,7 +2468,7 @@ subsystem. "None" under *blocked by* means only the work.
 | `src/services/app-runtime` | Quit and Force Quit, and the running/frontmost answers they use | medium | none on GNOME, wlroots, Hyprland, niri (close exists; a pid only on the last two) |
 | ~~`src/services/app-service`~~ | **Done** (`vicinae::catalog_watch`, `EngineApps`' lookups and `set_web_browser`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/calculator-service`, `src/builtins/calculator` | the history view (model and store ported), currency conversion, refresh-rates | medium | currency needs a decision on a rate source (fend has none); the backend dropdown is not wanted (fend by design) |
-| `src/services/clipboard`, `src/builtins/clipboard` | eviction by age and its timer; the monitoring switch and the ignore-passwords and record-all-offers preferences; the kind filter, keyword editing, open actions and remove-all (small each); the detail pane (medium); the drag payload | medium overall | drag needs drag-and-drop out of an Iced window, which Iced does not offer |
+| `src/builtins/clipboard` | the open actions (Open, Open with…) and the drag payload (eviction and its timer, monitoring, the preferences, the kind filter, keywords, remove-all and the detail pane landed in the gaps pass) | small (Open) and medium (Open with…, which needs the app-selector view) | drag needs drag-and-drop out of an Iced window, which Iced does not offer |
 | ~~`src/services/desktop-notification`~~ | **Done** (`vicinae::notification_icon`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | ~~`src/services/extension-registry`~~ | **Done** (`vicinae::catalog_watch::watch_extensions`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/global-shortcuts` | per-command global shortcuts from the config, conflict detection, `vicinae-hotkey-v1`, X11 | medium (X11 large) | a compositor: GNOME's portal grant is VM-tier only, no released compositor has the hotkey protocols; X11 needs a decision on whether it is supported |
@@ -2494,8 +2494,10 @@ Closed in the truth pass rather than listed: the `xdgpp` writers (`setDefaultApp
 power commands' `confirm` and `customProgram` preferences, and a notification's urgency and file
 icon.
 
-Closed in the gaps pass (`PARITY.md`, "The gaps pass"): `glyph-service` wired into the emoji picker
-(117 of 156).
+Closed in the gaps pass (`PARITY.md`, "The gaps pass"): `glyph-service` wired into the emoji picker;
+clipboard eviction and its timer, the monitoring switch and preferences, the kind filter, keyword
+editing, remove-all and the detail pane
+(118 of 156).
 
 **Landed in this round:**
 

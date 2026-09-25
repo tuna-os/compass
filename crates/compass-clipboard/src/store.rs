@@ -185,6 +185,32 @@ pub fn query(db: &Connection, limit: i64, offset: i64, opts: &ListSettings) -> R
     Ok(page)
 }
 
+/// One entry by its selection id, as a list row would show it: what the
+/// detail pane reads (`loadDetail` takes the list's own entry). `None` when no
+/// selection has that id or it has no preferred offer.
+///
+/// # Errors
+///
+/// [`Error::UnknownDiscriminant`] if a stored enum value names no variant,
+/// and [`Error::Database`] if SQLite refuses.
+pub fn entry(db: &Connection, id: &str) -> Result<Option<HistoryEntry>, Error> {
+    let sql = format!(
+        "SELECT
+{COLUMNS}, 1 AS total_count, s.keywords
+         FROM selection s
+         JOIN data_offer o
+           ON o.selection_id = s.id
+           AND o.mime_type = s.preferred_mime_type
+         WHERE s.id = :id"
+    );
+    let mut stmt = db.prepare_cached(&sql)?;
+    let mut rows = stmt.query(rusqlite::named_params! { ":id": id })?;
+    match rows.next()? {
+        Some(row) => Ok(Some(read_row(row)?.0)),
+        None => Ok(None),
+    }
+}
+
 /// Ceiling division for non-negative `a` and positive `b`.
 ///
 /// The C++ computes both of these as `ceil(static_cast<double>(x) / limit)`.

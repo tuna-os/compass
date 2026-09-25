@@ -64,6 +64,8 @@ pub enum Purpose {
     MediaArguments,
     /// The emoji picker's keywords for one glyph; `command_id` is the glyph.
     GlyphKeywords,
+    /// A clipboard history entry's keywords; `command_id` is the entry.
+    ClipboardKeywords,
 }
 
 impl Purpose {
@@ -72,7 +74,9 @@ impl Purpose {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Preferences | Self::Arguments => "Enter: save and run    Esc: back",
-            Self::CommandPreferences | Self::GlyphKeywords => "Enter: save    Esc: back",
+            Self::CommandPreferences | Self::GlyphKeywords | Self::ClipboardKeywords => {
+                "Enter: save    Esc: back"
+            }
             Self::ShortcutArguments => "Enter: open    Esc: back",
             Self::ShortcutForm { .. } => "Enter: save    Esc: back",
             Self::SnippetArguments { paste: false } => "Enter: copy    Esc: back",

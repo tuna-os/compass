@@ -802,6 +802,33 @@ impl Config {
         (!family.is_empty() && family != "auto" && family != "system").then_some(family)
     }
 
+    /// Sets one of a provider's preferences
+    /// (`providers.<provider>.preferences.<key>`), keeping the others, as the
+    /// C++ `setPreferenceValues` merges a patch.
+    pub fn set_provider_preference(
+        &mut self,
+        provider: &str,
+        key: &str,
+        value: Value,
+    ) -> &mut Self {
+        let settings = self
+            .providers
+            .get_or_insert_with(BTreeMap::new)
+            .entry(provider.to_owned())
+            .or_default();
+        let preferences = settings
+            .unknown
+            .entry("preferences".to_owned())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if !preferences.is_object() {
+            *preferences = Value::Object(serde_json::Map::new());
+        }
+        if let Some(preferences) = preferences.as_object_mut() {
+            preferences.insert(key.to_owned(), value);
+        }
+        self
+    }
+
     /// Sets `font.normal.family`, keeping the rest of the `font` object (its
     /// `rendering` and `normal.size`), as "Set as vicinae font" merges it.
     pub fn set_font_family(&mut self, family: &str) -> &mut Self {
