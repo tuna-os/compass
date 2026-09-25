@@ -47,6 +47,8 @@ pub enum UiCommand {
     Hide,
     /// Hide if visible, show if not.
     Toggle,
+    /// Show a `vicinae dmenu` list, fetched from the engine by this token.
+    Dmenu(u64),
 }
 
 /// What the window reports back, as the state it ended in.

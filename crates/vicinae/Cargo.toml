@@ -34,7 +34,6 @@ compass-ui.workspace = true
 compass-platform.workspace = true
 compass-platform-linux.workspace = true
 compass-xdg.workspace = true
-mime_guess.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -62,6 +61,11 @@ landlock.workspace = true
 seccompiler.workspace = true
 libc.workspace = true
 tempfile.workspace = true
+url = "2"
+fontdb = "0.23"
+ttf-parser = "0.25"
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 iced = { version = "0.14", features = ["tokio"] }

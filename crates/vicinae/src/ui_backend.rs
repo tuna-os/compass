@@ -5,8 +5,9 @@ use std::time::Duration;
 use compass_ipc::{Request, SocketPath};
 use compass_ui::backend::{
     ApplicationBackend, BackendFuture, ClipboardBackend, ClipboardContent, ClipboardRow,
-    ClipboardRowKind, ExtensionStart, ExtensionViewState, FileResults, FileRow, WindowBackend,
-    WindowRow,
+    ClipboardRowKind, DmenuList, ExtensionDraft, ExtensionStart, ExtensionViewState, FileResults,
+    FileRow, ProgramList, ScriptOutputState, Shortcut, ShortcutDraft, Snippet, SnippetDraft,
+    WindowBackend, WindowRow,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -107,6 +108,331 @@ impl ApplicationBackend for DaemonBackend {
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn create_extension(&self, draft: ExtensionDraft) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            let request = Request::CreateExtension {
+                author: draft.author,
+                title: draft.title,
+                description: draft.description,
+                location: draft.location,
+                command_title: draft.command_title,
+                command_description: draft.command_description,
+                template: draft.template,
+            };
+            match self.ask(request, "Creating the extension").await? {
+                compass_ipc::Response::ExtensionCreated { path } => Ok(path),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_theme(&self, theme: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::SetTheme { theme }, "Saving the theme")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_fonts(&self) -> BackendFuture<'_, compass_ui::backend::FontList> {
+        Box::pin(async move {
+            match self.ask(Request::ListFonts, "Listing the fonts").await? {
+                compass_ipc::Response::Fonts { fonts, categories } => {
+                    Ok(compass_ui::backend::FontList {
+                        fonts: fonts
+                            .into_iter()
+                            .map(|font| compass_ui::backend::FontListEntry {
+                                name: font.name,
+                                family: font.family,
+                                glyph: font.glyph,
+                                color: font.color,
+                                primary: font.primary,
+                                categories: font.categories,
+                            })
+                            .collect(),
+                        categories,
+                    })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn font_specimen(&self, name: String) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            match self
+                .ask(Request::FontSpecimen { name }, "Loading the specimen")
+                .await?
+            {
+                compass_ipc::Response::Text { text } => Ok(text),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
+        Box::pin(async move {
+            match self
+                .ask(Request::DmenuFetch { token }, "Fetching the dmenu list")
+                .await?
+            {
+                compass_ipc::Response::DmenuList { spec } => Ok(DmenuList {
+                    content: spec.content,
+                    navigation_title: spec.navigation_title,
+                    section_title: spec.section_title,
+                    output_index: spec.output_index,
+                    placeholder: spec.placeholder,
+                    query: spec.query,
+                    no_section: spec.no_section,
+                    no_quick_look: spec.no_quick_look,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn choose_dmenu(&self, token: u64, output: Option<String>) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::DmenuChoose { token, output },
+                    "Answering the dmenu list",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_programs(&self) -> BackendFuture<'_, ProgramList> {
+        Box::pin(async move {
+            match self.ask(Request::ListPrograms, "Listing programs").await? {
+                compass_ipc::Response::Programs {
+                    programs,
+                    terminal,
+                    default_action,
+                } => Ok(ProgramList {
+                    programs,
+                    terminal,
+                    default_action,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn run_program(&self, argv: Vec<String>, terminal: bool, hold: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::RunProgram {
+                        argv,
+                        terminal,
+                        hold,
+                    },
+                    "Running the program",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_scripts(&self) -> BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ListScripts, "Listing script commands")
+                .await?
+            {
+                compass_ipc::Response::Scripts { scripts } => {
+                    Ok(scripts.into_iter().map(script_item).collect())
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn run_script(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, Option<u64>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::RunScript { id, arguments }, "Running the script")
+                .await?
+            {
+                compass_ipc::Response::ScriptStarted { session } => Ok(session),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn script_output(&self, session: u64) -> BackendFuture<'_, ScriptOutputState> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ScriptOutput { session },
+                    "Reading the script's output",
+                )
+                .await?
+            {
+                compass_ipc::Response::ScriptOutput {
+                    output,
+                    finished,
+                    exit_code,
+                    elapsed_ms,
+                } => Ok(ScriptOutputState {
+                    output,
+                    finished,
+                    exit_code,
+                    elapsed_ms,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn stop_script(&self, session: u64) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::StopScript { session }, "Stopping the script")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_snippets(&self) -> BackendFuture<'_, Vec<Snippet>> {
+        Box::pin(
+            async move { snippets(self.ask(Request::ListSnippets, "Listing snippets").await?) },
+        )
+    }
+
+    fn save_snippet(&self, snippet: SnippetDraft) -> BackendFuture<'_, Vec<Snippet>> {
+        Box::pin(async move {
+            let request = Request::SaveSnippet {
+                id: snippet.id,
+                name: snippet.name,
+                text: snippet.text,
+                keyword: snippet.keyword,
+                word: snippet.word,
+                apps: snippet.apps,
+            };
+            snippets(self.ask(request, "Saving the snippet").await?)
+        })
+    }
+
+    fn remove_snippet(&self, id: String) -> BackendFuture<'_, Vec<Snippet>> {
+        Box::pin(async move {
+            snippets(
+                self.ask(Request::RemoveSnippet { id }, "Removing the snippet")
+                    .await?,
+            )
+        })
+    }
+
+    fn expand_snippet(
+        &self,
+        id: String,
+        arguments: Vec<(String, String)>,
+    ) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExpandSnippet { id, arguments },
+                    "Expanding the snippet",
+                )
+                .await?
+            {
+                compass_ipc::Response::Text { text } => Ok(text),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn paste_snippet(&self, id: String, arguments: Vec<(String, String)>) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::PasteSnippet { id, arguments },
+                    "Pasting the snippet",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_shortcuts(&self) -> BackendFuture<'_, Vec<Shortcut>> {
+        Box::pin(async move {
+            shortcuts(
+                self.ask(Request::ListShortcuts, "Listing shortcuts")
+                    .await?,
+            )
+        })
+    }
+
+    fn save_shortcut(&self, shortcut: ShortcutDraft) -> BackendFuture<'_, Vec<Shortcut>> {
+        Box::pin(async move {
+            let request = Request::SaveShortcut {
+                id: shortcut.id,
+                name: shortcut.name,
+                icon: shortcut.icon,
+                url: shortcut.url,
+                app: shortcut.app,
+            };
+            shortcuts(self.ask(request, "Saving the shortcut").await?)
+        })
+    }
+
+    fn remove_shortcut(&self, id: String) -> BackendFuture<'_, Vec<Shortcut>> {
+        Box::pin(async move {
+            shortcuts(
+                self.ask(Request::RemoveShortcut { id }, "Removing the shortcut")
+                    .await?,
+            )
+        })
+    }
+
+    fn open_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::OpenShortcut { id, arguments },
+                    "Opening the shortcut",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn expand_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExpandShortcut { id, arguments },
+                    "Expanding the shortcut",
+                )
+                .await?
+            {
+                compass_ipc::Response::Text { text } => Ok(text),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })
@@ -333,6 +659,90 @@ impl DaemonBackend {
             Ok(Ok(compass_ipc::Response::Error(error))) => Err(sentence(&error.message)),
             Ok(Ok(response)) => Ok(response),
         }
+    }
+}
+
+/// A script as the launcher holds it, from the wire.
+fn script_item(entry: compass_ipc::ScriptEntry) -> compass_core::script_scan::ScriptItem {
+    use compass_core::script_command::{
+        ArgumentDataOption, ArgumentType, OutputMode, ScriptArgument,
+    };
+    compass_core::script_scan::ScriptItem {
+        id: entry.id,
+        title: entry.title,
+        subtitle: entry.subtitle,
+        keywords: entry.keywords,
+        mode: OutputMode::parse(&entry.mode).unwrap_or_default(),
+        needs_confirmation: entry.needs_confirmation,
+        path: entry.path,
+        arguments: entry
+            .arguments
+            .into_iter()
+            .map(|argument| ScriptArgument {
+                argument_type: match argument.kind.as_str() {
+                    "password" => ArgumentType::Password,
+                    "dropdown" => ArgumentType::Dropdown,
+                    _ => ArgumentType::Text,
+                },
+                placeholder: argument.placeholder,
+                optional: argument.optional,
+                // The engine encodes; the launcher only asks.
+                percent_encoded: false,
+                data: argument
+                    .options
+                    .into_iter()
+                    .next()
+                    .map(|(title, value)| ArgumentDataOption { title, value }),
+            })
+            .collect(),
+    }
+}
+
+/// The snippet list in an engine answer.
+fn snippets(response: compass_ipc::Response) -> Result<Vec<Snippet>, String> {
+    use compass_core::snippet_store::{SnippetData, StoredExpansion};
+    match response {
+        compass_ipc::Response::Snippets { snippets } => Ok(snippets
+            .into_iter()
+            .map(|entry| Snippet {
+                id: entry.id,
+                name: entry.name,
+                data: match (entry.text, entry.file) {
+                    (Some(text), _) => SnippetData::Text { text },
+                    (None, Some(file)) => SnippetData::File { file },
+                    (None, None) => SnippetData::default(),
+                },
+                created_at: entry.created_at,
+                updated_at: entry.updated_at,
+                expansion: entry.keyword.map(|keyword| StoredExpansion {
+                    keyword,
+                    apps: entry.apps,
+                    word: entry.word,
+                }),
+            })
+            .collect()),
+        other => Err(format!("Unexpected answer from the engine: {other:?}")),
+    }
+}
+
+/// The shortcut list in an engine answer.
+fn shortcuts(response: compass_ipc::Response) -> Result<Vec<Shortcut>, String> {
+    match response {
+        compass_ipc::Response::Shortcuts { shortcuts } => Ok(shortcuts
+            .into_iter()
+            .map(|entry| Shortcut {
+                id: entry.id,
+                name: entry.name,
+                icon: entry.icon,
+                url: entry.url,
+                app: entry.app,
+                open_count: entry.open_count,
+                created_at: entry.created_at,
+                updated_at: entry.updated_at,
+                last_used_at: entry.last_used_at,
+            })
+            .collect()),
+        other => Err(format!("Unexpected answer from the engine: {other:?}")),
     }
 }
 

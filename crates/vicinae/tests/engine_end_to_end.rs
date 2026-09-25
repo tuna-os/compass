@@ -2679,3 +2679,761 @@ fn percent_encode(text: &str) -> String {
         })
         .collect()
 }
+
+/// A fake application in its own directory that appends each argument it is
+/// launched with to `<dir>/<name>.log`, and the desktop entry that runs it
+/// for `mime_types`.
+fn recording_app(dir: &Path, name: &str, mime_types: &str) -> (String, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = dir.join(format!("{name}.log"));
+    let program = dir.join(name);
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do echo \"$arg\" >> '{}'; done\n",
+            log.display()
+        ),
+    )
+    .expect("fake application");
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName={name}\nExec={} %u\nMimeType={mime_types}\n",
+        program.display()
+    );
+    (entry, log)
+}
+
+/// Reads `log` until it has a line, or panics: a launch is spawned, so the
+/// answer can arrive before the program has run.
+fn launched_with(log: &Path) -> Vec<String> {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Ok(text) = std::fs::read_to_string(log)
+            && !text.is_empty()
+        {
+            return text.lines().map(str::to_owned).collect();
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("{} was never launched", log.display());
+}
+
+#[test]
+fn shortcuts_are_imported_created_searched_opened_edited_and_removed() {
+    use compass_ipc::{ErrorKind, Request, Response, ShortcutEntry};
+    let bin = TempDir::new().expect("tempdir");
+    let (browser, log) = recording_app(bin.path(), "browser", "x-scheme-handler/https;");
+    let vicinae_file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("browser.desktop", &browser)], "{}", |root| {
+        let file = root.join("data-home/vicinae/shortcuts/shortcuts.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"[{"id":"sct-aaaaaaaaaaaa","name":"Crate Docs","icon":"icon://omnicast/link",
+                "url":"https://docs.rs/{crate}","app":"default","openCount":4,
+                "createdAt":1700000000,"updatedAt":1700000000}]"#,
+        )
+        .unwrap();
+        vicinae_file.set(file).unwrap();
+        Vec::new()
+    });
+    let list = |response: Response| -> Vec<ShortcutEntry> {
+        match response {
+            Response::Shortcuts { shortcuts } => shortcuts,
+            other => panic!("not a shortcut list: {other:?}"),
+        }
+    };
+
+    let imported = list(daemon.request(Request::ListShortcuts));
+    assert_eq!(imported.len(), 1, "Vicinae's shortcut came across");
+    assert_eq!(imported[0].name, "Crate Docs");
+    assert_eq!(imported[0].open_count, 4);
+
+    let saved = list(daemon.request(Request::SaveShortcut {
+        id: None,
+        name: "Search Rust".into(),
+        icon: "default".into(),
+        url: "https://docs.rs/releases/search?query={query}".into(),
+        app: "default".into(),
+    }));
+    assert_eq!(saved.len(), 2);
+    let created = saved.iter().find(|s| s.name == "Search Rust").unwrap();
+    assert!(created.id.starts_with("sct-"), "{}", created.id);
+    assert_eq!(
+        created.icon, "icon://favicon/docs.rs?fallback=icon://omnicast/image",
+        "the default icon is resolved to the site's favicon when saved"
+    );
+
+    // Root search ranks it with everything else, by its name.
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "search rust".into(),
+    }) else {
+        panic!("no query results");
+    };
+    assert_eq!(
+        hits.first().map(|hit| hit.id.as_str()),
+        Some(format!("shortcuts:{}", created.id).as_str()),
+        "{hits:?}"
+    );
+
+    let Response::Text { text } = daemon.request(Request::ExpandShortcut {
+        id: created.id.clone(),
+        arguments: vec!["serde json".into()],
+    }) else {
+        panic!("not expanded");
+    };
+    assert_eq!(text, "https://docs.rs/releases/search?query=serde json");
+
+    assert_eq!(
+        daemon.request(Request::OpenShortcut {
+            id: created.id.clone(),
+            arguments: vec!["serde".into()],
+        }),
+        Response::Ack
+    );
+    assert_eq!(
+        launched_with(&log),
+        ["https://docs.rs/releases/search?query=serde"],
+        "the browser, which claims https, opened the expanded link"
+    );
+    let after = list(daemon.request(Request::ListShortcuts));
+    let opened = after.iter().find(|s| s.id == created.id).unwrap();
+    assert_eq!(opened.open_count, 1);
+    assert!(opened.last_used_at.is_some());
+
+    let edited = list(daemon.request(Request::SaveShortcut {
+        id: Some(created.id.clone()),
+        name: "Rust Search".into(),
+        icon: "icon://omnicast/bolt".into(),
+        url: created.url.clone(),
+        app: "default".into(),
+    }));
+    let renamed = edited.iter().find(|s| s.id == created.id).unwrap();
+    assert_eq!(renamed.name, "Rust Search");
+    assert_eq!(renamed.icon, "icon://omnicast/bolt");
+    assert_eq!(renamed.open_count, 1, "editing is not opening");
+
+    let remaining = list(daemon.request(Request::RemoveShortcut {
+        id: "sct-aaaaaaaaaaaa".into(),
+    }));
+    assert_eq!(
+        remaining.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        [created.id.as_str()]
+    );
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "crate docs".into(),
+    }) else {
+        panic!("no query results");
+    };
+    assert!(
+        hits.iter()
+            .all(|hit| hit.id != "shortcuts:sct-aaaaaaaaaaaa"),
+        "a removed shortcut leaves root search: {hits:?}"
+    );
+
+    // Compass wrote its own file; Vicinae's is as it was.
+    let vicinae = std::fs::read_to_string(vicinae_file.get().unwrap()).unwrap();
+    assert!(vicinae.contains("Crate Docs"));
+    let compass = std::fs::read_to_string(
+        vicinae_file
+            .get()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("compass-shortcuts.json"),
+    )
+    .unwrap();
+    assert!(compass.contains("Rust Search") && !compass.contains("Crate Docs"));
+
+    let Response::Error(err) = daemon.request(Request::OpenShortcut {
+        id: "sct-gone".into(),
+        arguments: vec![],
+    }) else {
+        panic!("opening a missing shortcut was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    let Response::Error(err) = daemon.request(Request::SaveShortcut {
+        id: None,
+        name: "No link".into(),
+        icon: "default".into(),
+        url: String::new(),
+        app: "default".into(),
+    }) else {
+        panic!("a shortcut with no link was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+#[test]
+fn snippets_are_imported_created_expanded_edited_and_removed() {
+    use compass_ipc::{ErrorKind, Request, Response, SnippetEntry};
+    let vicinae_file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        let file = root.join("data-home/vicinae/snippets/snippets.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"[{"id":"snp-aaaaaaaaaaaa","name":"Signature","data":{"text":"Best,\nMe"},
+                "createdAt":1700000000,"expansion":{"keyword":";sig","apps":[],"word":true}}]"#,
+        )
+        .unwrap();
+        vicinae_file.set(file).unwrap();
+        Vec::new()
+    });
+    let list = |response: Response| -> Vec<SnippetEntry> {
+        match response {
+            Response::Snippets { snippets } => snippets,
+            other => panic!("not a snippet list: {other:?}"),
+        }
+    };
+    let refused = |response: Response| -> (ErrorKind, String) {
+        match response {
+            Response::Error(err) => (err.kind, err.message),
+            other => panic!("not refused: {other:?}"),
+        }
+    };
+
+    let imported = list(daemon.request(Request::ListSnippets));
+    assert_eq!(imported.len(), 1, "Vicinae's snippet came across");
+    assert_eq!(imported[0].keyword.as_deref(), Some(";sig"));
+    assert_eq!(imported[0].text.as_deref(), Some("Best,\nMe"));
+
+    let saved =
+        list(
+            daemon.request(Request::SaveSnippet {
+                id: None,
+                name: "Greeting".into(),
+                text:
+                    "Hello {name}, {date format=\"yyyy\"} {shell code=\"echo shell-ran\"}{cursor}"
+                        .into(),
+                keyword: Some(";hi".into()),
+                word: false,
+                apps: vec![],
+            }),
+        );
+    assert_eq!(saved.len(), 2);
+    let greeting = saved.iter().find(|s| s.name == "Greeting").unwrap().clone();
+    assert!(greeting.id.starts_with("snp-"));
+    assert!(!greeting.word);
+
+    let (kind, message) = refused(daemon.request(Request::SaveSnippet {
+        id: None,
+        name: "Other".into(),
+        text: "x".into(),
+        keyword: Some(";sig".into()),
+        word: true,
+        apps: vec![],
+    }));
+    assert_eq!(kind, ErrorKind::BadRequest);
+    assert_eq!(message, "keyword already assigned to \"Signature\"");
+    let (kind, message) = refused(daemon.request(Request::SaveSnippet {
+        id: None,
+        name: "x".into(),
+        text: "{cursor}{cursor}".into(),
+        keyword: Some("has space".into()),
+        word: true,
+        apps: vec![],
+    }));
+    assert_eq!(kind, ErrorKind::BadRequest);
+    assert!(
+        message.contains("2 chars min.")
+            && message.contains("Only one {cursor}")
+            && message.contains("printable ASCII"),
+        "{message}"
+    );
+
+    let Response::Text { text } = daemon.request(Request::ExpandSnippet {
+        id: greeting.id.clone(),
+        arguments: vec![("name".into(), "Zoë".into())],
+    }) else {
+        panic!("not expanded");
+    };
+    let year: i32 = text
+        .split(", ")
+        .nth(1)
+        .and_then(|rest| rest.get(..4))
+        .and_then(|year| year.parse().ok())
+        .unwrap_or_else(|| panic!("no year in {text:?}"));
+    assert!(year >= 2024, "{text}");
+    assert_eq!(text, format!("Hello Zoë, {year} shell-ran"));
+
+    // Pasting needs the Shell extension, and this engine has no session bus.
+    let (kind, _) = refused(daemon.request(Request::PasteSnippet {
+        id: greeting.id.clone(),
+        arguments: vec![],
+    }));
+    assert_eq!(kind, ErrorKind::Unsupported);
+
+    let edited = list(daemon.request(Request::SaveSnippet {
+        id: Some(greeting.id.clone()),
+        name: "Hello".into(),
+        text: "Hi".into(),
+        keyword: Some(";hi".into()),
+        word: true,
+        apps: vec![],
+    }));
+    let hello = edited.iter().find(|s| s.id == greeting.id).unwrap();
+    assert_eq!(hello.name, "Hello");
+    assert!(hello.updated_at.is_some());
+    assert_eq!(hello.created_at, greeting.created_at);
+
+    let remaining = list(daemon.request(Request::RemoveSnippet {
+        id: "snp-aaaaaaaaaaaa".into(),
+    }));
+    assert_eq!(remaining.len(), 1);
+    let (kind, _) = refused(daemon.request(Request::RemoveSnippet {
+        id: "snp-aaaaaaaaaaaa".into(),
+    }));
+    assert_eq!(kind, ErrorKind::BadRequest);
+
+    let vicinae = std::fs::read_to_string(vicinae_file.get().unwrap()).unwrap();
+    assert!(vicinae.contains("Signature"), "Vicinae's file is untouched");
+    let compass = std::fs::read_to_string(
+        vicinae_file
+            .get()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("compass-snippets.json"),
+    )
+    .unwrap();
+    assert!(compass.contains("\"name\":\"Hello\"") && !compass.contains("Signature"));
+}
+
+/// Asks for a script run's output until it has finished, or panics.
+fn script_output_until_finished(daemon: &Daemon, session: u64) -> (String, Option<i32>) {
+    use compass_ipc::{Request, Response};
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        match daemon.request(Request::ScriptOutput { session }) {
+            Response::ScriptOutput {
+                output,
+                finished: true,
+                exit_code,
+                ..
+            } => return (output, exit_code),
+            Response::ScriptOutput { .. } => {}
+            other => panic!("not a script output: {other:?}"),
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("script run {session} never finished");
+}
+
+#[test]
+fn script_commands_are_scanned_searched_and_run_in_their_modes() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let marker = std::sync::OnceLock::new();
+    let custom = TempDir::new().expect("tempdir");
+    let write = |dir: &Path, name: &str, mode: &str, title: &str, body: &str| {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\n# @raycast.schemaVersion 1\n# @raycast.title {title}\n\
+                 # @raycast.mode {mode}\n{body}\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    write(
+        custom.path(),
+        "compact.sh",
+        "compact",
+        "Custom Compact",
+        "echo custom; exit 1",
+    );
+    let config = format!(
+        r#"{{"providers": {{"scripts": {{"preferences": {{"customDirs": ["{}"]}}}}}}}}"#,
+        custom.path().display()
+    );
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], &config, |root| {
+        let dir = root.join("data-home/vicinae/scripts");
+        write(
+            &dir,
+            "full.sh",
+            "fullOutput",
+            "Full Report",
+            "# @raycast.argument1 {\"type\":\"text\",\"placeholder\":\"who\"}\n\
+             printf '\\033[32mgreen\\033[0m %s https://x.test\\n' \"$1\"; echo err >&2",
+        );
+        write(&dir, "inline.sh", "inline", "Queue Size", "echo '42 items'");
+        write(
+            &dir,
+            "compact.sh",
+            "compact",
+            "Packaged Compact",
+            "echo packaged",
+        );
+        let flag = root.join("silent-ran");
+        write(
+            &dir.join("tools"),
+            "silent.sh",
+            "silent",
+            "Touch Marker",
+            &format!("touch '{}'", flag.display()),
+        );
+        marker.set(flag).unwrap();
+        Vec::new()
+    });
+
+    let Response::Scripts { scripts } = daemon.request(Request::ListScripts) else {
+        panic!("no script list");
+    };
+    let mut listed: Vec<(&str, &str, &str)> = scripts
+        .iter()
+        .map(|s| (s.id.as_str(), s.title.as_str(), s.mode.as_str()))
+        .collect();
+    listed.sort_unstable();
+    assert_eq!(
+        listed,
+        [
+            ("compact.sh", "Custom Compact", "compact"),
+            ("full.sh", "Full Report", "fullOutput"),
+            ("inline.sh", "Queue Size", "inline"),
+            ("tools.silent.sh", "Touch Marker", "silent"),
+        ],
+        "a custom directory's script shadows the packaged one with the same id"
+    );
+    let full = scripts.iter().find(|s| s.id == "full.sh").unwrap();
+    assert_eq!(full.arguments.len(), 1);
+    assert_eq!(full.arguments[0].placeholder.as_deref(), Some("who"));
+
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "full report".into(),
+    }) else {
+        panic!("no query results");
+    };
+    assert_eq!(hits.first().map(|h| h.id.as_str()), Some("scripts:full.sh"));
+
+    let started = |id: &str, arguments: Vec<String>| match daemon.request(Request::RunScript {
+        id: id.into(),
+        arguments,
+    }) {
+        Response::ScriptStarted { session } => session,
+        other => panic!("{id} did not start: {other:?}"),
+    };
+
+    let session = started("full.sh", vec!["Zoë".into()]).expect("full output is followed");
+    let (output, exit) = script_output_until_finished(&daemon, session);
+    assert_eq!(exit, Some(0));
+    assert!(
+        output.contains("\u{1b}[32mgreen\u{1b}[0m Zoë https://x.test"),
+        "{output:?}"
+    );
+    assert!(output.contains("err"), "stderr is part of full output");
+
+    let session = started("inline.sh", vec![]).expect("inline is followed");
+    let (output, _) = script_output_until_finished(&daemon, session);
+    assert_eq!(output.trim(), "42 items");
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    loop {
+        let Response::Scripts { scripts } = daemon.request(Request::ListScripts) else {
+            panic!("no script list");
+        };
+        let inline = scripts.iter().find(|s| s.id == "inline.sh").unwrap();
+        if inline.subtitle == "42 items" {
+            break;
+        }
+        assert_eq!(inline.subtitle, "No data");
+        assert!(
+            Instant::now() < deadline,
+            "the inline line never became the subtitle"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let session = started("compact.sh", vec![]).expect("compact is followed");
+    assert_eq!(
+        script_output_until_finished(&daemon, session),
+        ("custom\n".to_owned(), Some(1))
+    );
+
+    assert_eq!(started("tools.silent.sh", vec![]), None);
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while !marker.get().unwrap().exists() {
+        assert!(Instant::now() < deadline, "the silent script never ran");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    let Response::Error(err) = daemon.request(Request::RunScript {
+        id: "nothing.sh".into(),
+        arguments: vec![],
+    }) else {
+        panic!("an unknown script was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+#[test]
+fn run_terminal_program_lists_path_and_runs_directly_or_refuses() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let bin = TempDir::new().expect("tempdir");
+    let (_, log) = recording_app(bin.path(), "fake-tool", "");
+    let path = std::env::join_paths(std::iter::once(bin.path().to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .expect("PATH");
+    let config = r#"{"providers": {"commands": {"entrypoints": {"run-program":
+        {"preferences": {"default-action": "run"}}}}}}"#;
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], config, |_| {
+        vec![("PATH", path)]
+    });
+
+    let Response::Programs {
+        programs,
+        terminal,
+        default_action,
+    } = daemon.request(Request::ListPrograms)
+    else {
+        panic!("no program list");
+    };
+    let tool = bin.path().join("fake-tool").to_string_lossy().into_owned();
+    assert!(programs.contains(&tool), "{programs:?}");
+    assert_eq!(terminal, None, "the fixture installs no terminal");
+    assert_eq!(default_action, "run", "read from the command's preferences");
+
+    assert_eq!(
+        daemon.request(Request::RunProgram {
+            argv: vec!["fake-tool".into(), "--flag".into(), "two words".into()],
+            terminal: false,
+            hold: false,
+        }),
+        Response::Ack
+    );
+    assert_eq!(launched_with(&log), ["--flag", "two words"]);
+
+    let Response::Error(err) = daemon.request(Request::RunProgram {
+        argv: vec!["no-such-tool-anywhere".into()],
+        terminal: false,
+        hold: false,
+    }) else {
+        panic!("a missing program was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (ErrorKind::BadRequest, "Not a valid executable")
+    );
+    let Response::Error(err) = daemon.request(Request::RunProgram {
+        argv: vec!["fake-tool".into()],
+        terminal: true,
+        hold: true,
+    }) else {
+        panic!("a terminal run with no terminal was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+}
+
+#[test]
+fn create_extension_writes_the_boilerplate_under_home() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let home = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        std::fs::create_dir_all(root.join("code")).unwrap();
+        home.set(root.to_path_buf()).unwrap();
+        Vec::new()
+    });
+    let request = |location: &str, author: &str| Request::CreateExtension {
+        author: author.into(),
+        title: "Hello World".into(),
+        description: "Says hello to the whole world".into(),
+        location: location.into(),
+        command_title: "Say Hello".into(),
+        command_description: "Says hello".into(),
+        template: ":boilerplate/tmpl-no-view".into(),
+    };
+    let Response::ExtensionCreated { path } = daemon.request(request("~/code", "zoe")) else {
+        panic!("not created");
+    };
+    let root = std::path::Path::new(&path);
+    assert!(root.starts_with(home.get().unwrap().join("code")), "{path}");
+    let manifest = std::fs::read_to_string(root.join("package.json")).unwrap();
+    assert!(manifest.contains("\"mode\": \"no-view\""), "{manifest}");
+
+    let Response::Error(err) = daemon.request(request("~/nowhere", "z")) else {
+        panic!("an invalid form was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    assert!(
+        err.message.contains("location: Must exist"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn set_theme_keeps_the_theme_in_the_configuration() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let config_file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        config_file
+            .set(root.join("config/vicinae/vicinae.json"))
+            .unwrap();
+        Vec::new()
+    });
+    assert_eq!(
+        daemon.request(Request::SetTheme {
+            theme: "Tokyo-Night".into()
+        }),
+        Response::Ack
+    );
+    let saved = std::fs::read_to_string(config_file.get().unwrap()).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert!(
+        saved.to_string().contains("\"tokyo-night\""),
+        "the persisted spelling is written: {saved}"
+    );
+    let Response::Error(err) = daemon.request(Request::SetTheme {
+        theme: "no-such-theme".into(),
+    }) else {
+        panic!("an unknown theme was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+#[test]
+fn browse_fonts_lists_families_and_previews_one() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let Response::Fonts { fonts, categories } = daemon.request(Request::ListFonts) else {
+        panic!("no font list");
+    };
+    assert!(categories.iter().any(|category| category == "Latin"));
+    for font in &fonts {
+        assert!(
+            font.categories.contains(&font.primary),
+            "{font:?} is listed under a category it cannot be filtered by"
+        );
+    }
+    if let Some(font) = fonts.first() {
+        let Response::Text { text } = daemon.request(Request::FontSpecimen {
+            name: font.name.clone(),
+        }) else {
+            panic!("no specimen for {}", font.name);
+        };
+        assert!(!text.is_empty());
+    }
+    let Response::Error(err) = daemon.request(Request::FontSpecimen {
+        name: "No Such Family 123".into(),
+    }) else {
+        panic!("an unknown family was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+/// Runs `vicinae dmenu` against `daemon` with `stdin`, returning its output.
+fn run_dmenu(daemon: &Daemon, args: &[&str], stdin: &str) -> std::process::Output {
+    use std::io::Write as _;
+    let mut child = Command::new(binary())
+        .arg("--socket")
+        .arg(&daemon.socket)
+        .arg("dmenu")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run vicinae dmenu");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("vicinae dmenu finished")
+}
+
+#[test]
+fn dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice() {
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+
+    // No window yet: refused, and nothing printed.
+    let refused = run_dmenu(&daemon, &[], "a\nb\n");
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+
+    // A fake window that picks the second entry for an index list, and
+    // dismisses anything else.
+    let socket = daemon.socket.clone();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<compass_ipc::DmenuSpec>::new()));
+    let window = {
+        let seen = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async move {
+                let mut window = compass_ipc::WindowClient::attach(&socket)
+                    .await
+                    .expect("attach");
+                ready_tx.send(()).expect("ready");
+                for _ in 0..2 {
+                    let Some(compass_ipc::WindowCommand::Dmenu(token)) =
+                        window.next_command().await.expect("a command")
+                    else {
+                        panic!("expected a dmenu command");
+                    };
+                    window
+                        .reply(compass_ipc::WindowOutcome::Shown)
+                        .await
+                        .expect("reply");
+                    let mut client = compass_ipc::Client::connect(&socket).await.expect("client");
+                    let compass_ipc::Response::DmenuList { spec } = client
+                        .request(compass_ipc::Request::DmenuFetch { token })
+                        .await
+                        .expect("fetch")
+                    else {
+                        panic!("no dmenu list");
+                    };
+                    let output = spec.output_index.then(|| "1".to_owned());
+                    seen.lock().expect("lock").push(spec);
+                    let answered = client
+                        .request(compass_ipc::Request::DmenuChoose { token, output })
+                        .await
+                        .expect("choose");
+                    assert_eq!(answered, compass_ipc::Response::Ack);
+                }
+            });
+        })
+    };
+    ready_rx.recv_timeout(STARTUP_TIMEOUT).expect("attached");
+
+    let chosen = run_dmenu(
+        &daemon,
+        &["--format", "index", "-p", "Pick one", "-W", "300"],
+        "alpha\nbeta\n\ngamma\n",
+    );
+    assert!(
+        chosen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&chosen.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&chosen.stdout), "1\n");
+
+    let dismissed = run_dmenu(&daemon, &[], "alpha\n");
+    assert_eq!(
+        dismissed.status.code(),
+        Some(1),
+        "dismissed: exit 1, as the C++"
+    );
+    assert!(dismissed.stdout.is_empty());
+
+    window.join().expect("the fake window finished");
+    let seen = seen.lock().expect("lock");
+    assert_eq!(seen[0].content, "alpha\nbeta\n\ngamma\n");
+    assert_eq!(seen[0].placeholder.as_deref(), Some("Pick one"));
+    assert!(
+        seen[0].no_quick_look && seen[0].no_footer,
+        "a list narrower than 500 px drops quick look and the footer"
+    );
+    assert!(!seen[1].output_index);
+}

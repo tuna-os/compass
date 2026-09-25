@@ -26,6 +26,53 @@ pub enum Purpose {
     Preferences,
     /// This one run's arguments.
     Arguments,
+    /// A shortcut's arguments, to open it with; the form's `command_id` is
+    /// the shortcut's id.
+    ShortcutArguments,
+    /// Creating, editing or duplicating a shortcut; `command_id` is the
+    /// shortcut edited or duplicated, empty when creating.
+    ShortcutForm {
+        /// Why the form is open.
+        mode: compass_core::shortcut_form::Mode,
+        /// Whether saving goes back to Manage Shortcuts rather than the root.
+        from_manage: bool,
+    },
+    /// A snippet's arguments, to copy or paste it with; `command_id` is the
+    /// snippet's id.
+    SnippetArguments {
+        /// Paste rather than copy.
+        paste: bool,
+    },
+    /// Creating, editing or duplicating a snippet; `command_id` is the
+    /// snippet edited or duplicated, empty when creating.
+    SnippetForm {
+        /// Why the form is open.
+        mode: compass_core::shortcut_form::Mode,
+        /// Whether saving goes back to Manage Snippets rather than the root.
+        from_manage: bool,
+    },
+    /// A script command's arguments, or its confirmation; `command_id` is
+    /// the script's id.
+    ScriptArguments,
+    /// The Create Extension form.
+    CreateExtension,
+}
+
+impl Purpose {
+    /// The line under the form saying what the keys do.
+    #[must_use]
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Preferences | Self::Arguments => "Enter: save and run    Esc: back",
+            Self::ShortcutArguments => "Enter: open    Esc: back",
+            Self::ShortcutForm { .. } => "Enter: save    Esc: back",
+            Self::SnippetArguments { paste: false } => "Enter: copy    Esc: back",
+            Self::SnippetArguments { paste: true } => "Enter: paste    Esc: back",
+            Self::SnippetForm { .. } => "Ctrl+Enter: save    Esc: back",
+            Self::ScriptArguments => "Enter: run    Esc: cancel",
+            Self::CreateExtension => "Enter: create extension    Esc: back",
+        }
+    }
 }
 
 /// The form.
@@ -43,6 +90,9 @@ pub struct PreferencesPage {
     pub values: Vec<FieldValue>,
     /// Why it cannot be saved yet, or why saving failed.
     pub notice: Option<String>,
+    /// Each text area's editor, by field position: it keeps the cursor and
+    /// selection, and its text is mirrored into `values`.
+    pub editors: std::collections::BTreeMap<usize, iced::widget::text_editor::Content>,
 }
 
 impl PreferencesPage {
@@ -54,16 +104,16 @@ impl PreferencesPage {
         title: String,
         fields: Vec<PreferenceInput>,
     ) -> Self {
-        let values = fields
+        let values: Vec<FieldValue> = fields
             .iter()
             .map(|field| match &field.kind {
-                PreferenceInputKind::Text | PreferenceInputKind::Password => {
-                    FieldValue::Text(match &field.value {
-                        Some(serde_json::Value::String(text)) => text.clone(),
-                        Some(serde_json::Value::Null) | None => String::new(),
-                        Some(other) => other.to_string(),
-                    })
-                }
+                PreferenceInputKind::Text
+                | PreferenceInputKind::Password
+                | PreferenceInputKind::TextArea => FieldValue::Text(match &field.value {
+                    Some(serde_json::Value::String(text)) => text.clone(),
+                    Some(serde_json::Value::Null) | None => String::new(),
+                    Some(other) => other.to_string(),
+                }),
                 PreferenceInputKind::Checkbox { .. } => FieldValue::Checked(
                     field
                         .value
@@ -80,6 +130,19 @@ impl PreferencesPage {
                 PreferenceInputKind::Unsupported { .. } => FieldValue::Kept(field.value.clone()),
             })
             .collect();
+        let editors = fields
+            .iter()
+            .zip(&values)
+            .enumerate()
+            .filter(|(_, (field, _))| field.kind == PreferenceInputKind::TextArea)
+            .map(|(index, (_, value))| {
+                let text = match value {
+                    FieldValue::Text(text) => text.as_str(),
+                    _ => "",
+                };
+                (index, iced::widget::text_editor::Content::with_text(text))
+            })
+            .collect();
         Self {
             purpose,
             command_id,
@@ -87,6 +150,28 @@ impl PreferencesPage {
             fields,
             values,
             notice: None,
+            editors,
+        }
+    }
+
+    /// Whether the form has a text area, where Enter is a newline and
+    /// submitting takes Ctrl+Enter.
+    #[must_use]
+    pub fn has_text_area(&self) -> bool {
+        !self.editors.is_empty()
+    }
+
+    /// An edit in the text area at `index`, applied to its editor and, when
+    /// it changed the text, to the field's value.
+    pub fn edit_text_area(&mut self, index: usize, action: iced::widget::text_editor::Action) {
+        let Some(editor) = self.editors.get_mut(&index) else {
+            return;
+        };
+        let changed = action.is_edit();
+        editor.perform(action);
+        if changed && let Some(value) = self.values.get_mut(index) {
+            *value = FieldValue::Text(editor.text());
+            self.notice = None;
         }
     }
 

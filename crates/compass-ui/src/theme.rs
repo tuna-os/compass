@@ -55,6 +55,34 @@ impl Theme {
         }
     }
 
+    /// What the picker calls it.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Catppuccin => "Catppuccin",
+            Self::Dracula => "Dracula",
+            Self::Nord => "Nord",
+            Self::Gruvbox => "Gruvbox",
+            Self::TokyoNight => "Tokyo Night",
+            Self::Solarized => "Solarized",
+        }
+    }
+
+    /// A line saying what it is, for the picker and `vicinae theme list`.
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::System => "Follow OS (Adwaita)",
+            Self::Catppuccin => "Catppuccin (Mocha/Latte)",
+            Self::Dracula => "Dracula",
+            Self::Nord => "Nord",
+            Self::Gruvbox => "Gruvbox",
+            Self::TokyoNight => "Tokyo Night",
+            Self::Solarized => "Solarized",
+        }
+    }
+
     /// Parse the persisted spelling, case-insensitive.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {

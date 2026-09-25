@@ -43,6 +43,23 @@ pub enum CommandKind {
     SearchEmojis,
     /// Search the file index and open a file.
     SearchFiles,
+    /// The form a new quicklink is made in.
+    CreateShortcut,
+    /// List, open, edit and remove quicklinks.
+    ManageShortcuts,
+    /// The form a new snippet is made in.
+    CreateSnippet,
+    /// List, copy, paste, edit and remove snippets.
+    ManageSnippets,
+    /// Run a program on `PATH`, or a typed command line, in a terminal or
+    /// directly.
+    RunProgram,
+    /// Browse the themes with a live preview, and keep one.
+    SetTheme,
+    /// Generate a new extension's boilerplate from a form.
+    CreateExtension,
+    /// Browse the installed fonts by script, and preview one.
+    BrowseFonts,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
     /// A media command, by its id in [`crate::media_commands`].
@@ -94,6 +111,70 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Search files on your system",
         keywords: &["files", "file", "find", "documents", "folders", "open"],
         icon: "magnifying-glass",
+    },
+    BuiltinCommand {
+        kind: CommandKind::CreateShortcut,
+        entrypoint: "create-shortcut",
+        title: "Create Shortcut",
+        subtitle: "Save a link with placeholders",
+        keywords: &["shortcut", "quicklink", "link", "bookmark", "url", "new"],
+        icon: "bolt",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ManageShortcuts,
+        entrypoint: "manage-shortcuts",
+        title: "Manage Shortcuts",
+        subtitle: "Open, edit and remove your shortcuts",
+        keywords: &["shortcuts", "quicklinks", "links", "bookmarks"],
+        icon: "bolt",
+    },
+    BuiltinCommand {
+        kind: CommandKind::CreateSnippet,
+        entrypoint: "create-snippet",
+        title: "Create Snippet",
+        subtitle: "Save text to paste or expand as you type",
+        keywords: &["snippet", "text", "template", "expansion", "new"],
+        icon: "snippets",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ManageSnippets,
+        entrypoint: "manage-snippets",
+        title: "Manage Snippets",
+        subtitle: "Copy, paste, edit and remove your snippets",
+        keywords: &["snippets", "text", "templates", "paste", "search"],
+        icon: "snippets",
+    },
+    BuiltinCommand {
+        kind: CommandKind::RunProgram,
+        entrypoint: "run-program",
+        title: "Run Terminal Program",
+        subtitle: "Run a program in a terminal window",
+        keywords: &["shell command", "run program", "terminal", "execute"],
+        icon: "terminal",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SetTheme,
+        entrypoint: "set-theme",
+        title: "Set Theme",
+        subtitle: "Browse the themes and pick one",
+        keywords: &["theme", "themes", "colors", "appearance", "dark", "light"],
+        icon: "brush",
+    },
+    BuiltinCommand {
+        kind: CommandKind::CreateExtension,
+        entrypoint: "create-extension",
+        title: "Create Extension",
+        subtitle: "Start a new extension from a template",
+        keywords: &["developer", "extension", "boilerplate", "template", "new"],
+        icon: "hammer",
+    },
+    BuiltinCommand {
+        kind: CommandKind::BrowseFonts,
+        entrypoint: "browse-fonts",
+        title: "Browse Fonts",
+        subtitle: "Browse and preview the installed fonts",
+        keywords: &["fonts", "font", "typeface", "typography", "specimen"],
+        icon: "text",
     },
     BuiltinCommand {
         kind: CommandKind::Power(power_commands::COMMANDS[0].id),

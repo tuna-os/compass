@@ -16,18 +16,25 @@ pub mod cli;
 pub mod clipboard_service;
 pub mod config_cmd;
 pub mod conformance;
+pub mod developer;
+pub mod dmenu;
 pub mod doctor;
 pub mod engine;
 pub mod extension_apps;
 pub mod extension_runner;
 pub mod file_search;
+pub mod fonts;
 pub mod hotkey;
 pub mod indexer_client;
 pub mod indexer_service;
 pub mod indexer_watch;
 pub mod ipc;
+pub mod programs;
+pub mod scripts;
 pub mod serve;
 pub mod session;
+pub mod shortcuts;
+pub mod snippets;
 pub mod spike;
 pub mod typography;
 pub mod ui_backend;
@@ -479,6 +486,22 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             unreachable!("the launcher is dispatched before the runtime")
         }
 
+        Command::Dmenu(args) => {
+            require_servable_engine(cli.engine)?;
+            let content = std::io::read_to_string(std::io::stdin())
+                .context("reading the dmenu entries from standard input")?;
+            let spec = crate::dmenu::spec(args, content);
+            match ipc::send(&socket, Request::Dmenu { spec }).await? {
+                Response::DmenuOutput { output } if output.is_empty() => {
+                    Ok(ExitCode::from(EXIT_FAILURE))
+                }
+                Response::DmenuOutput { output } => {
+                    println!("{output}");
+                    Ok(ExitCode::from(EXIT_OK))
+                }
+                other => bail!("unexpected answer from the engine: {other:?}"),
+            }
+        }
         Command::Toggle => window_command(&socket, cli.engine, Request::Toggle).await,
         Command::Show => window_command(&socket, cli.engine, Request::Show).await,
         Command::Hide => window_command(&socket, cli.engine, Request::Hide).await,
@@ -494,15 +517,7 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
                 .map(|t| {
                     serde_json::json!({
                         "name": t.name(),
-                        "description": match t {
-                            compass_ui::theme::Theme::System => "Follow OS (Adwaita)",
-                            compass_ui::theme::Theme::Catppuccin => "Catppuccin (Mocha/Latte)",
-                            compass_ui::theme::Theme::Dracula => "Dracula",
-                            compass_ui::theme::Theme::Nord => "Nord",
-                            compass_ui::theme::Theme::Gruvbox => "Gruvbox",
-                            compass_ui::theme::Theme::TokyoNight => "Tokyo Night",
-                            compass_ui::theme::Theme::Solarized => "Solarized",
-                        }
+                        "description": t.description(),
                     })
                 })
                 .collect();

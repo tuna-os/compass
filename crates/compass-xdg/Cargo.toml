@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 percent-encoding.workspace = true
 roxmltree.workspace = true
+mime_guess.workspace = true
 thiserror.workspace = true
 dirs = { workspace = true }
 

@@ -110,6 +110,117 @@ fn all_requests() -> Vec<Request> {
         Request::OAuthRedirect {
             url: "raycast://oauth?package_name=Extension&code=é&state=s".into(),
         },
+        Request::ListShortcuts,
+        Request::SaveShortcut {
+            id: None,
+            name: "Recherche 🚀".into(),
+            icon: "default".into(),
+            url: "https://x.test/?q={query}".into(),
+            app: "default".into(),
+        },
+        Request::SaveShortcut {
+            id: Some("sct-0123456789ab".into()),
+            name: String::new(),
+            icon: "icon://builtin/link".into(),
+            url: "{clipboard}".into(),
+            app: "firefox.desktop".into(),
+        },
+        Request::RemoveShortcut {
+            id: "sct-0123456789ab".into(),
+        },
+        Request::OpenShortcut {
+            id: "sct-0123456789ab".into(),
+            arguments: vec!["é".into(), String::new()],
+        },
+        Request::ExpandShortcut {
+            id: "sct-0123456789ab".into(),
+            arguments: vec![],
+        },
+        Request::ListSnippets,
+        Request::SaveSnippet {
+            id: None,
+            name: "Signature ✍".into(),
+            text: "Best,\n{cursor}".into(),
+            keyword: Some(";sig".into()),
+            word: true,
+            apps: vec!["org.gnome.TextEditor.desktop".into()],
+        },
+        Request::SaveSnippet {
+            id: Some("snp-0123456789ab".into()),
+            name: "Address".into(),
+            text: "1 Rue de l'Église".into(),
+            keyword: None,
+            word: false,
+            apps: vec![],
+        },
+        Request::RemoveSnippet {
+            id: "snp-0123456789ab".into(),
+        },
+        Request::ExpandSnippet {
+            id: "snp-0123456789ab".into(),
+            arguments: vec![("name".into(), "Zoë".into())],
+        },
+        Request::PasteSnippet {
+            id: "snp-0123456789ab".into(),
+            arguments: vec![],
+        },
+        Request::ListScripts,
+        Request::RunScript {
+            id: "tools.uptime.sh".into(),
+            arguments: vec!["é".into(), String::new()],
+        },
+        Request::ScriptOutput { session: 3 },
+        Request::StopScript { session: 3 },
+        Request::ListPrograms,
+        Request::Dmenu {
+            spec: compass_ipc::DmenuSpec {
+                content: "alpha\n/home/me/β.txt\n\ngamma 🚀".into(),
+                navigation_title: Some("Pick".into()),
+                section_title: Some("Items ({count})".into()),
+                output_index: true,
+                placeholder: Some("Filter…".into()),
+                query: Some("al".into()),
+                width: Some(480),
+                height: None,
+                no_section: false,
+                no_quick_look: true,
+                no_metadata: false,
+                no_footer: true,
+            },
+        },
+        Request::Dmenu {
+            spec: compass_ipc::DmenuSpec::default(),
+        },
+        Request::DmenuFetch { token: 9 },
+        Request::DmenuChoose {
+            token: 9,
+            output: Some("β".into()),
+        },
+        Request::DmenuChoose {
+            token: 9,
+            output: None,
+        },
+        Request::SetTheme {
+            theme: "tokyo-night".into(),
+        },
+        Request::ListFonts,
+        Request::FontSpecimen {
+            name: "Noto Sans ไทย".into(),
+        },
+        Request::CreateExtension {
+            author: "zoë".into(),
+            title: "My Extension".into(),
+            description: "Does something useful, promise".into(),
+            location: "~/code".into(),
+            command_title: "Search".into(),
+            command_description: "Search things".into(),
+            template: ":boilerplate/tmpl-list".into(),
+        },
+        Request::RunProgram {
+            argv: vec!["htop".into(), "-d".into(), "é 5".into()],
+            terminal: true,
+            hold: false,
+        },
     ]
 }
 
@@ -171,6 +282,7 @@ fn all_responses() -> Vec<Response> {
         Response::Window(WindowCommand::Show),
         Response::Window(WindowCommand::Hide),
         Response::Window(WindowCommand::Toggle),
+        Response::Window(WindowCommand::Dmenu(u64::MAX)),
         Response::ClipboardHistory { entries: vec![] },
         Response::ClipboardHistory {
             entries: vec![
@@ -293,6 +405,112 @@ fn all_responses() -> Vec<Response> {
             heading: "Recently Accessed".into(),
             files: vec![],
         },
+        Response::Shortcuts {
+            shortcuts: vec![compass_ipc::ShortcutEntry {
+                id: "sct-0123456789ab".into(),
+                name: "Recherche 🚀".into(),
+                icon: "icon://favicon/x.test".into(),
+                url: "https://x.test/?q={query}".into(),
+                app: "default".into(),
+                open_count: 3,
+                created_at: 1_700_000_000,
+                updated_at: 1_700_000_100,
+                last_used_at: Some(1_700_000_200),
+            }],
+        },
+        Response::Shortcuts { shortcuts: vec![] },
+        Response::Text {
+            text: "https://x.test/?q=é".into(),
+        },
+        Response::Snippets {
+            snippets: vec![
+                compass_ipc::SnippetEntry {
+                    id: "snp-0123456789ab".into(),
+                    name: "Signature ✍".into(),
+                    text: Some("Best,\n{cursor}".into()),
+                    file: None,
+                    created_at: 1_700_000_000,
+                    updated_at: Some(1_700_000_001),
+                    keyword: Some(";sig".into()),
+                    word: true,
+                    apps: vec![],
+                },
+                compass_ipc::SnippetEntry {
+                    id: "snp-ba9876543210".into(),
+                    name: "Logo".into(),
+                    text: None,
+                    file: Some("/home/me/logo.png".into()),
+                    created_at: 1_700_000_000,
+                    updated_at: None,
+                    keyword: None,
+                    word: false,
+                    apps: vec!["gimp.desktop".into()],
+                },
+            ],
+        },
+        Response::Snippets { snippets: vec![] },
+        Response::Scripts {
+            scripts: vec![compass_ipc::ScriptEntry {
+                id: "tools.uptime.sh".into(),
+                title: "Uptime ⏱".into(),
+                subtitle: "tools".into(),
+                keywords: vec!["load".into()],
+                mode: "fullOutput".into(),
+                needs_confirmation: true,
+                path: "/home/me/.local/share/vicinae/scripts/tools/uptime.sh".into(),
+                arguments: vec![compass_ipc::ScriptArgumentEntry {
+                    kind: "dropdown".into(),
+                    placeholder: Some("Unit".into()),
+                    optional: false,
+                    options: vec![("Seconds".into(), "s".into())],
+                }],
+            }],
+        },
+        Response::Scripts { scripts: vec![] },
+        Response::ScriptStarted { session: Some(3) },
+        Response::ScriptStarted { session: None },
+        Response::ScriptOutput {
+            output: "\u{1b}[31mred\u{1b}[0m https://x.test é".into(),
+            finished: true,
+            exit_code: Some(0),
+            elapsed_ms: 1500,
+        },
+        Response::Programs {
+            programs: vec!["/usr/bin/htop".into(), "/opt/bin/ünï".into()],
+            terminal: Some("Ptyxis".into()),
+            default_action: "run-in-terminal".into(),
+        },
+        Response::ExtensionCreated {
+            path: "/home/me/code/my-extension".into(),
+        },
+        Response::Fonts {
+            fonts: vec![compass_ipc::FontEntry {
+                name: "Noto Sans Thai".into(),
+                family: "Noto Sans Thai".into(),
+                glyph: Some("กข".into()),
+                color: false,
+                primary: "Thai".into(),
+                categories: vec!["Thai".into(), "Latin".into()],
+            }],
+            categories: vec!["Latin".into(), "Thai".into()],
+        },
+        Response::DmenuOutput {
+            output: "gamma 🚀".into(),
+        },
+        Response::DmenuOutput {
+            output: String::new(),
+        },
+        Response::DmenuList {
+            spec: compass_ipc::DmenuSpec {
+                content: "a\nb".into(),
+                ..compass_ipc::DmenuSpec::default()
+            },
+        },
+        Response::Programs {
+            programs: vec![],
+            terminal: None,
+            default_action: "run".into(),
+        },
     ]
 }
 
@@ -331,6 +549,29 @@ fn request_variants_are_exhaustive() {
             | Request::SearchFiles { .. }
             | Request::OpenFile { .. }
             | Request::OAuthRedirect { .. }
+            | Request::ListShortcuts
+            | Request::SaveShortcut { .. }
+            | Request::RemoveShortcut { .. }
+            | Request::OpenShortcut { .. }
+            | Request::ExpandShortcut { .. }
+            | Request::ListSnippets
+            | Request::SaveSnippet { .. }
+            | Request::RemoveSnippet { .. }
+            | Request::ExpandSnippet { .. }
+            | Request::PasteSnippet { .. }
+            | Request::ListScripts
+            | Request::RunScript { .. }
+            | Request::ScriptOutput { .. }
+            | Request::StopScript { .. }
+            | Request::ListPrograms
+            | Request::RunProgram { .. }
+            | Request::Dmenu { .. }
+            | Request::DmenuFetch { .. }
+            | Request::DmenuChoose { .. }
+            | Request::SetTheme { .. }
+            | Request::CreateExtension { .. }
+            | Request::ListFonts
+            | Request::FontSpecimen { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -355,6 +596,17 @@ fn response_variants_are_exhaustive() {
             | Response::ExtensionNeedsArguments { .. }
             | Response::ExtensionView { .. }
             | Response::Files { .. }
+            | Response::Shortcuts { .. }
+            | Response::Text { .. }
+            | Response::Snippets { .. }
+            | Response::Scripts { .. }
+            | Response::ScriptStarted { .. }
+            | Response::ScriptOutput { .. }
+            | Response::Programs { .. }
+            | Response::ExtensionCreated { .. }
+            | Response::Fonts { .. }
+            | Response::DmenuOutput { .. }
+            | Response::DmenuList { .. }
             | Response::Window(_) => {}
         }
     }

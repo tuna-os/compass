@@ -498,6 +498,14 @@ Three tracks that do not block each other:
 media control · power management · shortcuts · snippets · system · theme · script commands ·
 dmenu · store front-ends · window/workspace · developer tools.
 
+*Track A status:* running end to end (engine, IPC, launcher page, tests) — calculator, clipboard
+history, emoji, window switching, power, media and volume, Search Files, shortcuts (Create
+Shortcut, Manage Shortcuts, shortcuts in root search; IPC v13), and snippets (Create Snippet,
+Manage Snippets: copy, paste, edit; keyword expansion waits on the input server, which is not
+ported), script commands (scanned into root search, run in all five output modes), Run
+Terminal Program, `vicinae dmenu`, Set Theme, Create Extension, and Browse Fonts. What each still
+lacks is in `PARITY.md`, one section per builtin.
+
 **Browser tab search and switching is not in this list.** It is out of scope for the port and
 becomes an extension — see [ADR-0008](./adr/0008-browser-control-is-an-extension.md). It is a
 browser feature surfaced in a launcher, with no coupling to the compositor, clipboard or index, and
@@ -2311,7 +2319,7 @@ Ordered by what blocks what, not by size.
 | `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
 | `UI/confirmAlert` | done: drawn by the launcher, and settled on confirmation, cancellation, replacement (a second alert) and navigation (the launcher popping, or the extension pushing or popping) |
 | `EventCore/handlerActivated` | done: actions, search text and form fields fire it (`Views::activate`) |
-| `OAuth/authorize` | done without the overlay: the browser opens on the default https handler, a toast says so, and the `raycast://oauth` redirect comes back through `vicinae deeplink` (IPC v11) keyed by `state`; the token store is routed in the engine. 46 of 49 |
+| `OAuth/authorize` | done without the overlay: the browser opens on the default https handler, a toast says so, and the `raycast://oauth` redirect comes back through `vicinae deeplink` (IPC v12) keyed by `state`; the token store is routed in the engine. 46 of 49 |
 | remote images, date/tag/file pickers | done: `ureq` into Compass's own image cache; a typed date field, tag toggles, and the FileChooser portal (PARITY "Extension views") |
 | running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
 | Suite 1 (the gate) | **the harness runs, and the gate is not met.** `vicinae conformance` runs installed extensions against an engine of its own and judges each command's first frame; `scripts/suite1/` pins the corpus (top 25 Raycast store extensions by installs that can run on Linux at all, plus all 95 Vicinae store extensions), fetches the stores' own bundles, and ratchets against `expected.json`; `.github/workflows/suite1.yaml` runs it on the host (gating on regressions) and inside the Flatpak (report-only until seen green). First measured run, in the dev container: **71 of 120 pass** — Raycast 11 of 25, Vicinae 60 of 95. Of the 49 failures, 7 wait on an OAuth sign-in a headless run cannot give, about 30 need a program, file, session or account the runner does not have (hyprctl, pactl, a system bus, a Firefox profile, API keys), 2 need host APIs Compass lacks (`getSelectedText`, `WindowManagement/getActiveWindow`), 1 is the sandbox refusing a downloaded binary (`speedtest`), 1 the heap cap (`dashboard-icons`), and 5 draw only an empty first frame. None of it has run inside the Flatpak yet |

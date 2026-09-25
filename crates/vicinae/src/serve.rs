@@ -97,6 +97,21 @@ pub struct EngineState {
     views: Arc<crate::extension_runner::Views>,
     /// Search Files, and the file indexer it supervises.
     files: Arc<crate::file_search::FileSearch>,
+    /// Shortcuts (quicklinks). `None` without a data directory to keep them
+    /// in, and in tests that build the state around an index.
+    shortcuts: Option<compass_core::shortcut_service::ShortcutService>,
+    /// Snippets, `None` on the same terms as `shortcuts`.
+    snippets: Option<compass_core::snippet_store::SnippetStore>,
+    /// Script commands, as the last scan found them.
+    scripts: crate::scripts::Scripts,
+    /// Script runs the launcher follows.
+    script_runs: Arc<crate::scripts::Runs>,
+    /// Run Terminal Program's `default-action` preference.
+    run_program_default: String,
+    /// `vicinae dmenu` lists waiting on the launcher.
+    dmenus: Arc<crate::dmenu::Pending>,
+    /// Browse Fonts' families, read once.
+    fonts: Arc<tokio::sync::OnceCell<Vec<compass_core::font_service::BrowsedFamily>>>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -141,6 +156,23 @@ impl EngineState {
 
         let frecency = Self::open_frecency();
 
+        let shortcuts = crate::shortcuts::data_dir().map(|dir| crate::shortcuts::open(&dir));
+        let snippets = crate::shortcuts::data_dir().map(|dir| crate::snippets::open(&dir));
+        let mut scripts = crate::scripts::Scripts::new(
+            compass_core::script_scan::scan_directories(
+                &crate::scripts::custom_directories(
+                    config.provider_preferences(crate::scripts::PREFERENCES_PROVIDER_ID),
+                ),
+                &crate::scripts::default_directories(),
+            ),
+            crate::shortcuts::data_dir().map(|dir| dir.join(crate::scripts::METADATA_FILE)),
+        );
+        scripts.rescan();
+        index.set_scripts(scripts.items());
+        if let Some(shortcuts) = &shortcuts {
+            index.set_shortcuts(shortcuts.shortcuts().to_vec());
+        }
+
         // Started with the engine, as `FileExtension::initialized` starts
         // it, so the index is warm by the time anyone searches it.
         let files = crate::file_search::FileSearch::start(
@@ -160,6 +192,16 @@ impl EngineState {
             shell: None,
             views: Arc::default(),
             files: Arc::new(files),
+            shortcuts,
+            snippets,
+            scripts,
+            script_runs: Arc::default(),
+            dmenus: Arc::default(),
+            fonts: Arc::default(),
+            run_program_default: crate::programs::default_action(config.entrypoint_preferences(
+                compass_core::commands::COMMANDS_PROVIDER_ID,
+                crate::programs::ENTRYPOINT,
+            )),
         }
     }
 
@@ -206,6 +248,13 @@ impl EngineState {
             shell: None,
             views: Arc::default(),
             files: Arc::default(),
+            shortcuts: None,
+            snippets: None,
+            scripts: crate::scripts::Scripts::default(),
+            script_runs: Arc::default(),
+            run_program_default: crate::programs::default_action(None),
+            dmenus: Arc::default(),
+            fonts: Arc::default(),
         }
     }
 
@@ -276,6 +325,30 @@ impl EngineState {
                     id: command.id.clone(),
                     title: command.title.clone(),
                     subtitle: Some(command.extension_title.clone()),
+                    score: match_score,
+                },
+                compass_core::RootHit::Script {
+                    script,
+                    match_score,
+                } => QueryHit {
+                    id: compass_core::root_items::entrypoint_id(
+                        compass_core::script_scan::SCRIPTS_PROVIDER_ID,
+                        &script.id,
+                    ),
+                    title: script.title.clone(),
+                    subtitle: Some(script.subtitle.clone()),
+                    score: match_score,
+                },
+                compass_core::RootHit::Shortcut {
+                    shortcut,
+                    match_score,
+                } => QueryHit {
+                    id: compass_core::root_items::entrypoint_id(
+                        compass_core::shortcut::SHORTCUTS_PROVIDER_ID,
+                        &shortcut.id,
+                    ),
+                    title: shortcut.name.clone(),
+                    subtitle: Some("Shortcut".to_owned()),
                     score: match_score,
                 },
             })
@@ -386,6 +459,466 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
             "no application opens this kind of file",
         ))
     }
+}
+
+/// Browse Fonts' families, read from the font database the first time they
+/// are asked for (or warmed at start), then kept.
+async fn installed_fonts(
+    fonts: &tokio::sync::OnceCell<Vec<compass_core::font_service::BrowsedFamily>>,
+) -> &[compass_core::font_service::BrowsedFamily] {
+    fonts
+        .get_or_init(|| async {
+            tokio::task::spawn_blocking(crate::fonts::browse)
+                .await
+                .unwrap_or_default()
+        })
+        .await
+}
+
+/// Runs a command line for Run Terminal Program, as `OpenInTerminalAction`
+/// and `OpenRawProgramAction` do.
+async fn run_program(
+    state: &Arc<RwLock<EngineState>>,
+    argv: Vec<String>,
+    terminal: bool,
+    hold: bool,
+) -> Response {
+    use compass_worker_host::application_service::{Apps, TerminalOptions};
+    if argv.is_empty() || crate::programs::program_path(&argv[0]).is_none() {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "Not a valid executable",
+        ));
+    }
+    if terminal {
+        let apps = engine_apps(state).await;
+        let options = TerminalOptions {
+            hold,
+            ..TerminalOptions::default()
+        };
+        return if apps.run_in_terminal(&argv, &options) {
+            Response::Ack
+        } else {
+            Response::Error(ProtocolError::new(
+                ErrorKind::Unsupported,
+                "No terminal emulator is installed",
+            ))
+        };
+    }
+    match compass_platform_linux::run_command(&argv).await {
+        Ok(_) => Response::Ack,
+        Err(error) => Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string())),
+    }
+}
+
+/// Runs a script command in its mode, as `ScriptExecutorAction::execute`
+/// does; see [`crate::scripts`].
+async fn run_script(state: &Arc<RwLock<EngineState>>, id: &str, arguments: &[String]) -> Response {
+    use compass_core::script_command::OutputMode;
+    use compass_worker_host::application_service::{Apps, TerminalOptions};
+    let bad = |message: String| Response::Error(ProtocolError::new(ErrorKind::BadRequest, message));
+    let (path, runs) = {
+        let state = state.read().await;
+        let Some(script) = state.scripts.find(id) else {
+            return bad("no script command has that id".to_owned());
+        };
+        (script.path.clone(), Arc::clone(&state.script_runs))
+    };
+    // Read again, as the C++ reloads before every run: the file is the
+    // user's and may have changed since the scan.
+    let script = match std::fs::read_to_string(&path)
+        .map_err(|error| error.to_string())
+        .and_then(|text| compass_core::script_scan::ScriptCommandFile::parse(&path, id, &text))
+    {
+        Ok(script) => script,
+        Err(error) => return bad(format!("Failed to parse script: {error}")),
+    };
+    let argv = match crate::scripts::command_line(&script, arguments) {
+        Ok(argv) => argv,
+        Err(error) => return bad(error),
+    };
+    let cwd = crate::scripts::working_directory(&script);
+    let mode = script.data.mode;
+    if mode == OutputMode::Terminal {
+        let data = &script.data;
+        let options = TerminalOptions {
+            hold: data.terminal.as_ref().and_then(|t| t.hold).unwrap_or(true),
+            app_id: data.terminal.as_ref().and_then(|t| t.app_id.clone()),
+            title: data
+                .terminal
+                .as_ref()
+                .and_then(|t| t.title.clone())
+                .or_else(|| (!data.title.is_empty()).then(|| data.title.clone())),
+            working_directory: data
+                .terminal
+                .as_ref()
+                .and_then(|t| t.working_directory.clone())
+                .or_else(|| data.current_directory_path.clone()),
+        };
+        let apps = engine_apps(state).await;
+        return if apps.run_in_terminal(&argv, &options) {
+            Response::ScriptStarted { session: None }
+        } else {
+            Response::Error(ProtocolError::new(
+                ErrorKind::Unsupported,
+                "Failed to execute script",
+            ))
+        };
+    }
+    let (combined, timeout) = if mode == OutputMode::Full {
+        (true, None)
+    } else {
+        (false, Some(crate::scripts::ONE_LINE_TIMEOUT))
+    };
+    let (session, run, task) = match runs.start(&argv, &cwd, combined, timeout) {
+        Ok(started) => started,
+        Err(error) => return Response::Error(ProtocolError::new(ErrorKind::Internal, error)),
+    };
+    match mode {
+        OutputMode::Silent => {
+            tokio::spawn(async move {
+                let _ = task.await;
+                let (ok, line) = run
+                    .lock()
+                    .map(|run| (run.exit_code == Some(0), run.first_line()))
+                    .unwrap_or_default();
+                show_hud(&crate::scripts::one_line_message(mode, ok, &line)).await;
+            });
+            Response::ScriptStarted { session: None }
+        }
+        OutputMode::Inline => {
+            let state = Arc::clone(state);
+            let id = id.to_owned();
+            tokio::spawn(async move {
+                let _ = task.await;
+                let (ok, line) = run
+                    .lock()
+                    .map(|run| (run.exit_code == Some(0), run.first_line()))
+                    .unwrap_or_default();
+                if ok {
+                    let mut state = state.write().await;
+                    let state = &mut *state;
+                    state.scripts.save_run(&id, &line);
+                    state.index.set_scripts(state.scripts.items());
+                }
+            });
+            Response::ScriptStarted {
+                session: Some(session),
+            }
+        }
+        _ => Response::ScriptStarted {
+            session: Some(session),
+        },
+    }
+}
+
+/// The snippet list as the wire carries it.
+fn snippets_response(snippets: &compass_core::snippet_store::SnippetStore) -> Response {
+    Response::Snippets {
+        snippets: snippets
+            .snippets()
+            .iter()
+            .map(crate::snippets::entry)
+            .collect(),
+    }
+}
+
+fn snippets_unavailable() -> Response {
+    Response::Error(ProtocolError::new(
+        ErrorKind::Unsupported,
+        "snippets are unavailable: there is no data directory to keep them in",
+    ))
+}
+
+/// Creates or updates a text snippet, as `SnippetFormViewHost::submit` does:
+/// the form's rules first, then the store's (a keyword belongs to one
+/// snippet), each refusal carrying the sentence the form would show.
+async fn save_snippet(
+    state: &Arc<RwLock<EngineState>>,
+    id: Option<String>,
+    name: String,
+    text: String,
+    keyword: Option<String>,
+    word: bool,
+    apps: Vec<String>,
+) -> Response {
+    use compass_core::snippet_form::{Submission, submit};
+    use compass_core::snippet_store::{Error, SnippetData, SnippetPayload, StoredExpansion};
+    let cursors = compass_core::shortcut::parse_link(&text)
+        .placeholders
+        .iter()
+        .filter(|placeholder| placeholder.id == compass_core::snippet_expander::CURSOR_ID)
+        .count();
+    let keyword = keyword.unwrap_or_default();
+    let (name, content, expansion) =
+        match submit(id.as_deref(), &name, &text, cursors, &keyword, word, &apps) {
+            Submission::Rejected { errors, toast } => {
+                let reason = [errors.name, errors.content, errors.keyword]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("{toast}: {reason}"),
+                ));
+            }
+            Submission::Save {
+                name,
+                content,
+                expansion,
+                ..
+            } => (name, content, expansion),
+        };
+    let payload = SnippetPayload {
+        name,
+        data: SnippetData::Text { text: content },
+        expansion: expansion.map(|expansion| StoredExpansion {
+            keyword: expansion.keyword,
+            apps: expansion.apps,
+            word: expansion.word,
+        }),
+    };
+    let mut state = state.write().await;
+    let Some(snippets) = state.snippets.as_mut() else {
+        return snippets_unavailable();
+    };
+    let now = crate::shortcuts::now();
+    let saved = match &id {
+        Some(id) => snippets.update(id, payload, now),
+        None => snippets.add(payload, now).map(|_| ()),
+    };
+    match saved {
+        Ok(()) => snippets_response(snippets),
+        Err(error @ (Error::KeywordTaken(_) | Error::NoSuchId | Error::LimitReached)) => {
+            Response::Error(ProtocolError::new(ErrorKind::BadRequest, error.to_string()))
+        }
+        Err(error) => Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string())),
+    }
+}
+
+/// A snippet's text expanded with `arguments` (a file snippet's path),
+/// reading the clipboard first when the text asks for it.
+async fn expand_snippet(
+    state: &Arc<RwLock<EngineState>>,
+    id: &str,
+    arguments: &[(String, String)],
+) -> Result<String, Response> {
+    let (snippet, shell) = {
+        let state = state.read().await;
+        let Some(snippets) = &state.snippets else {
+            return Err(snippets_unavailable());
+        };
+        let Some(snippet) = snippets.find_by_id(id) else {
+            return Err(Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no snippet has that id",
+            )));
+        };
+        (snippet.clone(), state.shell.clone())
+    };
+    let text = match &snippet.data {
+        compass_core::snippet_store::SnippetData::Text { text } => text,
+        compass_core::snippet_store::SnippetData::File { file } => return Ok(file.clone()),
+    };
+    let mut clipboard = None;
+    if crate::snippets::needs_clipboard(text) {
+        match shell {
+            Some(shell) => match shell.clipboard().await {
+                Ok(content) => clipboard = content.as_text().map(str::to_owned),
+                Err(error) => tracing::info!(%error, "could not read the clipboard for a snippet"),
+            },
+            None => tracing::info!("no GNOME Shell extension; {{clipboard}} expands to nothing"),
+        }
+    }
+    Ok(crate::snippets::expand(text, arguments, clipboard)
+        .await
+        .to_text())
+}
+
+/// The shortcut list as the wire carries it.
+fn shortcuts_response(shortcuts: &compass_core::shortcut_service::ShortcutService) -> Response {
+    Response::Shortcuts {
+        shortcuts: shortcuts
+            .shortcuts()
+            .iter()
+            .map(crate::shortcuts::entry)
+            .collect(),
+    }
+}
+
+fn shortcuts_unavailable() -> Response {
+    Response::Error(ProtocolError::new(
+        ErrorKind::Unsupported,
+        "shortcuts are unavailable: there is no data directory to keep them in",
+    ))
+}
+
+/// The applications an engine request resolves openers against.
+async fn engine_apps(state: &Arc<RwLock<EngineState>>) -> crate::extension_apps::EngineApps {
+    crate::extension_apps::EngineApps::new(
+        &state.read().await.index,
+        compass_xdg::mimeapps::Lists::from_environment(),
+        tokio::runtime::Handle::current(),
+    )
+}
+
+/// Creates or updates a shortcut, as `ShortcutFormViewHost::submit` does
+/// once the form validates: the `default` icon is resolved to what the link
+/// currently offers, and stored as that.
+async fn save_shortcut(
+    state: &Arc<RwLock<EngineState>>,
+    id: Option<String>,
+    name: String,
+    icon: String,
+    url: String,
+    app: String,
+) -> Response {
+    use compass_core::shortcut_form::{Existing, Mode, Submission, submit};
+    let icon = if icon == compass_core::shortcut_form::DEFAULT_ICON {
+        let apps = engine_apps(state).await;
+        crate::shortcuts::resolve_default_icon(&apps, &url)
+    } else {
+        icon
+    };
+    let mut state = state.write().await;
+    let state = &mut *state;
+    let Some(shortcuts) = state.shortcuts.as_mut() else {
+        return shortcuts_unavailable();
+    };
+    let existing = match &id {
+        Some(id) => {
+            let Some(found) = shortcuts.find_by_id(id) else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no shortcut has that id",
+                ));
+            };
+            Some(Existing {
+                id: found.id.clone(),
+                name: found.name.clone(),
+                url: found.link.raw.clone(),
+                app: found.app.clone(),
+                icon: found.icon.clone(),
+            })
+        }
+        None => None,
+    };
+    let mode = if existing.is_some() {
+        Mode::Edit
+    } else {
+        Mode::Create
+    };
+    let now = crate::shortcuts::now();
+    let saved = match submit(mode, existing.as_ref(), &name, &url, &app, &icon, &icon) {
+        Submission::Rejected { errors, toast } => {
+            let field = if errors.link.is_some() {
+                "link"
+            } else if errors.app.is_some() {
+                "application"
+            } else {
+                "icon"
+            };
+            return Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                format!("{toast}: the {field} is required"),
+            ));
+        }
+        Submission::Update {
+            id,
+            name,
+            icon,
+            link,
+            app,
+            failure,
+            ..
+        } => shortcuts
+            .update(&id, &name, &icon, &link, &app, now)
+            .then_some(())
+            .ok_or(failure),
+        Submission::Create {
+            name,
+            icon,
+            link,
+            app,
+            failure,
+            ..
+        } => shortcuts
+            .create(&name, &icon, &link, &app, now)
+            .then_some(())
+            .ok_or(failure),
+    };
+    if let Err(failure) = saved {
+        return Response::Error(ProtocolError::new(ErrorKind::Internal, failure));
+    }
+    state.index.set_shortcuts(shortcuts.shortcuts().to_vec());
+    shortcuts_response(shortcuts)
+}
+
+/// The shortcut `id` names, expanded with `arguments`, reading the clipboard
+/// first when the link asks for it.
+async fn expand_shortcut(
+    state: &Arc<RwLock<EngineState>>,
+    id: &str,
+    arguments: &[String],
+) -> Result<(compass_core::shortcut_service::CachedShortcut, String), Response> {
+    let (shortcut, shell) = {
+        let state = state.read().await;
+        let Some(shortcuts) = &state.shortcuts else {
+            return Err(shortcuts_unavailable());
+        };
+        let Some(shortcut) = shortcuts.find_by_id(id) else {
+            return Err(Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no shortcut has that id",
+            )));
+        };
+        (shortcut.clone(), state.shell.clone())
+    };
+    let mut reserved = crate::shortcuts::Reserved::default();
+    if crate::shortcuts::needs_clipboard(&shortcut) {
+        match shell {
+            Some(shell) => match shell.clipboard().await {
+                Ok(content) => reserved.clipboard = content.as_text().map(str::to_owned),
+                Err(error) => tracing::info!(%error, "could not read the clipboard for a shortcut"),
+            },
+            None => tracing::info!("no GNOME Shell extension; {{clipboard}} expands to nothing"),
+        }
+    }
+    let expanded = compass_core::shortcut::expand(&shortcut.link, arguments, &reserved);
+    Ok((shortcut, expanded))
+}
+
+/// Opens a shortcut, as `OpenShortcutAction::execute` does: expand, find the
+/// application, launch, and count the visit.
+async fn open_shortcut(
+    state: &Arc<RwLock<EngineState>>,
+    id: &str,
+    arguments: &[String],
+) -> Response {
+    use compass_worker_host::application_service::Apps;
+    let (shortcut, expanded) = match expand_shortcut(state, id, arguments).await {
+        Ok(expanded) => expanded,
+        Err(response) => return response,
+    };
+    let apps = engine_apps(state).await;
+    let Some(app) = crate::shortcuts::resolve_app(&apps, &shortcut.app, &expanded) else {
+        let message = if shortcut.app == compass_core::shortcut::DEFAULT_APP_ID {
+            format!("No default app to open {expanded}")
+        } else {
+            format!("No app with id {}", shortcut.app)
+        };
+        return Response::Error(ProtocolError::new(ErrorKind::Unsupported, message));
+    };
+    apps.launch(&app, &expanded);
+    let mut state = state.write().await;
+    let state = &mut *state;
+    if let Some(shortcuts) = state.shortcuts.as_mut()
+        && shortcuts.register_visit(id, crate::shortcuts::now())
+    {
+        state.index.set_shortcuts(shortcuts.shortcuts().to_vec());
+    }
+    Response::Ack
 }
 
 /// The player a media command last acted on, which the next one that names
@@ -1145,6 +1678,275 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
 
         Request::OpenFile { path, reveal } => open_file(state, path, reveal).await,
+        Request::ListShortcuts => {
+            let state = state.read().await;
+            match &state.shortcuts {
+                Some(shortcuts) => shortcuts_response(shortcuts),
+                None => shortcuts_unavailable(),
+            }
+        }
+        Request::SaveShortcut {
+            id,
+            name,
+            icon,
+            url,
+            app,
+        } => save_shortcut(state, id, name, icon, url, app).await,
+        Request::RemoveShortcut { id } => {
+            let mut state = state.write().await;
+            let state = &mut *state;
+            let Some(shortcuts) = state.shortcuts.as_mut() else {
+                return shortcuts_unavailable();
+            };
+            if shortcuts.find_by_id(&id).is_none() {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no shortcut has that id",
+                ));
+            }
+            if !shortcuts.remove(&id) {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    "Failed to remove link",
+                ));
+            }
+            state.index.set_shortcuts(shortcuts.shortcuts().to_vec());
+            shortcuts_response(shortcuts)
+        }
+        Request::OpenShortcut { id, arguments } => open_shortcut(state, &id, &arguments).await,
+        Request::ListScripts => {
+            let mut state = state.write().await;
+            let state = &mut *state;
+            state.scripts.rescan();
+            let items = state.scripts.items();
+            let scripts = items.iter().map(crate::scripts::entry).collect();
+            state.index.set_scripts(items);
+            Response::Scripts { scripts }
+        }
+        Request::RunScript { id, arguments } => run_script(state, &id, &arguments).await,
+        Request::ScriptOutput { session } => {
+            let runs = Arc::clone(&state.read().await.script_runs);
+            let Some(run) = runs.get(session) else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no script run has that session",
+                ));
+            };
+            let run = run.lock().map_err(|_| ()).ok();
+            match run {
+                Some(run) => Response::ScriptOutput {
+                    output: String::from_utf8_lossy(&run.output).into_owned(),
+                    finished: run.finished,
+                    exit_code: run.exit_code,
+                    elapsed_ms: u64::try_from(run.elapsed().as_millis()).unwrap_or(u64::MAX),
+                },
+                None => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    "the script run's state is poisoned",
+                )),
+            }
+        }
+        Request::StopScript { session } => {
+            state.read().await.script_runs.stop(session);
+            Response::Ack
+        }
+        Request::Dmenu { spec } => {
+            let (slot, dmenus) = {
+                let state = state.read().await;
+                (state.window_slot(), Arc::clone(&state.dmenus))
+            };
+            let (token, chosen) = dmenus.open(spec);
+            match forward(&slot, WindowCommand::Dmenu(token), "show a dmenu list").await {
+                Response::Ack => Response::DmenuOutput {
+                    output: chosen.await.unwrap_or_default(),
+                },
+                refused => {
+                    dmenus.choose(token, None);
+                    refused
+                }
+            }
+        }
+        Request::DmenuFetch { token } => match state.read().await.dmenus.spec(token) {
+            Some(spec) => Response::DmenuList { spec },
+            None => Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no dmenu list has that token",
+            )),
+        },
+        Request::DmenuChoose { token, output } => {
+            if state.read().await.dmenus.choose(token, output) {
+                Response::Ack
+            } else {
+                Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no dmenu list has that token",
+                ))
+            }
+        }
+        Request::ListFonts => {
+            let fonts = Arc::clone(&state.read().await.fonts);
+            let families = installed_fonts(&fonts).await;
+            Response::Fonts {
+                fonts: families.iter().map(crate::fonts::entry).collect(),
+                categories: crate::fonts::category_names(),
+            }
+        }
+        Request::FontSpecimen { name } => {
+            let fonts = Arc::clone(&state.read().await.fonts);
+            match installed_fonts(&fonts)
+                .await
+                .iter()
+                .find(|f| f.name == name)
+            {
+                Some(family) => Response::Text {
+                    text: crate::fonts::specimen(family),
+                },
+                None => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "no installed font family has that name",
+                )),
+            }
+        }
+        Request::CreateExtension {
+            author,
+            title,
+            description,
+            location,
+            command_title,
+            command_description,
+            template,
+        } => {
+            let form = compass_core::create_extension::Form {
+                author,
+                title,
+                description,
+                location,
+                command_title,
+                command_description,
+                template_id: template,
+            };
+            match tokio::task::spawn_blocking(move || crate::developer::create_extension(&form))
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("creating the extension failed: {error}"),
+                )),
+            }
+        }
+        Request::SetTheme { theme } => {
+            let Some(parsed) = compass_ui::theme::Theme::from_name(&theme) else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("unknown theme {theme:?}"),
+                ));
+            };
+            let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                let mut config = Config::load().unwrap_or_default();
+                config
+                    .launcher_mut()
+                    .appearance_mut()
+                    .set_theme(Some(parsed.name().to_owned()));
+                config.save_to(compass_core::config::default_config_path()?)?;
+                Ok(())
+            })
+            .await;
+            match saved {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(error)) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("could not save the theme: {error}"),
+                )),
+                Err(error) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("saving the theme failed: {error}"),
+                )),
+            }
+        }
+        Request::ListPrograms => {
+            let default_action = state.read().await.run_program_default.clone();
+            let apps = engine_apps(state).await;
+            let programs = tokio::task::spawn_blocking(crate::programs::scan)
+                .await
+                .unwrap_or_default();
+            Response::Programs {
+                programs,
+                terminal: apps.terminal_name(),
+                default_action,
+            }
+        }
+        Request::RunProgram {
+            argv,
+            terminal,
+            hold,
+        } => run_program(state, argv, terminal, hold).await,
+        Request::ListSnippets => {
+            let state = state.read().await;
+            match &state.snippets {
+                Some(snippets) => snippets_response(snippets),
+                None => snippets_unavailable(),
+            }
+        }
+        Request::SaveSnippet {
+            id,
+            name,
+            text,
+            keyword,
+            word,
+            apps,
+        } => save_snippet(state, id, name, text, keyword, word, apps).await,
+        Request::RemoveSnippet { id } => {
+            let mut state = state.write().await;
+            let Some(snippets) = state.snippets.as_mut() else {
+                return snippets_unavailable();
+            };
+            match snippets.remove(&id) {
+                Ok(_) => snippets_response(snippets),
+                Err(error @ compass_core::snippet_store::Error::NoSuchSnippet) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, error.to_string()))
+                }
+                Err(error) => {
+                    Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string()))
+                }
+            }
+        }
+        Request::ExpandSnippet { id, arguments } => {
+            match expand_snippet(state, &id, &arguments).await {
+                Ok(text) => Response::Text { text },
+                Err(response) => response,
+            }
+        }
+        Request::PasteSnippet { id, arguments } => {
+            const WHAT: &str = "Pasting";
+            let text = match expand_snippet(state, &id, &arguments).await {
+                Ok(text) => text,
+                Err(response) => return response,
+            };
+            let Some(shell) = state.read().await.shell.clone() else {
+                return Response::Error(crate::window_service::no_bus(WHAT));
+            };
+            let terminals = {
+                let state = state.read().await;
+                compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
+            };
+            let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
+            let content = compass_shell::ClipboardContent::text(text);
+            let pasted = match shell.set_clipboard(&content).await {
+                Ok(()) => shell.paste(&terminals).await,
+                Err(err) => Err(err),
+            };
+            match pasted {
+                Ok(()) => Response::Ack,
+                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
+            }
+        }
+        Request::ExpandShortcut { id, arguments } => {
+            match expand_shortcut(state, &id, &arguments).await {
+                Ok((_, expanded)) => Response::Text { text: expanded },
+                Err(response) => response,
+            }
+        }
         Request::RunExtensionCommand { id, arguments_json } => {
             run_extension_command(state, id, arguments_json).await
         }
@@ -1377,6 +2179,17 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     // Detached for the same reason: a keyring that is slow or absent costs
     // clipboard history, never the socket.
     tokio::spawn(crate::clipboard_service::run(Arc::clone(&state)));
+
+    // Reading every font's character map takes a moment on a machine with
+    // many fonts; done once, after start-up has settled, so Browse Fonts
+    // answers at once.
+    {
+        let fonts = Arc::clone(&state.read().await.fonts);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            installed_fonts(&fonts).await;
+        });
+    }
 
     // The Shell extension, for window switching. Connecting only fails with
     // no session bus at all; an absent extension is reported per request.

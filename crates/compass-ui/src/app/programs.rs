@@ -1,0 +1,225 @@
+//! Run Terminal Program in the launcher.
+//!
+//! A child module of `app` so it can reach the launcher's state without
+//! widening it; the decisions that do not need that state are in
+//! [`crate::programs_page`].
+
+use iced::keyboard::{Key, Modifiers, key::Named};
+
+use super::{
+    Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
+    Task, chord_direction, column, container, focus_search, mouse_area, next_selection, scrollable,
+};
+use crate::action_panel::Action;
+use crate::programs_page::{self, Act, ProgramsPage, Status};
+
+/// The panel's action ids: `program.action.<n>`, by position in the row's
+/// actions.
+const ACTION_PREFIX: &str = "program.action.";
+
+const NEEDS_ENGINE: &str =
+    "Run Terminal Program needs the Compass engine, and this window is running without one";
+
+impl LauncherApp {
+    /// Opens Run Terminal Program and asks for the programs.
+    pub(super) fn open_run_program(&mut self) -> Task<Message> {
+        self.page = Page::Programs(ProgramsPage::default());
+        let Some(backend) = self.backend.clone() else {
+            if let Page::Programs(page) = &mut self.page {
+                page.apply(Err(NEEDS_ENGINE.to_owned()));
+            }
+            return focus_search();
+        };
+        Task::batch([
+            Task::perform(
+                async move { backend.list_programs().await },
+                Message::ProgramsLoaded,
+            ),
+            focus_search(),
+        ])
+    }
+
+    /// Carries out one of a row's actions.
+    fn act(&mut self, act: Act) -> Task<Message> {
+        self.panel = None;
+        match act {
+            Act::CopyPath(path) => Task::batch([iced::clipboard::write(path), self.conceal()]),
+            Act::Run {
+                argv,
+                terminal,
+                hold,
+            } => {
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                Task::perform(
+                    async move { backend.run_program(argv, terminal, hold).await },
+                    Message::ProgramRan,
+                )
+            }
+        }
+    }
+
+    /// Runs the selected row's first action, as Enter does.
+    fn run_selected_program(&mut self) -> Task<Message> {
+        let Page::Programs(page) = &self.page else {
+            return Task::none();
+        };
+        let Some(first) = page
+            .selected_row()
+            .and_then(|row| page.actions(row).into_iter().next())
+        else {
+            return Task::none();
+        };
+        self.act(first.1)
+    }
+
+    /// Opens the action panel over the selected row.
+    pub(super) fn open_program_panel(&mut self) -> Option<Task<Message>> {
+        let Page::Programs(page) = &self.page else {
+            return None;
+        };
+        let row = page.selected_row()?;
+        let actions = page
+            .actions(row)
+            .into_iter()
+            .enumerate()
+            .map(|(position, (title, _))| {
+                let action = Action::new(title).with_id(format!("{ACTION_PREFIX}{position}"));
+                if position == 0 {
+                    action.with_shortcut("enter")
+                } else {
+                    action
+                }
+            })
+            .collect();
+        self.panel = Some(PanelState::new(vec![PanelSection {
+            name: String::new(),
+            actions,
+        }]));
+        Some(iced::widget::operation::focus(super::PANEL_INPUT))
+    }
+
+    /// Runs a panel action, if `id` is one of this view's.
+    pub(super) fn program_panel_action(&mut self, id: &str) -> Option<Task<Message>> {
+        let position: usize = id.strip_prefix(ACTION_PREFIX)?.parse().ok()?;
+        let Page::Programs(page) = &self.page else {
+            return None;
+        };
+        let (_, act) = page
+            .selected_row()
+            .and_then(|row| page.actions(row).into_iter().nth(position))?;
+        Some(self.act(act))
+    }
+
+    /// The view's keys.
+    pub(super) fn programs_page_key(&mut self, key: &Key, modifiers: Modifiers) -> Task<Message> {
+        let Page::Programs(page) = &mut self.page else {
+            return Task::none();
+        };
+        let direction = match key.as_ref() {
+            Key::Named(Named::ArrowDown) => Some(Direction::Down),
+            Key::Named(Named::ArrowUp) => Some(Direction::Up),
+            Key::Named(Named::Escape) => return self.update(Message::Back),
+            Key::Named(Named::Enter) => return self.run_selected_program(),
+            _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+        };
+        if let Some(direction) = direction {
+            page.selected = next_selection(
+                page.rows.len(),
+                page.selected,
+                direction,
+                self.wrap_navigation,
+            );
+            return crate::scroll::reveal_root_selection();
+        }
+        Task::none()
+    }
+
+    /// Handles the view's messages.
+    pub(super) fn program_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::ProgramsLoaded(result) => {
+                if let Page::Programs(page) = &mut self.page {
+                    page.apply(result.map(|list| {
+                        (
+                            list.programs,
+                            list.terminal,
+                            compass_core::system_run::DefaultAction::parse(&list.default_action),
+                        )
+                    }));
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::ProgramsQueryChanged(query) => {
+                if let Page::Programs(page) = &mut self.page {
+                    page.query = query;
+                    page.notice = None;
+                    page.refilter();
+                }
+                crate::scroll::reveal_root_selection()
+            }
+            Message::ProgramSelected(position) => {
+                if let Page::Programs(page) = &mut self.page
+                    && position < page.rows.len()
+                {
+                    page.selected = position;
+                    return self.run_selected_program();
+                }
+                Task::none()
+            }
+            // `closeWindow({.clearRootSearch = true})`.
+            Message::ProgramRan(Ok(())) => {
+                self.query.clear();
+                self.results.clear();
+                self.conceal()
+            }
+            Message::ProgramRan(Err(reason)) => {
+                if let Page::Programs(page) = &mut self.page {
+                    page.notice = Some(reason);
+                }
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// The view's body.
+    pub(super) fn programs_body<'a>(&'a self, page: &'a ProgramsPage) -> Element<'a, Message> {
+        match &page.status {
+            Status::Loading => return self.notice("Looking for programs…"),
+            Status::Failed(reason) => return self.notice(reason),
+            Status::Ready if page.rows.is_empty() => return self.notice("No programs match"),
+            Status::Ready => {}
+        }
+        let home =
+            compass_core::xdg_dirs::home_dir().map(|home| home.to_string_lossy().into_owned());
+        let mut list = column![].spacing(f32::from(self.geometry.row_spacing));
+        for (position, row) in page.rows.iter().enumerate() {
+            let selected = position == page.selected;
+            let (title, subtitle) = programs_page::row_text(row, home.as_deref().unwrap_or(""));
+            let badge = if matches!(row, programs_page::RunRow::CommandLine(_)) {
+                self.initial_badge(">", selected)
+            } else {
+                self.initial_badge(&title, selected)
+            };
+            let row = self.list_row(badge, title, subtitle.filter(|_| self.subtitles), selected);
+            let row: Element<Message> = mouse_area(row)
+                .on_press(Message::ProgramSelected(position))
+                .into();
+            let row: Element<Message> = if selected {
+                container(row).id(crate::scroll::ROOT_SELECTION).into()
+            } else {
+                row
+            };
+            list = list.push(row);
+        }
+        let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![rows, self.notice(notice)].into(),
+            None => rows.into(),
+        }
+    }
+}

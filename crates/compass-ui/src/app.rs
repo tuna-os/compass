@@ -25,6 +25,15 @@ use crate::design::{self, Appearance, GEOMETRY, TINT_ALPHA};
 use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
+mod developer;
+mod dmenu;
+mod fonts;
+mod programs;
+mod scripts;
+mod shortcuts;
+mod snippets;
+mod themes;
+
 /// The search field's widget id.
 ///
 /// It exists so the field can be FOCUSED, and that is not a detail. An Iced
@@ -444,6 +453,10 @@ pub enum RootRow {
     Extension(usize),
     /// The calculator's answer to the query, held in `LauncherApp::calculator`.
     Calculator,
+    /// A shortcut (quicklink), as its index in `AppIndex::shortcuts`.
+    Shortcut(usize),
+    /// A script command, as its index in `AppIndex::scripts`.
+    Script(usize),
 }
 
 /// Which view the card shows.
@@ -459,6 +472,24 @@ enum Page {
     Emoji(crate::emoji_page::EmojiPage),
     /// Search Files.
     Files(crate::files_page::FilesPage),
+    /// Manage Shortcuts.
+    Shortcuts(crate::shortcuts_page::ShortcutsPage),
+    /// Manage Snippets.
+    Snippets(crate::snippets_page::SnippetsPage),
+    /// A script command's full output.
+    ScriptOutput(crate::script_page::ScriptOutputPage),
+    /// Run Terminal Program.
+    Programs(crate::programs_page::ProgramsPage),
+    /// A `vicinae dmenu` list.
+    Dmenu(crate::dmenu_page::DmenuPage),
+    /// Set Theme.
+    Themes(crate::themes_page::ThemesPage),
+    /// The page after Create Extension.
+    Created(crate::developer_page::CreatedPage),
+    /// Browse Fonts.
+    Fonts(crate::fonts_page::FontsPage),
+    /// One font's specimen.
+    FontPreview(crate::fonts_page::FontPreviewPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -715,6 +746,15 @@ pub struct LauncherApp {
     /// window -- the precise lie this whole design exists to prevent, arriving
     /// through the mechanism built to prevent it.
     awaiting: bool,
+    /// Manage Shortcuts as it was when a form was opened over it, so going
+    /// back returns to the same filter and selection.
+    parked_shortcuts: Option<crate::shortcuts_page::ShortcutsPage>,
+    /// Manage Snippets as it was when a form was opened over it.
+    parked_snippets: Option<crate::snippets_page::SnippetsPage>,
+    /// Browse Fonts as it was when a specimen was opened over it.
+    parked_fonts: Option<crate::fonts_page::FontsPage>,
+    /// A compact or inline script run the root list is waiting on.
+    following_script: Option<scripts::FollowedScript>,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -932,6 +972,10 @@ impl LauncherApp {
             last_summon_draw: None,
             started_at: None,
             awaiting: false,
+            parked_shortcuts: None,
+            parked_snippets: None,
+            parked_fonts: None,
+            following_script: None,
         }
     }
 
@@ -998,7 +1042,14 @@ impl LauncherApp {
     fn conceal(&mut self) -> Task<Message> {
         self.cancel_search();
         self.panel = None;
-        let closing = self.close_extension_view();
+        // Leaving Set Theme without choosing puts the theme back, as
+        // `beforePop` does.
+        if matches!(self.page, Page::Themes(_)) {
+            let _ = self.update(Message::ThemeCancel);
+        }
+        self.parked_fonts = None;
+        let dismissed = self.cancel_dmenu();
+        let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
         self.page = Page::Root;
         let hidden = self.hide_window();
@@ -1060,7 +1111,11 @@ impl LauncherApp {
     pub fn selected_item(&self) -> Option<&AppItem> {
         match *self.results.get(self.selected)? {
             RootRow::App(index) => self.app_index.items().get(index),
-            RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+            RootRow::Command(_)
+            | RootRow::Extension(_)
+            | RootRow::Shortcut(_)
+            | RootRow::Script(_)
+            | RootRow::Calculator => None,
         }
     }
 
@@ -1137,7 +1192,71 @@ impl LauncherApp {
                 let answer = self.calculator.as_ref().map_or("", |a| a.answer.as_str());
                 line.push_str(&format!(" selected_title={answer:?}"));
             }
+            Some(RootRow::Shortcut(index)) => {
+                let title = self
+                    .app_index
+                    .shortcuts()
+                    .get(index)
+                    .map_or("", crate::shortcuts_page::display_name);
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::Script(index)) => {
+                let title = self
+                    .app_index
+                    .scripts()
+                    .get(index)
+                    .map_or("", |script| script.title.as_str());
+                line.push_str(&format!(" selected_title={title:?}"));
+            }
             None => line.push_str(" selected_title=none"),
+        }
+        if let Page::Themes(page) = &self.page {
+            line.push_str(&format!(
+                " page=themes themes_query={:?} themes_rows={} themes_selected={} theme={}",
+                page.query,
+                page.rows.len(),
+                page.selected,
+                self.theme_choice.name()
+            ));
+        }
+        if let Page::Dmenu(page) = &self.page {
+            line.push_str(&format!(
+                " page=dmenu dmenu_token={} dmenu_query={:?} dmenu_shown={} dmenu_selected={}",
+                page.token,
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
+        }
+        if let Page::Programs(page) = &self.page {
+            line.push_str(&format!(
+                " page=programs programs_query={:?} programs_rows={} programs_selected={}",
+                page.query,
+                page.rows.len(),
+                page.selected
+            ));
+        }
+        if let Page::ScriptOutput(page) = &self.page {
+            line.push_str(&format!(
+                " page=script_output script_session={} script_finished={} script_exit={:?}",
+                page.session, page.state.finished, page.state.exit_code
+            ));
+        }
+        if let Page::Snippets(page) = &self.page {
+            line.push_str(&format!(
+                " page=snippets snippets_query={:?} snippets_shown={} snippets_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
+        }
+        if let Page::Shortcuts(page) = &self.page {
+            line.push_str(&format!(
+                " page=shortcuts shortcuts_query={:?} shortcuts_shown={} shortcuts_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
         }
         if let Page::Windows(page) = &self.page {
             line.push_str(&format!(
@@ -1322,8 +1441,19 @@ impl LauncherApp {
         // one reply. Set before any branch so every path answers exactly once.
         self.awaiting = true;
 
+        let dmenu = match command {
+            UiCommand::Dmenu(token) => self.start_dmenu(token),
+            _ => Task::none(),
+        };
+        let shown = self.obey_visibility(command);
+        Task::batch([dmenu, shown])
+    }
+
+    /// The visibility half of [`Self::obey`]: every command but `Hide`
+    /// shows the window, `Toggle` depending on where it is.
+    fn obey_visibility(&mut self, command: UiCommand) -> Task<Message> {
         let show = match command {
-            UiCommand::Show => true,
+            UiCommand::Show | UiCommand::Dmenu(_) => true,
             UiCommand::Hide => false,
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
@@ -1483,11 +1613,36 @@ impl LauncherApp {
                 self.search_task = None;
                 match result {
                     Ok(keys) => {
+                        let shortcuts = self.app_index.shortcuts();
                         let positions: Option<Vec<_>> = keys
                             .iter()
+                            // A shortcut the engine knows and this window has
+                            // not heard of yet (or one just removed) is left
+                            // out rather than failing the list: the next
+                            // refresh brings the two back into step.
+                            .filter(|key| {
+                                (!key.starts_with("shortcuts:")
+                                    || self.app_index.shortcut_by_entrypoint(key).is_some())
+                                    && (!key.starts_with("scripts:")
+                                        || self.app_index.script_by_entrypoint(key).is_some())
+                            })
                             .map(|key| {
                                 if let Some(command) = compass_core::commands::by_id(key) {
                                     return Some(RootRow::Command(command));
+                                }
+                                if let Some(script) = self.app_index.script_by_entrypoint(key) {
+                                    return self
+                                        .app_index
+                                        .scripts()
+                                        .iter()
+                                        .position(|known| known.id == script.id)
+                                        .map(RootRow::Script);
+                                }
+                                if let Some(shortcut) = self.app_index.shortcut_by_entrypoint(key) {
+                                    return shortcuts
+                                        .iter()
+                                        .position(|known| known.id == shortcut.id)
+                                        .map(RootRow::Shortcut);
                                 }
                                 if let Some(index) = self
                                     .app_index
@@ -1552,6 +1707,12 @@ impl LauncherApp {
                 }
                 if let Some(RootRow::Extension(index)) = self.selected_row() {
                     return self.run_extension_command(index);
+                }
+                if let Some(RootRow::Shortcut(index)) = self.selected_row() {
+                    return self.open_shortcut_at(index);
+                }
+                if let Some(RootRow::Script(index)) = self.selected_row() {
+                    return self.run_script_at(index);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -1628,7 +1789,12 @@ impl LauncherApp {
                 self.answer(UiOutcome::Shown);
                 // Covers boot and every summon: `conceal` closes the window, so
                 // a summon opens a new one whose field starts unfocused.
-                Task::batch([focus_search(), self.search_task()])
+                Task::batch([
+                    focus_search(),
+                    self.search_task(),
+                    self.refresh_shortcuts_task(),
+                    self.refresh_scripts_task(),
+                ])
             }
             Message::Closed(id) => {
                 // Only clear the state if *this* window is the one that went;
@@ -1652,6 +1818,18 @@ impl LauncherApp {
                 if self.panel.is_some() {
                     self.panel = None;
                     return focus_search();
+                } else if let Some(task) = self.open_shortcut_panel() {
+                    return task;
+                } else if let Some(task) = self.open_snippet_panel() {
+                    return task;
+                } else if let Some(task) = self.open_script_panel() {
+                    return task;
+                } else if let Some(task) = self.open_program_panel() {
+                    return task;
+                } else if let Some(task) = self.open_dmenu_panel() {
+                    return task;
+                } else if let Some(task) = self.open_font_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1702,6 +1880,21 @@ impl LauncherApp {
                 self.update(Message::PanelActivate)
             }
             Message::PanelActivate => {
+                if let Some(id) = self
+                    .panel
+                    .as_ref()
+                    .and_then(PanelState::selected_action)
+                    .and_then(|action| action.id.clone())
+                    && let Some(task) = self
+                        .shortcut_panel_action(&id)
+                        .or_else(|| self.snippet_panel_action(&id))
+                        .or_else(|| self.script_panel_action(&id))
+                        .or_else(|| self.program_panel_action(&id))
+                        .or_else(|| self.dmenu_panel_action(&id))
+                        .or_else(|| self.font_panel_action(&id))
+                {
+                    return task;
+                }
                 let Some(panel) = self.panel.as_ref() else {
                     return Task::none();
                 };
@@ -1720,6 +1913,7 @@ impl LauncherApp {
                     self.panel = None;
                     return Task::batch([task, focus_search()]);
                 }
+
                 let Some(item) = self.selected_item() else {
                     return Task::none();
                 };
@@ -1792,7 +1986,25 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::PreferenceTextEdited(index, action) => {
+                if let Page::Preferences(page) = &mut self.page {
+                    page.edit_text_area(index, action);
+                }
+                Task::none()
+            }
             Message::PreferencesSubmit => {
+                if let Some(task) = self.submit_shortcut_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_snippet_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_script_form() {
+                    return task;
+                }
+                if let Some(task) = self.submit_create_extension() {
+                    return task;
+                }
                 let Page::Preferences(page) = &mut self.page else {
                     return Task::none();
                 };
@@ -2039,7 +2251,53 @@ impl LauncherApp {
                     }
                 }
             }
+            Message::ShortcutsLoaded(_)
+            | Message::ShortcutSaved(_)
+            | Message::ShortcutRemoved(_)
+            | Message::ShortcutOpened(_)
+            | Message::ShortcutExpanded(_)
+            | Message::ShortcutsQueryChanged(_)
+            | Message::ShortcutSelected(_) => self.shortcut_message(message),
+            Message::SnippetsLoaded(_)
+            | Message::SnippetSaved(_)
+            | Message::SnippetExpanded(_)
+            | Message::SnippetPasted(_)
+            | Message::SnippetsQueryChanged(_)
+            | Message::SnippetSelected(_) => self.snippet_message(message),
+            Message::ScriptsLoaded(_)
+            | Message::ScriptStarted { .. }
+            | Message::ScriptPolled { .. } => self.script_message(message),
+            Message::ProgramsLoaded(_)
+            | Message::ProgramsQueryChanged(_)
+            | Message::ProgramSelected(_)
+            | Message::ProgramRan(_) => self.program_message(message),
+            Message::DmenuLoaded { .. }
+            | Message::DmenuQueryChanged(_)
+            | Message::DmenuSelected(_)
+            | Message::DmenuChosen(_) => self.dmenu_message(message),
+            Message::ThemesQueryChanged(_) | Message::ThemeSelected(_) | Message::ThemeSaved(_) => {
+                self.theme_message(message)
+            }
+            Message::ExtensionCreated { .. } | Message::CreatedFolderOpened(_) => {
+                self.developer_message(message)
+            }
+            Message::FontsLoaded(_)
+            | Message::FontsQueryChanged(_)
+            | Message::FontsCategoryChanged(_)
+            | Message::FontSelected(_)
+            | Message::FontSpecimenLoaded { .. } => self.font_message(message),
             Message::Back => {
+                // Escape on a dmenu list dismisses it and the launcher, as the
+                // C++'s instant dismiss does.
+                if matches!(self.page, Page::Dmenu(_)) {
+                    return self.conceal();
+                }
+                if let Some(task) = self.back_from_shortcut_form() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_snippet_form() {
+                    return task;
+                }
                 let closing = self.close_extension_view();
                 self.page = Page::Root;
                 Task::batch([closing, focus_search()])
@@ -2151,8 +2409,15 @@ impl LauncherApp {
                         _ => Task::none(),
                     };
                 }
-                if let Page::Preferences(_) = &self.page {
+                if let Page::Preferences(page) = &self.page {
                     return match key.as_ref() {
+                        // A text area's Enter is a newline; the form submits
+                        // with Ctrl+Enter.
+                        Key::Named(Named::Enter)
+                            if page.has_text_area() && !modifiers.control() =>
+                        {
+                            Task::none()
+                        }
                         Key::Named(Named::Enter) => self.update(Message::PreferencesSubmit),
                         Key::Named(Named::Escape) => self.update(Message::Back),
                         Key::Named(Named::Tab) if modifiers.shift() => {
@@ -2245,6 +2510,36 @@ impl LauncherApp {
                         return crate::scroll::reveal_root_selection();
                     }
                     return Task::none();
+                }
+                if !panel_key && let Some(task) = self.shortcut_chord(key, modifiers) {
+                    return task;
+                }
+                if !panel_key && matches!(self.page, Page::Shortcuts(_)) {
+                    return self.shortcuts_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Snippets(_)) {
+                    return self.snippets_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::ScriptOutput(_)) {
+                    return self.script_output_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Programs(_)) {
+                    return self.programs_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Dmenu(_)) {
+                    return self.dmenu_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Themes(_)) {
+                    return self.themes_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Created(_)) {
+                    return self.created_page_key(key);
+                }
+                if !panel_key && matches!(self.page, Page::Fonts(_)) {
+                    return self.fonts_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::FontPreview(_)) {
+                    return self.font_preview_key(key);
                 }
                 if let Page::Files(page) = &mut self.page {
                     let direction = match key.as_ref() {
@@ -2471,6 +2766,39 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::FilesQueryChanged as OnInput),
             ),
+            Page::Shortcuts(page) => (
+                "Search shortcuts...",
+                &page.query,
+                Some(Message::ShortcutsQueryChanged as OnInput),
+            ),
+            Page::Snippets(page) => (
+                "Search for snippets...",
+                &page.query,
+                Some(Message::SnippetsQueryChanged as OnInput),
+            ),
+            Page::ScriptOutput(page) => ("", &page.title, None),
+            Page::Programs(page) => (
+                "Search for a program to execute...",
+                &page.query,
+                Some(Message::ProgramsQueryChanged as OnInput),
+            ),
+            Page::Dmenu(page) => (
+                page.placeholder(),
+                &page.query,
+                Some(Message::DmenuQueryChanged as OnInput),
+            ),
+            Page::Themes(page) => (
+                compass_core::theme_picker::PLACEHOLDER,
+                &page.query,
+                Some(Message::ThemesQueryChanged as OnInput),
+            ),
+            Page::Created(page) => ("", &page.path, None),
+            Page::Fonts(page) => (
+                "Search fonts...",
+                &page.query,
+                Some(Message::FontsQueryChanged as OnInput),
+            ),
+            Page::FontPreview(page) => ("", &page.name, None),
             Page::Preferences(page) => ("Configure", &page.title, None),
             Page::Extension(page) => (
                 page.list()
@@ -2528,6 +2856,24 @@ impl LauncherApp {
             self.windows_body(page)
         } else if let Page::Files(page) = &self.page {
             self.files_body(page)
+        } else if let Page::Shortcuts(page) = &self.page {
+            self.shortcuts_body(page)
+        } else if let Page::Snippets(page) = &self.page {
+            self.snippets_body(page)
+        } else if let Page::ScriptOutput(page) = &self.page {
+            self.script_output_body(page)
+        } else if let Page::Programs(page) = &self.page {
+            self.programs_body(page)
+        } else if let Page::Dmenu(page) = &self.page {
+            self.dmenu_body(page)
+        } else if let Page::Themes(page) = &self.page {
+            self.themes_body(page)
+        } else if let Page::Created(page) = &self.page {
+            self.created_body(page)
+        } else if let Page::Fonts(page) = &self.page {
+            self.fonts_body(page)
+        } else if let Page::FontPreview(page) = &self.page {
+            self.font_preview_body(page)
         } else if let Page::Clipboard(page) = &self.page {
             self.clipboard_body(page)
         } else if let Some(err) = &self.error {
@@ -2572,6 +2918,29 @@ impl LauncherApp {
                             self.initial_badge(&command.title, selected),
                             command.title.clone(),
                             self.subtitles.then(|| command.extension_title.clone()),
+                            selected,
+                        )
+                    }
+                    RootRow::Script(index) => {
+                        let Some(script) = self.app_index.scripts().get(*index) else {
+                            continue;
+                        };
+                        self.list_row(
+                            self.initial_badge(&script.title, selected),
+                            script.title.clone(),
+                            self.subtitles.then(|| script.subtitle.clone()),
+                            selected,
+                        )
+                    }
+                    RootRow::Shortcut(index) => {
+                        let Some(shortcut) = self.app_index.shortcuts().get(*index) else {
+                            continue;
+                        };
+                        let title = crate::shortcuts_page::display_name(shortcut);
+                        self.list_row(
+                            self.initial_badge(title, selected),
+                            title.to_owned(),
+                            self.subtitles.then(|| "Shortcut".to_owned()),
                             selected,
                         )
                     }
@@ -3407,7 +3776,13 @@ impl LauncherApp {
                 crate::preferences_page::Purpose::Preferences => {
                     format!("{} needs a few settings", page.title)
                 }
-                crate::preferences_page::Purpose::Arguments => page.title.clone(),
+                crate::preferences_page::Purpose::Arguments
+                | crate::preferences_page::Purpose::ShortcutArguments
+                | crate::preferences_page::Purpose::ShortcutForm { .. }
+                | crate::preferences_page::Purpose::SnippetArguments { .. }
+                | crate::preferences_page::Purpose::SnippetForm { .. }
+                | crate::preferences_page::Purpose::ScriptArguments
+                | crate::preferences_page::Purpose::CreateExtension => page.title.clone(),
             })
             .font(self.font())
             .size(14)
@@ -3460,6 +3835,16 @@ impl LauncherApp {
                     })
                     .into()
                 }
+                (PreferenceInputKind::TextArea, _) => match page.editors.get(&index) {
+                    Some(editor) => iced::widget::text_editor(editor)
+                        .placeholder(field.placeholder.as_str())
+                        .font(self.font())
+                        .height(Length::Fixed(120.0))
+                        .padding(8)
+                        .on_action(move |action| Message::PreferenceTextEdited(index, action))
+                        .into(),
+                    None => iced::widget::text("").into(),
+                },
                 (PreferenceInputKind::Unsupported { declared }, _) => {
                     iced::widget::text(format!("Compass cannot edit {declared} preferences yet"))
                         .font(self.font())
@@ -3479,7 +3864,7 @@ impl LauncherApp {
             form = form.push(entry);
         }
         form = form.push(
-            iced::widget::text("Enter: save and run    Esc: back")
+            iced::widget::text(page.purpose.hint())
                 .font(self.font())
                 .size(12),
         );
@@ -3835,6 +4220,23 @@ impl LauncherApp {
                 self.page = Page::Files(crate::files_page::FilesPage::default());
                 Task::batch([record, self.files_query_task(), focus_search()])
             }
+            CommandKind::CreateShortcut => Task::batch([
+                record,
+                self.open_shortcut_form(compass_core::shortcut_form::Mode::Create, None, false),
+            ]),
+            CommandKind::ManageShortcuts => Task::batch([record, self.open_manage_shortcuts()]),
+            CommandKind::CreateSnippet => Task::batch([
+                record,
+                self.open_snippet_form(compass_core::shortcut_form::Mode::Create),
+            ]),
+            CommandKind::ManageSnippets => Task::batch([record, self.open_manage_snippets()]),
+            CommandKind::RunProgram => Task::batch([record, self.open_run_program()]),
+            CommandKind::SetTheme => Task::batch([record, self.open_set_theme()]),
+            CommandKind::CreateExtension => Task::batch([record, self.open_create_extension()]),
+            CommandKind::BrowseFonts => {
+                self.parked_fonts = None;
+                Task::batch([record, self.open_browse_fonts()])
+            }
             CommandKind::SwitchWindows => {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
@@ -4062,6 +4464,20 @@ impl LauncherApp {
                         .position(|known| known.id == command.id)
                         .unwrap_or_default(),
                 ),
+                compass_core::RootHit::Script { script, .. } => RootRow::Script(
+                    self.app_index
+                        .scripts()
+                        .iter()
+                        .position(|known| known.id == script.id)
+                        .unwrap_or_default(),
+                ),
+                compass_core::RootHit::Shortcut { shortcut, .. } => RootRow::Shortcut(
+                    self.app_index
+                        .shortcuts()
+                        .iter()
+                        .position(|known| known.id == shortcut.id)
+                        .unwrap_or_default(),
+                ),
             })
             .collect();
         // Back to the top on every new query: the old selection pointed into a
@@ -4114,7 +4530,11 @@ impl LauncherApp {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => self.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::Calculator => None,
             })
             .filter_map(AppItem::icon)
             .collect();
@@ -4404,6 +4824,9 @@ mod tests {
         assert_eq!(recorded_launch(false), [None]);
     }
 
+    /// A snippet the fake expanded or pasted: `(id, arguments, pasted)`.
+    type SnippetUse = (String, Vec<(String, String)>, bool);
+
     #[derive(Debug, Default)]
     struct TestBackend {
         keys: Vec<String>,
@@ -4438,6 +4861,30 @@ mod tests {
         file_queries: std::sync::Mutex<Vec<String>>,
         /// The files opened, and whether each was only revealed.
         opened: std::sync::Mutex<Vec<(String, bool)>>,
+        /// The shortcut store.
+        shortcuts: std::sync::Mutex<Vec<crate::backend::Shortcut>>,
+        /// The shortcuts opened, with their arguments.
+        opened_shortcuts: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// The shortcuts saved, as the form sent them.
+        drafts: std::sync::Mutex<Vec<crate::backend::ShortcutDraft>>,
+        /// The snippet store.
+        snippets: std::sync::Mutex<Vec<crate::backend::Snippet>>,
+        /// The snippets saved, as the form sent them.
+        snippet_drafts: std::sync::Mutex<Vec<crate::backend::SnippetDraft>>,
+        /// The snippets expanded or pasted: `(id, arguments, pasted)`.
+        snippet_uses: std::sync::Mutex<Vec<SnippetUse>>,
+        /// The script commands the fake lists.
+        scripts: Vec<compass_core::script_scan::ScriptItem>,
+        /// The scripts run, with their arguments.
+        script_runs: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// The programs Run Terminal Program ran: `(argv, terminal, hold)`.
+        programs_ran: std::sync::Mutex<Vec<(Vec<String>, bool, bool)>>,
+        /// The dmenu answers sent: `(token, output)`.
+        dmenu_answers: std::sync::Mutex<Vec<(u64, Option<String>)>>,
+        /// The themes kept.
+        themes_kept: std::sync::Mutex<Vec<String>>,
+        /// The extensions created.
+        created: std::sync::Mutex<Vec<crate::backend::ExtensionDraft>>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -4496,6 +4943,289 @@ mod tests {
             Box::pin(async move {
                 self.opened.lock().unwrap().push((path, reveal));
                 Ok(())
+            })
+        }
+
+        fn fetch_dmenu(
+            &self,
+            token: u64,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::DmenuList> {
+            Box::pin(async move {
+                assert_eq!(token, 5);
+                Ok(crate::backend::DmenuList {
+                    content: "alpha\nbeta\n\ngamma\n".into(),
+                    section_title: Some("Pick ({count})".into()),
+                    ..crate::backend::DmenuList::default()
+                })
+            })
+        }
+
+        fn create_extension(
+            &self,
+            draft: crate::backend::ExtensionDraft,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let path = format!("{}/{}", draft.location, draft.title.to_lowercase());
+                self.created.lock().unwrap().push(draft);
+                Ok(path)
+            })
+        }
+
+        fn set_theme(&self, theme: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.themes_kept.lock().unwrap().push(theme);
+                Ok(())
+            })
+        }
+
+        fn list_fonts(&self) -> crate::backend::BackendFuture<'_, crate::backend::FontList> {
+            Box::pin(async {
+                let font = |name: &str, primary: &str, categories: &[&str]| {
+                    crate::backend::FontListEntry {
+                        name: name.into(),
+                        family: name.into(),
+                        glyph: Some("Aa".into()),
+                        color: false,
+                        primary: primary.into(),
+                        categories: categories.iter().map(|c| (*c).to_owned()).collect(),
+                    }
+                };
+                Ok(crate::backend::FontList {
+                    fonts: vec![
+                        font("Inter", "Latin", &["Latin"]),
+                        font("JetBrains Mono", "Monospace", &["Latin", "Monospace"]),
+                    ],
+                    categories: vec!["Latin".into(), "Monospace".into()],
+                })
+            })
+        }
+
+        fn font_specimen(&self, name: String) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move { Ok(format!("# {name}\n\nThe quick brown fox\n\n---\n")) })
+        }
+
+        fn choose_dmenu(
+            &self,
+            token: u64,
+            output: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.dmenu_answers.lock().unwrap().push((token, output));
+                Ok(())
+            })
+        }
+
+        fn list_programs(&self) -> crate::backend::BackendFuture<'_, crate::backend::ProgramList> {
+            Box::pin(async {
+                Ok(crate::backend::ProgramList {
+                    programs: vec!["/usr/bin/htop".into(), "/usr/bin/top".into()],
+                    terminal: Some("Ptyxis".into()),
+                    default_action: "run-in-terminal".into(),
+                })
+            })
+        }
+
+        fn run_program(
+            &self,
+            argv: Vec<String>,
+            terminal: bool,
+            hold: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.programs_ran
+                    .lock()
+                    .unwrap()
+                    .push((argv, terminal, hold));
+                Ok(())
+            })
+        }
+
+        fn list_scripts(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
+            Box::pin(async move { Ok(self.scripts.clone()) })
+        }
+
+        fn run_script(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, Option<u64>> {
+            Box::pin(async move {
+                let mode = self
+                    .scripts
+                    .iter()
+                    .find(|script| script.id == id)
+                    .map(|script| script.mode)
+                    .ok_or("No script command has that id")?;
+                self.script_runs.lock().unwrap().push((id, arguments));
+                Ok(match mode {
+                    compass_core::script_command::OutputMode::Silent
+                    | compass_core::script_command::OutputMode::Terminal => None,
+                    _ => Some(7),
+                })
+            })
+        }
+
+        fn script_output(
+            &self,
+            session: u64,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::ScriptOutputState> {
+            Box::pin(async move {
+                let (id, arguments) = self.script_runs.lock().unwrap().last().cloned().unwrap();
+                assert_eq!(session, 7);
+                Ok(crate::backend::ScriptOutputState {
+                    output: format!(
+                        "\u{1b}[31m{id}\u{1b}[0m {}\nsecond line",
+                        arguments.join(" ")
+                    ),
+                    finished: true,
+                    exit_code: Some(0),
+                    elapsed_ms: 1200,
+                })
+            })
+        }
+
+        fn list_snippets(&self) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move { Ok(self.snippets.lock().unwrap().clone()) })
+        }
+
+        fn save_snippet(
+            &self,
+            draft: crate::backend::SnippetDraft,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move {
+                self.snippet_drafts.lock().unwrap().push(draft.clone());
+                let mut snippets = self.snippets.lock().unwrap();
+                let id = draft
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("snp-{}", snippets.len()));
+                let stored = crate::backend::Snippet {
+                    id: id.clone(),
+                    name: draft.name,
+                    data: compass_core::snippet_store::SnippetData::Text { text: draft.text },
+                    expansion: draft.keyword.map(|keyword| {
+                        compass_core::snippet_store::StoredExpansion {
+                            keyword,
+                            apps: draft.apps,
+                            word: draft.word,
+                        }
+                    }),
+                    ..crate::backend::Snippet::default()
+                };
+                match snippets.iter_mut().find(|s| s.id == id) {
+                    Some(existing) => *existing = stored,
+                    None => snippets.push(stored),
+                }
+                Ok(snippets.clone())
+            })
+        }
+
+        fn remove_snippet(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Snippet>> {
+            Box::pin(async move {
+                let mut snippets = self.snippets.lock().unwrap();
+                snippets.retain(|s| s.id != id);
+                Ok(snippets.clone())
+            })
+        }
+
+        fn expand_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                self.snippet_uses
+                    .lock()
+                    .unwrap()
+                    .push((id.clone(), arguments.clone(), false));
+                let values: Vec<String> = arguments.into_iter().map(|(_, v)| v).collect();
+                Ok(format!("{id}:{}", values.join(",")))
+            })
+        }
+
+        fn paste_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.snippet_uses
+                    .lock()
+                    .unwrap()
+                    .push((id, arguments, true));
+                Ok(())
+            })
+        }
+
+        fn list_shortcuts(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move { Ok(self.shortcuts.lock().unwrap().clone()) })
+        }
+
+        fn save_shortcut(
+            &self,
+            draft: crate::backend::ShortcutDraft,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move {
+                self.drafts.lock().unwrap().push(draft.clone());
+                let mut shortcuts = self.shortcuts.lock().unwrap();
+                let id = draft
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("sct-{}", shortcuts.len()));
+                let stored = crate::backend::Shortcut {
+                    id: id.clone(),
+                    name: draft.name,
+                    icon: draft.icon,
+                    url: draft.url,
+                    app: draft.app,
+                    ..crate::backend::Shortcut::default()
+                };
+                match shortcuts.iter_mut().find(|s| s.id == id) {
+                    Some(existing) => *existing = stored,
+                    None => shortcuts.push(stored),
+                }
+                Ok(shortcuts.clone())
+            })
+        }
+
+        fn remove_shortcut(
+            &self,
+            id: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::Shortcut>> {
+            Box::pin(async move {
+                let mut shortcuts = self.shortcuts.lock().unwrap();
+                shortcuts.retain(|s| s.id != id);
+                Ok(shortcuts.clone())
+            })
+        }
+
+        fn open_shortcut(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened_shortcuts.lock().unwrap().push((id, arguments));
+                Ok(())
+            })
+        }
+
+        fn expand_shortcut(
+            &self,
+            id: String,
+            arguments: Vec<String>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let shortcuts = self.shortcuts.lock().unwrap();
+                let shortcut = shortcuts.iter().find(|s| s.id == id).ok_or("gone")?;
+                Ok(format!("{}|{}", shortcut.url, arguments.join(",")))
             })
         }
 
@@ -5438,11 +6168,11 @@ mod tests {
     fn a_root_application_exposes_and_dispatches_its_desktop_action_in_the_panel() {
         use iced::futures::{StreamExt, executor::block_on};
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Browser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
+        std::fs::write(dir.path().join("browser.desktop"), "[Desktop Entry]\nType=Application\nName=Webbrowser\nExec=parent\nActions=private;\n[Desktop Action private]\nName=Private Window\nExec=private-app\n").unwrap();
         let index = AppIndex::builder().dir(dir.path()).build();
         let launcher = Arc::new(RecordingLaunchTarget::default());
         let mut app = LauncherApp::with_index(index).with_launcher(launcher.clone());
-        let _ = app.update(Message::QueryChanged("Browser".to_owned()));
+        let _ = app.update(Message::QueryChanged("Webbrowser".to_owned()));
         assert_eq!(app.results.len(), 1, "actions are not duplicate root rows");
         let backend = Arc::new(TestBackend::default());
         app.backend = Some(backend.clone());
@@ -6367,7 +7097,11 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -6531,6 +7265,834 @@ mod tests {
         assert!(
             matches!(&page.status, crate::files_page::Status::Failed(reason)
                 if reason.contains("needs the Compass engine")),
+            "{:?}",
+            page.status
+        );
+    }
+
+    // ---- Shortcuts ----
+
+    fn stored_shortcut(id: &str, name: &str, url: &str) -> crate::backend::Shortcut {
+        crate::backend::Shortcut {
+            id: id.into(),
+            name: name.into(),
+            icon: "icon://omnicast/link".into(),
+            url: url.into(),
+            app: "default".into(),
+            ..crate::backend::Shortcut::default()
+        }
+    }
+
+    /// An app whose engine holds two shortcuts, already listed.
+    fn shortcuts_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 2);
+        (app, backend)
+    }
+
+    fn open_builtin(app: &mut LauncherApp, query: &str, id: &str) {
+        app.query = query.into();
+        app.search();
+        let Some(RootRow::Command(command)) = app.selected_row() else {
+            panic!("{query:?} did not select a command: {}", app.state_line());
+        };
+        assert_eq!(command.id(), id);
+        let task = app.update(Message::LaunchSelected);
+        settle(app, task);
+    }
+
+    #[test]
+    fn a_shortcut_in_root_search_asks_for_its_argument_then_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.query = "crate docs".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Shortcut(0)),
+            "{}",
+            app.state_line()
+        );
+        assert!(app.state_line().contains("selected_title=\"Crate Docs\""));
+
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "crate");
+
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert!(
+            backend.opened_shortcuts.lock().unwrap().is_empty(),
+            "a required argument left empty does not open it"
+        );
+
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("serde".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().as_slice(),
+            [("sct-docs".to_owned(), vec!["serde".to_owned()])]
+        );
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["shortcuts:sct-docs"],
+            "the visit counts in root search's ranking"
+        );
+        assert!(matches!(app.page, Page::Root));
+
+        // One with no arguments opens at once.
+        app.query = "hacker news".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().last(),
+            Some(&("sct-news".to_owned(), Vec::new()))
+        );
+    }
+
+    #[test]
+    fn create_shortcut_saves_the_form_and_the_new_one_is_searchable() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        open_builtin(&mut app, "create shortcut", "commands:create-shortcut");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Create Shortcut");
+        let position = |name: &str| page.fields.iter().position(|f| f.name == name).unwrap();
+        let (name, link, icon) = (position("name"), position("link"), position("icon"));
+
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("the form went away without a link");
+        };
+        assert!(
+            page.notice.as_deref().is_some_and(|n| n.contains("Link")),
+            "{:?}",
+            page.notice
+        );
+
+        let _ = app.update(Message::PreferenceEdited(
+            name,
+            FieldValue::Text("Wiki".into()),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            link,
+            FieldValue::Text("https://en.wikipedia.org/wiki/{page}".into()),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            icon,
+            FieldValue::Choice(Some("icon://omnicast/book".into())),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.drafts.lock().unwrap().as_slice(),
+            [crate::backend::ShortcutDraft {
+                id: None,
+                name: "Wiki".into(),
+                icon: "icon://omnicast/book".into(),
+                url: "https://en.wikipedia.org/wiki/{page}".into(),
+                app: "default".into(),
+            }]
+        );
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        app.query = "wiki".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Shortcut(2)));
+    }
+
+    #[test]
+    fn manage_shortcuts_filters_edits_and_removes() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        open_builtin(&mut app, "manage shortcuts", "commands:manage-shortcuts");
+        assert!(
+            app.state_line().contains("page=shortcuts"),
+            "{}",
+            app.state_line()
+        );
+
+        let _ = app.update(Message::ShortcutsQueryChanged("hackr".into()));
+        let Page::Shortcuts(page) = &app.page else {
+            panic!("not on Manage Shortcuts");
+        };
+        assert_eq!(page.shown, [1], "the filter is fuzzy");
+
+        // Ctrl+E edits it in the form, prefilled; Escape comes back here.
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no edit form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Edit \"Hacker News\"");
+        assert_eq!(page.command_id, "sct-news");
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+
+        // Saving an edit sends the id, and returns to the list.
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend
+                .drafts
+                .lock()
+                .unwrap()
+                .last()
+                .and_then(|d| d.id.clone()),
+            Some("sct-news".to_owned())
+        );
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+
+        // Ctrl+X removes the selected one, here; Ctrl+Shift+X does not.
+        let _ = app.update(Message::ShortcutsQueryChanged(String::new()));
+        let task = app.update(chord("x", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 2);
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            app.app_index
+                .shortcuts()
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            ["sct-news"]
+        );
+
+        // The panel offers the rest; Copy writes the expanded link.
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("copy".into()));
+        let task = app.update(Message::PanelActivate);
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, ["https://news.ycombinator.com|"]);
+    }
+
+    #[test]
+    fn a_root_shortcut_is_removed_with_ctrl_shift_x() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _backend) = shortcuts_app(dir.path());
+        app.query = "hacker news".into();
+        app.search();
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        assert_eq!(
+            app.app_index.shortcuts().len(),
+            2,
+            "Ctrl+X is not remove here"
+        );
+        let task = app.update(chord("x", Modifiers::CTRL | Modifiers::SHIFT));
+        settle(&mut app, task);
+        assert_eq!(app.app_index.shortcuts().len(), 1);
+        assert!(
+            app.results
+                .iter()
+                .all(|row| !matches!(row, RootRow::Shortcut(_))),
+            "the removed shortcut left the results"
+        );
+    }
+
+    #[test]
+    fn shortcuts_without_an_engine_say_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        open_builtin(&mut app, "create shortcut", "commands:create-shortcut");
+        let _ = app.update(Message::PreferenceEdited(
+            1,
+            crate::preferences_page::FieldValue::Text("https://x.test".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("the form went away");
+        };
+        assert!(
+            page.notice
+                .as_deref()
+                .is_some_and(|n| n.contains("need the Compass engine")),
+            "{:?}",
+            page.notice
+        );
+    }
+
+    // ---- Create Extension ----
+
+    #[test]
+    fn create_extension_sends_the_form_and_shows_where_it_went() {
+        use crate::preferences_page::FieldValue;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "create extension", "commands:create-extension");
+        for (position, value) in [
+            "zoe",
+            "Hello",
+            "Says hello to the whole world",
+            "/home/me/code",
+            "Say Hello",
+            "Says hello",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let _ = app.update(Message::PreferenceEdited(
+                position,
+                FieldValue::Text(value.into()),
+            ));
+        }
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        let created = backend.created.lock().unwrap().clone();
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].template, ":boilerplate/tmpl-list");
+        let Page::Created(page) = &app.page else {
+            panic!("no success page: {}", app.state_line());
+        };
+        assert_eq!(page.path, "/home/me/code/hello");
+    }
+
+    // ---- Browse Fonts ----
+
+    #[test]
+    fn browse_fonts_filters_previews_and_goes_back_to_the_same_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        open_builtin(&mut app, "browse fonts", "commands:browse-fonts");
+        let Page::Fonts(page) = &app.page else {
+            panic!("not Browse Fonts: {}", app.state_line());
+        };
+        assert_eq!(page.shown().0, "All Fonts (2)");
+        assert_eq!(page.options, ["All", "Latin", "Monospace"]);
+
+        let task = app.update(Message::FontsCategoryChanged("Monospace".into()));
+        settle(&mut app, task);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::FontPreview(preview) = &app.page else {
+            panic!("no specimen: {}", app.state_line());
+        };
+        assert_eq!(preview.name, "JetBrains Mono");
+        assert_eq!(
+            preview.lines.first(),
+            Some(&crate::fonts_page::SpecimenLine::Heading(
+                "JetBrains Mono".into()
+            ))
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Fonts(page) = &app.page else {
+            panic!("not back at the list: {}", app.state_line());
+        };
+        assert_eq!(page.category.as_deref(), Some("Monospace"), "filter kept");
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let task = app.update(Message::PanelActivate);
+        assert_eq!(
+            settle(&mut app, task),
+            ["JetBrains Mono"],
+            "Copy font family"
+        );
+    }
+
+    // ---- Set Theme ----
+
+    #[test]
+    fn set_theme_previews_as_the_selection_moves_and_escape_puts_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.theme_choice = crate::theme::Theme::Nord;
+        open_builtin(&mut app, "set theme", "commands:set-theme");
+        assert!(
+            app.state_line().contains("page=themes"),
+            "{}",
+            app.state_line()
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        assert_ne!(app.theme_choice, crate::theme::Theme::Nord, "previewed");
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Nord, "put back");
+        assert!(matches!(app.page, Page::Root));
+        assert!(backend.themes_kept.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_theme_keeps_the_chosen_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.theme_choice = crate::theme::Theme::System;
+        open_builtin(&mut app, "set theme", "commands:set-theme");
+        let _ = app.update(Message::ThemesQueryChanged("dracula".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(backend.themes_kept.lock().unwrap().as_slice(), ["dracula"]);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula);
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        assert_eq!(
+            app.theme_choice,
+            crate::theme::Theme::Dracula,
+            "a kept theme stays when the launcher hides"
+        );
+    }
+
+    // ---- dmenu ----
+
+    fn dmenu_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        // Already open, so the summon focuses it rather than opening one,
+        // which only a running event loop could answer.
+        app.window = Some(window::Id::unique());
+        let task = app.update(Message::Command(UiCommand::Dmenu(5)));
+        settle(&mut app, task);
+        (app, backend)
+    }
+
+    #[test]
+    fn a_pushed_dmenu_list_is_shown_filtered_and_answered_with_the_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = dmenu_app(dir.path());
+        let Page::Dmenu(page) = &app.page else {
+            panic!("no dmenu view: {}", app.state_line());
+        };
+        assert_eq!(page.entries, ["alpha", "beta", "gamma"]);
+        assert_eq!(page.heading().as_deref(), Some("Pick (3)"));
+
+        let _ = app.update(Message::DmenuQueryChanged("gama".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.dmenu_answers.lock().unwrap().as_slice(),
+            [(5, Some("gamma".to_owned()))]
+        );
+        assert!(
+            matches!(app.page, Page::Root),
+            "choosing hides the launcher"
+        );
+    }
+
+    #[test]
+    fn escape_dismisses_a_dmenu_list_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = dmenu_app(dir.path());
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.dmenu_answers.lock().unwrap().as_slice(),
+            [(5, None)],
+            "one dismissal, however the view went away"
+        );
+    }
+
+    // ---- Run Terminal Program ----
+
+    #[test]
+    fn run_terminal_program_runs_the_typed_command_line_in_a_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "run terminal program", "commands:run-program");
+        let Page::Programs(page) = &app.page else {
+            panic!("not on Run Terminal Program: {}", app.state_line());
+        };
+        assert_eq!(page.rows.len(), 2, "every program for the empty query");
+
+        let _ = app.update(Message::ProgramsQueryChanged("htop -d 5".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.programs_ran.lock().unwrap().as_slice(),
+            [(
+                vec!["htop".to_owned(), "-d".to_owned(), "5".to_owned()],
+                true,
+                false
+            )],
+            "run-in-terminal is the default: a terminal that closes"
+        );
+        assert!(matches!(app.page, Page::Root), "running hides the launcher");
+    }
+
+    // ---- Script commands ----
+
+    fn script_item(
+        id: &str,
+        title: &str,
+        mode: compass_core::script_command::OutputMode,
+        arguments: usize,
+    ) -> compass_core::script_scan::ScriptItem {
+        compass_core::script_scan::ScriptItem {
+            id: id.into(),
+            title: title.into(),
+            subtitle: "scripts".into(),
+            keywords: vec![],
+            mode,
+            needs_confirmation: false,
+            arguments: (0..arguments)
+                .map(|n| compass_core::script_command::ScriptArgument {
+                    argument_type: compass_core::script_command::ArgumentType::Text,
+                    placeholder: Some(format!("arg{n}")),
+                    optional: false,
+                    percent_encoded: false,
+                    data: None,
+                })
+                .collect(),
+            path: format!("/scripts/{id}"),
+        }
+    }
+
+    fn scripts_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        use compass_core::script_command::OutputMode;
+        let backend = Arc::new(TestBackend {
+            scripts: vec![
+                script_item("report.sh", "Disk Report", OutputMode::Full, 1),
+                script_item("count.sh", "Count Things", OutputMode::Compact, 0),
+                script_item("touch.sh", "Touch Marker", OutputMode::Silent, 0),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_scripts_task();
+        settle(&mut app, task);
+        assert_eq!(app.app_index.scripts().len(), 3);
+        (app, backend)
+    }
+
+    #[test]
+    fn a_full_output_script_asks_for_its_argument_and_shows_its_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "disk report".into();
+        app.search();
+        assert_eq!(
+            app.selected_row(),
+            Some(RootRow::Script(0)),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "arg0");
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("/home".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.script_runs.lock().unwrap().as_slice(),
+            [("report.sh".to_owned(), vec!["/home".to_owned()])]
+        );
+        assert_eq!(
+            backend.recorded.lock().unwrap().as_slice(),
+            ["scripts:report.sh"]
+        );
+        let Page::ScriptOutput(page) = &app.page else {
+            panic!("no output view: {}", app.state_line());
+        };
+        assert_eq!(page.heading(), "Done in 1.2s (exit=0)");
+        assert_eq!(page.runs[0].text, "report.sh");
+        assert_eq!(
+            page.runs[0].foreground,
+            Some(compass_core::script_output::Color::Red)
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+    }
+
+    #[test]
+    fn a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = scripts_app(dir.path());
+        app.query = "count things".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            app.error.as_deref(),
+            Some("count.sh "),
+            "{}",
+            app.state_line()
+        );
+
+        app.query = "touch marker".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(backend.script_runs.lock().unwrap().len(), 2);
+    }
+
+    // ---- Snippets ----
+
+    fn stored_snippet(
+        id: &str,
+        name: &str,
+        text: &str,
+        keyword: Option<&str>,
+    ) -> crate::backend::Snippet {
+        crate::backend::Snippet {
+            id: id.into(),
+            name: name.into(),
+            data: compass_core::snippet_store::SnippetData::Text { text: text.into() },
+            expansion: keyword.map(|keyword| compass_core::snippet_store::StoredExpansion {
+                keyword: keyword.into(),
+                apps: vec!["org.gnome.TextEditor.desktop".into()],
+                word: true,
+            }),
+            ..crate::backend::Snippet::default()
+        }
+    }
+
+    /// An app whose engine holds two snippets, with Manage Snippets open.
+    fn snippets_app(dir: &std::path::Path) -> (LauncherApp, Arc<TestBackend>) {
+        let backend = Arc::new(TestBackend {
+            snippets: std::sync::Mutex::new(vec![
+                stored_snippet("snp-sig", "Signature", "Best,\nMe", Some(";sig")),
+                stored_snippet("snp-hi", "Greeting", "Hello {name}!", None),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+        assert!(
+            app.state_line().contains("page=snippets"),
+            "{}",
+            app.state_line()
+        );
+        (app, backend)
+    }
+
+    fn ctrl_enter() -> Message {
+        Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    #[test]
+    fn manage_snippets_copies_asking_for_arguments_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = snippets_app(dir.path());
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets");
+        };
+        assert_eq!(page.shown, [0, 1]);
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(
+            writes,
+            ["snp-sig:"],
+            "Enter copies, as the C++'s primary action"
+        );
+        assert!(
+            !matches!(app.page, Page::Snippets(_)),
+            "copying hides the launcher: {}",
+            app.state_line()
+        );
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+
+        let _ = app.update(Message::SnippetsQueryChanged("greting".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no arguments form: {}", app.state_line());
+        };
+        assert_eq!(page.fields[0].title, "name");
+        // Escape goes back to the list, as it was.
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!(
+                "Escape did not return to Manage Snippets: {}",
+                app.state_line()
+            );
+        };
+        assert_eq!(page.query, "greting");
+
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("paste".into()));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("Zoë".into()),
+        ));
+        let task = app.update(Message::PreferencesSubmit);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.snippet_uses.lock().unwrap().last(),
+            Some(&(
+                "snp-hi".to_owned(),
+                vec![("name".to_owned(), "Zoë".to_owned())],
+                true
+            ))
+        );
+        assert!(matches!(app.page, Page::Root), "pasting hides the launcher");
+    }
+
+    #[test]
+    fn create_snippet_takes_several_lines_and_saves_with_ctrl_enter() {
+        use crate::preferences_page::FieldValue;
+        use iced::widget::text_editor::{Action, Edit};
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "create snippet", "commands:create-snippet");
+        let Page::Preferences(page) = &app.page else {
+            panic!("no form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Create Snippet");
+        let content = page
+            .fields
+            .iter()
+            .position(|f| f.name == "content")
+            .unwrap();
+
+        let _ = app.update(Message::PreferenceEdited(0, FieldValue::Text("Sig".into())));
+        let _ = app.update(Message::PreferenceTextEdited(
+            content,
+            Action::Edit(Edit::Paste(Arc::new("Best,\n{cursor}".to_owned()))),
+        ));
+        let _ = app.update(Message::PreferenceEdited(
+            2,
+            FieldValue::Text(" ;sig ".into()),
+        ));
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            backend.snippet_drafts.lock().unwrap().is_empty(),
+            "Enter is a newline in the text area, not a submit"
+        );
+        let task = app.update(ctrl_enter());
+        settle(&mut app, task);
+        assert_eq!(
+            backend.snippet_drafts.lock().unwrap().as_slice(),
+            [crate::backend::SnippetDraft {
+                id: None,
+                name: "Sig".into(),
+                text: "Best,\n{cursor}".into(),
+                keyword: Some(";sig".into()),
+                word: true,
+                apps: vec![],
+            }]
+        );
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+    }
+
+    #[test]
+    fn editing_a_snippet_keeps_its_apps_and_returns_to_the_list() {
+        use iced::keyboard::Modifiers;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = snippets_app(dir.path());
+        let task = app.update(chord("e", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Preferences(page) = &app.page else {
+            panic!("no edit form: {}", app.state_line());
+        };
+        assert_eq!(page.title, "Edit \"Signature\"");
+        let task = app.update(ctrl_enter());
+        settle(&mut app, task);
+        let draft = backend
+            .snippet_drafts
+            .lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap();
+        assert_eq!(draft.id.as_deref(), Some("snp-sig"));
+        assert_eq!(draft.apps, ["org.gnome.TextEditor.desktop"]);
+        assert!(
+            matches!(app.page, Page::Snippets(_)),
+            "{}",
+            app.state_line()
+        );
+
+        let task = app.update(chord("x", Modifiers::CTRL));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets");
+        };
+        assert_eq!(
+            page.all.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["snp-hi"]
+        );
+    }
+
+    #[test]
+    fn snippets_without_an_engine_say_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        open_builtin(&mut app, "manage snippets", "commands:manage-snippets");
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets");
+        };
+        assert!(
+            matches!(&page.status, crate::snippets_page::Status::Failed(reason)
+                if reason.contains("need the Compass engine")),
             "{:?}",
             page.status
         );
@@ -7202,7 +8764,11 @@ mod quick_launch_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(i) => app.app_index.items().get(*i),
-                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -7345,7 +8911,11 @@ mod icon_tests {
             .iter()
             .filter_map(|row| match row {
                 RootRow::App(index) => app.app_index.items().get(*index),
-                RootRow::Command(_) | RootRow::Extension(_) | RootRow::Calculator => None,
+                RootRow::Command(_)
+                | RootRow::Extension(_)
+                | RootRow::Shortcut(_)
+                | RootRow::Script(_)
+                | RootRow::Calculator => None,
             })
             .find(|item| item.name() == name)
             .unwrap_or_else(|| panic!("{name} is not a row"))

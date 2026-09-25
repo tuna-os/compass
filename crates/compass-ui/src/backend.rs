@@ -48,6 +48,145 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
     }
 
+    /// Every stored shortcut, in the store's order.
+    fn list_shortcuts(&self) -> BackendFuture<'_, Vec<Shortcut>> {
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Creates a shortcut (`id` is `None`) or updates one, answering with the
+    /// list after the change. `icon` may be `default`, which the engine
+    /// resolves.
+    fn save_shortcut(&self, shortcut: ShortcutDraft) -> BackendFuture<'_, Vec<Shortcut>> {
+        let _ = shortcut;
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Removes a shortcut, answering with the list after the change.
+    fn remove_shortcut(&self, id: String) -> BackendFuture<'_, Vec<Shortcut>> {
+        let _ = id;
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Opens a shortcut with its arguments. An error is the sentence to show.
+    fn open_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, ()> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// A shortcut's link, expanded with its arguments, without opening it.
+    fn expand_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, String> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Every stored snippet, in the store's order.
+    fn list_snippets(&self) -> BackendFuture<'_, Vec<Snippet>> {
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Creates a snippet (`id` is `None`) or updates one, answering with the
+    /// list after the change. An error is the sentence to show.
+    fn save_snippet(&self, snippet: SnippetDraft) -> BackendFuture<'_, Vec<Snippet>> {
+        let _ = snippet;
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Removes a snippet, answering with the list after the change.
+    fn remove_snippet(&self, id: String) -> BackendFuture<'_, Vec<Snippet>> {
+        let _ = id;
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// A snippet expanded with its arguments, to copy.
+    fn expand_snippet(
+        &self,
+        id: String,
+        arguments: Vec<(String, String)>,
+    ) -> BackendFuture<'_, String> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Expands a snippet and pastes it into the focused window.
+    fn paste_snippet(&self, id: String, arguments: Vec<(String, String)>) -> BackendFuture<'_, ()> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Generates a new extension's boilerplate: where it was written, or the
+    /// sentence saying why not.
+    fn create_extension(&self, draft: ExtensionDraft) -> BackendFuture<'_, String> {
+        let _ = draft;
+        Box::pin(async { Err("Create Extension needs the Compass engine".to_owned()) })
+    }
+
+    /// Keeps a theme in the configuration, by its persisted name.
+    fn set_theme(&self, theme: String) -> BackendFuture<'_, ()> {
+        let _ = theme;
+        Box::pin(async { Err("Set Theme needs the Compass engine to keep the theme".to_owned()) })
+    }
+
+    /// The installed font families, as Browse Fonts lists them.
+    fn list_fonts(&self) -> BackendFuture<'_, FontList> {
+        Box::pin(async { Err("Browse Fonts needs the Compass engine".to_owned()) })
+    }
+
+    /// A family's specimen, as Markdown.
+    fn font_specimen(&self, name: String) -> BackendFuture<'_, String> {
+        let _ = name;
+        Box::pin(async { Err("Browse Fonts needs the Compass engine".to_owned()) })
+    }
+
+    /// The `vicinae dmenu` list the engine holds under `token`.
+    fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
+        let _ = token;
+        Box::pin(async { Err("dmenu needs the Compass engine".to_owned()) })
+    }
+
+    /// Answers the dmenu list under `token`: what to print, or `None` when it
+    /// was dismissed.
+    fn choose_dmenu(&self, token: u64, output: Option<String>) -> BackendFuture<'_, ()> {
+        let _ = (token, output);
+        Box::pin(async { Err("dmenu needs the Compass engine".to_owned()) })
+    }
+
+    /// The executables on `PATH`, the terminal they would run in, and the
+    /// default action.
+    fn list_programs(&self) -> BackendFuture<'_, ProgramList> {
+        Box::pin(async { Err(PROGRAMS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Runs a command line, in a terminal (kept open when `hold`) or
+    /// directly.
+    fn run_program(&self, argv: Vec<String>, terminal: bool, hold: bool) -> BackendFuture<'_, ()> {
+        let _ = (argv, terminal, hold);
+        Box::pin(async { Err(PROGRAMS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Every script command, scanned afresh.
+    fn list_scripts(&self) -> BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Runs a script command with its arguments: the run to follow, or
+    /// `None` when there is nothing to follow (silent and terminal modes).
+    fn run_script(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, Option<u64>> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// What a script run has printed so far.
+    fn script_output(&self, session: u64) -> BackendFuture<'_, ScriptOutputState> {
+        let _ = session;
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Stops a script run.
+    fn stop_script(&self, session: u64) -> BackendFuture<'_, ()> {
+        let _ = session;
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
     /// Run an installed extension's command by its entrypoint id, with the
     /// argument values entered for it, or `None` when none have been. `Ok`
     /// once the engine has started it; an error is a sentence saying why it
@@ -123,6 +262,146 @@ const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine"
 
 const FILES_NEED_ENGINE: &str =
     "Search Files needs the Compass engine, and this window is running without one";
+
+const SHORTCUTS_NEED_ENGINE: &str =
+    "Shortcuts need the Compass engine, and this window is running without one";
+
+/// The Create Extension form's values.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExtensionDraft {
+    /// Who is writing it.
+    pub author: String,
+    /// The extension's title.
+    pub title: String,
+    /// What it does.
+    pub description: String,
+    /// The directory to create it in.
+    pub location: String,
+    /// The first command's title.
+    pub command_title: String,
+    /// The first command's description.
+    pub command_description: String,
+    /// The command template's resource id.
+    pub template: String,
+}
+
+/// Browse Fonts' families and its filter's categories.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FontList {
+    /// The families, in the browser's order.
+    pub fonts: Vec<FontListEntry>,
+    /// The category names, in the filter's order.
+    pub categories: Vec<String>,
+}
+
+/// One family in Browse Fonts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FontListEntry {
+    /// The typeface's name, its members folded together.
+    pub name: String,
+    /// The member to draw it with.
+    pub family: String,
+    /// The glyph its row shows.
+    pub glyph: Option<String>,
+    /// Whether it is a colour emoji font.
+    pub color: bool,
+    /// The category it is listed under.
+    pub primary: String,
+    /// Every category it can be filtered by.
+    pub categories: Vec<String>,
+}
+
+/// A `vicinae dmenu` list and its options.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DmenuList {
+    /// The entries, one per line.
+    pub content: String,
+    /// `--navigation-title`.
+    pub navigation_title: Option<String>,
+    /// `--section-title`, with `{count}`.
+    pub section_title: Option<String>,
+    /// `--format index`.
+    pub output_index: bool,
+    /// `--placeholder`.
+    pub placeholder: Option<String>,
+    /// `--query`.
+    pub query: Option<String>,
+    /// `--no-section`.
+    pub no_section: bool,
+    /// `--no-quick-look`.
+    pub no_quick_look: bool,
+}
+
+const PROGRAMS_NEED_ENGINE: &str =
+    "Run Terminal Program needs the Compass engine, and this window is running without one";
+
+/// What Run Terminal Program offers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProgramList {
+    /// Every executable, by path.
+    pub programs: Vec<String>,
+    /// The terminal's name, when one is installed.
+    pub terminal: Option<String>,
+    /// The `default-action` preference.
+    pub default_action: String,
+}
+
+const SCRIPTS_NEED_ENGINE: &str =
+    "Script commands need the Compass engine, and this window is running without one";
+
+/// What a script run has printed, and whether it has ended.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScriptOutputState {
+    /// Everything read so far.
+    pub output: String,
+    /// Whether it has ended.
+    pub finished: bool,
+    /// Its exit code, when it exited normally.
+    pub exit_code: Option<i32>,
+    /// How long it has run, or ran.
+    pub elapsed_ms: u64,
+}
+
+const SNIPPETS_NEED_ENGINE: &str =
+    "Snippets need the Compass engine, and this window is running without one";
+
+/// A stored snippet, as the engine lists it.
+pub type Snippet = compass_core::snippet_store::SerializedSnippet;
+
+/// A text snippet to save.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnippetDraft {
+    /// The snippet to update, or `None` for a new one.
+    pub id: Option<String>,
+    /// Its name.
+    pub name: String,
+    /// Its text.
+    pub text: String,
+    /// Its keyword, if any.
+    pub keyword: Option<String>,
+    /// Whether the keyword waits for a word boundary.
+    pub word: bool,
+    /// The applications the keyword is limited to.
+    pub apps: Vec<String>,
+}
+
+/// A stored shortcut, as the engine lists it.
+pub type Shortcut = compass_core::shortcut_store::SerializedShortcut;
+
+/// A shortcut to save.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortcutDraft {
+    /// The shortcut to update, or `None` for a new one.
+    pub id: Option<String>,
+    /// Its name; may be empty.
+    pub name: String,
+    /// Its icon URL, or `default`.
+    pub icon: String,
+    /// The link.
+    pub url: String,
+    /// The application id, or `default`.
+    pub app: String,
+}
 
 /// One file in Search Files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +483,8 @@ pub enum PreferenceInputKind {
         /// The options.
         options: Vec<(String, String)>,
     },
+    /// Several lines of text.
+    TextArea,
     /// A kind the form cannot edit yet.
     Unsupported {
         /// What the manifest calls it.

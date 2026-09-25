@@ -123,6 +123,107 @@ pub enum Message {
     FilesSelected(usize),
     /// Opening a file (or showing it in the file browser) finished.
     FileOpened(Result<(), String>),
+    /// An edit in a form's text area, by field position.
+    PreferenceTextEdited(usize, iced::widget::text_editor::Action),
+    /// The snippet list arrived (on opening Manage Snippets, or after a
+    /// change), or why it could not be read.
+    SnippetsLoaded(Result<Vec<crate::backend::Snippet>, String>),
+    /// A snippet was saved (the list after it), or why it was not.
+    SnippetSaved(Result<Vec<crate::backend::Snippet>, String>),
+    /// A snippet's expansion, to copy, or why it could not be expanded.
+    SnippetExpanded(Result<String, String>),
+    /// Pasting a snippet finished.
+    SnippetPasted(Result<(), String>),
+    /// Manage Snippets' filter changed.
+    SnippetsQueryChanged(String),
+    /// A Manage Snippets row was clicked, by position.
+    SnippetSelected(usize),
+    /// Create Extension finished, for the extension called `title`: where
+    /// it was written, or why not.
+    ExtensionCreated {
+        /// The extension's title.
+        title: String,
+        /// Its path, or the reason.
+        result: Result<String, String>,
+    },
+    /// Opening the new extension's folder finished.
+    CreatedFolderOpened(Result<(), String>),
+    /// Browse Fonts' families arrived, or why they could not be listed.
+    FontsLoaded(Result<crate::backend::FontList, String>),
+    /// Browse Fonts' search text changed.
+    FontsQueryChanged(String),
+    /// Browse Fonts' category filter changed, to the option titled so.
+    FontsCategoryChanged(String),
+    /// A Browse Fonts row was clicked, by position.
+    FontSelected(usize),
+    /// A family's specimen arrived, or why not.
+    FontSpecimenLoaded {
+        /// The typeface's name.
+        name: String,
+        /// The member to draw it with.
+        family: String,
+        /// The specimen's Markdown.
+        result: Result<String, String>,
+    },
+    /// Set Theme's search text changed.
+    ThemesQueryChanged(String),
+    /// A Set Theme row was clicked, by position.
+    ThemeSelected(usize),
+    /// The chosen theme was kept, or why not.
+    ThemeSaved(Result<(), String>),
+    /// A dmenu list arrived for `token`, or why it could not be fetched.
+    DmenuLoaded {
+        /// Which list.
+        token: u64,
+        /// The list.
+        result: Result<crate::backend::DmenuList, String>,
+    },
+    /// The dmenu view's search text changed.
+    DmenuQueryChanged(String),
+    /// A dmenu entry was clicked, by position.
+    DmenuSelected(usize),
+    /// The dmenu choice reached the engine, or why it did not.
+    DmenuChosen(Result<(), String>),
+    /// Run Terminal Program's programs arrived, or why they could not.
+    ProgramsLoaded(Result<crate::backend::ProgramList, String>),
+    /// Run Terminal Program's text changed.
+    ProgramsQueryChanged(String),
+    /// A Run Terminal Program row was clicked, by position.
+    ProgramSelected(usize),
+    /// Running a program finished starting, or why it did not.
+    ProgramRan(Result<(), String>),
+    /// The script commands arrived, or why they could not be listed.
+    ScriptsLoaded(Result<Vec<compass_core::script_scan::ScriptItem>, String>),
+    /// A script started: the run to follow, if any.
+    ScriptStarted {
+        /// Which script.
+        id: String,
+        /// The arguments it ran with.
+        arguments: Vec<String>,
+        /// The run, or why it did not start.
+        result: Result<Option<u64>, String>,
+    },
+    /// A report on script run `session` arrived.
+    ScriptPolled {
+        /// Which run.
+        session: u64,
+        /// What it printed so far, or why it could not be read.
+        result: Result<crate::backend::ScriptOutputState, String>,
+    },
+    /// The shortcut list arrived, or why it could not be read.
+    ShortcutsLoaded(Result<Vec<crate::backend::Shortcut>, String>),
+    /// A shortcut was saved (the list after it), or why it was not.
+    ShortcutSaved(Result<Vec<crate::backend::Shortcut>, String>),
+    /// A shortcut was removed (the list after it), or why it was not.
+    ShortcutRemoved(Result<Vec<crate::backend::Shortcut>, String>),
+    /// Opening a shortcut finished.
+    ShortcutOpened(Result<(), String>),
+    /// A shortcut's expanded link, to copy, or why it could not be expanded.
+    ShortcutExpanded(Result<String, String>),
+    /// Manage Shortcuts' filter changed.
+    ShortcutsQueryChanged(String),
+    /// A Manage Shortcuts row was clicked, by position.
+    ShortcutSelected(usize),
     /// The open windows arrived, or why they could not be listed.
     WindowsLoaded(Result<Vec<crate::backend::WindowRow>, String>),
     /// A window row was clicked.

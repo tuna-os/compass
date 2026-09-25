@@ -35,8 +35,10 @@ use serde::{Deserialize, Serialize};
 /// clipboard entry, and running an installed extension's command; version 8,
 /// following and driving an extension's view; version 9, an extension view's
 /// toast; version 10, the power and media commands; version 11, file search;
-/// version 12, an OAuth provider's redirect back to the launcher.
-pub const PROTOCOL_VERSION: u16 = 12;
+/// version 12, an OAuth provider's redirect back to the launcher; version 13,
+/// shortcuts, snippets, script commands, Run Terminal Program, dmenu, themes,
+/// create-extension and fonts.
+pub const PROTOCOL_VERSION: u16 = 13;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,6 +314,193 @@ pub enum Request {
         /// The deeplink, verbatim.
         url: String,
     },
+    /// Every stored shortcut (quicklink), answered with
+    /// [`Response::Shortcuts`].
+    ListShortcuts,
+    /// Create a shortcut (`id` is `None`) or update one in place. Answered
+    /// with [`Response::Shortcuts`], the list after the change; a store that
+    /// could not be written, or an `id` that names nothing, is refused as
+    /// [`ErrorKind::Internal`] and [`ErrorKind::BadRequest`].
+    SaveShortcut {
+        /// The shortcut to update, or `None` for a new one.
+        id: Option<String>,
+        /// What it is called; may be empty.
+        name: String,
+        /// Its icon as an image URL, or `default` for whatever the link's
+        /// opener or site offers, which the engine resolves when saving.
+        icon: String,
+        /// The link, `{placeholders}` and all.
+        url: String,
+        /// The application id that opens it, or `default`.
+        app: String,
+    },
+    /// Remove a shortcut. Answered with [`Response::Shortcuts`].
+    RemoveShortcut {
+        /// Which one.
+        id: String,
+    },
+    /// Expand a shortcut's link with `arguments` and open it with its
+    /// application, counting the visit. Answered with [`Response::Ack`] once
+    /// the launch started; a shortcut with no application to open it is
+    /// refused as [`ErrorKind::Unsupported`].
+    OpenShortcut {
+        /// Which one.
+        id: String,
+        /// Values for its argument placeholders, in order.
+        arguments: Vec<String>,
+    },
+    /// Expand a shortcut's link without opening it. Answered with
+    /// [`Response::Text`].
+    ExpandShortcut {
+        /// Which one.
+        id: String,
+        /// Values for its argument placeholders, in order.
+        arguments: Vec<String>,
+    },
+    /// Every stored snippet, answered with [`Response::Snippets`].
+    ListSnippets,
+    /// Create a text snippet (`id` is `None`) or update one. Answered with
+    /// [`Response::Snippets`], the list after the change; a form that does not
+    /// validate, or a keyword another snippet has, is refused as
+    /// [`ErrorKind::BadRequest`] with the reason.
+    SaveSnippet {
+        /// The snippet to update, or `None` for a new one.
+        id: Option<String>,
+        /// Its name, two characters at least.
+        name: String,
+        /// Its text, `{placeholders}` and all.
+        text: String,
+        /// The keyword that expands it as it is typed, if any.
+        keyword: Option<String>,
+        /// Whether the keyword waits for a word boundary.
+        word: bool,
+        /// The applications the keyword is limited to; empty for everywhere.
+        apps: Vec<String>,
+    },
+    /// Remove a snippet. Answered with [`Response::Snippets`].
+    RemoveSnippet {
+        /// Which one.
+        id: String,
+    },
+    /// Expand a snippet with its arguments, running its `{shell}`
+    /// placeholders. Answered with [`Response::Text`]; a file snippet
+    /// answers with its path.
+    ExpandSnippet {
+        /// Which one.
+        id: String,
+        /// `(name, value)` for its arguments.
+        arguments: Vec<(String, String)>,
+    },
+    /// Expand a snippet and paste it into the focused window. Answered with
+    /// [`Response::Ack`] once pasted.
+    PasteSnippet {
+        /// Which one.
+        id: String,
+        /// `(name, value)` for its arguments.
+        arguments: Vec<(String, String)>,
+    },
+    /// Every script command in the script directories, scanned afresh.
+    /// Answered with [`Response::Scripts`].
+    ListScripts,
+    /// Run a script command with its arguments, in the mode its header
+    /// declares. Answered with [`Response::ScriptStarted`]: a session to
+    /// follow with [`Request::ScriptOutput`] for `fullOutput`, `compact` and
+    /// `inline`, none for `silent` (the engine shows the result itself) and
+    /// `terminal`. A script that no longer parses, or has no interpreter, is
+    /// refused as [`ErrorKind::BadRequest`].
+    RunScript {
+        /// The script's id, as [`ScriptEntry::id`] carries it.
+        id: String,
+        /// Values for its arguments, in order.
+        arguments: Vec<String>,
+    },
+    /// What a running script has printed so far. Answered with
+    /// [`Response::ScriptOutput`].
+    ScriptOutput {
+        /// From [`Response::ScriptStarted`].
+        session: u64,
+    },
+    /// Stop a running script. Answered with [`Response::Ack`].
+    StopScript {
+        /// From [`Response::ScriptStarted`].
+        session: u64,
+    },
+    /// Every executable in the `PATH` directories, and how Run Terminal
+    /// Program runs them. Answered with [`Response::Programs`].
+    ListPrograms,
+    /// Run a command line: in the terminal emulator (kept open when `hold`),
+    /// or directly. Answered with [`Response::Ack`] once started; a program
+    /// that is not found is refused as [`ErrorKind::BadRequest`] ("Not a
+    /// valid executable"), and a terminal run with no terminal installed as
+    /// [`ErrorKind::Unsupported`].
+    RunProgram {
+        /// The program and its arguments.
+        argv: Vec<String>,
+        /// Run it in a terminal.
+        terminal: bool,
+        /// Keep the terminal open once it exits.
+        hold: bool,
+    },
+    /// `vicinae dmenu`: show a list in the launcher and wait for the choice.
+    /// Answered with [`Response::DmenuOutput`] once the person chose (or
+    /// dismissed the list); refused as [`ErrorKind::Unsupported`] when no
+    /// launcher window is attached.
+    Dmenu {
+        /// What to show.
+        spec: DmenuSpec,
+    },
+    /// The window asks for the list behind a [`WindowCommand::Dmenu`].
+    /// Answered with [`Response::DmenuList`].
+    DmenuFetch {
+        /// From the pushed command.
+        token: u64,
+    },
+    /// The window's answer to a dmenu list: what to print, or `None` when
+    /// the list was dismissed. Answered with [`Response::Ack`].
+    DmenuChoose {
+        /// From the pushed command.
+        token: u64,
+        /// The chosen entry, its index, or the search text.
+        output: Option<String>,
+    },
+    /// Keep a theme in the configuration (`launcher.appearance.theme`), as
+    /// `vicinae theme set` does. Answered with [`Response::Ack`]; an unknown
+    /// name is refused as [`ErrorKind::BadRequest`], and a configuration that
+    /// cannot be written as [`ErrorKind::Internal`].
+    SetTheme {
+        /// The theme's persisted name, e.g. `tokyo-night`.
+        theme: String,
+    },
+    /// Generate a new extension's boilerplate, as the developer extension's
+    /// Create Extension form does. Answered with
+    /// [`Response::ExtensionCreated`]; a form that does not validate is
+    /// refused as [`ErrorKind::BadRequest`] naming the fields, and a failed
+    /// generation as [`ErrorKind::Internal`].
+    CreateExtension {
+        /// Who is writing it; three characters at least.
+        author: String,
+        /// The extension's title; three characters at least.
+        title: String,
+        /// What it does; sixteen characters at least.
+        description: String,
+        /// The directory to create it in, which must exist; `~` is expanded.
+        location: String,
+        /// The first command's title.
+        command_title: String,
+        /// The first command's description.
+        command_description: String,
+        /// The command template, e.g. `:boilerplate/tmpl-list`.
+        template: String,
+    },
+    /// The installed font families, grouped and classified as Browse Fonts
+    /// lists them. Answered with [`Response::Fonts`].
+    ListFonts,
+    /// A family's specimen, as Markdown. Answered with [`Response::Text`];
+    /// an unknown family is refused as [`ErrorKind::BadRequest`].
+    FontSpecimen {
+        /// The family's name, as [`FontEntry::name`] carries it.
+        name: String,
+    },
 }
 
 /// What the engine answers.
@@ -415,6 +604,176 @@ pub enum Response {
         /// The files, in presentation order.
         files: Vec<FileHit>,
     },
+    /// Every stored shortcut, in the store's order: the answer to
+    /// [`Request::ListShortcuts`], and to a change to the list.
+    Shortcuts {
+        /// The shortcuts.
+        shortcuts: Vec<ShortcutEntry>,
+    },
+    /// A piece of text the engine produced, such as an expanded shortcut.
+    Text {
+        /// The text.
+        text: String,
+    },
+    /// Every stored snippet, in the store's order: the answer to
+    /// [`Request::ListSnippets`], and to a change to the list.
+    Snippets {
+        /// The snippets.
+        snippets: Vec<SnippetEntry>,
+    },
+    /// Answer to [`Request::ListScripts`], in scan order.
+    Scripts {
+        /// The script commands.
+        scripts: Vec<ScriptEntry>,
+    },
+    /// Answer to [`Request::RunScript`].
+    ScriptStarted {
+        /// The run to follow, when the launcher shows its output.
+        session: Option<u64>,
+    },
+    /// Answer to [`Request::ListFonts`].
+    Fonts {
+        /// The families, in the browser's order.
+        fonts: Vec<FontEntry>,
+        /// The category names, in the order the filter offers them.
+        categories: Vec<String>,
+    },
+    /// Answer to [`Request::CreateExtension`].
+    ExtensionCreated {
+        /// Where the extension was written.
+        path: String,
+    },
+    /// Answer to [`Request::Dmenu`]: what to print; empty when the list was
+    /// dismissed.
+    DmenuOutput {
+        /// The chosen entry, its index, or the search text.
+        output: String,
+    },
+    /// Answer to [`Request::DmenuFetch`].
+    DmenuList {
+        /// What to show.
+        spec: DmenuSpec,
+    },
+    /// Answer to [`Request::ListPrograms`].
+    Programs {
+        /// Every executable found, as absolute paths, in `PATH` order.
+        programs: Vec<String>,
+        /// The terminal emulator's name, for the actions' titles; `None`
+        /// when none is installed.
+        terminal: Option<String>,
+        /// The command's `default-action` preference: `run-in-terminal`,
+        /// `run-in-terminal-hold` or `run`.
+        default_action: String,
+    },
+    /// Answer to [`Request::ScriptOutput`].
+    ScriptOutput {
+        /// Everything read so far: stdout and stderr interleaved for
+        /// `fullOutput`, stdout alone otherwise.
+        output: String,
+        /// Whether the script has exited (or was stopped, or timed out).
+        finished: bool,
+        /// Its exit code, once it exited normally.
+        exit_code: Option<i32>,
+        /// Milliseconds since it started, or how long it ran once finished.
+        elapsed_ms: u64,
+    },
+}
+
+/// One script command, as root search and the launcher need it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptEntry {
+    /// The dotted id the scan gave it, from its path below its directory.
+    pub id: String,
+    /// `@raycast.title`.
+    pub title: String,
+    /// Its package name, or an inline script's last line of output.
+    pub subtitle: String,
+    /// Extra search terms.
+    pub keywords: Vec<String>,
+    /// `fullOutput`, `compact`, `inline`, `silent` or `terminal`.
+    pub mode: String,
+    /// Whether to ask before running it.
+    pub needs_confirmation: bool,
+    /// Where the file is.
+    pub path: String,
+    /// What it asks for, in order.
+    pub arguments: Vec<ScriptArgumentEntry>,
+}
+
+/// One argument a script command declares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptArgumentEntry {
+    /// `text`, `password` or `dropdown`.
+    pub kind: String,
+    /// The field's placeholder, if it declares one.
+    pub placeholder: Option<String>,
+    /// Whether it may be left empty.
+    pub optional: bool,
+    /// A dropdown's options, as `(title, value)`.
+    pub options: Vec<(String, String)>,
+}
+
+/// One stored snippet, as `snippets.json` holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnippetEntry {
+    /// `snp-` and twelve hex characters.
+    pub id: String,
+    /// What the user called it.
+    pub name: String,
+    /// Its text, for a text snippet.
+    pub text: Option<String>,
+    /// Its file, for a file snippet.
+    pub file: Option<String>,
+    /// When it was created, in Unix seconds.
+    pub created_at: u64,
+    /// When it was last edited, in Unix seconds, if it was.
+    pub updated_at: Option<u64>,
+    /// The keyword that expands it, if it has one.
+    pub keyword: Option<String>,
+    /// Whether the keyword waits for a word boundary.
+    pub word: bool,
+    /// The applications the keyword is limited to.
+    pub apps: Vec<String>,
+}
+
+/// One family in Browse Fonts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FontEntry {
+    /// The typeface's name, its members folded together.
+    pub name: String,
+    /// The member to draw it with.
+    pub family: String,
+    /// The glyph its row shows, in its own script.
+    pub glyph: Option<String>,
+    /// Whether it is a colour emoji font.
+    pub color: bool,
+    /// The category it is listed under.
+    pub primary: String,
+    /// Every category it can be filtered by.
+    pub categories: Vec<String>,
+}
+
+/// One stored shortcut (quicklink), as `shortcuts.json` holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShortcutEntry {
+    /// `sct-` and twelve hex characters.
+    pub id: String,
+    /// What the user called it; may be empty.
+    pub name: String,
+    /// Its icon, as an image URL.
+    pub icon: String,
+    /// The link, `{placeholders}` and all.
+    pub url: String,
+    /// The application id that opens it, or `default`.
+    pub app: String,
+    /// How many times it has been opened.
+    pub open_count: i64,
+    /// When it was created, in Unix seconds.
+    pub created_at: u64,
+    /// When it was last edited, in Unix seconds.
+    pub updated_at: u64,
+    /// When it was last opened, in Unix seconds, if it ever was.
+    pub last_used_at: Option<u64>,
 }
 
 /// One file in a [`Response::Files`].
@@ -437,6 +796,41 @@ pub enum WindowCommand {
     Hide,
     /// Hide if visible, show if not.
     Toggle,
+    /// Show, with the dmenu list the engine holds under this token; the
+    /// window fetches it with [`Request::DmenuFetch`] and answers the choice
+    /// with [`Request::DmenuChoose`]. Answered, like `Show`, with
+    /// [`WindowOutcome::Shown`] once visible.
+    Dmenu(u64),
+}
+
+/// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and
+/// the C++ CLI's options.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DmenuSpec {
+    /// The entries, one per line; empty lines are dropped.
+    pub content: String,
+    /// `--navigation-title`.
+    pub navigation_title: Option<String>,
+    /// `--section-title`, where `{count}` is the number shown.
+    pub section_title: Option<String>,
+    /// `--format`: print the entry (`false`) or its index (`true`).
+    pub output_index: bool,
+    /// `--placeholder`.
+    pub placeholder: Option<String>,
+    /// `--query`, the initial search text.
+    pub query: Option<String>,
+    /// `--width`.
+    pub width: Option<u32>,
+    /// `--height`.
+    pub height: Option<u32>,
+    /// `--no-section`.
+    pub no_section: bool,
+    /// `--no-quick-look`.
+    pub no_quick_look: bool,
+    /// `--no-metadata`.
+    pub no_metadata: bool,
+    /// `--no-footer`.
+    pub no_footer: bool,
 }
 
 /// What an attached window reports back after acting on a [`WindowCommand`].

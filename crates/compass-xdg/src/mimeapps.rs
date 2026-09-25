@@ -198,27 +198,76 @@ pub fn search_paths() -> Vec<PathBuf> {
 ///    `https://…` reaches a browser, and it is the case that needs no
 ///    database at all;
 /// 2. a string that is already a MIME type is itself;
-/// 3. anything else is looked up as a file, and falls back to the string
-///    unchanged.
+/// 3. anything else is looked up as a file.
 ///
 /// # Where this diverges, and it is visible
 ///
 /// Step 2 asks `QMimeDatabase::mimeTypeForName(...).isValid()`, which means
-/// *registered on this machine*; here it is the syntactic shape `type/subtype`.
-/// A made-up `foo/bar` is therefore taken as a MIME type here and as a
-/// filename by the C++ — and both then find no opener, because nothing claims
-/// `foo/bar` either way.
+/// *registered on this machine*; here it is the syntactic shape `type/subtype`
+/// under a known top-level type. A made-up `text/bar` is therefore taken as a
+/// MIME type here and as a filename by the C++ — and both then find no
+/// opener, because nothing claims it either way.
 ///
-/// Step 3's lookup needs shared-mime-info, which nothing in Rust reads yet, so
-/// a path is returned unchanged. That is the C++'s own fallback for a file it
-/// cannot classify, and it means `example.txt` does not resolve to
-/// `text/plain` here. The gap is the module's, not this function's.
+/// Step 3 classifies a file by its extension through `mime_guess`, and a
+/// directory as `inode/directory`; shared-mime-info's content sniffing is not
+/// read, so an extensionless file is `application/octet-stream`, which is
+/// what `QMimeDatabase` answers for a file it cannot sniff either.
 #[must_use]
 pub fn target_mime(target: &str) -> String {
     if let Some(scheme) = url_scheme(target) {
         return format!("x-scheme-handler/{scheme}");
     }
-    target.to_owned()
+    if is_mime_name(target) {
+        return target.to_owned();
+    }
+    file_mime(std::path::Path::new(target))
+}
+
+/// The MIME type of a file: `inode/directory` for a directory, else what its
+/// extension says, else `application/octet-stream`.
+#[must_use]
+pub fn file_mime(path: &std::path::Path) -> String {
+    if path.is_dir() {
+        return "inode/directory".to_owned();
+    }
+    mime_guess::from_path(path)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_owned()
+}
+
+/// The top-level media types a MIME name can start with: the IANA registry's,
+/// plus the freedesktop pseudo-types openers are registered for.
+const MIME_TOP_LEVEL: &[&str] = &[
+    "application",
+    "audio",
+    "chemical",
+    "font",
+    "image",
+    "inode",
+    "message",
+    "model",
+    "multipart",
+    "text",
+    "video",
+    "x-content",
+    "x-scheme-handler",
+];
+
+/// Whether `text` has the shape of a MIME name, `type/subtype`, with a known
+/// top-level type. The C++ asks whether the name is registered on this
+/// machine; the shape with a known top level is the closest a check can come
+/// without shared-mime-info, and it keeps a relative path such as
+/// `notes/today.md` a path.
+fn is_mime_name(text: &str) -> bool {
+    let Some((top, sub)) = text.split_once('/') else {
+        return false;
+    };
+    MIME_TOP_LEVEL.contains(&top)
+        && !sub.is_empty()
+        && sub
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$&^_.+-".contains(c))
 }
 
 /// The scheme of `target`, if it has one.
@@ -568,23 +617,34 @@ mod tests {
 
     #[test]
     fn a_path_and_a_mime_type_are_left_alone() {
-        // Neither has a scheme. A path stays a path because classifying it
-        // needs shared-mime-info, which is the module's stated gap; a MIME
-        // type is already the answer.
-        assert_eq!(target_mime("/home/u/notes.txt"), "/home/u/notes.txt");
+        // Neither has a scheme. A MIME type is already the answer; a path is
+        // classified by its extension, or as a directory.
+        assert_eq!(target_mime("/home/u/notes.txt"), "text/plain");
+        assert_eq!(target_mime("/home/u/report.pdf"), "application/pdf");
         assert_eq!(target_mime("text/plain"), "text/plain");
-        assert_eq!(target_mime("notes.txt"), "notes.txt");
+        assert_eq!(
+            target_mime("application/vnd.oasis.opendocument.text"),
+            "application/vnd.oasis.opendocument.text"
+        );
+        assert_eq!(target_mime("notes.txt"), "text/plain");
+        assert_eq!(target_mime("notes/today.md"), "text/markdown");
+        assert_eq!(target_mime("/home/u/Makefile"), "application/octet-stream");
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            target_mime(&dir.path().to_string_lossy()),
+            "inode/directory"
+        );
     }
 
     #[test]
     fn something_that_only_looks_like_a_scheme_is_not_one() {
         // RFC 3986 says a scheme starts with a letter. A Windows-style path or
         // a time of day must not become `x-scheme-handler/c`.
-        assert_eq!(target_mime("12:30"), "12:30");
-        assert_eq!(target_mime(":/x"), ":/x");
+        assert_eq!(target_mime("12:30"), "application/octet-stream");
+        assert_eq!(target_mime(":/x"), "application/octet-stream");
         assert_eq!(
             target_mime("a b:c"),
-            "a b:c",
+            "application/octet-stream",
             "a space is not scheme syntax"
         );
     }

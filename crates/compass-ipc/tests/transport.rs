@@ -107,7 +107,51 @@ async fn echo_handler(request: Request) -> Response {
         | Request::ExtensionAlertAnswer { .. }
         | Request::CloseExtension { .. }
         | Request::OpenFile { .. }
-        | Request::OAuthRedirect { .. } => Response::Ack,
+        | Request::OAuthRedirect { .. }
+        | Request::OpenShortcut { .. }
+        | Request::PasteSnippet { .. }
+        | Request::StopScript { .. }
+        | Request::RunProgram { .. }
+        | Request::DmenuChoose { .. }
+        | Request::SetTheme { .. } => Response::Ack,
+        Request::Dmenu { .. } => Response::DmenuOutput {
+            output: String::new(),
+        },
+        Request::DmenuFetch { .. } => Response::DmenuList {
+            spec: compass_ipc::DmenuSpec::default(),
+        },
+        Request::ListFonts => Response::Fonts {
+            fonts: vec![],
+            categories: vec![],
+        },
+        Request::FontSpecimen { .. } => Response::Text {
+            text: String::new(),
+        },
+        Request::CreateExtension { .. } => Response::ExtensionCreated {
+            path: String::new(),
+        },
+        Request::ListPrograms => Response::Programs {
+            programs: vec![],
+            terminal: None,
+            default_action: "run".into(),
+        },
+        Request::ListScripts => Response::Scripts { scripts: vec![] },
+        Request::RunScript { .. } => Response::ScriptStarted { session: None },
+        Request::ScriptOutput { .. } => Response::ScriptOutput {
+            output: String::new(),
+            finished: true,
+            exit_code: Some(0),
+            elapsed_ms: 0,
+        },
+        Request::ListSnippets | Request::SaveSnippet { .. } | Request::RemoveSnippet { .. } => {
+            Response::Snippets { snippets: vec![] }
+        }
+        Request::ListShortcuts | Request::SaveShortcut { .. } | Request::RemoveShortcut { .. } => {
+            Response::Shortcuts { shortcuts: vec![] }
+        }
+        Request::ExpandShortcut { .. } | Request::ExpandSnippet { .. } => Response::Text {
+            text: String::new(),
+        },
         Request::SearchFiles { .. } => Response::Files {
             heading: "Results".into(),
             files: vec![],

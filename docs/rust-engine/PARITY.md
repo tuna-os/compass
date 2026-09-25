@@ -321,8 +321,9 @@ ordinary value here; a singleton is how that file is reached, not what it does.
 `Expansion::validateKeyword`: a two-character minimum name, non-empty content with at most one
 `{cursor}`, and a keyword that is optional but, when given, must be printable ASCII with no spaces
 and at most 32 bytes. The two success toasts are not symmetrical ("Snippet updated" against
-"Snippet successfully created") and are copied as they are. Still C++-only: the QML form, the
-snippet store, and the manage-snippets list.
+"Snippet successfully created") and are copied as they are. The store is
+`compass-core::snippet_store` and Create Snippet / Manage Snippets run end to end (see "Snippets —
+what the port does not have yet"); keyword expansion as you type is still C++-only.
 
 **`src/builtins/shortcut` → `compass-core::shortcut_form`** — the quicklink form: what each mode
 prefills (`Copy of %1` only when duplicating, the quoted navigation titles), the reverts to
@@ -2084,9 +2085,157 @@ The negative tests are §8.2's list; each has a positive control beside it.
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | An overlay names the provider and waits for "Open browser". | The browser opens at once, with the default `x-scheme-handler/https` application, and the view shows a toast ("Continue in your browser to connect …") until the redirect arrives; then "Connected to …" or the provider's refusal. | `an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it` |
-| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v11); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. Every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
+| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v12); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. Every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
 | 3 | An authorize URL without a `state` waits for ever. | Refused at once: nothing could match a redirect to it. | `a_url_without_a_state_is_refused_rather_than_waited_on` |
 | 4 | A redirect with `error=` leaves the request waiting. | The extension's `authorize()` rejects with `error_description` (else `error`). | `every_redirect_shape_raycast_uses_parses` |
+### Shortcuts — what the port does not have yet
+
+Create Shortcut, Manage Shortcuts and shortcuts in root search run end to end: the engine keeps
+the list in `$XDG_DATA_HOME/vicinae/compass-shortcuts.json` (ADR-0017 decision 3; the first start
+with no such file copies Vicinae's `shortcuts/shortcuts.json`, whose shape is the same), answers
+`ListShortcuts`/`SaveShortcut`/`RemoveShortcut`/`OpenShortcut`/`ExpandShortcut` (IPC v13), ranks
+shortcuts in root search by name and link, resolves the opener and the `default` icon, and counts
+visits. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Arguments are completion fields beside the search text of the selected root row. | A form with one field per argument opens when the shortcut is launched; required unless it has a `default=`. | `a_shortcut_in_root_search_asks_for_its_argument_then_opens` |
+| 2 | An argument left empty expands to nothing, even with a `default=` — `expandShortcut` never reads the default. | It expands to its default. | `arguments_fill_their_placeholders_in_order` |
+| 3 | `{date}` is reserved (so not an argument) and then falls into the expansion's argument branch, eating the next argument's value. | Expands to nothing; the arguments stay aligned with their placeholders. | `reserved_placeholders_take_their_values` |
+| 4 | `{selection}`/`{selected}` read the focused application's selection. | Expand to nothing: the selection service is not ported. `{clipboard}` is read through the GNOME Shell extension, and is empty without it. | — |
+| 5 | Open with… lists the link's openers in a submenu. | Not yet; a shortcut opens with its stored application, else the default opener, else the browser. | `the_app_is_the_named_one_or_the_opener_or_the_browser` |
+| 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link). | Rows carry the link as their subtitle; no detail pane yet. | — |
+| 7 | The form's link field offers placeholder completions (Selected Text, Clipboard Text, Argument, UUID) and the app list updates to the link's default opener on blur; the default icon previews the favicon. | The field's help text names the placeholders; `default` app and icon are resolved by the engine when saving (favicon for `http*`, else the opener's icon, else the link glyph). | `the_default_icon_is_the_favicon_then_the_opener_then_the_link_glyph` |
+| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text. | Ranked like every other root item; no fallback rows yet. | — |
+| 9 | The migration from the pre-JSON SQLite `shortcut` table. | Not run: the one-shot import is from Vicinae's JSON file, which already holds a migrated list. | — |
+| 10 | A removal toast ("Removed link") and success toasts after saving. | The list updates in place; failures show in the view. | `manage_shortcuts_filters_edits_and_removes` |
+
+### Snippets — what the port does not have yet
+
+Create Snippet and Manage Snippets run end to end: the engine keeps snippets in
+`$XDG_DATA_HOME/vicinae/compass-snippets.json` (the first start without one copies Vicinae's
+`snippets/snippets.json`, which glaze writes in the same shape), answers
+`ListSnippets`/`SaveSnippet`/`RemoveSnippet`/`ExpandSnippet`/`PasteSnippet` (IPC v13), validates
+with the form's rules and the store's (a keyword belongs to one snippet), and expands with the
+ported expander: `{clipboard}` through the Shell extension, `{uuid}`, `{date format=…}` in Qt's
+syntax on the local clock (`jiff`), `{shell}` placeholders run concurrently under the 2 s limit,
+arguments by name. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Typing a keyword anywhere expands the snippet: `vicinae-snippet-server` reads `/dev/input` (libudev, xkbcommon), injects through uinput or the clipboard, with undo on backspace, per-app limits and the extension's delay/layout preferences. | **Not ported.** The trigger matcher (`compass-core::snippet`), the injection protocol (`compass-platform-linux::keyboard`) and the server's framing (`compass-core::input_server`) are, but no process reads the keyboard; keywords are stored and shown, and do nothing yet. | `compass-core::snippet` tests |
+| 2 | Arguments are completion fields beside the search text. | A form with one field per argument (named once, in order of first use); an empty optional one takes its default. | `manage_snippets_copies_asking_for_arguments_first` |
+| 3 | Copy to clipboard copies text as transient (not recorded in history), and a file snippet as the file. | The launcher writes the expanded text to the clipboard itself; a file snippet copies its path as text. No form creates file snippets (the C++ form does not either). | — |
+| 4 | — | Paste, which the C++ list does not offer: the expansion is put on the clipboard and pasted through the Shell extension, as clipboard history pastes. | `snippets_are_imported_created_expanded_edited_and_removed` |
+| 5 | The form edits the keyword's application list, and offers placeholder completions in the content field. | The list is kept as it was (a duplicate keeps it too); the content field's help text names the placeholders. | `editing_a_snippet_keeps_its_apps_and_returns_to_the_list` |
+| 6 | A detail pane shows the type, the dates, the keyword and its apps, and the expansion as arguments are typed (shell placeholders shown as `$(code)`). | Rows carry the keyword (or the text's first words) as their subtitle; no detail pane yet. | `the_subtitle_is_the_keyword_or_the_first_words` |
+| 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | Parsed with the quicklink parser, which has no escape: `\{` is a backslash and a placeholder. | — |
+| 8 | `{argument}` with no `name=` is collected as an argument with an empty name. | Left out of the form; it expands to nothing either way. | `arguments_are_named_once_and_reserved_ids_are_not_arguments` |
+
+### Script commands — what the port does not have yet
+
+Script commands run end to end: the engine scans `vicinae/scripts` under the data home and each
+data directory, after the `customDirs` in `providers.scripts.preferences`, lists them in root search
+(title, package name, keywords; `scripts:<id>`), rescans whenever the launcher lists them, re-reads
+a script before running it, and runs it in its mode (IPC v13 `ListScripts`, `RunScript`,
+`ScriptOutput`, `StopScript`): `fullOutput` streams stdout and stderr with `FORCE_COLOR=1` to a view
+that colours them with the ported tokenizer; `compact` and `inline` take the first stdout line
+within 10 s, an inline line becoming the script's subtitle (kept in
+`compass-script-metadata.json`); `silent` says its line in a transient notification; `terminal` runs
+in the terminal emulator with the header's options. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Every root is pushed on one stack, so the *last* directory is walked first and a packaged script shadows a custom one with the same id, although the preference promises the opposite. | Roots are walked in order, so a custom directory wins. | `the_scan_finds_scripts_ids_them_by_path_and_lets_custom_dirs_win`, `script_commands_are_scanned_searched_and_run_in_their_modes` |
+| 2 | Arguments are completion fields beside the search text; confirmation is an alert. | One form carries both: a field per argument (text, password, dropdown), and the confirmation sentence in its title when the header asks for one. | `a_script_asks_for_its_arguments_or_its_confirmation` |
+| 3 | The directories are watched (100 ms debounce) and rescanned every 15 minutes. | Rescanned at start and each time the launcher is summoned; no watcher. | — |
+| 4 | `compact` and `inline` results are toasts; the window is reopened with the title as search text if it had closed. | The result shows in the root list's notice line; the window is not reopened. `silent`'s HUD is a transient notification, as the media commands' is. | `a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher` |
+| 5 | The full-output view's action panel runs the script again or kills it, and a toast counts the seconds. | The same two actions (Ctrl+R to run again), and the count is in the view's heading; Escape kills a running script, as leaving the view does. | `a_full_output_script_asks_for_its_argument_and_shows_its_output` |
+| 6 | The root row's panel opens the script in the text editor and its folder in the file browser. | Run and Copy path only. | — |
+| 7 | `refreshTime` (inline) is parsed and validated. | Parsed and validated, and not acted on — nor is it in the C++. | — |
+| 8 | Links in full output are clickable. | Drawn as links; a click is logged, the launcher having no URL opener yet (as for extension views). | — |
+| 9 | The script's icon (emoji, file, `https`). | Rows use the initial badge, like every root row without resolved art. | — |
+
+### System: Run Terminal Program — what the port does not have yet
+
+Run Terminal Program runs end to end: the engine lists every entry of every `PATH` directory
+(`ListPrograms`, with the terminal's name and the command's `default-action` preference from
+`providers.commands.entrypoints.run-program.preferences`, default `run-in-terminal` as the C++
+declares), and runs a command line in the terminal emulator (held open or not) or directly
+(`RunProgram`, refusing "Not a valid executable"). The view parses the typed text with the desktop
+entry `Exec` parser, offers it as a command-line row when its first word is a program, lists the
+fuzzy-matching programs (100 at most), and orders the actions as `compass-core::system_run` pins.
+What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | The command takes an optional `command` argument in root search and runs it without opening the view. | The view always opens. | — |
+| 2 | Browse Apps, Set Default Browser and Set Default Terminal are also in the system extension. | Not yet. | — |
+| 3 | Programs are scanned once per view in the background, with a loading state. | Scanned by the engine on each opening (a blocking task), the view showing "Looking for programs…" until then. | `run_terminal_program_lists_path_and_runs_directly_or_refuses` |
+| 4 | Inside the Flatpak, `PATH` is the host's through the portal's environment. | The engine's own `PATH` (the sandbox's inside the Flatpak); runs go through `flatpak-spawn --host`. | — |
+
+### dmenu — what the port does not have yet
+
+`vicinae dmenu` runs end to end with the C++ CLI's options: it reads stdin, the engine keeps the
+list under a token and pushes `WindowCommand::Dmenu(token)` to the resident window (IPC v13), which
+fetches the list, shows it (non-empty lines, fuzzy filter keeping input order among equals, a path
+shown by its name and folder, the `{count}` section heading, the placeholder and initial query), and
+answers the choice: the entry, its index with `--format index`, or the search text when nothing
+matches. Printing it exits 0; a dismissal (Escape, the window hiding, a newer list) exits 1 with
+nothing printed, as the C++ does. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | `--width`/`--height` resize the window for the list, and `--navigation-title` sets its title. | Carried to the window and not applied: the launcher window has one size and no navigation title yet. (A width under 500 still turns quick look and the footer off, as in the C++.) | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
+| 2 | Quick look previews a highlighted file (name, path, MIME type, image or text); `--no-metadata` hides its metadata; `--no-footer` hides the status bar. | No preview pane or footer yet; `--no-quick-look` only drops the folder subtitle. | `a_path_shows_its_name_and_folder` |
+| 3 | A path entry shows its file icon. | The initial badge, like every row without resolved art. | — |
+| 4 | Without a running launcher the C++ server starts showing its own window. | Refused like `vicinae show` is, when no window is attached. | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
+
+### Set Theme — what the port does not have yet
+
+Set Theme runs end to end: the view lists the themes in the ported sections ("Current Theme", then
+"Available Themes", fuzzy over name and description), previews a theme as soon as its row is
+selected, and puts the configured one back when it is left, as `ThemeViewHost` does; Enter keeps
+the selected theme through the engine (`SetTheme`, IPC v13), which writes it to `vicinae.json` as
+`vicinae theme set` does. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | The themes are TOML files found in the theme directories, each with its own palette, icon and path. | Compass's curated themes (System, Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized), which is what the launcher can draw; user theme files are not read. | `the_configured_theme_is_its_own_section_and_the_filter_is_fuzzy` |
+| 2 | The action panel opens the theme file in the text editor, and copies its id or path; rows show the palette's colour dots. | Enter keeps the theme; no other actions or swatches yet. | `set_theme_keeps_the_chosen_theme` |
+| 3 | Choosing a theme applies it to every window at once through the theme service. | This window applies it at once; another launcher process picks it up from the configuration when it next reads it. | `set_theme_keeps_the_theme_in_the_configuration` |
+
+### Create Extension — what the port does not have yet
+
+Create Extension runs end to end: the launcher's form has the C++ fields (author, title,
+description, location, first command's title and description, command template), the engine
+validates them with the ported rules ("Min. 3 chars", "Min. 16 chars", "Must exist" after `~`
+expansion) and writes the ported boilerplate (`CreateExtension`, IPC v13), and a success page shows
+the C++'s Markdown with the path and the `npm` steps; Enter opens the new folder. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Field errors show beside each field. | The engine's refusal names the fields in one sentence under the form. | `a_valid_form_writes_the_boilerplate_and_an_invalid_one_says_why` |
+| 2 | The success view offers "Open in …" for every application that opens folders. | Enter opens the folder with the default one. | `create_extension_sends_the_form_and_shows_where_it_went` |
+| 3 | The API dependency is pinned to the build's git tag. | Pinned to `v` + the crate version (`^0.1.0` today), through the same `api_dependency_version` rule. | `create_extension_writes_the_boilerplate_under_home` |
+
+### Browse Fonts — what the port does not have yet
+
+Browse Fonts runs end to end: the engine reads the installed families once (warmed five seconds
+after start, or on first use), folds the members of a typeface together and classifies each with
+the ported `font_service` rules (`ListFonts`, IPC v13). The launcher lists them under the ported
+heading ("All Fonts (n)", "<Category> (n)", "Results (n)"), with a category filter that offers only
+categories some font has. Each row draws its glyph in its own font. Enter opens the ported specimen
+(`FontSpecimen`), drawn in the family, and Escape returns to the list with its filter kept. The
+panel offers "Preview font" and "Copy font family". What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | A family's scripts come from `QFontDatabase::writingSystems`, which on Linux is fontconfig's language coverage. | Read from the font's character map (`ttf-parser`), one or two sample characters per script (`font_service::SCRIPT_SAMPLES`), over the fonts `fontdb` finds on the fontconfig path. A font whose coverage claims and cmap disagree can land in a different category. | `a_font_file_is_found_and_classified_by_what_it_covers`, `browse_fonts_lists_families_and_previews_one` |
+| 2 | A six-column grid of glyph tiles. | A list: glyph, name, and its category as the subtitle. | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
+| 3 | "Set as vicinae font" sets the launcher's font. | Not offered: the launcher follows the desktop's interface font and has no font setting yet. | — |
+| 4 | The chosen category is remembered across openings (`fontCategory` in local storage). | Kept while the launcher is shown (across a preview); a new opening starts at "All". | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
+| 5 | The specimen is Markdown rendered in the family. | The same Markdown read back line by line (heading, regular, bold, italic, rule) and drawn in the family; bold and italic ask the renderer for that face, which synthesises nothing when the family has none. | `a_specimen_reads_back_as_lines` |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 

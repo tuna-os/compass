@@ -213,6 +213,14 @@ pub enum Command {
         json: bool,
     },
 
+    /// Render a list view from stdin, and print the entry chosen.
+    ///
+    /// Shows the lines of standard input in the running launcher and waits;
+    /// prints the chosen entry (or its index with `--format index`, or the
+    /// search text when passed instead) and exits 0, or exits 1 when the list
+    /// is dismissed.
+    Dmenu(DmenuArgs),
+
     /// Open the launcher window.
     ///
     /// Attaches to an existing engine when available. Without one, indexes
@@ -230,6 +238,45 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+/// `vicinae dmenu`'s options, the C++ CLI's.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct DmenuArgs {
+    /// Set the navigation title.
+    #[arg(short = 'n', long)]
+    pub navigation_title: Option<String>,
+    /// Set the title of the main section. Use the {count} placeholder to
+    /// render the current count.
+    #[arg(short = 's', long)]
+    pub section_title: Option<String>,
+    /// Control the format of the output (data, index).
+    #[arg(short = 'f', long, default_value = "data", value_parser = ["data", "index"], ignore_case = true)]
+    pub format: String,
+    /// Placeholder text to use in the search bar.
+    #[arg(short = 'p', long)]
+    pub placeholder: Option<String>,
+    /// Initial search query.
+    #[arg(short = 'q', long)]
+    pub query: Option<String>,
+    /// Window width in pixels.
+    #[arg(short = 'W', long)]
+    pub width: Option<u32>,
+    /// Window height in pixels.
+    #[arg(short = 'H', long)]
+    pub height: Option<u32>,
+    /// Do not insert a section heading.
+    #[arg(long)]
+    pub no_section: bool,
+    /// Do not show quick look if available for a given entry.
+    #[arg(long)]
+    pub no_quick_look: bool,
+    /// Do not show metadata section in quick look.
+    #[arg(long)]
+    pub no_metadata: bool,
+    /// Hide the status bar footer.
+    #[arg(long)]
+    pub no_footer: bool,
 }
 
 /// Theme management subcommands (#153: Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized + System).
