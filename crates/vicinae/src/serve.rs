@@ -112,6 +112,13 @@ pub struct EngineState {
     dmenus: Arc<crate::dmenu::Pending>,
     /// Browse Fonts' families, read once.
     fonts: Arc<tokio::sync::OnceCell<Vec<compass_core::font_service::BrowsedFamily>>>,
+    /// Rhai scripts, and their open views.
+    rhai: Arc<crate::rhai_scripts::RhaiScripts>,
+    /// The Shell extension's client for the scripts' clipboard, once
+    /// connected.
+    shell_slot: crate::rhai_host::ShellSlot,
+    /// The extension stores.
+    stores: Arc<crate::stores::Stores>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -173,6 +180,29 @@ impl EngineState {
             index.set_shortcuts(shortcuts.shortcuts().to_vec());
         }
 
+        let shell_slot = crate::rhai_host::ShellSlot::default();
+        let rhai = {
+            let apps = tokio::runtime::Handle::try_current().ok().map(|handle| {
+                crate::extension_apps::EngineApps::new(
+                    &index,
+                    compass_xdg::mimeapps::Lists::from_environment(),
+                    handle,
+                )
+            });
+            let host = crate::rhai_host::EngineHost::new(
+                Arc::clone(&shell_slot),
+                apps,
+                compass_core::xdg_dirs::data_home().map(|home| home.join("vicinae")),
+            );
+            let rhai = crate::rhai_scripts::RhaiScripts::new(
+                crate::rhai_scripts::Config::from_environment(),
+                Arc::new(host),
+            );
+            rhai.create_user_dir();
+            index.set_rhai_scripts(rhai.reload());
+            Arc::new(rhai)
+        };
+
         // Started with the engine, as `FileExtension::initialized` starts
         // it, so the index is warm by the time anyone searches it.
         let files = crate::file_search::FileSearch::start(
@@ -198,6 +228,9 @@ impl EngineState {
             script_runs: Arc::default(),
             dmenus: Arc::default(),
             fonts: Arc::default(),
+            rhai,
+            shell_slot,
+            stores: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -255,12 +288,39 @@ impl EngineState {
             run_program_default: crate::programs::default_action(None),
             dmenus: Arc::default(),
             fonts: Arc::default(),
+            rhai: Arc::default(),
+            shell_slot: crate::rhai_host::ShellSlot::default(),
+            stores: Arc::default(),
         }
     }
 
     /// Makes the Shell extension's client available to requests.
     pub fn set_shell(&mut self, shell: Arc<compass_shell::ShellClient>) {
+        *self
+            .shell_slot
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&shell));
         self.shell = Some(shell);
+    }
+
+    /// Replaces the engine's Rhai scripts, loading them and listing them in
+    /// root search. For tests, which bring their own paths and host.
+    pub fn set_rhai_scripts(&mut self, scripts: crate::rhai_scripts::RhaiScripts) {
+        self.index.set_rhai_scripts(scripts.reload());
+        self.rhai = Arc::new(scripts);
+    }
+
+    /// The engine's Rhai scripts.
+    #[must_use]
+    pub fn rhai_scripts(&self) -> Arc<crate::rhai_scripts::RhaiScripts> {
+        Arc::clone(&self.rhai)
+    }
+
+    /// Lists `items` in root search as the Rhai scripts, after a reload.
+    pub fn set_rhai_items(&mut self, items: Vec<compass_core::rhai_scripts::RhaiScriptItem>) {
+        if self.index.rhai_scripts() != items.as_slice() {
+            self.index.set_rhai_scripts(items);
+        }
     }
 
     /// Makes clipboard history available to requests.
@@ -337,6 +397,15 @@ impl EngineState {
                     ),
                     title: script.title.clone(),
                     subtitle: Some(script.subtitle.clone()),
+                    score: match_score,
+                },
+                compass_core::RootHit::RhaiScript {
+                    script,
+                    match_score,
+                } => QueryHit {
+                    id: script.entrypoint_id(),
+                    title: script.title.clone(),
+                    subtitle: Some(script.subtitle().to_owned()),
                     score: match_score,
                 },
                 compass_core::RootHit::Shortcut {
@@ -459,6 +528,67 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
             "no application opens this kind of file",
         ))
     }
+}
+
+/// Uninstalls an extension, as `ExtensionRegistry::uninstall` does: its
+/// directory, its support directory and its stored data, then root search
+/// forgets its commands.
+async fn uninstall_extension(state: &Arc<RwLock<EngineState>>, id: String) -> Response {
+    let lookup = id.clone();
+    let Ok(Some(directory)) =
+        tokio::task::spawn_blocking(move || crate::stores::installed_directory(&lookup)).await
+    else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            format!("No extension is installed with the id {id}"),
+        ));
+    };
+    let Some(support) = compass_core::manifest::registry::support_directory(&id) else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "Uninstalling an extension needs a data directory",
+        ));
+    };
+    let removed = tokio::task::spawn_blocking(move || {
+        compass_core::store_bundle::uninstall(&directory, &support)
+    })
+    .await
+    .unwrap_or_else(|err| Err(format!("the uninstall task failed: {err}")));
+    if let Err(reason) = removed {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Internal,
+            format!("Failed to uninstall extension: {reason}"),
+        ));
+    }
+    clear_extension_storage(&id).await;
+    state.write().await.index.rescan_extensions();
+    tracing::info!(%id, "extension uninstalled");
+    Response::Ack
+}
+
+/// Clears what an extension kept in local storage, and its preference
+/// values, as `m_storage.clearNamespace(id)` does. Only when the storage
+/// database exists: an extension that never ran has nothing there, and
+/// opening the keyring to find that out would be a prompt for nothing.
+async fn clear_extension_storage(id: &str) {
+    let Some(data_dir) = compass_core::xdg_dirs::data_home().map(|home| home.join("vicinae"))
+    else {
+        return;
+    };
+    if !data_dir
+        .join(crate::extension_runner::STORAGE_DATABASE)
+        .is_file()
+    {
+        return;
+    }
+    let Some(storage) = extension_storage(&data_dir).await else {
+        return;
+    };
+    let id = id.to_owned();
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::extension_runner::clear_extension_data(&storage, &id);
+    })
+    .await;
 }
 
 /// Browse Fonts' families, read from the font database the first time they
@@ -1113,6 +1243,9 @@ async fn run_extension_command(
     id: String,
     arguments_json: Option<String>,
 ) -> Response {
+    if let Some(script) = compass_core::rhai_scripts::script_id(&id) {
+        return open_rhai_script(state, &id, script).await;
+    }
     let Some(command) = state.read().await.index.extension(&id).cloned() else {
         return Response::Error(ProtocolError::new(
             ErrorKind::BadRequest,
@@ -1219,6 +1352,43 @@ async fn run_extension_command(
             ErrorKind::Internal,
             format!("the extension task failed: {err}"),
         )),
+    }
+}
+
+/// Opens the Rhai script `script` (root entry `id`) as a view session.
+async fn open_rhai_script(state: &Arc<RwLock<EngineState>>, id: &str, script: &str) -> Response {
+    let (rhai, session) = {
+        let state = state.read().await;
+        (Arc::clone(&state.rhai), state.views.reserve())
+    };
+    if let Err(reason) = rhai.open(script, session).await {
+        return Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason));
+    }
+    let recorded = tokio::task::spawn_blocking({
+        let (state, id) = (Arc::clone(state), id.to_owned());
+        move || state.blocking_write().frecency.record_launch(&id)
+    })
+    .await;
+    if !matches!(recorded, Ok(Ok(()))) {
+        tracing::warn!("could not record opening a Rhai script");
+    }
+    Response::ExtensionStarted { session }
+}
+
+/// Carries out what a Rhai script's action asked of the engine.
+async fn rhai_outcomes(
+    state: &Arc<RwLock<EngineState>>,
+    outcomes: Vec<crate::rhai_scripts::Outcome>,
+) {
+    for outcome in outcomes {
+        if let crate::rhai_scripts::Outcome::Hud(text) = &outcome {
+            show_hud(text).await;
+        }
+        let slot = state.read().await.window_slot();
+        if let Response::Error(err) = forward(&slot, WindowCommand::Hide, "hide the launcher").await
+        {
+            tracing::debug!(message = %err.message, "a script's close reached no window");
+        }
     }
 }
 
@@ -1364,7 +1534,14 @@ async fn set_extension_preferences(
 const VIEW_POLL: std::time::Duration = std::time::Duration::from_secs(20);
 
 async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u64) -> Response {
-    let Some(mut watch) = state.read().await.views.watch(session) else {
+    let watched = {
+        let state = state.read().await;
+        state
+            .views
+            .watch(session)
+            .or_else(|| state.rhai.watch(session))
+    };
+    let Some(mut watch) = watched else {
         return Response::Error(ProtocolError::new(
             ErrorKind::BadRequest,
             "no extension view is running with that session",
@@ -1386,7 +1563,9 @@ async fn extension_view(state: &Arc<RwLock<EngineState>>, session: u64, after: u
 
 /// Extensions' local storage, keyed from Compass's own master key; `None`
 /// (and local storage answered "not implemented") without a keyring.
-async fn extension_storage(data_dir: &std::path::Path) -> Option<crate::extension_runner::Storage> {
+pub(crate) async fn extension_storage(
+    data_dir: &std::path::Path,
+) -> Option<crate::extension_runner::Storage> {
     let keyring = match crate::clipboard_service::Oo7Store::connect().await {
         Ok(keyring) => keyring,
         Err(err) => {
@@ -1807,6 +1986,63 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 )),
             }
         }
+        Request::StoreBrowse { store, query } => {
+            let stores = Arc::clone(&state.read().await.stores);
+            match stores.browse(store, &query).await {
+                Ok(listed) => Response::StoreListing {
+                    heading: listed.heading,
+                    entries: listed.entries,
+                },
+                Err(message) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
+            }
+        }
+        Request::StoreExtension {
+            store,
+            author,
+            name,
+        } => {
+            let stores = Arc::clone(&state.read().await.stores);
+            match stores.detail(store, &author, &name).await {
+                Ok(detail) => Response::StoreExtension { detail },
+                Err(message) => Response::Error(ProtocolError::new(ErrorKind::BadRequest, message)),
+            }
+        }
+        Request::StoreInstall {
+            store,
+            author,
+            name,
+        } => {
+            let stores = Arc::clone(&state.read().await.stores);
+            match stores.install(store, &author, &name).await {
+                Ok((id, title)) => {
+                    state.write().await.index.rescan_extensions();
+                    Response::StoreInstalled { id, title }
+                }
+                Err(message) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
+            }
+        }
+        Request::StoreUninstall { id } => uninstall_extension(state, id).await,
+        Request::OpenUrl { url } => {
+            use compass_worker_host::application_service::Apps;
+            if !crate::stores::is_openable_url(&url) {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "only http and https URLs are opened",
+                ));
+            }
+            let apps = engine_apps(state).await;
+            match crate::shortcuts::resolve_app(&apps, compass_core::shortcut::DEFAULT_APP_ID, &url)
+            {
+                Some(app) => {
+                    apps.launch(&app, &url);
+                    Response::Ack
+                }
+                None => Response::Error(ProtocolError::new(
+                    ErrorKind::Unsupported,
+                    format!("No default app to open {url}"),
+                )),
+            }
+        }
         Request::CreateExtension {
             author,
             title,
@@ -1965,6 +2201,18 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                     ));
                 }
             };
+            let rhai = Arc::clone(&state.read().await.rhai);
+            if rhai.has(session) {
+                return match rhai.event(session, &handler, &args).await {
+                    Ok(outcomes) => {
+                        rhai_outcomes(state, outcomes).await;
+                        Response::Ack
+                    }
+                    Err(reason) => {
+                        Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                    }
+                };
+            }
             let views = Arc::clone(&state.read().await.views);
             match tokio::task::spawn_blocking(move || views.activate(session, &handler, &args))
                 .await
@@ -1980,6 +2228,15 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
         Request::ExtensionAlertAnswer { session, confirmed } => {
+            let rhai = Arc::clone(&state.read().await.rhai);
+            if rhai.has(session) {
+                return match rhai.answer(session, confirmed).await {
+                    Ok(()) => Response::Ack,
+                    Err(reason) => {
+                        Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                    }
+                };
+            }
             let views = Arc::clone(&state.read().await.views);
             match tokio::task::spawn_blocking(move || views.answer_alert(session, confirmed)).await
             {
@@ -1997,6 +2254,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             set_extension_preferences(state, id, values_json).await
         }
         Request::ExtensionPop { session } => {
+            // A script shows one view; there is nothing above it to pop.
+            if state.read().await.rhai.has(session) {
+                return Response::Ack;
+            }
             let views = Arc::clone(&state.read().await.views);
             match tokio::task::spawn_blocking(move || views.pop(session)).await {
                 Ok(Ok(())) => Response::Ack,
@@ -2010,8 +2271,38 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
         Request::CloseExtension { session } => {
-            state.read().await.views.close(session);
+            let state = state.read().await;
+            if !state.rhai.close(session) {
+                state.views.close(session);
+            }
             Response::Ack
+        }
+        Request::ListRhaiScripts => {
+            // A rescan, as `ListScripts` does: the watcher is the fast path,
+            // this the one that cannot miss (a full inotify queue, a
+            // directory created after start).
+            let rhai = Arc::clone(&state.read().await.rhai);
+            let scripts = match tokio::task::spawn_blocking(move || rhai.reload()).await {
+                Ok(scripts) => scripts,
+                Err(err) => {
+                    return Response::Error(ProtocolError::new(
+                        ErrorKind::Internal,
+                        format!("the script scan failed: {err}"),
+                    ));
+                }
+            };
+            let entries = scripts
+                .iter()
+                .map(|script| compass_ipc::RhaiScriptEntry {
+                    id: script.id.clone(),
+                    title: script.title.clone(),
+                    description: script.description.clone(),
+                    icon: script.icon.clone(),
+                    keywords: script.keywords.clone(),
+                })
+                .collect();
+            state.write().await.set_rhai_items(scripts);
+            Response::RhaiScripts { scripts: entries }
         }
         Request::OAuthRedirect { url } => match crate::extension_runner::oauth_redirect(&url) {
             Ok(()) => Response::Ack,
@@ -2190,6 +2481,9 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
             installed_fonts(&fonts).await;
         });
     }
+
+    // Rhai scripts' hot reload.
+    tokio::spawn(crate::rhai_scripts::watch(Arc::clone(&state)));
 
     // The Shell extension, for window switching. Connecting only fails with
     // no session bus at all; an absent extension is reported per request.

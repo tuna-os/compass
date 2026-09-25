@@ -203,10 +203,31 @@ fn all_requests() -> Vec<Request> {
         Request::SetTheme {
             theme: "tokyo-night".into(),
         },
+        Request::StoreBrowse {
+            store: compass_ipc::StoreKind::Raycast,
+            query: "spotify & co".into(),
+        },
+        Request::StoreExtension {
+            store: compass_ipc::StoreKind::Vicinae,
+            author: "zoë".into(),
+            name: "clock".into(),
+        },
+        Request::StoreInstall {
+            store: compass_ipc::StoreKind::Vicinae,
+            author: "zoë".into(),
+            name: "clock".into(),
+        },
+        Request::StoreUninstall {
+            id: "store.vicinae.clock".into(),
+        },
+        Request::OpenUrl {
+            url: "https://example.com/?q=é".into(),
+        },
         Request::ListFonts,
         Request::FontSpecimen {
             name: "Noto Sans ไทย".into(),
         },
+        Request::ListRhaiScripts,
         Request::CreateExtension {
             author: "zoë".into(),
             title: "My Extension".into(),
@@ -225,6 +246,23 @@ fn all_requests() -> Vec<Request> {
 }
 
 /// Every `Response` variant.
+fn store_entry() -> compass_ipc::StoreEntry {
+    compass_ipc::StoreEntry {
+        id: "store.vicinae.clock".into(),
+        name: "clock".into(),
+        author: "zoe".into(),
+        author_name: "Zoë".into(),
+        title: "Clock".into(),
+        description: "Shows the time".into(),
+        icon_light: Some("https://example.com/light.png".into()),
+        icon_dark: None,
+        downloads: "1.1K".into(),
+        installed: true,
+        update_available: true,
+        compat: Some(1),
+    }
+}
+
 fn all_responses() -> Vec<Response> {
     vec![
         Response::Pong {
@@ -475,6 +513,16 @@ fn all_responses() -> Vec<Response> {
             exit_code: Some(0),
             elapsed_ms: 1500,
         },
+        Response::RhaiScripts {
+            scripts: vec![compass_ipc::RhaiScriptEntry {
+                id: "script.unit-converter".into(),
+                title: "Unit Converter".into(),
+                description: Some("Convert °C, km and kg".into()),
+                icon: Some("calculator".into()),
+                keywords: vec!["convert".into(), "单位".into()],
+            }],
+        },
+        Response::RhaiScripts { scripts: vec![] },
         Response::Programs {
             programs: vec!["/usr/bin/htop".into(), "/opt/bin/ünï".into()],
             terminal: Some("Ptyxis".into()),
@@ -482,6 +530,24 @@ fn all_responses() -> Vec<Response> {
         },
         Response::ExtensionCreated {
             path: "/home/me/code/my-extension".into(),
+        },
+        Response::StoreListing {
+            heading: "Extensions".into(),
+            entries: vec![store_entry()],
+        },
+        Response::StoreExtension {
+            detail: compass_ipc::StoreDetail {
+                entry: store_entry(),
+                markdown: "# Clock\n\nShows the time".into(),
+                screenshots: vec!["https://example.com/1.png".into()],
+                readme_url: Some("https://example.com/README.md".into()),
+                source_url: None,
+                store_url: Some("https://www.raycast.com/zoe/clock".into()),
+            },
+        },
+        Response::StoreInstalled {
+            id: "store.vicinae.clock".into(),
+            title: "Clock".into(),
         },
         Response::Fonts {
             fonts: vec![compass_ipc::FontEntry {
@@ -572,6 +638,12 @@ fn request_variants_are_exhaustive() {
             | Request::CreateExtension { .. }
             | Request::ListFonts
             | Request::FontSpecimen { .. }
+            | Request::ListRhaiScripts
+            | Request::StoreBrowse { .. }
+            | Request::StoreExtension { .. }
+            | Request::StoreInstall { .. }
+            | Request::StoreUninstall { .. }
+            | Request::OpenUrl { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -605,8 +677,12 @@ fn response_variants_are_exhaustive() {
             | Response::Programs { .. }
             | Response::ExtensionCreated { .. }
             | Response::Fonts { .. }
+            | Response::StoreListing { .. }
+            | Response::StoreExtension { .. }
+            | Response::StoreInstalled { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
+            | Response::RhaiScripts { .. }
             | Response::Window(_) => {}
         }
     }
@@ -639,6 +715,30 @@ fn every_response_variant_round_trips() {
         assert_eq!(codec.decode(&mut buf).unwrap(), Some(envelope));
         assert!(buf.is_empty());
     }
+}
+
+#[test]
+fn an_extension_view_of_several_mebibytes_is_carried() {
+    // Suite 1's dashboard-icons draws 4,473 grid items: more than four
+    // mebibytes of view, which the old one-mebibyte limit refused.
+    let view_json = format!("[{}]", "{\"title\":\"an icon\"},".repeat(300_000));
+    assert!(view_json.len() > 4 * 1024 * 1024);
+    let envelope = ResponseEnvelope::new(
+        1,
+        Response::ExtensionView {
+            version: 2,
+            view_json: Some(view_json),
+            problem: None,
+            ended: false,
+            depth: 1,
+            alert: None,
+            toast: None,
+        },
+    );
+    let mut codec = FrameCodec::<ResponseEnvelope>::new();
+    let mut buf = BytesMut::new();
+    codec.encode(&envelope, &mut buf).expect("encoded");
+    assert_eq!(codec.decode(&mut buf).expect("decoded"), Some(envelope));
 }
 
 #[test]
@@ -829,12 +929,12 @@ fn a_well_framed_but_nonsense_body_is_an_error_not_a_panic() {
 #[test]
 fn error_messages_are_legible() {
     let err = Error::FrameTooLarge {
-        len: 5_000_000,
+        len: 50_000_000,
         max: MAX_FRAME_LEN,
     };
     assert_eq!(
         err.to_string(),
-        "frame of 5000000 bytes exceeds the 1048576 byte limit"
+        "frame of 50000000 bytes exceeds the 33554432 byte limit"
     );
 
     let err = Error::VersionMismatch {

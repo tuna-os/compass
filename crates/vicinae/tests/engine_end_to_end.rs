@@ -191,6 +191,15 @@ impl Daemon {
             // Nor its compositor: on a wlroots session the engine would answer
             // window requests over Wayland (`tests/wlroots_engine.rs`).
             .env_remove("WAYLAND_DISPLAY")
+            // Nor the network: a test's HTTP goes to its own local fake,
+            // never through a proxy the invoking shell set.
+            .env_remove("HTTP_PROXY")
+            .env_remove("HTTPS_PROXY")
+            .env_remove("ALL_PROXY")
+            .env_remove("http_proxy")
+            .env_remove("https_proxy")
+            .env_remove("all_proxy")
+            .env("NO_PROXY", "127.0.0.1,localhost")
             .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1087,6 +1096,7 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
               {"name": "tiles", "title": "Tiles", "mode": "view"},
               {"name": "toaster", "title": "Toaster", "mode": "view"},
               {"name": "heap", "title": "Heap", "mode": "no-view"},
+              {"name": "machine", "title": "Machine", "mode": "view"},
               {"name": "probe", "title": "Probe", "mode": "no-view",
                "preferences": [{"name": "limit", "title": "Limit", "type": "textfield",
                                 "required": false, "default": "20"}]},
@@ -1280,6 +1290,28 @@ fn install_extension(root: &std::path::Path) -> std::path::PathBuf {
                React.createElement(ActionPanel, null,
                  React.createElement(Action, { title: 'Hide', onAction: () => toast.hide() }))
              }));
+         };",
+    )
+    .unwrap();
+    // Asks the host what a command can learn about the desktop, and shows the
+    // answers (or the rejections) in one line.
+    std::fs::write(
+        ext.join("machine.js"),
+        "const React = require('react');
+         const { Detail, getSelectedText, WindowManagement } = require('@vicinae/api');
+         const said = (p) => p.then((v) => JSON.stringify(v), (e) => 'error: ' + String(e));
+         module.exports.default = () => {
+           const [text, setText] = React.useState('');
+           React.useEffect(() => {
+             Promise.all([
+               said(getSelectedText()),
+               said(WindowManagement.getActiveWindow()),
+               said(WindowManagement.getWindows()),
+               said(WindowManagement.getScreens()),
+               said(WindowManagement.getActiveWorkspace()),
+             ]).then((answers) => setText(answers.join(' | ')));
+           }, []);
+           return React.createElement(Detail, { markdown: text || 'asking' });
          };",
     )
     .unwrap();
@@ -1518,6 +1550,52 @@ fn wait_for_view(
         after = version;
     }
     panic!("the view never got there");
+}
+
+#[test]
+fn without_a_desktop_the_selection_and_window_apis_answer_as_the_cpp_does() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        install_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hello:machine".into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("no session: {started:?}");
+    };
+    // No session bus and no Wayland display: no Shell extension, no
+    // compositor. Every call is answered, none of them "not implemented".
+    let (view, _) = wait_for_view(
+        &daemon,
+        session,
+        |view, _| matches!(view, View::Detail(detail) if detail.markdown.as_deref() != Some("asking")),
+    );
+    let View::Detail(detail) = view else {
+        unreachable!()
+    };
+    assert_eq!(
+        detail.markdown.as_deref(),
+        Some(
+            "error: Unable to get selected text | error: No active window | [] | [] \
+             | error: No active workspace"
+        )
+    );
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
 }
 
 #[test]
@@ -3436,4 +3514,570 @@ fn dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice() {
         "a list narrower than 500 px drops quick look and the footer"
     );
     assert!(!seen[1].output_index);
+}
+
+// ---------------------------------------------------------------------------
+// Rhai scripts. The in-process tests in `rhai_scripts.rs` cover actions,
+// consent and effects against a fake clipboard; these hold the real process
+// to the XDG layout: a packaged script under `$XDG_DATA_DIRS`, the user's
+// directory created under `$XDG_DATA_HOME`, and hot reload.
+
+#[test]
+fn a_packaged_rhai_script_is_found_in_root_search_and_its_view_renders() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extensions/rhai-examples");
+    let mut root = PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        let target = dir.join("data/compass/scripts/web-search");
+        std::fs::create_dir_all(&target).unwrap();
+        for file in ["script.toml", "main.rhai"] {
+            std::fs::copy(examples.join("web-search").join(file), target.join(file)).unwrap();
+        }
+        root = dir.to_path_buf();
+        Vec::new()
+    });
+    let user_dir = root.join("data-home/compass/scripts");
+    assert!(user_dir.is_dir(), "the engine creates the user's directory");
+
+    let Response::RhaiScripts { scripts } = daemon.request(Request::ListRhaiScripts) else {
+        panic!("no script list");
+    };
+    assert_eq!(scripts.len(), 1);
+    assert_eq!(scripts[0].title, "Web Search");
+    assert_eq!(scripts[0].icon.as_deref(), Some("globe"));
+
+    let json = daemon.client(&["query", "--json", "duckduckgo"]);
+    assert!(json.contains("rhai:script.web-search"), "{json}");
+
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "rhai:script.web-search".into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("the script did not open: {started:?}");
+    };
+    let (view, depth) = wait_for_view(&daemon, session, |view, _| matches!(view, View::List(_)));
+    assert_eq!(depth, 1);
+    let View::List(list) = view else {
+        unreachable!()
+    };
+    let titles: Vec<&str> = list.sections[0]
+        .items
+        .iter()
+        .map(|item| item.title.as_str())
+        .collect();
+    assert_eq!(titles, ["DuckDuckGo", "Wikipedia", "GitHub", "crates.io"]);
+    let handler = list.search.on_change.expect("the script takes the text");
+    assert_eq!(
+        daemon.request(Request::ExtensionEvent {
+            session,
+            handler: handler.0,
+            args_json: r#"["rust", 1]"#.into(),
+        }),
+        Response::Ack
+    );
+    let (view, _) = wait_for_view(&daemon, session, |view, _| {
+        matches!(view, View::List(list)
+            if list.sections[0].items[0].title.contains("rust"))
+    });
+    let View::List(list) = view else {
+        unreachable!()
+    };
+    assert_eq!(
+        list.sections[0].items[0].subtitle.as_deref(),
+        Some("https://duckduckgo.com/?q=rust")
+    );
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+
+    // A script saved into the user's directory while the engine runs is in
+    // root search without asking for a rescan.
+    let mine = user_dir.join("mine");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("main.rhai"), "fn search(q) { [] }").unwrap();
+    std::fs::write(mine.join("script.toml"), "title = \"Zebra Notes\"").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let json = daemon.client(&["query", "--json", "zebra notes"]);
+        if json.contains("rhai:script.mine") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "hot reload never listed it: {json}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+// ---- The extension stores, against a local fake ----
+
+/// A local stand-in for `api.vicinae.com` (under `/v1`) and
+/// `backend.raycast.com` (under `/raycast`), serving fixture listings and
+/// bundles. The Raycast extension's commit can be moved on to publish an
+/// update.
+struct FakeStore {
+    base: String,
+    raycast_commit: std::sync::Arc<std::sync::Mutex<String>>,
+    _server: std::sync::Arc<tiny_http::Server>,
+}
+
+fn bundle(entries: &[(&str, &str)]) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, content) in entries {
+        out.start_file(*name, zip::write::SimpleFileOptions::default())
+            .expect("zip entry");
+        out.write_all(content.as_bytes()).expect("zip write");
+    }
+    out.finish().expect("zip").into_inner()
+}
+
+impl FakeStore {
+    fn start() -> FakeStore {
+        let server =
+            std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("fake store"));
+        let port = server.server_addr().to_ip().expect("ip").port();
+        let base = format!("http://127.0.0.1:{port}");
+        let raycast_commit = std::sync::Arc::new(std::sync::Mutex::new("c1".to_owned()));
+
+        let clock = bundle(&[
+            (
+                "clock/package.json",
+                r#"{"name": "clock", "title": "Clock", "author": "zoe",
+                    "commands": [{"name": "show-time", "title": "Show Time Now", "mode": "view"}]}"#,
+            ),
+            ("clock/show-time.js", "module.exports = {};"),
+        ]);
+        let hn = bundle(&[
+            (
+                "hn/package.json",
+                r#"{"name": "hn", "title": "Hacker News", "author": "ray",
+                    "dependencies": {"@raycast/api": "1.0.0"},
+                    "commands": [{"name": "front", "title": "Front Page Stories", "mode": "view"}]}"#,
+            ),
+            ("hn/front.js", "module.exports = {};"),
+        ]);
+        let evil = bundle(&[
+            ("evil/package.json", r#"{"name": "evil", "commands": []}"#),
+            ("evil/../../escaped.txt", "gotcha"),
+        ]);
+
+        let vicinae_listing = serde_json::json!({
+            "extensions": [
+                {
+                    "id": "x1", "name": "clock", "title": "Clock",
+                    "description": "Shows the time",
+                    "author": {"handle": "zoe", "name": "Zoë", "avatarUrl": "", "profileUrl": ""},
+                    "downloadCount": 1001, "checksum": "v1",
+                    "platforms": ["linux"], "categories": [{"id": "system", "name": "System"}],
+                    "commands": [{"id": "c", "name": "show-time", "title": "Show Time Now",
+                                  "subtitle": "", "description": "Says the time", "mode": "view"}],
+                    "readmeUrl": format!("{base}/readme/clock.md"),
+                    "downloadUrl": format!("{base}/dl/clock.zip"),
+                    "updatedAt": "2026-07-02T11:50:22.441Z"
+                },
+                {
+                    "id": "x2", "name": "evil", "title": "Evil", "description": "Climbs out",
+                    "author": {"handle": "mallory", "name": "Mallory", "avatarUrl": "", "profileUrl": ""},
+                    "downloadUrl": format!("{base}/dl/evil.zip")
+                },
+                {
+                    "id": "x3", "name": "mac-only", "title": "Mac Only", "description": "Not here",
+                    "platforms": ["macos"]
+                }
+            ],
+            "pagination": {"page": 1, "limit": 500, "total": 3, "totalPages": 1}
+        })
+        .to_string();
+
+        let thread_server = std::sync::Arc::clone(&server);
+        let commit = std::sync::Arc::clone(&raycast_commit);
+        let base_for_thread = base.clone();
+        std::thread::spawn(move || {
+            for request in thread_server.incoming_requests() {
+                let url = request.url().to_owned();
+                let hn_json = || {
+                    serde_json::json!({
+                        "id": "u1", "name": "hn", "title": "Hacker News",
+                        "description": "Read the front page",
+                        "author": {"name": "Ray", "handle": "ray"},
+                        "platforms": ["macOS"], "download_count": 2500,
+                        "commit_sha": *commit.lock().unwrap(),
+                        "metadata_count": 1,
+                        "readme_assets_path": format!("{base_for_thread}/assets/"),
+                        "store_url": "https://www.raycast.com/ray/hn",
+                        "download_url": format!("{base_for_thread}/dl/hn.zip"),
+                        "updated_at": 1_788_465_682,
+                        "commands": [{"id": "c", "name": "front", "title": "Front Page Stories",
+                                      "mode": "view"}]
+                    })
+                };
+                let (status, body): (u16, Vec<u8>) = match url.as_str() {
+                    "/v1/store/list?page=1&limit=500" => (200, vicinae_listing.clone().into_bytes()),
+                    "/v1/raycast/get-compat" => (
+                        200,
+                        br#"{"hn": {"status": "partial", "confidence": "high", "notes": ["No menu bar"]}}"#
+                            .to_vec(),
+                    ),
+                    "/readme/clock.md" => (200, b"## Usage\n\nPress it.".to_vec()),
+                    "/dl/clock.zip" => (200, clock.clone()),
+                    "/dl/hn.zip" => (200, hn.clone()),
+                    "/dl/evil.zip" => (200, evil.clone()),
+                    "/raycast/store_listings?page=1&per_page=50"
+                    | "/raycast/store_listings/search?q=hacker%20news" => (
+                        200,
+                        serde_json::json!({"data": [hn_json()]})
+                            .to_string()
+                            .into_bytes(),
+                    ),
+                    "/raycast/extensions/ray/hn" => (200, hn_json().to_string().into_bytes()),
+                    _ => (404, b"not found".to_vec()),
+                };
+                let _ =
+                    request.respond(tiny_http::Response::from_data(body).with_status_code(status));
+            }
+        });
+        FakeStore {
+            base,
+            raycast_commit,
+            _server: server,
+        }
+    }
+
+    fn start_engine(&self) -> Daemon {
+        let vicinae = format!("{}/v1", self.base);
+        let raycast = format!("{}/raycast", self.base);
+        Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", move |_| {
+            vec![
+                ("VICINAE_API_URL", vicinae.into()),
+                ("COMPASS_RAYCAST_API_URL", raycast.into()),
+            ]
+        })
+    }
+}
+
+fn root_ids(daemon: &Daemon, text: &str) -> Vec<String> {
+    use compass_ipc::{Request, Response};
+    let Response::QueryResults { hits } = daemon.request(Request::Query { text: text.into() })
+    else {
+        panic!("no query results");
+    };
+    hits.into_iter().map(|hit| hit.id).collect()
+}
+
+#[test]
+fn the_vicinae_store_lists_installs_into_root_search_and_uninstalls() {
+    use compass_ipc::{ErrorKind, Request, Response, StoreKind};
+    let store = FakeStore::start();
+    let daemon = store.start_engine();
+    let data_home = daemon._dirs.path().join("data-home/vicinae");
+    let extensions = data_home.join("extensions");
+
+    let Response::StoreListing { heading, entries } = daemon.request(Request::StoreBrowse {
+        store: StoreKind::Vicinae,
+        query: String::new(),
+    }) else {
+        panic!("no listing");
+    };
+    assert_eq!(heading, "Extensions");
+    let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["clock", "evil"], "the macOS-only one is dropped");
+    assert_eq!(entries[0].id, "store.vicinae.clock");
+    assert_eq!(entries[0].downloads, "1.1K");
+    assert!(!entries[0].installed);
+
+    let Response::StoreListing { entries, .. } = daemon.request(Request::StoreBrowse {
+        store: StoreKind::Vicinae,
+        query: "time".into(),
+    }) else {
+        panic!("no filtered listing");
+    };
+    assert_eq!(entries.len(), 1, "filtered by the description");
+
+    let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
+        store: StoreKind::Vicinae,
+        author: "zoe".into(),
+        name: "clock".into(),
+    }) else {
+        panic!("no detail");
+    };
+    assert!(
+        detail.markdown.starts_with("# Clock\n"),
+        "{}",
+        detail.markdown
+    );
+    assert!(detail.markdown.contains("**Updated** 2026-07-02"));
+    assert!(
+        detail
+            .markdown
+            .contains("- **Show Time Now** — Says the time")
+    );
+    assert!(
+        detail.markdown.contains("Press it."),
+        "the README is appended"
+    );
+
+    assert!(
+        !root_ids(&daemon, "show time now")
+            .iter()
+            .any(|id| id.contains("store.vicinae.clock")),
+        "not in root search before it is installed"
+    );
+    let Response::StoreInstalled { id, title } = daemon.request(Request::StoreInstall {
+        store: StoreKind::Vicinae,
+        author: "zoe".into(),
+        name: "clock".into(),
+    }) else {
+        panic!("not installed");
+    };
+    assert_eq!(
+        (id.as_str(), title.as_str()),
+        ("store.vicinae.clock", "Clock")
+    );
+    assert!(
+        extensions
+            .join("store.vicinae.clock/package.json")
+            .is_file()
+    );
+    assert!(
+        extensions
+            .join("store.vicinae.clock/show-time.js")
+            .is_file()
+    );
+    assert!(
+        root_ids(&daemon, "show time now")
+            .iter()
+            .any(|id| id == "@zoe/store.vicinae.clock:show-time"),
+        "the installed command is in root search"
+    );
+    let Response::StoreListing { entries, .. } = daemon.request(Request::StoreBrowse {
+        store: StoreKind::Vicinae,
+        query: String::new(),
+    }) else {
+        panic!("no listing");
+    };
+    assert!(entries[0].installed && !entries[0].update_available);
+
+    // A bundle whose entry climbs out is refused whole.
+    let Response::Error(err) = daemon.request(Request::StoreInstall {
+        store: StoreKind::Vicinae,
+        author: "mallory".into(),
+        name: "evil".into(),
+    }) else {
+        panic!("a zip-slip bundle was installed");
+    };
+    assert!(
+        err.message.contains("outside its directory"),
+        "{}",
+        err.message
+    );
+    assert!(!extensions.join("store.vicinae.evil").exists());
+    assert!(!extensions.join("escaped.txt").exists());
+    assert!(!data_home.join("escaped.txt").exists());
+
+    assert!(matches!(
+        daemon.request(Request::StoreUninstall {
+            id: "store.vicinae.clock".into()
+        }),
+        Response::Ack
+    ));
+    assert!(!extensions.join("store.vicinae.clock").exists());
+    assert!(
+        !root_ids(&daemon, "show time now")
+            .iter()
+            .any(|id| id.contains("store.vicinae.clock")),
+        "gone from root search"
+    );
+    let Response::Error(err) = daemon.request(Request::StoreUninstall {
+        id: "store.vicinae.clock".into(),
+    }) else {
+        panic!("uninstalled twice");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+
+    let Response::Error(err) = daemon.request(Request::OpenUrl {
+        url: "file:///etc/passwd".into(),
+    }) else {
+        panic!("a file URL was opened");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+}
+
+#[test]
+fn the_raycast_store_badges_compatibility_and_notices_an_update() {
+    use compass_ipc::{ErrorKind, Request, Response, StoreKind};
+    let store = FakeStore::start();
+    let daemon = store.start_engine();
+
+    let Response::StoreListing { heading, entries } = daemon.request(Request::StoreBrowse {
+        store: StoreKind::Raycast,
+        query: String::new(),
+    }) else {
+        panic!("no listing");
+    };
+    assert_eq!(heading, "Extensions");
+    assert_eq!(entries.len(), 1, "a macOS listing is offered on Linux");
+    assert_eq!(entries[0].id, "store.raycast.hn");
+    if cfg!(target_os = "linux") {
+        assert_eq!(entries[0].compat, Some(1), "partial, from the sheet");
+    }
+
+    let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
+        store: StoreKind::Raycast,
+        author: "ray".into(),
+        name: "hn".into(),
+    }) else {
+        panic!("no detail");
+    };
+    assert_eq!(
+        detail.screenshots,
+        [format!("{}/assets/metadata/hn-1.png", store.base)]
+    );
+    assert_eq!(
+        detail.store_url.as_deref(),
+        Some("https://www.raycast.com/ray/hn")
+    );
+    if cfg!(target_os = "linux") {
+        assert!(detail.markdown.contains("works but has a few quirks"));
+        assert!(detail.markdown.contains("No menu bar"));
+    }
+
+    let Response::StoreInstalled { id, .. } = daemon.request(Request::StoreInstall {
+        store: StoreKind::Raycast,
+        author: "ray".into(),
+        name: "hn".into(),
+    }) else {
+        panic!("not installed");
+    };
+    assert_eq!(id, "store.raycast.hn");
+    assert!(
+        root_ids(&daemon, "front page stories")
+            .iter()
+            .any(|id| id == "@ray/store.raycast.hn:front")
+    );
+
+    let search = || {
+        let Response::StoreListing { heading, entries } = daemon.request(Request::StoreBrowse {
+            store: StoreKind::Raycast,
+            query: "hacker news".into(),
+        }) else {
+            panic!("no search");
+        };
+        assert_eq!(heading, "Results");
+        entries.into_iter().next().expect("a result")
+    };
+    let current = search();
+    assert!(current.installed && !current.update_available);
+    *store.raycast_commit.lock().unwrap() = "c2".into();
+    assert!(search().update_available, "a new commit is an update");
+
+    let Response::StoreInstalled { .. } = daemon.request(Request::StoreInstall {
+        store: StoreKind::Raycast,
+        author: "ray".into(),
+        name: "hn".into(),
+    }) else {
+        panic!("not updated");
+    };
+    assert!(
+        !search().update_available,
+        "reinstalling applies the update"
+    );
+
+    let Response::Error(err) = daemon.request(Request::StoreExtension {
+        store: StoreKind::Raycast,
+        author: "ray".into(),
+        name: "missing".into(),
+    }) else {
+        panic!("a missing extension had a page");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    assert!(err.message.contains("\"ray/missing\""), "{}", err.message);
+}
+
+/// The real stores, end to end: browse both, open a detail page, install a
+/// Vicinae store extension into a temp data home and uninstall it. Network,
+/// so ignored by default; run with
+/// `cargo test -p vicinae --test engine_end_to_end -- --ignored real_stores`.
+#[test]
+#[ignore = "talks to api.vicinae.com and backend.raycast.com"]
+fn real_stores_smoke() {
+    use compass_ipc::{Request, Response, StoreKind};
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        // The invoking shell's proxy, which the harness otherwise strips.
+        [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "NO_PROXY",
+        ]
+        .into_iter()
+        .filter_map(|name| Some((name, std::env::var_os(name)?)))
+        .collect()
+    });
+
+    let entries = match daemon.request(Request::StoreBrowse {
+        store: StoreKind::Vicinae,
+        query: String::new(),
+    }) {
+        Response::StoreListing { entries, .. } => entries,
+        other => panic!("no Vicinae listing: {other:?}"),
+    };
+    assert!(entries.len() > 10, "{} extensions", entries.len());
+    let first = entries[0].clone();
+    let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
+        store: StoreKind::Vicinae,
+        author: first.author.clone(),
+        name: first.name.clone(),
+    }) else {
+        panic!("no Vicinae detail");
+    };
+    assert!(detail.markdown.contains(&first.title));
+
+    let Response::StoreInstalled { id, .. } = daemon.request(Request::StoreInstall {
+        store: StoreKind::Vicinae,
+        author: first.author.clone(),
+        name: first.name.clone(),
+    }) else {
+        panic!("not installed");
+    };
+    let installed = daemon
+        ._dirs
+        .path()
+        .join("data-home/vicinae/extensions")
+        .join(&id);
+    assert!(installed.join("package.json").is_file());
+    assert!(matches!(
+        daemon.request(Request::StoreUninstall { id }),
+        Response::Ack
+    ));
+    assert!(!installed.exists());
+
+    let Response::StoreListing { entries, .. } = daemon.request(Request::StoreBrowse {
+        store: StoreKind::Raycast,
+        query: String::new(),
+    }) else {
+        panic!("no Raycast listing");
+    };
+    assert!(!entries.is_empty());
+    let Response::StoreListing { heading, entries } = daemon.request(Request::StoreBrowse {
+        store: StoreKind::Raycast,
+        query: "spotify".into(),
+    }) else {
+        panic!("no Raycast search");
+    };
+    assert_eq!(heading, "Results");
+    let hit = entries.first().expect("a Raycast result").clone();
+    let Response::StoreExtension { detail } = daemon.request(Request::StoreExtension {
+        store: StoreKind::Raycast,
+        author: hit.author,
+        name: hit.name,
+    }) else {
+        panic!("no Raycast detail");
+    };
+    assert!(detail.markdown.starts_with("# "));
 }

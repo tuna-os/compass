@@ -328,6 +328,24 @@ pub fn load_preferences(
     }
 }
 
+/// Removes everything `extension_id` kept in local storage and its stored
+/// preference values; logged, never fatal, since the extension is already
+/// gone by the time this runs.
+pub fn clear_extension_data(storage: &Storage, extension_id: &str) {
+    let Some(db) = open_storage(storage) else {
+        return;
+    };
+    let local = compass_local_storage::LocalStorage::new(&db);
+    for namespace in [
+        compass_local_storage::namespace_for(extension_id),
+        preferences_namespace(extension_id),
+    ] {
+        if let Err(err) = local.scoped(&namespace).clear() {
+            tracing::warn!(%err, %namespace, "could not clear an uninstalled extension's data");
+        }
+    }
+}
+
 /// Keeps `values` for `extension_id`. A null or empty value removes the
 /// stored one, so clearing a field falls back to its default.
 ///
@@ -572,6 +590,19 @@ fn serve(
         apps,
     } = served;
     let title = title.as_str();
+    let windows = compass_worker_host::window_service::WindowService::new(
+        crate::extension_windows::EngineWindows::detect(
+            clipboard.shell.clone(),
+            clipboard.handle.clone(),
+            apps.as_ref()
+                .map(crate::extension_apps::EngineApps::window_classes)
+                .unwrap_or_default(),
+        ),
+    );
+    let selection = Selection {
+        shell: clipboard.shell.clone(),
+        handle: clipboard.handle.clone(),
+    };
     let database = storage.and_then(|storage| open_storage(&storage));
     let local = database
         .as_ref()
@@ -584,6 +615,7 @@ fn serve(
             handle,
             alert: std::sync::Mutex::new(None),
             view: view.as_ref().map(|view| view.state.clone()),
+            selection,
         },
         CommandInfo {
             name: name.to_owned(),
@@ -592,7 +624,11 @@ fn serve(
     );
     let clipboard = ClipboardService::new(clipboard);
     let ui = UiService::new();
-    let mut router = Router::new().with(&shell).with(&clipboard).with(&ui);
+    let mut router = Router::new()
+        .with(&shell)
+        .with(&clipboard)
+        .with(&ui)
+        .with(&windows);
     if let Some(service) = &storage_service {
         router = router.with(service);
     }
@@ -841,7 +877,9 @@ pub fn oauth_redirect(url: &str) -> Result<(), String> {
     answered.map_err(|err| format!("The extension did not take the authorization: {err}"))
 }
 
-fn open_storage(storage: &Storage) -> Option<compass_sqlcipher_sys::rusqlite::Connection> {
+pub(crate) fn open_storage(
+    storage: &Storage,
+) -> Option<compass_sqlcipher_sys::rusqlite::Connection> {
     let opened = compass_sqlcipher_sys::open(&storage.path, &storage.key)
         .map_err(|err| err.to_string())
         .and_then(|db| {
@@ -960,6 +998,43 @@ struct HeadlessShell {
     /// A view's state, where its toasts are shown; `None` for a no-view run,
     /// whose toasts become notifications.
     view: Option<tokio::sync::watch::Sender<ViewState>>,
+    /// Where `getSelectedText` reads from.
+    selection: Selection,
+}
+
+/// `getSelectedText`'s answer, verbatim from the C++, when nothing is
+/// selected or there is nowhere to read a selection from.
+pub const NO_SELECTED_TEXT: &str = "Unable to get selected text";
+
+/// The primary selection, as `LinuxSelectionService` reads it: over
+/// data-control on a wlroots compositor, and through the Shell extension on
+/// GNOME, where Mutter has no data-control and only a focused client may read
+/// the primary selection.
+struct Selection {
+    shell: Option<Arc<compass_shell::ShellClient>>,
+    handle: Option<tokio::runtime::Handle>,
+}
+
+impl Selection {
+    fn text(&self) -> Result<String, String> {
+        let text = if data_control() {
+            compass_wayland::clipboard::read_primary_text().unwrap_or_else(|err| {
+                tracing::info!(error = %err, "could not read the primary selection");
+                None
+            })
+        } else if let (Some(shell), Some(handle)) = (&self.shell, &self.handle) {
+            let shell = Arc::clone(shell);
+            handle
+                .block_on(async move { shell.primary_selection().await })
+                .unwrap_or_else(|err| {
+                    tracing::info!(error = %err, "could not read the primary selection");
+                    None
+                })
+        } else {
+            None
+        };
+        text.ok_or_else(|| NO_SELECTED_TEXT.to_owned())
+    }
 }
 
 impl HeadlessShell {
@@ -1040,7 +1115,7 @@ impl Shell for HeadlessShell {
     fn set_search_text(&self, _text: &str) {}
 
     fn selected_text(&self) -> Result<String, String> {
-        Err("Selected text is not available to extensions in Compass yet".to_owned())
+        self.selection.text()
     }
 
     fn send_notification(&self, notification: &Notification) {
@@ -1130,6 +1205,13 @@ impl Views {
             deferral,
             views: Arc::clone(self),
         }
+    }
+
+    /// A session number no view has, for a view this module does not run
+    /// (a Rhai script's), so the launcher's session numbers stay unique.
+    #[must_use]
+    pub fn reserve(&self) -> u64 {
+        self.next.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// Follows `session`'s state; `None` for a session that is not running.
@@ -1352,9 +1434,20 @@ fn settle(
 
 /// The clipboard an extension reaches: the GNOME Shell extension's, or
 /// data-control on a wlroots compositor.
-struct ShellClipboard {
+pub(crate) struct ShellClipboard {
     shell: Option<Arc<compass_shell::ShellClient>>,
     handle: Option<tokio::runtime::Handle>,
+}
+
+impl ShellClipboard {
+    /// The clipboard through `shell`, or data-control on wlroots; `None`
+    /// when this session has neither.
+    pub(crate) fn available(
+        shell: Option<Arc<compass_shell::ShellClient>>,
+        handle: Option<tokio::runtime::Handle>,
+    ) -> Option<Self> {
+        (data_control() || (shell.is_some() && handle.is_some())).then_some(Self { shell, handle })
+    }
 }
 
 impl ShellClipboard {

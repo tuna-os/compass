@@ -16,12 +16,11 @@
     "why": "waiting on an OAuth sign-in in the browser"
   },
   "store.raycast.google-search:index": {
-    "verdict": "crashed",
-    "why": "Google Search crashed: TypeError: Cannot read properties of null (reading 'filter')"
+    "verdict": "rendered"
   },
   "store.raycast.json-format:formatSelectionAndShow": {
     "verdict": "error-toast",
-    "why": "Failed to fetch latest data: Selected text is not available to extensions in Compass yet"
+    "why": "Failed to fetch latest data: Unable to get selected text (a headless run has no selection)"
   },
   "store.raycast.linear:create-issue": {
     "verdict": "needs-sign-in",
@@ -39,7 +38,7 @@
   },
   "store.raycast.raycast-gemini:history": {
     "verdict": "rendered-empty",
-    "why": "only ever drew an empty frame"
+    "why": "only ever drew an empty frame: the history is empty and the list has no empty view"
   },
   "store.raycast.remove-paywall:remove-paywall": {
     "verdict": "ran"
@@ -114,8 +113,7 @@
     "verdict": "rendered"
   },
   "store.vicinae.bluetooth:devices": {
-    "verdict": "crashed",
-    "why": "Devices crashed: Error: connect ENOENT /var/run/dbus/system_bus_socket"
+    "verdict": "rendered"
   },
   "store.vicinae.brotab:tabs-list": {
     "verdict": "rendered"
@@ -150,8 +148,7 @@
     "why": "Search Icons crashed: Error [ERR_WORKER_OUT_OF_MEMORY]: Worker terminated due to reaching memory limit: JS heap out of memory"
   },
   "store.vicinae.dbus:explore-bus": {
-    "verdict": "crashed",
-    "why": "Explore The Bus crashed: Error: connect ENOENT /var/run/dbus/system_bus_socket"
+    "verdict": "rendered"
   },
   "store.vicinae.dms-integration:dsearch": {
     "verdict": "error-toast",
@@ -175,8 +172,8 @@
     "verdict": "rendered"
   },
   "store.vicinae.fuzzy-files:find": {
-    "verdict": "crashed",
-    "why": "Find Files crashed: UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a pro"
+    "verdict": "rendered-empty",
+    "why": "only ever drew an empty frame: it searches through `gf` (goldfish), which the runner lacks, and says so only after a keystroke"
   },
   "store.vicinae.gentoo-explorer:browse-categories": {
     "verdict": "rendered"
@@ -187,7 +184,10 @@
   },
   "store.vicinae.gnome-dnd:status": {
     "verdict": "crashed",
-    "why": "Do Not Disturb Status crashed: Re: Command failed with exit code 1: gsettings get org.gnome.desktop.notifications show-banners"
+    "why": "Do Not Disturb Status crashed: Re: Command failed with exit code 1: gsettings get org.gnome.desktop.notifications show-banners",
+    "flatpak": {
+      "verdict": "rendered"
+    }
   },
   "store.vicinae.gnome-extensions:gnome-extensions": {
     "verdict": "rendered"
@@ -203,7 +203,7 @@
   },
   "store.vicinae.html-symbol-finder:index": {
     "verdict": "error-toast",
-    "why": "Failed to fetch latest data: WindowManagement/getActiveWindow is not implemented by this host (compass-worker-host)"
+    "why": "Failed to fetch latest data: No active window (a headless run has no windows)"
   },
   "store.vicinae.hypr-keybinds:hyprland-keybinds": {
     "verdict": "error-toast",
@@ -252,7 +252,7 @@
   },
   "store.vicinae.mise:mise": {
     "verdict": "crashed",
-    "why": "Mise crashed: Error: Command failed: mise ls --json"
+    "why": "Mise crashed: Error: Command failed: mise registry"
   },
   "store.vicinae.mullvad:mullvad": {
     "verdict": "rendered"
@@ -297,8 +297,7 @@
     "why": "Failed to load passwords: Password store path \"/tmp/tmp.6e64FjtJZQ/home/.password-store\" is not a directory"
   },
   "store.vicinae.player-pilot:player-pilot": {
-    "verdict": "rendered-empty",
-    "why": "only ever drew an empty frame"
+    "verdict": "rendered"
   },
   "store.vicinae.podman:containers": {
     "verdict": "rendered"
@@ -357,19 +356,16 @@
     "verdict": "rendered"
   },
   "store.vicinae.ssh:ssh": {
-    "verdict": "rendered-empty",
-    "why": "only ever drew an empty frame"
+    "verdict": "rendered"
   },
   "store.vicinae.stocks:stocks": {
     "verdict": "rendered"
   },
   "store.vicinae.supergenpass:supergenpass": {
-    "verdict": "rendered-empty",
-    "why": "only ever drew an empty frame"
+    "verdict": "rendered"
   },
   "store.vicinae.systemd:services": {
-    "verdict": "crashed",
-    "why": "Services crashed: Error: connect ENOENT /var/run/dbus/system_bus_socket"
+    "verdict": "rendered"
   },
   "store.vicinae.timer:index": {
     "verdict": "rendered"
@@ -381,8 +377,7 @@
     "verdict": "rendered"
   },
   "store.vicinae.wallhaven:downloaded-wallpapers": {
-    "verdict": "rendered-empty",
-    "why": "only ever drew an empty frame"
+    "verdict": "rendered"
   },
   "store.vicinae.wayland-explorer:protocols": {
     "verdict": "rendered"
@@ -392,7 +387,7 @@
   },
   "store.vicinae.wikipedia:open-page": {
     "verdict": "error-toast",
-    "why": "Page not found: compass-conformance"
+    "why": "Page not found: Linux (the Wikipedia API rate-limits shared egress; it renders when the API answers)"
   },
   "store.vicinae.wiktionary:define": {
     "verdict": "crashed",

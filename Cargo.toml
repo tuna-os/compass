@@ -26,6 +26,7 @@ compass-ipc = { path = "crates/compass-ipc" }
 compass-shell = { path = "crates/compass-shell" }
 compass-worker-host = { path = "crates/compass-worker-host" }
 compass-extension-api = { path = "crates/compass-extension-api" }
+compass-script = { path = "crates/compass-script" }
 compass-portals = { path = "crates/compass-portals" }
 compass-wayland = { path = "crates/compass-wayland" }
 compass-wayland-protocols = { path = "crates/compass-wayland-protocols" }
@@ -114,7 +115,19 @@ hex = "0.4"
 # URL parsing: the OAuth redirect (`raycast://oauth?code=…&state=…`) and the
 # authorize URL's `state`. Already in the tree through ureq and zbus.
 url = "2.5"
-ureq = { version = "3.4", default-features = false, features = ["native-tls-no-default", "gzip"] }
+#
+# `native-tls`, not `native-tls-no-default`: ureq 3.4 decides whether its
+# native-tls provider is compiled in with `cfg!(feature = "native-tls")`, so
+# with only `-no-default` every https request panicked ("provider is NativeTls
+# but feature is not enabled"). The difference is the bundled webpki roots,
+# which are compiled in and never used: the agents ask for the platform's.
+ureq = { version = "3.4", default-features = false, features = ["native-tls", "gzip"] }
+# Extension store bundles (the Vicinae and Raycast stores serve zips). Only
+# deflate, through the flate2/zlib-rs backend the tree already builds; the
+# stores use nothing else, and an archive that does is refused.
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# dev: the fake store the engine's end-to-end tests install from.
+tiny_http = "0.12"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

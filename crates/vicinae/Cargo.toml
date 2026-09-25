@@ -46,6 +46,7 @@ oo7.workspace = true
 compass-clipboard.workspace = true
 compass-worker-host.workspace = true
 compass-extension-api = { path = "../compass-extension-api" }
+compass-script.workspace = true
 compass-local-storage = { path = "../compass-local-storage" }
 compass-oauth-store = { path = "../compass-oauth-store" }
 wait-timeout = "0.2"
@@ -66,12 +67,17 @@ fontdb = "0.23"
 ttf-parser = "0.25"
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 uuid = { version = "1", features = ["v4"] }
+ureq.workspace = true
 
 [dev-dependencies]
 iced = { version = "0.14", features = ["tokio"] }
 iced_winit = "0.14"
 compass-testkit.workspace = true
 tempfile = "3"
+tiny_http.workspace = true
+zip.workspace = true
 # The headless-Sway harness shared with compass-wayland (tests/wlroots_engine.rs).
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client"] }
+# Holding a primary selection for the engine to read (tests/wlroots_engine.rs).
+wl-clipboard-rs = "0.9"

@@ -499,7 +499,9 @@ impl AppIndexBuilder {
             extensions,
             shortcuts: Vec::new(),
             scripts: Vec::new(),
+            rhai_scripts: Vec::new(),
             root_config: crate::root_items::RootConfig::default(),
+            extension_dirs: self.extension_dirs,
         }
     }
 
@@ -680,8 +682,12 @@ pub struct AppIndex {
     shortcuts: Vec<crate::shortcut_service::CachedShortcut>,
     /// Script commands, in scan order; their roots come after the shortcuts'.
     scripts: Vec<crate::script_scan::ScriptItem>,
+    /// Rhai scripts, in id order; their roots come after the script commands'.
+    rhai_scripts: Vec<crate::rhai_scripts::RhaiScriptItem>,
     /// The configuration last applied, kept for roots added later.
     root_config: crate::root_items::RootConfig,
+    /// Where installed extensions are looked for, kept for a rescan.
+    extension_dirs: Vec<PathBuf>,
 }
 
 /// One row of a root search over applications and commands.
@@ -714,6 +720,13 @@ pub enum RootHit<'a> {
     Script {
         /// Which one.
         script: &'a crate::script_scan::ScriptItem,
+        /// Match score on the IPC scale, excluding frecency.
+        match_score: u32,
+    },
+    /// A Rhai script.
+    RhaiScript {
+        /// Which one.
+        script: &'a crate::rhai_scripts::RhaiScriptItem,
         /// Match score on the IPC scale, excluding frecency.
         match_score: u32,
     },
@@ -872,6 +885,14 @@ impl AppIndex {
                                 script,
                                 match_score,
                             })
+                    })
+                    .or_else(|| {
+                        self.rhai_script_by_entrypoint(entrypoint_id).map(|script| {
+                            RootHit::RhaiScript {
+                                script,
+                                match_score,
+                            }
+                        })
                     }),
             }
         })
@@ -951,6 +972,34 @@ impl AppIndex {
         self.scripts = scripts;
     }
 
+    /// The Rhai scripts root search lists, in id order.
+    #[must_use]
+    pub fn rhai_scripts(&self) -> &[crate::rhai_scripts::RhaiScriptItem] {
+        &self.rhai_scripts
+    }
+
+    /// The Rhai script a `rhai:<id>` entrypoint id names.
+    #[must_use]
+    pub fn rhai_script_by_entrypoint(
+        &self,
+        entrypoint_id: &str,
+    ) -> Option<&crate::rhai_scripts::RhaiScriptItem> {
+        let id = crate::rhai_scripts::script_id(entrypoint_id)?;
+        self.rhai_scripts.iter().find(|script| script.id == id)
+    }
+
+    /// Replaces the Rhai scripts root search lists, as
+    /// [`AppIndex::set_shortcuts`] replaces the quicklinks: scripts come and
+    /// go while the launcher runs (hot reload).
+    pub fn set_rhai_scripts(&mut self, scripts: Vec<crate::rhai_scripts::RhaiScriptItem>) {
+        let roots = scripts
+            .iter()
+            .map(crate::rhai_scripts::RhaiScriptItem::root_item)
+            .collect();
+        self.replace_provider_roots(crate::rhai_scripts::RHAI_PROVIDER_ID, roots);
+        self.rhai_scripts = scripts;
+    }
+
     /// Drops `provider`'s roots and appends `roots` in their place, merged
     /// with the configuration last applied.
     fn replace_provider_roots(&mut self, provider: &str, roots: Vec<crate::root_items::RootItem>) {
@@ -959,6 +1008,44 @@ impl AppIndex {
             root.merge_config(&self.root_config, false);
             self.roots.push(root);
         }
+    }
+
+    /// Scans the extension directories the index was built with again and
+    /// takes what is installed now, as `ExtensionRegistry::requestScan`
+    /// does after an install or an uninstall.
+    pub fn rescan_extensions(&mut self) {
+        let extensions = if self.extension_dirs.is_empty() {
+            Vec::new()
+        } else {
+            crate::extension_commands::ExtensionCommand::from_manifests(
+                &crate::manifest::registry::scan(&self.extension_dirs).extensions,
+            )
+        };
+        self.set_extensions(extensions);
+    }
+
+    /// Replaces the installed extensions' commands, applying the
+    /// configuration last given to [`AppIndex::apply_root_config`] to their
+    /// rows. Every other row keeps its position.
+    pub fn set_extensions(&mut self, extensions: Vec<crate::extension_commands::ExtensionCommand>) {
+        let old: std::collections::HashSet<&str> = self
+            .extensions
+            .iter()
+            .map(|command| command.id.as_str())
+            .collect();
+        let first_non_app = self.root_indices.len();
+        let mut position = 0;
+        self.roots.retain(|root| {
+            let keep = position < first_non_app || !old.contains(root.id.as_str());
+            position += 1;
+            keep
+        });
+        for command in &extensions {
+            let mut root = command.root_item();
+            root.merge_config(&self.root_config, false);
+            self.roots.push(root);
+        }
+        self.extensions = extensions;
     }
 
     /// The installed extension command with this entrypoint id.

@@ -531,6 +531,36 @@ pub fn read(mime_type: &str) -> Result<Option<Vec<u8>>, ClipboardError> {
     }
 }
 
+/// The primary selection's text — what was last selected, in any window —
+/// or `None` when nothing is selected, it is not text, or the compositor's
+/// data-control is too old to carry the primary selection (version 2 of the
+/// wlr protocol added it; the ext protocol always has it).
+///
+/// # Errors
+///
+/// [`ClipboardError::Paste`] when there is no data-control,
+/// [`ClipboardError::Io`] when the bytes do not arrive.
+pub fn read_primary_text() -> Result<Option<String>, ClipboardError> {
+    match paste::get_contents(
+        paste::ClipboardType::Primary,
+        paste::Seat::Unspecified,
+        paste::MimeType::Text,
+    ) {
+        Ok((mut pipe, _)) => {
+            let mut data = Vec::new();
+            pipe.read_to_end(&mut data)?;
+            Ok(Some(String::from_utf8_lossy(&data).into_owned()).filter(|text| !text.is_empty()))
+        }
+        Err(
+            paste::Error::ClipboardEmpty
+            | paste::Error::NoMimeType
+            | paste::Error::NoSeats
+            | paste::Error::PrimarySelectionUnsupported,
+        ) => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

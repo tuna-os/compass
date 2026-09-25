@@ -19,7 +19,7 @@
 /// An extension reporting any other value is reported as
 /// [`Availability::VersionMismatch`](crate::Availability::VersionMismatch) and
 /// its capability is not used.
-pub const CONTRACT_VERSION: u32 = 2;
+pub const CONTRACT_VERSION: u32 = 3;
 
 /// Well-known bus name the helper extension lives behind.
 ///
@@ -65,4 +65,14 @@ pub mod window_key {
     pub const WORKSPACE: &str = "workspace";
     /// `b`, optional.
     pub const CAN_CLOSE: &str = "can_close";
+    /// `b`, optional (contract 3).
+    pub const FULLSCREEN: &str = "fullscreen";
+    /// `i`, optional (contract 3): the frame's left edge.
+    pub const X: &str = "x";
+    /// `i`, optional (contract 3): the frame's top edge.
+    pub const Y: &str = "y";
+    /// `i`, optional (contract 3): the frame's width.
+    pub const WIDTH: &str = "width";
+    /// `i`, optional (contract 3): the frame's height.
+    pub const HEIGHT: &str = "height";
 }

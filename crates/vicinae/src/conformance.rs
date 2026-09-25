@@ -12,7 +12,8 @@
 //! # What counts as a pass
 //!
 //! A `view` command passes when a frame with something in it arrives — a
-//! list or grid item, a form field, a detail's text — within the timeout,
+//! list or grid item, a form field, a detail's text, or the extension's own
+//! empty view on a list or grid that has stopped loading — within the timeout,
 //! and nothing on the way was a crash, a view Compass cannot draw, or a
 //! failure toast. A `no-view` command passes when the engine starts it; the
 //! runtime never says when one finished, so there is no frame to judge.
@@ -575,7 +576,14 @@ fn measure(view: &compass_extension_api::View) -> (&'static str, usize) {
         ),
         View::Grid(grid) => (
             "grid",
-            grid.sections.iter().map(|s| s.items.len()).sum::<usize>(),
+            grid.sections.iter().map(|s| s.items.len()).sum::<usize>()
+                + usize::from(
+                    !grid.is_loading
+                        && grid
+                            .empty_state
+                            .as_ref()
+                            .is_some_and(|empty| !empty.title.is_empty()),
+                ),
         ),
         View::Detail(detail) => (
             "detail",
@@ -717,6 +725,22 @@ mod tests {
             ..ListSection::default()
         });
         assert_eq!(measure(&View::List(list)), ("list", 1));
+    }
+
+    #[test]
+    fn a_grid_showing_its_empty_view_has_drawn_something_unless_it_is_loading() {
+        use compass_extension_api::View;
+        use compass_extension_api::view::{EmptyState, GridView};
+        let mut grid = GridView {
+            empty_state: Some(EmptyState {
+                title: "No downloaded wallpapers".into(),
+                ..EmptyState::default()
+            }),
+            ..GridView::default()
+        };
+        assert_eq!(measure(&View::Grid(grid.clone())), ("grid", 1));
+        grid.is_loading = true;
+        assert_eq!(measure(&View::Grid(grid)), ("grid", 0));
     }
 
     #[test]

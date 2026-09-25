@@ -2066,9 +2066,24 @@ The negative tests are §8.2's list; each has a positive control beside it.
 |---|---|---|---|
 | 1 | An extension may run a program it wrote itself (Raycast's `speedtest` downloads its CLI into `supportPath` and runs it). | Execute is granted on the system trees (`/usr`, `/bin`, `/lib*`, `/app`), Node and the extension's installed directory, never on the directories it may write: running what it wrote fails with `EACCES`. The Landlock crate's "read" set includes `Execute`, which had made every readable path executable; read no longer implies execute. Suite 1's `speedtest` fails here, by design. | `a_program_the_worker_wrote_itself_cannot_be_run`, `a_command_sees_its_own_paths_and_preferences_and_may_exec_but_not_unshare` |
 | 2 | A raw socket is whatever the kernel allows the process. | `socket()` with `SOCK_RAW` or `SOCK_PACKET`, or in `AF_PACKET`, answers `EPERM` from the seccomp filter, root or not; an ordinary socket is unaffected. | `a_raw_socket_is_refused_while_an_ordinary_one_is_not` |
-| 3 | No memory limit; the worker asks V8 for 1000 MB of heap. | The heap is capped at 160 MiB (`--max-old-space-size`), and `RLIMIT_DATA` at 512 MiB, which bounds `Buffer`s and native allocations where no cgroup is reachable (a Flatpak): a 512 MiB `Buffer` is a `RangeError` the extension can catch. Measured over Suite 1 the worker's `VmData` peaks at 340 MiB. The heap cap costs one real extension: `dashboard-icons` runs out of heap loading its catalogue. | `an_allocation_past_the_data_limit_fails_and_the_process_carries_on`, `an_extension_that_allocates_past_the_heap_cap_is_stopped` |
+| 3 | No memory limit; the worker asks V8 for 1000 MB of heap. | The heap is capped at 160 MiB (`--max-old-space-size`), and `RLIMIT_DATA` at 512 MiB, which bounds `Buffer`s and native allocations where no cgroup is reachable (a Flatpak): a 512 MiB `Buffer` is a `RangeError` the extension can catch. Measured over Suite 1 the worker's `VmData` peaks at 340 MiB. The heap cap costs one real extension, **kept deliberately**: `dashboard-icons` groups a 1.2 MB catalogue into 4,473 grid items, each with its own action panel. Measured (2026-09-24, caps lifted one at a time): it runs out of heap at 160 MiB and renders at 192 MiB, and at 192 MiB the worker peaks at about 450 MiB resident and 490 MiB `VmData`. That is past the 256 MiB process budget (§6) by more than the heap alone, so raising the heap flag would only move its failure to the cgroup or `RLIMIT_DATA`; admitting it means a different budget, not a different flag. It also needed row 1 of "The extension host API" (a view past a mebibyte). | `an_allocation_past_the_data_limit_fails_and_the_process_carries_on`, `an_extension_that_allocates_past_the_heap_cap_is_stopped` |
 | 4 | Writes anywhere the user may. | Writes only its support and asset directories: `reminders` (Vicinae store) fails making `~/.local/share/vicinae-reminders`. | `an_installed_extension_command_is_found_and_a_no_view_one_runs` |
 | 5 | TLS trusts whatever `NODE_EXTRA_CA_CERTS` names. | The same, because the file it names (and `SSL_CERT_FILE`, `SSL_CERT_DIR`) is granted read; otherwise Node could not load a corporate CA from `$HOME`. | — |
+| 6 | Reads anywhere the user may. | Reads the system trees, Node, the runtime bundle, the extension's own directory and its support and asset directories, and nothing else of `$HOME`. So an extension that reads the user's own files — `ssh` reading `~/.ssh/config`, `pass` the password store, `firefox` the profiles, `zoxide-recent-directories` its database, the `niri` and `hypr*` keybinding lists their compositor's config, Raycast's `obsidian` a vault — sees nothing there on a real desktop, where the C++ let it read them. **Suite 1 cannot see this**: its `HOME` is empty, so these fail (or pass, as `ssh` does with a typed host) for the same reason under either policy. It is the largest open question between the sandbox and "running unmodified", and a policy decision rather than a bug: widening reads to `$HOME` would admit every one of these and also every secret in it. | — (by the policy's read set, `extension_runner::policy`) |
+
+### The extension host API — where the engine answers differently, and what it serves
+
+Found by Suite 1 (`scripts/suite1/`), each against a real store extension. The adapters in
+`compass-worker-host` were pinned against the C++ before; these are the engine's backends behind
+them and three places where the answer an extension gets differs.
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | The UI receives an extension's view in-process, whatever its size. | The launcher and `vicinae conformance` receive it over IPC as `ExtensionView`, whose frames were capped at 1 MiB — about a thousand list items with their actions. The cap is now 32 MiB (`compass_ipc::MAX_FRAME_LEN`), still checked from the prefix before anything is reserved. No wire change and no protocol bump: an older peer refuses a large frame as it always did. | `an_extension_view_of_several_mebibytes_is_carried` |
+| 2 | `Storage/get` of a missing key answers `null`. Raycast resolves `undefined`, and Google Search tests `=== undefined` before `JSON.parse`, so on the C++ host it crashes on `null.filter` with an empty history. **A C++ bug not reproduced.** | The reply carries no `result` member, which the generated client resolves as `undefined`. A stored value cannot be `null`, so nothing else changes. | `a_missing_key_reads_as_undefined_not_null` |
+| 3 | `getSelectedText` reads the primary selection the data-control clipboard server last reported, else Qt's (which needs the launcher focused), else fails "Unable to get selected text". | The primary selection over data-control on a wlroots compositor (`compass_wayland::clipboard::read_primary_text`), and through the Shell extension on GNOME (`GetPrimarySelection`, contract version 3: Mutter has no data-control and a Wayland client may read the primary selection only while it has keyboard focus, which the engine never has). The failure is the C++'s, verbatim. | `the_primary_selection_reads_back_and_is_not_the_clipboard`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `the_primary_selection_is_its_text_or_nothing` |
+| 4 | `WindowManagement` is the window manager provider's: windows, workspaces, screens, bounds. | Served by the engine now (`extension_windows`), over the same backends as the window switcher: the Shell extension on GNOME (whose `ListWindows` gained a frame and `fullscreen` in contract 3) and the foreign-toplevel list on wlroots (no bounds, no workspace). Screens come from `wl_output`, with `zxdg_output_manager_v1` for the logical layout, on any compositor; the active one is the one under the active window, or the only one. The *active window* is the focused one, or — with the launcher focused, as it is when an extension asks — the one before it in most-recently-used order, which is the window the C++'s focus memory returns. **Not served**: workspaces (neither backend lists them: `getActiveWorkspace` fails "No active workspace", `getWorkspaces` is `[]`) and `setWindowBounds` (neither can move a window: "Failed to set window bounds"). | `the_focused_window_is_active_unless_it_is_the_launcher`, `with_the_launcher_focused_the_window_before_it_is_active`, `the_screen_under_the_focused_window_is_the_active_one`, `the_headless_output_is_listed_with_its_name_and_mode`, `without_a_desktop_the_selection_and_window_apis_answer_as_the_cpp_does` |
+| 5 | `FileSearch/search`, `Command/*`, `Wallpaper/set` and `BrowserExtension/*` reach their services. | Their adapters are pinned, but the engine does not route them yet: they answer "… is not implemented by this host (compass-worker-host)". No Suite 1 command reaches one before its first frame. | — (the adapters' own tests in `compass-worker-host`) |
 
 ### Extension views — remote images, date, tag and file pickers, and dialogs
 
@@ -2236,6 +2251,50 @@ panel offers "Preview font" and "Copy font family". What differs:
 | 3 | "Set as vicinae font" sets the launcher's font. | Not offered: the launcher follows the desktop's interface font and has no font setting yet. | — |
 | 4 | The chosen category is remembered across openings (`fontCategory` in local storage). | Kept while the launcher is shown (across a preview); a new opening starts at "All". | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
 | 5 | The specimen is Markdown rendered in the family. | The same Markdown read back line by line (heading, regular, bold, italic, rule) and drawn in the family; bold and italic ask the renderer for that face, which synthesises nothing when the family has none. | `a_specimen_reads_back_as_lines` |
+
+### Rhai scripts — a Compass addition, with no C++ counterpart
+
+Rhai scripts (PLAN §2.2, [RHAI-SCRIPTS.md](./RHAI-SCRIPTS.md)) are new in Compass, so nothing here
+is a divergence from the C++ so much as a boundary of it. Their root entries use their own provider,
+`rhai:script.<name>`, so frecency, aliases and favourites the Rust engine records for them are keys
+the C++ engine has no item for and ignores. They are opened as extension view sessions over IPC
+v14 (`ListRhaiScripts`, then the v8 `RunExtensionCommand` / `ExtensionView` / `ExtensionEvent`
+requests); a v13 launcher does not list them. A script's `paste` on a wlroots compositor copies
+and does not type, as an extension's paste does there ("wlroots" below).
+
+### Extension Store and Raycast Store — what the port does not have yet
+
+Both stores run end to end (IPC v14: `StoreBrowse`, `StoreExtension`, `StoreInstall`,
+`StoreUninstall`, `OpenUrl`). The engine fetches with `ureq` on the blocking pool:
+the Vicinae store's whole list (`/store/list?page=1&limit=500`, `postProcess` dropping other
+platforms and renaming to `store.vicinae.<name>`), filtered locally as the user types with the C++
+weights (title 1.0, author 0.5, description 0.3); the Raycast store's first page (cached for the
+session, as `m_cachedPages`) or its server-side search after the ported 200 ms pause, with the
+Linux compatibility sheet from `/raycast/get-compat` fetched once (a failure is an empty sheet and
+is retried next time, as the C++). Rows carry the ported download count (`1.1K`), whether the
+extension is installed, and on Linux its compatibility tier; the detail page carries the ported
+banner ("This extension works but has a few quirks." and the sheet's notes), the metadata, the
+command list, the README, and the Raycast screenshots. Install downloads the bundle, unpacks it
+through `compass_core::store_bundle` in the ported staging order, and the engine and the launcher
+both rescan the extension directories, so the new commands are in root search at once; uninstall
+removes the extension, its support directory and its local-storage and preference namespaces, and
+root search forgets it. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | `Unzipper` extracts whatever the entry names say. | An entry that leaves its directory (`../`, an absolute path, a drive prefix) or is a symbolic link refuses the whole archive before anything is written; the download (128 MiB), the entry count (20,000) and the unpacked total (512 MiB, counted as bytes are inflated, not taken from the headers) are capped; every entry is read to its end so its CRC-32 is checked. | `store_bundle::tests`, `the_vicinae_store_lists_installs_into_root_search_and_uninstalls` |
+| 2 | Install checks only that `package.json` exists. | It must also parse as an extension manifest, and the id built from the store's name must be one ordinary directory name (`store.vicinae../x` is refused). | `ids_that_would_leave_the_directory_are_refused` |
+| 3 | No update detection. | An install leaves `.compass-store.json` beside the manifest with the store's version key (the Vicinae store's `checksum`, the Raycast store's `commit_sha`); a row whose store key differs says "Update available", and the detail page offers "Update extension" (a reinstall) first. An extension installed by the C++ engine, by hand or by Suite 1's harness has no marker and is never called out of date: the bundles' own timestamps land seconds before the store's publication time, so guessing from file times would flag every fresh install. | `only_a_marked_install_with_a_different_build_is_out_of_date`, `the_raycast_store_badges_compatibility_and_notices_an_update` |
+| 4 | "Verify" is not attempted. | Nor is it possible beyond the CRC: neither store publishes a signature, and the Vicinae store's `checksum` matched no hash of the archive or of its `package.json` (SHA-256 and MD5 tried on a live bundle), so it is used only as a version key. | — |
+| 5 | The detail page links the README (`readmeUrl`); the Vicinae store shows no screenshots. | The README is fetched (a GitHub `tree/`/`blob/` page is rewritten to its `raw.githubusercontent.com` text, 512 KiB at most) and rendered below the details in the launcher's Markdown view; a failed fetch leaves it out. Its relative image links are not resolved, and Markdown images are not drawn. Raycast screenshots are fetched through the remote-image cache and drawn below. | `a_github_readme_page_is_fetched_as_raw_text`, `the_detail_names_everything_the_qml_view_shows` |
+| 6 | Rows show an author avatar, a download count, an installed check and a coloured compatibility dot. | One line of text at the row's right: "Installed" or "Update available", "↓ 1.1K", and the tier's name. No avatar. | `the_accessory_says_installed_or_out_of_date_and_the_tier` |
+| 7 | The first opening shows an intro page (`alwaysShowIntro`, `introCompleted` in command storage). | No intro: the store opens straight to its list. | — |
+| 8 | "Uninstall Extension" is on every row's panel, and fails for one that is not installed. | Offered only on an installed row. The confirmation is the C++'s ("Are you sure?" and its message), answered with Enter or Escape under the list rather than in a dialog. | `the_extension_store_installs_into_root_search_and_uninstalls_after_asking` |
+| 9 | A failed list fetch shows a toast and leaves the spinner running (`FAILED_FETCH_CLEARS_LOADING`). | The failure is said under the list (or in place of it, when nothing has loaded), and loading stops. | `a_failure_after_rows_keeps_them` |
+| 10 | The list is fetched with `PreferCache` and reused while Qt's disk cache keeps it. | The Vicinae list is kept in memory for ten minutes; the Raycast pages for the session, as the C++. | — |
+| 11 | The Raycast API is always `backend.raycast.com`. | `COMPASS_RAYCAST_API_URL` overrides it, as `VICINAE_API_URL` already overrides the Vicinae API, so tests serve both stores locally. | `raycast_store::api_base_url` |
+| 12 | Only the store builtins' links open (`openTarget`). | `OpenUrl` opens any `http(s)` link with the default browser (anything else is refused), and the launcher now uses it for links clicked in Markdown, including an extension view's, which were only logged before. | `only_web_urls_are_opened` |
+| 13 | Deep links (`vicinae://extensions/<author>/<name>` into a detail host) exist. | Not yet: the detail page is reached from the list. | — |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 

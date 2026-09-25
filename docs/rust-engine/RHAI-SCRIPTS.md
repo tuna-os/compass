@@ -35,15 +35,17 @@ $EDITOR ~/.local/share/compass/scripts/my-search/main.rhai
 ```
 
 Scripts are found in `$XDG_DATA_HOME/compass/scripts/<name>/` (usually
-`~/.local/share/compass/scripts/`) and then in `compass/scripts/` under each `$XDG_DATA_DIRS`
-entry. A script in your own directory shadows a packaged one with the same folder name. Folders
-starting with a dot are ignored. The crate watches these directories and reports which scripts
-changed, so saving a file is meant to be enough.
+`~/.local/share/compass/scripts/`, which Compass creates) and then in `compass/scripts/` under each
+`$XDG_DATA_DIRS` entry and beside the installed binary (`../share/compass/scripts`). A script in
+your own directory shadows a packaged one with the same folder name. Folders starting with a dot
+are ignored.
 
-> **Status (2026-09-24):** the tier — engine, sandbox, discovery, hot reload, view and action
-> dispatch — is built and tested in `compass-script`, but the launcher does not load scripts into
-> root search yet. That wiring is tracked under PLAN Phase 5, Track C. Until it lands, run your
-> script through the test harness described at the end of this page.
+Each script is a command in root search, found by its title, description and keywords. Enter opens
+it: the launcher shows what `search` returns and calls it again as you type. Compass watches the
+script directories, so saving a file is enough: an open script re-renders with the new code, a new
+folder appears in root search, and a script that no longer compiles says why when opened. The five
+examples are installed with Compass (`share/compass/scripts`), so they are in root search from the
+start.
 
 Every example is also exercised by `cargo test -p compass-script --test examples`; if you change
 one, that test says whether it still works.
@@ -195,6 +197,30 @@ for name in names {
 }
 ```
 
+## Permissions
+
+What a script may reach is decided before any of its code runs, from its manifest and where it is
+installed:
+
+* **Scripts installed with Compass** — under an `$XDG_DATA_DIRS` entry or beside the binary (the
+  Flatpak's `/app/share`, a package's `/usr/share`, an AppImage's own tree) — are granted every
+  capability their manifest declares. Installing them was the decision; they are ours or the
+  distribution's.
+* **Your own scripts**, in `$XDG_DATA_HOME/compass/scripts`, are granted **nothing** until you
+  allow it. The first time you open one that declares capabilities, the launcher asks — "Allow
+  Quick Notes to: read its saved data, save data, copy to the clipboard" — before a line of it
+  runs. **Enter** allows and is remembered; **Escape** refuses, grants nothing, remembers nothing,
+  and it asks again next time. A script that declares no capabilities is never asked about.
+* A copy of a packaged script placed in your own directory shadows it, and is yours: it is asked
+  about like any other.
+* Allowing covers the capabilities listed at the time. A script that later starts declaring
+  another one is asked about that one when next opened; one it stops declaring is no longer granted.
+* Answers are kept in `$XDG_CONFIG_HOME/compass/script-grants.json`
+  (`{"scripts": {"script.quick-notes": ["clipboard.write", …]}}`). Delete an entry, or the file, to
+  withdraw it; it is read again whenever a script is opened, so no restart is needed.
+
+Capability names this build does not know are never granted and never asked about.
+
 ## Capabilities
 
 A capability is a line in the manifest that makes a module of functions exist. A script that did
@@ -214,7 +240,10 @@ and catch, and nothing to probe.
 
 Each capability brings only its own functions: `clipboard.write` gives `clipboard::copy` but not
 `clipboard::read`. Storage values are anything JSON can hold (strings, numbers, booleans, arrays,
-maps, `()`), are private to the script, and survive restarts. A host function that fails (the
+maps, `()`), are private to the script, and survive restarts: they live in Compass's encrypted
+extension database, in a namespace of the script's own, so storage needs the login keyring as an
+extension's does. The clipboard is the one extensions use (the GNOME Shell extension, or
+data-control on wlroots, where `paste` copies and you paste). A host function that fails (the
 clipboard is unavailable, say) raises an error the script can `catch`.
 
 Other capabilities in `compass-extension-api` (network, processes, windows, OAuth…) have no Rhai
@@ -278,7 +307,13 @@ thread, so a slow one makes its own results late but never freezes the launcher.
 
 ## For host developers
 
-The tier is the `compass-script` crate. Its pieces:
+The tier is the `compass-script` crate; the engine's side is `crates/vicinae/src/rhai_scripts.rs`
+(loading, the grant policy, the view session, hot reload) and `rhai_host.rs` (the real
+`ScriptHost`). A script's root entry is `rhai:script.<name>`; the launcher lists them with
+`ListRhaiScripts` (IPC v14) and opens one with `RunExtensionCommand`, after which it is followed
+and driven with the same `ExtensionView` / `ExtensionEvent` / `ExtensionAlertAnswer` /
+`CloseExtension` requests as an extension's view. The search bar's text arrives as the
+`rhai.search` handler; a consent prompt is the view's alert. The crate's pieces:
 
 * `discovery::search_paths()` / `scan()` / `load()` — find scripts, with shadowing, as
   `compass_core::manifest::registry` finds Node extensions.

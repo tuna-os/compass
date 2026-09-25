@@ -75,6 +75,15 @@ install -Dm644 -t "$share/vicinae/builtin-icons" "$repo_root"/src/server/icons/*
 install -Dm644 "$repo_root/packaging/schema/vicinae.schema.json" \
   "$share/vicinae/vicinae.schema.json"
 
+# The first-party Rhai scripts, found through $XDG_DATA_DIRS as compass/scripts
+# and at ../share/compass/scripts from bin/ (crates/vicinae/src/rhai_scripts.rs).
+# Packaged scripts are granted what their manifests declare; the user's own are
+# asked about first (docs/rust-engine/RHAI-SCRIPTS.md, "Permissions").
+for script in "$repo_root"/extensions/rhai-examples/*/; do
+  name="$(basename "$script")"
+  install -Dm644 -t "$share/compass/scripts/$name" "$script"script.toml "$script"*.rhai
+done
+
 # The extension runtime bundle, found at ../share/vicinae/ from bin/.
 if [ -f "$runtime_js" ]; then
   install -Dm644 "$runtime_js" "$share/vicinae/extension-runtime.js"

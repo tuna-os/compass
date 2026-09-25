@@ -164,7 +164,7 @@ jobs:
           test -s /tmp/suite1/report.json
 
       - name: Judge against the ledger
-        run: python3 scripts/suite1/check.py /tmp/suite1/report.json
+        run: python3 scripts/suite1/check.py /tmp/suite1/report.json --environment flatpak
 
       - name: Upload the report
         if: always()

@@ -97,6 +97,11 @@ fn list_windows_fills_every_key_the_client_decodes() {
         window_key::FOCUSED,
         window_key::WORKSPACE,
         window_key::CAN_CLOSE,
+        window_key::FULLSCREEN,
+        window_key::X,
+        window_key::Y,
+        window_key::WIDTH,
+        window_key::HEIGHT,
     ] {
         assert!(
             script.contains(&format!("{key}: new GLib.Variant("))

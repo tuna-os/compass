@@ -137,6 +137,47 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err("Browse Fonts needs the Compass engine".to_owned()) })
     }
 
+    /// A store's rows for `query`: the Vicinae store's list filtered, the
+    /// Raycast store's first page or its search results.
+    fn store_browse(&self, store: Store, query: String) -> BackendFuture<'_, StoreList> {
+        let _ = (store, query);
+        Box::pin(async { Err("The extension stores need the Compass engine".to_owned()) })
+    }
+
+    /// One store extension's detail page.
+    fn store_extension(
+        &self,
+        store: Store,
+        author: String,
+        name: String,
+    ) -> BackendFuture<'_, StoreDetail> {
+        let _ = (store, author, name);
+        Box::pin(async { Err("The extension stores need the Compass engine".to_owned()) })
+    }
+
+    /// Downloads and installs a store extension, answering its id and title.
+    fn store_install(
+        &self,
+        store: Store,
+        author: String,
+        name: String,
+    ) -> BackendFuture<'_, (String, String)> {
+        let _ = (store, author, name);
+        Box::pin(async { Err("Installing extensions needs the Compass engine".to_owned()) })
+    }
+
+    /// Uninstalls the extension installed as `id`.
+    fn store_uninstall(&self, id: String) -> BackendFuture<'_, ()> {
+        let _ = id;
+        Box::pin(async { Err("Uninstalling extensions needs the Compass engine".to_owned()) })
+    }
+
+    /// Opens an `http(s)` URL in the default browser.
+    fn open_url(&self, url: String) -> BackendFuture<'_, ()> {
+        let _ = url;
+        Box::pin(async { Err("Opening links needs the Compass engine".to_owned()) })
+    }
+
     /// The `vicinae dmenu` list the engine holds under `token`.
     fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
         let _ = token;
@@ -166,6 +207,13 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// Every script command, scanned afresh.
     fn list_scripts(&self) -> BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
         Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Every Rhai script the engine has loaded, rescanned.
+    fn list_rhai_scripts(
+        &self,
+    ) -> BackendFuture<'_, Vec<compass_core::rhai_scripts::RhaiScriptItem>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
     /// Runs a script command with its arguments: the run to follow, or
@@ -283,6 +331,63 @@ pub struct ExtensionDraft {
     pub command_description: String,
     /// The command template's resource id.
     pub template: String,
+}
+
+pub use compass_core::store_listing::Store;
+
+/// A store's rows and the heading over them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StoreList {
+    /// `Extensions` or `Results`.
+    pub heading: String,
+    /// The rows, in order.
+    pub rows: Vec<StoreRow>,
+}
+
+/// One store extension, as a row.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StoreRow {
+    /// The id it installs under.
+    pub id: String,
+    /// Its name in the store.
+    pub name: String,
+    /// Its author's handle.
+    pub author: String,
+    /// Its author's display name.
+    pub author_name: String,
+    /// Its title.
+    pub title: String,
+    /// What it does.
+    pub description: String,
+    /// Its icon's URL for a light theme.
+    pub icon_light: Option<String>,
+    /// Its icon's URL for a dark theme.
+    pub icon_dark: Option<String>,
+    /// Its download count, formatted.
+    pub downloads: String,
+    /// Whether it is installed.
+    pub installed: bool,
+    /// Whether the store serves a newer build than the one installed.
+    pub update_available: bool,
+    /// Its Raycast compatibility tier, where there is a sheet.
+    pub compat: Option<u8>,
+}
+
+/// One store extension's detail page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StoreDetail {
+    /// Its row.
+    pub row: StoreRow,
+    /// The page's Markdown.
+    pub markdown: String,
+    /// Screenshot URLs.
+    pub screenshots: Vec<String>,
+    /// Where its README is.
+    pub readme_url: Option<String>,
+    /// Where its source is.
+    pub source_url: Option<String>,
+    /// Its page on the store's website.
+    pub store_url: Option<String>,
 }
 
 /// Browse Fonts' families and its filter's categories.

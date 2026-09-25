@@ -37,8 +37,8 @@ use serde::{Deserialize, Serialize};
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
 /// shortcuts, snippets, script commands, Run Terminal Program, dmenu, themes,
-/// create-extension and fonts.
-pub const PROTOCOL_VERSION: u16 = 13;
+/// create-extension and fonts; version 14, Rhai scripts and the extension stores.
+pub const PROTOCOL_VERSION: u16 = 14;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -501,6 +501,55 @@ pub enum Request {
         /// The family's name, as [`FontEntry::name`] carries it.
         name: String,
     },
+    /// Every Rhai script the engine has loaded, as root search lists them.
+    /// Answered with [`Response::RhaiScripts`]. A script is opened with
+    /// [`Request::RunExtensionCommand`] and its `rhai:` id, and then followed
+    /// and driven exactly as an extension's view is.
+    ListRhaiScripts,
+    /// A store's extensions: the Vicinae store's whole list filtered by
+    /// `query`, or the Raycast store's first page (empty `query`) or its
+    /// search results. Answered with [`Response::StoreListing`].
+    StoreBrowse {
+        /// Which store.
+        store: StoreKind,
+        /// What was typed; empty for the list itself.
+        query: String,
+    },
+    /// One store extension's detail page. Answered with
+    /// [`Response::StoreExtension`]; one the store does not have is refused
+    /// as [`ErrorKind::BadRequest`].
+    StoreExtension {
+        /// Which store.
+        store: StoreKind,
+        /// Its author's handle.
+        author: String,
+        /// Its name in the store.
+        name: String,
+    },
+    /// Download a store extension's bundle and install it, replacing an
+    /// installed copy (which is how an update is applied). Answered with
+    /// [`Response::StoreInstalled`] once it is in root search.
+    StoreInstall {
+        /// Which store.
+        store: StoreKind,
+        /// Its author's handle.
+        author: String,
+        /// Its name in the store.
+        name: String,
+    },
+    /// Remove an installed extension, its support files and its stored
+    /// data. Answered with [`Response::Ack`]; an id nothing is installed
+    /// under is a bad request.
+    StoreUninstall {
+        /// The installed id, e.g. `store.vicinae.bluetooth`.
+        id: String,
+    },
+    /// Open an `http(s)` URL with the default browser. Answered with
+    /// [`Response::Ack`]; any other scheme is a bad request.
+    OpenUrl {
+        /// The URL.
+        url: String,
+    },
 }
 
 /// What the engine answers.
@@ -677,6 +726,101 @@ pub enum Response {
         /// Milliseconds since it started, or how long it ran once finished.
         elapsed_ms: u64,
     },
+    /// Answer to [`Request::ListRhaiScripts`], in id order.
+    RhaiScripts {
+        /// The scripts.
+        scripts: Vec<RhaiScriptEntry>,
+    },
+    /// Answer to [`Request::StoreBrowse`].
+    StoreListing {
+        /// The heading over the rows: `Extensions` or `Results`.
+        heading: String,
+        /// The extensions, in the order to show them.
+        entries: Vec<StoreEntry>,
+    },
+    /// Answer to [`Request::StoreExtension`].
+    StoreExtension {
+        /// The extension.
+        detail: StoreDetail,
+    },
+    /// Answer to [`Request::StoreInstall`].
+    StoreInstalled {
+        /// The id it was installed under.
+        id: String,
+        /// Its title, for the confirmation.
+        title: String,
+    },
+}
+
+/// One Rhai script, as root search and the launcher need it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RhaiScriptEntry {
+    /// `script.<folder name>`; the root entry is `rhai:<id>`.
+    pub id: String,
+    /// The manifest's `title`.
+    pub title: String,
+    /// The manifest's `description`.
+    pub description: Option<String>,
+    /// A builtin icon name.
+    pub icon: Option<String>,
+    /// Extra search terms.
+    pub keywords: Vec<String>,
+}
+
+/// Which extension store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StoreKind {
+    /// The Vicinae extension store.
+    Vicinae,
+    /// The Raycast store.
+    Raycast,
+}
+
+/// One extension as a store's list shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoreEntry {
+    /// The id it installs under, e.g. `store.raycast.spotify-player`.
+    pub id: String,
+    /// Its name in the store.
+    pub name: String,
+    /// Its author's handle.
+    pub author: String,
+    /// Its author's display name.
+    pub author_name: String,
+    /// Its title.
+    pub title: String,
+    /// What it does.
+    pub description: String,
+    /// Its icon's URL for a light theme.
+    pub icon_light: Option<String>,
+    /// Its icon's URL for a dark theme.
+    pub icon_dark: Option<String>,
+    /// Its download count, formatted (`1.1K`).
+    pub downloads: String,
+    /// Whether it is installed.
+    pub installed: bool,
+    /// Whether it is installed and the store serves a newer build.
+    pub update_available: bool,
+    /// Its Raycast compatibility tier (0 compatible, 1 partial,
+    /// 2 incompatible, 3 unknown); `None` where there is no sheet.
+    pub compat: Option<u8>,
+}
+
+/// One extension's detail page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoreDetail {
+    /// The row it was opened from.
+    pub entry: StoreEntry,
+    /// The page's text: header, facts, compatibility, commands and README.
+    pub markdown: String,
+    /// Screenshot URLs.
+    pub screenshots: Vec<String>,
+    /// Where its README is.
+    pub readme_url: Option<String>,
+    /// Where its source is.
+    pub source_url: Option<String>,
+    /// Its page on the store's website.
+    pub store_url: Option<String>,
 }
 
 /// One script command, as root search and the launcher need it.

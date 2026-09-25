@@ -79,4 +79,4 @@ pub use contract::{
     WINDOWS_PATH,
 };
 pub use error::{Result, ShellError};
-pub use model::{ClipboardChange, ClipboardContent, Window, WindowId};
+pub use model::{ClipboardChange, ClipboardContent, Frame, Window, WindowId};

@@ -503,7 +503,9 @@ history, emoji, window switching, power, media and volume, Search Files, shortcu
 Shortcut, Manage Shortcuts, shortcuts in root search; IPC v13), and snippets (Create Snippet,
 Manage Snippets: copy, paste, edit; keyword expansion waits on the input server, which is not
 ported), script commands (scanned into root search, run in all five output modes), Run
-Terminal Program, `vicinae dmenu`, Set Theme, Create Extension, and Browse Fonts. What each still
+Terminal Program, `vicinae dmenu`, Set Theme, Create Extension, Browse Fonts, and the two store
+front-ends (Extension Store and Raycast Store: browse, search, detail with README and screenshots,
+install with zip-slip and size guards, uninstall, update detection; IPC v14). What each still
 lacks is in `PARITY.md`, one section per builtin.
 
 **Browser tab search and switching is not in this list.** It is out of scope for the port and
@@ -543,12 +545,26 @@ discovery and hot reload; and first-party example scripts with authoring docs. T
 when the examples are good enough that someone can copy one and be productive — an empty tier is
 worse than no tier.
 
-*Track C status (2026-09-24):* **gate met in the crate.** `compass-script` has the hardened
+*Track C status (2026-09-24):* **wired into the launcher.** `compass-script` has the hardened
 engine, capability-gated registry, blocking-pool execution with a terminating deadline,
 `script.toml` discovery under `$XDG_DATA_HOME/compass/scripts`, and `notify` hot reload; 26
 negative sandbox tests fail closed, a shared-seam test holds it to the TS tier's `to_view`, and
-five examples ship in `extensions/rhai-examples/` with [RHAI-SCRIPTS.md](./RHAI-SCRIPTS.md).
-Not done: loading scripts into root search and the extension page, and a real `ScriptHost`.
+five examples ship in `extensions/rhai-examples/` with [RHAI-SCRIPTS.md](./RHAI-SCRIPTS.md). The
+engine (`crates/vicinae/src/rhai_scripts.rs`, `rhai_host.rs`) loads them at start, lists each as a
+root-search command (`rhai:script.<name>`), and opens one as an extension view session, so the
+launcher's extension page draws it unchanged: the search text goes to `search`, actions run
+through the seam's `ActionIndex`/`Pending`, and toasts, HUDs, re-rendering, closing and popping are
+carried out. The real `ScriptHost` reaches the extensions' clipboard (GNOME Shell extension or
+wlroots data-control), the default-application opener, Compass's encrypted local storage (a
+namespace per script) and `notify-rust`. Grants: packaged scripts get what they declare; the user's
+own get it after a one-time consent prompt in the launcher, kept in
+`$XDG_CONFIG_HOME/compass/script-grants.json`. The user directory is created and watched; edits
+rebuild the script, re-render an open view, and update root search. The five examples install
+under `share/compass/scripts` in every package (`install-rust-engine.sh`). Its share of IPC v14 is only
+`ListRhaiScripts`/`RhaiScripts`. Tested in-process against a `MemoryHost` (`tests/rhai_scripts.rs`)
+and against the real process (`engine_end_to_end.rs`). Not done: script icons in the root list
+(rows use the initial badge, as extension commands do), an action panel on a script's root row,
+and a settings page to review or revoke consent (edit or delete the file).
 
 **Gate:** every feature area in the ledger has absolute tests — ported Catch2 cases count where they
 state intended behaviour, not where they pin a C++ quirk (§8.3, ADR-0017).
@@ -2309,20 +2325,20 @@ Ordered by what blocks what, not by size.
 | session routing (event → service → reply) | done |
 | `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
 | `Wallpaper/set`, `BrowserExtension` (both) | the adapters are done and pinned (`wallpaper_service`, `browser_service`) — 33 of 49. The wallpaper backends and the browser bridge are Phase 5/6 work |
-| `WindowManagement` (all seven) | the adapter is done and pinned (`compass-worker-host::window_service`), behind a `Windows` trait — 30 of 49. The compositor protocols behind it (`compass-wayland`, the GNOME provider) are Phase 3/6 work |
+| `WindowManagement` (all seven) | the adapter is done and pinned (`compass-worker-host::window_service`), behind a `Windows` trait — 30 of 49 — and **the engine serves it** (`vicinae::extension_windows`): the Shell extension's windows on GNOME (contract 3 adds each window's frame and full-screen state), the foreign-toplevel list on wlroots, and `wl_output`/`xdg_output` for screens on either. Workspaces and moving a window are not served; PARITY "The extension host API" |
 | `Command` (all four) | the adapter is done and pinned (`compass-worker-host::command_service`), behind a `Commands` trait — 23 of 49. The registry walk, the navigation controller and the settings window behind it are Phase 4/5 work |
 | `Application` (all five) | the adapter is done and pinned (`compass-worker-host::application_service`), behind an `Apps` trait — 19 of 49. `compass-core::AppIndex` and `compass-xdg::mimeapps` already answer most of what the trait needs; wiring them together, launching, and the terminal are still ahead |
 | `Clipboard` (all four) | the adapter is done and pinned (`compass-worker-host::clipboard_service`), behind a `Clipboard` trait — 14 of 49. The Wayland backend behind it is Phase 3/5 work and does not exist yet |
 | `FileSearch/search` | the adapter is done and pinned (`compass-worker-host::file_search_service`), behind a `FileIndexer` trait — 10 of 49. The index it would query is Phase 6 and does not exist yet, so no real backend implements the trait |
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
-| `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op |
+| `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op. `getSelectedText` reads the primary selection: over data-control on wlroots, through the Shell extension on GNOME (`GetPrimarySelection`, contract 3) |
 | `UI/confirmAlert` | done: drawn by the launcher, and settled on confirmation, cancellation, replacement (a second alert) and navigation (the launcher popping, or the extension pushing or popping) |
 | `EventCore/handlerActivated` | done: actions, search text and form fields fire it (`Views::activate`) |
 | `OAuth/authorize` | done without the overlay: the browser opens on the default https handler, a toast says so, and the `raycast://oauth` redirect comes back through `vicinae deeplink` (IPC v12) keyed by `state`; the token store is routed in the engine. 46 of 49 |
 | remote images, date/tag/file pickers | done: `ureq` into Compass's own image cache; a typed date field, tag toggles, and the FileChooser portal (PARITY "Extension views") |
 | running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
-| Suite 1 (the gate) | **the harness runs, and the gate is not met.** `vicinae conformance` runs installed extensions against an engine of its own and judges each command's first frame; `scripts/suite1/` pins the corpus (top 25 Raycast store extensions by installs that can run on Linux at all, plus all 95 Vicinae store extensions), fetches the stores' own bundles, and ratchets against `expected.json`; `.github/workflows/suite1.yaml` runs it on the host (gating on regressions) and inside the Flatpak (report-only until seen green). First measured run, in the dev container: **71 of 120 pass** — Raycast 11 of 25, Vicinae 60 of 95. Of the 49 failures, 7 wait on an OAuth sign-in a headless run cannot give, about 30 need a program, file, session or account the runner does not have (hyprctl, pactl, a system bus, a Firefox profile, API keys), 2 need host APIs Compass lacks (`getSelectedText`, `WindowManagement/getActiveWindow`), 1 is the sandbox refusing a downloaded binary (`speedtest`), 1 the heap cap (`dashboard-icons`), and 5 draw only an empty first frame. None of it has run inside the Flatpak yet |
+| Suite 1 (the gate) | **the harness runs, and the gate is not met.** `vicinae conformance` runs installed extensions against an engine of its own and judges each command's first frame; `scripts/suite1/` pins the corpus (top 25 Raycast store extensions by installs that can run on Linux at all, plus all 95 Vicinae store extensions), fetches the stores' own bundles, and ratchets against `expected.json`; `.github/workflows/suite1.yaml` runs it on the host (gating on regressions) and inside the Flatpak (report-only until seen green, judged with the ledger's `flatpak` overrides). First measured run, in the dev container: 71 of 120. **Now 79 of 120 on the runner's ledger** — Raycast 12 of 25, Vicinae 67 of 95 — from host fixes and harness inputs, not from relaxing the judgement: `LocalStorage.getItem` of a missing key resolves `undefined` as Raycast's does (Google Search had crashed on `null`); an extension's view may now exceed the IPC's old 1 MiB frame; `getSelectedText` and all of `WindowManagement` are served by the engine instead of refused; a grid's own empty view counts as drawn, as a list's already did (`player-pilot`, `wallhaven`); `ssh`, `supergenpass` and `google-search` are typed into, as a person would, and `wikipedia` is given a title; and the D-Bus extensions (`bluetooth`, `dbus`, `systemd`) render on the runner, which has a system bus. Of the 41 failures, 7 wait on an OAuth sign-in a headless run cannot give; 4 need a selection or a focused window a headless run does not have (`json-format`, `wiktionary`, `case-converter`, `html-symbol-finder` — the APIs now answer, with the C++'s own "Unable to get selected text" and "No active window"); 2 are the sandbox by design (`speedtest` running a binary it downloaded, `reminders` writing outside its directories); 1 is the heap cap, kept by decision (`dashboard-icons`, PARITY sandbox row 3); 1 is an extension that only knows macOS and Windows paths (`visual-studio-code`); and 26 need a program, file, service, server or account the runner does not have (hyprctl, pactl, mise, goldfish, a SearXNG instance, API keys, GSettings schemas — `gnome-dnd` renders inside the Flatpak). Not measurable here and the largest open question for "running unmodified": the sandbox reads nothing of `$HOME`, so extensions that read the user's own files (`ssh`'s config, `pass`, Firefox profiles) find nothing on a real desktop either (PARITY sandbox row 6). None of it has been seen green inside the Flatpak yet |
 | the seam (the gate's third condition) | **done and in CI**: `scripts/ci/extension-api-seam.sh` checks `cargo tree -p compass-extension-api` (normal, build and dev edges) never reaches `compass-worker-host`, then copies the crate into a workspace where the host does not exist and runs `cargo test` there against the same `Cargo.lock` pins. Rust workflow job `extension-api-seam` |
 
 #### 11.4a Phase 4 specified a transport the worker does not speak — resolved

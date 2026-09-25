@@ -559,6 +559,23 @@ async fn clipboard_get_and_set_round_trip() {
     );
 }
 
+#[tokio::test]
+async fn the_primary_selection_is_its_text_or_nothing() {
+    let Some(bus) = start_or_skip("the_primary_selection_is_its_text_or_nothing") else {
+        return;
+    };
+    let mock = MockShell::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    let client = client_with(&bus).await;
+    assert_eq!(client.primary_selection().await.expect("read"), None);
+    mock.set_primary_selection("selected words");
+    assert_eq!(
+        client.primary_selection().await.expect("read").as_deref(),
+        Some("selected words")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Reconnection
 // ---------------------------------------------------------------------------

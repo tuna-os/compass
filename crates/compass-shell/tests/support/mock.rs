@@ -105,6 +105,8 @@ pub struct MockState {
     pub calls: Vec<(&'static str, u32)>,
     /// The `shift_wm_classes` of every `Paste`, in order.
     pub pastes: Vec<Vec<String>>,
+    /// What `GetPrimarySelection` answers.
+    pub primary: String,
 }
 
 pub type SharedState = Arc<Mutex<MockState>>;
@@ -180,6 +182,10 @@ impl ClipboardService {
     fn paste(&self, shift_wm_classes: Vec<String>) {
         let mut state = self.state.lock().expect("mock state");
         state.pastes.push(shift_wm_classes);
+    }
+
+    fn get_primary_selection(&self) -> String {
+        self.state.lock().expect("mock state").primary.clone()
     }
 
     #[zbus(signal)]
@@ -271,6 +277,10 @@ impl MockShell {
 
     pub fn set_clipboard(&self, data: &[u8], mime_type: &str) {
         self.state.lock().expect("mock state").clipboard = (data.to_vec(), mime_type.to_owned());
+    }
+
+    pub fn set_primary_selection(&self, text: &str) {
+        text.clone_into(&mut self.state.lock().expect("mock state").primary);
     }
 
     pub fn calls(&self) -> Vec<(&'static str, u32)> {
