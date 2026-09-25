@@ -41,6 +41,12 @@ pub trait Windows {
     /// Something in the window set changed; re-read `ListWindows`.
     #[zbus(signal)]
     fn windows_changed(&self) -> zbus::Result<()>;
+
+    /// The workspaces, in order (contract 4).
+    fn list_workspaces(&self) -> zbus::Result<Vec<HashMap<String, OwnedValue>>>;
+
+    /// Switch to the workspace at `index` (contract 4).
+    fn activate_workspace(&self, index: i32) -> zbus::Result<()>;
 }
 
 /// Proxy for `org.gnome.Shell.Extensions.Vicinae.Clipboard`.

@@ -141,3 +141,28 @@ code in the extension, so the host never speaks OAuth itself.
 | Pressing the paste chord without the input server | `wayland-protocols-misc` 0.3 (`zwp_virtual_keyboard_v1`; already in the tree through `layershellev` and smithay-client-toolkit) | **Used** (`compass_wayland::virtual_keyboard`): the generated client. The keymap is a fixed three-key xkb string, as `wtype` sends; compiling one with `xkbcommon` would add a C library to link for three keys. `wtype`/`ydotool` as programs were not taken: a runtime dependency to install for what is six requests. |
 | The paste's focus wait | `compass_core::paste::PasteService` (ours, ported earlier) | **Used**: driven on one blocking thread per paste. |
 | keyboard-shortcuts-inhibit | `wayland-protocols` 0.32 `unstable` (already in `compass-wayland`) | **Used** (`compass_wayland::keyboard_inhibit`). The launcher's `wl_surface` is reached without `unsafe` by sharing a `wayland-client` `Connection` with `iced_layershell` (`Settings::with_connection`) and reading `wl_keyboard.enter`, rather than `wayland-backend`'s foreign-display bridge. winit 0.30 takes no connection, so the `xdg_toplevel` presentation has none. |
+
+## Product decisions: the update check (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Reading `repos/tuna-os/compass/releases/latest` | `ureq` 3.4 (already the engine's HTTP client, for the stores) | **Reused** (`vicinae::updates::GithubFeed`): the stores' native-tls agent with a 15 s per-request timeout; the reply is `serde_json` into `compass_core::update::Release`. `octocrab` was not taken: an async GitHub client with its own `hyper` and TLS stack, for one unauthenticated GET. |
+| Comparing the release's tag with the running version | `compass_core::semver` (the existing port); `semver` 1 considered | **Kept the port, no crate added.** The comparison was already present and is load-bearing in the way the crate is not: a tag with a suffix (`v1.2.0-rc1`) does not parse at all, which keeps release candidates from ever being offered, and `1.0` equals `1.0.0`; `semver` would accept the first (as a prerelease that orders below `1.2.0`) and refuse the second. GitHub's `releases/latest` already leaves out drafts and prereleases; the gates stay for a feed that does not. |
+| Throttling and caching the check | `serde_json` (already in the tree) | **Hand-written** (`compass_core::update::CheckCache`, ~50 lines): a timestamp and the last release in one JSON file under the cache directory. |
+| A local feed for the tests | `tiny_http` 0.12 (dev only, already used for the stores) | **Used**: `the_github_feed_reads_the_release_from_its_url` and the engine's end-to-end tests serve the release from `127.0.0.1:0`; no test reaches the network. |
+
+## The gaps pass, currency (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Currency conversion in the calculator | `fend-core` 1.5.8 (already the calculator) | **Used**: its own currency units and `Context::set_exchange_rate_handler_v2` (`ExchangeRateFnV2`), fed the ECB's rates per euro (`compass_core::calculator::RateHandler`, ten lines). Only gap handled around it: fend reads `€5` as one unknown word (it takes `£8` and `$5`), so a `€` right before a number is moved after it before evaluating. |
+| Reading the ECB's `eurofxref-daily.xml` | `roxmltree` 0.20 (already a workspace dependency, through `compass-xdg` and `compass-shell`); `quick-xml` also locked | **Used** (`compass_core::exchange_rates::parse_ecb`): a read-only DOM over a two-kilobyte file is what `roxmltree` is for; `quick-xml`'s streaming reader would be more code for no gain. No package added to `Cargo.lock`, only the edge to `compass-core`, so the Flatpak sources are unchanged. |
+| Fetching the file | `ureq` 3 (the engine's HTTP client, `vicinae::stores::get`) | **Used**: the same agent, timeout and TLS roots as the stores. |
+| The cache file | `serde_json` (already) | **Used**: the rates, the ECB's date and the fetch time as JSON under `$XDG_CACHE_HOME/compass`, written through a partial file and a rename. |
+
+## The gaps pass, tray and sandbox (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Compass's own StatusNotifierItem and its `dbusmenu` (`TrayServiceLinux`, ~450 lines of C++) | `ksni` 0.3 (the maintained *item* side, on the zbus 5 already in the tree; one new package besides, `pastey`); `system-tray` (already used) considered and not fit, being the host side only; `tray-icon` (tauri's) considered and not taken, as it draws through GTK and libappindicator | **Used** (`vicinae::tray_icon`). It exports the item and the menu, owns `org.kde.StatusNotifierItem-<pid>-<n>` (or only its unique name inside a Flatpak, `disable_dbus_name`), registers with the watcher and again whenever one appears (`assume_sni_available`). Around it: the menu model is `compass_core::tray`'s, the pixmaps are drawn from `extra/compass.svg` with the `resvg` already in the tree, and the switch is a `watch` channel. |
+| Which `$HOME` paths an extension may read, and whether a link among them stays inside the list | none needed | **Hand-written** (`compass_sandbox::home`, ~60 lines): `std::fs::canonicalize` and a comparison against the list's own resolved places. Landlock itself (the `landlock` crate, already used) enforces the grant. |

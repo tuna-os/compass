@@ -42,6 +42,7 @@ mod onboarding;
 mod open_with;
 mod preview;
 mod programs;
+mod release_check;
 mod rhai;
 mod root;
 mod runtime;
@@ -627,6 +628,8 @@ pub enum RootRow {
     RhaiScript(usize),
     /// A fallback offered for the query, under "Use "…" with...".
     Fallback(Fallback),
+    /// A newer Compass release, held in `LauncherApp::update`.
+    Update,
 }
 
 /// A root item offered as a fallback for the query (`RootFallbackSection`):
@@ -1087,6 +1090,8 @@ pub struct LauncherApp {
     /// Subtitles extensions set for their commands (`updateCommandMetadata`),
     /// by command id, shown in place of the extension's title.
     extension_subtitles: std::collections::HashMap<String, String>,
+    /// A newer Compass release, as the engine last said.
+    update: Option<crate::backend::UpdateOffer>,
     /// Whether the application under the root panel runs, by its key.
     app_runtime: Option<(String, crate::backend::AppRuntimeInfo)>,
     /// The HUD shown after an action hides the launcher (`crate::hud`).
@@ -1384,6 +1389,7 @@ impl LauncherApp {
             resized_to: None,
             following_script: None,
             extension_subtitles: std::collections::HashMap::new(),
+            update: None,
             app_runtime: None,
             hud: crate::hud::HudState::new(
                 crate::surface::presentation() == crate::surface::Presentation::LayerShell,
@@ -1533,7 +1539,8 @@ impl LauncherApp {
             | RootRow::Script(_)
             | RootRow::RhaiScript(_)
             | RootRow::Fallback(_)
-            | RootRow::Calculator => None,
+            | RootRow::Calculator
+            | RootRow::Update => None,
         }
     }
 
@@ -1609,6 +1616,14 @@ impl LauncherApp {
             Some(RootRow::Calculator) => {
                 let answer = self.calculator.as_ref().map_or("", |a| a.answer.as_str());
                 line.push_str(&format!(" selected_title={answer:?}"));
+            }
+            Some(RootRow::Update) => {
+                let title = self
+                    .update
+                    .as_ref()
+                    .map(release_check::title)
+                    .unwrap_or_default();
+                line.push_str(&format!(" selected_title={title:?}"));
             }
             Some(RootRow::Shortcut(index)) => {
                 let title = self
@@ -2203,6 +2218,7 @@ impl LauncherApp {
                             self.apply_calculator();
                             self.apply_fallbacks();
                             self.apply_favorites();
+                            self.apply_update();
                             self.warm_icons();
                         } else {
                             self.error = Some(
@@ -2232,6 +2248,9 @@ impl LauncherApp {
             Message::LaunchSelected => {
                 if matches!(self.page, Page::Root) {
                     self.record_search();
+                }
+                if let Some(RootRow::Update) = self.selected_row() {
+                    return self.open_release_notes();
                 }
                 if let Some(RootRow::Calculator) = self.selected_row()
                     && let Some(answer) = &self.calculator
@@ -2374,7 +2393,9 @@ impl LauncherApp {
                     self.refresh_scripts_task(),
                     self.refresh_rhai_scripts_task(),
                     self.refresh_subtitles_task(),
+                    self.refresh_update_task(),
                     self.catalog_task(),
+                    self.exchange_rates_task(),
                     self.window_capabilities_task(),
                     self.apply_dmenu_size(),
                 ])
@@ -2451,6 +2472,8 @@ impl LauncherApp {
                         return iced::widget::operation::focus(PANEL_INPUT);
                     }
                     return Task::none();
+                } else if let Some(task) = self.open_update_panel() {
+                    return task;
                 } else if let Some(task) = self.open_root_panel() {
                     return task;
                 } else if let Some(item) = self.selected_item() {
@@ -2523,6 +2546,7 @@ impl LauncherApp {
                         .or_else(|| self.apps_panel_action(&id))
                         .or_else(|| self.emoji_panel_action(&id))
                         .or_else(|| self.clipboard_panel_action(&id))
+                        .or_else(|| self.update_panel_action(&id))
                         .or_else(|| self.root_panel_action(&id))
                         .or_else(|| self.windows_panel_action(&id))
                         .or_else(|| self.calculator_panel_action(&id))
@@ -2965,6 +2989,9 @@ impl LauncherApp {
             | Message::ScriptStarted { .. }
             | Message::ScriptPolled { .. } => self.script_message(message),
             Message::RhaiScriptsLoaded(_) => self.rhai_message(message),
+            Message::UpdateStatusLoaded(_) | Message::UpdateSkipped(..) => {
+                self.release_check_message(message)
+            }
             Message::LaunchFetched(_)
             | Message::ExtensionSubtitlesLoaded(_)
             | Message::PreferencesOpened { .. } => self.launch_message(message),
@@ -2986,6 +3013,7 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::ShortcutProbed(trigger, result) => self.shortcut_probed(&trigger, result),
             Message::WindowCapabilities(_)
             | Message::WorkspacesQueryChanged(_)
             | Message::WorkspacesLoaded(_)
@@ -3003,7 +3031,9 @@ impl LauncherApp {
             Message::CalculatorQueryChanged(_)
             | Message::CalculatorLoaded { .. }
             | Message::CalculatorSelected(_)
-            | Message::CalculatorEdited(_) => self.calculator_message(message),
+            | Message::CalculatorEdited(_)
+            | Message::ExchangeRatesLoaded(_)
+            | Message::ExchangeRatesRefreshed(_) => self.calculator_message(message),
             Message::GrantsLoaded(_)
             | Message::GrantsQueryChanged(_)
             | Message::GrantSelected(_)
@@ -3928,6 +3958,12 @@ impl LauncherApp {
                         self.subtitles.then(|| command.subtitle.to_owned()),
                         selected,
                     ),
+                    RootRow::Update => {
+                        let Some(row) = self.update_row(selected) else {
+                            continue;
+                        };
+                        row
+                    }
                     RootRow::Calculator => {
                         let Some(answer) = &self.calculator else {
                             continue;
@@ -5925,6 +5961,9 @@ impl LauncherApp {
             CommandKind::OpenSettings => Task::batch([record, self.open_settings(None)]),
             CommandKind::Vicinae(id) => Task::batch([record, self.open_vicinae_command(id)]),
             CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
+            CommandKind::RefreshExchangeRates => {
+                Task::batch([record, self.refresh_exchange_rates(command)])
+            }
             CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
             CommandKind::SetDefaultBrowser => Task::batch([
                 record,
@@ -6227,6 +6266,7 @@ impl LauncherApp {
             self.results.clear();
             self.selected = 0;
             self.apply_favorites();
+            self.apply_update();
             return;
         }
 
@@ -6488,7 +6528,8 @@ impl LauncherApp {
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
                 | RootRow::Fallback(_)
-                | RootRow::Calculator => None,
+                | RootRow::Calculator
+                | RootRow::Update => None,
             })
             .filter_map(AppItem::icon)
             .collect();
@@ -7140,6 +7181,10 @@ mod tests {
         default_apps: Vec<crate::backend::DefaultAppRow>,
         /// The recorder's capture, as the engine was told it.
         captures: std::sync::Mutex<Vec<bool>>,
+        /// What the desktop says of every probed combination, and the
+        /// combinations probed.
+        probe_refusal: Option<String>,
+        probes: std::sync::Mutex<Vec<String>>,
         /// The defaults set: `(kind, id)`.
         defaults_set: std::sync::Mutex<Vec<(crate::backend::DefaultApp, String)>>,
         keys: Vec<String>,
@@ -7234,6 +7279,14 @@ mod tests {
         store_queries: std::sync::Mutex<Vec<(crate::backend::Store, String)>>,
         /// The URLs opened.
         opened_urls: std::sync::Mutex<Vec<String>>,
+        /// The newer release the engine reports.
+        update: std::sync::Mutex<Option<crate::backend::UpdateOffer>>,
+        /// The releases skipped.
+        skipped: std::sync::Mutex<Vec<String>>,
+        /// The exchange rates the fake engine holds and refreshes to, and
+        /// why a refresh fails when it does.
+        rates: Option<compass_core::exchange_rates::ExchangeRates>,
+        refuse_rates: Option<String>,
     }
 
     impl crate::backend::ApplicationBackend for TestBackend {
@@ -7244,6 +7297,15 @@ mod tests {
         fn set_shortcut_capture(&self, capturing: bool) -> crate::backend::BackendFuture<'_, ()> {
             self.captures.lock().unwrap().push(capturing);
             Box::pin(async { Ok(()) })
+        }
+
+        fn probe_shortcut(
+            &self,
+            trigger: String,
+        ) -> crate::backend::BackendFuture<'_, Option<String>> {
+            self.probes.lock().unwrap().push(trigger);
+            let refusal = self.probe_refusal.clone();
+            Box::pin(async move { Ok(refusal) })
         }
 
         fn edit_root_item(
@@ -7551,6 +7613,26 @@ mod tests {
             })
         }
 
+        fn exchange_rates(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Option<compass_core::exchange_rates::ExchangeRates>>
+        {
+            Box::pin(async move { Ok(self.rates.clone()) })
+        }
+
+        fn refresh_exchange_rates(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, compass_core::exchange_rates::ExchangeRates>
+        {
+            Box::pin(async move {
+                match (&self.refuse_rates, &self.rates) {
+                    (Some(reason), _) => Err(reason.clone()),
+                    (None, Some(rates)) => Ok(rates.clone()),
+                    (None, None) => Err("there is no exchange rate source".to_owned()),
+                }
+            })
+        }
+
         fn calculator_history(
             &self,
             query: String,
@@ -7734,6 +7816,23 @@ mod tests {
         fn open_url(&self, url: String) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened_urls.lock().unwrap().push(url);
+                Ok(())
+            })
+        }
+
+        fn update_status(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Option<crate::backend::UpdateOffer>> {
+            Box::pin(async move { Ok(self.update.lock().unwrap().clone()) })
+        }
+
+        fn skip_update(&self, tag: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let mut update = self.update.lock().unwrap();
+                if update.as_ref().is_some_and(|offer| offer.tag == tag) {
+                    *update = None;
+                }
+                self.skipped.lock().unwrap().push(tag);
                 Ok(())
             })
         }
@@ -10297,6 +10396,68 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_release_leads_the_empty_query_and_its_panel_opens_or_skips_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = Arc::new(TestBackend::default());
+        let url = "https://github.com/tuna-os/compass/releases/tag/v0.2.0";
+        *backend.update.lock().unwrap() = Some(crate::backend::UpdateOffer {
+            tag: "v0.2.0".into(),
+            version: "0.2.0".into(),
+            release_url: url.into(),
+            current: "v0.1.0".into(),
+        });
+        let mut app = app(dir.path());
+        app.backend = Some(backend.clone());
+
+        // What the window asks each time it opens.
+        let task = app.refresh_update_task();
+        settle(&mut app, task);
+        assert_eq!(app.results.first(), Some(&RootRow::Update));
+        assert_eq!(app.root_heading_at(0), Some("Update"));
+        assert!(
+            app.state_line()
+                .contains("selected_title=\"Compass v0.2.0 is available\""),
+            "{}",
+            app.state_line()
+        );
+        let offer = app.update.as_ref().expect("held");
+        assert_eq!(release_check::subtitle(offer), "You are running v0.1.0");
+
+        // Only for the empty query.
+        let task = app.update(Message::QueryChanged("fire".into()));
+        settle(&mut app, task);
+        assert!(!app.results.contains(&RootRow::Update));
+        let task = app.update(Message::QueryChanged(String::new()));
+        settle(&mut app, task);
+        assert_eq!(app.results.first(), Some(&RootRow::Update));
+
+        // Enter reads the release notes.
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(backend.opened_urls.lock().unwrap().as_slice(), [url]);
+
+        // The panel skips it, and the row goes.
+        let _ = app.update(Message::TogglePanel);
+        let skip = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Skip This Version"))
+            .expect("the panel offers to skip");
+        assert!(
+            app.panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("View Release Notes"))
+                .is_some()
+        );
+        let task = app.update(Message::PanelClicked(skip));
+        settle(&mut app, task);
+        assert_eq!(backend.skipped.lock().unwrap().as_slice(), ["v0.2.0"]);
+        assert!(app.update.is_none());
+        assert!(!app.results.contains(&RootRow::Update));
+        assert_eq!(app.root_heading_at(0), None);
+    }
+
+    #[test]
     fn the_root_panel_favourites_aliases_and_the_up_arrow_recalls_searches() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app(dir.path());
@@ -10563,6 +10724,64 @@ mod tests {
         settle(&mut app, task);
         assert!(!app.capture_reported());
         assert_eq!(backend.captures.lock().unwrap().as_slice(), [true, false]);
+    }
+
+    #[test]
+    fn the_recorder_shows_the_desktops_refusal_and_keeps_what_it_takes() {
+        use iced::keyboard::{Key, Modifiers};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let open = |backend: Arc<TestBackend>| {
+            let mut app = app(dir.path());
+            let _ = app.update(Message::QueryChanged("firefox".into()));
+            let id = app.root_id(app.selected_row().unwrap()).unwrap();
+            let _ = app.update(Message::TogglePanel);
+            let row = app
+                .panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .expect("the panel offers a shortcut");
+            app.backend = Some(backend);
+            let task = app.update(Message::PanelClicked(row));
+            settle(&mut app, task);
+            (app, id)
+        };
+
+        let refusing = Arc::new(TestBackend {
+            probe_refusal: Some("The compositor has already bound super+Q".into()),
+            ..TestBackend::default()
+        });
+        let (mut app, _) = open(refusing.clone());
+        let task = app.update(key_event(true, Key::Character("q".into()), Modifiers::LOGO));
+        settle(&mut app, task);
+        assert_eq!(refusing.probes.lock().unwrap().as_slice(), ["super+Q"]);
+        let recorder = app
+            .panel
+            .as_ref()
+            .and_then(|p| p.recorder.as_ref())
+            .expect("the recorder stays open");
+        assert_eq!(recorder.status, "The compositor has already bound super+Q");
+        assert!(recorder.error);
+        assert!(
+            refusing.root_edits.lock().unwrap().is_empty(),
+            "nothing kept"
+        );
+
+        let taking = Arc::new(TestBackend::default());
+        let (mut app, id) = open(taking.clone());
+        let task = app.update(key_event(true, Key::Character("q".into()), Modifiers::LOGO));
+        settle(&mut app, task);
+        assert_eq!(taking.probes.lock().unwrap().as_slice(), ["super+Q"]);
+        assert!(
+            app.panel.is_none(),
+            "a combination the desktop takes is kept"
+        );
+        assert_eq!(
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.shortcut.clone())
+                .as_deref(),
+            Some("super+Q")
+        );
     }
 
     #[test]
@@ -11100,7 +11319,8 @@ mod tests {
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
                 | RootRow::Fallback(_)
-                | RootRow::Calculator => None,
+                | RootRow::Calculator
+                | RootRow::Update => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -14109,6 +14329,48 @@ mod tests {
     }
 
     #[test]
+    fn refresh_exchange_rates_installs_the_fresh_rates_and_says_so_or_why_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let rates = compass_core::exchange_rates::ExchangeRates {
+            date: "2026-09-24".into(),
+            fetched_at: 7,
+            rates: [("EUR".to_owned(), 1.0), ("USD".to_owned(), 1.25)].into(),
+        };
+        let backend = Arc::new(TestBackend {
+            rates: Some(rates.clone()),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend);
+        open_builtin(&mut app, "refresh exchange rates", "commands:refresh-rates");
+        let installed = compass_core::calculator::exchange_rates();
+        let answer = compass_core::calculator::compute("10 usd to eur").map(|a| a.answer);
+        compass_core::calculator::set_exchange_rates(None);
+        assert_eq!(installed.as_deref(), Some(&rates));
+        assert_eq!(answer.as_deref(), Some("8 EUR"));
+        assert_eq!(
+            app.hud_content(),
+            Some(&crate::app::calculator::rates_refreshed())
+        );
+
+        let failing = Arc::new(TestBackend {
+            refuse_rates: Some("Could not refresh the exchange rates: offline".into()),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(failing);
+        open_builtin(&mut app, "refresh exchange rates", "commands:refresh-rates");
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Could not refresh the exchange rates: offline")
+        );
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Could not refresh the exchange rates: offline")
+        );
+    }
+
+    #[test]
     fn quit_and_force_quit_hide_with_the_cpps_hud() {
         let dir = tempfile::tempdir().unwrap();
         let running = crate::backend::AppRuntimeInfo {
@@ -15066,7 +15328,8 @@ mod quick_launch_tests {
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
                 | RootRow::Fallback(_)
-                | RootRow::Calculator => None,
+                | RootRow::Calculator
+                | RootRow::Update => None,
             })
             .map(|item| item.name().to_owned())
             .collect();
@@ -15215,7 +15478,8 @@ mod icon_tests {
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
                 | RootRow::Fallback(_)
-                | RootRow::Calculator => None,
+                | RootRow::Calculator
+                | RootRow::Update => None,
             })
             .find(|item| item.name() == name)
             .unwrap_or_else(|| panic!("{name} is not a row"))

@@ -81,6 +81,8 @@ pub enum CommandKind {
     ScriptPermissions,
     /// Browse, pin and remove past calculations.
     CalculatorHistory,
+    /// Fetch the calculator's exchange rates now (`refresh-rates`).
+    RefreshExchangeRates,
     /// A media command, by its id in [`crate::media_commands`].
     Media(&'static str),
     /// Browse every installed application, hidden ones included on request.
@@ -343,6 +345,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: "Browse past calculations",
         keywords: &["calculator", "history", "calc", "math", "calculations"],
         icon: "calculator",
+    },
+    BuiltinCommand {
+        kind: CommandKind::RefreshExchangeRates,
+        entrypoint: "refresh-rates",
+        title: "Refresh Exchange Rates",
+        subtitle: "Refresh the rates the calculator converts currencies with",
+        keywords: &["calculator", "currency", "exchange", "rates", "ecb"],
+        icon: "globe-01",
     },
     BuiltinCommand {
         kind: CommandKind::NowPlaying,
@@ -628,7 +638,8 @@ impl CommandKind {
             | Self::ToggleFullscreen
             | Self::ToggleFloating
             | Self::ToggleOverview
-            | Self::CalculatorHistory => Tile::Blue,
+            | Self::CalculatorHistory
+            | Self::RefreshExchangeRates => Tile::Blue,
             Self::CreateShortcut | Self::ManageShortcuts | Self::SetTheme => Tile::Purple,
             Self::CreateSnippet | Self::ManageSnippets | Self::BrowseFonts => Tile::Orange,
             Self::CreateExtension => Tile::Green,

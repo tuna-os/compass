@@ -3,10 +3,11 @@
 //! Read off `UpdateService` (`src/server/src/services/update/`).
 
 use compass_core::update::{
-    CHECK_INTERVAL_SECS, DEFAULT_FEED_URL, FAILED_TITLE, FEED_URL_ENV, INSTALLED_BODY,
-    INSTALLED_TITLE, NullUpdateInstaller, RELAUNCH_DELAY_MS, Rejected, Release, ReleaseAsset,
-    STATE_FILE, State, Status, UNSUPPORTED_MESSAGE, UpdateInstaller, UpdateService,
-    VERSION_OVERRIDE_ENV, display_version, feed_url, load_state, save_state, state_path,
+    CACHE_FILE, CHECK_INTERVAL_SECS, CheckCache, DEFAULT_FEED_URL, FAILED_TITLE, FEED_URL_ENV,
+    INSTALLED_BODY, INSTALLED_TITLE, NullUpdateInstaller, RELAUNCH_DELAY_MS, Rejected, Release,
+    ReleaseAsset, ReleaseCheck, STATE_FILE, State, Status, UNSUPPORTED_MESSAGE, UpdateInstaller,
+    UpdateService, VERSION_OVERRIDE_ENV, cache_path, display_version, feed_url, load_cache,
+    load_state, save_cache, save_state, state_path,
 };
 
 /// An installer that can install one named asset.
@@ -91,7 +92,10 @@ fn a_newer_release_becomes_an_offer() {
     let update = service.handle_release(&release("v1.1.0")).expect("offered");
     assert_eq!(update.tag, "v1.1.0");
     assert_eq!(update.version, "1.1.0", "the v is stripped for display");
-    assert_eq!(update.asset_url, "https://example.test/linux");
+    assert_eq!(
+        update.asset_url.as_deref(),
+        Some("https://example.test/linux")
+    );
     assert_eq!(update.release_url, "https://github.com/o/r/releases/v1.1.0");
     assert_eq!(service.status(), Status::UpdateAvailable);
 }
@@ -428,4 +432,89 @@ fn the_skipped_version_survives_a_round_trip_under_the_cpp_key() {
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("JSON");
     assert_eq!(json["skippedVersion"], "v9.9.9");
+}
+
+#[test]
+fn compass_reads_its_own_releases() {
+    assert_eq!(
+        DEFAULT_FEED_URL,
+        "https://api.github.com/repos/tuna-os/compass/releases/latest"
+    );
+    assert_eq!(CACHE_FILE, "latest-release.json");
+}
+
+#[test]
+fn a_release_check_offers_any_newer_published_release_without_an_asset() {
+    let mut service = UpdateService::new(ReleaseCheck, "v1.0.0", State::default());
+    assert!(service.checks_supported(), "checking needs no installer");
+    let mut bare = release("v1.1.0");
+    bare.assets.clear();
+    let update = service.handle_release(&bare).expect("offered");
+    assert_eq!(update.asset_url, None);
+    assert_eq!(update.release_url, "https://github.com/o/r/releases/v1.1.0");
+    assert!(!service.may_download(), "there is nothing to download");
+}
+
+#[test]
+fn a_release_check_keeps_every_other_gate() {
+    for (mutate, rejected) in [
+        (
+            (|r: &mut Release| r.tag_name = "v1.0.0".to_owned()) as fn(&mut Release),
+            Rejected::NotNewer,
+        ),
+        (|r: &mut Release| r.draft = true, Rejected::Draft),
+        (|r: &mut Release| r.prerelease = true, Rejected::Prerelease),
+        (
+            |r: &mut Release| r.tag_name = "v1.1.0-rc1".to_owned(),
+            Rejected::NotAVersion,
+        ),
+    ] {
+        let mut service = UpdateService::new(ReleaseCheck, "v1.0.0", State::default());
+        let mut candidate = release("v1.1.0");
+        mutate(&mut candidate);
+        assert_eq!(service.handle_release(&candidate), Err(rejected));
+    }
+    let mut service = UpdateService::new(
+        ReleaseCheck,
+        "v1.0.0",
+        State {
+            skipped_version: Some("v1.1.0".to_owned()),
+        },
+    );
+    assert_eq!(
+        service.handle_release(&release("v1.1.0")),
+        Err(Rejected::Skipped)
+    );
+}
+
+#[test]
+fn a_check_is_fresh_for_six_hours_and_not_after() {
+    let now = 1_800_000_000;
+    let at = |checked_at| CheckCache {
+        checked_at,
+        release: None,
+    };
+    assert!(!CheckCache::default().is_fresh(now), "never checked");
+    assert!(at(now).is_fresh(now));
+    assert!(at(now - 6 * 3600 + 1).is_fresh(now));
+    assert!(!at(now - 6 * 3600).is_fresh(now), "six hours on");
+    assert!(!at(now + 60).is_fresh(now), "a stamp from the future");
+}
+
+#[test]
+fn the_check_cache_round_trips_and_a_bad_one_is_empty() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = cache_path(&dir.path().join("nested"));
+    assert_eq!(load_cache(&path), CheckCache::default());
+    let cache = CheckCache {
+        checked_at: 42,
+        release: Some(release("v2.0.0")),
+    };
+    save_cache(&path, &cache).expect("saves");
+    assert_eq!(load_cache(&path), cache);
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("JSON");
+    assert_eq!(json["checkedAt"], 42);
+    std::fs::write(&path, "nope").expect("write");
+    assert_eq!(load_cache(&path), CheckCache::default());
 }

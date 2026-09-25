@@ -68,7 +68,7 @@ impl LauncherApp {
             RootRow::RhaiScript(index) => {
                 Some(self.app_index.rhai_scripts().get(index)?.entrypoint_id())
             }
-            RootRow::Calculator | RootRow::Fallback(_) => None,
+            RootRow::Calculator | RootRow::Fallback(_) | RootRow::Update => None,
         }
     }
 
@@ -136,9 +136,25 @@ impl LauncherApp {
 
     /// The heading drawn above the root row at `position`, if a section
     /// starts there: only the empty query has sections, and only when it
-    /// has favourites.
+    /// has favourites or an update.
     pub(super) fn root_heading_at(&self, position: usize) -> Option<&'static str> {
-        if self.favorites_len == 0 || !self.query.is_empty() {
+        if !self.query.is_empty() {
+            return None;
+        }
+        // The Update section, when it leads, heads its row and moves the
+        // others down one (`RootUpdateSection` before the favourites).
+        let position = if self.update_shown() {
+            if position == 0 {
+                return Some(super::release_check::UPDATE_HEADING);
+            }
+            if position == 1 && self.favorites_len == 0 {
+                return Some(SUGGESTIONS_HEADING);
+            }
+            position - 1
+        } else {
+            position
+        };
+        if self.favorites_len == 0 {
             return None;
         }
         if position == 0 {
@@ -311,8 +327,14 @@ impl LauncherApp {
                 .iter()
                 .map(|(id, title, shortcut)| (id.as_str(), title.as_str(), shortcut.as_str())),
         );
+        self.panel_recorder_outcome(outcome)
+    }
+
+    /// What the action panel's recorder said to do.
+    pub(super) fn panel_recorder_outcome(&mut self, outcome: RecorderOutcome) -> Task<Message> {
         match outcome {
             RecorderOutcome::Recording => Task::none(),
+            RecorderOutcome::Probe(trigger) => self.probe_shortcut(trigger),
             RecorderOutcome::Back => {
                 if let Some(panel) = self.panel.as_mut() {
                     panel.recorder = None;
@@ -320,7 +342,14 @@ impl LauncherApp {
                 iced::widget::operation::focus(super::PANEL_INPUT)
             }
             RecorderOutcome::Save(shortcut) => {
-                let id = recorder.id.clone();
+                let Some(id) = self
+                    .panel
+                    .as_ref()
+                    .and_then(|panel| panel.recorder.as_ref())
+                    .map(|recorder| recorder.id.clone())
+                else {
+                    return Task::none();
+                };
                 self.panel = None;
                 self.edit_root_item(id, RootEdit::Shortcut(shortcut))
             }
@@ -404,7 +433,7 @@ impl LauncherApp {
             }
             RootRow::Script(index) => self.app_index.scripts().get(index)?.title.clone(),
             RootRow::RhaiScript(index) => self.app_index.rhai_scripts().get(index)?.title.clone(),
-            RootRow::Calculator => return None,
+            RootRow::Calculator | RootRow::Update => return None,
         })
     }
 

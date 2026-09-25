@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use compass_core::input_server::expansion::{self, Frontmost, Settings, UndoRecord};
+use compass_core::input_server::expansion::{self, Settings, UndoRecord};
 use compass_core::input_server::wire::{Call, ExpansionMode};
 use compass_core::snippet_store::{SerializedSnippet, SnippetData};
 use compass_worker_host::clipboard_service::{Clipboard, Content, CopyOptions};
@@ -239,7 +239,7 @@ async fn expand(state: &Arc<RwLock<EngineState>>, expander: &Expander, keyword: 
         return;
     };
 
-    let frontmost = frontmost(state).await;
+    let frontmost = crate::frontmost::frontmost(state).await;
     if !expansion::allowed(&stored.apps, &frontmost) {
         return;
     }
@@ -312,88 +312,13 @@ async fn clipboard(
     .flatten()
 }
 
-/// The focused window's application, recognised in the app index.
-async fn frontmost(state: &Arc<RwLock<EngineState>>) -> Frontmost {
-    let Some(class) = focused_class(state).await else {
-        return Frontmost::default();
-    };
-    let state = state.read().await;
-    let apps = compass_core::app_service::AppService::new(state.app_index());
-    let Some(app) = apps.find_by_class(&class) else {
-        return Frontmost::default();
-    };
-    Frontmost {
-        app_id: Some(app.desktop_id().to_owned()),
-        terminal: app.terminal() || app.categories().iter().any(|c| c == "TerminalEmulator"),
-    }
-}
-
-/// The focused window's class (`WM_CLASS` or Wayland `app_id`) and a handle
-/// that changes when focus moves.
-async fn focused_window(state: &Arc<RwLock<EngineState>>) -> Option<(String, String)> {
-    if let Some(wlroots) = crate::wlroots::detect().await {
-        let toplevels = wlroots.toplevels.clone()?;
-        return toplevels
-            .list()
-            .into_iter()
-            .find(|window| window.activated)
-            .map(|window| (window.id.to_string(), window.app_id));
-    }
-    let shell = state.read().await.shell_client()?;
-    let windows = shell.list_windows().await.ok()?;
-    windows
-        .into_iter()
-        .find(|window| window.focused)
-        .map(|window| (format!("{:?}", window.id), window.wm_class))
-}
-
-async fn focused_class(state: &Arc<RwLock<EngineState>>) -> Option<String> {
-    focused_window(state)
-        .await
-        .map(|(_, class)| class)
-        .filter(|class| !class.is_empty())
-}
-
 /// Resets the helper's context whenever the focused window changes, as the
 /// C++ does on `WindowManager::focusChanged`: from the Shell extension's
 /// window signal on GNOME, the toplevel list on wlroots.
 async fn watch_focus(state: Arc<RwLock<EngineState>>, expander: Arc<Expander>) {
-    let mut last = focused_window(&state).await.map(|(id, _)| id);
-    let mut changed = |now: Option<String>| {
-        let moved = now != last;
-        last = now;
-        moved
-    };
-
-    if let Some(wlroots) = crate::wlroots::detect().await {
-        let Some(toplevels) = wlroots.toplevels.clone() else {
-            return;
-        };
-        let mut changes = toplevels.changes();
-        while changes.changed().await.is_ok() {
-            if changed(focused_window(&state).await.map(|(id, _)| id)) {
-                expander.focus_changed().await;
-            }
-        }
-        return;
-    }
-
-    // The Shell client arrives after start-up; wait for it.
-    let shell = loop {
-        if let Some(shell) = state.read().await.shell_client() {
-            break shell;
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    };
-    let Ok(mut signals) = shell.windows_changed().await else {
-        tracing::info!(
-            "no window signals from the Shell extension; typing is not reset on focus changes"
-        );
-        return;
-    };
-    while signals.next().await.is_some() {
-        if changed(focused_window(&state).await.map(|(id, _)| id)) {
-            expander.focus_changed().await;
-        }
-    }
+    crate::frontmost::watch(state, || {
+        let expander = Arc::clone(&expander);
+        async move { expander.focus_changed().await }
+    })
+    .await;
 }

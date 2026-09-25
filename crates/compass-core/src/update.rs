@@ -3,6 +3,11 @@
 //! A port of `UpdateService` (`src/server/src/services/update/`), minus the
 //! HTTP client, the timer and the platform installer.
 //!
+//! Compass only *checks*: it reads its own releases ([`DEFAULT_FEED_URL`]) and
+//! says when a newer one is out ([`ReleaseCheck`]); installing is the package
+//! manager's job. The engine does the fetching (`vicinae::updates`), at most
+//! once per [`CHECK_INTERVAL_SECS`], remembering the answer in a [`CheckCache`].
+//!
 //! # Every gate here is a gate against offering the wrong thing
 //!
 //! Five conditions have to hold before a release becomes an offer: it parses
@@ -29,8 +34,12 @@ pub const RELAUNCH_DELAY_MS: u64 = 800;
 /// The file the skipped version is kept in, under the state directory.
 pub const STATE_FILE: &str = "updates.json";
 
-/// Where releases are read from, from `Environment::updateFeedUrl`.
-pub const DEFAULT_FEED_URL: &str = "https://api.github.com/repos/vicinaehq/vicinae/releases/latest";
+/// Where releases are read from: Compass's own, where the C++'s
+/// `Environment::updateFeedUrl` reads Vicinae's.
+pub const DEFAULT_FEED_URL: &str = "https://api.github.com/repos/tuna-os/compass/releases/latest";
+
+/// The file the last check is remembered in, under the cache directory.
+pub const CACHE_FILE: &str = "latest-release.json";
 
 /// The environment variable that overrides [`DEFAULT_FEED_URL`].
 pub const FEED_URL_ENV: &str = "VICINAE_UPDATE_FEED_URL";
@@ -92,8 +101,9 @@ pub struct AvailableUpdate {
     pub version: String,
     /// The release page.
     pub release_url: String,
-    /// The asset to download.
-    pub asset_url: String,
+    /// The asset to download, when the installer asked for one; `None` for
+    /// a [`ReleaseCheck`], which installs nothing.
+    pub asset_url: Option<String>,
 }
 
 /// Where the service is in the update cycle.
@@ -185,6 +195,7 @@ pub trait UpdateInstaller {
     ///
     /// Matched by equality, not by pattern: a release carrying assets for
     /// every platform must give this one exactly the file it can install.
+    /// Empty for an installer that needs none ([`ReleaseCheck`]).
     fn asset_name(&self) -> String;
 }
 
@@ -199,6 +210,78 @@ impl UpdateInstaller for NullUpdateInstaller {
     fn asset_name(&self) -> String {
         String::new()
     }
+}
+
+/// The installer of a build that only checks: it installs nothing and needs
+/// no asset, so every newer published release is an offer. Compass is
+/// updated by whatever installed it (a distribution package, the Flatpak).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReleaseCheck;
+
+impl UpdateInstaller for ReleaseCheck {
+    fn supported(&self) -> bool {
+        true
+    }
+    fn asset_name(&self) -> String {
+        String::new()
+    }
+}
+
+/// The last answer the feed gave, so a check is made at most once per
+/// [`CHECK_INTERVAL_SECS`] however often the launcher opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckCache {
+    /// When the feed was last asked, in seconds since the epoch, whether it
+    /// answered or not.
+    #[serde(default)]
+    pub checked_at: i64,
+    /// The latest release it reported, kept across a failed check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<Release>,
+}
+
+impl CheckCache {
+    /// Whether the last check is recent enough to answer from.
+    ///
+    /// A stamp in the future (the clock went back) is stale, so a wrong clock
+    /// costs one extra check rather than silencing checks until it catches up.
+    #[must_use]
+    pub fn is_fresh(&self, now: i64) -> bool {
+        let age = now - self.checked_at;
+        self.checked_at > 0
+            && (0..i64::try_from(CHECK_INTERVAL_SECS).unwrap_or(i64::MAX)).contains(&age)
+    }
+}
+
+/// The path the check cache lives at, under a cache directory.
+#[must_use]
+pub fn cache_path(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(CACHE_FILE)
+}
+
+/// Read the check cache, or start with none: a missing or unreadable file
+/// only means the next check asks the feed.
+#[must_use]
+pub fn load_cache(path: &Path) -> CheckCache {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Write the check cache, creating the directory above it.
+///
+/// # Errors
+///
+/// Returns the io error if the directory or file cannot be written.
+pub fn save_cache(path: &Path, cache: &CheckCache) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string(cache)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    fs::write(path, json)
 }
 
 /// Why a release was not offered.
@@ -321,17 +404,16 @@ impl<I: UpdateInstaller> UpdateService<I> {
         }
 
         let asset_name = self.installer.asset_name();
-        let asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == asset_name)
-            .expect("evaluate already found the asset");
+        let asset_url = (!asset_name.is_empty())
+            .then(|| release.assets.iter().find(|asset| asset.name == asset_name))
+            .flatten()
+            .map(|asset| asset.browser_download_url.clone());
 
         self.available = Some(AvailableUpdate {
             tag: release.tag_name.clone(),
             version: display_version(&release.tag_name),
             release_url: release.html_url.clone(),
-            asset_url: asset.browser_download_url.clone(),
+            asset_url,
         });
         self.status = Status::UpdateAvailable;
         Ok(self.available.as_ref().expect("just set"))
@@ -358,7 +440,7 @@ impl<I: UpdateInstaller> UpdateService<I> {
             return Some(Rejected::Skipped);
         }
         let asset_name = self.installer.asset_name();
-        if !release.assets.iter().any(|asset| asset.name == asset_name) {
+        if !asset_name.is_empty() && !release.assets.iter().any(|asset| asset.name == asset_name) {
             return Some(Rejected::NoAsset);
         }
         None
@@ -366,7 +448,10 @@ impl<I: UpdateInstaller> UpdateService<I> {
 
     /// Whether a download may start.
     pub fn may_download(&self) -> bool {
-        self.available.is_some() && !self.status.is_busy()
+        self.available
+            .as_ref()
+            .is_some_and(|update| update.asset_url.is_some())
+            && !self.status.is_busy()
     }
 
     /// Begin downloading the offered update.

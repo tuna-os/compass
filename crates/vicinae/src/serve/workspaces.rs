@@ -1,6 +1,7 @@
 //! The window-management extension's other commands: Switch Workspaces and
 //! the fullscreen, floating and overview toggles (`src/builtins/wm/`), over
-//! the compositor's own IPC (Hyprland, niri, KWin).
+//! the compositor's own IPC (Hyprland, niri, KWin), and on GNOME Switch
+//! Workspaces through the Shell extension's contract 4.
 //!
 //! Workspaces are described as `SwitchWorkspacesViewHost::refreshWindows`
 //! builds them: each with its window count and the applications with a
@@ -138,6 +139,12 @@ pub(super) async fn handle(
 ) -> Response {
     use compass_ipc::Request;
     let provider = crate::wlroots::compositor();
+    if provider.is_none()
+        && !matches!(request, Request::ToggleWindowState { .. })
+        && let Some(shell) = shell(state).await
+    {
+        return gnome(state, &shell, request).await;
+    }
     let blocking = |work: Box<dyn FnOnce() -> Response + Send>| async move {
         tokio::task::spawn_blocking(work)
             .await
@@ -178,6 +185,104 @@ pub(super) async fn handle(
             ErrorKind::BadRequest,
             "not a window-management request",
         )),
+    }
+}
+
+/// The Shell extension, when there is no compositor IPC and it answers: GNOME,
+/// where the workspaces are Mutter's and only the extension reaches them.
+async fn shell(
+    state: &std::sync::Arc<tokio::sync::RwLock<super::EngineState>>,
+) -> Option<std::sync::Arc<compass_shell::ShellClient>> {
+    let shell = state.read().await.shell_client()?;
+    let answers = shell.capabilities().windows.is_available()
+        || shell.refresh_capabilities().await.windows.is_available();
+    answers.then_some(shell)
+}
+
+/// A GNOME workspace as the listing's: its index is its id, and a person
+/// counts from one (`Gnome::Workspace`).
+#[must_use]
+pub fn gnome_workspace(workspace: &compass_shell::Workspace) -> WmWorkspace {
+    WmWorkspace {
+        id: workspace.index.to_string(),
+        name: workspace.name.clone(),
+        number: Some(workspace.index.saturating_add(1)),
+        monitor: None,
+        has_fullscreen: workspace.has_fullscreen,
+    }
+}
+
+/// A Shell window as the listing's, on the workspace it names.
+#[must_use]
+pub fn gnome_window(window: &compass_shell::Window) -> WmWindow {
+    WmWindow {
+        id: window.id.to_string(),
+        title: window.title.clone(),
+        wm_class: window.wm_class.clone(),
+        pid: window.pid,
+        workspace: window.workspace.map(|index| index.to_string()),
+        bounds: None,
+        focused: window.focused,
+        fullscreen: window.fullscreen,
+    }
+}
+
+/// The window-management requests on GNOME, through the Shell extension's
+/// contract 4 (`GnomeWindowManager::listWorkspaces`). The C++ lists GNOME's
+/// workspaces but cannot switch to one; the extension's `ActivateWorkspace`
+/// does.
+async fn gnome(
+    state: &std::sync::Arc<tokio::sync::RwLock<super::EngineState>>,
+    shell: &compass_shell::ShellClient,
+    request: compass_ipc::Request,
+) -> Response {
+    use compass_ipc::Request;
+    const WHAT: &str = "Switch Workspaces";
+    match request {
+        Request::WindowManagerCapabilities => {
+            Response::WindowManagerCapabilities(WindowManagerCapabilities {
+                workspaces: shell
+                    .capabilities()
+                    .windows
+                    .supports(compass_shell::WORKSPACES_SINCE),
+                ..WindowManagerCapabilities::default()
+            })
+        }
+        Request::ListWorkspaces => {
+            let workspaces = match shell.list_workspaces().await {
+                Ok(workspaces) => workspaces,
+                Err(err) => {
+                    return Response::Error(crate::window_service::refusal(&err, WHAT));
+                }
+            };
+            let windows = shell.list_windows().await.unwrap_or_default();
+            let active = workspaces
+                .iter()
+                .find(|workspace| workspace.active)
+                .map(|workspace| workspace.index.to_string());
+            let windows: Vec<WmWindow> = windows.iter().map(gnome_window).collect();
+            Response::Workspaces {
+                workspaces: entries(
+                    workspaces.iter().map(gnome_workspace).collect(),
+                    &windows,
+                    active.as_deref(),
+                    &state.read().await.index,
+                ),
+            }
+        }
+        Request::FocusWorkspace { id } => {
+            let Ok(index) = id.parse::<i32>() else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("{id:?} is not a GNOME workspace"),
+                ));
+            };
+            match shell.activate_workspace(index).await {
+                Ok(()) => Response::Ack,
+                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
+            }
+        }
+        _ => Response::Error(unsupported()),
     }
 }
 

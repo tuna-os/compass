@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use zbus::zvariant::{OwnedValue, Value};
 
-use crate::contract::window_key;
+use crate::contract::{window_key, workspace_key};
 use crate::error::{Result, ShellError};
 
 /// Opaque handle for a window, as minted by the shell extension.
@@ -65,6 +65,33 @@ pub struct Frame {
     pub height: i32,
 }
 
+/// One workspace as reported by `ListWorkspaces` (contract 4).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub struct Workspace {
+    /// Its position from 0, and what `ActivateWorkspace` takes.
+    pub index: i32,
+    /// What GNOME calls it; empty when unnamed.
+    pub name: String,
+    /// Whether it is the one shown.
+    pub active: bool,
+    /// Whether a window on it is full-screen.
+    pub has_fullscreen: bool,
+}
+
+impl Workspace {
+    /// Decode one `a{sv}` entry, on [`Window::from_dict`]'s rules.
+    pub fn from_dict(dict: &WindowDict) -> Result<Self> {
+        Ok(Self {
+            index: as_i32(dict, workspace_key::INDEX)?
+                .ok_or_else(|| missing(workspace_key::INDEX))?,
+            name: as_string(dict, workspace_key::NAME)?.unwrap_or_default(),
+            active: as_bool(dict, workspace_key::ACTIVE)?.unwrap_or(false),
+            has_fullscreen: as_bool(dict, workspace_key::HAS_FULLSCREEN)?.unwrap_or(false),
+        })
+    }
+}
+
 /// A clipboard selection: one blob plus the mime type describing it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClipboardContent {
@@ -120,14 +147,12 @@ pub struct ClipboardChange {
 pub(crate) type WindowDict = HashMap<String, OwnedValue>;
 
 fn missing(key: &str) -> ShellError {
-    ShellError::Protocol(format!(
-        "window entry is missing the required `{key}` field"
-    ))
+    ShellError::Protocol(format!("an entry is missing the required `{key}` field"))
 }
 
 fn wrong_type(key: &str, want: &str, got: &Value<'_>) -> ShellError {
     ShellError::Protocol(format!(
-        "window field `{key}` should be {want} but the extension sent signature `{}`",
+        "field `{key}` should be {want} but the extension sent signature `{}`",
         got.value_signature()
     ))
 }
@@ -289,6 +314,25 @@ mod tests {
         );
         let err = Window::from_dict(&dict).expect_err("must not decode");
         assert!(err.to_string().contains("should be u"), "{err}");
+    }
+
+    #[test]
+    fn a_workspace_needs_its_index_and_defaults_the_rest() {
+        let dict = HashMap::from([("index".to_owned(), OwnedValue::from(2i32))]);
+        let workspace = Workspace::from_dict(&dict).expect("decodes");
+        assert_eq!(
+            (
+                workspace.index,
+                workspace.name.as_str(),
+                workspace.active,
+                workspace.has_fullscreen
+            ),
+            (2, "", false, false)
+        );
+        let err = Workspace::from_dict(&HashMap::new()).expect_err("no index");
+        assert!(err.to_string().contains("index"), "{err}");
+        let mistyped = HashMap::from([("index".to_owned(), OwnedValue::from(2u32))]);
+        assert!(Workspace::from_dict(&mistyped).is_err());
     }
 
     #[test]

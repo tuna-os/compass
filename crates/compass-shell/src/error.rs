@@ -22,6 +22,18 @@ pub enum ShellError {
     #[error("shell extension capability unusable: {0}")]
     Unavailable(Availability),
 
+    /// The extension is usable, but speaks a contract older than the one
+    /// that added this call.
+    #[error("`{method}` needs contract v{needed}, and the extension speaks v{found}")]
+    TooOld {
+        /// D-Bus method that was not called.
+        method: &'static str,
+        /// Version the extension reported.
+        found: u32,
+        /// Version that added the method.
+        needed: u32,
+    },
+
     /// A method call reached the bus but failed.
     #[error("D-Bus call to the shell extension failed")]
     Call(#[source] zbus::Error),

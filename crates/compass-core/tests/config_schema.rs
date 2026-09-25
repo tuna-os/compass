@@ -75,6 +75,7 @@ fn every_documented_key_is_in_the_schema_with_its_default() {
         (&["launcher", "keybinding"], Value::from("default")),
         (&["launcher", "wrap_navigation"], Value::from(false)),
         (&["launcher", "quick_launch"], Value::from(true)),
+        (&["launcher", "check_for_updates"], Value::from(true)),
         (
             &["launcher", "appearance", "color_scheme"],
             Value::from("system"),
@@ -84,6 +85,7 @@ fn every_documented_key_is_in_the_schema_with_its_default() {
         (&["launcher", "appearance", "icons"], Value::from(true)),
         (&["launcher", "appearance", "tint"], Value::from(false)),
         (&["extensions", "auto_update"], Value::from(true)),
+        (&["tray", "enabled"], Value::from(true)),
     ] {
         let node = property(&root, &root, path);
         assert_eq!(node["default"], default, "default of {path:?}");

@@ -107,6 +107,9 @@ pub enum Kind {
     Text,
     /// A list of paths, one per line in the view; a JSON array of strings.
     Paths,
+    /// A list of names (application ids), comma-separated in the view; a
+    /// JSON array of strings.
+    Names,
     /// A key combination, recorded; a JSON string in `KeyCombo`'s spelling.
     Shortcut,
     /// A theme's name, from the themes the view lists; a JSON string.
@@ -219,7 +222,7 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         cpp: "telemetrySystemInfo",
         page: CorePage::General,
         label: "Basic usage statistics",
-        reason: "Compass sends no telemetry",
+        reason: "Compass sends no telemetry (a hard fork: no telemetry, by decision)",
     },
     NotPorted {
         cpp: "fontSize",
@@ -330,12 +333,6 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         reason: "Compass fetches no favicons yet",
     },
     NotPorted {
-        cpp: "trayEnabled",
-        page: CorePage::Advanced,
-        label: "Tray icon",
-        reason: "Compass has no tray icon of its own",
-    },
-    NotPorted {
         cpp: "encryptSensitiveData",
         page: CorePage::Advanced,
         label: "Encrypt sensitive data",
@@ -396,6 +393,13 @@ pub fn catalog() -> Vec<Setting> {
             )
             .kind(Kind::Shortcut, json!(crate::config::DEFAULT_HOTKEY))
             .cpp("toggleShortcut"),
+        Setting::new("global_shortcuts.inhibit_apps", core(General), "Behavior")
+            .label(
+                "Pause shortcuts in",
+                "While one of these applications is focused, global shortcuts are released so its keys reach it.",
+            )
+            .kind(Kind::Names, json!([]))
+            .placeholder("org.gnome.Boxes.desktop"),
         Setting::new("launcher.close_on_focus_loss", core(General), "Behavior")
             .label("Close on focus loss", "")
             .kind(
@@ -415,6 +419,12 @@ pub fn catalog() -> Vec<Setting> {
                 Kind::Number { min: 0, max: 500 },
                 json!(crate::config::DEFAULT_MAX_RESULTS),
             ),
+        Setting::new("launcher.check_for_updates", core(General), "Updates")
+            .label(
+                "Check for updates",
+                "Ask Compass's GitHub releases, at most every six hours, whether a newer version is out.",
+            )
+            .kind(Kind::Toggle, json!(crate::config::DEFAULT_CHECK_FOR_UPDATES)),
         Setting::new("launcher.clock.enabled", core(General), "Clock")
             .label("Show the clock", "The time, in the root search's status bar.")
             .kind(Kind::Toggle, json!(crate::config::DEFAULT_CLOCK_ENABLED)),
@@ -495,6 +505,13 @@ pub fn catalog() -> Vec<Setting> {
                 json!(crate::config::DEFAULT_INPUT_SERVER_ENABLED),
             )
             .cpp("inputServerEnabled"),
+        Setting::new("tray.enabled", core(Advanced), "System")
+            .label(
+                "Tray icon",
+                "Show Compass in the tray, with a menu to toggle the launcher, open settings and quit.",
+            )
+            .kind(Kind::Toggle, json!(crate::config::DEFAULT_TRAY_ENABLED))
+            .cpp("trayEnabled"),
     ];
 
     let clipboard = || Scope::Command("commands:clipboard-history".to_owned());
@@ -816,6 +833,19 @@ pub fn validate(setting: &Setting, value: Value) -> Result<Option<Value>, String
             }
             _ => Err(refuse(setting, "a list of folders")),
         },
+        Kind::Names => match value.as_array() {
+            Some(items) if items.iter().all(Value::is_string) => {
+                let kept: Vec<Value> = items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(|name| Value::String(name.to_owned()))
+                    .collect();
+                Ok(Some(Value::Array(kept)))
+            }
+            _ => Err(refuse(setting, "a list of application ids")),
+        },
         Kind::Shortcut => match value.as_str().map(str::trim) {
             Some("") => Ok(None),
             Some(shortcut) if crate::key_combo::KeyCombo::parse(shortcut).is_some() => {
@@ -929,6 +959,7 @@ mod tests {
         apply(&mut config, "launcher.wrap_navigation", json!(true)).unwrap();
         apply(&mut config, "launcher.keybinding", json!("emacs")).unwrap();
         apply(&mut config, "input_server.enabled", json!(false)).unwrap();
+        apply(&mut config, "tray.enabled", json!(false)).unwrap();
         apply(&mut config, "launcher.appearance.tint", json!(true)).unwrap();
         apply(&mut config, "font.normal.family", json!("Inter")).unwrap();
         apply(
@@ -943,6 +974,7 @@ mod tests {
             crate::keybinding::Scheme::Emacs
         );
         assert!(!config.input_server().enabled());
+        assert!(!config.tray().enabled());
         assert!(config.launcher().appearance().tint());
         assert_eq!(config.font_family(), Some("Inter"));
         assert_eq!(config.launcher().hotkey(), "alt+space");
@@ -1005,6 +1037,24 @@ mod tests {
             None,
         );
         assert_eq!(settings.paths, ["/home/u/docs", "/srv"]);
+    }
+
+    #[test]
+    fn the_apps_that_pause_the_shortcuts_are_names_the_engine_reads() {
+        let mut config = Config::default();
+        apply(
+            &mut config,
+            "global_shortcuts.inhibit_apps",
+            json!([" org.gnome.Boxes.desktop ", "", "steam.desktop"]),
+        )
+        .unwrap();
+        assert_eq!(
+            config.global_shortcuts().inhibit_apps(),
+            ["org.gnome.Boxes.desktop", "steam.desktop"]
+        );
+        assert!(apply(&mut config, "global_shortcuts.inhibit_apps", json!("steam")).is_err());
+        apply(&mut config, "global_shortcuts.inhibit_apps", Value::Null).unwrap();
+        assert_eq!(config, Config::default());
     }
 
     #[test]

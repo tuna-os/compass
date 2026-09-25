@@ -131,6 +131,8 @@ pub struct EngineState {
     shell_slot: crate::rhai_host::ShellSlot,
     /// The extension stores.
     stores: Arc<crate::stores::Stores>,
+    /// The update check.
+    updates: Arc<crate::updates::Updates>,
     /// Snippet keyword expansion and its input server, once started.
     expander: Option<Arc<crate::snippet_expansion::Expander>>,
     /// Launches extensions asked for, and their commands' subtitle overrides.
@@ -142,9 +144,13 @@ pub struct EngineState {
     calculator: Arc<tokio::sync::Mutex<Option<crate::extension_runner::Storage>>>,
     /// Other applications' tray icons (`SniTrayHost`).
     tray: Arc<crate::tray_host::TrayHost>,
+    /// Compass's own tray icon (`TrayServiceLinux`): `tray.enabled`.
+    tray_icon: Arc<crate::tray_icon::Control>,
     /// The global shortcuts' service: rebinding them, and the recorder's
     /// capture.
     global_shortcuts: Arc<crate::global_shortcuts::Control>,
+    /// The calculator's exchange rates.
+    exchange_rates: Arc<crate::exchange_rates::ExchangeRateService>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -262,12 +268,17 @@ impl EngineState {
             rhai,
             shell_slot,
             stores: Arc::default(),
+            updates: Arc::default(),
             expander: None,
             launches: Arc::default(),
             catalog_generation: 0,
             calculator: Arc::default(),
             tray: Arc::default(),
+            tray_icon: Arc::default(),
             global_shortcuts: Arc::default(),
+            exchange_rates: Arc::new(
+                crate::exchange_rates::ExchangeRateService::from_environment(),
+            ),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -331,12 +342,15 @@ impl EngineState {
             rhai: Arc::default(),
             shell_slot: crate::rhai_host::ShellSlot::default(),
             stores: Arc::default(),
+            updates: Arc::new(crate::updates::Updates::offline()),
             expander: None,
             launches: Arc::default(),
             catalog_generation: 0,
             calculator: Arc::default(),
             tray: Arc::default(),
+            tray_icon: Arc::default(),
             global_shortcuts: Arc::default(),
+            exchange_rates: Arc::default(),
         }
     }
 
@@ -447,6 +461,12 @@ impl EngineState {
     #[must_use]
     pub fn window_slot(&self) -> WindowSlot {
         Arc::clone(&self.window)
+    }
+
+    /// Compass's own tray icon's control.
+    #[must_use]
+    pub fn tray_icon(&self) -> Arc<crate::tray_icon::Control> {
+        Arc::clone(&self.tray_icon)
     }
 
     /// The global shortcuts' service control.
@@ -2767,6 +2787,45 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 .set_capturing(capturing);
             Response::Ack
         }
+        Request::UpdateStatus => {
+            let updates = Arc::clone(&state.read().await.updates);
+            // Read when asked, so turning the setting off stops the next check.
+            let enabled = Config::load()
+                .map(|config| config.launcher().check_for_updates())
+                .unwrap_or(compass_core::config::DEFAULT_CHECK_FOR_UPDATES);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| {
+                    i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
+                });
+            Response::UpdateStatus {
+                current: updates.current().to_owned(),
+                available: updates.status(enabled, now).await,
+            }
+        }
+        Request::SkipUpdate { tag } => {
+            let updates = Arc::clone(&state.read().await.updates);
+            match updates.skip(&tag) {
+                Ok(()) => Response::Ack,
+                Err(message) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
+            }
+        }
+        request @ (Request::ExchangeRates | Request::RefreshExchangeRates) => {
+            let rates = Arc::clone(&state.read().await.exchange_rates);
+            rates.answer(request).await
+        }
+        Request::ProbeShortcut { trigger } => {
+            let Some(combo) = compass_core::key_combo::KeyCombo::parse(&trigger) else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("{trigger:?} is not a key combination"),
+                ));
+            };
+            let control = state.read().await.global_shortcuts();
+            Response::ShortcutProbe {
+                refusal: control.probe(combo).await,
+            }
+        }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => {
@@ -3527,6 +3586,11 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
         });
     }
 
+    // The calculator's exchange rates: fetched when stale, then daily.
+    tokio::spawn(crate::exchange_rates::run(Arc::clone(
+        &state.read().await.exchange_rates,
+    )));
+
     // Rhai scripts' hot reload.
     tokio::spawn(crate::rhai_scripts::watch(Arc::clone(&state)));
 
@@ -3536,6 +3600,10 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
         let tray = Arc::clone(&state.read().await.tray);
         tokio::spawn(async move { tray.start().await });
     }
+
+    // Compass's own tray icon, while `tray.enabled`; its Quit stops the
+    // engine as `Shutdown` does.
+    tokio::spawn(crate::tray_icon::run(Arc::clone(&state), stop_tx.clone()));
 
     // Applications installed or removed while the engine runs.
     tokio::spawn(crate::catalog_watch::watch_applications(Arc::clone(&state)));

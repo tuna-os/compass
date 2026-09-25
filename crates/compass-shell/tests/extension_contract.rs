@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use compass_shell::contract::{CLIPBOARD_XML, WINDOWS_XML, window_key};
+use compass_shell::contract::{CLIPBOARD_XML, WINDOWS_XML, window_key, workspace_key};
 
 fn extension_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -109,6 +109,51 @@ fn list_windows_fills_every_key_the_client_decodes() {
             "ListWindows never sets `{key}`"
         );
     }
+}
+
+#[test]
+fn list_workspaces_fills_every_key_the_client_decodes() {
+    let script = script();
+    for key in [
+        workspace_key::INDEX,
+        workspace_key::NAME,
+        workspace_key::ACTIVE,
+        workspace_key::HAS_FULLSCREEN,
+    ] {
+        assert!(
+            script.contains(&format!("{key}: new GLib.Variant(")),
+            "ListWorkspaces never sets `{key}`"
+        );
+    }
+}
+
+#[test]
+fn a_workspace_switch_tells_the_client_to_look_again() {
+    // Switch Workspaces refreshes on WindowsChanged, so the extension must
+    // emit it when the workspaces themselves change, not only the windows.
+    let script = script();
+    for signal in [
+        "'active-workspace-changed'",
+        "'workspace-added'",
+        "'workspace-removed'",
+    ] {
+        assert!(
+            script.contains(signal),
+            "extension.js does not watch {signal}"
+        );
+    }
+}
+
+#[test]
+fn the_vm_tier_asks_for_the_workspaces() {
+    let checks = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packaging/vmtest/checks.sh"),
+    )
+    .expect("checks.sh");
+    assert!(
+        checks.contains("org.gnome.Shell.Extensions.Vicinae.Windows.ListWorkspaces"),
+        "checks.sh shell-extension must call ListWorkspaces on the real Shell"
+    );
 }
 
 #[test]

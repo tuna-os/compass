@@ -17,6 +17,10 @@
 //!
 //! The host starts with the engine and on the engine's session bus. With no
 //! bus it logs once and the requests are refused.
+//!
+//! Compass's own icon (`crate::tray_icon`) is left out of the list: it is
+//! this process's, found by the connection's process id, and toggling the
+//! launcher from the launcher's own list would only close it.
 
 use std::path::Path;
 
@@ -76,7 +80,8 @@ impl TrayHost {
             .as_ref()
     }
 
-    /// Every item, in key order, as the tray view lists them.
+    /// Every item but Compass's own, in key order, as the tray view lists
+    /// them.
     ///
     /// # Errors
     ///
@@ -91,10 +96,13 @@ impl TrayHost {
             .map(|(key, (item, _))| (key.clone(), item.clone()))
             .collect();
         items.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(items
-            .into_iter()
-            .map(|(key, item)| info(key, &item, &find_in_theme_path))
-            .collect())
+        let mut listed = Vec::with_capacity(items.len());
+        for (key, item) in items {
+            if !is_own(&started.connection, &key).await {
+                listed.push(info(key, &item, &find_in_theme_path));
+            }
+        }
+        Ok(listed)
     }
 
     /// Activates the item `key`, or its secondary activation.
@@ -179,6 +187,20 @@ impl TrayHost {
             .await
             .map_err(|error| format!("the menu entry did not run: {error}"))
     }
+}
+
+/// Whether the item `key` is served by this process: Compass's own icon.
+async fn is_own(connection: &zbus::Connection, key: &str) -> bool {
+    let Ok(name) = zbus::names::BusName::try_from(key) else {
+        return false;
+    };
+    let Ok(proxy) = zbus::fdo::DBusProxy::new(connection).await else {
+        return false;
+    };
+    proxy
+        .get_connection_unix_process_id(name)
+        .await
+        .is_ok_and(|pid| pid == std::process::id())
 }
 
 /// The item's menu path, `None` when it has none (`hasMenu`).

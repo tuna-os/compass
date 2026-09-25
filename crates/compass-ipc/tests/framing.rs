@@ -439,6 +439,18 @@ fn all_requests() -> Vec<Request> {
         },
         Request::ShortcutCapture { capturing: true },
         Request::ShortcutCapture { capturing: false },
+        Request::UpdateStatus,
+        Request::SkipUpdate {
+            tag: "v1.2.0-ü".into(),
+        },
+        Request::ExchangeRates,
+        Request::RefreshExchangeRates,
+        Request::ProbeShortcut {
+            trigger: "super+shift+K".into(),
+        },
+        Request::ProbeShortcut {
+            trigger: "ctrl+alt+é".into(),
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -621,6 +633,14 @@ fn all_responses() -> Vec<Response> {
                 value: "{\"n\":1}".into(),
             }],
         },
+        Response::ExchangeRates { rates: None },
+        Response::ExchangeRates {
+            rates: Some(compass_ipc::ExchangeRateTable {
+                date: "2026-09-24".into(),
+                fetched_at: 1_790_000_000,
+                rates: vec![("EUR".into(), "1".into()), ("USD".into(), "1.1367".into())],
+            }),
+        },
         Response::OAuthTokenSets {
             sets: vec![compass_ipc::OAuthTokenSetEntry {
                 extension_id: "github".into(),
@@ -632,6 +652,22 @@ fn all_responses() -> Vec<Response> {
                 expires_at: Some(i64::MAX),
                 expired: false,
             }],
+        },
+        Response::UpdateStatus {
+            current: "v0.1.0".into(),
+            available: Some(compass_ipc::UpdateOffer {
+                tag: "v1.2.0".into(),
+                version: "1.2.0".into(),
+                release_url: "https://github.com/tuna-os/compass/releases/tag/v1.2.0".into(),
+            }),
+        },
+        Response::UpdateStatus {
+            current: String::new(),
+            available: None,
+        },
+        Response::ShortcutProbe { refusal: None },
+        Response::ShortcutProbe {
+            refusal: Some("Already bound by the desktop ✗".into()),
         },
         Response::FileActions(compass_ipc::FileActionInfo {
             mime: Some("image/png".into()),
@@ -1129,6 +1165,11 @@ fn request_variants_are_exhaustive() {
             | Request::OAuthTokenSets
             | Request::RemoveOAuthTokenSet { .. }
             | Request::ShortcutCapture { .. }
+            | Request::UpdateStatus
+            | Request::SkipUpdate { .. }
+            | Request::ExchangeRates
+            | Request::RefreshExchangeRates
+            | Request::ProbeShortcut { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1193,6 +1234,9 @@ fn response_variants_are_exhaustive() {
             | Response::LocalStorageNamespaces { .. }
             | Response::LocalStorageItems { .. }
             | Response::OAuthTokenSets { .. }
+            | Response::UpdateStatus { .. }
+            | Response::ExchangeRates { .. }
+            | Response::ShortcutProbe { .. }
             | Response::Window(_) => {}
         }
     }

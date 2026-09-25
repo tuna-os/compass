@@ -14,6 +14,8 @@ slug.workspace = true
 percent-encoding.workspace = true
 url.workspace = true
 fend-core.workspace = true
+# Reading the ECB's exchange rates (`exchange_rates`); already in the workspace for compass-xdg.
+roxmltree.workspace = true
 compass-xdg.workspace = true
 compass-search.workspace = true
 serde.workspace = true

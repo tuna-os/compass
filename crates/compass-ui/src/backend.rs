@@ -69,6 +69,14 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Ok(()) })
     }
 
+    /// Whether the desktop would bind `trigger`, which the recorder just
+    /// captured (`GlobalShortcutBridge::validate`'s `probeBind`): its
+    /// refusal, or `None`. `None` without an engine, which binds nothing.
+    fn probe_shortcut(&self, trigger: String) -> BackendFuture<'_, Option<String>> {
+        let _ = trigger;
+        Box::pin(async { Ok(None) })
+    }
+
     /// Turns a whole provider's items on or off in root search.
     fn set_provider_enabled(&self, provider: String, enabled: bool) -> BackendFuture<'_, ()> {
         let _ = (provider, enabled);
@@ -169,6 +177,22 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// to show.
     fn set_default_app(&self, kind: DefaultApp, id: String) -> BackendFuture<'_, ()> {
         let _ = (kind, id);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// The exchange rates the engine holds, for currency conversions; `None`
+    /// when it has none.
+    fn exchange_rates(
+        &self,
+    ) -> BackendFuture<'_, Option<compass_core::exchange_rates::ExchangeRates>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Refresh Exchange Rates: the engine fetches them now. An error is the
+    /// sentence to show.
+    fn refresh_exchange_rates(
+        &self,
+    ) -> BackendFuture<'_, compass_core::exchange_rates::ExchangeRates> {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
@@ -560,6 +584,33 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         let _ = choice;
         Box::pin(async { Err("Choosing files needs the desktop's file chooser".to_owned()) })
     }
+
+    /// Whether a newer Compass release is out (`UpdateService::available`):
+    /// `None` when it is not, or checking is off. Nothing without an engine,
+    /// which is the only one that asks.
+    fn update_status(&self) -> BackendFuture<'_, Option<UpdateOffer>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    /// Never offer the release `tag` again (`skipAvailableVersion`). An
+    /// error is the sentence to show.
+    fn skip_update(&self, tag: String) -> BackendFuture<'_, ()> {
+        let _ = tag;
+        Box::pin(async { Err("Skipping an update needs the Compass engine".to_owned()) })
+    }
+}
+
+/// A newer Compass release, as the root search's Update section offers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateOffer {
+    /// The release's tag, such as `v1.2.0`.
+    pub tag: String,
+    /// The tag without its leading `v`.
+    pub version: String,
+    /// The release page.
+    pub release_url: String,
+    /// The version running, such as `v0.1.0`.
+    pub current: String,
 }
 
 const NEEDS_ENGINE: &str = "Running extension commands needs the Compass engine";

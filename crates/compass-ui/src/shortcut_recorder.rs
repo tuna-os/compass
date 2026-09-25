@@ -18,6 +18,10 @@ pub const RECORDING: &str = "Recording...";
 /// The status line once a combination is accepted.
 pub const UPDATED: &str = "Keybind updated";
 
+/// The status line while the desktop is asked whether it would bind the
+/// combination.
+pub const CHECKING: &str = "Checking...";
+
 /// The hint under the capture area while the item has a shortcut.
 pub const REMOVE_HINT: &str = "Press Backspace to remove the current shortcut";
 
@@ -29,6 +33,9 @@ pub enum Outcome {
     /// Keep this shortcut for the item (empty to clear it) and close the
     /// panel, as `accept`/`clear` then `requestClose` do.
     Save(String),
+    /// Ask the engine whether the desktop would bind this combination
+    /// (`probeBind`), and hand its answer to [`ShortcutRecorder::probed`].
+    Probe(String),
     /// Back to the action list (`navigateBack`).
     Back,
 }
@@ -49,6 +56,8 @@ pub struct ShortcutRecorder {
     /// Whether that line is an error.
     pub error: bool,
     recorder: Recorder,
+    /// The combination the engine is being asked about.
+    probing: Option<String>,
 }
 
 impl ShortcutRecorder {
@@ -69,6 +78,7 @@ impl ShortcutRecorder {
             status: RECORDING.to_owned(),
             error: false,
             recorder: Recorder::default(),
+            probing: None,
         }
     }
 
@@ -128,9 +138,11 @@ impl ShortcutRecorder {
                 };
                 match global_shortcuts::validate(&combo, exclude, launcher_hotkey, bound) {
                     Ok(()) => {
-                        self.status = UPDATED.to_owned();
+                        let trigger = combo.to_config_string();
+                        self.status = CHECKING.to_owned();
                         self.error = false;
-                        Outcome::Save(combo.to_config_string())
+                        self.probing = Some(trigger.clone());
+                        Outcome::Probe(trigger)
                     }
                     Err(reason) => {
                         self.status = reason;
@@ -138,6 +150,29 @@ impl ShortcutRecorder {
                         Outcome::Recording
                     }
                 }
+            }
+        }
+    }
+
+    /// The engine's answer about `trigger`: kept when the desktop would bind
+    /// it, else its refusal shown in the recorder, which keeps recording, as
+    /// `validate` returns `probeBind`'s reason. An answer about a combination
+    /// no longer being asked about changes nothing.
+    pub fn probed(&mut self, trigger: &str, refusal: Option<String>) -> Outcome {
+        if self.probing.as_deref() != Some(trigger) {
+            return Outcome::Recording;
+        }
+        self.probing = None;
+        match refusal {
+            None => {
+                self.status = UPDATED.to_owned();
+                self.error = false;
+                Outcome::Save(trigger.to_owned())
+            }
+            Some(reason) => {
+                self.status = reason;
+                self.error = true;
+                Outcome::Recording
             }
         }
     }
@@ -284,10 +319,48 @@ mod tests {
                 None,
                 NONE
             ),
-            Outcome::Save("control+shift+K".into())
+            Outcome::Probe("control+shift+K".into())
         );
         assert_eq!(recorder.tokens, ["Ctrl", "Shift", "K"]);
+        assert_eq!(recorder.status, CHECKING);
+        assert_eq!(
+            recorder.probed("control+shift+K", None),
+            Outcome::Save("control+shift+K".into())
+        );
         assert_eq!(recorder.status, UPDATED);
+    }
+
+    #[test]
+    fn a_combination_the_desktop_refuses_is_shown_and_recording_goes_on() {
+        let mut recorder = ShortcutRecorder::new("apps:firefox".into(), "Firefox".into(), None);
+        let captured = recorder.key(
+            &press(IcedKey::Character("q".into()), IcedModifiers::LOGO),
+            None,
+            NONE,
+        );
+        assert_eq!(captured, Outcome::Probe("super+Q".into()));
+        assert_eq!(
+            recorder.probed(
+                "super+Q",
+                Some("The compositor has already bound it".into())
+            ),
+            Outcome::Recording
+        );
+        assert_eq!(recorder.status, "The compositor has already bound it");
+        assert!(recorder.error);
+
+        // An answer about an earlier combination is not this one's.
+        let _ = recorder.key(
+            &press(IcedKey::Character("w".into()), IcedModifiers::LOGO),
+            None,
+            NONE,
+        );
+        assert_eq!(recorder.probed("super+Q", None), Outcome::Recording);
+        assert_eq!(recorder.status, CHECKING);
+        assert_eq!(
+            recorder.probed("super+W", None),
+            Outcome::Save("super+W".into())
+        );
     }
 
     #[test]
@@ -319,7 +392,7 @@ mod tests {
                 None,
                 bound
             ),
-            Outcome::Save("F5".into())
+            Outcome::Probe("F5".into())
         );
     }
 
@@ -337,7 +410,7 @@ mod tests {
                 None,
                 NONE
             ),
-            Outcome::Save("SUPER".into())
+            Outcome::Probe("SUPER".into())
         );
     }
 
@@ -413,7 +486,7 @@ mod tests {
                 Some("super+SPACE"),
                 [("apps:files", "Files", "super+F")]
             ),
-            Outcome::Save("super+SPACE".into())
+            Outcome::Probe("super+SPACE".into())
         );
         assert_eq!(
             recorder.key(

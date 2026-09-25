@@ -16,7 +16,7 @@ use compass_shell::{
     Availability, ClipboardContent, DegradedFeature, ShellClient, ShellConfig, ShellError, WindowId,
 };
 use support::bus::{TestBus, start_or_skip};
-use support::mock::{MockOptions, MockShell, MockWindow};
+use support::mock::{MockOptions, MockShell, MockWindow, MockWorkspace};
 use zbus::zvariant::Value;
 
 /// Generous deadline: every await below is event-driven, so a healthy run
@@ -108,6 +108,7 @@ async fn extension_absent_degrades_without_error() {
         degraded,
         vec![
             DegradedFeature::WindowSwitching,
+            DegradedFeature::WorkspaceSwitching,
             DegradedFeature::ClipboardHistory,
             DegradedFeature::Paste,
         ]
@@ -213,6 +214,87 @@ async fn one_sided_extension_degrades_only_that_half() {
 // ---------------------------------------------------------------------------
 // Windows
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn workspaces_are_listed_and_switched_through_the_extension() {
+    let Some(bus) = start_or_skip("workspaces_are_listed_and_switched_through_the_extension")
+    else {
+        return;
+    };
+    let mock = MockShell::start(bus.address(), MockOptions::default())
+        .await
+        .expect("mock");
+    mock.set_workspaces(vec![
+        MockWorkspace::new(0, "Mail").active(),
+        MockWorkspace::new(1, ""),
+    ]);
+
+    let client = client_with(&bus).await;
+    let workspaces = client.list_workspaces().await.expect("list");
+    assert_eq!(
+        workspaces
+            .iter()
+            .map(|w| (w.index, w.name.as_str(), w.active))
+            .collect::<Vec<_>>(),
+        [(0, "Mail", true), (1, "", false)]
+    );
+
+    client.activate_workspace(1).await.expect("switch");
+    assert_eq!(mock.calls(), [("ActivateWorkspace", 1)]);
+    let after = client.list_workspaces().await.expect("list");
+    assert!(after[1].active && !after[0].active);
+}
+
+#[tokio::test]
+async fn an_extension_a_release_behind_switches_windows_but_refuses_workspaces() {
+    let Some(bus) =
+        start_or_skip("an_extension_a_release_behind_switches_windows_but_refuses_workspaces")
+    else {
+        return;
+    };
+    let mock = MockShell::start(
+        bus.address(),
+        MockOptions {
+            version: compass_shell::OLDEST_CONTRACT_VERSION,
+            ..MockOptions::default()
+        },
+    )
+    .await
+    .expect("mock");
+    mock.set_windows(vec![MockWindow::new(3, "firefox", "A tab")]);
+    mock.set_workspaces(vec![MockWorkspace::new(0, "Mail").active()]);
+
+    let client = client_with(&bus).await;
+    let caps = client.capabilities();
+    assert_eq!(
+        caps.windows,
+        Availability::Available {
+            version: compass_shell::OLDEST_CONTRACT_VERSION
+        }
+    );
+    assert_eq!(caps.degraded(), vec![DegradedFeature::WorkspaceSwitching]);
+    assert_eq!(client.list_windows().await.expect("windows").len(), 1);
+
+    match client.list_workspaces().await {
+        Err(ShellError::TooOld {
+            method: "ListWorkspaces",
+            found,
+            needed,
+        }) => {
+            assert_eq!(found, compass_shell::OLDEST_CONTRACT_VERSION);
+            assert_eq!(needed, compass_shell::WORKSPACES_SINCE);
+        }
+        other => panic!("expected TooOld, got {other:?}"),
+    }
+    assert!(matches!(
+        client.activate_workspace(0).await,
+        Err(ShellError::TooOld { .. })
+    ));
+    assert!(
+        mock.calls().is_empty(),
+        "nothing was asked of an old extension"
+    );
+}
 
 #[tokio::test]
 async fn window_list_round_trips_empty() {

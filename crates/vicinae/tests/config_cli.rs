@@ -34,7 +34,7 @@ fn migrate_writes_vicinae_json_and_leaves_the_cpp_file_alone() {
     let home = tempfile::tempdir().unwrap();
     let dir = home.path().join("vicinae");
     std::fs::create_dir_all(&dir).unwrap();
-    let settings = "// written by the C++ engine\n{ \"keybinding\": \"emacs\", \"tray\": { \"enabled\": false } }\n";
+    let settings = "// written by the C++ engine\n{ \"keybinding\": \"emacs\", \"tray\": { \"enabled\": false }, \"pop_to_root_on_close\": true }\n";
     std::fs::write(dir.join("settings.json"), settings).unwrap();
 
     let dry = run(home.path(), &["config", "migrate"]);
@@ -48,8 +48,9 @@ fn migrate_writes_vicinae_json_and_leaves_the_cpp_file_alone() {
         report.contains("keybinding -> launcher.keybinding"),
         "{report}"
     );
+    assert!(report.contains("tray.enabled -> tray.enabled"), "{report}");
     assert!(
-        report.contains("tray.enabled: no vicinae.json equivalent"),
+        report.contains("pop_to_root_on_close: no vicinae.json equivalent"),
         "{report}"
     );
 
@@ -60,6 +61,7 @@ fn migrate_writes_vicinae_json_and_leaves_the_cpp_file_alone() {
     );
     let written = compass_core::Config::load_from(dir.join("vicinae.json")).unwrap();
     assert_eq!(written.launcher().keybinding(), "emacs");
+    assert!(!written.tray().enabled());
     assert_eq!(
         std::fs::read_to_string(dir.join("settings.json")).unwrap(),
         settings

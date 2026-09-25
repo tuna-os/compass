@@ -33,7 +33,69 @@ pub fn answer_copied() -> crate::hud::Hud {
     crate::hud::Hud::new("Answer copied to clipboard").with_icon(crate::hud::COPY_ICON)
 }
 
+/// Refresh Exchange Rates' HUD while it fetches, as the C++'s dynamic
+/// "Refreshing rates..." toast.
+#[must_use]
+pub fn refreshing_rates() -> crate::hud::Hud {
+    crate::hud::Hud::new("Refreshing rates...").with_icon(RATES_ICON)
+}
+
+/// Refresh Exchange Rates' HUD on success, as the C++'s success toast.
+#[must_use]
+pub fn rates_refreshed() -> crate::hud::Hud {
+    crate::hud::Hud::new("Rates successfully refreshed").with_icon(RATES_ICON)
+}
+
+/// Refresh Exchange Rates' HUD on failure: the C++'s failure toast carries
+/// the error alone.
+#[must_use]
+pub fn rates_not_refreshed(reason: &str) -> crate::hud::Hud {
+    crate::hud::Hud::new(reason.to_owned()).with_icon("warning")
+}
+
+const RATES_ICON: &str = "globe-01";
+
+/// Makes `rates` the ones the calculator converts currencies with. An
+/// engine never gives rates up once it has some, so "none" changes nothing.
+fn install_rates(rates: compass_core::exchange_rates::ExchangeRates) {
+    if compass_core::calculator::exchange_rates().is_none_or(|current| *current != rates) {
+        compass_core::calculator::set_exchange_rates(Some(std::sync::Arc::new(rates)));
+    }
+}
+
 impl LauncherApp {
+    /// Asks the engine for its exchange rates, as the window opens, so a
+    /// refresh the engine made meanwhile reaches the calculator.
+    pub(super) fn exchange_rates_task(&self) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.exchange_rates().await },
+            Message::ExchangeRatesLoaded,
+        )
+    }
+
+    /// Refresh Exchange Rates, as `CalculatorRefreshRatesCommand`: the
+    /// engine fetches them, and the HUD says how it went.
+    pub(super) fn refresh_exchange_rates(
+        &mut self,
+        command: &'static compass_core::commands::BuiltinCommand,
+    ) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            self.error = Some(format!(
+                "{} needs the Compass engine, and this window is running without one",
+                command.title
+            ));
+            return Task::none();
+        };
+        let refresh = Task::perform(
+            async move { backend.refresh_exchange_rates().await },
+            Message::ExchangeRatesRefreshed,
+        );
+        Task::batch([self.show_hud(refreshing_rates()), refresh])
+    }
+
     /// Opens Calculator History and asks for the rows.
     pub(super) fn open_calculator_history(&mut self) -> Task<Message> {
         self.page = Page::Calculator(CalculatorPage::default());
@@ -244,6 +306,28 @@ impl LauncherApp {
                     page.selected = position;
                 }
                 self.copy_selected_calculation()
+            }
+            Message::ExchangeRatesLoaded(result) => {
+                match result {
+                    Ok(Some(rates)) => install_rates(rates),
+                    Ok(None) => {}
+                    Err(error) => tracing::debug!(%error, "no exchange rates from the engine"),
+                }
+                Task::none()
+            }
+            Message::ExchangeRatesRefreshed(result) => {
+                let hud = match result {
+                    Ok(rates) => {
+                        install_rates(rates);
+                        rates_refreshed()
+                    }
+                    Err(reason) => {
+                        let hud = rates_not_refreshed(&reason);
+                        self.error = Some(reason);
+                        hud
+                    }
+                };
+                self.show_hud(hud)
             }
             Message::CalculatorEdited(result) => {
                 if let Page::Calculator(page) = &mut self.page {

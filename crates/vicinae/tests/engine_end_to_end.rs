@@ -37,6 +37,10 @@ const NO_SESSION_BUS: &str = "unix:path=/nonexistent/compass-test-no-session-bus
 /// catching.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A release feed nothing listens on (the discard port), so an engine a
+/// test starts never asks GitHub.
+const NO_UPDATE_FEED: &str = "http://127.0.0.1:9/releases/latest";
+
 fn binary() -> PathBuf {
     // The integration-test binary lives next to the crate's binaries.
     let mut path = std::env::current_exe().expect("test binary path");
@@ -57,12 +61,14 @@ fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
         .arg(socket.as_path())
         .args(["serve", "--no-hotkey"])
         .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+        .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
         .env("XDG_DATA_HOME", dir.path().join("data"))
         .env("XDG_DATA_DIRS", dir.path().join("empty"))
         .env("XDG_CONFIG_HOME", dir.path().join("config"))
         .env("XDG_CACHE_HOME", dir.path().join(".cache"))
         .env("HOME", dir.path())
         .env_remove("XDG_STATE_HOME")
+        .env("VICINAE_UPDATE_FEED_URL", NO_UPDATE_FEED)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -218,10 +224,22 @@ impl Daemon {
             .env_remove("https_proxy")
             .env_remove("all_proxy")
             .env("NO_PROXY", "127.0.0.1,localhost")
+            // Nor the ECB: no exchange rates are fetched unless a test
+            // serves its own and turns the refresh back on.
+            .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
+            .env(
+                "COMPASS_EXCHANGE_RATES_URL",
+                "http://127.0.0.1:9/no-network",
+            )
             // Nor the machine's keyboards: a helper that exits at once
             // stands in for vicinae-input-server unless a test brings its
             // own fake.
             .env("VICINAE_INPUT_SERVER_BIN", "/bin/true")
+            // Nor GitHub: the update check asks a closed local port unless a
+            // test brings its own feed.
+            .env("VICINAE_UPDATE_FEED_URL", NO_UPDATE_FEED)
+            // Nor its supervisor: under systemd the tray has no Quit.
+            .env_remove("INVOCATION_ID")
             .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -935,6 +953,7 @@ fn a_second_engine_on_the_same_socket_refuses_to_start() {
         .arg(&daemon.socket)
         .arg("serve")
         .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+        .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
         .env("HOME", daemon._dirs.path())
         .env_remove("XDG_STATE_HOME")
         .output()
@@ -5867,6 +5886,158 @@ fn killed(child: &mut Child) -> bool {
     false
 }
 
+/// Asks `request` until the engine, which reaches the Shell extension in the
+/// background, answers something `done` accepts.
+fn until_answered(
+    daemon: &Daemon,
+    request: &compass_ipc::Request,
+    done: impl Fn(&compass_ipc::Response) -> bool,
+) -> compass_ipc::Response {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    loop {
+        let response = daemon.request(request.clone());
+        if done(&response) {
+            return response;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the engine never reached the extension: {response:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension() {
+    use compass_ipc::{Request, Response};
+    use shell_mock::{MockOptions, MockShell, MockWindow, MockWorkspace};
+    let Some(bus) = shell_bus::start_or_skip(
+        "on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension",
+    ) else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let shell = runtime
+        .block_on(MockShell::start(bus.address(), MockOptions::default()))
+        .expect("the mock shell");
+    shell.set_workspaces(vec![
+        MockWorkspace::new(0, "Mail").active(),
+        MockWorkspace::new(1, ""),
+    ]);
+    shell.set_windows(vec![
+        MockWindow::new(1, "firefox", "Inbox").focused(),
+        MockWindow::new(2, "firefox", "Docs"),
+        MockWindow {
+            workspace: Some(1),
+            ..MockWindow::new(3, "unknown-app", "Elsewhere")
+        },
+    ]);
+    let address = bus.address().to_owned();
+    let daemon = Daemon::start_prepared(
+        &[(
+            "firefox.desktop",
+            &entry("Firefox", "StartupWMClass=firefox\nIcon=firefox\n"),
+        )],
+        "{}",
+        move |_| vec![("DBUS_SESSION_BUS_ADDRESS", address.into())],
+    );
+
+    let caps = until_answered(
+        &daemon,
+        &Request::WindowManagerCapabilities,
+        |r| matches!(r, Response::WindowManagerCapabilities(caps) if caps.workspaces),
+    );
+    let Response::WindowManagerCapabilities(caps) = caps else {
+        unreachable!()
+    };
+    assert!(
+        !caps.fullscreen && !caps.floating && !caps.overview,
+        "GNOME offers Switch Workspaces only: {caps:?}"
+    );
+
+    let Response::Workspaces { workspaces } = daemon.request(Request::ListWorkspaces) else {
+        panic!("no workspaces");
+    };
+    assert_eq!(
+        workspaces
+            .iter()
+            .map(|w| (w.id.as_str(), w.name.as_str(), w.window_count, w.active))
+            .collect::<Vec<_>>(),
+        [("0", "Mail", 2, true), ("1", "2", 1, false)],
+        "named by GNOME, else counted from one"
+    );
+    assert_eq!(
+        workspaces[0]
+            .apps
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Firefox"],
+        "each application once"
+    );
+
+    assert_eq!(
+        daemon.request(Request::FocusWorkspace { id: "1".into() }),
+        Response::Ack
+    );
+    assert_eq!(shell.calls(), [("ActivateWorkspace", 1)]);
+    let Response::Workspaces { workspaces } = daemon.request(Request::ListWorkspaces) else {
+        panic!("no workspaces");
+    };
+    assert!(workspaces[1].active && !workspaces[0].active);
+    drop(daemon);
+}
+
+#[test]
+fn an_extension_a_release_behind_offers_no_switch_workspaces_and_says_to_update() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use shell_mock::{MockOptions, MockShell, MockWindow};
+    let Some(bus) = shell_bus::start_or_skip(
+        "an_extension_a_release_behind_offers_no_switch_workspaces_and_says_to_update",
+    ) else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let shell = runtime
+        .block_on(MockShell::start(
+            bus.address(),
+            MockOptions {
+                version: 3,
+                ..MockOptions::default()
+            },
+        ))
+        .expect("the mock shell");
+    shell.set_windows(vec![MockWindow::new(1, "firefox", "Inbox").focused()]);
+    let address = bus.address().to_owned();
+    let daemon = Daemon::start_prepared(&[], "{}", move |_| {
+        vec![("DBUS_SESSION_BUS_ADDRESS", address.into())]
+    });
+
+    // Window switching still works with the older extension.
+    until_answered(
+        &daemon,
+        &Request::ListWindows,
+        |r| matches!(r, Response::Windows { windows } if windows.len() == 1),
+    );
+    assert_eq!(
+        daemon.request(Request::WindowManagerCapabilities),
+        Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities::default())
+    );
+    match daemon.request(Request::ListWorkspaces) {
+        Response::Error(err) => {
+            assert_eq!(err.kind, ErrorKind::Unsupported);
+            assert!(
+                err.message.contains("Update the extension"),
+                "{}",
+                err.message
+            );
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(shell.calls().is_empty());
+    drop(daemon);
+}
+
 #[test]
 fn quit_closes_an_applications_windows_and_force_quit_kills_their_processes() {
     use compass_ipc::{ErrorKind, Request, Response};
@@ -6267,6 +6438,34 @@ fn the_tray_host_lists_activates_and_browses_another_applications_item() {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         assert!(registered, "the engine never served the watcher");
+        // Compass's own icon registers with the same watcher; wait for it,
+        // so the list below is asked with both there.
+        let watcher = zbus::fdo::PropertiesProxy::builder(&connection)
+            .destination("org.kde.StatusNotifierWatcher")
+            .unwrap()
+            .path("/StatusNotifierWatcher")
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let mut both = false;
+        for _ in 0..200 {
+            let items = watcher
+                .get(
+                    zbus::names::InterfaceName::try_from("org.kde.StatusNotifierWatcher").unwrap(),
+                    "RegisteredStatusNotifierItems",
+                )
+                .await
+                .ok()
+                .and_then(|value| Vec::<String>::try_from(value).ok())
+                .unwrap_or_default();
+            if items.len() >= 2 {
+                both = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(both, "Compass's own icon never registered");
         connection
     });
 
@@ -6343,6 +6542,308 @@ fn the_tray_host_lists_activates_and_browses_another_applications_item() {
     );
     assert!(calls.contains(&"AboutToShow".to_owned()), "{calls:?}");
     assert!(calls.contains(&"Event 3 clicked".to_owned()), "{calls:?}");
+}
+
+/// A desktop's `StatusNotifierWatcher` on a private bus, recording each item
+/// that registers.
+mod fake_watcher {
+    use std::sync::{Arc, Mutex};
+
+    /// `(the name it registered, the connection it came from)`.
+    pub type Registered = Arc<Mutex<Vec<(String, String)>>>;
+
+    pub struct Watcher {
+        pub registered: Registered,
+    }
+
+    #[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
+    impl Watcher {
+        fn register_status_notifier_item(
+            &self,
+            service: String,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+        ) {
+            let sender = header.sender().map(ToString::to_string).unwrap_or_default();
+            self.registered.lock().unwrap().push((service, sender));
+        }
+        fn register_status_notifier_host(&self, _service: String) {}
+        #[zbus(property)]
+        fn registered_status_notifier_items(&self) -> Vec<String> {
+            self.registered
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(service, _)| service.clone())
+                .collect()
+        }
+        #[zbus(property)]
+        fn is_status_notifier_host_registered(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn protocol_version(&self) -> i32 {
+            0
+        }
+    }
+}
+
+#[test]
+fn compass_shows_its_own_tray_icon_with_the_cpp_menu_as_the_setting_says() {
+    use compass_ipc::{Request, Response, WindowCommand};
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader};
+    use zbus::zvariant::{OwnedValue, Value};
+
+    let mut bus = match Command::new("dbus-daemon")
+        .args(["--session", "--print-address", "--nofork"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(bus) => bus,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("SKIPPED: no dbus-daemon on this machine");
+            return;
+        }
+        Err(err) => panic!("failed to spawn dbus-daemon: {err}"),
+    };
+    let mut address = String::new();
+    BufReader::new(bus.stdout.take().expect("piped stdout"))
+        .read_line(&mut address)
+        .expect("dbus-daemon prints its address");
+    let address = address.trim().to_owned();
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let registered = fake_watcher::Registered::default();
+    // The desktop's watcher is there before the engine, as it is in a
+    // session: the engine's own host then leaves the name alone.
+    let connection = runtime.block_on(async {
+        zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name("org.kde.StatusNotifierWatcher")
+            .unwrap()
+            .serve_at(
+                "/StatusNotifierWatcher",
+                fake_watcher::Watcher {
+                    registered: registered.clone(),
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .expect("the fake watcher owns its name on the private bus")
+    });
+
+    let mut daemon = Daemon::start_prepared(
+        &[("a.desktop", &entry("Alpha", ""))],
+        r#"{"tray": {"enabled": false}}"#,
+        |_| vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())],
+    );
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+    let wait_for = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let set_tray = |on: bool| {
+        assert_eq!(
+            daemon.request(Request::SetSetting {
+                key: "tray.enabled".to_owned(),
+                value_json: on.to_string(),
+            }),
+            Response::Ack
+        );
+    };
+
+    // Off in the file: nothing registers.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(registered.lock().unwrap().is_empty(), "the icon is off");
+
+    // Turned on from the settings view: shown at once.
+    set_tray(true);
+    wait_for("the icon to register", &|| {
+        !registered.lock().unwrap().is_empty()
+    });
+    let (service, sender) = registered.lock().unwrap()[0].clone();
+    assert!(
+        service.starts_with("org.kde.StatusNotifierItem-"),
+        "the specification's name: {service}"
+    );
+
+    let (id, title, menu_path, labels) = runtime.block_on(async {
+        let item = zbus::fdo::PropertiesProxy::builder(&connection)
+            .destination(service.as_str())
+            .unwrap()
+            .path("/StatusNotifierItem")
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let iface = zbus::names::InterfaceName::try_from("org.kde.StatusNotifierItem").unwrap();
+        let id = String::try_from(item.get(iface.clone(), "Id").await.unwrap()).unwrap();
+        let title = String::try_from(item.get(iface.clone(), "Title").await.unwrap()).unwrap();
+        let menu = zbus::zvariant::OwnedObjectPath::try_from(
+            item.get(iface.clone(), "Menu").await.unwrap(),
+        )
+        .unwrap();
+        connection
+            .call_method(
+                Some(service.as_str()),
+                "/StatusNotifierItem",
+                Some("org.kde.StatusNotifierItem"),
+                "Activate",
+                &(0i32, 0i32),
+            )
+            .await
+            .expect("Activate");
+        let reply = connection
+            .call_method(
+                Some(service.as_str()),
+                menu.as_str(),
+                Some("com.canonical.dbusmenu"),
+                "GetGroupProperties",
+                &(Vec::<i32>::new(), vec!["label".to_owned()]),
+            )
+            .await
+            .expect("GetGroupProperties");
+        let mut entries: Vec<(i32, HashMap<String, OwnedValue>)> =
+            reply.body().deserialize().unwrap();
+        entries.sort_by_key(|(id, _)| *id);
+        let labels: Vec<(i32, String)> = entries
+            .into_iter()
+            .filter_map(|(id, properties)| {
+                let label = properties.get("label")?;
+                Some((id, String::try_from(label.try_clone().ok()?).ok()?))
+            })
+            .collect();
+        (id, title, menu, labels)
+    });
+    assert_eq!(id, "com.vicinae.Vicinae");
+    assert_eq!(title, "Compass");
+    let texts: Vec<&str> = labels.iter().map(|(_, label)| label.as_str()).collect();
+    let version = format!("Compass {}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        texts,
+        [
+            "Toggle Compass",
+            version.as_str(),
+            "About Compass",
+            "Settings…",
+            "Sponsor Vicinae",
+            "Join the Discord",
+            "Follow on X",
+            "Quit Compass",
+        ]
+    );
+    let entry = |label: &str| {
+        labels
+            .iter()
+            .find(|(_, text)| text == label)
+            .map(|(id, _)| *id)
+            .unwrap()
+    };
+    let click = |id: i32| {
+        runtime.block_on(async {
+            connection
+                .call_method(
+                    Some(service.as_str()),
+                    menu_path.as_str(),
+                    Some("com.canonical.dbusmenu"),
+                    "Event",
+                    &(id, "clicked", Value::from(0i32), 0u32),
+                )
+                .await
+                .expect("Event");
+        });
+    };
+    click(entry("Settings…"));
+    click(entry("About Compass"));
+    click(entry("Toggle Compass"));
+    wait_for("the window to be told", &|| window.seen().len() >= 4);
+    assert_eq!(
+        window.seen(),
+        [
+            WindowCommand::Toggle,
+            WindowCommand::Deeplink("vicinae://settings/open".to_owned()),
+            WindowCommand::Deeplink("vicinae://settings/open?tab=about".to_owned()),
+            WindowCommand::Toggle,
+        ]
+    );
+
+    // Turned off: the item leaves the bus. On again: it comes back.
+    let has_owner = |name: &str| {
+        runtime.block_on(async {
+            zbus::fdo::DBusProxy::new(&connection)
+                .await
+                .unwrap()
+                .name_has_owner(zbus::names::BusName::try_from(name).unwrap())
+                .await
+                .unwrap()
+        })
+    };
+    assert!(has_owner(&sender));
+    set_tray(false);
+    wait_for("the icon to leave", &|| !has_owner(&sender));
+    set_tray(true);
+    wait_for("the icon to come back", &|| {
+        registered.lock().unwrap().len() == 2
+    });
+    let (service, _) = registered.lock().unwrap()[1].clone();
+
+    // Quit stops the engine, as `vicinae shutdown` does.
+    let quit = runtime.block_on(async {
+        let reply = connection
+            .call_method(
+                Some(service.as_str()),
+                menu_path.as_str(),
+                Some("com.canonical.dbusmenu"),
+                "GetGroupProperties",
+                &(Vec::<i32>::new(), vec!["label".to_owned()]),
+            )
+            .await
+            .unwrap();
+        let entries: Vec<(i32, HashMap<String, OwnedValue>)> = reply.body().deserialize().unwrap();
+        entries
+            .into_iter()
+            .find(|(_, properties)| {
+                properties
+                    .get("label")
+                    .and_then(|label| String::try_from(label.try_clone().ok()?).ok())
+                    .is_some_and(|label| label == "Quit Compass")
+            })
+            .map(|(id, _)| id)
+            .unwrap()
+    });
+    runtime.block_on(async {
+        connection
+            .call_method(
+                Some(service.as_str()),
+                menu_path.as_str(),
+                Some("com.canonical.dbusmenu"),
+                "Event",
+                &(quit, "clicked", Value::from(0i32), 0u32),
+            )
+            .await
+            .expect("Event");
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = daemon.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "Quit did not stop the engine");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "a clean stop: {status:?}");
+    drop(window);
+    let _ = bus.kill();
+    let _ = bus.wait();
 }
 
 #[test]
@@ -6437,5 +6938,267 @@ fn a_files_panel_learns_its_mime_type_and_an_appimage_is_made_executable_and_run
             path: home.join("gone.png").to_string_lossy().into_owned(),
         }),
         Response::Error(e) if e.kind == ErrorKind::BadRequest
+    ));
+}
+
+// ---- The update check, against a local feed ----
+
+/// A local stand-in for `api.github.com/repos/tuna-os/compass/releases/latest`,
+/// counting how often it is asked.
+struct FakeFeed {
+    url: String,
+    asked: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    _server: std::sync::Arc<tiny_http::Server>,
+}
+
+impl FakeFeed {
+    fn start(tag: &'static str) -> FakeFeed {
+        let server =
+            std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("fake feed"));
+        let port = server.server_addr().to_ip().expect("ip").port();
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (thread_server, count) = (
+            std::sync::Arc::clone(&server),
+            std::sync::Arc::clone(&asked),
+        );
+        std::thread::spawn(move || {
+            for request in thread_server.incoming_requests() {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = serde_json::json!({
+                    "tag_name": tag,
+                    "html_url": format!("https://github.com/tuna-os/compass/releases/tag/{tag}"),
+                    "draft": false,
+                    "prerelease": false,
+                    "assets": [],
+                })
+                .to_string();
+                let _ = request.respond(tiny_http::Response::from_string(body));
+            }
+        });
+        FakeFeed {
+            url: format!("http://127.0.0.1:{port}/repos/tuna-os/compass/releases/latest"),
+            asked,
+            _server: server,
+        }
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn start_engine(&self, config: &str) -> Daemon {
+        let url = self.url.clone();
+        Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], config, move |_| {
+            vec![
+                ("VICINAE_UPDATE_FEED_URL", url.into()),
+                ("VICINAE_UPDATE_VERSION", "v0.1.0".into()),
+            ]
+        })
+    }
+}
+
+fn update_status(daemon: &Daemon) -> (String, Option<compass_ipc::UpdateOffer>) {
+    let compass_ipc::Response::UpdateStatus { current, available } =
+        daemon.request(compass_ipc::Request::UpdateStatus)
+    else {
+        panic!("no update status");
+    };
+    (current, available)
+}
+
+#[test]
+fn a_newer_release_is_offered_once_checked_and_skipping_it_is_remembered() {
+    let feed = FakeFeed::start("v0.2.0");
+    let daemon = feed.start_engine("{}");
+
+    let (current, offer) = update_status(&daemon);
+    assert_eq!(current, "v0.1.0");
+    let offer = offer.expect("offered");
+    assert_eq!(offer.tag, "v0.2.0");
+    assert_eq!(offer.version, "0.2.0");
+    assert_eq!(
+        offer.release_url,
+        "https://github.com/tuna-os/compass/releases/tag/v0.2.0"
+    );
+    assert!(update_status(&daemon).1.is_some());
+    assert_eq!(feed.asked(), 1, "the second answer came from the cache");
+    assert!(
+        daemon
+            ._dirs
+            .path()
+            .join(".cache/vicinae/latest-release.json")
+            .is_file(),
+        "the check is remembered under the cache directory"
+    );
+
+    assert_eq!(
+        daemon.request(compass_ipc::Request::SkipUpdate {
+            tag: "v0.2.0".into()
+        }),
+        compass_ipc::Response::Ack
+    );
+    assert_eq!(update_status(&daemon).1, None, "skipped");
+    let state = std::fs::read_to_string(
+        daemon
+            ._dirs
+            .path()
+            .join(".local/state/vicinae/updates.json"),
+    )
+    .expect("the state file");
+    assert!(state.contains("\"skippedVersion\":\"v0.2.0\""), "{state}");
+}
+
+#[test]
+fn with_update_checks_off_the_feed_is_never_asked() {
+    let feed = FakeFeed::start("v0.2.0");
+    let daemon = feed.start_engine(r#"{"launcher": {"check_for_updates": false}}"#);
+    assert_eq!(update_status(&daemon).1, None);
+    assert_eq!(feed.asked(), 0);
+}
+
+// ---- The calculator's exchange rates, against a local fake ECB ----
+
+const ECB_FIXTURE: &str = include_str!("../../compass-core/tests/fixtures/eurofxref-daily.xml");
+
+/// A local stand-in for the ECB's daily file, which can be made to fail.
+struct FakeEcb {
+    url: String,
+    failing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    fetches: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    _server: std::sync::Arc<tiny_http::Server>,
+}
+
+impl FakeEcb {
+    fn start() -> FakeEcb {
+        use std::sync::atomic::Ordering;
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("fake ECB"));
+        let port = server.server_addr().to_ip().expect("ip").port();
+        let failing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let fetches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (thread_server, thread_failing, thread_fetches) = (
+            std::sync::Arc::clone(&server),
+            std::sync::Arc::clone(&failing),
+            std::sync::Arc::clone(&fetches),
+        );
+        std::thread::spawn(move || {
+            for request in thread_server.incoming_requests() {
+                thread_fetches.fetch_add(1, Ordering::SeqCst);
+                let response = if thread_failing.load(Ordering::SeqCst) {
+                    tiny_http::Response::from_data(b"unavailable".to_vec()).with_status_code(503)
+                } else {
+                    tiny_http::Response::from_data(ECB_FIXTURE.as_bytes().to_vec())
+                };
+                let _ = request.respond(response);
+            }
+        });
+        FakeEcb {
+            url: format!("http://127.0.0.1:{port}/stats/eurofxref/eurofxref-daily.xml"),
+            failing,
+            fetches,
+            _server: server,
+        }
+    }
+}
+
+fn exchange_rates(daemon: &Daemon) -> Option<compass_ipc::ExchangeRateTable> {
+    match daemon.request(compass_ipc::Request::ExchangeRates) {
+        compass_ipc::Response::ExchangeRates { rates } => rates,
+        other => panic!("unexpected answer: {other:?}"),
+    }
+}
+
+#[test]
+fn the_engine_fetches_the_ecb_rates_at_start_caches_them_and_keeps_them_when_a_refresh_fails() {
+    use std::sync::atomic::Ordering;
+    let ecb = FakeEcb::start();
+    let url = ecb.url.clone();
+    let daemon = Daemon::start_prepared(&[], "{}", move |_| {
+        vec![
+            ("VICINAE_DISABLE_AUTO_RATE_REFRESH", "".into()),
+            ("COMPASS_EXCHANGE_RATES_URL", url.into()),
+        ]
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let rates = loop {
+        if let Some(rates) = exchange_rates(&daemon) {
+            break rates;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the rates were never fetched at start"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(rates.date, "2026-09-24");
+    assert!(
+        rates
+            .rates
+            .contains(&("USD".to_owned(), "1.1367".to_owned()))
+    );
+    assert!(rates.rates.contains(&("EUR".to_owned(), "1".to_owned())));
+    let cache = daemon
+        ._dirs
+        .path()
+        .join(".cache/compass/exchange-rates.json");
+    assert!(
+        cache.is_file(),
+        "the rates are cached under Compass's cache dir"
+    );
+
+    match daemon.request(compass_ipc::Request::RefreshExchangeRates) {
+        compass_ipc::Response::ExchangeRates { rates: Some(fresh) } => {
+            assert_eq!(fresh.date, "2026-09-24");
+            assert!(fresh.fetched_at >= rates.fetched_at);
+        }
+        other => panic!("unexpected answer: {other:?}"),
+    }
+    assert_eq!(
+        ecb.fetches.load(Ordering::SeqCst),
+        2,
+        "start, then the forced refresh"
+    );
+
+    ecb.failing.store(true, Ordering::SeqCst);
+    match daemon.request(compass_ipc::Request::RefreshExchangeRates) {
+        compass_ipc::Response::Error(error) => {
+            assert!(
+                error
+                    .message
+                    .contains("could not refresh the exchange rates"),
+                "{error:?}"
+            );
+        }
+        other => panic!("a failed refresh must say so: {other:?}"),
+    }
+    assert_eq!(
+        exchange_rates(&daemon).map(|rates| rates.date),
+        Some("2026-09-24".to_owned()),
+        "the rates held survive a failed refresh"
+    );
+}
+
+#[test]
+fn an_offline_engine_answers_with_the_cached_rates_or_none() {
+    let cached = compass_core::exchange_rates::parse_ecb(ECB_FIXTURE, 1).unwrap();
+    let daemon = Daemon::start_prepared(&[], "{}", move |root| {
+        let path = compass_core::exchange_rates::cache_path(&root.join(".cache"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&cached).unwrap()).unwrap();
+        Vec::new()
+    });
+    let rates = exchange_rates(&daemon).expect("the cached rates");
+    assert_eq!(rates.date, "2026-09-24");
+    assert_eq!(rates.fetched_at, 1);
+
+    let empty = Daemon::start(&[]);
+    assert_eq!(
+        exchange_rates(&empty),
+        None,
+        "no cache and no network: no rates"
+    );
+    assert!(matches!(
+        empty.request(compass_ipc::Request::RefreshExchangeRates),
+        compass_ipc::Response::Error(_)
     ));
 }

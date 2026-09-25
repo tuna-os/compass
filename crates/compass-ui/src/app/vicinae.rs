@@ -100,7 +100,7 @@ impl LauncherApp {
 
     /// Opens `url` in the browser and hides with "Opened in browser", as
     /// `BuiltinUrlCommand`.
-    fn open_link(&mut self, url: String) -> Task<Message> {
+    pub(super) fn open_link(&mut self, url: String) -> Task<Message> {
         let Some(backend) = self.backend.clone() else {
             return self.say_in_root("Opening a link needs the Compass engine".to_owned());
         };

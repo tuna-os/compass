@@ -317,6 +317,10 @@ pub enum Message {
     LaunchFetched(Result<crate::backend::ExtensionLaunch, String>),
     /// The subtitles extensions set for their commands arrived.
     ExtensionSubtitlesLoaded(Result<Vec<(String, String)>, String>),
+    /// The engine's answer to whether a newer Compass release is out.
+    UpdateStatusLoaded(Result<Option<crate::backend::UpdateOffer>, String>),
+    /// "Skip This Version" finished for the tag.
+    UpdateSkipped(String, Result<(), String>),
     /// A command's preferences form arrived, to edit without running it.
     PreferencesOpened {
         /// The command's root id.
@@ -419,6 +423,10 @@ pub enum Message {
     CalculatorSelected(usize),
     /// A pin, unpin or removal finished, with what to say.
     CalculatorEdited(Result<&'static str, String>),
+    /// The engine's exchange rates arrived, for currency conversions.
+    ExchangeRatesLoaded(Result<Option<compass_core::exchange_rates::ExchangeRates>, String>),
+    /// Refresh Exchange Rates finished.
+    ExchangeRatesRefreshed(Result<compass_core::exchange_rates::ExchangeRates, String>),
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must
@@ -579,4 +587,7 @@ pub enum Message {
     /// The engine's answer to the recorder suspending or resuming the
     /// global shortcuts.
     ShortcutCaptureSet(Result<(), String>),
+    /// The engine's answer to the recorder asking whether the desktop would
+    /// bind a combination: the combination, and the refusal if any.
+    ShortcutProbed(String, Result<Option<String>, String>),
 }

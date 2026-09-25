@@ -86,8 +86,14 @@ use serde::{Deserialize, Serialize};
 /// [`Request::LocalStorageItems`], [`Request::OAuthTokenSets`],
 /// [`Request::RemoveOAuthTokenSet`]); version 20, the shortcut recorder
 /// suspending the global shortcuts while it captures
-/// ([`Request::ShortcutCapture`]).
-pub const PROTOCOL_VERSION: u16 = 20;
+/// ([`Request::ShortcutCapture`]); version 21, the update check: whether a
+/// newer Compass release is out ([`Request::UpdateStatus`],
+/// [`Response::UpdateStatus`]) and skipping it ([`Request::SkipUpdate`]), and currency conversion's exchange rates
+/// ([`Request::ExchangeRates`], [`Request::RefreshExchangeRates`], both
+/// answered with [`Response::ExchangeRates`]), and the recorder asking whether the
+/// desktop would bind a combination ([`Request::ProbeShortcut`],
+/// [`Response::ShortcutProbe`]).
+pub const PROTOCOL_VERSION: u16 = 21;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1002,6 +1008,57 @@ pub enum Request {
         /// Whether the recorder is capturing.
         capturing: bool,
     },
+    /// Whether a newer Compass release is out, as the root search's Update
+    /// section shows it (`UpdateService::available`). The engine asks the
+    /// release feed when its last answer is older than six hours and
+    /// `launcher.check_for_updates` is on. Answered with
+    /// [`Response::UpdateStatus`]. (v21.)
+    UpdateStatus,
+    /// Never offer the release `tag` again (`skipAvailableVersion`).
+    /// Answered with [`Response::Ack`]. (v21.)
+    SkipUpdate {
+        /// The release's tag, as [`UpdateOffer::tag`] gave it.
+        tag: String,
+    },
+    /// The exchange rates the engine holds, for the calculator's currency
+    /// conversions. Answered with [`Response::ExchangeRates`]. (v21.)
+    ExchangeRates,
+    /// Refresh Exchange Rates: fetch the rates now, whatever their age.
+    /// Answered with [`Response::ExchangeRates`] holding the fresh rates, or
+    /// an error saying why the fetch failed (the rates held are kept).
+    /// (v21.)
+    RefreshExchangeRates,
+    /// The shortcut recorder captured `trigger`: would the desktop bind it
+    /// (`GlobalShortcutService::probeBind`)? Asked while capturing, so the
+    /// probe binds and releases it at once. Answered with
+    /// [`Response::ShortcutProbe`]. (v21.)
+    ProbeShortcut {
+        /// The combination, as the configuration spells it.
+        trigger: String,
+    },
+}
+
+/// A newer Compass release, in a [`Response::UpdateStatus`]. (v21.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateOffer {
+    /// The release's tag, such as `v1.2.0`.
+    pub tag: String,
+    /// The tag without its leading `v`, for showing.
+    pub version: String,
+    /// The release page.
+    pub release_url: String,
+}
+
+/// Currency exchange rates: one day of the ECB's reference rates. (v21.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExchangeRateTable {
+    /// The ECB's reference date, `YYYY-MM-DD`.
+    pub date: String,
+    /// When the engine fetched them, in seconds since the epoch.
+    pub fetched_at: i64,
+    /// `(ISO 4217 code, units per euro)`, the rate as decimal text that
+    /// reads back to the same `f64`, so the table stays `Eq`.
+    pub rates: Vec<(String, String)>,
 }
 
 /// Answer to [`Request::FileActions`]. (v18.)
@@ -1480,6 +1537,27 @@ pub enum Response {
     OAuthTokenSets {
         /// The token sets.
         sets: Vec<OAuthTokenSetEntry>,
+    },
+    /// Answer to [`Request::UpdateStatus`]. (v21.)
+    UpdateStatus {
+        /// The version the engine is, such as `v0.1.0`.
+        current: String,
+        /// The newer release, or `None`: up to date, checking off, or the
+        /// feed not reached.
+        available: Option<UpdateOffer>,
+    },
+    /// Answer to [`Request::ExchangeRates`] and
+    /// [`Request::RefreshExchangeRates`]: `None` when the engine has none,
+    /// neither cached nor fetched. (v21.)
+    ExchangeRates {
+        /// The rates.
+        rates: Option<ExchangeRateTable>,
+    },
+    /// Answer to [`Request::ProbeShortcut`]: why the desktop refused the
+    /// combination, or `None` when it would bind it or cannot say. (v21.)
+    ShortcutProbe {
+        /// The desktop's reason.
+        refusal: Option<String>,
     },
 }
 

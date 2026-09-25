@@ -11,6 +11,7 @@
 //!     "keybinding": "default",
 //!     "wrap_navigation": false,
 //!     "quick_launch": true,
+//!     "check_for_updates": true,
 //!     "appearance": { "color_scheme": "system", "preset": "gnome", "icons": false }
 //!   },
 //!   "extensions": {
@@ -68,6 +69,14 @@ pub const DEFAULT_WRAP_NAVIGATION: bool = false;
 /// rather than under an `appearance` section because it is behaviour, not
 /// appearance: it changes what a keystroke does, not what a row looks like.
 pub const DEFAULT_QUICK_LAUNCH: bool = true;
+
+/// Default for `launcher.check_for_updates`.
+///
+/// On: the engine asks Compass's GitHub releases at most every six hours
+/// whether a newer one is out, and the root search says so. The C++ has no
+/// switch (it checks wherever it can install); a fork that only checks gives
+/// the person who does not want the request a way to refuse it.
+pub const DEFAULT_CHECK_FOR_UPDATES: bool = true;
 
 /// Default for `launcher.appearance.preset`.
 ///
@@ -243,6 +252,10 @@ pub struct LauncherConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = DEFAULT_QUICK_LAUNCH))]
     quick_launch: Option<bool>,
+    /// Whether Compass checks its GitHub releases for a newer version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_CHECK_FOR_UPDATES))]
+    check_for_updates: Option<bool>,
     /// Colour mode and row presentation.
     #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
     appearance: AppearanceConfig,
@@ -507,6 +520,14 @@ impl LauncherConfig {
         self.quick_launch.unwrap_or(DEFAULT_QUICK_LAUNCH)
     }
 
+    /// Whether Compass checks for a newer release.
+    ///
+    /// Defaults to [`DEFAULT_CHECK_FOR_UPDATES`].
+    #[must_use]
+    pub fn check_for_updates(&self) -> bool {
+        self.check_for_updates.unwrap_or(DEFAULT_CHECK_FOR_UPDATES)
+    }
+
     /// The scheme [`keybinding`](Self::keybinding) names.
     #[must_use]
     pub fn keybinding_scheme(&self) -> crate::keybinding::Scheme {
@@ -575,6 +596,7 @@ impl LauncherConfig {
             keybinding,
             wrap_navigation,
             quick_launch,
+            check_for_updates,
             appearance,
             clock,
             unknown,
@@ -585,6 +607,7 @@ impl LauncherConfig {
             && keybinding.is_none()
             && wrap_navigation.is_none()
             && quick_launch.is_none()
+            && check_for_updates.is_none()
             && appearance.is_empty()
             && clock.is_empty()
             && unknown.is_empty()
@@ -697,6 +720,85 @@ impl InputServerConfig {
     }
 }
 
+/// The `tray` section: Compass's own icon in the desktop's tray
+/// (`config::Tray`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TrayConfig {
+    /// Whether Compass shows its icon, with its menu (toggle the launcher,
+    /// settings, quit), in the tray. Applied at once when changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_TRAY_ENABLED))]
+    enabled: Option<bool>,
+
+    /// Keys this build does not know about, preserved verbatim.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+/// Default for `tray.enabled`, as the C++ `config::Tray`.
+pub const DEFAULT_TRAY_ENABLED: bool = true;
+
+impl TrayConfig {
+    /// Whether the icon is shown. Defaults to [`DEFAULT_TRAY_ENABLED`].
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(DEFAULT_TRAY_ENABLED)
+    }
+
+    /// Sets `tray.enabled`. `None` removes the key.
+    pub fn set_enabled(&mut self, value: Option<bool>) -> &mut Self {
+        self.enabled = value;
+        self
+    }
+
+    /// Whether the section carries nothing at all, known or unknown.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let Self { enabled, unknown } = self;
+        enabled.is_none() && unknown.is_empty()
+    }
+}
+
+/// The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose
+/// `toggle` is [`LauncherConfig::hotkey`] here).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GlobalShortcutsConfig {
+    /// While one of these applications is focused, every global shortcut is
+    /// released so its keys reach the application: a virtual machine or a
+    /// remote desktop. Desktop file ids, e.g. `org.gnome.Boxes.desktop`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = [], "examples" = [["org.gnome.Boxes.desktop"]]))]
+    inhibit_apps: Option<Vec<String>>,
+
+    /// Keys this build does not know about, preserved verbatim.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+impl GlobalShortcutsConfig {
+    /// The applications that pause the global shortcuts. Defaults to none.
+    #[must_use]
+    pub fn inhibit_apps(&self) -> &[String] {
+        self.inhibit_apps.as_deref().unwrap_or(&[])
+    }
+
+    /// Sets `global_shortcuts.inhibit_apps`. `None` removes the key.
+    pub fn set_inhibit_apps(&mut self, value: Option<Vec<String>>) -> &mut Self {
+        self.inhibit_apps = value;
+        self
+    }
+
+    /// Whether the section carries nothing at all, known or unknown.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let Self {
+            inhibit_apps,
+            unknown,
+        } = self;
+        inhibit_apps.is_none() && unknown.is_empty()
+    }
+}
+
 /// A parsed `vicinae.json`.
 ///
 /// [`Config::default`] is the fully-defaulted configuration and is what an empty file produces.
@@ -724,6 +826,12 @@ pub struct Config {
     /// The snippet keyword expander's keyboard helper.
     #[serde(default, skip_serializing_if = "InputServerConfig::is_empty")]
     input_server: InputServerConfig,
+    /// Compass's own tray icon.
+    #[serde(default, skip_serializing_if = "TrayConfig::is_empty")]
+    tray: TrayConfig,
+    /// The global shortcuts, beyond the launcher hotkey.
+    #[serde(default, skip_serializing_if = "GlobalShortcutsConfig::is_empty")]
+    global_shortcuts: GlobalShortcutsConfig,
 
     /// Top level keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -950,6 +1058,28 @@ impl Config {
     /// The `input_server` section, mutably.
     pub fn input_server_mut(&mut self) -> &mut InputServerConfig {
         &mut self.input_server
+    }
+
+    /// The `tray` section.
+    #[must_use]
+    pub fn tray(&self) -> &TrayConfig {
+        &self.tray
+    }
+
+    /// The `tray` section, mutably.
+    pub fn tray_mut(&mut self) -> &mut TrayConfig {
+        &mut self.tray
+    }
+
+    /// The `global_shortcuts` section.
+    #[must_use]
+    pub fn global_shortcuts(&self) -> &GlobalShortcutsConfig {
+        &self.global_shortcuts
+    }
+
+    /// The `global_shortcuts` section, mutably.
+    pub fn global_shortcuts_mut(&mut self) -> &mut GlobalShortcutsConfig {
+        &mut self.global_shortcuts
     }
 
     /// The `extensions` section.

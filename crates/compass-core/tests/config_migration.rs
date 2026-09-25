@@ -86,7 +86,8 @@ fn every_shared_setting_is_carried_across() {
                 }
             },
             "favorites": ["applications:firefox", "clipboard:history"],
-            "fallbacks": ["files:search"]
+            "fallbacks": ["files:search"],
+            "global_shortcuts": { "inhibit_apps": ["steam"] }
         })
     );
     assert_eq!(migration.sources, vec![path]);
@@ -104,7 +105,6 @@ fn settings_with_no_equivalent_are_reported_not_smuggled_in() {
         migration.unmapped(),
         vec![
             "font.normal.size",
-            "global_shortcuts.inhibit_apps",
             "keybinds.open-search-filter",
             "launcher_window.blur.enabled",
             "launcher_window.opacity",
@@ -137,6 +137,7 @@ fn the_migrated_file_round_trips_through_the_rust_reader() {
     assert_eq!(reread, migration.config);
     assert_eq!(reread.launcher().keybinding(), "emacs");
     assert_eq!(reread.launcher().hotkey(), "super+space");
+    assert_eq!(reread.global_shortcuts().inhibit_apps(), ["steam"]);
     assert!(reread.launcher().close_on_focus_loss());
     assert_eq!(reread.launcher().appearance().theme(), "catppuccin");
     assert_eq!(reread.schema(), Some(SCHEMA_URL));

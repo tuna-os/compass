@@ -127,6 +127,29 @@
       },
       "type": "object"
     },
+    "GlobalShortcutsConfig": {
+      "additionalProperties": true,
+      "description": "The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose\n`toggle` is [`LauncherConfig::hotkey`] here).",
+      "properties": {
+        "inhibit_apps": {
+          "default": [],
+          "description": "While one of these applications is focused, every global shortcut is\nreleased so its keys reach the application: a virtual machine or a\nremote desktop. Desktop file ids, e.g. `org.gnome.Boxes.desktop`.",
+          "examples": [
+            [
+              "org.gnome.Boxes.desktop"
+            ]
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "InputServerConfig": {
       "additionalProperties": true,
       "description": "The `input_server` section: the keyboard helper behind snippet keyword\nexpansion (`vicinae-input-server`).",
@@ -149,6 +172,14 @@
         "appearance": {
           "$ref": "#/$defs/AppearanceConfig",
           "description": "Colour mode and row presentation."
+        },
+        "check_for_updates": {
+          "default": true,
+          "description": "Whether Compass checks its GitHub releases for a newer version.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "clock": {
           "$ref": "#/$defs/ClockConfig",
@@ -267,6 +298,21 @@
         }
       },
       "type": "object"
+    },
+    "TrayConfig": {
+      "additionalProperties": true,
+      "description": "The `tray` section: Compass's own icon in the desktop's tray\n(`config::Tray`).",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether Compass shows its icon, with its menu (toggle the launcher,\nsettings, quit), in the tray. Applied at once when changed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     }
   },
   "$id": "https://raw.githubusercontent.com/tuna-os/compass/main/packaging/schema/vicinae.schema.json",
@@ -305,6 +351,10 @@
         "null"
       ]
     },
+    "global_shortcuts": {
+      "$ref": "#/$defs/GlobalShortcutsConfig",
+      "description": "The global shortcuts, beyond the launcher hotkey."
+    },
     "input_server": {
       "$ref": "#/$defs/InputServerConfig",
       "description": "The snippet keyword expander's keyboard helper."
@@ -322,6 +372,10 @@
         "object",
         "null"
       ]
+    },
+    "tray": {
+      "$ref": "#/$defs/TrayConfig",
+      "description": "Compass's own tray icon."
     }
   },
   "title": "vicinae.json",

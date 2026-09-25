@@ -130,8 +130,21 @@ impl LauncherApp {
                 .map(|(id, title, shortcut)| (id.as_str(), title.as_str(), shortcut.as_str())),
         );
         let target = target.clone();
+        self.settings_recorder_outcome(target, outcome)
+    }
+
+    /// What the settings view's recorder, recording for `target`, said to do.
+    pub(super) fn settings_recorder_outcome(
+        &mut self,
+        target: RecordTarget,
+        outcome: RecorderOutcome,
+    ) -> Task<Message> {
+        let Page::Settings(page) = &mut self.page else {
+            return Task::none();
+        };
         match outcome {
             RecorderOutcome::Recording => Task::none(),
+            RecorderOutcome::Probe(trigger) => self.probe_shortcut(trigger),
             RecorderOutcome::Back => {
                 page.recorder = None;
                 focus_search()
@@ -634,11 +647,12 @@ impl LauncherApp {
                     ))))
                     .into()
             }
-            Kind::Number { .. } | Kind::Text | Kind::Paths | Kind::Font => {
+            Kind::Number { .. } | Kind::Text | Kind::Paths | Kind::Names | Kind::Font => {
                 let submit = key.clone();
                 let placeholder = if setting.placeholder.is_empty() {
                     match setting.kind {
                         Kind::Paths => "Folders, separated by :",
+                        Kind::Names => "Application ids, separated by ,",
                         _ => "",
                     }
                 } else {
@@ -700,19 +714,33 @@ impl LauncherApp {
                             .font(self.font())
                             .size(12)
                             .color(muted),
-                    )
-                    .push(
+                    );
+                if let Some(offer) = &self.update {
+                    body = body.push(
                         row![
-                            button(text("Documentation").font(self.font()).size(13))
-                                .on_press(settings(SettingsMessage::OpenUrl(DOCS_URL.to_owned()))),
-                            button(text("Report a Bug").font(self.font()).size(13)).on_press(
-                                settings(SettingsMessage::OpenUrl(
-                                    compass_core::bug_report::CREATE_ISSUE_URL.to_owned()
-                                ))
+                            text(super::release_check::title(offer))
+                                .font(self.font())
+                                .size(13),
+                            button(text("View Release Notes").font(self.font()).size(13)).on_press(
+                                settings(SettingsMessage::OpenUrl(offer.release_url.clone()))
                             ),
                         ]
-                        .spacing(8),
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
                     );
+                }
+                body = body.push(
+                    row![
+                        button(text("Documentation").font(self.font()).size(13))
+                            .on_press(settings(SettingsMessage::OpenUrl(DOCS_URL.to_owned()))),
+                        button(text("Report a Bug").font(self.font()).size(13)).on_press(settings(
+                            SettingsMessage::OpenUrl(
+                                compass_core::bug_report::CREATE_ISSUE_URL.to_owned()
+                            )
+                        )),
+                    ]
+                    .spacing(8),
+                );
             }
             CorePage::Keybindings => {
                 for (name, description, keys) in settings_catalog::KEYBINDINGS {

@@ -56,6 +56,7 @@ impl Engine {
             .arg(&socket)
             .args(["serve", "--no-hotkey"])
             .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+            .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
             .env("XDG_DATA_DIRS", dirs.path().join("empty"))
             .env("XDG_DATA_HOME", dirs.path().join("data"))
             .env("XDG_CONFIG_HOME", dirs.path().join("config"))
@@ -67,6 +68,12 @@ impl Engine {
             // Never the invoking session's compositor socket.
             .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
             .env_remove("NIRI_SOCKET")
+            // Nor GitHub: the launcher asks for the update status when it
+            // opens, and a closed local port answers it.
+            .env(
+                "VICINAE_UPDATE_FEED_URL",
+                "http://127.0.0.1:9/releases/latest",
+            )
             .envs(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::null())

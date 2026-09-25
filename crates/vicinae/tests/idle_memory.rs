@@ -125,6 +125,7 @@ fn start() -> (Engine, u32) {
         .arg(&socket)
         .arg("serve")
         .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+        .env("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")
         .env("XDG_DATA_DIRS", dirs.path().join("data"))
         .env("XDG_DATA_HOME", dirs.path().join("data-home"))
         .env("XDG_CONFIG_HOME", dirs.path().join("config"))

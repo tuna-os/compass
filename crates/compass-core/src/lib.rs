@@ -54,6 +54,7 @@ pub mod create_extension;
 pub mod default_app;
 pub mod emoji_grid;
 pub mod entry_filter;
+pub mod exchange_rates;
 pub mod extension_commands;
 pub mod extension_install;
 pub mod extension_store;
@@ -133,7 +134,7 @@ pub mod window_switcher;
 pub mod xdg_dirs;
 
 pub use apps::{AppIndex, AppIndexBuilder, AppItem, RootHit, SkipReason, SkippedEntry};
-pub use config::{Config, ConfigError, ExtensionsConfig, LauncherConfig};
+pub use config::{Config, ConfigError, ExtensionsConfig, GlobalShortcutsConfig, LauncherConfig};
 pub use frecency::{
     Clock, FrecencyError, FrecencyRecord, FrecencyStore, JsonFrecencyStore, ManualClock,
     SystemClock,

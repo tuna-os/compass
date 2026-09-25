@@ -157,10 +157,19 @@ async fn echo_handler(request: Request) -> Response {
         | Request::SetProviderEnabled { .. }
         | Request::RemoveOAuthTokenSet { .. }
         | Request::ShortcutCapture { .. }
+        | Request::SkipUpdate { .. }
         | Request::SetTheme { .. } => Response::Ack,
         Request::LocalStorageNamespaces => Response::LocalStorageNamespaces { namespaces: vec![] },
         Request::LocalStorageItems { .. } => Response::LocalStorageItems { items: vec![] },
         Request::OAuthTokenSets => Response::OAuthTokenSets { sets: vec![] },
+        Request::UpdateStatus => Response::UpdateStatus {
+            current: "v0.1.0".into(),
+            available: None,
+        },
+        Request::ExchangeRates | Request::RefreshExchangeRates => {
+            Response::ExchangeRates { rates: None }
+        }
+        Request::ProbeShortcut { .. } => Response::ShortcutProbe { refusal: None },
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
         Request::FileActions { .. } => {

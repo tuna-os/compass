@@ -12,6 +12,10 @@ use compass_ui::backend::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How long the update check may take: the engine may be asking the release
+/// feed, which it allows 15 seconds.
+const UPDATE_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// How long a store listing or detail page may take: it is fetched from the
 /// network, where two seconds is not enough.
 const STORE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -200,6 +204,40 @@ impl ApplicationBackend for DaemonBackend {
             };
             match self.ask(request, "Remembering the calculation").await? {
                 compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn exchange_rates(
+        &self,
+    ) -> BackendFuture<'_, Option<compass_core::exchange_rates::ExchangeRates>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ExchangeRates, "Asking for the exchange rates")
+                .await?
+            {
+                compass_ipc::Response::ExchangeRates { rates } => Ok(rates.map(exchange_rates)),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn refresh_exchange_rates(
+        &self,
+    ) -> BackendFuture<'_, compass_core::exchange_rates::ExchangeRates> {
+        Box::pin(async move {
+            match self
+                .ask_within(
+                    Request::RefreshExchangeRates,
+                    "Refreshing the exchange rates",
+                    STORE_TIMEOUT,
+                )
+                .await?
+            {
+                compass_ipc::Response::ExchangeRates { rates: Some(rates) } => {
+                    Ok(exchange_rates(rates))
+                }
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })
@@ -526,6 +564,21 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn probe_shortcut(&self, trigger: String) -> BackendFuture<'_, Option<String>> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ProbeShortcut { trigger },
+                    "Asking the desktop about the shortcut",
+                )
+                .await?
+            {
+                compass_ipc::Response::ShortcutProbe { refusal } => Ok(refusal),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn set_shortcut_capture(&self, capturing: bool) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self
@@ -533,6 +586,41 @@ impl ApplicationBackend for DaemonBackend {
                     Request::ShortcutCapture { capturing },
                     "Suspending the global shortcuts",
                 )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn update_status(&self) -> BackendFuture<'_, Option<compass_ui::backend::UpdateOffer>> {
+        Box::pin(async move {
+            match self
+                .ask_within(
+                    Request::UpdateStatus,
+                    "Checking for updates",
+                    UPDATE_TIMEOUT,
+                )
+                .await?
+            {
+                compass_ipc::Response::UpdateStatus { current, available } => {
+                    Ok(available.map(|offer| compass_ui::backend::UpdateOffer {
+                        tag: offer.tag,
+                        version: offer.version,
+                        release_url: offer.release_url,
+                        current,
+                    }))
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn skip_update(&self, tag: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::SkipUpdate { tag }, "Skipping the update")
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
@@ -1527,6 +1615,22 @@ impl DaemonBackend {
             Ok(Ok(compass_ipc::Response::Error(error))) => Err(sentence(&error.message)),
             Ok(Ok(response)) => Ok(response),
         }
+    }
+}
+
+/// Exchange rates as the calculator holds them, from the wire. A rate that
+/// does not read back is left out, so that currency answers nothing.
+fn exchange_rates(
+    table: compass_ipc::ExchangeRateTable,
+) -> compass_core::exchange_rates::ExchangeRates {
+    compass_core::exchange_rates::ExchangeRates {
+        date: table.date,
+        fetched_at: table.fetched_at,
+        rates: table
+            .rates
+            .into_iter()
+            .filter_map(|(code, rate)| Some((code, rate.parse::<f64>().ok()?)))
+            .collect(),
     }
 }
 

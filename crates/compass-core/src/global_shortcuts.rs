@@ -16,6 +16,10 @@
 //! What a backend is told is a keysym and a modifier mask for the Wayland
 //! hotkey protocols ([`keysym`], [`modifier_mask`], after the C++'s
 //! `xkbKeysymForQtKey`), or the portal's trigger text ([`portal_trigger`]).
+//!
+//! [`inhibited`] is `computeInhibited`: whether `global_shortcuts.inhibit_apps`
+//! pauses every binding for the focused application, and [`probe`] is the
+//! throwaway binding `probeBind` asks a backend to take.
 
 use std::collections::BTreeMap;
 
@@ -370,9 +374,63 @@ pub fn portal_trigger(combo: &KeyCombo) -> Option<String> {
     Some(trigger)
 }
 
+/// The id [`probe`]'s bind is made under: never a root item's, since those
+/// are `provider:entrypoint`, and not [`LAUNCHER_ID`].
+pub const PROBE_ID: &str = "@probe";
+
+/// A throwaway binding for `combo`, to ask a backend whether it would take
+/// it (`GlobalShortcutService::probeBind`).
+#[must_use]
+pub fn probe(combo: &KeyCombo) -> Binding {
+    Binding {
+        id: PROBE_ID.to_owned(),
+        trigger: combo.to_config_string(),
+        combo: combo.clone(),
+        description: "Compass".to_owned(),
+        action: Action::ToggleLauncher,
+    }
+}
+
+/// Whether the global shortcuts are paused for `frontmost`, the focused
+/// application's desktop id (`computeInhibited`): only when it is known and
+/// listed in `global_shortcuts.inhibit_apps`. A listed id may leave off the
+/// `.desktop` the C++ requires.
+#[must_use]
+pub fn inhibited(apps: &[String], frontmost: Option<&str>) -> bool {
+    let Some(frontmost) = frontmost else {
+        return false;
+    };
+    let bare = frontmost.strip_suffix(".desktop").unwrap_or(frontmost);
+    apps.iter()
+        .any(|app| app == frontmost || app.strip_suffix(".desktop").unwrap_or(app) == bare)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_listed_frontmost_application_pauses_the_shortcuts() {
+        let apps = vec!["org.gnome.Boxes.desktop".to_owned(), "steam".to_owned()];
+        assert!(inhibited(&apps, Some("org.gnome.Boxes.desktop")));
+        assert!(inhibited(&apps, Some("steam.desktop")), "without .desktop");
+        assert!(!inhibited(&apps, Some("firefox.desktop")));
+        assert!(!inhibited(&apps, Some("org.gnome.BoxesHelper.desktop")));
+        assert!(
+            !inhibited(&apps, None),
+            "an unknown application pauses nothing"
+        );
+        assert!(!inhibited(&[], Some("org.gnome.Boxes.desktop")));
+    }
+
+    #[test]
+    fn a_probe_binds_the_combination_under_its_own_id() {
+        let combo = KeyCombo::parse("super+shift+K").unwrap();
+        let binding = probe(&combo);
+        assert_eq!(binding.id, PROBE_ID);
+        assert_eq!(binding.combo, combo);
+        assert_ne!(binding.id, LAUNCHER_ID);
+    }
 
     fn config(json: &str) -> Config {
         serde_json::from_str(json).expect("a configuration")

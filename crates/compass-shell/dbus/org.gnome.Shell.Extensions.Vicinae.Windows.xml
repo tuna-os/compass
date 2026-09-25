@@ -23,6 +23,11 @@
     3 - ListWindows gained the optional fullscreen, x, y, width and height
         keys, for an extension's WindowManagement API; Clipboard gained
         GetPrimarySelection.
+    4 - ListWorkspaces() and ActivateWorkspace(i), for Switch Workspaces
+        (the unversioned surface's ListWorkspaces and GetActiveWorkspace, the
+        active one now a key of each entry), and WindowsChanged also fires
+        when a workspace is added, removed or switched to. Compass still
+        speaks 3, without workspaces.
 -->
 <node>
   <interface name="org.gnome.Shell.Extensions.Vicinae.Windows">
@@ -70,6 +75,27 @@
          ListWindows rather than tracking deltas, so the extension needs no
          per-event bookkeeping. Extensions SHOULD coalesce bursts. -->
     <signal name="WindowsChanged"/>
+
+    <!--
+      The workspaces, in order (contract 4).
+
+      Each dictionary carries:
+        index              i  required  position from 0; ActivateWorkspace's argument
+        name               s  optional  what GNOME calls it; may be empty
+        active             b  optional  defaults to false; one entry is true
+        has_fullscreen     b  optional  defaults to false; a window on it is full-screen
+
+      Unknown keys MUST be ignored by the client, as for ListWindows.
+    -->
+    <method name="ListWorkspaces">
+      <arg type="aa{sv}" name="workspaces" direction="out"/>
+    </method>
+
+    <!-- Switch to the workspace at index (contract 4). An index with no
+         workspace does nothing. -->
+    <method name="ActivateWorkspace">
+      <arg type="i" name="index" direction="in"/>
+    </method>
 
   </interface>
 </node>
