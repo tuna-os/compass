@@ -14,6 +14,8 @@ use super::{LauncherApp, Message, Page, Task};
 use crate::onboarding_page::{OnboardingPage, ThemeOption};
 use compass_core::onboarding::{self, Advance, Step};
 
+const COMPASS_LOGO: &[u8] = include_bytes!("../../../../extra/compass.svg");
+
 /// Whether the platform binds the launcher's hotkey itself
 /// (`Platform.supports("globalShortcuts")`). Compass binds only its fixed
 /// toggle through the portal, with no recorder to change it, so the flow
@@ -141,9 +143,10 @@ impl LauncherApp {
         };
 
         let mut content = column![].spacing(8).align_x(Alignment::Center);
-        if step == Step::Welcome
-            && let Some(logo) = self.builtin_svg("vicinae", palette.text.to_iced(), 72.0)
-        {
+        if step == Step::Welcome {
+            let logo = iced::widget::svg(iced::widget::svg::Handle::from_memory(COMPASS_LOGO))
+                .width(72)
+                .height(72);
             content = content.push(container(logo).padding(Padding::new(0.0).bottom(12)));
         }
         content = content.push(heading).push(subtitle);
