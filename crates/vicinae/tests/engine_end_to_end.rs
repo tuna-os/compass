@@ -7202,3 +7202,214 @@ fn an_offline_engine_answers_with_the_cached_rates_or_none() {
         compass_ipc::Response::Error(_)
     ));
 }
+
+/// A stand-in for Raycast's Brew extension, installed as a Raycast store
+/// extension, doing what its Show Installed command does: find Homebrew's
+/// prefix with `execSync("brew --prefix")` at load (falling back to macOS's
+/// prefix), then list what is installed with the promisified `exec` of
+/// `<prefix>/bin/brew info --json=v2 --installed`. And a fake `brew` in a
+/// temporary prefix, which is the only Homebrew this test ever runs.
+fn install_brewlike(root: &Path) -> PathBuf {
+    let ext = root.join("data-home/vicinae/extensions/store.raycast.brewlike");
+    std::fs::create_dir_all(&ext).unwrap();
+    std::fs::write(
+        ext.join("package.json"),
+        r#"{"name": "brewlike", "title": "Brewlike", "author": "nhojb",
+            "commands": [{"name": "installed", "title": "Show Installed", "mode": "view"}]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("installed.js"),
+        "const React = require('react');
+         const { List } = require('@raycast/api');
+         const { execSync, exec } = require('child_process');
+         const { promisify } = require('util');
+         const prefix = (() => {
+           try { return execSync('brew --prefix', { encoding: 'utf8' }).trim(); }
+           catch (e) { return '/opt/homebrew'; }
+         })();
+         module.exports.default = () => {
+           const [items, setItems] = React.useState(null);
+           React.useEffect(() => {
+             promisify(exec)(`${prefix}/bin/brew info --json=v2 --installed`, {
+               env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: '1' },
+             }).then(
+               ({ stdout }) => setItems(JSON.parse(stdout).formulae.map((f) => f.name)),
+               (e) => setItems(['failed: ' + e.message]),
+             );
+           }, []);
+           return React.createElement(List, { isLoading: items === null },
+             (items || []).map((name) => React.createElement(List.Item, { key: name, title: name })));
+         };",
+    )
+    .unwrap();
+
+    let prefix = root.join("linuxbrew");
+    let bin = prefix.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let brew = bin.join("brew");
+    std::fs::write(
+        &brew,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in\n  --prefix) echo {} ;;\n  \
+             info) echo '{{\"formulae\":[{{\"name\":\"wget\"}},{{\"name\":\"jq\"}}],\"casks\":[]}}' ;;\n  \
+             *) exit 1 ;;\nesac\n",
+            prefix.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&brew, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+/// The titles of the list `session` shows once it has finished loading.
+fn listed(daemon: &Daemon, session: u64) -> Vec<String> {
+    use compass_extension_api::View;
+    let (view, _) = wait_for_view(
+        daemon,
+        session,
+        |view, _| matches!(view, View::List(list) if list.sections.iter().any(|s| !s.items.is_empty())),
+    );
+    let View::List(list) = view else {
+        unreachable!()
+    };
+    list.sections
+        .iter()
+        .flat_map(|section| section.items.iter().map(|item| item.title.clone()))
+        .collect()
+}
+
+#[test]
+fn raycasts_brew_runs_homebrew_on_the_host_once_the_person_allows_it() {
+    use compass_ipc::{Request, Response};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = PathBuf::new();
+    let daemon = Daemon::start_prepared(&[], "{}", |dir| {
+        root = dir.to_path_buf();
+        let bin = install_brewlike(dir);
+        // The fake prefix first: the broker looks `brew` up on the engine's
+        // PATH before Linuxbrew's own prefix.
+        let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )))
+        .unwrap();
+        vec![
+            ("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string()),
+            ("PATH", path),
+        ]
+    });
+    let id = "@nhojb/store.raycast.brewlike:installed";
+    let grants = root.join("config/compass/host-command-grants.json");
+
+    // First run: the extension blocks on `execSync("brew --prefix")` while
+    // the person is asked.
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: id.into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("no session: {started:?}");
+    };
+    wait_for_alert(&daemon, session, "Allow Brewlike to run brew?");
+    let Response::ExtensionView { alert, .. } =
+        daemon.request(Request::ExtensionView { session, after: 0 })
+    else {
+        panic!("no view answer");
+    };
+    let alert = alert.expect("the consent prompt");
+    assert_eq!(
+        (alert.confirm_text.as_str(), alert.cancel_text.as_str()),
+        ("Allow Once", "Deny")
+    );
+    assert_eq!(alert.remember_text.as_deref(), Some("Always Allow"));
+    assert_eq!(
+        daemon.request(Request::ExtensionAlertRemember { session }),
+        Response::Ack
+    );
+    assert_eq!(
+        listed(&daemon, session),
+        ["wget", "jq"],
+        "Show Installed lists what the host's brew reports"
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&grants).unwrap())
+            .unwrap(),
+        serde_json::json!({ "extensions": { "store.raycast.brewlike": ["brew"] } }),
+        "Always Allow is kept"
+    );
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+
+    // Script Permissions lists it, beside the Rhai scripts.
+    let Response::ScriptGrants {
+        grants: listed_grants,
+    } = daemon.request(Request::ListScriptGrants)
+    else {
+        panic!("no grants");
+    };
+    assert_eq!(
+        listed_grants,
+        [compass_ipc::ScriptGrantEntry {
+            id: "store.raycast.brewlike".into(),
+            title: "Brewlike".into(),
+            capabilities: vec!["host.run:brew".into()],
+            descriptions: vec!["run brew on your computer, outside the extension sandbox".into()],
+        }]
+    );
+
+    // Second run: remembered, so nobody is asked.
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: id.into(),
+        arguments_json: None,
+    }) else {
+        panic!("no second session");
+    };
+    assert_eq!(listed(&daemon, session), ["wget", "jq"]);
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+
+    // Revoked, the next run asks again. Denied, the extension's
+    // `execSync` throws and it falls back to macOS's prefix, as it would on
+    // a Mac without Homebrew; that brew goes to the broker too, is asked
+    // about again, and denied again the extension is told why by name.
+    assert_eq!(
+        daemon.request(Request::RevokeScriptGrant {
+            id: "store.raycast.brewlike".into()
+        }),
+        Response::ScriptGrants { grants: vec![] }
+    );
+    let Response::ExtensionStarted { session } = daemon.request(Request::RunExtensionCommand {
+        id: id.into(),
+        arguments_json: None,
+    }) else {
+        panic!("no third session");
+    };
+    for _ in 0..2 {
+        wait_for_alert(&daemon, session, "Allow Brewlike to run brew?");
+        assert_eq!(
+            daemon.request(Request::ExtensionAlertAnswer {
+                session,
+                confirmed: false
+            }),
+            Response::Ack
+        );
+    }
+    let titles = listed(&daemon, session);
+    assert_eq!(titles.len(), 1);
+    assert!(
+        titles[0].contains("You did not allow Brewlike to run brew on your computer"),
+        "{titles:?}"
+    );
+}

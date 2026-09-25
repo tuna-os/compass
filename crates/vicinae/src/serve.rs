@@ -731,6 +731,40 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
 /// Uninstalls an extension, as `ExtensionRegistry::uninstall` does: its
 /// directory, its support directory and its stored data, then root search
 /// forgets its commands.
+/// Installed extensions' titles, by extension id.
+async fn extension_titles(
+    state: &Arc<RwLock<EngineState>>,
+) -> std::collections::BTreeMap<String, String> {
+    state
+        .read()
+        .await
+        .index
+        .extensions()
+        .iter()
+        .map(|command| {
+            (
+                command.extension_id.clone(),
+                command.extension_title.clone(),
+            )
+        })
+        .collect()
+}
+
+/// What Script Permissions lists: the Rhai scripts' grants, then the
+/// programs extensions were always allowed to run on the host, each part in
+/// id order. Blocking: both read files.
+fn all_grants(
+    rhai: &crate::rhai_scripts::RhaiScripts,
+    titles: &std::collections::BTreeMap<String, String>,
+) -> Vec<compass_ipc::ScriptGrantEntry> {
+    let mut grants = rhai.grants();
+    grants.extend(
+        crate::host_commands::Grants::from_environment()
+            .entries(|id| titles.get(id).filter(|title| !title.is_empty()).cloned()),
+    );
+    grants
+}
+
 async fn uninstall_extension(state: &Arc<RwLock<EngineState>>, id: String) -> Response {
     let lookup = id.clone();
     let Ok(Some(directory)) =
@@ -3047,6 +3081,27 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             name,
         } => {
             let stores = Arc::clone(&state.read().await.stores);
+            // A Raycast extension the overrides manifest replaces on Linux
+            // installs its replacement instead.
+            let (store, author, name) = match (
+                store,
+                compass_core::raycast_overrides::Manifest::shipped().raycast_redirect(&name),
+            ) {
+                (compass_ipc::StoreKind::Raycast, Some(redirect))
+                    if redirect.store == "vicinae" =>
+                {
+                    tracing::info!(
+                        from = %name, to = %redirect.name, why = %redirect.why,
+                        "installing the Linux-capable replacement of a Raycast extension"
+                    );
+                    (
+                        compass_ipc::StoreKind::Vicinae,
+                        redirect.author.clone(),
+                        redirect.name.clone(),
+                    )
+                }
+                _ => (store, author, name),
+            };
             match stores.install(store, &author, &name).await {
                 Ok((id, title)) => {
                     state.write().await.index.rescan_extensions();
@@ -3316,6 +3371,19 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 )),
             }
         }
+        Request::ExtensionAlertRemember { session } => {
+            let views = Arc::clone(&state.read().await.views);
+            match tokio::task::spawn_blocking(move || views.answer_alert_always(session)).await {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(reason)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, reason))
+                }
+                Err(err) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("the alert answer task failed: {err}"),
+                )),
+            }
+        }
         Request::SetExtensionPreferences { id, values_json } => {
             set_extension_preferences(state, id, values_json).await
         }
@@ -3372,7 +3440,8 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         Request::SetDefaultApp { kind, id } => set_default_app(state, kind, &id).await,
         Request::ListScriptGrants => {
             let rhai = Arc::clone(&state.read().await.rhai);
-            match tokio::task::spawn_blocking(move || rhai.grants()).await {
+            let titles = extension_titles(state).await;
+            match tokio::task::spawn_blocking(move || all_grants(&rhai, &titles)).await {
                 Ok(grants) => Response::ScriptGrants { grants },
                 Err(err) => Response::Error(ProtocolError::new(
                     ErrorKind::Internal,
@@ -3382,8 +3451,20 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
         Request::RevokeScriptGrant { id } => {
             let rhai = Arc::clone(&state.read().await.rhai);
-            match tokio::task::spawn_blocking(move || rhai.revoke(&id).map(|()| rhai.grants()))
-                .await
+            let titles = extension_titles(state).await;
+            match tokio::task::spawn_blocking(move || {
+                let hosts = crate::host_commands::Grants::from_environment();
+                match hosts.revoke(&id) {
+                    Ok(true) => {
+                        tracing::info!(extension = %id, "host-program grants revoked");
+                        Ok(())
+                    }
+                    Ok(false) => rhai.revoke(&id),
+                    Err(err) => Err(format!("Compass could not change the permissions: {err}")),
+                }
+                .map(|()| all_grants(&rhai, &titles))
+            })
+            .await
             {
                 Ok(Ok(grants)) => Response::ScriptGrants { grants },
                 Ok(Err(reason)) => {

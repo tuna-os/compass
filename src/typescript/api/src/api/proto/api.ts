@@ -289,6 +289,24 @@ export type BrowserTab = {
 	browserId: string;
 }
 
+export type HostCommandEnv = {
+	name: string;
+	value: string;
+}
+
+export type HostCommandRequest = {
+	program: string;
+	args: string[];
+	input?: string;
+	env: HostCommandEnv[];
+}
+
+export type HostCommandResult = {
+	exitCode: number;
+	stdout: string;
+	stderr: string;
+}
+
 class ApplicationService {
 	constructor(private readonly transport: RpcTransport) {}
 
@@ -537,6 +555,15 @@ class EventCoreService {
 	}
 }
 
+class HostCommandService {
+	constructor(private readonly transport: RpcTransport) {}
+
+	run(request: HostCommandRequest): Promise<HostCommandResult> {
+		return this.transport.request("HostCommand/run", { request});	
+	}
+
+}
+
 export class Client {
 	constructor(private readonly transport: RpcTransport) {
 		this.Application = new ApplicationService(this.transport);
@@ -550,6 +577,7 @@ export class Client {
 		this.Wallpaper = new WallpaperService(this.transport);
 		this.BrowserExtension = new BrowserExtensionService(this.transport);
 		this.EventCore = new EventCoreService(this.transport);
+		this.HostCommand = new HostCommandService(this.transport);
 	}
 
   	route(msg: string): void { this.transport.dispatchMessage(msg); }
@@ -564,5 +592,6 @@ export class Client {
 	Wallpaper: WallpaperService;
 	BrowserExtension: BrowserExtensionService;
 	EventCore: EventCoreService;
+	HostCommand: HostCommandService;
 
 }

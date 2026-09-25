@@ -4,12 +4,13 @@
 	"description": "Extension manager process responsible for loading and unloading extension bundles",
 	"main": "index.js",
 	"scripts": {
-		"test": "echo \"Error: no test specified\" && exit 1",
+		"test": "node scripts/test.mjs",
 		"typecheck": "tsc --noEmit",
 		"build-only": "node scripts/build.mjs",
 		"build": "run-p typecheck build-only",
 		"dev": "nodemon -e ts,tsx --watch src --watch ../api/src --exec \"node scripts/dev.mjs\"",
-		"format": "biome format --write"
+		"format": "biome format --write",
+		"lint": "biome lint src/linux-shim test scripts"
 	},
 	"keywords": [
 		"vicinae",

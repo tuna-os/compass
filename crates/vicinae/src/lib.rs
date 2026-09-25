@@ -35,6 +35,7 @@ pub mod file_search;
 pub mod fonts;
 pub mod frontmost;
 pub mod global_shortcuts;
+pub mod host_commands;
 pub mod indexer_client;
 pub mod indexer_service;
 pub mod indexer_watch;

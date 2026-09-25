@@ -40,6 +40,7 @@ use compass_worker_host::extension_manager::{
     Capabilities, CommandEnv, LaunchType, LoadOptions, ManagerClient,
 };
 use compass_worker_host::file_search_service::{FileIndexer, FileSearchService};
+use compass_worker_host::host_command_service::HostCommandService;
 use compass_worker_host::oauth_service::{
     AuthorizeRequest, AuthorizeService, Authorizer, OAuthService, Redirect,
 };
@@ -531,6 +532,7 @@ pub fn start(
     let name = command.name.clone();
     let namespace = compass_local_storage::namespace_for(&command.extension_id);
     let extension_id = command.extension_id.clone();
+    let extension_title = command.extension_title.clone();
     let assets = command.extension_dir.join("assets");
     let handle = tokio::runtime::Handle::try_current().ok();
     let started = view
@@ -544,6 +546,7 @@ pub fn start(
                 Served {
                     session_id,
                     extension_id,
+                    extension_title,
                     title,
                     name,
                     namespace,
@@ -642,6 +645,7 @@ pub enum Started {
 struct Served {
     session_id: String,
     extension_id: String,
+    extension_title: String,
     title: String,
     name: String,
     namespace: String,
@@ -663,6 +667,7 @@ fn serve(
     let Served {
         session_id,
         extension_id,
+        extension_title,
         title,
         name,
         namespace,
@@ -746,6 +751,19 @@ fn serve(
     if let Some(service) = &command_service {
         router = router.with(service);
     }
+    let broker = crate::host_commands::SessionBroker::new(
+        extension_id.as_str(),
+        if extension_title.is_empty() {
+            title
+        } else {
+            extension_title.as_str()
+        },
+        crate::host_commands::Grants::from_environment(),
+        crate::host_commands::Runner::detect(),
+        compass_core::raycast_overrides::Manifest::shipped(),
+    );
+    let host_commands = HostCommandService::new(&*broker);
+    router = router.with(&host_commands);
     let mut session = Session::new(worker, session_id.as_str(), router);
     if let Some(view) = &view {
         view.attach(session.events());
@@ -801,6 +819,25 @@ fn serve(
                 {
                     tracing::warn!(command = title, error = %err, "could not refuse an authorization");
                     break;
+                }
+            }
+            Turn::Deferred { method, deferral } if method == "HostCommand/run" => {
+                match broker.take() {
+                    Some(request) => broker.dispatch(
+                        request,
+                        deferral,
+                        Arc::new(session.events()),
+                        view.as_ref()
+                            .map(|view| view as &dyn crate::host_commands::Asker),
+                    ),
+                    None => {
+                        if let Err(err) =
+                            session.fail_deferred(&deferral, "the host command request was lost")
+                        {
+                            tracing::warn!(command = title, error = %err, "could not refuse a host command");
+                            break;
+                        }
+                    }
                 }
             }
             Turn::Deferred { method, deferral } => {
@@ -1268,6 +1305,7 @@ impl Shell for HeadlessShell {
                 message: alert.message.clone(),
                 confirm_text: alert.confirm_text.clone(),
                 cancel_text: alert.cancel_text.clone(),
+                remember_text: None,
             });
     }
 }
@@ -1288,8 +1326,8 @@ struct ViewEntry {
     state: tokio::sync::watch::Sender<ViewState>,
     events: Arc<std::sync::Mutex<Option<SessionEvents>>>,
     pid: u32,
-    /// The call a shown alert holds open.
-    deferral: Arc<std::sync::Mutex<Option<Deferral>>>,
+    /// What a shown alert is waiting to answer.
+    asking: Arc<std::sync::Mutex<Option<Asking>>>,
 }
 
 /// What a view session shows now.
@@ -1324,21 +1362,21 @@ impl Views {
         let session = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let (state, _) = tokio::sync::watch::channel(ViewState::default());
         let events = Arc::new(std::sync::Mutex::new(None));
-        let deferral = Arc::new(std::sync::Mutex::new(None));
+        let asking = Arc::new(std::sync::Mutex::new(None));
         self.lock().insert(
             session,
             ViewEntry {
                 state: state.clone(),
                 events: Arc::clone(&events),
                 pid,
-                deferral: Arc::clone(&deferral),
+                asking: Arc::clone(&asking),
             },
         );
         ViewHandle {
             session,
             state,
             events,
-            deferral,
+            asking,
             views: Arc::clone(self),
         }
     }
@@ -1387,24 +1425,39 @@ impl Views {
             .map_err(|err| format!("The extension did not take it: {err}"))
     }
 
-    /// Answers the alert `session` is showing.
+    /// Answers the alert `session` is showing: confirmed or not.
     ///
     /// # Errors
     ///
     /// A sentence: no such session, no alert waiting, or the worker is gone.
     pub fn answer_alert(&self, session: u64, confirmed: bool) -> Result<(), String> {
-        let (events, deferral, state) = {
+        self.answer_with(session, if confirmed { Answer::Yes } else { Answer::No })
+    }
+
+    /// Answers the alert `session` is showing with its third choice, the one
+    /// that is remembered (a host program's "Always Allow"). An alert with no
+    /// third choice takes it as confirming.
+    ///
+    /// # Errors
+    ///
+    /// A sentence: no such session, no alert waiting, or the worker is gone.
+    pub fn answer_alert_always(&self, session: u64) -> Result<(), String> {
+        self.answer_with(session, Answer::Always)
+    }
+
+    fn answer_with(&self, session: u64, answer: Answer) -> Result<(), String> {
+        let (events, asking, state) = {
             let sessions = self.lock();
             let entry = sessions
                 .get(&session)
                 .ok_or_else(|| "That extension view has closed".to_owned())?;
             (
                 Arc::clone(&entry.events),
-                Arc::clone(&entry.deferral),
+                Arc::clone(&entry.asking),
                 entry.state.clone(),
             )
         };
-        let deferral = deferral
+        let asking = asking
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
@@ -1418,9 +1471,7 @@ impl Views {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .ok_or_else(|| "That extension view has not started yet".to_owned())?;
-        events
-            .answer(&deferral, serde_json::json!(confirmed))
-            .map_err(|err| format!("The extension did not take the answer: {err}"))
+        asking.settle(answer, &events)
     }
 
     /// Pops `session`'s top view, as Escape on a pushed view does. An alert
@@ -1431,14 +1482,14 @@ impl Views {
     ///
     /// A sentence: the session is gone, or its worker is.
     pub fn pop(&self, session: u64) -> Result<(), String> {
-        let (events, deferral, state) = {
+        let (events, asking, state) = {
             let sessions = self.lock();
             let entry = sessions
                 .get(&session)
                 .ok_or_else(|| "That extension view has closed".to_owned())?;
             (
                 Arc::clone(&entry.events),
-                Arc::clone(&entry.deferral),
+                Arc::clone(&entry.asking),
                 entry.state.clone(),
             )
         };
@@ -1447,7 +1498,7 @@ impl Views {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .ok_or_else(|| "That extension view has not started yet".to_owned())?;
-        settle(&deferral, &state, Some(&events));
+        settle(&asking, &state, Some(&events));
         events
             .view_popped()
             .map_err(|err| format!("The extension did not take it: {err}"))
@@ -1471,7 +1522,7 @@ struct ViewHandle {
     session: u64,
     state: tokio::sync::watch::Sender<ViewState>,
     events: Arc<std::sync::Mutex<Option<SessionEvents>>>,
-    deferral: Arc<std::sync::Mutex<Option<Deferral>>>,
+    asking: Arc<std::sync::Mutex<Option<Asking>>>,
     views: Arc<Views>,
 }
 
@@ -1490,7 +1541,10 @@ impl ViewHandle {
     ) {
         // The extension navigated (pushed or popped a view) while a dialog
         // was open: that is a way out of the dialog, and it answers "no".
-        if self.state.borrow().depth != depth {
+        // Its first render is not navigating: a question asked while the
+        // command loads (a host program's consent) stays open across it.
+        let previous = self.state.borrow().depth;
+        if previous != 0 && previous != depth {
             self.settle();
         }
         self.state.send_modify(|state| {
@@ -1511,11 +1565,15 @@ impl ViewHandle {
     /// the one a second replaces: it is some promise the extension is still
     /// waiting on.
     fn ask(&self, alert: compass_ipc::ExtensionAlert, deferral: Deferral) {
+        self.show(alert, Asking::Alert(deferral));
+    }
+
+    fn show(&self, alert: compass_ipc::ExtensionAlert, asking: Asking) {
         self.settle();
         *self
-            .deferral
+            .asking
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(deferral);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(asking);
         self.state.send_modify(|state| {
             state.version += 1;
             state.alert = Some(alert);
@@ -1529,7 +1587,7 @@ impl ViewHandle {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        settle(&self.deferral, &self.state, events.as_ref());
+        settle(&self.asking, &self.state, events.as_ref());
     }
 
     fn end(self, why: Option<String>) {
@@ -1544,14 +1602,66 @@ impl ViewHandle {
     }
 }
 
-/// Takes the alert `deferral` holds, if any, clears it from `state` and
-/// answers it "no" through `events`.
+impl crate::host_commands::Asker for ViewHandle {
+    /// Shows `alert`; `answered` gets the person's answer, or [`Answer::No`]
+    /// if the view navigates or another alert replaces it.
+    fn ask(&self, alert: compass_ipc::ExtensionAlert, answered: crate::host_commands::Answered) {
+        self.show(alert, Asking::Consent(answered));
+    }
+}
+
+/// What a person answered an alert with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    /// Escape, or any way out of the alert that is not a button.
+    No,
+    /// Enter.
+    Yes,
+    /// The third, remembered choice.
+    Always,
+}
+
+/// What a shown alert answers.
+pub(crate) enum Asking {
+    /// An extension's `confirmAlert`, which gets `true` or `false`.
+    Alert(Deferral),
+    /// The engine's own question, asked for an extension (a host program's
+    /// consent); the engine acts on the answer.
+    Consent(Box<dyn FnOnce(Answer) + Send>),
+}
+
+impl std::fmt::Debug for Asking {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Alert(deferral) => f.debug_tuple("Alert").field(deferral).finish(),
+            Self::Consent(_) => f.write_str("Consent"),
+        }
+    }
+}
+
+impl Asking {
+    fn settle(self, answer: Answer, events: &SessionEvents) -> Result<(), String> {
+        match self {
+            Self::Alert(deferral) => events
+                .answer(&deferral, serde_json::json!(answer != Answer::No))
+                .map_err(|err| format!("The extension did not take the answer: {err}")),
+            Self::Consent(answered) => {
+                answered(answer);
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Takes what the shown alert is waiting on, if anything, clears it from
+/// `state` and answers it "no": through `events` for an extension's alert,
+/// to the engine for its own question.
 fn settle(
-    deferral: &std::sync::Mutex<Option<Deferral>>,
+    asking: &std::sync::Mutex<Option<Asking>>,
     state: &tokio::sync::watch::Sender<ViewState>,
     events: Option<&SessionEvents>,
 ) {
-    let Some(deferral) = deferral
+    let Some(asking) = asking
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take()
@@ -1562,8 +1672,15 @@ fn settle(
         state.version += 1;
         state.alert = None;
     });
-    let answered = events.map(|events| events.answer(&deferral, serde_json::json!(false)));
-    if !matches!(answered, Some(Ok(()))) {
+    let answered = match (asking, events) {
+        (Asking::Consent(answered), _) => {
+            answered(Answer::No);
+            Ok(())
+        }
+        (asking, Some(events)) => asking.settle(Answer::No, events),
+        (Asking::Alert(_), None) => Err("no session".to_owned()),
+    };
+    if answered.is_err() {
         tracing::warn!("could not answer a dismissed dialog; the extension may wait on it");
     }
 }

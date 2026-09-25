@@ -90,6 +90,7 @@ pub mod qt_date;
 pub mod query_policy;
 pub mod query_ranking;
 pub mod rank;
+pub mod raycast_overrides;
 pub mod raycast_store;
 pub mod raycast_store_view;
 pub mod rhai_scripts;

@@ -374,6 +374,12 @@ jobs:
           CXX: g++-14
         run: ./scripts/build-extension-runtime.sh
 
+      # The runtime's own unit tests (the macOS shim), on Node's test runner
+      # over esbuild bundles: nothing to install beyond what the build did.
+      - name: Test the runtime
+        working-directory: src/typescript/extension-manager
+        run: npm test
+
       - name: Drive it from the host
         env:
           COMPASS_REQUIRE_RUNTIME: "1"

@@ -175,3 +175,23 @@ code in the extension, so the host never speaks OAuth itself.
 | The window's handles in `compass-ui` | `iced::window::run` (iced 0.14; lends `&dyn Window: HasWindowHandle + HasDisplayHandle`) | **Used**. `iced_layershell` 0.19 drops the `Run` action, so the layer-shell presentation lends nothing; there the safe route is the inhibitor's shared connection and `wl_keyboard.enter`, not built yet. |
 | Where the card is, to blur behind it | `iced::widget::sensor` (iced 0.14) | **Used**: the card's size on show and on resize, keyed on translucency and corner radius so a change of either reports again; no layout code of ours. |
 | The compositor side of `ext-background-effect-v1`, for a fake that blurs | `wayland-protocols` 0.32 `server` (dev only; `wayland-server` 0.31 was already a dev dependency) | **Used** (`compass-wayland/tests/background_effect.rs`): Sway has no such protocol, so the region traffic and the destroyed-surface rule are checked against an in-process compositor. |
+
+## Raycast extensions written for macOS: the shim and the broker (2026-09-25)
+
+`docs/rust-engine/RAYCAST-LINUX-SHIM.md` has the design; these are its build-or-buy calls. The
+runtime is TypeScript, so the candidates are npm packages, and one constraint weighs on every one
+of them: a runtime dependency changes `src/typescript/extension-manager/package-lock.json`, which
+the Nix build pins by hash (`fetchNpmDeps` in `nix/vicinae.nix`) and the Flatpak builds offline
+from. None was added.
+
+| Need | Candidate | Decision |
+|---|---|---|
+| Telling a simple shell line from one that needs the shell, and taking it apart into words | `shell-quote` 1.8 (maintained); `string-argv` | **Hand-written** (`linux-shim/shell.ts`, ~110 lines). `shell-quote`'s `parse` expands `$VAR` from an env it is given and turns globs and operators into objects, so what it hands back is not the line's words; and a line that is re-joined from its output can mean something else. What the shim needs is narrower: which words, and where each command starts in the raw text, so a line that keeps its shell is changed only by replacing a command word in place. `string-argv` splits on quotes and knows no operators. |
+| Intercepting `child_process` for one extension | `mock-spawn`, `proxyquire`-style module mocking; `node:module` hooks | **A `Proxy` over the real module**, returned from the runtime's existing `require` override (`patch-require.ts`). Mocking libraries replace the module for tests; the shim must keep every function it does not change real, and only for the extension's `require`. |
+| A child process that is not one (`pbcopy` from the clipboard, `brew` from the host, a refusal) | none: every "fake child process" package is a test double | **Hand-written** (`linux-shim/fake-child.ts`, ~250 lines): an `EventEmitter` with Node's streams, `exit`/`close`/`error`, the `exec` callback and `util.promisify.custom`, the sync forms' return values and errors. |
+| Answering `execSync("brew --prefix")` while the extension's thread is blocked | `synckit` (worker plus `Atomics.wait`); `deasync` (native) | **Node's own `worker_threads.receiveMessageOnPort` plus `Atomics.wait`** (`linux-shim/sync-rpc.ts`, ~90 lines). The extension already runs in a worker whose port carries the API's answers; `synckit` would start a second worker and `deasync` is a native addon, which the runtime ships none of. |
+| Load-time source patches from the overrides manifest | `patch-package` (patches `node_modules` on install); monkey-patching `Module.prototype._compile` | **`module.registerHooks`** (Node 22.15+, synchronous, in-thread): the official hook for changing a module's source as it loads, for `require` and `import` alike. `patch-package` patches installed files, which a store update overwrites; `_compile` is private. |
+| Running the brokered program on the host | `compass_platform_linux::host_command` (already: `flatpak-spawn --host` inside the Flatpak, a direct spawn outside) | **Used**, with `env PATH=… program args…` so the program is looked up on the host's side, Linuxbrew's prefix included; `std::process::Command` does the rest. |
+| The grants file | `serde_json` (already), the Rhai consent file's write-then-rename | **Used** (`vicinae::host_commands::Grants`). |
+| The runtime's unit tests | `vitest`, `jest`, `tsx` | **Node's own `node:test`**, over bundles `esbuild` (already the runtime's bundler) makes: `npm test` needs nothing the offline builds would have to fetch. |
+

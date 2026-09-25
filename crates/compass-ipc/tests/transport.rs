@@ -131,6 +131,7 @@ async fn echo_handler(request: Request) -> Response {
         | Request::ExtensionPop { .. }
         | Request::SetExtensionPreferences { .. }
         | Request::ExtensionAlertAnswer { .. }
+        | Request::ExtensionAlertRemember { .. }
         | Request::CloseExtension { .. }
         | Request::OpenFile { .. }
         | Request::OAuthRedirect { .. }

@@ -546,6 +546,7 @@ pub mod clipboard_service;
 pub mod command_service;
 pub mod extension_manager;
 pub mod file_search_service;
+pub mod host_command_service;
 pub mod oauth_service;
 pub mod render;
 pub mod session;

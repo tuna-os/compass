@@ -3307,9 +3307,14 @@ impl LauncherApp {
                 if let Page::Extension(page) = &mut self.page
                     && page.alert.is_some()
                 {
-                    let confirmed = match key.as_ref() {
-                        Key::Named(Named::Enter) => true,
-                        Key::Named(Named::Escape) => false,
+                    let remembers = page
+                        .alert
+                        .as_ref()
+                        .is_some_and(|alert| alert.remember_text.is_some());
+                    let answer = match key.as_ref() {
+                        Key::Named(Named::Enter) if remembers && modifiers.control() => None,
+                        Key::Named(Named::Enter) => Some(true),
+                        Key::Named(Named::Escape) => Some(false),
                         _ => return Task::none(),
                     };
                     page.alert = None;
@@ -3318,7 +3323,14 @@ impl LauncherApp {
                         return Task::none();
                     };
                     return Task::perform(
-                        async move { backend.extension_alert_answer(session, confirmed).await },
+                        async move {
+                            match answer {
+                                Some(confirmed) => {
+                                    backend.extension_alert_answer(session, confirmed).await
+                                }
+                                None => backend.extension_alert_remember(session).await,
+                            }
+                        },
                         Message::ExtensionEventSent,
                     );
                 }
@@ -5767,14 +5779,17 @@ impl LauncherApp {
             if !alert.message.is_empty() {
                 prompt = prompt.push(iced::widget::text(alert.message.clone()).font(self.font()));
             }
-            prompt = prompt.push(
-                iced::widget::text(format!(
+            let keys = match &alert.remember_text {
+                Some(remember) => format!(
+                    "Enter: {}    Ctrl+Enter: {remember}    Esc: {}",
+                    alert.confirm_text, alert.cancel_text
+                ),
+                None => format!(
                     "Enter: {}    Esc: {}",
                     alert.confirm_text, alert.cancel_text
-                ))
-                .font(self.font())
-                .size(12),
-            );
+                ),
+            };
+            prompt = prompt.push(iced::widget::text(keys).font(self.font()).size(12));
             return prompt.into();
         }
         match (&page.status, &page.view) {
@@ -7277,6 +7292,7 @@ mod tests {
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
+        remembered: std::sync::Mutex<Vec<()>>,
         /// Preferences the fake asks for until some are saved.
         needs: Vec<crate::backend::PreferenceInput>,
         saved: std::sync::Mutex<Vec<serde_json::Map<String, serde_json::Value>>>,
@@ -8254,6 +8270,13 @@ mod tests {
             })
         }
 
+        fn extension_alert_remember(&self, _session: u64) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.remembered.lock().unwrap().push(());
+                Ok(())
+            })
+        }
+
         fn extension_pop(&self, _session: u64) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.events.lock().unwrap().push(("pop".to_owned(), vec![]));
@@ -9120,6 +9143,7 @@ mod tests {
                     message: "This cannot be undone.".into(),
                     confirm_text: "Delete".into(),
                     cancel_text: "Keep".into(),
+                    remember_text: None,
                 }),
                 ..TestBackend::default()
             });
@@ -9146,6 +9170,54 @@ mod tests {
                 "answered, and still in the view"
             );
         }
+    }
+
+    #[test]
+    fn a_consent_alert_takes_ctrl_enter_as_always_allow() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            view: Some(greeting_list(true)),
+            alert: Some(crate::backend::ExtensionPrompt {
+                title: "Allow Brew to run brew?".into(),
+                message: String::new(),
+                confirm_text: "Allow Once".into(),
+                cancel_text: "Deny".into(),
+                remember_text: Some("Always Allow".into()),
+            }),
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        let mut pending = task_messages(app.update(Message::LaunchSelected));
+        while let Some(message) = pending.pop() {
+            pending.extend(task_messages(app.update(message)));
+        }
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(
+                ui.find("Enter: Allow Once    Ctrl+Enter: Always Allow    Esc: Deny")
+                    .is_ok()
+            );
+        }
+        let ctrl_enter = Message::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        });
+        for message in task_messages(app.update(ctrl_enter)) {
+            let _ = app.update(message);
+        }
+        assert_eq!(backend.remembered.lock().unwrap().len(), 1);
+        assert!(backend.answers.lock().unwrap().is_empty());
     }
 
     #[test]

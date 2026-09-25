@@ -8,6 +8,7 @@
 #include "extension/api/command-service.hpp"
 #include "extension/api/event-core-service.hpp"
 #include "extension/api/file-search-service.hpp"
+#include "extension/api/host-command-service.hpp"
 #include "extension/api/oauth-service.hpp"
 #include "extension/api/storage-service.hpp"
 #include "extension/api/ui-service.hpp"
@@ -60,9 +61,10 @@ void ExtensionCommandRuntime::initialize() {
   auto *oauth = new ExtOAuthService(*m_transport, m_command->extensionId(), ctx);
   auto wallpaper = new ExtWallpaperService(*m_transport, *services->wallpaperManager());
   auto browserExtension = new ExtBrowserExtensionService(*m_transport, *services->browserExtension());
+  auto *hostCommand = new ExtHostCommandService(*m_transport);
 
   m_server = new tsapi::Server(*m_transport, app, ui, wm, clipboard, storage, fileSearch, command, oauth,
-                               wallpaper, browserExtension, eventCore);
+                               wallpaper, browserExtension, eventCore, hostCommand);
   m_server->setLogger(m_logger.get());
   m_server->setParent(this);
 }

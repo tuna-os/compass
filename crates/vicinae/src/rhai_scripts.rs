@@ -661,6 +661,7 @@ fn consent_prompt(title: &str, missing: &[Capability]) -> compass_ipc::Extension
         ),
         confirm_text: "Allow".to_owned(),
         cancel_text: "Don't Allow".to_owned(),
+        remember_text: None,
     }
 }
 

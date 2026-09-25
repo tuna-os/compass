@@ -1513,6 +1513,34 @@ Declared differences:
 - **The shortcut inhibitor stays layer-shell only.** The same bridge could give it the
   `xdg_toplevel` surface; not done in this pass.
 
+### Raycast extensions written for macOS (2026-09-25)
+
+Compass-only, with no C++ counterpart: the C++ runs a Raycast extension's
+`brew`, `open` and `osascript` as it finds them, inside no sandbox. Three
+pieces, documented with the measurement behind them in
+[RAYCAST-LINUX-SHIM.md](RAYCAST-LINUX-SHIM.md):
+
+- The runtime's shim (`src/typescript/extension-manager/src/linux-shim/`):
+  a Raycast extension's `open` runs `xdg-open`, `pbcopy`/`pbpaste` use the
+  runtime's clipboard, `osascript` and other macOS-only programs fail by name
+  rather than with `ENOENT`, and Homebrew's macOS paths resolve to Linuxbrew's.
+  `process.platform` stays `linux`.
+- The host-command broker (`vicinae::host_commands`, `HostCommand/run`): `brew`,
+  for any extension, runs on the host as the engine's child once the person
+  allows it (Allow Once, Always Allow, Deny), never by widening the
+  extension's Landlock policy. "Always Allow" is kept in
+  `$XDG_CONFIG_HOME/compass/host-command-grants.json` and listed and revoked in
+  Script Permissions. The Qt engine refuses the call by name.
+- The overrides manifest (`extensions/raycast-linux-overrides.json`): per
+  extension, more host programs, path and command maps, load-time patches and
+  install redirects.
+
+IPC v22: `ExtensionAlert::remember_text` and `Request::ExtensionAlertRemember`
+(the alert's third answer, Ctrl+Enter), and extension grants in
+`ListScriptGrants`/`RevokeScriptGrant`. Raycast's Brew renders Show Installed
+and Search against a Linuxbrew `brew`; Suite 1's ledger is unchanged, since its
+corpus leaves macOS-only listings out.
+
 ### Earlier row notes
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,

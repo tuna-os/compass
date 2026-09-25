@@ -92,8 +92,13 @@ use serde::{Deserialize, Serialize};
 /// ([`Request::ExchangeRates`], [`Request::RefreshExchangeRates`], both
 /// answered with [`Response::ExchangeRates`]), and the recorder asking whether the
 /// desktop would bind a combination ([`Request::ProbeShortcut`],
-/// [`Response::ShortcutProbe`]).
-pub const PROTOCOL_VERSION: u16 = 21;
+/// [`Response::ShortcutProbe`]); version 22, an extension view's alert with a
+/// third, remembered answer ([`ExtensionAlert::remember_text`],
+/// [`Request::ExtensionAlertRemember`]), which the engine's consent to run a
+/// host program for an extension is asked with, and those grants listed and
+/// revoked beside the Rhai scripts' ([`Request::ListScriptGrants`],
+/// [`Request::RevokeScriptGrant`]).
+pub const PROTOCOL_VERSION: u16 = 22;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -669,14 +674,16 @@ pub enum Request {
         /// The URL.
         url: String,
     },
-    /// What the user has allowed their own Rhai scripts to do. Answered
-    /// with [`Response::ScriptGrants`].
+    /// What the user has allowed their own Rhai scripts to do, and, since
+    /// v22, which programs they have always allowed an extension to run on
+    /// the host. Answered with [`Response::ScriptGrants`].
     ListScriptGrants,
-    /// Withdraw everything the user allowed a Rhai script. Answered with
-    /// [`Response::ScriptGrants`], the list after the change; an id with
-    /// nothing recorded is a bad request.
+    /// Withdraw everything the user allowed a Rhai script, or an extension.
+    /// Answered with [`Response::ScriptGrants`], the list after the change;
+    /// an id with nothing recorded is a bad request.
     RevokeScriptGrant {
-        /// The script's id, `script.<folder name>`.
+        /// The script's id, `script.<folder name>`, or the extension's,
+        /// `store.raycast.brew`.
         id: String,
     },
     /// How many times the engine has rescanned its catalog (the applications
@@ -1035,6 +1042,14 @@ pub enum Request {
     ProbeShortcut {
         /// The combination, as the configuration spells it.
         trigger: String,
+    },
+    /// The person chose the view's alert's third answer
+    /// ([`ExtensionAlert::remember_text`], Ctrl+Enter): allow, and remember
+    /// it. Answered with [`Response::Ack`]; a session with no alert waiting is
+    /// a bad request. (v22.)
+    ExtensionAlertRemember {
+        /// From [`Response::ExtensionStarted`].
+        session: u64,
     },
 }
 
@@ -2083,6 +2098,10 @@ pub struct ExtensionAlert {
     pub confirm_text: String,
     /// The cancel button's text.
     pub cancel_text: String,
+    /// A third answer that confirms and is remembered ("Always Allow"), or
+    /// `None` for an alert with two. Answered with
+    /// [`Request::ExtensionAlertRemember`]. (v22.)
+    pub remember_text: Option<String>,
 }
 
 /// A toast an extension shows over its view (`showToast`).

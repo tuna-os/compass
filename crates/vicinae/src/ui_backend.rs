@@ -1450,6 +1450,7 @@ impl ApplicationBackend for DaemonBackend {
                         message: alert.message,
                         confirm_text: alert.confirm_text,
                         cancel_text: alert.cancel_text,
+                        remember_text: alert.remember_text,
                     }),
                     version,
                     view: view_json
@@ -1516,6 +1517,21 @@ impl ApplicationBackend for DaemonBackend {
             match self
                 .ask(
                     Request::ExtensionAlertAnswer { session, confirmed },
+                    "Answering the extension",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_alert_remember(&self, session: u64) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExtensionAlertRemember { session },
                     "Answering the extension",
                 )
                 .await?

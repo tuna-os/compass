@@ -106,6 +106,7 @@ class ExtensionManager extends manager.ManagerService {
 				capabilities: load.capabilities,
 				cwd: load.cwd,
 				fallbackText: load.fallbackText,
+				extension_id: load.extension_id,
 			},
 		};
 

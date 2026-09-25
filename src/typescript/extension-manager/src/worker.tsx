@@ -12,6 +12,8 @@ import { callbackManager } from "./callback";
 import { globalState } from "./globals";
 import loadNoView from "./loaders/load-no-view-command";
 import loadView from "./loaders/load-view-command";
+import { installShim } from "./linux-shim";
+import { workerPort } from "./linux-shim/sync-rpc";
 import { patchRequire } from "./patch-require";
 import * as api from "./proto/api";
 import * as extensionServer from "./proto/extension-manager";
@@ -23,7 +25,7 @@ class Lifecycle extends extensionServer.LifecycleService {
 
 		// raycast compat captures preference values at load time: keep before patchRequire
 		loadEnviron(environment, data);
-		patchRequire(environment);
+		patchRequire(environment, shimFor(data));
 		(process as any).noDeprecation = environment === "production";
 
 		if (data.mode === "View") {
@@ -70,6 +72,19 @@ const client = new api.Client(clientRpc);
 client.EventCore.handlerActivated((id, data) => {
 	callbackManager.activateHandler(id, data);
 });
+
+const shimFor = (data: extensionServer.LaunchEventData) =>
+	installShim({
+		extensionName: data.extension_name,
+		extensionId: data.extension_id,
+		raycast: data.is_raycast,
+		entrypoint: data.entrypoint,
+		runOnHost: (request) => client.HostCommand.run(request),
+		copy: (text) => client.Clipboard.copy({ text }, { concealed: false }),
+		readText: async () => (await client.Clipboard.readContent()).text,
+		port: workerPort((message) => server.route(message)),
+		log: (message) => console.error(`[linux-shim] ${message}`),
+	});
 
 const mapLaunchType = (t: extensionServer.LaunchType) => {
 	switch (t) {

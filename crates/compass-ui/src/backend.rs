@@ -562,6 +562,12 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// The person chose the alert's remembered answer (Ctrl+Enter).
+    fn extension_alert_remember(&self, session: u64) -> BackendFuture<'_, ()> {
+        let _ = session;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// Escape on a pushed view: the extension pops it.
     fn extension_pop(&self, session: u64) -> BackendFuture<'_, ()> {
         let _ = session;
@@ -1116,6 +1122,9 @@ pub struct ExtensionPrompt {
     pub confirm_text: String,
     /// What Escape does.
     pub cancel_text: String,
+    /// What Ctrl+Enter does, when the alert has a third, remembered answer
+    /// ("Always Allow").
+    pub remember_text: Option<String>,
 }
 
 /// One clipboard history row, as the UI draws it.
