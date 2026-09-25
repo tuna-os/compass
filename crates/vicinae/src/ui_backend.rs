@@ -132,6 +132,18 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn catalog_generation(&self) -> BackendFuture<'_, u64> {
+        Box::pin(async move {
+            match self
+                .ask(Request::CatalogGeneration, "Asking what changed")
+                .await?
+            {
+                compass_ipc::Response::CatalogGeneration { generation } => Ok(generation),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn revoke_script_grant(
         &self,
         id: String,

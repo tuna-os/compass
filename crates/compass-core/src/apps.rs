@@ -415,6 +415,10 @@ impl AppIndexBuilder {
     /// because one `.desktop` file on the system is broken is not shippable.
     #[must_use]
     pub fn build(self) -> AppIndex {
+        let scan = AppIndexBuilder {
+            extension_dirs: Vec::new(),
+            ..self.clone()
+        };
         let mut items: Vec<AppItem> = Vec::new();
         let mut skipped: Vec<SkippedEntry> = Vec::new();
         // Desktop file id -> the file that claimed it. Claiming happens before any visibility
@@ -502,6 +506,7 @@ impl AppIndexBuilder {
             rhai_scripts: Vec::new(),
             root_config: crate::root_items::RootConfig::default(),
             extension_dirs: self.extension_dirs,
+            scan,
         }
     }
 
@@ -688,6 +693,10 @@ pub struct AppIndex {
     root_config: crate::root_items::RootConfig,
     /// Where installed extensions are looked for, kept for a rescan.
     extension_dirs: Vec<PathBuf>,
+    /// How the applications were scanned, kept for a rescan
+    /// ([`AppIndex::application_scan`]); without the extension directories,
+    /// which [`AppIndex::rescan_extensions`] covers.
+    scan: AppIndexBuilder,
 }
 
 /// One row of a root search over applications and commands.
@@ -1008,6 +1017,52 @@ impl AppIndex {
             root.merge_config(&self.root_config, false);
             self.roots.push(root);
         }
+    }
+
+    /// The directories applications are scanned from, highest precedence
+    /// first: what `AppService` watches (`reinstallWatches(searchPaths())`).
+    #[must_use]
+    pub fn application_dirs(&self) -> &[PathBuf] {
+        &self.scan.dirs
+    }
+
+    /// A builder that scans the applications again exactly as this index
+    /// was scanned, without the extensions. Built off the lock and handed to
+    /// [`AppIndex::replace_applications`], so a rescan never holds up a query.
+    #[must_use]
+    pub fn application_scan(&self) -> AppIndexBuilder {
+        self.scan.clone()
+    }
+
+    /// Scans the application directories again and takes what is installed
+    /// now, as `AppService::scanSync` does after a directory changed.
+    pub fn rescan_applications(&mut self) {
+        let fresh = self.application_scan().build();
+        self.replace_applications(fresh);
+    }
+
+    /// Takes `fresh`'s applications in place of this index's, keeping every
+    /// other root (commands, extensions, shortcuts, scripts) and the
+    /// configuration last applied, which the new application rows get too:
+    /// an alias or a disabled flag survives an application being reinstalled.
+    pub fn replace_applications(&mut self, fresh: AppIndex) {
+        let mut roots: Vec<crate::root_items::RootItem> = fresh
+            .roots
+            .into_iter()
+            .take(fresh.root_indices.len())
+            .collect();
+        for root in &mut roots {
+            root.merge_config(&self.root_config, false);
+        }
+        roots.extend(
+            self.roots
+                .drain(self.root_indices.len().min(self.roots.len())..),
+        );
+        self.roots = roots;
+        self.root_indices = fresh.root_indices;
+        self.items = fresh.items;
+        self.by_key = fresh.by_key;
+        self.skipped = fresh.skipped;
     }
 
     /// Scans the extension directories the index was built with again and

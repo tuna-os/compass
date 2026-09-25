@@ -150,6 +150,7 @@ async fn echo_handler(request: Request) -> Response {
         Request::ListScriptGrants | Request::RevokeScriptGrant { .. } => {
             Response::ScriptGrants { grants: vec![] }
         }
+        Request::CatalogGeneration => Response::CatalogGeneration { generation: 0 },
         Request::ListFonts => Response::Fonts {
             fonts: vec![],
             categories: vec![],

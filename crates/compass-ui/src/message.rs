@@ -194,6 +194,9 @@ pub enum Message {
     FontSet(Result<String, String>),
     /// Script Permissions' list arrived.
     GrantsLoaded(Result<Vec<crate::backend::ScriptGrant>, String>),
+    /// The engine's catalog generation, asked on every summon: when it moved,
+    /// applications or extensions were installed or removed.
+    CatalogGeneration(Result<u64, String>),
     /// Script Permissions' filter changed.
     GrantsQueryChanged(String),
     /// A script row was clicked, by position in the shown list.

@@ -46,8 +46,10 @@ use serde::{Deserialize, Serialize};
 /// ([`Request::ExtensionSubtitles`]), and a command's preferences form without
 /// running it ([`Request::ExtensionPreferences`]); version 16, media arguments,
 /// Now Playing, the launcher's font, store avatars, extension deeplinks and
-/// reviewing Rhai script permissions.
-pub const PROTOCOL_VERSION: u16 = 16;
+/// reviewing Rhai script permissions; version 17, the catalog generation a
+/// window compares to know that applications or extensions were installed or
+/// removed while it ran ([`Request::CatalogGeneration`]).
+pub const PROTOCOL_VERSION: u16 = 17;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -633,6 +635,11 @@ pub enum Request {
         /// The script's id, `script.<folder name>`.
         id: String,
     },
+    /// How many times the engine has rescanned its catalog (the applications
+    /// or the installed extensions) because their directories changed.
+    /// Answered with [`Response::CatalogGeneration`]; a window whose last
+    /// answer differs scans its own copy again.
+    CatalogGeneration,
 }
 
 /// What the engine answers.
@@ -861,6 +868,11 @@ pub enum Response {
     ScriptGrants {
         /// One per script with something allowed.
         grants: Vec<ScriptGrantEntry>,
+    },
+    /// Answer to [`Request::CatalogGeneration`].
+    CatalogGeneration {
+        /// Starts at zero and goes up by one per rescan.
+        generation: u64,
     },
 }
 

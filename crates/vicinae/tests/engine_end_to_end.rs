@@ -286,6 +286,51 @@ impl Drop for Daemon {
 
 // ---------------------------------------------------------------------------
 
+/// `AppService`'s directory watch: an application installed while the engine
+/// runs is found without a restart, one removed is gone, and the catalog
+/// generation a window compares says so.
+#[test]
+fn an_application_installed_while_the_engine_runs_is_found_without_a_restart() {
+    use compass_ipc::{Request, Response};
+    let alpha = entry("Alpha Editor", "");
+    let daemon = Daemon::start(&[("alpha.desktop", alpha.as_str())]);
+    let ids = |query: &str| -> Vec<String> {
+        let Response::QueryResults { hits } = daemon.request(Request::Query { text: query.into() })
+        else {
+            panic!("expected query results");
+        };
+        hits.into_iter()
+            .map(|hit| hit.id)
+            .filter(|id| id.starts_with("applications:"))
+            .collect()
+    };
+    let generation = || match daemon.request(Request::CatalogGeneration) {
+        Response::CatalogGeneration { generation } => generation,
+        other => panic!("unexpected answer: {other:?}"),
+    };
+    assert_eq!(generation(), 0);
+    assert!(ids("Zephyr").is_empty());
+
+    let apps = daemon._dirs.path().join("data/applications");
+    std::fs::write(apps.join("zephyr.desktop"), entry("Zephyr Mail", "")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while ids("Zephyr").is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the new application never appeared"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(ids("Zephyr"), ["applications:zephyr"]);
+    assert!(generation() >= 1);
+
+    std::fs::remove_file(apps.join("alpha.desktop")).unwrap();
+    while !ids("Alpha").is_empty() {
+        assert!(Instant::now() < deadline, "the removed application stayed");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[test]
 fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() {
     use compass_ipc::{Request, Response};

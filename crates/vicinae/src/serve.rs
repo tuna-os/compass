@@ -123,6 +123,9 @@ pub struct EngineState {
     expander: Option<Arc<crate::snippet_expansion::Expander>>,
     /// Launches extensions asked for, and their commands' subtitle overrides.
     launches: Arc<crate::extension_commands::Launches>,
+    /// How many times a directory watch has rescanned the catalog; see
+    /// [`Request::CatalogGeneration`].
+    catalog_generation: u64,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -237,6 +240,7 @@ impl EngineState {
             stores: Arc::default(),
             expander: None,
             launches: Arc::default(),
+            catalog_generation: 0,
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -299,7 +303,38 @@ impl EngineState {
             stores: Arc::default(),
             expander: None,
             launches: Arc::default(),
+            catalog_generation: 0,
         }
+    }
+
+    /// Takes `fresh`'s applications, scanned after an application directory
+    /// changed, as `AppService::scanSync` ends in `appsChanged`.
+    pub fn replace_applications(&mut self, fresh: AppIndex) {
+        self.index.replace_applications(fresh);
+        self.catalog_generation += 1;
+        tracing::info!(
+            applications = self.index.len(),
+            generation = self.catalog_generation,
+            "applications rescanned"
+        );
+    }
+
+    /// Takes the installed extensions again after an extension directory
+    /// changed, as the registry's debounced `requestScan` does.
+    pub fn rescan_extensions(&mut self) {
+        self.index.rescan_extensions();
+        self.catalog_generation += 1;
+        tracing::info!(
+            commands = self.index.extensions().len(),
+            generation = self.catalog_generation,
+            "extensions rescanned"
+        );
+    }
+
+    /// See [`Request::CatalogGeneration`].
+    #[must_use]
+    pub fn catalog_generation(&self) -> u64 {
+        self.catalog_generation
     }
 
     /// Makes the Shell extension's client available to requests.
@@ -2739,6 +2774,9 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
             Response::Ack
         }
+        Request::CatalogGeneration => Response::CatalogGeneration {
+            generation: state.read().await.catalog_generation,
+        },
         Request::ListScriptGrants => {
             let rhai = Arc::clone(&state.read().await.rhai);
             match tokio::task::spawn_blocking(move || rhai.grants()).await {
@@ -2971,6 +3009,9 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
 
     // Rhai scripts' hot reload.
     tokio::spawn(crate::rhai_scripts::watch(Arc::clone(&state)));
+
+    // Applications installed or removed while the engine runs.
+    tokio::spawn(crate::catalog_watch::watch_applications(Arc::clone(&state)));
 
     // Snippet keyword expansion: the input server, when `input_server.enabled`.
     {

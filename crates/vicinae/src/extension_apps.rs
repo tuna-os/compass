@@ -34,6 +34,14 @@ fn file_uri(path: &std::path::Path) -> String {
     )
 }
 
+/// The types `setWebBrowser` makes the browser the default for.
+pub const WEB_BROWSER_MIMES: [&str; 4] = [
+    "x-scheme-handler/http",
+    "x-scheme-handler/https",
+    "text/html",
+    "application/xhtml+xml",
+];
+
 /// A snapshot of the installed applications and the MIME associations, taken
 /// when the command starts.
 #[derive(Debug)]
@@ -125,6 +133,119 @@ impl EngineApps {
                 )
             })
             .collect()
+    }
+
+    /// `XdgAppDatabase::webBrowser`: what opens `https`, then `http`, then
+    /// HTML, then the first `WebBrowser`, then the first application that
+    /// claims either scheme.
+    #[must_use]
+    pub fn web_browser(&self) -> Option<Application> {
+        self.lookup(
+            &[
+                "x-scheme-handler/https",
+                "x-scheme-handler/http",
+                "text/html",
+            ],
+            "WebBrowser",
+            &["x-scheme-handler/https", "x-scheme-handler/http"],
+        )
+    }
+
+    /// `XdgAppDatabase::fileBrowser`: what opens a directory, then the first
+    /// `FileManager`, then the first application that claims directories.
+    #[must_use]
+    pub fn file_browser(&self) -> Option<Application> {
+        self.lookup(&["inode/directory"], "FileManager", &["inode/directory"])
+    }
+
+    /// `XdgAppDatabase::genericTextEditor`: what opens plain text, then the
+    /// first `TextEditor`, then the first application that claims plain
+    /// text.
+    #[must_use]
+    pub fn text_editor(&self) -> Option<Application> {
+        self.lookup(&["text/plain"], "TextEditor", &["text/plain"])
+    }
+
+    /// `XdgAppDatabase::terminalEmulator`, as [`Self::terminal_name`] finds
+    /// it.
+    #[must_use]
+    pub fn terminal_emulator(&self) -> Option<Application> {
+        self.terminal().map(|(app, _)| app.clone())
+    }
+
+    /// The installed terminal emulators (the `TerminalEmulator` category),
+    /// in index order: what Set Default Terminal offers.
+    #[must_use]
+    pub fn terminal_emulators(&self) -> Vec<Application> {
+        self.terminals
+            .iter()
+            .filter_map(|id| self.find(id).map(|(app, _)| app.clone()))
+            .collect()
+    }
+
+    /// `XdgAppDatabase::setWebBrowser`: makes `id` the default for
+    /// [`WEB_BROWSER_MIMES`] in the `mimeapps.list` at `path`, reads the
+    /// associations again from `search_paths` and answers whether every one
+    /// of them now resolves to `id` — so a desktop-specific list that
+    /// overrides the user's is reported as a failure rather than a success
+    /// nobody sees.
+    pub fn set_web_browser(
+        &mut self,
+        id: &str,
+        path: &std::path::Path,
+        search_paths: &[std::path::PathBuf],
+    ) -> bool {
+        self.set_default_for(&WEB_BROWSER_MIMES, id, path, search_paths)
+    }
+
+    /// `setDefaultForMimes`, which [`Self::set_web_browser`] is.
+    pub fn set_default_for(
+        &mut self,
+        mimes: &[&str],
+        id: &str,
+        path: &std::path::Path,
+        search_paths: &[std::path::PathBuf],
+    ) -> bool {
+        if let Err(error) = compass_xdg::mimeapps_writer::set_default_application(path, mimes, id) {
+            tracing::warn!(%error, path = %path.display(), "could not write mimeapps.list");
+            return false;
+        }
+        self.lists = Lists::load(search_paths);
+        mimes.iter().all(|mime| {
+            self.default_for_mime(mime)
+                .is_some_and(|(app, _)| app.id == id)
+        })
+    }
+
+    /// `defaultForMime`: the first usable `Default Applications` entry, else
+    /// the first opener.
+    fn default_for_mime(&self, mime: &str) -> Option<&(Application, Arc<DesktopEntry>)> {
+        self.lists
+            .default_for(mime, &self.usable())
+            .or_else(|| self.opener_ids(mime).into_iter().next())
+            .and_then(|id| self.find(&id))
+    }
+
+    /// The shape the three `XdgAppDatabase` lookups share: the defaults for
+    /// `mimes` in turn, then `findByCategory(category)`, then the first
+    /// application whose own `MimeType=` claims one of `claimed`.
+    fn lookup(&self, mimes: &[&str], category: &str, claimed: &[&str]) -> Option<Application> {
+        mimes
+            .iter()
+            .find_map(|mime| self.default_for_mime(mime))
+            .or_else(|| {
+                self.apps
+                    .iter()
+                    .find(|(_, entry)| entry.categories().iter().any(|c| c == category))
+            })
+            .or_else(|| {
+                self.apps.iter().find(|(_, entry)| {
+                    claimed
+                        .iter()
+                        .any(|mime| entry.mime_types().iter().any(|m| m == mime))
+                })
+            })
+            .map(|(app, _)| app.clone())
     }
 
     /// The name of the terminal a command would run in, if one is
@@ -437,5 +558,90 @@ mod tests {
         assert!(apps.by_id("files").is_some());
         assert!(apps.by_id("files.desktop").is_some());
         assert!(apps.default_opener("mailto:a@b").is_none());
+    }
+
+    /// `webBrowser`, `fileBrowser` and `genericTextEditor`: the default for
+    /// the type first, then the category, then whatever claims the type.
+    #[test]
+    fn the_browser_file_manager_and_editor_are_the_defaults_then_the_category_then_a_claim() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |file: &str, body: &str| {
+            std::fs::write(
+                dir.path().join(file),
+                format!("[Desktop Entry]\nType=Application\nExec=x\n{body}"),
+            )
+            .unwrap();
+        };
+        write("aa-reader.desktop", "Name=Reader\nMimeType=text/plain;\n");
+        write(
+            "bb-notes.desktop",
+            "Name=Notes\nCategories=Utility;TextEditor;\n",
+        );
+        write(
+            "cc-web.desktop",
+            "Name=Web\nMimeType=x-scheme-handler/http;\n",
+        );
+        write(
+            "dd-surf.desktop",
+            "Name=Surf\nCategories=Network;WebBrowser;\n",
+        );
+        write("ee-gedit.desktop", "Name=Gedit\nMimeType=text/plain;\n");
+        let index = compass_core::AppIndex::builder().dir(dir.path()).build();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let lists = dir.path().join("mimeapps.list");
+        std::fs::write(
+            &lists,
+            "[Default Applications]\ntext/plain=ee-gedit.desktop;\n",
+        )
+        .unwrap();
+        let mut apps = EngineApps::new(
+            &index,
+            Lists::load(std::slice::from_ref(&lists)),
+            runtime.handle().clone(),
+        );
+        let id = |app: Option<Application>| app.map(|app| app.id);
+
+        assert_eq!(
+            id(apps.text_editor()),
+            Some("ee-gedit.desktop".into()),
+            "the default"
+        );
+        assert_eq!(
+            id(apps.web_browser()),
+            Some("cc-web.desktop".into()),
+            "what claims http is an opener, which comes before the category"
+        );
+        assert_eq!(id(apps.file_browser()), None, "nothing opens a directory");
+
+        apps.lists = Lists::load(&[]);
+        assert_eq!(
+            id(apps.text_editor()),
+            Some("aa-reader.desktop".into()),
+            "without a default, the first opener"
+        );
+
+        let user = dir.path().join("config/mimeapps.list");
+        assert!(apps.set_web_browser("dd-surf.desktop", &user, std::slice::from_ref(&user)));
+        assert_eq!(id(apps.web_browser()), Some("dd-surf.desktop".into()));
+        let written = std::fs::read_to_string(&user).unwrap();
+        for mime in WEB_BROWSER_MIMES {
+            assert!(
+                written.contains(&format!("{mime}=dd-surf.desktop")),
+                "{written}"
+            );
+        }
+
+        let system = dir.path().join("system-mimeapps.list");
+        std::fs::write(
+            &system,
+            "[Default Applications]\nx-scheme-handler/https=cc-web.desktop;\n",
+        )
+        .unwrap();
+        assert!(
+            !apps.set_web_browser("dd-surf.desktop", &user, &[system, user.clone()]),
+            "a list read first that still says otherwise is a failure"
+        );
     }
 }

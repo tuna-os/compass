@@ -12,6 +12,7 @@
 #![warn(missing_debug_implementations)]
 
 pub mod appearance;
+pub mod catalog_watch;
 pub mod cli;
 pub mod clipboard_service;
 pub mod config_cmd;

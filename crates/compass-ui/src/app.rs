@@ -651,6 +651,9 @@ fn extension_panel_sections(page: &crate::extension_page::ExtensionPage) -> Vec<
 pub struct LauncherApp {
     /// The application index.
     app_index: AppIndex,
+    /// The engine's catalog generation this index was last brought up to;
+    /// see [`crate::backend::ApplicationBackend::catalog_generation`].
+    catalog_generation: u64,
     /// Current query text.
     query: String,
     /// Ranked results: applications as indices into `app_index.items()`,
@@ -987,6 +990,7 @@ impl LauncherApp {
     pub fn with_index(app_index: AppIndex) -> Self {
         Self {
             app_index,
+            catalog_generation: 0,
             query: String::new(),
             results: Vec::new(),
             calculator: None,
@@ -1903,6 +1907,7 @@ impl LauncherApp {
                     self.refresh_scripts_task(),
                     self.refresh_rhai_scripts_task(),
                     self.refresh_subtitles_task(),
+                    self.catalog_task(),
                     self.apply_dmenu_size(),
                 ])
             }
@@ -2422,6 +2427,11 @@ impl LauncherApp {
             Message::LaunchFetched(_)
             | Message::ExtensionSubtitlesLoaded(_)
             | Message::PreferencesOpened { .. } => self.launch_message(message),
+            Message::CatalogGeneration(Ok(generation)) => self.catalog_moved(generation),
+            Message::CatalogGeneration(Err(error)) => {
+                tracing::debug!(%error, "no catalog generation");
+                Task::none()
+            }
             Message::GrantsLoaded(_)
             | Message::GrantsQueryChanged(_)
             | Message::GrantSelected(_)
@@ -4502,6 +4512,36 @@ impl LauncherApp {
         }
     }
 
+    /// Asks the engine whether its catalog moved since this window last
+    /// looked.
+    fn catalog_task(&self) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.catalog_generation().await },
+            Message::CatalogGeneration,
+        )
+    }
+
+    /// The engine rescanned applications or extensions: this window scans
+    /// its own copy again, as the C++'s one process reloads its root items on
+    /// `appsChanged`, and searches again so no row points at a moved entry.
+    fn catalog_moved(&mut self, generation: u64) -> Task<Message> {
+        if generation == self.catalog_generation {
+            return Task::none();
+        }
+        self.catalog_generation = generation;
+        self.app_index.rescan_applications();
+        self.app_index.rescan_extensions();
+        if matches!(self.page, Page::Root) {
+            self.search_task()
+        } else {
+            self.results.clear();
+            Task::none()
+        }
+    }
+
     fn open_command(
         &mut self,
         command: &'static compass_core::commands::BuiltinCommand,
@@ -4957,6 +4997,37 @@ mod tests {
 
     fn app(dir: &std::path::Path) -> LauncherApp {
         LauncherApp::with_index(index(dir))
+    }
+
+    #[test]
+    fn a_moved_catalog_generation_rescans_and_the_same_one_does_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        fs::write(
+            dir.path().join("zephyr.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Zephyr\nExec=/bin/true\n",
+        )
+        .expect("write entry");
+        let _ = app.update(Message::CatalogGeneration(Ok(0)));
+        assert!(app.app_index.get("zephyr.desktop").is_none(), "unchanged");
+
+        let _ = app.update(Message::CatalogGeneration(Ok(1)));
+        assert!(app.app_index.get("zephyr.desktop").is_some());
+        let _ = app.update(Message::QueryChanged("zeph".into()));
+        assert_eq!(
+            app.selected_item().map(AppItem::key),
+            Some("zephyr.desktop")
+        );
+
+        fs::remove_file(dir.path().join("zephyr.desktop")).expect("remove");
+        let _ = app.update(Message::CatalogGeneration(Ok(1)));
+        assert!(
+            app.app_index.get("zephyr.desktop").is_some(),
+            "same generation"
+        );
+        let _ = app.update(Message::CatalogGeneration(Err("no engine".into())));
+        let _ = app.update(Message::CatalogGeneration(Ok(2)));
+        assert!(app.app_index.get("zephyr.desktop").is_none());
     }
 
     #[test]

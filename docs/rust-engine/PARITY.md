@@ -137,7 +137,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/services/app-runtime` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/app-service` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ⏳ |
+| `src/services/app-service` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
 | `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
@@ -346,6 +346,23 @@ PLAN §12.0 sizes them and says what blocks each.
   icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
 - `ui/action-panel`: Still C++-only: the shortcut recorder panel.
 - `ui/bridges`: Still C++-only: images inside an extension's Markdown detail, which are not fetched.
+
+### Gaps closed after the truth pass (2026-09-25)
+
+Genuine gaps from PLAN §12.0's list, closed one commit each against the C++ in
+`src/server/src/services` and `builtins`. The same rule as the truth pass: a cell flips only with a
+named Rust module and named tests that fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/app-service` | Rust ✅ | `vicinae::catalog_watch` (the directory watch, debounced 500 ms as `m_rescanDebounce`), `AppIndex::{rescan_applications, replace_applications}`, `EngineApps::{web_browser, file_browser, text_editor, terminal_emulator, set_web_browser}`; the window rescans its own copy when `Request::CatalogGeneration` (IPC v17) moves | `an_application_installed_while_the_engine_runs_is_found_without_a_restart` (a real engine over temp XDG dirs), `a_rescan_takes_installed_and_removed_applications_and_keeps_the_rest`, `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none`, `a_moved_catalog_generation_rescans_and_the_same_one_does_not`, `the_browser_file_manager_and_editor_are_the_defaults_then_the_category_then_a_claim` |
+
+What differs, by row:
+
+| Row | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| `app-service` | `QFileSystemWatcher` on each application directory itself, so a file added in a subdirectory (`applications/kde4/`) waits for the next change at the top. | The watch is recursive, as the scan it triggers is. | `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none` |
+| `app-service` | One process: `appsChanged` reloads the root items the window shows. | Two: the engine rescans on the watch; the window asks for the catalog generation on every summon and rescans its own index when it moved, so an open window catches up on its next summon. | `a_moved_catalog_generation_rescans_and_the_same_one_does_not` |
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
@@ -1008,8 +1025,10 @@ opens, it just gets no title, directory or hold. Guessing more would not be an i
 `findById` (with its `.desktop` retry), `findByClass`, `find`'s id-then-class order,
 `findCuratedOpeners`' dedupe by display name, and `list`'s case-insensitive sort. Launching, the
 file browser (`ShowItems`) and the terminal (`compass-xdg::terminal`) are the engine's now.
-Still C++-only: the watch on the application directories (an application installed while the engine runs
-appears only after a restart), the text-editor and file-browser lookups, and `setWebBrowser`.
+The rest landed after the ledger truth pass, which turns the row green (see "Gaps closed after
+the truth pass" above): the watch on the application directories (`vicinae::catalog_watch`,
+`AppIndex::rescan_applications`), and the text-editor, file-browser and web-browser lookups with
+`setWebBrowser` (`vicinae::extension_apps::EngineApps`). Two things differ, both declared there.
 
 `findOpeners` / `findDefaultOpener` are no longer among them. The per-type lookup was already in
 `compass-xdg::mimeapps`; what was missing was the **parent-chain walk**, which the C++ gets from

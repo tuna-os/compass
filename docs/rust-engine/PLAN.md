@@ -2466,7 +2466,7 @@ subsystem. "None" under *blocked by* means only the work.
 |---|---|---|---|
 | `src/cli` | `launch`, `app ls`, `cmd ls`/`launch`, `version`, `logs`, `state open`, `server`, `fs query`, `theme check`/`template`/`paths`, `script template`/`check`, `config default` | medium (a dozen small subcommands; `script template` needs the generator's 185 lines) | none; `state open` and `logs` need an IPC request and an engine log file |
 | `src/services/app-runtime` | Quit and Force Quit, and the running/frontmost answers they use | medium | none on GNOME, wlroots, Hyprland, niri (close exists; a pid only on the last two) |
-| `src/services/app-service` | the applications-directory watch and rescan; the text-editor and file-browser lookups; `setWebBrowser` | small each (the directory watcher and the `mimeapps.list` writer exist) | none |
+| ~~`src/services/app-service`~~ | **Done** (`vicinae::catalog_watch`, `EngineApps`' lookups and `set_web_browser`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/calculator-service`, `src/builtins/calculator` | the history view (model and store ported), currency conversion, refresh-rates | medium | currency needs a decision on a rate source (fend has none); the backend dropdown is not wanted (fend by design) |
 | `src/services/clipboard`, `src/builtins/clipboard` | eviction by age and its timer; the monitoring switch and the ignore-passwords and record-all-offers preferences; the kind filter, keyword editing, open actions and remove-all (small each); the detail pane (medium); the drag payload | medium overall | drag needs drag-and-drop out of an Iced window, which Iced does not offer |
 | `src/services/desktop-notification` | rendering a non-file icon to a PNG so it can be passed | small | none |

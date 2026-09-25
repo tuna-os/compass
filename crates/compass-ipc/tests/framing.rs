@@ -245,6 +245,7 @@ fn all_requests() -> Vec<Request> {
         Request::RevokeScriptGrant {
             id: "script.quick-notes".into(),
         },
+        Request::CatalogGeneration,
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -613,6 +614,7 @@ fn all_responses() -> Vec<Response> {
                 ..Default::default()
             }],
         },
+        Response::CatalogGeneration { generation: 3 },
         Response::ScriptGrants {
             grants: vec![compass_ipc::ScriptGrantEntry {
                 id: "script.quick-notes".into(),
@@ -727,6 +729,7 @@ fn request_variants_are_exhaustive() {
             | Request::OpenDeeplink { .. }
             | Request::ListScriptGrants
             | Request::RevokeScriptGrant { .. }
+            | Request::CatalogGeneration
             | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }
@@ -766,6 +769,7 @@ fn response_variants_are_exhaustive() {
             | Response::StoreInstalled { .. }
             | Response::MediaPlayers { .. }
             | Response::ScriptGrants { .. }
+            | Response::CatalogGeneration { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }
