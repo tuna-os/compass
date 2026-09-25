@@ -20,7 +20,7 @@ tracing.workspace = true
 # to. Icon themes are PNG and SVG; `crate::icons::classify` accepts exactly
 # those two and nothing else, so a format we cannot decode falls back to the
 # row's initial rather than drawing an empty box.
-iced = { version = "0.14", features = ["wayland", "image-without-codecs", "svg", "tokio", "markdown"] }
+iced = { version = "0.14", features = ["wayland", "image-without-codecs", "svg", "tokio", "markdown", "highlighter"] }
 # JPEG too, for remote images: avatars are mostly JPEG. zune-jpeg, pure Rust.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Drawing an SVG into pixels to clip it to a circle or a rounded rectangle

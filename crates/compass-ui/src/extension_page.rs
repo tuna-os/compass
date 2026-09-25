@@ -126,6 +126,9 @@ pub struct ExtensionPage {
     pub masks: std::collections::BTreeMap<(usize, usize), compass_core::image_url::ImageMask>,
     /// The images a detail's Markdown shows that have been fetched, by URL.
     pub markdown_art: std::collections::HashMap<String, RowIcon>,
+    /// For a grid, each section's column count (the section's, else the
+    /// grid's, else `SectionGridModel`'s eight); `None` for any other view.
+    pub grid_columns: Option<Vec<usize>>,
     /// Remote images fetched so far, by URL.
     pub remote_art: std::collections::HashMap<String, RowIcon>,
     /// Remote images already asked for, fetched or not, so a re-render does
@@ -166,6 +169,7 @@ impl ExtensionPage {
             icon_lookup: None,
             masks: std::collections::BTreeMap::new(),
             markdown_art: std::collections::HashMap::new(),
+            grid_columns: None,
             icons: Vec::new(),
             remote_rows: std::collections::BTreeMap::new(),
             remote_art: std::collections::HashMap::new(),
@@ -197,6 +201,13 @@ impl ExtensionPage {
             // the same search, selection and actions, one cell per row.
             let view = match *view {
                 View::Grid(grid) => {
+                    let default = grid.columns.map_or(DEFAULT_GRID_COLUMNS, usize::from);
+                    self.grid_columns = Some(
+                        grid.sections
+                            .iter()
+                            .map(|section| section.columns.map_or(default, usize::from).max(1))
+                            .collect(),
+                    );
                     self.masks = masks_of(grid.sections.iter().map(|s| {
                         s.items.iter().map(|c| match &c.content {
                             compass_extension_api::view::GridContent::Image(image) => image.mask,
@@ -219,6 +230,7 @@ impl ExtensionPage {
                     Box::new(View::List(grid_as_list(grid)))
                 }
                 other => {
+                    self.grid_columns = None;
                     self.masks = match &other {
                         View::List(list) => masks_of(list.sections.iter().map(|s| {
                             s.items
@@ -291,6 +303,108 @@ impl ExtensionPage {
             .get(item)?
             .as_ref()
             .or_else(|| self.remote_art.get(self.remote_rows.get(&(section, item))?))
+    }
+
+    /// The shown cells grouped by section, in order: each section and the
+    /// positions in `shown` of its cells.
+    #[must_use]
+    pub fn grid_groups(&self) -> Vec<(usize, Vec<usize>)> {
+        let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
+        for (position, &(section, _)) in self.shown.iter().enumerate() {
+            match groups.last_mut() {
+                Some((last, cells)) if *last == section => cells.push(position),
+                _ => groups.push((section, vec![position])),
+            }
+        }
+        groups
+    }
+
+    /// How many columns the grid's `section` has.
+    #[must_use]
+    pub fn section_columns(&self, section: usize) -> usize {
+        self.grid_columns
+            .as_ref()
+            .and_then(|columns| columns.get(section).copied())
+            .unwrap_or(DEFAULT_GRID_COLUMNS)
+    }
+
+    /// Where the selection goes in a grid, as `SectionGridModel` navigates:
+    /// Left and Right through the cells in reading order across sections;
+    /// Up and Down by the section's columns, into the next section's first
+    /// row (or the previous one's last) keeping the column; wrapping only
+    /// when `wrap`.
+    #[must_use]
+    pub fn grid_step(&self, step: crate::fonts_page::GridMove, wrap: bool) -> usize {
+        use crate::fonts_page::GridMove;
+        let total = self.shown.len();
+        if total == 0 {
+            return 0;
+        }
+        let current = self.selected.min(total - 1);
+        let groups = self.grid_groups();
+        let Some((group, item)) = groups
+            .iter()
+            .enumerate()
+            .find_map(|(g, (_, cells))| cells.iter().position(|&p| p == current).map(|i| (g, i)))
+        else {
+            return current;
+        };
+        let columns = |g: usize| self.section_columns(groups[g].0);
+        let last_row_cell = |g: usize, column: usize| {
+            let count = groups[g].1.len();
+            let cols = columns(g);
+            let last_row = (count - 1) / cols;
+            groups[g].1[(last_row * cols + column.min(cols - 1)).min(count - 1)]
+        };
+        let first_row_cell = |g: usize, column: usize| {
+            let count = groups[g].1.len();
+            groups[g].1[column.min(columns(g).min(count) - 1)]
+        };
+        let cols = columns(group);
+        let column = item % cols;
+        let cells = &groups[group].1;
+        match step {
+            GridMove::Right if current + 1 < total => current + 1,
+            GridMove::Right => {
+                if wrap {
+                    0
+                } else {
+                    current
+                }
+            }
+            GridMove::Left if current > 0 => current - 1,
+            GridMove::Left => {
+                if wrap {
+                    total - 1
+                } else {
+                    current
+                }
+            }
+            GridMove::Down => {
+                let next_row = item / cols + 1;
+                if next_row <= (cells.len() - 1) / cols {
+                    cells[(next_row * cols + column).min(cells.len() - 1)]
+                } else if group + 1 < groups.len() {
+                    first_row_cell(group + 1, column)
+                } else if wrap {
+                    first_row_cell(0, column)
+                } else {
+                    current
+                }
+            }
+            GridMove::Up => {
+                let row = item / cols;
+                if row > 0 {
+                    cells[(row - 1) * cols + column]
+                } else if group > 0 {
+                    last_row_cell(group - 1, column)
+                } else if wrap {
+                    last_row_cell(groups.len() - 1, column)
+                } else {
+                    current
+                }
+            }
+        }
     }
 
     /// How the row at `(section, item)` clips its image.
@@ -811,6 +925,9 @@ fn grid_as_list(
     }
 }
 
+/// A grid's columns when neither it nor its section says (`SectionGridModel`).
+pub const DEFAULT_GRID_COLUMNS: usize = 8;
+
 /// The `(section, item)` of every row whose image `masks` gives a mask.
 fn masks_of<S, I>(
     masks: S,
@@ -1161,6 +1278,106 @@ mod tests {
             page.mask(0, 2),
             Mask::RoundedRectangle,
             "a remote image keeps its row's mask"
+        );
+    }
+
+    #[test]
+    fn a_grid_moves_by_cell_and_by_its_sections_columns() {
+        use crate::fonts_page::GridMove;
+        use compass_extension_api::view::{GridContent, GridItem, GridSection, GridView};
+        let cell = |title: &str| GridItem {
+            id: compass_extension_api::id::NodeId::ROOT,
+            key: None,
+            title: title.into(),
+            subtitle: None,
+            content: GridContent::Color(compass_extension_api::view::Color::Literal(
+                "#ff0000".into(),
+            )),
+            tooltip: None,
+            keywords: Vec::new(),
+            actions: None,
+        };
+        let section = |columns: Option<u16>, titles: &[&str]| GridSection {
+            columns,
+            items: titles.iter().map(|t| cell(t)).collect(),
+            ..GridSection::default()
+        };
+        let mut page = ExtensionPage::new(1, "Grid");
+        page.apply(state(
+            1,
+            View::Grid(GridView {
+                columns: Some(3),
+                sections: vec![
+                    section(None, &["a", "b", "c", "d", "e"]),
+                    section(Some(2), &["f", "g", "h"]),
+                ],
+                ..GridView::default()
+            }),
+        ));
+        assert_eq!(page.grid_columns, Some(vec![3, 2]));
+        assert_eq!(
+            page.grid_groups(),
+            [(0, vec![0, 1, 2, 3, 4]), (1, vec![5, 6, 7])]
+        );
+        let at = |page: &mut ExtensionPage, from: usize, step: GridMove, wrap: bool| {
+            page.selected = from;
+            page.grid_step(step, wrap)
+        };
+        assert_eq!(at(&mut page, 1, GridMove::Down, false), 4, "b down to e");
+        assert_eq!(
+            at(&mut page, 2, GridMove::Down, false),
+            4,
+            "c down: the row is short"
+        );
+        assert_eq!(
+            at(&mut page, 4, GridMove::Down, false),
+            6,
+            "e down: g, same column"
+        );
+        assert_eq!(
+            at(&mut page, 5, GridMove::Up, false),
+            3,
+            "f up: d, the last row"
+        );
+        assert_eq!(
+            at(&mut page, 4, GridMove::Right, false),
+            5,
+            "reading order runs on"
+        );
+        assert_eq!(at(&mut page, 7, GridMove::Down, false), 7, "no wrap");
+        assert_eq!(at(&mut page, 7, GridMove::Down, true), 0, "wrap to the top");
+        assert_eq!(
+            at(&mut page, 1, GridMove::Up, true),
+            7,
+            "wrap to the last row, clamped"
+        );
+        assert_eq!(at(&mut page, 0, GridMove::Left, true), 7);
+
+        page.apply(state(2, list(vec![ListItem::new("x")], true)));
+        assert_eq!(page.grid_columns, None, "a list is not a grid");
+    }
+
+    #[test]
+    fn a_code_block_is_highlighted_by_its_language() {
+        use iced::widget::markdown::Item;
+        let items: Vec<Item> =
+            iced::widget::markdown::parse("```rust\nfn main() { let answer = 42; }\n```").collect();
+        let Some(Item::CodeBlock {
+            language, lines, ..
+        }) = items.first()
+        else {
+            panic!("no code block: {items:?}");
+        };
+        assert_eq!(language.as_deref(), Some("rust"));
+        let style = iced::widget::markdown::Style::from_palette(iced::Theme::Dark.palette());
+        let colors: std::collections::BTreeSet<String> = lines[0]
+            .spans(style)
+            .iter()
+            .map(|span| format!("{:?}", span.color))
+            .collect();
+        assert!(
+            colors.len() > 2,
+            "keywords, numbers and names in their own colours: {colors:?}"
         );
     }
 

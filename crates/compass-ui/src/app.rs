@@ -3115,6 +3115,22 @@ impl LauncherApp {
                         Key::Named(Named::Enter) => return self.activate_extension_action(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                     };
+                    // A grid moves by cell and by row, as `SectionGridModel`.
+                    if page.grid_columns.is_some() {
+                        use crate::fonts_page::GridMove;
+                        let step = match (key.as_ref(), direction) {
+                            (Key::Named(Named::ArrowLeft), _) => Some(GridMove::Left),
+                            (Key::Named(Named::ArrowRight), _) => Some(GridMove::Right),
+                            (_, Some(Direction::Up)) => Some(GridMove::Up),
+                            (_, Some(Direction::Down)) => Some(GridMove::Down),
+                            _ => None,
+                        };
+                        if let Some(step) = step {
+                            page.selected = page.grid_step(step, self.wrap_navigation);
+                            return crate::scroll::reveal_root_selection();
+                        }
+                        return Task::none();
+                    }
                     if let Some(direction) = direction {
                         page.selected = next_selection(
                             page.shown.len(),
@@ -4151,7 +4167,7 @@ impl LauncherApp {
         let rows: Element<Message> = match &page.detail {
             Some(detail) => row![
                 container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
-                self.clipboard_detail_pane(detail),
+                self.clipboard_detail_pane(detail, &page.query),
             ]
             .into(),
             None => rows.into(),
@@ -4241,9 +4257,19 @@ impl LauncherApp {
         mask: compass_core::image_url::ImageMask,
         selected: bool,
     ) -> Element<'_, Message> {
+        self.icon_art(icon, mask, selected, f32::from(self.geometry.icon_size))
+    }
+
+    /// [`Self::masked_icon`] in a square of `side`.
+    fn icon_art(
+        &self,
+        icon: &crate::extension_page::RowIcon,
+        mask: compass_core::image_url::ImageMask,
+        selected: bool,
+        side: f32,
+    ) -> Element<'_, Message> {
         use crate::extension_page::RowIcon;
-        let geometry = self.geometry;
-        let size = Length::Fixed(f32::from(geometry.icon_size));
+        let size = Length::Fixed(side);
         let palette = self.palette();
         let text_color = if selected {
             palette.selection_text
@@ -4272,14 +4298,12 @@ impl LauncherApp {
                 .into();
         }
         let art: Element<Message> = match icon {
-            RowIcon::Text(glyph) => {
-                container(text(glyph.clone()).size(f32::from(geometry.icon_size) * 0.75))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_x(Alignment::Center)
-                    .align_y(Alignment::Center)
-                    .into()
-            }
+            RowIcon::Text(glyph) => container(text(glyph.clone()).size(side * 0.75))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into(),
             RowIcon::Swatch(color) => {
                 let color = *color;
                 container(text(""))
@@ -5439,6 +5463,9 @@ impl LauncherApp {
                 .map_or("No results", |empty| empty.title.as_str());
             return self.notice(empty);
         }
+        if page.grid_columns.is_some() {
+            return self.extension_grid(page);
+        }
         let mut list = column![].spacing(f32::from(geometry.row_spacing));
         let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
         for (position, &(s, i)) in page.shown.iter().enumerate() {
@@ -5483,6 +5510,85 @@ impl LauncherApp {
         match &page.notice {
             Some(notice) => column![rows, self.notice(notice)].into(),
             None => rows.into(),
+        }
+    }
+
+    /// An extension's grid: each section under its title, its cells in rows
+    /// of the section's columns, each cell its content (an image, a colour)
+    /// over its title, as `SectionGridModel` lays them out.
+    fn extension_grid<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
+        let width = f32::from(self.geometry.card_width) - 24.0;
+        let mut grid = column![].spacing(8);
+        for (section, positions) in page.grid_groups() {
+            if let Some(title) = sections.get(section).and_then(|s| s.title.clone()) {
+                grid = grid.push(self.section_heading(title));
+            }
+            let columns = page.section_columns(section);
+            #[allow(clippy::cast_precision_loss)]
+            let side = (width / columns as f32 - 8.0).max(16.0);
+            for chunk in positions.chunks(columns) {
+                let mut cells = row![].spacing(8);
+                for &position in chunk {
+                    let (s, i) = page.shown[position];
+                    let Some(item) = sections.get(s).and_then(|sec| sec.items.get(i)) else {
+                        continue;
+                    };
+                    let selected = position == page.selected;
+                    let art: Element<Message> = match page.icon(s, i) {
+                        Some(icon) => self.icon_art(icon, page.mask(s, i), selected, side * 0.7),
+                        None => Space::new().into(),
+                    };
+                    let tile = container(art)
+                        .width(Length::Fixed(side))
+                        .height(Length::Fixed(side))
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center)
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(palette.surface.to_iced().into()),
+                            border: Border {
+                                color: if selected {
+                                    palette.accent.to_iced()
+                                } else {
+                                    palette.border.to_iced()
+                                },
+                                width: if selected { 2.0 } else { 1.0 },
+                                radius: 8.0.into(),
+                            },
+                            ..container::Style::default()
+                        });
+                    let cell = column![
+                        tile,
+                        text(item.title.clone())
+                            .font(self.font())
+                            .size(12)
+                            .color(palette.text.to_iced())
+                            .width(Length::Fixed(side)),
+                    ]
+                    .spacing(4);
+                    let cell: Element<Message> = mouse_area(cell)
+                        .on_press(Message::ExtensionItemSelected(position))
+                        .into();
+                    let cell: Element<Message> = if selected {
+                        container(cell).id(crate::scroll::ROOT_SELECTION).into()
+                    } else {
+                        cell
+                    };
+                    cells = cells.push(cell);
+                }
+                grid = grid.push(cells);
+            }
+        }
+        let body = scrollable(container(grid).padding(Padding::new(12.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![body, self.notice(notice)].into(),
+            None => body.into(),
         }
     }
 
@@ -8308,6 +8414,58 @@ mod tests {
             ui.find("# Release notes").is_err(),
             "not the Markdown source"
         );
+    }
+
+    #[test]
+    fn an_extension_grid_is_drawn_as_tiles_and_the_arrows_move_by_cell_and_row() {
+        use compass_extension_api::view::{Color, GridContent, GridItem, GridSection, GridView};
+        let cell = |title: &str| GridItem {
+            id: compass_extension_api::id::NodeId::ROOT,
+            key: None,
+            title: title.into(),
+            subtitle: None,
+            content: GridContent::Color(Color::Literal("#336699".into())),
+            tooltip: None,
+            keywords: Vec::new(),
+            actions: None,
+        };
+        let grid = compass_extension_api::View::Grid(GridView {
+            columns: Some(3),
+            sections: vec![GridSection {
+                title: Some("Swatches".into()),
+                items: ["Navy", "Teal", "Plum", "Rust"]
+                    .iter()
+                    .map(|t| cell(t))
+                    .collect(),
+                ..GridSection::default()
+            }],
+            ..GridView::default()
+        });
+        let (mut app, _backend, _dir) = open_extension_view(grid);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Swatches").is_ok(), "the section's title");
+            assert!(ui.find("Rust").is_ok(), "each cell's title under its tile");
+            assert!(
+                ui.find("N").is_err(),
+                "a tile, not a row with an initial: {}",
+                app.state_line()
+            );
+        }
+        let selected = |app: &LauncherApp| match &app.page {
+            Page::Extension(page) => page.selected,
+            _ => panic!("left the grid"),
+        };
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowRight));
+        assert_eq!(selected(&app), 1, "Right is the next cell");
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(
+            selected(&app),
+            3,
+            "Down keeps the column, clamped to the short row"
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(selected(&app), 0, "and Up goes back a row");
     }
 
     #[test]

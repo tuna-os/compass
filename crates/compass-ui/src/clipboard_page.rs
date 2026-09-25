@@ -420,6 +420,27 @@ fn describe_mime(mime: &str) -> &'static str {
     }
 }
 
+/// The detail text cut where the search's words occur, each piece with
+/// whether it is one (`MatchHighlighter` over `searchTerms`: the query's
+/// words, found literally, ignoring case and accents).
+#[must_use]
+pub fn highlighted<'a>(body: &'a str, query: &str) -> Vec<(&'a str, bool)> {
+    let terms: Vec<&str> = query.split_whitespace().collect();
+    let mut pieces = Vec::new();
+    let mut at = 0;
+    for range in compass_search::term_ranges(body, &terms) {
+        if range.start > at {
+            pieces.push((&body[at..range.start], false));
+        }
+        pieces.push((&body[range.clone()], true));
+        at = range.end;
+    }
+    if at < body.len() || pieces.is_empty() {
+        pieces.push((&body[at..], false));
+    }
+    pieces
+}
+
 /// A row's second line.
 #[must_use]
 pub fn subtitle(row: &ClipboardRow) -> String {
@@ -438,6 +459,30 @@ pub fn subtitle(row: &ClipboardRow) -> String {
         line.push_str(" · Pinned");
     }
     line
+}
+
+#[cfg(test)]
+mod highlight_tests {
+    use super::*;
+
+    #[test]
+    fn the_searched_words_are_marked_in_the_detail_text() {
+        assert_eq!(
+            highlighted("Déjà vu, deja VU again", "deja vu"),
+            [
+                ("Déjà", true),
+                (" ", false),
+                ("vu", true),
+                (", ", false),
+                ("deja", true),
+                (" ", false),
+                ("VU", true),
+                (" again", false),
+            ]
+        );
+        assert_eq!(highlighted("plain", "  "), [("plain", false)]);
+        assert_eq!(highlighted("", "x"), [("", false)]);
+    }
 }
 
 #[cfg(test)]

@@ -2456,7 +2456,7 @@ where it is.
 
 #### Remaining parity work (after the ledger truth pass)
 
-The ledger is at **136 of 156 (87%)** after the truth pass, the gaps passes of 2026-09-25 and the UI pass (§11.4, and `PARITY.md`,
+The ledger is at **137 of 156 (88%)** after the truth pass, the gaps passes of 2026-09-25 and the UI pass (§11.4, and `PARITY.md`,
 "The ledger truth pass"). The gaps pass that followed (`PARITY.md`, "The gaps pass") closes rows
 from this table one at a time and strikes them through here; `scripts/ci/parity-score.py` has the
 current figure. These are the 40 cells still amber, by row, and nothing else: each is what
@@ -2490,7 +2490,7 @@ subsystem. "None" under *blocked by* means only the work.
 | ~~`ui/image`~~ | **Done**: the builtin icon set, file-type icons, command tiles and badges (`PARITY.md`, "The gaps pass, icons and tray"); masks, extension, script and shortcut row icons in root search, favicons, `ImageURL(source)` for a bare string, and the tile's gradient and shadow (`PARITY.md`, "The gaps pass, UI", IPC v19 `ScriptIcons`) | — | — |
 | ~~`ui/bridges`~~ | **Done in the UI pass**: a Markdown detail's images, fetched and drawn with the store page's viewer (`PARITY.md`, "The gaps pass, UI") | — | — |
 | ~~`ui/action-panel`~~ | **Done** (`compass_ui::shortcut_recorder` over `compass_core::key_combo`; `PARITY.md`, "The gaps pass, root and actions") | — | — |
-| `ui/qml`, `ui/quick`, `ui/views`, `ui/settings`, `ui/windows` | the settings window and its pages, onboarding, the HUD, match and Markdown highlighting, the edit-keywords and app-selector views, drag and drop | large | a design decision on the settings window (the config file is the interface today); drag as above; the VM tier for anything drawn |
+| `ui/qml`, `ui/quick`, ~~`ui/views`~~, `ui/settings`, `ui/windows` | the settings window and its pages, onboarding, the HUD (~~match and Markdown highlighting, the edit-keywords and app-selector views~~, and extension grids: **done**, `PARITY.md`, "The gaps pass, UI"; drag and drop is a declared difference) | large | a design decision on the settings window (the config file is the interface today); the VM tier for anything drawn |
 
 Closed in the truth pass rather than listed: the `xdgpp` writers (`setDefaultApplication`,
 `setDefaultTerminal`), `glyph`'s `isUtf8EncodedEmoji`, `{selection}`/`{selected}` in shortcuts, the

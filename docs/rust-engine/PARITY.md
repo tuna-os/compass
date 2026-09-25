@@ -216,7 +216,7 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 |---|--:|---|---|:-:|:-:|:-:|:-:|
 | `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
@@ -333,9 +333,11 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/tray`: Still C++-only: Vicinae's own tray icon.
 - `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
   escape).
-- `ui/qml`, `ui/quick`, `ui/views`: Still C++-only: the rest of the view layer — the settings window,
-  onboarding, the HUD, text highlighting in lists and Markdown, the edit-keywords view (the
-  app-selector landed in the views pass), and drag and drop.
+- `ui/qml`, `ui/quick`: Still C++-only: the rest of the view layer — the settings window,
+  onboarding and the HUD. `ui/views` closed in "The gaps pass, UI" below (match and Markdown
+  highlighting, extension grids; the edit-keywords view had landed with clipboard history and the
+  emoji picker, the app-selector in the views pass); dragging out of the window is a declared
+  difference, Iced having no drag out of a window.
 - `ui/settings`, `ui/windows`: Still C++-only: the settings window and its pages (general,
   appearance, keybinds, extensions) beyond the sidebar model and the preferences form.
 - `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
@@ -716,6 +718,7 @@ The rest of `ui/image`, the snippet view and the Markdown detail's images, again
 | `ui/image` | Rust ✅ | `compass_core::image_url::{ImageUrl::from_source, SourceLookup}` (`ImageURL(const ImageLikeModel &)` for a bare string: an `icon://`, `file:`, `data:` or `http(s):` URL, an emoji, a glyph of the table, a builtin, a file, an asset, a theme icon); `compass_core::favicon::Service` (`favicon_service`: `twenty`, `google`, `none`); `compass_core::extension_commands::ExtensionCommand::icon_url` (`ExtensionCommand::iconUrl`); `compass_ui::icons::{url_glyph, UrlLookup, remote_source, semantic_color, Glyph::Text, tile_gradient, apply_mask, rasterize, MaskedCache}`; `LauncherApp::{url_icon, warm_urls, root_icon_arrived}` with `shortcut_url` (`RootShortcutItem::iconUrl`'s purple tile) and `clipboard_url` (the favicon with the link builtin as fallback); script icons over IPC v19 `ScriptIcons` (`vicinae::scripts::Scripts::icons`); `Image.mask` read by `compass_worker_host::view_model` and kept per row (`ExtensionPage::mask`) | `a_bare_source_is_read_as_image_url_reads_one`, `a_remote_images_own_query_survives_the_round_trip`, `each_service_asks_for_the_cpps_url_and_none_asks_nothing`, `the_configuration_names_the_service_and_twenty_is_the_default`, `the_icon_is_the_commands_then_the_extensions_then_the_hammer`, `an_image_url_is_drawn_as_its_type_says`, `a_tile_is_a_gradient_lighter_at_the_top_and_deeper_at_the_bottom`, `a_circle_mask_clears_the_corners_and_keeps_the_middle`, `a_rounded_mask_rounds_a_quarter_of_the_side`, `a_masked_image_is_drawn_once_from_a_png_or_an_svg`, `extension_script_and_shortcut_rows_draw_their_icons_in_root_search`, `a_favicon_is_fetched_once_into_the_cache_and_then_drawn`, `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept`, `an_images_mask_is_kept_in_either_spelling`, `script_commands_are_scanned_searched_and_run_in_their_modes` (a real engine) |
 | `src/builtins/snippet` | Rust ✅ | `compass_core::placeholder::{parse_snippet_text, parse}` (`PlaceholderString::parse`, with its backslash escape), used by `vicinae::snippets`, the save path's cursor count and `snippets_page::arguments_form`; the detail pane: `compass_ui::snippets_page::{Detail, detail_fields}`, `compass_ui::app::snippets::{snippet_detail_task, snippet_detail_pane}`, `vicinae::snippets::preview` over IPC v19 `PreviewSnippet` | `an_escaped_brace_is_text_and_not_a_placeholder`, `a_doubled_backslash_is_one_and_the_brace_after_it_opens_a_placeholder`, `another_escaped_character_loses_its_backslash_and_a_trailing_one_stays`, `without_a_backslash_it_reads_as_a_quicklink_does`, `an_escaped_brace_expands_as_a_brace`, `an_escaped_brace_asks_for_no_argument`, `a_preview_shows_a_shell_placeholder_instead_of_running_it`, `the_pane_lists_what_load_detail_lists_in_its_order`, `manage_snippets_shows_the_selected_snippets_detail_pane`, `snippets_are_imported_created_expanded_edited_and_removed` (a real engine) |
 | `ui/bridges` | Rust ✅ | `ExtensionPage::{wanted_images, image_arrived, markdown_art}` fetch a detail's Markdown images through `compass_ui::remote_image`'s cache, drawn by the store page's viewer (`app::stores::StoreMarkdown`) | `a_details_markdown_images_are_fetched_and_drawn` |
+| `ui/views` | Rust ✅ | `compass_search::term_ranges` (`MatchHighlighter`: each search word found literally, ignoring case and accents) with `compass_ui::clipboard_page::highlighted`, drawn as `rich_text` spans behind the accent at 35% in clipboard history's detail text; Markdown code blocks highlighted by their language (Iced's `highlighter` feature, syntect through `two-face`); an extension's grid drawn as a grid (`ExtensionPage::{grid_columns, grid_groups, section_columns, grid_step}`, `LauncherApp::extension_grid`), each section in its own columns, the arrows moving as `SectionGridModel::navigate*`; the edit-keywords view is clipboard history's and the emoji picker's keyword form | `every_occurrence_of_each_term_is_found_ignoring_case_and_accents`, `a_term_does_not_overlap_itself_and_overlapping_terms_merge`, `the_searched_words_are_marked_in_the_detail_text`, `a_code_block_is_highlighted_by_its_language`, `a_grid_moves_by_cell_and_by_its_sections_columns`, `an_extension_grid_is_drawn_as_tiles_and_the_arrows_move_by_cell_and_row`, `the_kind_filter_the_pane_keywords_remove_all_and_monitoring`, `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
 
 **`ui/image` → every `ImageURL` a root row carries.** An extension command's row draws the command's
 icon from the extension's assets, else the extension's, else the hammer on a cyan tile; a script's,
@@ -742,6 +745,14 @@ another row is dropped): the text expanded by the engine with `executeShell` off
 placeholder reads `$(code)` and nothing runs, then Type, Created at, Updated at (when edited),
 Keyword and Apps.
 
+**`ui/views` → highlighting and grids.** Clipboard history's detail text marks every occurrence of
+each word of the search, as `ClipboardHistoryView` hands `searchTerms` to `TextViewer`'s
+`MatchHighlighter`; a fenced code block in any Markdown the launcher draws (an extension's detail,
+a store README, release notes) is coloured by its language. An extension's `Grid` was drawn as a
+single-column list; it is a grid now, eight columns unless the grid or the section says otherwise,
+Left and Right in reading order, Up and Down by the section's columns into the neighbouring
+section's nearest row, wrapping only where navigation wraps.
+
 **`ui/bridges` → a Markdown detail's images.** An extension's detail view asks for the remote images
 its Markdown shows once, with its rows' images, and draws each where it stands once fetched, the
 placeholder until then, as the store's README does.
@@ -756,6 +767,10 @@ What differs, by row:
 | `ui/image` | `ImageURL(source)` tests a relative path against the working directory (`QFile(source).exists()`). | Only an absolute path is a file; a relative one is an asset or a theme name. | `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept` |
 | `ui/image` | Remote icons are fetched by every build. | By the launcher `vicinae` starts (`AppFlags::remote_icons`); off in tests, which never reach the network. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn` |
 | `ui/image` | `QUrl::toString()` escapes a name's `?`, `#` and `%` in an `icon://` URL. | The same (`ImageUrl::to_url`); before this pass an `https` image with a query string did not survive the round trip. | `a_remote_images_own_query_survives_the_round_trip` |
+| `ui/views` | `TextViewer` scrolls to the first match. | The matches are marked; the pane is not scrolled to them. | `the_searched_words_are_marked_in_the_detail_text` |
+| `ui/views` | Code blocks are coloured by KSyntaxHighlighting in the theme's semantic colours. | By syntect's grammars in the Base16 Ocean theme, which Iced's Markdown fixes. | `a_code_block_is_highlighted_by_its_language` |
+| `ui/views` | A grid's cells follow its `aspectRatio`, `fit` and `inset`. | Square tiles, the content at 70% of the tile; the three are read but not applied. | `an_extension_grid_is_drawn_as_tiles_and_the_arrows_move_by_cell_and_row` |
+| `ui/views` | A grid section's title stays pinned as it scrolls, and PageUp/PageDown jump by section. | The title scrolls with its cells; no section jumps. | — |
 | `builtins/snippet` | The pane re-expands as argument values are typed into the search bar's completer. | Manage Snippets has no completer: arguments expand empty. | `manage_snippets_shows_the_selected_snippets_detail_pane` |
 | `builtins/snippet` | The pane lists the keyword's applications as icons with their names as tooltips. | Their names, comma-separated. | `the_pane_lists_what_load_detail_lists_in_its_order` |
 
