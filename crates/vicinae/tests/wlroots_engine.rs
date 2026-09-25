@@ -211,15 +211,20 @@ fn on_sway_a_shortcut_expands_the_selected_text() {
         lines.any(|line| line.is_ok_and(|line| line.contains("CHILD-OK"))),
         "the selection holder never started"
     );
-    let expanded = expand();
+    // The holder has handed its source to the compositor, but the selection
+    // is only offered once the compositor has processed it: read until it is.
+    let want = Response::Text {
+        text: "https://example.com/?q=selected words&also=selected words".into(),
+    };
+    let deadline = std::time::Instant::now() + WAIT;
+    let mut expanded = expand();
+    while expanded != want && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        expanded = expand();
+    }
     let _ = holder.kill();
     let _ = holder.wait();
-    assert_eq!(
-        expanded,
-        Response::Text {
-            text: "https://example.com/?q=selected words&also=selected words".into()
-        }
-    );
+    assert_eq!(expanded, want);
 }
 
 #[test]
