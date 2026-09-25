@@ -108,6 +108,10 @@ pub enum Verdict {
     /// The command is waiting on an OAuth sign-in in the browser, which a
     /// headless run cannot give it.
     NeedsSignIn,
+    /// The command is waiting for the person to allow a program on the host
+    /// (the host-command broker's Allow Once / Always Allow / Deny), which a
+    /// headless run cannot answer.
+    NeedsConsent,
     /// The plan names something that is not installed.
     NotInstalled,
 }
@@ -442,11 +446,14 @@ async fn run_one(
     let mut full_since: Option<Instant> = None;
     let mut typed = false;
     let mut signing_in = false;
+    let mut consent: Option<String> = None;
     let verdict = loop {
         let now = Instant::now();
         if now >= deadline || full_since.is_some_and(|since| now >= since + SETTLE) {
             break if full_since.is_some() {
                 (Verdict::Rendered, None)
+            } else if let Some(title) = consent.take() {
+                (Verdict::NeedsConsent, Some(title))
             } else if signing_in {
                 (
                     Verdict::NeedsSignIn,
@@ -472,19 +479,23 @@ async fn run_one(
         let Ok(answer) = answer else {
             continue;
         };
-        let (version, view_json, problem, ended, toast) = match answer {
+        let (version, view_json, problem, ended, toast, alert) = match answer {
             Ok(Response::ExtensionView {
                 version,
                 view_json,
                 problem,
                 ended,
                 toast,
+                alert,
                 ..
-            }) => (version, view_json, problem, ended, toast),
+            }) => (version, view_json, problem, ended, toast, alert),
             Ok(other) => break (Verdict::Crashed, Some(format!("unexpected: {other:?}"))),
             Err(err) => break (Verdict::Crashed, Some(err.to_string())),
         };
         after = version;
+        consent = alert
+            .filter(|alert| alert.remember_text.is_some())
+            .map(|alert| alert.title);
         signing_in = toast.as_ref().is_some_and(|toast| {
             toast
                 .title
@@ -755,6 +766,7 @@ mod tests {
             Verdict::Refused,
             Verdict::Timeout,
             Verdict::NeedsSignIn,
+            Verdict::NeedsConsent,
             Verdict::NotInstalled,
         ] {
             assert!(!failing.passes(), "{failing:?}");

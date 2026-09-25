@@ -249,7 +249,8 @@
     "why": "Error: KeePassXC not found"
   },
   "store.vicinae.linuxbrew:installed": {
-    "verdict": "rendered"
+    "verdict": "needs-consent",
+    "why": "Allow Linuxbrew to run brew?"
   },
   "store.vicinae.lorem-ipsum:generate": {
     "verdict": "rendered"
