@@ -24,7 +24,34 @@ on:
     # Nightly. ADR-0010: promote to the merge queue only after it has been
     # stable for a couple of weeks, never straight in.
     - cron: "0 3 * * *"
+
+  # A manual run on any branch (`just vm-tier`, or Actions → VM tier → Run
+  # workflow). The nightly and the release run everything; a dispatch runs
+  # what it names, because each job is a KVM runner booting a 30 GB bootc
+  # disk and a question about one check should not pay for four VMs.
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: >-
+          Which jobs to run: all; control (stock Bluefin, no Compass); compass
+          (the checks below in a real session); launcher (open it, look at it,
+          type at it); spike-a (the portal's Super+Space). Every one but control
+          builds the Flatpak first.
+        type: choice
+        default: all
+        options:
+          - all
+          - control
+          - compass
+          - launcher
+          - spike-a
+      checks:
+        description: >-
+          The `compass` job's checks: packaging/vmtest/checks.sh subcommands,
+          space-separated, run in order. Empty runs the default set.
+        type: string
+        required: false
+        default: installed session shell-extension doctor doctor-assert spike-b
 
   # Releases. This is the tier that tests what users install, so it runs on the
   # thing users will install. Same `v*` tags `release.yml` builds from, so a
@@ -91,6 +118,7 @@ permissions:
 jobs:
   boot-bluefin:
     name: Stock Bluefin boots and paints
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'control'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -158,10 +186,12 @@ jobs:
   # this job produces is the `flatpak-bundle` artifact the image build consumes.
   flatpak:
     name: Flatpak
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs != 'control'
     uses: ./.github/workflows/flatpak.yaml
 
   boot-compass:
     name: Compass runs in a real GNOME session
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'compass'
     needs: flatpak
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -199,6 +229,8 @@ jobs:
         env:
           HOME: /mnt/corral
           TMPDIR: /mnt/corral
+          # Through the environment, never interpolated into the script.
+          CHECKS: ${{ inputs.checks }}
         run: |
           mkdir -p /mnt/corral
           # Deliberately no --user: that would make corral derive an image
@@ -216,17 +248,26 @@ jobs:
           # session to inspect. The checks still do their own waiting with
           # explicit timeouts, because a named check timing out is a better
           # failure message than a readiness timeout.
+          # The checks: the dispatch's list, else the default set. Each name
+          # must be a checks.sh subcommand; anything else is refused here,
+          # before a VM is booted for it, and never reaches a shell unquoted.
+          checks="${CHECKS:-installed session shell-extension doctor doctor-assert spike-b}"
+          args=()
+          for check in $checks; do
+            if ! [[ "$check" =~ ^[a-z][a-z0-9-]*$ ]] \
+              || ! grep -Eq "^  ${check}\)" packaging/vmtest/checks.sh; then
+              echo "::error::'$check' is not a checks.sh subcommand"
+              exit 1
+            fi
+            args+=(--check "/usr/libexec/compass-vmtest/checks.sh $check")
+          done
+          echo "checks: $checks"
           sudo -E "$(which corral)" vmtest compass \
             --bootc localhost/bluefin-compass:ci \
             --ready-marker 'COMPASS-VMTEST: graphical session up' \
             --require-paint \
             --video \
-            --check '/usr/libexec/compass-vmtest/checks.sh installed' \
-            --check '/usr/libexec/compass-vmtest/checks.sh session' \
-            --check '/usr/libexec/compass-vmtest/checks.sh shell-extension' \
-            --check '/usr/libexec/compass-vmtest/checks.sh doctor' \
-            --check '/usr/libexec/compass-vmtest/checks.sh doctor-assert' \
-            --check '/usr/libexec/compass-vmtest/checks.sh spike-b' \
+            "${args[@]}" \
             --cpu 4 --mem 8G --disk 30G \
             --timeout 30m \
             --artifacts "$GITHUB_WORKSPACE/vmtest-out" \
@@ -261,6 +302,7 @@ jobs:
   # can drop back to nightly.
   spike-a:
     name: "Spike A: does the portal give us Super+Space?"
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'spike-a'
     needs: flatpak
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -401,6 +443,7 @@ jobs:
   # dishonest way, which ADR-0010 rules out, is to move the threshold.
   launcher:
     name: "The launcher opens in a real GNOME session"
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'launcher'
     needs: flatpak
     runs-on: ubuntu-24.04
     timeout-minutes: 75
