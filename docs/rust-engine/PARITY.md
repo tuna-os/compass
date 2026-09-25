@@ -363,8 +363,8 @@ What differs, by row:
 | Row | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | `app-service` | `QFileSystemWatcher` on each application directory itself, so a file added in a subdirectory (`applications/kde4/`) waits for the next change at the top. | The watch is recursive, as the scan it triggers is. | `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none` |
-| `builtins/system` | Browse Apps' panel starts with Focus Window when the application has a window open. | Not offered: the launcher has no per-application window lookup yet (Switch Windows is its own view). | — |
-| `builtins/system` | Browse Apps reads `showHidden` and `sortAlphabetically` each time it opens. | Read when the window starts, like the power commands' preferences; a change applies after a restart of the window. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
+| `builtins/system` | Browse Apps' panel starts with Focus Window when the application has a window open. | The same since "The gaps pass, root and actions". | `browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening` |
+| `builtins/system` | Browse Apps reads `showHidden` and `sortAlphabetically` each time it opens. | The same since "The gaps pass, root and actions". | `browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening` |
 | `builtins/system` | Unsorted, the list is `m_apps` in scan order, hidden entries among the rest. | Unsorted, the shown applications in scan order, then the hidden ones. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
 | `builtins/system` | The current default carries a green check icon. | The same icon (`CheckCircle` in green) since "The gaps pass, icons and tray"; the `✓ Default` text only where the builtin icon set is not installed. | `the_default_pickers_mark_is_the_green_check_icon` |
 | `desktop-notification` | Every icon is rendered to a 128×128 PNG, with the theme's side of a themed image, and a file icon or `data:` URL drawn as the launcher would. | Since "The gaps pass, icons and tray" every source is: a PNG or JPEG is fitted into the 128×128 PNG, a file icon and a `data:` URL drawn. A file that does not decode is still passed as it is, for the server to try; a themed image uses its light side (a notification has no theme). | `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn`, `a_data_url_is_decoded_and_drawn_into_the_square`, `a_file_icon_is_the_themes_mime_icon_or_the_builtin_document` |
@@ -480,6 +480,7 @@ and named tests that fail on a regression.
 | `src/builtins/root`, `src/services/root-item-manager` | Rust ✅ (the per-item shortcut in the row below) | `compass_core::root_items::{parse_launch_link, LaunchLink::target}`, `AppIndex::{search_root_with, has_provider, provider_title}`, `compass_ui::app::{Fallback, ProviderScope}`, `compass_ui::app::root::{open_launch_link, open_provider_search, has_completer}`, `vicinae::serve::launch::open_launch_link` | `a_launch_link_names_a_provider_or_an_item_with_its_text`, `a_launch_deeplink_to_a_provider_searches_its_items_alone`, `a_launch_deeplink_to_an_item_launches_it_with_its_text`, `fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query`, `an_alias_and_a_space_open_an_items_arguments` |
 | `ui/action-panel`, and the per-item shortcuts of `src/builtins/root` and `src/services/root-item-manager` | Rust ✅ | `compass_core::key_combo` (`Keyboard::Shortcut`'s spelling and parser, the capture's chord tracking, `shortcut_conflict::validate`), `compass_ui::shortcut_recorder`, `compass_ui::app::root::recorder_event`, `RootEdit::Shortcut` over IPC v18 `RootItemEdit::Shortcut`, `Config::apply_root_edit`, `RootItem::merge_config` | `a_combination_is_stored_in_the_cpps_spelling_and_read_back`, `a_recording_is_a_key_with_modifiers_or_modifiers_released_alone`, `a_combination_needs_a_modifier_and_must_not_be_anothers`, `the_badge_names_the_modifiers_then_the_key`, `shortcut_recorder::tests` (four), `the_root_panel_records_an_items_shortcut_and_backspace_removes_it`, `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
 | `src/builtins/vicinae` | — (the picker half is done; the other views remain) | `compass_ui::app::emoji::{paste_selected_emoji, emoji_pasted}`, `EmojiPage::{supports_paste, default_action}` over `compass_core::emoji_grid::main_actions`, `vicinae::serve::paste_text` over IPC v18 `Request::PasteText` | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot`, `window_requests_without_a_session_bus_are_refused_by_name` |
+| `src/builtins/system` | — (already Rust ✅; two declared differences closed) | `compass_ui::app::apps::{open_browse_apps, apps_runtime_task}`, `AppsPage::running`, `AppFlags::config_path`, over `vicinae::serve::app_runtime` (IPC v17 `AppRuntime`) | `browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening` |
 
 **The provider search view (`ProviderSearchViewHost`).** `vicinae://launch/<provider>` — the link
 `vicinae deeplink` sends and a desktop shortcut can carry — opens root search over that provider's
@@ -523,6 +524,15 @@ into the window the launcher hides back to, as it pastes a clipboard entry or a 
 engine cannot paste (no Shell extension: the wlroots family, a missing session bus) it refuses by
 name and the window copies the glyph instead, which is where the C++'s `pasteContent` leaves it too:
 copied first, then "the current platform cannot paste".
+
+**Browse Apps: Focus Window, and the preferences read on opening.** As the selection moves (and
+when the view opens) the window asks the engine whether the selected application runs
+(`Request::AppRuntime`, the app runtime's `isRunning`); when it has a window open, the panel starts
+with Focus Window, which Enter runs, raising its first window as `activeWindows.front()` does; an
+answer for a row no longer selected is dropped, and one that arrives with the panel open joins it.
+`showHidden` and `sortAlphabetically` are read from `vicinae.json` each time the view opens, as
+`BrowseAppsView` reads them, rather than when the window starts; a file that cannot be read keeps
+the ones the window started with.
 
 **A regression found on the way.** The root row's panel (the first gaps pass) had taken over the
 panel an application's row opens, so Quit, Force Quit, Focus Window and Close Window (the

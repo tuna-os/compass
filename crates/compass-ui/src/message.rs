@@ -245,6 +245,13 @@ pub enum Message {
     AppsQueryChanged(String),
     /// A row of Browse Apps or a default picker was clicked.
     AppsSelected(usize),
+    /// Whether Browse Apps' selected application has windows open.
+    BrowseAppRuntime {
+        /// The application's desktop id, so a late answer is dropped.
+        id: String,
+        /// Its windows.
+        result: Result<crate::backend::AppRuntimeInfo, String>,
+    },
     /// A default picker's candidates arrived.
     DefaultAppsLoaded(Result<Vec<crate::backend::DefaultAppRow>, String>),
     /// A default picker's choice was written, or could not be.

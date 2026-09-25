@@ -25,11 +25,51 @@ const NEEDS_ENGINE: &str = "Setting a default application needs the Compass engi
 
 impl LauncherApp {
     /// Opens Browse Apps over this window's index, with the command's
-    /// preferences.
+    /// preferences as the configuration holds them now (`showHidden`,
+    /// `sortAlphabetically`, read on each opening as the C++ reads them).
     pub(super) fn open_browse_apps(&mut self) -> Task<Message> {
-        self.page = Page::Apps(AppsPage::browse(&self.app_index, self.browse_apps));
+        let options = self
+            .config_path
+            .as_deref()
+            .and_then(|path| match compass_core::Config::load_from(path) {
+                Ok(config) => Some(browse_apps::Options::from_preferences(
+                    config.entrypoint_preferences(
+                        compass_core::commands::COMMANDS_PROVIDER_ID,
+                        browse_apps::ENTRYPOINT,
+                    ),
+                )),
+                Err(error) => {
+                    tracing::debug!(%error, "Browse Apps keeps the preferences it started with");
+                    None
+                }
+            })
+            .unwrap_or(self.browse_apps);
+        self.browse_apps = options;
+        self.page = Page::Apps(AppsPage::browse(&self.app_index, options));
         self.warm_app_icons();
-        focus_search()
+        Task::batch([focus_search(), self.apps_runtime_task()])
+    }
+
+    /// Asks the engine whether Browse Apps' selected application has a
+    /// window open, for Focus Window.
+    fn apps_runtime_task(&self) -> Task<Message> {
+        let Page::Apps(page) = &self.page else {
+            return Task::none();
+        };
+        let (AppsKind::Browse, Some(row), Some(windows)) =
+            (page.kind, page.selected_row(), self.windows.clone())
+        else {
+            return Task::none();
+        };
+        let id = row.app.id.clone();
+        let asked = id.clone();
+        Task::perform(
+            async move { windows.app_runtime(asked).await },
+            move |result| Message::BrowseAppRuntime {
+                id: id.clone(),
+                result,
+            },
+        )
     }
 
     /// Opens Set Default Browser or Set Default Terminal and asks the engine
@@ -53,16 +93,21 @@ impl LauncherApp {
     }
 
     /// The actions a row offers, in panel order: Browse Apps' panel as
-    /// [`browse_apps::action_panel`] builds it (no window to focus: see
-    /// PARITY.md), or the picker's one action.
-    fn app_actions(&self, kind: AppsKind, row: &AppRow) -> Vec<(String, Option<String>, Act)> {
+    /// [`browse_apps::action_panel`] builds it, Focus Window first when the
+    /// application has a window open, or the picker's one action.
+    fn app_actions(
+        &self,
+        kind: AppsKind,
+        row: &AppRow,
+        windows: &[String],
+    ) -> Vec<(String, Option<String>, Act)> {
         match kind {
             AppsKind::Browse => {
-                let panel = browse_apps::action_panel(&row.app, &[], self.backend.is_some());
+                let panel = browse_apps::action_panel(&row.app, windows, self.backend.is_some());
                 panel
                     .actions
                     .into_iter()
-                    .map(|action| {
+                    .filter_map(|action| {
                         let shortcut = action.shortcut.map(|shortcut| match shortcut {
                             Shortcut::Literal(chord) => chord,
                             Shortcut::Keybind(_) => browse_apps::OPEN_KEYBIND_DEFAULT.to_owned(),
@@ -73,9 +118,9 @@ impl LauncherApp {
                             ActionKind::OpenLocation => Act::OpenLocation,
                             ActionKind::CopyAppId => Act::Copy(row.app.id.clone()),
                             ActionKind::CopyAppLocation => Act::Copy(row.app.path.clone()),
-                            ActionKind::FocusWindow { .. } => Act::Open(None),
+                            ActionKind::FocusWindow { window } => Act::Focus(window.parse().ok()?),
                         };
-                        (action.title, shortcut, act)
+                        Some((action.title, shortcut, act))
                     })
                     .collect()
             }
@@ -94,9 +139,16 @@ impl LauncherApp {
         let Page::Apps(page) = &self.page else {
             return Vec::new();
         };
-        page.selected_row()
-            .map(|row| self.app_actions(page.kind, row))
-            .unwrap_or_default()
+        let Some(row) = page.selected_row() else {
+            return Vec::new();
+        };
+        let windows: Vec<String> = page
+            .running
+            .as_ref()
+            .filter(|(id, _)| *id == row.app.id)
+            .map(|(_, windows)| windows.iter().map(u32::to_string).collect())
+            .unwrap_or_default();
+        self.app_actions(page.kind, row, &windows)
     }
 
     /// Carries out one of the selected row's actions.
@@ -134,6 +186,15 @@ impl LauncherApp {
                 )
             }
             Act::Copy(text) => Task::batch([iced::clipboard::write(text), self.conceal()]),
+            Act::Focus(window) => {
+                let Some(windows) = self.windows.clone() else {
+                    return Task::none();
+                };
+                Task::perform(
+                    async move { windows.activate_window(window).await },
+                    Message::AppQuit,
+                )
+            }
             Act::SetDefault(kind) => {
                 let Some(backend) = self.backend.clone() else {
                     return Task::none();
@@ -227,7 +288,10 @@ impl LauncherApp {
                 direction,
                 self.wrap_navigation,
             );
-            return crate::scroll::reveal_root_selection();
+            return Task::batch([
+                crate::scroll::reveal_root_selection(),
+                self.apps_runtime_task(),
+            ]);
         }
         Task::none()
     }
@@ -249,6 +313,35 @@ impl LauncherApp {
                     page.refilter();
                 }
                 self.warm_app_icons();
+                return Task::batch([
+                    crate::scroll::reveal_root_selection(),
+                    self.apps_runtime_task(),
+                ]);
+            }
+            Message::BrowseAppRuntime { id, result } => {
+                let Page::Apps(page) = &mut self.page else {
+                    return Task::none();
+                };
+                if page.selected_row().is_none_or(|row| row.app.id != id) {
+                    return Task::none();
+                }
+                let windows = match result {
+                    Ok(info) if info.running => info.windows.iter().map(|w| w.id).collect(),
+                    Ok(_) => Vec::new(),
+                    Err(reason) => {
+                        tracing::debug!(%reason, "no answer on whether the application runs");
+                        Vec::new()
+                    }
+                };
+                page.running = Some((id, windows));
+                // An open panel takes Focus Window in, keeping its filter.
+                if let Some(filter) = self.panel.as_ref().map(|panel| panel.filter.clone()) {
+                    let _ = self.open_apps_panel();
+                    if let Some(panel) = self.panel.as_mut() {
+                        panel.set_filter(filter);
+                    }
+                }
+                return Task::none();
             }
             Message::AppsSelected(position) => {
                 if let Page::Apps(page) = &mut self.page
@@ -386,6 +479,8 @@ enum Act {
     OpenLocation,
     /// Copy text.
     Copy(String),
+    /// Focus and raise one of its windows.
+    Focus(u32),
     /// Make it the default.
     SetDefault(DefaultApp),
 }

@@ -61,6 +61,9 @@ pub struct AppsPage {
     pub status: Status,
     /// What the last action said.
     pub notice: Option<String>,
+    /// The selected application's open windows, by its id, as the engine
+    /// last answered (Browse Apps' Focus Window).
+    pub running: Option<(String, Vec<u32>)>,
 }
 
 impl AppsPage {
@@ -96,6 +99,7 @@ impl AppsPage {
             selected: 0,
             status,
             notice: None,
+            running: None,
         }
     }
 

@@ -336,6 +336,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             fallbacks,
             power_asks,
             browse_apps,
+            config_path: compass_core::config::default_config_path().ok(),
             glyph_path: compass_core::glyph_service::default_path(),
             builtin_icons: compass_core::builtin_icon::directory(),
             emoji_skin_tone,

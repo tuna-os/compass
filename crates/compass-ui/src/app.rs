@@ -237,6 +237,9 @@ pub struct AppFlags {
     pub power_asks: std::collections::BTreeMap<String, bool>,
     /// Browse Apps' `showHidden` and `sortAlphabetically` preferences.
     pub browse_apps: compass_core::browse_apps::Options,
+    /// The configuration file commands read their preferences from when
+    /// they open (Browse Apps); `None` keeps the ones given at start.
+    pub config_path: Option<std::path::PathBuf>,
     /// Where the emoji picker's visits, pins, tones and keywords are kept
     /// (`compass_core::glyph_service::default_path`); `None` keeps them in
     /// memory, as tests do.
@@ -345,6 +348,7 @@ impl Default for AppFlags {
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
+            config_path: None,
             glyph_path: None,
             builtin_icons: None,
             emoji_skin_tone: None,
@@ -843,6 +847,8 @@ pub struct LauncherApp {
     power_asks: std::collections::BTreeMap<String, bool>,
     /// See [`AppFlags::browse_apps`].
     browse_apps: compass_core::browse_apps::Options,
+    /// See [`AppFlags::config_path`].
+    config_path: Option<std::path::PathBuf>,
     /// See [`AppFlags::glyph_path`].
     glyph_path: Option<std::path::PathBuf>,
     /// See [`AppFlags::emoji_skin_tone`].
@@ -1103,6 +1109,7 @@ impl LauncherApp {
         app.quick_launch = flags.quick_launch;
         app.power_asks = flags.power_asks;
         app.browse_apps = flags.browse_apps;
+        app.config_path = flags.config_path;
         app.glyph_path = flags.glyph_path;
         app.builtin_icons = flags.builtin_icons;
         app.emoji_skin_tone = flags.emoji_skin_tone;
@@ -1188,6 +1195,7 @@ impl LauncherApp {
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             power_asks: std::collections::BTreeMap::new(),
+            config_path: None,
             browse_apps: compass_core::browse_apps::Options::default(),
             glyph_path: None,
             emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
@@ -2696,7 +2704,8 @@ impl LauncherApp {
             Message::AppsQueryChanged(_)
             | Message::AppsSelected(_)
             | Message::DefaultAppsLoaded(_)
-            | Message::DefaultAppSet(_) => self.apps_message(message),
+            | Message::DefaultAppSet(_)
+            | Message::BrowseAppRuntime { .. } => self.apps_message(message),
             Message::CatalogGeneration(Ok(generation)) => self.catalog_moved(generation),
             Message::CatalogGeneration(Err(error)) => {
                 tracing::debug!(%error, "no catalog generation");
@@ -12226,6 +12235,96 @@ mod tests {
             can_close: true,
             app_known: true,
         }
+    }
+
+    #[test]
+    fn browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening() {
+        let dir = tempfile::tempdir().unwrap();
+        drop(index(dir.path()));
+        fs::write(
+            dir.path().join("editor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=/bin/true\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("probe.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Probe\nExec=/bin/true\nNoDisplay=true\n",
+        )
+        .unwrap();
+        let config_path = dir.path().join("vicinae.json");
+        let write_config = |show_hidden: bool| {
+            fs::write(
+                &config_path,
+                format!(
+                    r#"{{"providers":{{"commands":{{"entrypoints":{{"browse-apps":
+                        {{"enabled":true,"preferences":{{"showHidden":{show_hidden}}}}}}}}}}}}}"#
+                ),
+            )
+            .unwrap();
+        };
+        write_config(false);
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: false,
+            windows: vec![window_row(42, "Draft", "Editor", 7)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("editor.desktop".into(), running)],
+            ..FakeWindows::default()
+        });
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        app.apply(AppFlags {
+            windows: Some(windows.clone() as Arc<dyn crate::backend::WindowBackend>),
+            config_path: Some(config_path.clone()),
+            ..AppFlags::default()
+        });
+        let config = compass_core::Config::load_from(&config_path).unwrap();
+        app.app_index.apply_root_config(&config.root_config());
+
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let Page::Apps(page) = &app.page else {
+            panic!("not Browse Apps: {}", app.state_line());
+        };
+        assert_eq!(page.heading(), "Applications (4)");
+
+        // A change to the preference applies the next time the view opens,
+        // without a restart.
+        write_config(true);
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let Page::Apps(page) = &app.page else {
+            panic!("not Browse Apps: {}", app.state_line());
+        };
+        assert_eq!(
+            page.heading(),
+            "Applications (5)",
+            "the hidden entry now shows"
+        );
+
+        // A running application's panel starts with Focus Window, which Enter
+        // runs.
+        let task = app.update(Message::AppsQueryChanged("editor".into()));
+        settle(&mut app, task);
+        let _ = app.open_apps_panel().expect("a panel");
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(titles[..2], ["Focus Window", "Open Application"]);
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(windows.activated.lock().unwrap().as_slice(), [42]);
+
+        // One that does not run opens.
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let task = app.update(Message::AppsQueryChanged("terminal".into()));
+        settle(&mut app, task);
+        let _ = app.open_apps_panel().expect("a panel");
+        assert_eq!(
+            app.panel.as_ref().unwrap().sections[0].actions[0].title,
+            "Open Application"
+        );
     }
 
     fn windows_app(
