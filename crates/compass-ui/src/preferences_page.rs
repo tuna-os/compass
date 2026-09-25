@@ -59,6 +59,9 @@ pub enum Purpose {
     ScriptArguments,
     /// The Create Extension form.
     CreateExtension,
+    /// A media command's optional argument (the player, or the volume
+    /// step); `command_id` is the command's entrypoint.
+    MediaArguments,
 }
 
 impl Purpose {
@@ -73,7 +76,7 @@ impl Purpose {
             Self::SnippetArguments { paste: false } => "Enter: copy    Esc: back",
             Self::SnippetArguments { paste: true } => "Enter: paste    Esc: back",
             Self::SnippetForm { .. } => "Ctrl+Enter: save    Esc: back",
-            Self::ScriptArguments => "Enter: run    Esc: cancel",
+            Self::ScriptArguments | Self::MediaArguments => "Enter: run    Esc: cancel",
             Self::CreateExtension => "Enter: create extension    Esc: back",
         }
     }

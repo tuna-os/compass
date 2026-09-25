@@ -27,10 +27,22 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
-    /// Run a media command by its id on the default player. An error is the
-    /// sentence to show.
-    fn run_media_command(&self, id: String) -> BackendFuture<'_, ()> {
-        let _ = id;
+    /// Run a media command by its id, with its optional argument: the player
+    /// to fuzzy-match (the default player when `None`), or the volume step.
+    /// An error is the sentence to show.
+    fn run_media_command(&self, id: String, argument: Option<String>) -> BackendFuture<'_, ()> {
+        let _ = (id, argument);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// The running media players, for Now Playing.
+    fn list_media_players(&self) -> BackendFuture<'_, Vec<MediaPlayerRow>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Play/pause, skip or go back on one player, by its bus name.
+    fn control_media_player(&self, player: String, action: MediaAction) -> BackendFuture<'_, ()> {
+        let _ = (player, action);
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
@@ -332,6 +344,40 @@ const FILES_NEED_ENGINE: &str =
 
 const SHORTCUTS_NEED_ENGINE: &str =
     "Shortcuts need the Compass engine, and this window is running without one";
+
+/// One running media player, as Now Playing lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MediaPlayerRow {
+    /// Its bus name.
+    pub id: String,
+    /// What it calls itself.
+    pub identity: String,
+    /// Its desktop entry id, when it names one.
+    pub app_id: String,
+    /// The current track's title.
+    pub title: String,
+    /// The current track's artists.
+    pub artist: String,
+    /// Whether it is playing.
+    pub playing: bool,
+    /// Whether it is paused.
+    pub paused: bool,
+    /// Whether it has a next track.
+    pub can_go_next: bool,
+    /// Whether it has a previous track.
+    pub can_go_previous: bool,
+}
+
+/// What Now Playing asks a player to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaAction {
+    /// Toggle playback.
+    PlayPause,
+    /// Skip to the next track.
+    Next,
+    /// Go back to the previous track.
+    Previous,
+}
 
 /// The Create Extension form's values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

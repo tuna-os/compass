@@ -194,7 +194,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -725,7 +725,10 @@ Two things are ported as they are rather than tidied:
   neither negates its argument, so the defaults are the only thing carrying the direction. Pinned
   rather than quietly corrected.
 
-Still C++-only: the MPRIS provider, the audio provider, and the Now Playing view.
+The MPRIS provider is `compass-media`, the audio provider the ported `pactl` adapter, and Now
+Playing a launcher view (`compass-ui::media_page`, IPC v16 `ListMediaPlayers` and
+`ControlMediaPlayer`); the `player` and `step` arguments reach the engine as
+`RunMediaCommandWith`. What still differs is declared under "Media commands" below.
 
 **`src/builtins/wm` → `compass-core::window_switcher`** — which commands the window-management
 extension offers and how a window and a workspace are described in the list. Switching windows is
@@ -2031,9 +2034,9 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`). | The launcher has hidden by then and has no HUD, so the engine posts the same sentence as a transient desktop notification (1.5 s, `transient` hint). Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
-| 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players; Turn Volume Up/Down take an optional `step`. | Not yet: the default player is always used (last acted on, else playing, else first, as `defaultPlayer`), and the step is always ±5. | `the_default_player_is_the_last_then_the_playing_then_the_first` |
+| 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players (title 1.0, artist 0.8, identity 0.6); Turn Volume Up/Down take an optional `step`. Both are typed inline beside the search field. | The same matching and the same refusals ("No media player matches …", "Invalid step value"), with no argument taking the default player (last acted on, else playing, else first) or ±5. The launcher has no inline argument fields, so Enter runs the command at once and the row's action panel offers "Choose player…" / "Choose step…", a one-field form. | `a_player_argument_picks_the_player_and_now_playing_lists_and_drives_them`, `a_media_command_runs_with_the_player_chosen_in_its_form`, `a_volume_command_runs_pactl_with_the_cpp_arguments` |
 | 3 | Volume goes through `pactl`. | The same `pactl` invocations, through `flatpak-spawn --host` inside the Flatpak, with the C++'s 3 s timeout. `libpulse-binding` was considered and not taken: a C build dependency and a threaded mainloop for five calls the ported `pactl` adapter already makes. | `a_volume_command_runs_pactl_with_the_cpp_arguments` |
-| 4 | Now Playing. | Not yet: it needs a view. | — |
+| 4 | Now Playing lists the players ("Players", fuzzy over title, artist and name), with Playing/Paused accessories, the player application's icon, and Play or Pause, Next Track and Previous Track; it reloads on `playersChanged`. | The same list, filter, accessories and actions (Enter is the first); a row shows the player's initial rather than its application's icon, and the list is asked again 300 ms after each action rather than on a bus signal, so a player changed from elsewhere shows when the view is next opened. | `now_playing_lists_the_players_and_controls_the_selected_one`, `a_player_is_found_by_track_artist_or_name_and_stays_selected` |
 
 ### Search Files — what the port does not have yet
 

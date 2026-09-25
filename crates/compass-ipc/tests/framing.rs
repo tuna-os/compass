@@ -230,6 +230,15 @@ fn all_requests() -> Vec<Request> {
         Request::ExtensionPreferences {
             id: "@zoë/notes:list".into(),
         },
+        Request::RunMediaCommandWith {
+            id: "play-pause".into(),
+            argument: Some("spötify".into()),
+        },
+        Request::ListMediaPlayers,
+        Request::ControlMediaPlayer {
+            player: "org.mpris.MediaPlayer2.spotify".into(),
+            action: compass_ipc::MediaPlayerAction::Next,
+        },
         Request::ListFonts,
         Request::FontSpecimen {
             name: "Noto Sans ไทย".into(),
@@ -579,6 +588,17 @@ fn all_responses() -> Vec<Response> {
         Response::ExtensionSubtitles {
             subtitles: vec![("@zoë/notes:list".into(), "3 unread 🚀".into())],
         },
+        Response::MediaPlayers {
+            players: vec![compass_ipc::MediaPlayerEntry {
+                id: "org.mpris.MediaPlayer2.spotify".into(),
+                identity: "Spotify".into(),
+                title: "Blue Monday".into(),
+                artist: "New Order".into(),
+                playing: true,
+                can_go_next: true,
+                ..Default::default()
+            }],
+        },
         Response::Fonts {
             fonts: vec![compass_ipc::FontEntry {
                 name: "Noto Sans Thai".into(),
@@ -679,6 +699,9 @@ fn request_variants_are_exhaustive() {
             | Request::ExtensionLaunchFetch { .. }
             | Request::ExtensionSubtitles
             | Request::ExtensionPreferences { .. }
+            | Request::RunMediaCommandWith { .. }
+            | Request::ListMediaPlayers
+            | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -715,6 +738,7 @@ fn response_variants_are_exhaustive() {
             | Response::StoreListing { .. }
             | Response::StoreExtension { .. }
             | Response::StoreInstalled { .. }
+            | Response::MediaPlayers { .. }
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }

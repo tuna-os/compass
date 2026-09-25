@@ -93,10 +93,64 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
-    fn run_media_command(&self, id: String) -> BackendFuture<'_, ()> {
+    fn run_media_command(&self, id: String, argument: Option<String>) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self
-                .ask(Request::RunMediaCommand { id }, "The media command")
+                .ask(
+                    Request::RunMediaCommandWith { id, argument },
+                    "The media command",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_media_players(&self) -> BackendFuture<'_, Vec<compass_ui::backend::MediaPlayerRow>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ListMediaPlayers, "Listing media players")
+                .await?
+            {
+                compass_ipc::Response::MediaPlayers { players } => Ok(players
+                    .into_iter()
+                    .map(|player| compass_ui::backend::MediaPlayerRow {
+                        id: player.id,
+                        identity: player.identity,
+                        app_id: player.app_id,
+                        title: player.title,
+                        artist: player.artist,
+                        playing: player.playing,
+                        paused: player.paused,
+                        can_go_next: player.can_go_next,
+                        can_go_previous: player.can_go_previous,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn control_media_player(
+        &self,
+        player: String,
+        action: compass_ui::backend::MediaAction,
+    ) -> BackendFuture<'_, ()> {
+        use compass_ipc::MediaPlayerAction;
+        use compass_ui::backend::MediaAction;
+        let action = match action {
+            MediaAction::PlayPause => MediaPlayerAction::PlayPause,
+            MediaAction::Next => MediaPlayerAction::Next,
+            MediaAction::Previous => MediaPlayerAction::Previous,
+        };
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ControlMediaPlayer { player, action },
+                    "The media player",
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

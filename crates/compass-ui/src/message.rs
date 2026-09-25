@@ -103,6 +103,14 @@ pub enum Message {
     WindowsQueryChanged(String),
     /// The engine answered a power or media command.
     BuiltinCommandDone(Result<(), String>),
+    /// Now Playing's players arrived.
+    NowPlayingLoaded(Result<Vec<crate::backend::MediaPlayerRow>, String>),
+    /// Now Playing's filter changed.
+    NowPlayingQueryChanged(String),
+    /// A player row was clicked, by position in the shown list.
+    NowPlayingSelected(usize),
+    /// A player did what it was asked, or could not.
+    NowPlayingActed(Result<(), String>),
     /// The emoji picker's filter changed.
     EmojiQueryChanged(String),
     /// An emoji row was clicked, by position in the shown list.

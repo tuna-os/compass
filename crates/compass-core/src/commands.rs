@@ -66,6 +66,8 @@ pub enum CommandKind {
     RaycastStore,
     /// A Power Management command, by its id in [`crate::power_commands`].
     Power(&'static str),
+    /// Browse and control the running media players.
+    NowPlaying,
     /// A media command, by its id in [`crate::media_commands`].
     Media(&'static str),
 }
@@ -259,6 +261,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         subtitle: power_commands::COMMANDS[7].description,
         keywords: power_commands::COMMANDS[7].keywords,
         icon: "rotate-clockwise",
+    },
+    BuiltinCommand {
+        kind: CommandKind::NowPlaying,
+        entrypoint: "now-playing",
+        title: "Now Playing",
+        subtitle: "Browse and control running media players",
+        keywords: &["media", "music", "player", "mpris"],
+        icon: "music",
     },
     BuiltinCommand {
         kind: CommandKind::Media("play-pause"),

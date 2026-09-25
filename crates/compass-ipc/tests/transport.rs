@@ -101,6 +101,8 @@ async fn echo_handler(request: Request) -> Response {
         | Request::RunExtensionCommand { .. }
         | Request::RunPowerCommand { .. }
         | Request::RunMediaCommand { .. }
+        | Request::RunMediaCommandWith { .. }
+        | Request::ControlMediaPlayer { .. }
         | Request::ExtensionEvent { .. }
         | Request::ExtensionPop { .. }
         | Request::SetExtensionPreferences { .. }
@@ -142,6 +144,7 @@ async fn echo_handler(request: Request) -> Response {
             title: String::new(),
             fields: vec![],
         },
+        Request::ListMediaPlayers => Response::MediaPlayers { players: vec![] },
         Request::ListFonts => Response::Fonts {
             fonts: vec![],
             categories: vec![],

@@ -44,8 +44,9 @@ use serde::{Deserialize, Serialize};
 /// or opening its preferences in the launcher ([`WindowCommand::Launch`],
 /// [`Request::ExtensionLaunchFetch`]), its subtitle override in root search
 /// ([`Request::ExtensionSubtitles`]), and a command's preferences form without
-/// running it ([`Request::ExtensionPreferences`]).
-pub const PROTOCOL_VERSION: u16 = 15;
+/// running it ([`Request::ExtensionPreferences`]); version 16, media arguments and Now
+/// Playing.
+pub const PROTOCOL_VERSION: u16 = 16;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -587,6 +588,26 @@ pub enum Request {
         /// The command's [`QueryHit::id`].
         id: String,
     },
+    /// [`Request::RunMediaCommand`] with the command's optional argument:
+    /// the `player` to fuzzy-match over the running players, or the volume
+    /// `step` in percent. `None` or empty is the command's default.
+    RunMediaCommandWith {
+        /// The command's id in `compass_core::media_commands`.
+        id: String,
+        /// What was entered for its argument.
+        argument: Option<String>,
+    },
+    /// The running media players, for Now Playing. Answered with
+    /// [`Response::MediaPlayers`].
+    ListMediaPlayers,
+    /// Play/pause, skip or go back on one player, by its bus name, without a
+    /// HUD. Answered with [`Response::Ack`].
+    ControlMediaPlayer {
+        /// The player's bus name, as [`MediaPlayerEntry::id`] carries it.
+        player: String,
+        /// What to do.
+        action: MediaPlayerAction,
+    },
 }
 
 /// What the engine answers.
@@ -805,6 +826,11 @@ pub enum Response {
         /// Every override, by command id.
         subtitles: Vec<(String, String)>,
     },
+    /// Answer to [`Request::ListMediaPlayers`], in the bus's order.
+    MediaPlayers {
+        /// The players.
+        players: Vec<MediaPlayerEntry>,
+    },
 }
 
 /// The keyboard helper behind snippet keyword expansion, as the engine sees
@@ -825,6 +851,40 @@ pub struct InputServerStatus {
     /// Why it is not working, when it is not: not installed, inside a
     /// Flatpak, no permission, gave up after crashing.
     pub problem: Option<String>,
+}
+
+/// One running media player, as Now Playing lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaPlayerEntry {
+    /// Its bus name.
+    pub id: String,
+    /// What it calls itself.
+    pub identity: String,
+    /// Its `DesktopEntry`, when it offers one.
+    pub app_id: String,
+    /// The current track's title.
+    pub title: String,
+    /// The current track's artists.
+    pub artist: String,
+    /// Whether it is playing.
+    pub playing: bool,
+    /// Whether it is paused (neither this nor `playing` is stopped).
+    pub paused: bool,
+    /// Whether it has a next track.
+    pub can_go_next: bool,
+    /// Whether it has a previous track.
+    pub can_go_previous: bool,
+}
+
+/// What [`Request::ControlMediaPlayer`] does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaPlayerAction {
+    /// Toggle playback.
+    PlayPause,
+    /// Skip to the next track.
+    Next,
+    /// Go back to the previous track.
+    Previous,
 }
 
 /// One Rhai script, as root search and the launcher need it.

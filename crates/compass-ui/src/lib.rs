@@ -26,6 +26,7 @@ pub mod extension_page;
 pub mod files_page;
 pub mod fonts_page;
 pub mod icons;
+pub mod media_page;
 pub mod message;
 pub mod preferences_page;
 pub mod preset;
