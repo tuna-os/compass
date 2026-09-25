@@ -194,6 +194,8 @@ impl Default for IconLookup {
 pub struct AppFlags {
     /// Curated color theme (#153), or System for Adwaita.
     pub theme: crate::theme::Theme,
+    /// Where Set Theme looks for theme files; none in tests.
+    pub theme_dirs: Vec<std::path::PathBuf>,
     /// Window configuration.
     pub window_config: window::Settings,
     /// How to launch the selected application.
@@ -285,6 +287,7 @@ impl Default for AppFlags {
         let platform_specific = window::settings::PlatformSpecific::default();
         Self {
             theme: crate::theme::Theme::System,
+            theme_dirs: Vec::new(),
             window_config: window::Settings {
                 size: iced::Size::new(
                     f32::from(GEOMETRY.card_width + 2 * design::SHADOW_PADDING),
@@ -674,6 +677,8 @@ pub struct LauncherApp {
     window_config: window::Settings,
     /// Curated theme (#153).
     theme_choice: crate::theme::Theme,
+    /// Where Set Theme looks for theme files.
+    theme_dirs: Vec<std::path::PathBuf>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -920,6 +925,7 @@ impl LauncherApp {
         app.link = flags.link;
         app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
         app.theme_choice = flags.theme;
+        app.theme_dirs = flags.theme_dirs;
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
         app.font_family = flags.font_family;
@@ -972,6 +978,7 @@ impl LauncherApp {
             reopen_after_close: false,
             window_config: AppFlags::default().window_config,
             theme_choice: crate::theme::Theme::System,
+            theme_dirs: Vec::new(),
             theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
@@ -1890,6 +1897,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_media_panel() {
                     return task;
+                } else if let Some(task) = self.open_theme_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -1954,6 +1963,7 @@ impl LauncherApp {
                         .or_else(|| self.font_panel_action(&id))
                         .or_else(|| self.store_panel_action(&id))
                         .or_else(|| self.media_panel_action(&id))
+                        .or_else(|| self.theme_panel_action(&id))
                 {
                     return task;
                 }

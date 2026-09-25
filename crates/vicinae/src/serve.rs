@@ -2386,6 +2386,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
         Request::SetTheme { theme } => {
+            let _ = tokio::task::spawn_blocking(compass_ui::theme::load_default_user_themes).await;
             let Some(parsed) = compass_ui::theme::Theme::from_name(&theme) else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::BadRequest,

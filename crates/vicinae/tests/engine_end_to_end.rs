@@ -3582,8 +3582,24 @@ fn set_theme_keeps_the_theme_in_the_configuration() {
         config_file
             .set(root.join("config/vicinae/vicinae.json"))
             .unwrap();
+        let themes = root.join("data-home/vicinae/themes");
+        std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(
+            themes.join("harbour.toml"),
+            "[meta]\nname = \"Harbour\"\ndescription = \"\"\nvariant = \"dark\"\n",
+        )
+        .unwrap();
         Vec::new()
     });
+    assert_eq!(
+        daemon.request(Request::SetTheme {
+            theme: "harbour".into()
+        }),
+        Response::Ack,
+        "a theme file in the user's theme directory is a theme"
+    );
+    let saved = std::fs::read_to_string(config_file.get().unwrap()).unwrap();
+    assert!(saved.contains("\"harbour\""), "{saved}");
     assert_eq!(
         daemon.request(Request::SetTheme {
             theme: "Tokyo-Night".into()

@@ -192,6 +192,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
+                // A configured theme may be one of the user's theme files.
+                let _ = compass_ui::theme::load_default_user_themes();
                 (
                     config.launcher().keybinding_scheme(),
                     config.launcher().wrap_navigation(),
@@ -283,6 +285,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             appearance_link,
             font_family,
             typography_link,
+            theme_dirs: compass_core::theme_file::default_search_dirs(),
             ..compass_ui::AppFlags::default()
         };
 
@@ -594,6 +597,8 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
         ThemeCommand::List { json } => {
             let themes: Vec<_> = compass_ui::theme::Theme::ALL
                 .iter()
+                .copied()
+                .chain(compass_ui::theme::load_default_user_themes())
                 .map(|t| {
                     serde_json::json!({
                         "name": t.name(),
@@ -615,6 +620,7 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
             Ok(ExitCode::from(EXIT_OK))
         }
         ThemeCommand::Set { theme } => {
+            let _ = compass_ui::theme::load_default_user_themes();
             let parsed = compass_ui::theme::Theme::from_name(&theme).ok_or_else(|| {
                 anyhow::anyhow!("unknown theme {theme:?}; try `vicinae theme list`")
             })?;
