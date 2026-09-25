@@ -25,13 +25,16 @@ pub mod dmenu_page;
 pub mod emoji_page;
 pub mod extension_fields;
 pub mod extension_page;
+pub mod fallbacks_page;
 pub mod file_preview;
 pub mod files_page;
 pub mod fonts_page;
 pub mod grants_page;
+pub mod hud;
 pub mod icons;
 pub mod media_page;
 pub mod message;
+pub mod onboarding_page;
 pub mod open_with_page;
 pub mod preferences_page;
 pub mod preset;
@@ -42,6 +45,7 @@ pub mod root_list;
 pub mod script_page;
 mod scroll;
 pub mod settings;
+pub mod settings_page;
 pub mod shortcut_recorder;
 pub mod shortcuts_page;
 pub mod snippets_page;
@@ -51,6 +55,7 @@ pub mod theme;
 pub mod themes_page;
 pub mod tray_page;
 pub mod typography;
+pub mod vicinae_pages;
 pub mod view_memory;
 pub mod windows_page;
 pub mod workspaces_page;
@@ -116,8 +121,8 @@ pub fn run_resident(flags: AppFlags) -> iced::Result {
     // Named functions rather than closures: `iced::daemon`'s view takes a
     // higher-ranked lifetime, and a closure's inferred signature is not general
     // enough to satisfy it.
-    fn view(app: &LauncherApp, _window: iced::window::Id) -> iced::Element<'_, Message> {
-        app.view()
+    fn view(app: &LauncherApp, window: iced::window::Id) -> iced::Element<'_, Message> {
+        app.view_for(window)
     }
     fn title(app: &LauncherApp, _window: iced::window::Id) -> String {
         app.title()
@@ -154,8 +159,8 @@ pub fn run_resident(flags: AppFlags) -> iced::Result {
 pub fn run_resident_layer_shell(flags: AppFlags) -> Result<(), iced_layershell::Error> {
     use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 
-    fn view(app: &LauncherApp, _window: iced::window::Id) -> iced::Element<'_, Message> {
-        app.view()
+    fn view(app: &LauncherApp, window: iced::window::Id) -> iced::Element<'_, Message> {
+        app.view_for(window)
     }
     fn title(app: &LauncherApp, _window: iced::window::Id) -> Option<String> {
         Some(app.title())

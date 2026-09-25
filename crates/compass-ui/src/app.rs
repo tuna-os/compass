@@ -34,8 +34,10 @@ mod emoji;
 mod file_actions;
 mod fonts;
 mod grants;
+mod hud;
 mod launch;
 mod media;
+mod onboarding;
 mod open_with;
 mod preview;
 mod programs;
@@ -43,11 +45,13 @@ mod rhai;
 mod root;
 mod runtime;
 mod scripts;
+mod settings_view;
 mod shortcuts;
 mod snippets;
 mod stores;
 mod themes;
 mod tray;
+mod vicinae;
 mod workspaces;
 
 /// The search field's widget id.
@@ -200,6 +204,31 @@ impl Default for IconLookup {
     }
 }
 
+/// A shortcut's stored icon as its root row draws it (`RootShortcutItem::iconUrl`):
+/// the `ImageURL` it names, a builtin on a purple tile.
+fn shortcut_url(icon: &str) -> compass_core::image_url::ImageUrl {
+    let url = compass_core::image_url::ImageUrl::parse(icon);
+    if url.is_builtin() {
+        url.with_background_tint(compass_core::image_url::ColorLike::Semantic(
+            "Purple".into(),
+        ))
+    } else {
+        url
+    }
+}
+
+/// A clipboard link row's favicon, with the link builtin as its fallback
+/// (`ClipboardHistoryModel`'s icon for a link).
+fn clipboard_url(
+    entry: &crate::backend::ClipboardRow,
+) -> Option<compass_core::image_url::ImageUrl> {
+    use compass_core::image_url::{ImageUrl, ImageUrlType};
+    let host = entry.url_host.as_deref().filter(|host| !host.is_empty())?;
+    (entry.kind == crate::backend::ClipboardRowKind::Link).then(|| {
+        ImageUrl::new(ImageUrlType::Favicon, host).with_fallback(&ImageUrl::builtin("link"))
+    })
+}
+
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
@@ -262,6 +291,14 @@ pub struct AppFlags {
     pub search_history_path: Option<std::path::PathBuf>,
     /// The root search's clock (`launcher.clock`); `None` shows none.
     pub clock: Option<ClockSettings>,
+    /// Where favicons come from (`favicon_service`).
+    pub favicon_service: compass_core::favicon::Service,
+    /// Whether root rows fetch their remote icons (an `https` script icon,
+    /// a shortcut's or a clipboard link's favicon) into
+    /// [`crate::remote_image`]'s cache. Off by default, so a test never
+    /// reaches the network or the cache under the real home; `vicinae` turns
+    /// it on.
+    pub remote_icons: bool,
     /// When the process started, for the cold-start figure (#13).
     ///
     /// `None` in a test or anywhere nobody is timing, which simply means no
@@ -306,6 +343,11 @@ pub struct AppFlags {
     pub exit_on_engine_disconnect: bool,
     /// Start without a window when an engine link can summon it later.
     pub start_hidden: bool,
+    /// Where the first-run flow records that it was finished, when it is
+    /// due (`compass_core::onboarding::should_show`): the window then opens
+    /// on it, even when started hidden, as the C++ shows its onboarding
+    /// window at server start. `None` when it is not due.
+    pub onboarding: Option<std::path::PathBuf>,
     /// The desktop's interface font family, as `org.gnome.desktop.interface font-name`.
     ///
     /// `None` is the historic hard-coded `Cantarell` path; `Some` means the
@@ -358,6 +400,8 @@ impl Default for AppFlags {
             emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
             search_history_path: None,
             clock: None,
+            favicon_service: compass_core::favicon::Service::default(),
+            remote_icons: false,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             appearance_preset: crate::preset::resolve(None, None, None),
@@ -374,6 +418,7 @@ impl Default for AppFlags {
             link: None,
             exit_on_engine_disconnect: false,
             start_hidden: false,
+            onboarding: None,
             // Light, until a desktop says otherwise. This is Adwaita's
             // documented no-preference fallback; `vicinae` replaces it with
             // the portal's native choice before the first frame when possible.
@@ -535,6 +580,11 @@ enum ConfirmAction {
     /// Change a root item in a way that asks first: reset its ranking or
     /// disable it.
     RootEdit(String, compass_core::root_items::RootEdit),
+    /// Uninstall an extension, from Show Installed Extensions.
+    UninstallExtension(String),
+    /// Remove an extension's token set for a provider, from Manage OAuth
+    /// Token Sets.
+    RemoveTokenSet(String, Option<String>),
 }
 
 /// The root search's clock (`launcher.clock`), when it is shown.
@@ -647,6 +697,22 @@ enum Page {
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
     Preferences(Box<crate::preferences_page::PreferencesPage>),
+    /// The settings: the C++ settings window's pages.
+    Settings(Box<crate::settings_page::SettingsPage>),
+    /// The first-run flow.
+    Onboarding(Box<crate::onboarding_page::OnboardingPage>),
+    /// Configure Fallback Commands.
+    Fallbacks(crate::fallbacks_page::FallbacksPage),
+    /// Show Installed Extensions.
+    Extensions(crate::vicinae_pages::ExtensionsPage),
+    /// Search Builtin Icons.
+    Icons(crate::vicinae_pages::IconsPage),
+    /// Inspect Local Storage.
+    Storage(crate::vicinae_pages::StoragePage),
+    /// Manage OAuth Token Sets.
+    Tokens(crate::vicinae_pages::TokensPage),
+    /// A store's intro, before its list.
+    StoreIntro(crate::vicinae_pages::StoreIntroPage),
 }
 
 /// A key press as an extension shortcut: its modifiers and the key's name
@@ -835,6 +901,25 @@ pub struct LauncherApp {
     provider_scope: Option<ProviderScope>,
     /// Each Rhai script's manifest icon, resolved, by script id.
     rhai_icons: std::collections::HashMap<String, crate::extension_page::RowIcon>,
+    /// Each script command's icon, as the engine resolved it, by script id.
+    script_icons: std::collections::HashMap<String, compass_core::image_url::ImageUrl>,
+    /// Root rows' `ImageURL`s resolved to what is drawn, by URL, warmed
+    /// from `update`; `None` is a miss (or a remote image not yet here).
+    url_glyphs: std::collections::HashMap<String, Option<crate::icons::Glyph>>,
+    /// Remote icons fetched into the cache, by URL.
+    remote_files: std::collections::HashMap<String, std::path::PathBuf>,
+    /// Remote icons asked for, so each is fetched once.
+    remote_requested: std::collections::BTreeSet<String>,
+    /// Remote icons to fetch after this update.
+    remote_pending: Vec<String>,
+    /// See [`AppFlags::remote_icons`].
+    remote_icons: bool,
+    /// See [`AppFlags::favicon_service`].
+    favicon_service: compass_core::favicon::Service,
+    /// Masked images, drawn once.
+    masked: crate::icons::MaskedCache,
+    /// Extension icon files seen to exist, so a draw does not stat them.
+    known_files: std::collections::HashSet<std::path::PathBuf>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -868,6 +953,9 @@ pub struct LauncherApp {
     emoji_default_action: String,
     /// The emoji picker while its keyword form is open.
     parked_emoji: Option<crate::emoji_page::EmojiPage>,
+    /// The settings while an extension command's preferences form is open
+    /// over them.
+    parked_settings: Option<Box<crate::settings_page::SettingsPage>>,
     /// See [`AppFlags::search_history_path`].
     search_history_path: Option<std::path::PathBuf>,
     /// The root search's history, newest first.
@@ -974,6 +1062,8 @@ pub struct LauncherApp {
     extension_subtitles: std::collections::HashMap<String, String>,
     /// Whether the application under the root panel runs, by its key.
     app_runtime: Option<(String, crate::backend::AppRuntimeInfo)>,
+    /// The HUD shown after an action hides the launcher (`crate::hud`).
+    hud: crate::hud::HudState,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -1126,6 +1216,8 @@ impl LauncherApp {
         app.emoji_skin_tone = flags.emoji_skin_tone;
         app.emoji_default_action = flags.emoji_default_action;
         app.icons = flags.icons;
+        app.remote_icons = flags.remote_icons;
+        app.favicon_service = flags.favicon_service;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
         app.tint = flags.appearance_preset.tint;
@@ -1149,8 +1241,12 @@ impl LauncherApp {
     /// windows at all: without this, `vicinae ui` with no engine attached would
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
-        let hidden = flags.start_hidden && flags.link.is_some();
+        let onboarding = flags.onboarding.clone();
+        let hidden = flags.start_hidden && flags.link.is_some() && onboarding.is_none();
         let (mut app, task) = Self::new(flags);
+        if let Some(path) = onboarding {
+            app.open_onboarding(path);
+        }
         if hidden {
             return (app, task);
         }
@@ -1199,6 +1295,15 @@ impl LauncherApp {
             fallbacks: Vec::new(),
             provider_scope: None,
             rhai_icons: std::collections::HashMap::new(),
+            script_icons: std::collections::HashMap::new(),
+            url_glyphs: std::collections::HashMap::new(),
+            remote_files: std::collections::HashMap::new(),
+            remote_requested: std::collections::BTreeSet::new(),
+            remote_pending: Vec::new(),
+            remote_icons: false,
+            favicon_service: compass_core::favicon::Service::default(),
+            masked: crate::icons::MaskedCache::default(),
+            known_files: std::collections::HashSet::new(),
             theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
@@ -1222,6 +1327,7 @@ impl LauncherApp {
             root_config: compass_core::root_items::RootConfig::default(),
             favorites_len: 0,
             parked_emoji: None,
+            parked_settings: None,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
@@ -1244,6 +1350,9 @@ impl LauncherApp {
             following_script: None,
             extension_subtitles: std::collections::HashMap::new(),
             app_runtime: None,
+            hud: crate::hud::HudState::new(
+                crate::surface::presentation() == crate::surface::Presentation::LayerShell,
+            ),
         }
     }
 
@@ -1728,6 +1837,7 @@ impl LauncherApp {
                 iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::ClockTick),
             );
         }
+        streams.extend(self.hud_subscription());
         iced::Subscription::batch(streams)
     }
 
@@ -1752,6 +1862,24 @@ impl LauncherApp {
             return Task::none();
         }
 
+        if let UiCommand::Hud { text, icon } = &command {
+            let hud = crate::hud::Hud {
+                text: text.clone(),
+                icon: icon.clone(),
+            };
+            let (shown, task) = self.put_up_hud_for_engine(hud);
+            // The outcome names the launcher's state, which a HUD leaves alone.
+            let open = self.is_visible() && !self.closing;
+            self.answer(if shown && open {
+                UiOutcome::Shown
+            } else if shown {
+                UiOutcome::Hidden
+            } else {
+                UiOutcome::Failed("this session has no HUD".to_owned())
+            });
+            return task;
+        }
+
         let opened = match &command {
             UiCommand::Dmenu(token) => self.start_dmenu(*token),
             UiCommand::Launch(token) => self.start_launch(*token),
@@ -1772,7 +1900,7 @@ impl LauncherApp {
             | UiCommand::Deeplink(_) => true,
             UiCommand::Hide => false,
             // Answered in `obey` without touching the window.
-            UiCommand::Describe => return Task::none(),
+            UiCommand::Describe | UiCommand::Hud { .. } => return Task::none(),
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
                     || (self.pending_window.is_some() && !self.pending_hide)
@@ -1828,7 +1956,11 @@ impl LauncherApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.update_inner(message);
         tracing::debug!(target: "compass_ui::state", "{}", self.state_line());
-        task
+        if self.remote_pending.is_empty() {
+            return task;
+        }
+        let wanted = std::mem::take(&mut self.remote_pending);
+        Task::batch([task, crate::remote_image::fetch_tasks(wanted)])
     }
 
     fn update_inner(&mut self, message: Message) -> Task<Message> {
@@ -2053,7 +2185,7 @@ impl LauncherApp {
                         answer.answer.clone(),
                         answer.answer.clone(),
                     );
-                    return Task::batch([copy, self.conceal()]);
+                    return Task::batch([copy, self.show_hud(calculator::answer_copied())]);
                 }
                 if let Some(RootRow::Command(command)) = self.selected_row() {
                     return self.open_command(command);
@@ -2132,6 +2264,34 @@ impl LauncherApp {
             }
             // Taken by `iced_layershell` before `update`; see `crate::surface`.
             Message::Layer(_) => Task::none(),
+            Message::Opened(id) if self.hud.owns(id) => Task::none(),
+            Message::Closed(id) if self.hud.closed(id) => Task::none(),
+            Message::HudTick(now) => self.hud_tick(now),
+            Message::FallbacksQueryChanged(_) | Message::FallbackSelected(_) => {
+                self.fallbacks_message(message)
+            }
+            Message::ExtensionsQueryChanged(_)
+            | Message::IconsQueryChanged(_)
+            | Message::VicinaeRowSelected(_)
+            | Message::ExtensionUninstalled { .. }
+            | Message::StorageQueryChanged(_)
+            | Message::TokensQueryChanged(_)
+            | Message::StorageNamespacesLoaded(_)
+            | Message::StorageItemsLoaded { .. }
+            | Message::TokenSetsLoaded(_)
+            | Message::TokenSetRemoved(_) => self.vicinae_view_message(message),
+            Message::OnboardingContinue
+            | Message::OnboardingBack
+            | Message::OnboardingJump(_)
+            | Message::OnboardingTheme(_)
+            | Message::OnboardingOpen(_)
+            | Message::OnboardingLinkOpened(_) => self.onboarding_message(message),
+            Message::ActionDone(Some(hud), Ok(())) => self.show_hud(hud),
+            Message::ActionDone(None, Ok(())) => self.conceal(),
+            Message::ActionDone(_, Err(reason)) => {
+                self.say(reason);
+                Task::none()
+            }
             Message::Opened(id) => {
                 if self.window.is_some_and(|current| current != id)
                     || self.pending_window.is_some_and(|pending| pending != id)
@@ -2214,6 +2374,12 @@ impl LauncherApp {
                 } else if let Some(task) = self.open_windows_panel() {
                     return task;
                 } else if let Some(task) = self.open_calculator_panel() {
+                    return task;
+                } else if let Some(task) = self.open_fallbacks_panel() {
+                    return task;
+                } else if let Some(task) = self.open_vicinae_view_panel() {
+                    return task;
+                } else if let Some(task) = self.open_fallback_row_panel() {
                     return task;
                 } else if let Some(task) = self.open_workspaces_panel() {
                     return task;
@@ -2304,6 +2470,7 @@ impl LauncherApp {
                         .or_else(|| self.workspaces_panel_action(&id))
                         .or_else(|| self.file_panel_action(&id))
                         .or_else(|| self.app_runtime_action(&id))
+                        .or_else(|| self.vicinae_panel_action(&id))
                 {
                     return task;
                 }
@@ -2379,6 +2546,7 @@ impl LauncherApp {
                 if let Page::Clipboard(page) = &mut self.page {
                     page.apply(generation, result);
                 }
+                self.warm_clipboard_icons();
                 Task::batch([
                     crate::scroll::reveal_root_selection(),
                     self.clipboard_detail_task(),
@@ -2477,6 +2645,9 @@ impl LauncherApp {
                     page.purpose == crate::preferences_page::Purpose::CommandPreferences;
                 self.page = Page::Root;
                 if only_saved {
+                    if let Some(settings) = self.parked_settings.take() {
+                        self.page = Page::Settings(settings);
+                    }
                     return focus_search();
                 }
                 match self.app_index.extensions().iter().position(|c| c.id == id) {
@@ -2617,6 +2788,9 @@ impl LauncherApp {
                 }
             }
             Message::ExtensionImageFetched { url, result } => {
+                if self.remote_requested.contains(&url) {
+                    self.root_icon_arrived(&url, &result);
+                }
                 if self.store_image_arrived(&url, &result) {
                     return Task::none();
                 }
@@ -2702,7 +2876,8 @@ impl LauncherApp {
                         // Copy, then get out of the way: the user copied it
                         // to paste it somewhere else.
                         let copy = iced::clipboard::write(text);
-                        Task::batch([copy, self.conceal()])
+                        let hud = crate::hud::Hud::new("Selection copied to clipboard");
+                        Task::batch([copy, self.show_hud(hud)])
                     }
                     Err(reason) => {
                         page.notice = Some(reason);
@@ -2723,8 +2898,10 @@ impl LauncherApp {
             | Message::SnippetExpanded(_)
             | Message::SnippetPasted(_)
             | Message::SnippetsQueryChanged(_)
-            | Message::SnippetSelected(_) => self.snippet_message(message),
+            | Message::SnippetSelected(_)
+            | Message::SnippetDetailLoaded(_) => self.snippet_message(message),
             Message::ScriptsLoaded(_)
+            | Message::ScriptIconsLoaded(_)
             | Message::ScriptStarted { .. }
             | Message::ScriptPolled { .. } => self.script_message(message),
             Message::RhaiScriptsLoaded(_) => self.rhai_message(message),
@@ -2818,6 +2995,9 @@ impl LauncherApp {
                     return task;
                 }
                 if let Some(task) = self.back_from_alias_form() {
+                    return task;
+                }
+                if let Some(task) = self.back_to_settings() {
                     return task;
                 }
                 if let Some(task) = self.back_from_shortcut_form() {
@@ -2929,6 +3109,11 @@ impl LauncherApp {
                 }
                 self.list_windows_task()
             }
+            Message::Settings(message) => self.settings_message(message),
+            // The settings' shortcut recorder takes every key too.
+            Message::Keyboard(event) if matches!(&self.page, Page::Settings(page) if page.recorder.is_some()) => {
+                self.settings_recorder_event(&event)
+            }
             // The shortcut recorder takes every key, releases included.
             Message::Keyboard(event)
                 if self
@@ -2965,6 +3150,16 @@ impl LauncherApp {
                             self.power_confirm = None;
                             Task::none()
                         }
+                        _ => Task::none(),
+                    };
+                }
+                if matches!(self.page, Page::Onboarding(_)) {
+                    return self.onboarding_key(key);
+                }
+                if !panel_key && matches!(self.page, Page::StoreIntro(_)) {
+                    return match key.as_ref() {
+                        Key::Named(Named::Enter) => self.continue_to_store(),
+                        Key::Named(Named::Escape) => self.update(Message::Back),
                         _ => Task::none(),
                     };
                 }
@@ -3040,6 +3235,22 @@ impl LauncherApp {
                         Key::Named(Named::Enter) => return self.activate_extension_action(),
                         _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
                     };
+                    // A grid moves by cell and by row, as `SectionGridModel`.
+                    if page.grid_columns.is_some() {
+                        use crate::fonts_page::GridMove;
+                        let step = match (key.as_ref(), direction) {
+                            (Key::Named(Named::ArrowLeft), _) => Some(GridMove::Left),
+                            (Key::Named(Named::ArrowRight), _) => Some(GridMove::Right),
+                            (_, Some(Direction::Up)) => Some(GridMove::Up),
+                            (_, Some(Direction::Down)) => Some(GridMove::Down),
+                            _ => None,
+                        };
+                        if let Some(step) = step {
+                            page.selected = page.grid_step(step, self.wrap_navigation);
+                            return crate::scroll::reveal_root_selection();
+                        }
+                        return Task::none();
+                    }
                     if let Some(direction) = direction {
                         page.selected = next_selection(
                             page.shown.len(),
@@ -3084,6 +3295,17 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Calculator(_)) {
                     return self.calculator_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Fallbacks(_)) {
+                    return self.fallbacks_page_key(key, modifiers);
+                }
+                if !panel_key
+                    && matches!(
+                        self.page,
+                        Page::Extensions(_) | Page::Icons(_) | Page::Storage(_) | Page::Tokens(_)
+                    )
+                {
+                    return self.vicinae_view_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::Workspaces(_)) {
                     return self.workspaces_page_key(key, modifiers);
                 }
@@ -3095,6 +3317,9 @@ impl LauncherApp {
                 }
                 if !panel_key && matches!(self.page, Page::Themes(_)) {
                     return self.themes_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Settings(_)) {
+                    return self.settings_page_key(key, modifiers);
                 }
                 if !panel_key && matches!(self.page, Page::Created(_)) {
                     return self.created_page_key(key);
@@ -3210,6 +3435,15 @@ impl LauncherApp {
                 // `#ifdef`, for the same reason.
                 if modifiers.control() && key.as_ref() == Key::Character("b") {
                     return self.update(Message::TogglePanel);
+                }
+
+                // Ctrl+, opens the settings (`Keybind::OpenSettings`).
+                if modifiers.control()
+                    && self.panel.is_none()
+                    && matches!(self.page, Page::Root)
+                    && key.as_ref() == Key::Character(",")
+                {
+                    return self.open_settings(None);
                 }
 
                 // While the panel is open it takes the keys the list would
@@ -3361,6 +3595,36 @@ impl LauncherApp {
                 Some(Message::SnippetsQueryChanged as OnInput),
             ),
             Page::ScriptOutput(page) => ("", &page.title, None),
+            Page::Onboarding(_) | Page::StoreIntro(_) => ("", "", None),
+            Page::Fallbacks(page) => (
+                crate::fallbacks_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::FallbacksQueryChanged as OnInput),
+            ),
+            Page::Extensions(page) => (
+                crate::vicinae_pages::EXTENSIONS_PLACEHOLDER,
+                &page.query,
+                Some(Message::ExtensionsQueryChanged as OnInput),
+            ),
+            Page::Icons(page) => (
+                crate::vicinae_pages::ICONS_PLACEHOLDER,
+                &page.query,
+                Some(Message::IconsQueryChanged as OnInput),
+            ),
+            Page::Storage(page) => (
+                if page.browsing.is_some() {
+                    crate::vicinae_pages::ITEMS_PLACEHOLDER
+                } else {
+                    crate::vicinae_pages::NAMESPACES_PLACEHOLDER
+                },
+                &page.query,
+                Some(Message::StorageQueryChanged as OnInput),
+            ),
+            Page::Tokens(page) => (
+                crate::vicinae_pages::TOKENS_PLACEHOLDER,
+                &page.query,
+                Some(Message::TokensQueryChanged as OnInput),
+            ),
             Page::Programs(page) => (
                 "Search for a program to execute...",
                 &page.query,
@@ -3419,6 +3683,17 @@ impl LauncherApp {
             ),
             Page::StoreDetail(page) => ("", &page.title, None),
             Page::Preferences(page) => ("Configure", &page.title, None),
+            Page::Settings(page) => (
+                crate::settings_page::PLACEHOLDER,
+                &page.query,
+                Some(
+                    (|query| {
+                        Message::Settings(crate::settings_page::SettingsMessage::QueryChanged(
+                            query,
+                        ))
+                    }) as OnInput,
+                ),
+            ),
             Page::Extension(page) => (
                 page.list()
                     .and_then(|list| list.search.placeholder.as_deref())
@@ -3536,10 +3811,18 @@ impl LauncherApp {
             self.apps_body(page)
         } else if let Page::Calculator(page) = &self.page {
             self.calculator_body(page)
+        } else if let Page::Fallbacks(page) = &self.page {
+            self.fallbacks_body(page)
+        } else if let Some(body) = self.vicinae_view_body() {
+            body
+        } else if let Page::StoreIntro(page) = &self.page {
+            self.store_intro_body(page)
         } else if let Page::NowPlaying(page) = &self.page {
             self.now_playing_body(page)
         } else if let Page::Themes(page) = &self.page {
             self.themes_body(page)
+        } else if let Page::Settings(page) = &self.page {
+            self.settings_body(page)
         } else if let Page::Created(page) = &self.page {
             self.created_body(page)
         } else if let Page::Fonts(page) = &self.page {
@@ -3594,7 +3877,11 @@ impl LauncherApp {
                             continue;
                         };
                         self.list_row(
-                            self.initial_badge(&command.title, selected),
+                            self.url_icon(
+                                self.extension_url(command).as_ref(),
+                                &command.title,
+                                selected,
+                            ),
                             command.title.clone(),
                             self.subtitles.then(|| {
                                 self.extension_subtitles
@@ -3610,7 +3897,11 @@ impl LauncherApp {
                             continue;
                         };
                         self.list_row(
-                            self.initial_badge(&script.title, selected),
+                            self.url_icon(
+                                self.script_icons.get(&script.id),
+                                &script.title,
+                                selected,
+                            ),
                             script.title.clone(),
                             self.subtitles.then(|| script.subtitle.clone()),
                             selected,
@@ -3669,7 +3960,7 @@ impl LauncherApp {
                         };
                         let title = crate::shortcuts_page::display_name(shortcut);
                         self.list_row(
-                            self.initial_badge(title, selected),
+                            self.url_icon(Some(&shortcut_url(&shortcut.icon)), title, selected),
                             title.to_owned(),
                             self.subtitles.then(|| "Shortcut".to_owned()),
                             selected,
@@ -3693,7 +3984,9 @@ impl LauncherApp {
         // container rather than a border on the field, because the field has
         // its own rounded border in the other presets and a rule has to span
         // the card's full width regardless of the field's radius.
-        let card_content = if self.field_rule {
+        let card_content = if let Page::Onboarding(page) = &self.page {
+            column![self.onboarding_body(page)].width(Length::Fill)
+        } else if self.field_rule {
             column![
                 field,
                 container(Space::new())
@@ -4036,10 +4329,14 @@ impl LauncherApp {
             let subtitle = self
                 .subtitles
                 .then(|| crate::clipboard_page::subtitle(entry));
+            let favicon =
+                clipboard_url(entry).and_then(|url| self.url_glyphs.get(&url.to_url())?.clone());
             let row = self.list_row(
                 self.glyph_or_initial(
                     self.icons
-                        .then(|| crate::icons::clipboard_glyph(entry.kind))
+                        .then(|| {
+                            favicon.unwrap_or_else(|| crate::icons::clipboard_glyph(entry.kind))
+                        })
                         .as_ref(),
                     crate::clipboard_page::subtitle(entry).as_str(),
                     selected,
@@ -4064,7 +4361,7 @@ impl LauncherApp {
         let rows: Element<Message> = match &page.detail {
             Some(detail) => row![
                 container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
-                self.clipboard_detail_pane(detail),
+                self.clipboard_detail_pane(detail, &page.query),
             ]
             .into(),
             None => rows.into(),
@@ -4142,9 +4439,31 @@ impl LauncherApp {
         icon: &crate::extension_page::RowIcon,
         selected: bool,
     ) -> Element<'_, Message> {
+        self.masked_icon(icon, compass_core::image_url::ImageMask::None, selected)
+    }
+
+    /// [`Self::extension_icon`], clipped to `mask` (`Image.mask`): the
+    /// image drawn into pixels and clipped as `applyCircleMask` and
+    /// `applyRoundedRectMask` clip it.
+    fn masked_icon(
+        &self,
+        icon: &crate::extension_page::RowIcon,
+        mask: compass_core::image_url::ImageMask,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        self.icon_art(icon, mask, selected, f32::from(self.geometry.icon_size))
+    }
+
+    /// [`Self::masked_icon`] in a square of `side`.
+    fn icon_art(
+        &self,
+        icon: &crate::extension_page::RowIcon,
+        mask: compass_core::image_url::ImageMask,
+        selected: bool,
+        side: f32,
+    ) -> Element<'_, Message> {
         use crate::extension_page::RowIcon;
-        let geometry = self.geometry;
-        let size = Length::Fixed(f32::from(geometry.icon_size));
+        let size = Length::Fixed(side);
         let palette = self.palette();
         let text_color = if selected {
             palette.selection_text
@@ -4152,7 +4471,33 @@ impl LauncherApp {
             palette.text
         }
         .to_iced();
+        let masked = match icon {
+            RowIcon::Art {
+                art,
+                monochrome,
+                tint,
+            } if mask != compass_core::image_url::ImageMask::None => {
+                let color = tint.or(monochrome.then_some(text_color)).map(|c| {
+                    let [r, g, b, _] = c.into_rgba8();
+                    [r, g, b]
+                });
+                self.masked.get(art, mask, color)
+            }
+            _ => None,
+        };
+        if let Some(handle) = masked {
+            return container(image(handle).width(Length::Fill).height(Length::Fill))
+                .width(size)
+                .height(size)
+                .into();
+        }
         let art: Element<Message> = match icon {
+            RowIcon::Text(glyph) => container(text(glyph.clone()).size(side * 0.75))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .into(),
             RowIcon::Swatch(color) => {
                 let color = *color;
                 container(text(""))
@@ -4280,6 +4625,14 @@ impl LauncherApp {
         use crate::icons::Glyph;
         let square = Length::Fixed(size);
         match glyph {
+            Glyph::Text(glyph) => Some(
+                container(text(glyph.clone()).size(size * 0.75))
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into(),
+            ),
             Glyph::Art(art) => {
                 let drawn: Element<'static, Message> = match art {
                     crate::icons::IconArt::Raster(path) => image(path.clone())
@@ -4317,22 +4670,45 @@ impl LauncherApp {
                     .align_y(Alignment::Center)
                     .into(),
                     Some(tile) => {
-                        let tile = tile.to_iced();
+                        let (top, bottom) = crate::icons::tile_gradient(*tile);
+                        let gradient = iced::gradient::Linear::new(std::f32::consts::PI)
+                            .add_stop(0.0, top.to_iced())
+                            .add_stop(1.0, bottom.to_iced());
                         let inner = size * (1.0 - 2.0 * 0.19);
-                        container(
-                            self.builtin_svg(
-                                name,
-                                fill.unwrap_or(crate::design::Rgb::new(255, 255, 255))
-                                    .to_iced(),
-                                inner,
-                            )?,
-                        )
+                        let centred = |element: Element<'static, Message>, drop: f32| {
+                            container(element)
+                                .width(square)
+                                .height(square)
+                                .align_x(Alignment::Center)
+                                .align_y(Alignment::Center)
+                                .padding(Padding::ZERO.top(drop * 2.0))
+                        };
+                        // `applyBackdrop`'s shadow: the glyph's silhouette in
+                        // translucent black, a little lower, under it.
+                        let shadow = self.builtin_svg(
+                            name,
+                            Color::from_rgba8(
+                                0,
+                                0,
+                                0,
+                                f32::from(crate::icons::TILE_SHADOW_ALPHA) / 255.0,
+                            ),
+                            inner,
+                        )?;
+                        let glyph = self.builtin_svg(
+                            name,
+                            fill.unwrap_or(crate::design::Rgb::new(255, 255, 255))
+                                .to_iced(),
+                            inner,
+                        )?;
+                        container(iced::widget::stack![
+                            centred(shadow, size * crate::icons::TILE_SHADOW_OFFSET),
+                            centred(glyph, 0.0),
+                        ])
                         .width(square)
                         .height(square)
-                        .align_x(Alignment::Center)
-                        .align_y(Alignment::Center)
                         .style(move |_: &Theme| container::Style {
-                            background: Some(tile.into()),
+                            background: Some(iced::Background::Gradient(gradient.into())),
                             border: Border {
                                 color: Color::from_rgba8(255, 255, 255, 30.0 / 255.0),
                                 width: (size / 32.0).max(1.0),
@@ -5251,11 +5627,15 @@ impl LauncherApp {
             (Status::Stopped(why), _) => return self.notice(why),
             (Status::Ready, Some(View::Detail(_))) => {
                 let theme = self.theme();
-                let markdown = iced::widget::markdown::view(
+                // Its images drawn once fetched, as the store page draws a
+                // README's.
+                let markdown = iced::widget::markdown::view_with(
                     &page.markdown,
                     iced::widget::markdown::Settings::with_text_size(14, &theme),
-                )
-                .map(Message::ExtensionLinkClicked);
+                    &stores::StoreMarkdown {
+                        images: &page.markdown_art,
+                    },
+                );
                 let body = scrollable(container(markdown).padding(Padding::new(14.0)))
                     .id(crate::scroll::ROOT_RESULTS)
                     .height(Length::Shrink);
@@ -5277,6 +5657,9 @@ impl LauncherApp {
                 .map_or("No results", |empty| empty.title.as_str());
             return self.notice(empty);
         }
+        if page.grid_columns.is_some() {
+            return self.extension_grid(page);
+        }
         let mut list = column![].spacing(f32::from(geometry.row_spacing));
         let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
         for (position, &(s, i)) in page.shown.iter().enumerate() {
@@ -5296,7 +5679,7 @@ impl LauncherApp {
                 (None, true) => None,
             };
             let icon = match page.icon(s, i) {
-                Some(icon) => self.extension_icon(icon, selected),
+                Some(icon) => self.masked_icon(icon, page.mask(s, i), selected),
                 None => self.initial_badge(&item.title, selected),
             };
             let row = self.list_row(
@@ -5321,6 +5704,85 @@ impl LauncherApp {
         match &page.notice {
             Some(notice) => column![rows, self.notice(notice)].into(),
             None => rows.into(),
+        }
+    }
+
+    /// An extension's grid: each section under its title, its cells in rows
+    /// of the section's columns, each cell its content (an image, a colour)
+    /// over its title, as `SectionGridModel` lays them out.
+    fn extension_grid<'a>(
+        &'a self,
+        page: &'a crate::extension_page::ExtensionPage,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let sections = page.list().map(|list| &list.sections[..]).unwrap_or(&[]);
+        let width = f32::from(self.geometry.card_width) - 24.0;
+        let mut grid = column![].spacing(8);
+        for (section, positions) in page.grid_groups() {
+            if let Some(title) = sections.get(section).and_then(|s| s.title.clone()) {
+                grid = grid.push(self.section_heading(title));
+            }
+            let columns = page.section_columns(section);
+            #[allow(clippy::cast_precision_loss)]
+            let side = (width / columns as f32 - 8.0).max(16.0);
+            for chunk in positions.chunks(columns) {
+                let mut cells = row![].spacing(8);
+                for &position in chunk {
+                    let (s, i) = page.shown[position];
+                    let Some(item) = sections.get(s).and_then(|sec| sec.items.get(i)) else {
+                        continue;
+                    };
+                    let selected = position == page.selected;
+                    let art: Element<Message> = match page.icon(s, i) {
+                        Some(icon) => self.icon_art(icon, page.mask(s, i), selected, side * 0.7),
+                        None => Space::new().into(),
+                    };
+                    let tile = container(art)
+                        .width(Length::Fixed(side))
+                        .height(Length::Fixed(side))
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center)
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(palette.surface.to_iced().into()),
+                            border: Border {
+                                color: if selected {
+                                    palette.accent.to_iced()
+                                } else {
+                                    palette.border.to_iced()
+                                },
+                                width: if selected { 2.0 } else { 1.0 },
+                                radius: 8.0.into(),
+                            },
+                            ..container::Style::default()
+                        });
+                    let cell = column![
+                        tile,
+                        text(item.title.clone())
+                            .font(self.font())
+                            .size(12)
+                            .color(palette.text.to_iced())
+                            .width(Length::Fixed(side)),
+                    ]
+                    .spacing(4);
+                    let cell: Element<Message> = mouse_area(cell)
+                        .on_press(Message::ExtensionItemSelected(position))
+                        .into();
+                    let cell: Element<Message> = if selected {
+                        container(cell).id(crate::scroll::ROOT_SELECTION).into()
+                    } else {
+                        cell
+                    };
+                    cells = cells.push(cell);
+                }
+                grid = grid.push(cells);
+            }
+        }
+        let body = scrollable(container(grid).padding(Padding::new(12.0).top(8)))
+            .id(crate::scroll::ROOT_RESULTS)
+            .height(Length::Shrink);
+        match &page.notice {
+            Some(notice) => column![body, self.notice(notice)].into(),
+            None => body.into(),
         }
     }
 
@@ -5393,6 +5855,8 @@ impl LauncherApp {
             CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
             CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
             CommandKind::SearchTray => Task::batch([record, self.open_search_tray()]),
+            CommandKind::OpenSettings => Task::batch([record, self.open_settings(None)]),
+            CommandKind::Vicinae(id) => Task::batch([record, self.open_vicinae_command(id)]),
             CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
             CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
             CommandKind::SetDefaultBrowser => Task::batch([
@@ -5422,11 +5886,17 @@ impl LauncherApp {
             CommandKind::CreateExtension => Task::batch([record, self.open_create_extension()]),
             CommandKind::ExtensionStore => {
                 self.parked_store = None;
-                Task::batch([record, self.open_store(crate::backend::Store::Vicinae)])
+                Task::batch([
+                    record,
+                    self.open_store_or_intro(crate::backend::Store::Vicinae),
+                ])
             }
             CommandKind::RaycastStore => {
                 self.parked_store = None;
-                Task::batch([record, self.open_store(crate::backend::Store::Raycast)])
+                Task::batch([
+                    record,
+                    self.open_store_or_intro(crate::backend::Store::Raycast),
+                ])
             }
             CommandKind::BrowseFonts => {
                 self.parked_fonts = None;
@@ -5560,6 +6030,10 @@ impl LauncherApp {
         let task = match confirm.action {
             ConfirmAction::ClipboardRemoveAll => self.remove_all_clipboard_entries(),
             ConfirmAction::RootEdit(id, edit) => self.edit_root_item(id, edit),
+            ConfirmAction::UninstallExtension(id) => self.uninstall_extension(id),
+            ConfirmAction::RemoveTokenSet(extension, provider) => {
+                self.remove_token_set(extension, provider)
+            }
         };
         Task::batch([task, focus_search()])
     }
@@ -5838,6 +6312,89 @@ impl LauncherApp {
         item.icon().and_then(|name| self.icon_cache.cached(name))
     }
 
+    /// A root row's `ImageURL` drawn in its icon slot, once warmed, else
+    /// `title`'s initial.
+    fn url_icon(
+        &self,
+        url: Option<&compass_core::image_url::ImageUrl>,
+        title: &str,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = url
+            .filter(|_| self.icons)
+            .and_then(|url| self.url_glyphs.get(&url.to_url())?.as_ref());
+        self.glyph_or_initial(glyph, title, selected)
+    }
+
+    /// An extension command's icon URL, once warmed.
+    fn extension_url(
+        &self,
+        command: &compass_core::extension_commands::ExtensionCommand,
+    ) -> Option<compass_core::image_url::ImageUrl> {
+        self.icons
+            .then(|| command.icon_url(|path| self.known_files.contains(path)))
+    }
+
+    /// Resolves `urls` into [`Self::url_glyphs`], asking for each remote
+    /// image not yet fetched (when [`AppFlags::remote_icons`] allows).
+    fn warm_urls(&mut self, urls: Vec<compass_core::image_url::ImageUrl>) {
+        let find = self.icon_lookup.clone();
+        let find = |name: &str| find.find(name);
+        for url in urls {
+            let key = url.to_url();
+            if self.url_glyphs.contains_key(&key) {
+                continue;
+            }
+            let remote_files = &self.remote_files;
+            let remote = |remote: &str| remote_files.get(remote).cloned();
+            let lookup = crate::icons::UrlLookup {
+                find: &find,
+                remote: &remote,
+                favicon: self.favicon_service,
+                accent: self.palette().accent,
+            };
+            let glyph = crate::icons::url_glyph(&url, &lookup);
+            let waiting = crate::icons::remote_source(&url, self.favicon_service)
+                .filter(|remote| !self.remote_files.contains_key(remote));
+            if let Some(remote) = waiting {
+                if self.remote_icons && self.remote_requested.insert(remote.clone()) {
+                    self.remote_pending.push(remote);
+                }
+                if glyph.is_none() {
+                    // Resolved again when it arrives.
+                    continue;
+                }
+            }
+            self.url_glyphs.insert(key, glyph);
+        }
+    }
+
+    /// A remote root icon arrived in the cache, or could not be fetched.
+    fn root_icon_arrived(&mut self, url: &str, result: &Result<std::path::PathBuf, String>) {
+        match result {
+            Ok(path) => {
+                self.remote_files.insert(url.to_owned(), path.clone());
+                // Whatever waited on it (and its fallbacks) is resolved again.
+                self.url_glyphs.clear();
+                self.warm_icons();
+                self.warm_clipboard_icons();
+            }
+            Err(reason) => tracing::debug!(%url, %reason, "a root icon was not fetched"),
+        }
+    }
+
+    /// Resolve the favicons of clipboard history's link rows.
+    fn warm_clipboard_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Clipboard(page) = &self.page else {
+            return;
+        };
+        let urls: Vec<_> = page.rows.iter().filter_map(clipboard_url).collect();
+        self.warm_urls(urls);
+    }
+
     /// Resolve the icons of the rows now on screen.
     ///
     /// Here rather than in `view` because resolution walks the theme
@@ -5848,7 +6405,7 @@ impl LauncherApp {
     ///
     /// A no-op when icons are off, so the default configuration does no lookup
     /// at all.
-    fn warm_icons(&mut self) {
+    pub(super) fn warm_icons(&mut self) {
         if !self.icons {
             return;
         }
@@ -5870,6 +6427,48 @@ impl LauncherApp {
             .collect();
         let find = self.icon_lookup.clone();
         self.icon_cache.warm(names, &|name| find.find(name));
+
+        // Extension, script and shortcut rows: their `ImageURL`s.
+        let mut urls = Vec::new();
+        for row in &self.results {
+            match row {
+                RootRow::Extension(index) => {
+                    if let Some(command) = self.app_index.extensions().get(*index) {
+                        for icon in [
+                            command.icon.as_deref(),
+                            Some(command.extension_icon.as_str()),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .filter(|icon| !icon.is_empty())
+                        {
+                            let path = command.extension_dir.join("assets").join(icon);
+                            if path.is_file() {
+                                self.known_files.insert(path);
+                            }
+                        }
+                        urls.push(command.icon_url(|path| self.known_files.contains(path)));
+                    }
+                }
+                RootRow::Script(index) => {
+                    if let Some(url) = self
+                        .app_index
+                        .scripts()
+                        .get(*index)
+                        .and_then(|script| self.script_icons.get(&script.id))
+                    {
+                        urls.push(url.clone());
+                    }
+                }
+                RootRow::Shortcut(index) => {
+                    if let Some(shortcut) = self.app_index.shortcuts().get(*index) {
+                        urls.push(shortcut_url(&shortcut.icon));
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.warm_urls(urls);
     }
 
     /// Resolve the file-type icons of Search Files' rows.
@@ -6005,6 +6604,117 @@ mod tests {
         });
         let mut exit = task::into_stream(app.update(Message::EngineDisconnected)).unwrap();
         assert!(matches!(block_on(exit.next()), Some(Action::Exit)));
+    }
+
+    #[test]
+    fn a_due_onboarding_opens_the_window_even_when_started_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            onboarding: Some(dir.path().join("vicinae/onboarding.json")),
+            ..AppFlags::default()
+        });
+        assert!(app.pending_window.is_some(), "the flow is put on screen");
+        assert_eq!(
+            app.onboarding_step(),
+            Some(compass_core::onboarding::Step::Welcome)
+        );
+
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            onboarding: None,
+            ..AppFlags::default()
+        });
+        assert!(app.pending_window.is_none(), "not due: hidden as asked");
+        assert!(!app.showing_onboarding());
+    }
+
+    #[test]
+    fn finishing_the_onboarding_records_it_and_hides() {
+        use compass_core::onboarding::{self, Step};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vicinae").join(onboarding::FILE_NAME);
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        app.open_onboarding(path.clone());
+
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert_eq!(app.onboarding_step(), Some(Step::Personalize));
+        let task = app.update(Message::OnboardingTheme(
+            crate::onboarding_page::ThemeOption(crate::theme::Theme::Dracula),
+        ));
+        settle(&mut app, task);
+        assert_eq!(app.theme_choice, crate::theme::Theme::Dracula, "previewed");
+        assert_eq!(
+            backend.themes_kept.lock().unwrap().as_slice(),
+            ["dracula"],
+            "and kept"
+        );
+        let task = app.update(Message::OnboardingOpen(onboarding::HOTKEY_DOCS_URL));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            [onboarding::HOTKEY_DOCS_URL]
+        );
+
+        let _ = app.update(Message::OnboardingContinue);
+        assert_eq!(app.onboarding_step(), Some(Step::Complete));
+        assert!(onboarding::should_show(&path, false), "not before Finish");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(!app.showing_onboarding(), "Finish hides the flow");
+        assert!(!onboarding::should_show(&path, false), "and records it");
+    }
+
+    #[test]
+    fn escape_closes_the_onboarding_without_recording_it() {
+        use compass_core::onboarding;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(onboarding::FILE_NAME);
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.open_onboarding(path.clone());
+        let _ = app.update(Message::OnboardingJump(2));
+        assert_eq!(
+            app.onboarding_step(),
+            Some(onboarding::Step::Complete),
+            "a dot goes straight to its step"
+        );
+        let _ = app.update(Message::OnboardingBack);
+        assert_eq!(app.onboarding_step(), Some(onboarding::Step::Personalize));
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        assert!(!app.showing_onboarding());
+        assert!(!path.exists(), "the next start asks again");
+    }
+
+    #[test]
+    fn every_onboarding_step_draws_its_heading_and_buttons() {
+        use compass_core::onboarding::Step;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.open_onboarding(dir.path().join("onboarding.json"));
+        for (step, expected) in [
+            (Step::Welcome, ["Welcome to Vicinae", "Continue"]),
+            (Step::Personalize, ["Make it your own", "Open Docs"]),
+            (Step::Complete, ["Setup complete", "Finish"]),
+        ] {
+            assert_eq!(app.onboarding_step(), Some(step));
+            let mut ui = iced_test::Simulator::with_size(
+                iced::Settings::default(),
+                iced::Size::new(800.0, 600.0),
+                app.view(),
+            );
+            for label in expected {
+                assert!(ui.find(label).is_ok(), "{step:?} has no {label:?}");
+            }
+            drop(ui);
+            let _ = app.update(Message::OnboardingContinue);
+        }
     }
 
     #[test]
@@ -6349,6 +7059,12 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct TestBackend {
+        /// Local storage, by namespace.
+        storage: Vec<(String, Vec<crate::backend::StorageItemRow>)>,
+        /// Stored token sets.
+        token_sets: std::sync::Mutex<Vec<crate::backend::TokenSetRow>>,
+        /// The root edits the engine was asked for.
+        root_edits: std::sync::Mutex<Vec<(String, compass_core::root_items::RootEdit)>>,
         /// Other applications' tray icons.
         tray: Vec<crate::backend::TrayItemRow>,
         /// What the tray was asked to do.
@@ -6428,6 +7144,8 @@ mod tests {
         snippet_uses: std::sync::Mutex<Vec<SnippetUse>>,
         /// The script commands the fake lists.
         scripts: Vec<compass_core::script_scan::ScriptItem>,
+        /// Each script's icon URL, by id.
+        script_icons: Vec<(String, String)>,
         /// The scripts run, with their arguments.
         script_runs: std::sync::Mutex<Vec<(String, Vec<String>)>>,
         /// The programs Run Terminal Program ran: `(argv, terminal, hold)`.
@@ -6452,6 +7170,54 @@ mod tests {
     impl crate::backend::ApplicationBackend for TestBackend {
         fn search(&self, _query: String) -> crate::backend::BackendFuture<'_, Vec<String>> {
             Box::pin(async { Ok(self.keys.clone()) })
+        }
+
+        fn edit_root_item(
+            &self,
+            id: String,
+            edit: compass_core::root_items::RootEdit,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.root_edits.lock().unwrap().push((id, edit));
+                Ok(())
+            })
+        }
+
+        fn local_storage_namespaces(&self) -> crate::backend::BackendFuture<'_, Vec<String>> {
+            Box::pin(async move { Ok(self.storage.iter().map(|(ns, _)| ns.clone()).collect()) })
+        }
+
+        fn local_storage_items(
+            &self,
+            namespace: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::StorageItemRow>> {
+            Box::pin(async move {
+                Ok(self
+                    .storage
+                    .iter()
+                    .find(|(ns, _)| *ns == namespace)
+                    .map(|(_, items)| items.clone())
+                    .unwrap_or_default())
+            })
+        }
+
+        fn oauth_token_sets(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TokenSetRow>> {
+            Box::pin(async move { Ok(self.token_sets.lock().unwrap().clone()) })
+        }
+
+        fn remove_oauth_token_set(
+            &self,
+            extension_id: String,
+            provider_id: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.token_sets.lock().unwrap().retain(|set| {
+                    set.extension_id != extension_id || set.provider_id != provider_id
+                });
+                Ok(())
+            })
         }
 
         fn list_default_apps(
@@ -7027,6 +7793,21 @@ mod tests {
             })
         }
 
+        fn preview_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let values: Vec<String> = arguments.into_iter().map(|(_, v)| v).collect();
+                Ok(format!("preview {id}:{}", values.join(",")))
+            })
+        }
+
+        fn script_icons(&self) -> crate::backend::BackendFuture<'_, Vec<(String, String)>> {
+            Box::pin(async move { Ok(self.script_icons.clone()) })
+        }
+
         fn expand_snippet(
             &self,
             id: String,
@@ -7281,6 +8062,289 @@ mod tests {
         let mut app = LauncherApp::with_index(index);
         app.backend = Some(backend);
         app
+    }
+
+    #[test]
+    fn configure_fallback_commands_moves_items_between_its_sections() {
+        use compass_core::root_items::RootEdit;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.fallbacks = vec!["files:search".into()];
+        open_builtin(&mut app, "configure fallback", "commands:manage-fallback");
+        let Page::Fallbacks(page) = &app.page else {
+            panic!("not the fallback manager: {}", app.state_line());
+        };
+        let titles: Vec<(&str, Option<&str>)> = page
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(at, row)| {
+                (
+                    page.candidates[row.candidate].title.as_str(),
+                    page.heading_at(at),
+                )
+            })
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                ("Search Files", Some("Enabled")),
+                ("Write Greeting", Some("Available"))
+            ]
+        );
+
+        // Enter on the available command enables it, first.
+        let _ = app.update(Message::FallbacksQueryChanged("greet".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            app.fallbacks,
+            ["@someone/hello:write".to_owned(), "files:search".to_owned()]
+        );
+        assert_eq!(
+            backend.root_edits.lock().unwrap().last(),
+            Some(&("@someone/hello:write".to_owned(), RootEdit::Fallback(true)))
+        );
+
+        // The panel's action disables Search Files by the id it is stored as.
+        let _ = app.update(Message::FallbacksQueryChanged("search files".into()));
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Disable fallback");
+        settle(&mut app, task);
+        assert_eq!(app.fallbacks, ["@someone/hello:write".to_owned()]);
+        assert_eq!(
+            backend.root_edits.lock().unwrap().last(),
+            Some(&("files:search".to_owned(), RootEdit::Fallback(false)))
+        );
+
+        // A root fallback row's panel opens the manager.
+        let _ = app.update(Message::Back);
+        app.query = "zzzz".into();
+        app.search();
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Fallback(_)))
+            .expect("the extension is a fallback now");
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            ["Open command", "Manage Fallback Actions"]
+        );
+        let task = choose(&mut app, "Manage Fallback Actions");
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Fallbacks(_)));
+    }
+
+    #[test]
+    fn installed_extensions_are_listed_copied_and_uninstalled_after_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(extension_app(dir.path(), backend.clone()));
+        open_builtin(&mut app, "installed extensions", "commands:list-extensions");
+        let Page::Extensions(page) = &app.page else {
+            panic!("not the installed extensions: {}", app.state_line());
+        };
+        assert_eq!(page.all.len(), 1);
+        assert_eq!(page.all[0].title, "Hello");
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Uninstall",
+                "Copy Name",
+                "Copy ID",
+                "Copy Path",
+                "Copy Author"
+            ]
+        );
+        let task = choose(&mut app, "Copy Author");
+        assert_eq!(settle(&mut app, task), ["someone"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "installed extensions", "commands:list-extensions");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.confirm.is_some(), "asks first");
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Extensions(page) = &app.page else {
+            panic!("left the view: {}", app.state_line());
+        };
+        assert!(page.all.is_empty(), "gone from the list");
+        assert_eq!(page.notice.as_deref(), Some("Extension uninstalled"));
+    }
+
+    #[test]
+    fn search_builtin_icons_copies_the_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let config = compass_core::Config::parse(
+            r#"{"providers":{"commands":{"entrypoints":{"search-builtin-icons":{"enabled":true}}}}}"#,
+            std::path::Path::new("config.json"),
+        )
+        .unwrap();
+        app.root_config = config.root_config();
+        app.app_index.apply_root_config(&app.root_config);
+        open_builtin(&mut app, "builtin icons", "commands:search-builtin-icons");
+        let _ = app.update(Message::IconsQueryChanged("copy-clipboard".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert_eq!(settle(&mut app, task), ["copy-clipboard"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+    }
+
+    /// Turns on the default-disabled Vicinae commands named.
+    fn enable_commands(app: &mut LauncherApp, entrypoints: &[&str]) {
+        let entries: Vec<String> = entrypoints
+            .iter()
+            .map(|id| format!("\"{id}\":{{\"enabled\":true}}"))
+            .collect();
+        let config = compass_core::Config::parse(
+            &format!(
+                "{{\"providers\":{{\"commands\":{{\"entrypoints\":{{{}}}}}}}}}",
+                entries.join(",")
+            ),
+            std::path::Path::new("config.json"),
+        )
+        .unwrap();
+        app.root_config = config.root_config();
+        app.app_index.apply_root_config(&app.root_config);
+    }
+
+    #[test]
+    fn inspect_local_storage_browses_a_namespace_and_shows_a_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            storage: vec![
+                (
+                    "@a/notes".to_owned(),
+                    vec![crate::backend::StorageItemRow {
+                        key: "draft".into(),
+                        value: "hello".into(),
+                    }],
+                ),
+                ("core".to_owned(), Vec::new()),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        enable_commands(&mut app, &["inspect-local-storage"]);
+        open_builtin(
+            &mut app,
+            "inspect local storage",
+            "commands:inspect-local-storage",
+        );
+        let Page::Storage(page) = &app.page else {
+            panic!("not local storage: {}", app.state_line());
+        };
+        assert_eq!(page.titles(), ["@a/notes", "core"]);
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(panel_titles(&app), ["Browse namespace"]);
+        let task = choose(&mut app, "Browse namespace");
+        settle(&mut app, task);
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let Page::Storage(page) = &app.page else {
+            panic!("left local storage");
+        };
+        assert_eq!(page.titles(), ["draft"]);
+        assert_eq!(page.notice.as_deref(), Some("hello"), "Show value");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        let Page::Storage(page) = &app.page else {
+            panic!("Escape left the view instead of the namespace");
+        };
+        assert!(page.browsing.is_none());
+    }
+
+    #[test]
+    fn manage_oauth_token_sets_copies_and_removes_after_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            token_sets: std::sync::Mutex::new(vec![crate::backend::TokenSetRow {
+                extension_id: "github".into(),
+                provider_id: Some("GitHub".into()),
+                access_token: "gho_token".into(),
+                scope: Some("repo".into()),
+                expires_at: Some(0),
+                expired: true,
+                ..crate::backend::TokenSetRow::default()
+            }]),
+            ..TestBackend::default()
+        });
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        enable_commands(&mut app, &["oauth-token-store"]);
+        open_builtin(
+            &mut app,
+            "manage oauth token sets",
+            "commands:oauth-token-store",
+        );
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Remove token set",
+                "Copy Access Token",
+                "Copy Scopes",
+                "Copy Expiration Date"
+            ]
+        );
+        let task = choose(&mut app, "Copy Access Token");
+        assert_eq!(settle(&mut app, task), ["gho_token"]);
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(
+            &mut app,
+            "manage oauth token sets",
+            "commands:oauth-token-store",
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.confirm.is_some(), "asks first");
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(backend.token_sets.lock().unwrap().is_empty());
+        let Page::Tokens(page) = &app.page else {
+            panic!("left the view");
+        };
+        assert!(page.sets.is_empty(), "listed again");
+        assert_eq!(page.notice.as_deref(), Some("Token set removed"));
+    }
+
+    #[test]
+    fn the_link_and_refresh_commands_do_what_their_cpp_ones_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "donate", "commands:sponsor");
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            [compass_core::commands::SPONSOR_URL]
+        );
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Opened in browser")
+        );
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "report a vicinae bug", "commands:report-bug");
+        let reported = backend.opened_urls.lock().unwrap().last().cloned().unwrap();
+        assert!(
+            reported.starts_with(compass_core::bug_report::CREATE_ISSUE_URL),
+            "{reported}"
+        );
+        assert!(reported.contains("type=bug"));
+
+        fs::write(
+            dir.path().join("zephyr.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Zephyr\nExec=/bin/true\n",
+        )
+        .unwrap();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "refresh apps", "commands:refresh-apps");
+        assert!(app.app_index.get("zephyr.desktop").is_some(), "rescanned");
+        assert_eq!(app.error.as_deref(), Some("Apps successfully refreshed"));
     }
 
     #[test]
@@ -8004,6 +9068,58 @@ mod tests {
             ui.find("# Release notes").is_err(),
             "not the Markdown source"
         );
+    }
+
+    #[test]
+    fn an_extension_grid_is_drawn_as_tiles_and_the_arrows_move_by_cell_and_row() {
+        use compass_extension_api::view::{Color, GridContent, GridItem, GridSection, GridView};
+        let cell = |title: &str| GridItem {
+            id: compass_extension_api::id::NodeId::ROOT,
+            key: None,
+            title: title.into(),
+            subtitle: None,
+            content: GridContent::Color(Color::Literal("#336699".into())),
+            tooltip: None,
+            keywords: Vec::new(),
+            actions: None,
+        };
+        let grid = compass_extension_api::View::Grid(GridView {
+            columns: Some(3),
+            sections: vec![GridSection {
+                title: Some("Swatches".into()),
+                items: ["Navy", "Teal", "Plum", "Rust"]
+                    .iter()
+                    .map(|t| cell(t))
+                    .collect(),
+                ..GridSection::default()
+            }],
+            ..GridView::default()
+        });
+        let (mut app, _backend, _dir) = open_extension_view(grid);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Swatches").is_ok(), "the section's title");
+            assert!(ui.find("Rust").is_ok(), "each cell's title under its tile");
+            assert!(
+                ui.find("N").is_err(),
+                "a tile, not a row with an initial: {}",
+                app.state_line()
+            );
+        }
+        let selected = |app: &LauncherApp| match &app.page {
+            Page::Extension(page) => page.selected,
+            _ => panic!("left the grid"),
+        };
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowRight));
+        assert_eq!(selected(&app), 1, "Right is the next cell");
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        assert_eq!(
+            selected(&app),
+            3,
+            "Down keeps the column, clamped to the short row"
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(selected(&app), 0, "and Up goes back a row");
     }
 
     #[test]
@@ -11169,6 +12285,27 @@ mod tests {
         );
         app.backend = Some(backend.clone());
         open_builtin(&mut app, "extension store", "commands:store");
+        // The first time, the intro (`StoreIntroViewHost`); Enter goes on,
+        // and it is not shown again.
+        assert!(
+            matches!(app.page, Page::StoreIntro(_)),
+            "{}",
+            app.state_line()
+        );
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Enter: Continue to store    Esc: back").is_ok());
+        }
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            app.view_memory.get(crate::vicinae_pages::intro_key(
+                crate::backend::Store::Vicinae
+            )),
+            Some("true")
+        );
+        let _ = app.update(Message::Back);
+        open_builtin(&mut app, "extension store", "commands:store");
         let Page::Store(page) = &app.page else {
             panic!("not the store: {}", app.state_line());
         };
@@ -11263,6 +12400,10 @@ mod tests {
         let backend = store_backend(dir.path());
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend.clone());
+        app.view_memory.set(
+            crate::vicinae_pages::intro_key(crate::backend::Store::Raycast),
+            "true",
+        );
         open_builtin(&mut app, "raycast store", "commands:raycast-store");
         // The Raycast store waits for typing to settle; the wait itself
         // needs a runtime, so the test delivers its end.
@@ -11618,6 +12759,44 @@ mod tests {
             text: None,
             repeat: false,
         })
+    }
+
+    #[test]
+    fn manage_snippets_shows_the_selected_snippets_detail_pane() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _backend) = snippets_app(dir.path());
+        let task = app.update(Message::SnippetsQueryChanged(String::new()));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets: {}", app.state_line());
+        };
+        assert_eq!(
+            page.detail,
+            Some(crate::snippets_page::Detail {
+                id: "snp-sig".into(),
+                expanded: Ok("preview snp-sig:".into()),
+            }),
+            "the first row's text, previewed by the engine"
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets: {}", app.state_line());
+        };
+        assert_eq!(
+            page.detail.as_ref().map(|d| d.id.as_str()),
+            Some("snp-hi"),
+            "the pane follows the selection"
+        );
+        // A late answer for a row no longer selected is dropped.
+        let _ = app.update(Message::SnippetDetailLoaded(crate::snippets_page::Detail {
+            id: "snp-sig".into(),
+            expanded: Ok("late".into()),
+        }));
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets");
+        };
+        assert_eq!(page.detail.as_ref().map(|d| d.id.as_str()), Some("snp-hi"));
     }
 
     #[test]
@@ -12657,6 +13836,7 @@ mod tests {
                 "Add to favorites",
                 "Set alias",
                 "Set Global Shortcut",
+                "Open Preferences",
                 "Copy ID",
                 "Disable item"
             ]
@@ -12719,6 +13899,179 @@ mod tests {
         let task = choose(&mut app, "Quit Application");
         settle(&mut app, task);
         assert_eq!(app.error.as_deref(), Some("Failed to quit files.desktop"));
+    }
+
+    /// A resident launcher (dismissal hides) whose presentation has a HUD.
+    fn with_resident_hud(mut app: LauncherApp) -> LauncherApp {
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, outcomes) = tokio::sync::mpsc::unbounded_channel();
+        // Kept alive for the test's length: a dropped end is a disconnect.
+        std::mem::forget((commands, outcomes));
+        app.link = Some(EngineLink::new(receiver, sender));
+        app.with_hud(true)
+    }
+
+    #[test]
+    fn quit_and_force_quit_hide_with_the_cpps_hud() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: true,
+            windows: vec![window_row(31, "Files", "Files", 5)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("files.desktop".into(), running)],
+            ..FakeWindows::default()
+        });
+        let (app, _) = windows_app(dir.path(), Some(windows));
+        let mut app = with_resident_hud(app);
+        app.query = "Files".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Quit Application");
+        settle(&mut app, task);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::new("Quit Files")));
+        assert!(matches!(app.page, Page::Root), "the launcher hid");
+
+        app.query = "Files".into();
+        app.search();
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Force Quit Application");
+        settle(&mut app, task);
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Force quit Files")
+        );
+    }
+
+    #[test]
+    fn a_copied_answer_shows_the_calculators_hud_until_its_time_is_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.query = "6*7".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Calculator));
+        let shown_at = std::time::Instant::now();
+        let task = app.update(Message::LaunchSelected);
+        assert_eq!(settle(&mut app, task), ["42"]);
+        let hud = app.hud_content().expect("a HUD").clone();
+        assert_eq!(hud.text, "Answer copied to clipboard");
+        assert_eq!(hud.icon.as_deref(), Some(crate::hud::COPY_ICON));
+
+        let _ = app.update(Message::HudTick(shown_at));
+        assert!(app.hud_content().is_some(), "not yet");
+        let _ = app.update(Message::HudTick(
+            shown_at + crate::hud::DURATION + std::time::Duration::from_millis(100),
+        ));
+        assert!(app.hud_content().is_none(), "gone after 1.5 s");
+    }
+
+    #[test]
+    fn without_a_hud_a_copy_only_hides_and_an_exiting_launcher_shows_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path()))).with_hud(false);
+        app.query = "6*7".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        assert_eq!(settle(&mut app, task), ["42"]);
+        assert!(app.hud_content().is_none(), "GNOME's toplevel has no HUD");
+
+        let mut exiting = LauncherApp::with_index(index(dir.path())).with_hud(true);
+        exiting.query = "6*7".into();
+        exiting.search();
+        let task = exiting.update(Message::LaunchSelected);
+        settle(&mut exiting, task);
+        assert!(
+            exiting.hud_content().is_none(),
+            "no process left to show it"
+        );
+    }
+
+    #[test]
+    fn the_hud_surface_is_not_taken_for_the_launcher_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let launcher = window::Id::unique();
+        let _ = app.update(Message::Opened(launcher));
+        assert_eq!(app.window, Some(launcher));
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Paused".into(),
+            icon: Some("pause".into()),
+        }));
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Paused")
+        );
+        assert_eq!(app.window, Some(launcher), "the launcher stays up");
+        let hud = app.hud.window_id().expect("the HUD surface");
+        let _ = app.update(Message::Opened(hud));
+        assert_eq!(app.window, Some(launcher), "the HUD is not the launcher");
+        let _ = app.update(Message::Closed(hud));
+        assert_eq!(app.window, Some(launcher));
+        assert!(app.hud_content().is_none());
+    }
+
+    #[test]
+    fn the_engines_hud_is_refused_where_the_presentation_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path())).with_hud(false);
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        app.link = Some(EngineLink::new(receiver, sender));
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Next Track".into(),
+            icon: None,
+        }));
+        assert!(matches!(outcomes.try_recv(), Ok(UiOutcome::Failed(_))));
+
+        app.hud.set_supported(true);
+        let _ = app.update(Message::Command(UiCommand::Hud {
+            text: "Next Track".into(),
+            icon: Some("forward".into()),
+        }));
+        assert_eq!(outcomes.try_recv().ok(), Some(UiOutcome::Hidden));
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Next Track")
+        );
+    }
+
+    #[test]
+    fn a_refused_paste_copies_the_glyph_with_the_copy_hud() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let task = app.emoji_pasted("🙂".into(), Err("no paste here".into()));
+        assert_eq!(settle(&mut app, task), ["🙂"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+    }
+
+    #[test]
+    fn a_set_wallpaper_and_a_copied_file_say_so_and_running_does_not() {
+        assert_eq!(
+            file_actions::file_action_hud("file.wallpaper"),
+            Some(crate::hud::Hud::new("Wallpaper set").with_icon("image"))
+        );
+        assert_eq!(
+            file_actions::file_action_hud("file.copy"),
+            Some(crate::hud::Hud::copied())
+        );
+        assert_eq!(file_actions::file_action_hud("file.run"), None);
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let task = app.update(Message::ActionDone(
+            file_actions::file_action_hud("file.wallpaper"),
+            Ok(()),
+        ));
+        settle(&mut app, task);
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Wallpaper set")
+        );
+        let task = app.update(Message::ActionDone(None, Err("no backend".into())));
+        settle(&mut app, task);
+        assert_eq!(app.error.as_deref(), Some("no backend"));
     }
 
     #[test]
@@ -13284,6 +14637,154 @@ mod tests {
         let mut ui = iced_test::simulator(app.view());
         assert!(ui.find("hello").is_ok());
         assert!(ui.find("T").is_err(), "the text builtin, not an initial");
+    }
+
+    #[test]
+    fn extension_script_and_shortcut_rows_draw_their_icons_in_root_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let ext = dir.path().join("extensions/hello");
+        fs::create_dir_all(ext.join("assets")).unwrap();
+        fs::write(ext.join("assets/hello.png"), b"png").unwrap();
+        fs::write(
+            ext.join("package.json"),
+            r#"{"name": "hello", "title": "Hello", "author": "someone", "icon": "hello.png",
+                "commands": [{"name": "write", "title": "Write Greeting", "mode": "no-view"}]}"#,
+        )
+        .unwrap();
+        index(dir.path());
+        let mut app = LauncherApp::with_index(
+            AppIndex::builder()
+                .dir(dir.path())
+                .extension_dirs([dir.path().join("extensions")])
+                .build(),
+        );
+        app.backend = Some(backend);
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        app.query = "greeting".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Extension(0)));
+        let extension_icon = ext.join("assets/hello.png");
+        let key =
+            compass_core::image_url::ImageUrl::local(extension_icon.to_string_lossy()).to_url();
+        assert_eq!(
+            app.url_glyphs.get(&key),
+            Some(&Some(crate::icons::Glyph::Art(IconArt::Raster(
+                extension_icon
+            )))),
+            "the extension's own icon, from its assets"
+        );
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Write Greeting").is_ok());
+            assert!(ui.find("W").is_err(), "the icon replaces the initial");
+        }
+
+        // A script whose header names an emoji.
+        app.app_index.set_scripts(vec![script_item(
+            "party.sh",
+            "Party Time",
+            compass_core::script_command::OutputMode::Silent,
+            0,
+        )]);
+        let _ = app.update(Message::ScriptIconsLoaded(Ok(vec![(
+            "party.sh".into(),
+            "icon://emoji/🎉".into(),
+        )])));
+        app.query = "party time".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Script(_))));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("🎉").is_ok(), "the emoji is drawn as text");
+            assert!(ui.find("P").is_err());
+        }
+
+        // A shortcut with a builtin icon: on a purple tile.
+        app.app_index
+            .set_shortcuts(vec![compass_core::shortcut_service::CachedShortcut {
+                id: "s1".into(),
+                name: "Docs Search".into(),
+                icon: "icon://omnicast/link".into(),
+                link: compass_core::shortcut::parse_link("https://docs.rs/{query}"),
+                app: "default".into(),
+                open_count: 0,
+                created_at: 0,
+                updated_at: 0,
+                last_opened_at: None,
+            }]);
+        app.query = "docs search".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Shortcut(_))));
+        let key = "icon://omnicast/link?bg_tint=purple";
+        let Some(Some(crate::icons::Glyph::Builtin { name, tile, .. })) = app.url_glyphs.get(key)
+        else {
+            panic!("no glyph for {key}: {:?}", app.url_glyphs.keys());
+        };
+        assert_eq!(name, "link");
+        assert!(tile.is_some(), "a shortcut's builtin sits on a purple tile");
+    }
+
+    #[test]
+    fn a_favicon_is_fetched_once_into_the_cache_and_then_drawn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        app.favicon_service = compass_core::favicon::Service::Twenty;
+        let row = crate::backend::ClipboardRow {
+            id: "1".into(),
+            preview: "https://example.com/page".into(),
+            kind: crate::backend::ClipboardRowKind::Link,
+            pinned: false,
+            url_host: Some("example.com".into()),
+        };
+        let page = crate::clipboard_page::ClipboardPage::default();
+        let generation = page.generation;
+        app.page = Page::Clipboard(page);
+        let load = |app: &mut LauncherApp| {
+            let _ = app.update(Message::ClipboardLoaded {
+                generation,
+                result: Ok(vec![row.clone()]),
+            });
+        };
+        let favicon = clipboard_url(&row).expect("a link has a favicon").to_url();
+        let favicon = favicon.as_str();
+        assert!(favicon.starts_with("icon://favicon/example.com?fallback="));
+
+        // Without remote icons (every test's default) nothing is fetched and
+        // the link builtin stands in.
+        load(&mut app);
+        assert!(app.remote_requested.is_empty());
+        assert_eq!(
+            app.url_glyphs.get(favicon),
+            Some(&Some(crate::icons::Glyph::builtin("link")))
+        );
+
+        app.remote_icons = true;
+        app.url_glyphs.clear();
+        load(&mut app);
+        let wanted = "https://twenty-icons.com/example.com/128";
+        assert_eq!(
+            app.remote_requested.iter().collect::<Vec<_>>(),
+            [wanted],
+            "the favicon is asked of the configured service"
+        );
+        load(&mut app);
+        assert_eq!(app.remote_requested.len(), 1, "and asked for once");
+
+        let cached = dir.path().join("favicon.png");
+        fs::write(&cached, b"png").unwrap();
+        let _ = app.update(Message::ExtensionImageFetched {
+            url: wanted.into(),
+            result: Ok(cached.clone()),
+        });
+        assert_eq!(
+            app.url_glyphs.get(favicon),
+            Some(&Some(crate::icons::Glyph::Art(IconArt::Raster(cached)))),
+            "once in the cache, the favicon is drawn"
+        );
     }
 }
 

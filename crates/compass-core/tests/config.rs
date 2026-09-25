@@ -645,6 +645,32 @@ fn the_root_panel_writes_favorites_whole_and_an_items_alias_and_switch() {
 }
 
 #[test]
+fn the_settings_switches_turn_an_item_and_a_provider_back_on() {
+    use compass_core::root_items::RootEdit;
+    let mut config = parse(r#"{"providers": {"applications": {"enabled": false}}}"#);
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Disable));
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Enabled(true)));
+    config.set_provider_enabled("applications", true);
+    let root = config.root_config();
+    assert_eq!(root.providers["applications"].enabled, Some(true));
+    assert_eq!(
+        root.providers["applications"].entrypoints["firefox"].enabled,
+        Some(true)
+    );
+
+    let mut local = compass_core::root_items::RootConfig::default();
+    assert!(compass_core::root_items::apply_edit(
+        &mut local,
+        "applications:firefox",
+        &RootEdit::Enabled(false)
+    ));
+    assert_eq!(
+        local.providers["applications"].entrypoints["firefox"].enabled,
+        Some(false)
+    );
+}
+
+#[test]
 fn the_clock_is_on_every_minute_in_hh_mm_unless_set() {
     let clock = parse("{}");
     let clock = clock.launcher().clock();
@@ -662,6 +688,31 @@ fn the_clock_is_on_every_minute_in_hh_mm_unless_set() {
     assert_eq!(
         serde_json::to_value(&set).unwrap()["launcher"]["clock"]["format"],
         "hh:mm:ss"
+    );
+}
+
+#[test]
+fn a_fallback_is_enabled_first_and_disabled_as_the_cpp_writes_them() {
+    use compass_core::root_items::RootEdit;
+    let mut config = parse(r#"{"launcher": {"max_results": 9}}"#);
+    assert_eq!(config.fallback_ids(), ["files:search"], "the default");
+    assert!(config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(true)));
+    assert_eq!(config.fallback_ids(), ["@a/notes:new", "files:search"]);
+    assert!(
+        !config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(true)),
+        "already one"
+    );
+    assert!(config.apply_root_edit("files:search", &RootEdit::Fallback(false)));
+    assert!(
+        !config.apply_root_edit("files:search", &RootEdit::Fallback(false)),
+        "not one any more"
+    );
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert_eq!(written["fallbacks"], serde_json::json!(["@a/notes:new"]));
+    assert!(config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(false)));
+    assert!(
+        config.fallback_ids().is_empty(),
+        "an emptied list stays empty"
     );
 }
 

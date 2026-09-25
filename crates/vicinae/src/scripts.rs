@@ -112,6 +112,20 @@ impl Scripts {
             .collect()
     }
 
+    /// Each script's icon as `ScriptCommandFile::icon` resolves it, as an
+    /// `icon://` URL: an emoji, a file as given or beside the script, an
+    /// `https` image, else the default.
+    #[must_use]
+    pub fn icons(&self) -> Vec<(String, String)> {
+        self.files
+            .iter()
+            .map(|file| {
+                let icon = file.icon(compass_core::glyph::is_emoji, std::path::Path::is_file);
+                (file.id.clone(), icon.to_url())
+            })
+            .collect()
+    }
+
     /// The script with this id.
     #[must_use]
     pub fn find(&self, id: &str) -> Option<&ScriptCommandFile> {

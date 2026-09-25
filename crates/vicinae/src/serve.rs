@@ -45,6 +45,8 @@ mod calculator;
 mod files;
 mod launch;
 mod openers;
+mod settings;
+mod storage;
 mod workspaces;
 
 /// The at-most-one launcher window this engine drives.
@@ -821,7 +823,11 @@ async fn set_default_app(
             .await
             .unwrap_or(false);
             if set {
-                tokio::spawn(show_hud(compass_core::default_app::BROWSER_SUCCESS));
+                tokio::spawn(show_hud(
+                    state.read().await.window_slot(),
+                    compass_core::default_app::BROWSER_SUCCESS.to_owned(),
+                    Some("globe-01"),
+                ));
                 Response::Ack
             } else {
                 failure(BROWSER_FAILURE)
@@ -834,7 +840,11 @@ async fn set_default_app(
                 None,
             ) {
                 Ok(()) => {
-                    tokio::spawn(show_hud(compass_core::default_app::TERMINAL_SUCCESS));
+                    tokio::spawn(show_hud(
+                        state.read().await.window_slot(),
+                        compass_core::default_app::TERMINAL_SUCCESS.to_owned(),
+                        None,
+                    ));
                     Response::Ack
                 }
                 Err(error) => {
@@ -986,13 +996,19 @@ async fn run_script(state: &Arc<RwLock<EngineState>>, id: &str, arguments: &[Str
     };
     match mode {
         OutputMode::Silent => {
+            let slot = state.read().await.window_slot();
             tokio::spawn(async move {
                 let _ = task.await;
                 let (ok, line) = run
                     .lock()
                     .map(|run| (run.exit_code == Some(0), run.first_line()))
                     .unwrap_or_default();
-                show_hud(&crate::scripts::one_line_message(mode, ok, &line)).await;
+                show_hud(
+                    slot,
+                    crate::scripts::one_line_message(mode, ok, &line),
+                    None,
+                )
+                .await;
             });
             Response::ScriptStarted { session: None }
         }
@@ -1039,9 +1055,16 @@ fn edit_root_item(
         compass_ipc::RootItemEdit::Disable => RootEdit::Disable,
         compass_ipc::RootItemEdit::ResetRanking => RootEdit::ResetRanking,
         compass_ipc::RootItemEdit::Shortcut(shortcut) => RootEdit::Shortcut(shortcut),
+        compass_ipc::RootItemEdit::Enabled(enabled) => RootEdit::Enabled(enabled),
+        compass_ipc::RootItemEdit::Fallback(enabled) => RootEdit::Fallback(enabled),
     };
     let mut state = state.blocking_write();
-    if state.index.root(id).is_none() {
+    // Search Files is a fallback by the C++'s id (`files:search`), which
+    // names no root item here.
+    let known = state.index.root(id).is_some()
+        || (matches!(edit, RootEdit::Fallback(_))
+            && compass_core::commands::fallback(id).is_some());
+    if !known {
         return Response::Error(ProtocolError::new(
             ErrorKind::BadRequest,
             "no root item has that id",
@@ -1176,7 +1199,7 @@ async fn save_snippet(
 ) -> Response {
     use compass_core::snippet_form::{Submission, submit};
     use compass_core::snippet_store::{Error, SnippetData, SnippetPayload, StoredExpansion};
-    let cursors = compass_core::shortcut::parse_link(&text)
+    let cursors = compass_core::placeholder::parse_snippet_text(&text)
         .placeholders
         .iter()
         .filter(|placeholder| placeholder.id == compass_core::snippet_expander::CURSOR_ID)
@@ -1301,6 +1324,7 @@ async fn expand_snippet(
     state: &Arc<RwLock<EngineState>>,
     id: &str,
     arguments: &[(String, String)],
+    run_shell: bool,
 ) -> Result<String, Response> {
     let (snippet, shell) = {
         let state = state.read().await;
@@ -1328,6 +1352,9 @@ async fn expand_snippet(
             },
             None => tracing::info!("no GNOME Shell extension; {{clipboard}} expands to nothing"),
         }
+    }
+    if !run_shell {
+        return Ok(crate::snippets::preview(text, arguments, clipboard).to_text());
     }
     Ok(crate::snippets::expand(text, arguments, clipboard)
         .await
@@ -1623,9 +1650,23 @@ fn run_volume_command(id: &str, argument: Option<&str>) -> Result<String, &'stat
     }
 }
 
-/// Shows what the C++ puts in its HUD, as a short transient notification:
-/// the launcher has already hidden.
-async fn show_hud(text: &str) {
+/// Shows what the C++ puts in its HUD: in the launcher's HUD where the
+/// window has one (`WindowCommand::Hud`, a layer surface), otherwise as a
+/// short transient notification, since an `xdg_toplevel` cannot appear
+/// without taking the focus.
+async fn show_hud(slot: WindowSlot, text: String, icon: Option<&'static str>) {
+    let command = WindowCommand::Hud {
+        text: text.clone(),
+        icon: icon.map(str::to_owned),
+    };
+    if matches!(forward(&slot, command, "show the HUD").await, Response::Ack) {
+        return;
+    }
+    notify_hud(&text).await;
+}
+
+/// The HUD as a transient notification (1.5 s, the HUD's own timer).
+async fn notify_hud(text: &str) {
     let shown = notify_rust::Notification::new()
         .appname("Vicinae")
         .summary(text)
@@ -1641,7 +1682,7 @@ async fn show_hud(text: &str) {
 /// Runs a media command over MPRIS, on the player `argument` fuzzy-matches or,
 /// when it is empty, on the default one. What the C++ shows in its HUD goes
 /// out as a short-lived notification, since the launcher has already hidden.
-async fn run_media_command(id: &str, argument: Option<String>) -> Response {
+async fn run_media_command(slot: WindowSlot, id: &str, argument: Option<String>) -> Response {
     use compass_core::media_commands::{self, NoPlayer};
     let refuse =
         |message: String| Response::Error(ProtocolError::new(ErrorKind::Unsupported, message));
@@ -1662,7 +1703,7 @@ async fn run_media_command(id: &str, argument: Option<String>) -> Response {
                 .await;
         return match answer {
             Ok(Ok(hud)) => {
-                show_hud(&hud).await;
+                show_hud(slot, hud, None).await;
                 Response::Ack
             }
             Ok(Err(message)) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
@@ -1735,7 +1776,13 @@ async fn run_media_command(id: &str, argument: Option<String>) -> Response {
     *LAST_PLAYER
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(player.id.clone());
-    show_hud(&hud).await;
+    let icon = match id {
+        "play-pause" if player.playing => "pause",
+        "play-pause" => "play",
+        "next-track" => "forward",
+        _ => "rewind",
+    };
+    show_hud(slot, hud, Some(icon)).await;
     Response::Ack
 }
 
@@ -2084,7 +2131,7 @@ async fn rhai_outcomes(
 ) {
     for outcome in outcomes {
         if let crate::rhai_scripts::Outcome::Hud(text) = &outcome {
-            show_hud(text).await;
+            show_hud(state.read().await.window_slot(), text.clone(), None).await;
         }
         let slot = state.read().await.window_slot();
         if let Response::Error(err) = forward(&slot, WindowCommand::Hide, "hide the launcher").await
@@ -2656,6 +2703,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         request @ (Request::CalculatorHistory { .. }
         | Request::AddCalculatorRecord { .. }
         | Request::EditCalculatorHistory { .. }) => calculator::handle(state, request).await,
+        request @ (Request::LocalStorageNamespaces
+        | Request::LocalStorageItems { .. }
+        | Request::OAuthTokenSets
+        | Request::RemoveOAuthTokenSet { .. }) => storage::handle(state, request).await,
         request @ (Request::TrayItems
         | Request::TrayActivate { .. }
         | Request::TrayMenu { .. }
@@ -2681,10 +2732,17 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         | Request::CopyFile { .. }
         | Request::RunExecutable { .. }
         | Request::SetWallpaper { .. }) => files::handle(state, request).await,
+        request @ (Request::SetSetting { .. } | Request::SetProviderEnabled { .. }) => {
+            settings::handle(state, request).await
+        }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
-        Request::RunMediaCommand { id } => run_media_command(&id, None).await,
-        Request::RunMediaCommandWith { id, argument } => run_media_command(&id, argument).await,
+        Request::RunMediaCommand { id } => {
+            run_media_command(state.read().await.window_slot(), &id, None).await
+        }
+        Request::RunMediaCommandWith { id, argument } => {
+            run_media_command(state.read().await.window_slot(), &id, argument).await
+        }
         Request::ListMediaPlayers => list_media_players().await,
         Request::ControlMediaPlayer { player, action } => {
             control_media_player(&player, action).await
@@ -2761,6 +2819,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             state.index.set_scripts(items);
             Response::Scripts { scripts }
         }
+        Request::ScriptIcons => {
+            let icons = state.read().await.scripts.icons();
+            Response::ScriptIcons { icons }
+        }
         Request::RunScript { id, arguments } => run_script(state, &id, &arguments).await,
         Request::ScriptOutput { session } => {
             let runs = Arc::clone(&state.read().await.script_runs);
@@ -2807,6 +2869,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         Request::OpenDeeplink { url } => {
             if let Some(link) = compass_core::root_items::parse_launch_link(&url) {
                 return launch::open_launch_link(state, url, link).await;
+            }
+            if compass_core::settings_catalog::parse_settings_link(&url).is_some() {
+                let slot = state.read().await.window_slot();
+                return forward(&slot, WindowCommand::Deeplink(url), "open the settings").await;
             }
             match compass_core::store_listing::parse_extension_link(&url) {
                 Some(Ok(_)) => {
@@ -3065,15 +3131,21 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
         Request::InputServerStatus => input_server(state, None).await,
         Request::SetInputServerEnabled { enabled } => input_server(state, Some(enabled)).await,
+        Request::PreviewSnippet { id, arguments } => {
+            match expand_snippet(state, &id, &arguments, false).await {
+                Ok(text) => Response::Text { text },
+                Err(response) => response,
+            }
+        }
         Request::ExpandSnippet { id, arguments } => {
-            match expand_snippet(state, &id, &arguments).await {
+            match expand_snippet(state, &id, &arguments, true).await {
                 Ok(text) => Response::Text { text },
                 Err(response) => response,
             }
         }
         Request::PasteSnippet { id, arguments } => {
             const WHAT: &str = "Pasting";
-            let text = match expand_snippet(state, &id, &arguments).await {
+            let text = match expand_snippet(state, &id, &arguments, true).await {
                 Ok(text) => text,
                 Err(response) => return response,
             };

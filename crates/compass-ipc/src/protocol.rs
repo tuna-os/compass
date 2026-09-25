@@ -74,8 +74,18 @@ use serde::{Deserialize, Serialize};
 /// [`Request::FocusWorkspace`], [`Request::ToggleWindowState`]), "Open
 /// with…" ([`Request::ListOpeners`], [`Request::OpenWith`]) and a file's
 /// action panel ([`Request::FileActions`], [`Request::CopyFile`],
-/// [`Request::RunExecutable`], [`Request::SetWallpaper`]).
-pub const PROTOCOL_VERSION: u16 = 18;
+/// [`Request::RunExecutable`], [`Request::SetWallpaper`]); version 19,
+/// Manage Snippets' detail pane and script commands' icons in root search
+/// ([`Request::PreviewSnippet`], [`Request::ScriptIcons`]), and the settings
+/// view's writes: one setting of `vicinae.json` ([`Request::SetSetting`]),
+/// a provider's switch ([`Request::SetProviderEnabled`]) and turning a root
+/// item back on ([`RootItemEdit::Enabled`]), and the HUD the engine asks the
+/// window to show ([`WindowCommand::Hud`]), and the fallback manager's switch
+/// ([`RootItemEdit::Fallback`]), and Inspect Local Storage's and Manage OAuth
+/// Token Sets' reads ([`Request::LocalStorageNamespaces`],
+/// [`Request::LocalStorageItems`], [`Request::OAuthTokenSets`],
+/// [`Request::RemoveOAuthTokenSet`]).
+pub const PROTOCOL_VERSION: u16 = 19;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -929,6 +939,58 @@ pub enum Request {
         /// The image's absolute path.
         path: String,
     },
+    /// Expand a text snippet for Manage Snippets' detail pane, as
+    /// `updateExpandedText` does: its `{shell}` placeholders are shown, not
+    /// run. Answered with [`Response::Text`]; a file snippet answers with its
+    /// path. (v19.)
+    PreviewSnippet {
+        /// Which one.
+        id: String,
+        /// `(name, value)` for its arguments.
+        arguments: Vec<(String, String)>,
+    },
+    /// The icon of each script command, as `ScriptCommandFile::icon` resolves
+    /// its `@raycast.icon`. Answered with [`Response::ScriptIcons`]. (v19.)
+    ScriptIcons,
+    /// Write one setting the settings view edits into `vicinae.json` and
+    /// apply it: `key` is its dotted path, as `compass_core::settings_catalog`
+    /// lists it, and `value_json` its new value, `null` to reset it. Answered
+    /// with [`Response::Ack`]; a key that is not a setting, or a value it
+    /// does not take, is a bad request with the sentence to show. (v19.)
+    SetSetting {
+        /// The setting's dotted path (`launcher.wrap_navigation`).
+        key: String,
+        /// The value, as JSON.
+        value_json: String,
+    },
+    /// Turn a whole provider's items on or off in root search
+    /// (`setProviderEnabled`). Answered with [`Response::Ack`]. (v19.)
+    SetProviderEnabled {
+        /// The provider's id (`applications`).
+        provider: String,
+        /// Whether its items are offered.
+        enabled: bool,
+    },
+    /// Inspect Local Storage's list: every namespace that holds an item.
+    /// Answered with [`Response::LocalStorageNamespaces`]. (v19.)
+    LocalStorageNamespaces,
+    /// One namespace's items. Answered with [`Response::LocalStorageItems`].
+    /// (v19.)
+    LocalStorageItems {
+        /// The namespace.
+        namespace: String,
+    },
+    /// Manage OAuth Token Sets' list. Answered with
+    /// [`Response::OAuthTokenSets`]. (v19.)
+    OAuthTokenSets,
+    /// Remove one extension's token set for one provider (`None` for its
+    /// unnamed one). Answered with [`Response::Ack`]. (v19.)
+    RemoveOAuthTokenSet {
+        /// The extension.
+        extension_id: String,
+        /// The provider.
+        provider_id: Option<String>,
+    },
 }
 
 /// Answer to [`Request::FileActions`]. (v18.)
@@ -1064,6 +1126,12 @@ pub enum RootItemEdit {
     /// Give it a keyboard shortcut (`control+shift+A`), or clear it with an
     /// empty one. Version 18.
     Shortcut(String),
+    /// Put it in root search or take it out, as the settings view's switch
+    /// does. Version 19.
+    Enabled(bool),
+    /// Make it a fallback, first in the list (`enableFallback`), or stop it
+    /// being one (`disableFallback`). Version 19.
+    Fallback(bool),
 }
 
 /// What the engine answers.
@@ -1381,6 +1449,57 @@ pub enum Response {
     },
     /// Answer to [`Request::FileActions`]. (v18.)
     FileActions(FileActionInfo),
+    /// Answer to [`Request::ScriptIcons`]: `(script id, icon URL)`, the URL
+    /// in `ImageURL`'s `icon://` form. (v19.)
+    ScriptIcons {
+        /// One per script command.
+        icons: Vec<(String, String)>,
+    },
+    /// Answer to [`Request::LocalStorageNamespaces`], sorted. (v19.)
+    LocalStorageNamespaces {
+        /// The namespaces.
+        namespaces: Vec<String>,
+    },
+    /// Answer to [`Request::LocalStorageItems`], by key. (v19.)
+    LocalStorageItems {
+        /// The items.
+        items: Vec<LocalStorageEntry>,
+    },
+    /// Answer to [`Request::OAuthTokenSets`]. (v19.)
+    OAuthTokenSets {
+        /// The token sets.
+        sets: Vec<OAuthTokenSetEntry>,
+    },
+}
+
+/// One item of a [`Response::LocalStorageItems`]. (v19.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalStorageEntry {
+    /// Its key.
+    pub key: String,
+    /// Its value as text: a string as it is, anything else as JSON.
+    pub value: String,
+}
+
+/// One token set of a [`Response::OAuthTokenSets`]. (v19.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthTokenSetEntry {
+    /// The extension it belongs to.
+    pub extension_id: String,
+    /// The provider, or `None` for the unnamed one.
+    pub provider_id: Option<String>,
+    /// The bearer token.
+    pub access_token: String,
+    /// The refresh token.
+    pub refresh_token: Option<String>,
+    /// The id token.
+    pub id_token: Option<String>,
+    /// The granted scope.
+    pub scope: Option<String>,
+    /// When it expires, in seconds since the epoch, when it does.
+    pub expires_at: Option<i64>,
+    /// Whether it has expired.
+    pub expired: bool,
 }
 
 /// Which system default a picker sets.
@@ -1746,6 +1865,17 @@ pub enum WindowCommand {
     /// Change nothing; answer [`WindowOutcome::Shown`] if the window is on
     /// screen and [`WindowOutcome::Hidden`] if not. (v17.)
     Describe,
+    /// Show the HUD, the pill the C++ shows for a moment after an action
+    /// (`NavigationController::showHud`), leaving the launcher as it is.
+    /// Answered with the launcher's state when shown, and
+    /// [`WindowOutcome::Failed`] where the presentation has none (an
+    /// `xdg_toplevel` cannot appear without taking the focus). (v19.)
+    Hud {
+        /// The line of text.
+        text: String,
+        /// A builtin icon's name or an emoji.
+        icon: Option<String>,
+    },
 }
 
 /// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and

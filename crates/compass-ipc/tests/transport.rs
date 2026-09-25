@@ -153,13 +153,23 @@ async fn echo_handler(request: Request) -> Response {
         | Request::CopyFile { .. }
         | Request::RunExecutable { .. }
         | Request::SetWallpaper { .. }
+        | Request::SetSetting { .. }
+        | Request::SetProviderEnabled { .. }
+        | Request::RemoveOAuthTokenSet { .. }
         | Request::SetTheme { .. } => Response::Ack,
+        Request::LocalStorageNamespaces => Response::LocalStorageNamespaces { namespaces: vec![] },
+        Request::LocalStorageItems { .. } => Response::LocalStorageItems { items: vec![] },
+        Request::OAuthTokenSets => Response::OAuthTokenSets { sets: vec![] },
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
         Request::FileActions { .. } => {
             Response::FileActions(compass_ipc::FileActionInfo::default())
         }
         Request::ListOpeners { .. } => Response::Openers { apps: vec![] },
+        Request::PreviewSnippet { .. } => Response::Text {
+            text: String::new(),
+        },
+        Request::ScriptIcons => Response::ScriptIcons { icons: vec![] },
         Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
         Request::WindowManagerCapabilities => {
             Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities::default())

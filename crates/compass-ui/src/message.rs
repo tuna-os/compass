@@ -180,6 +180,8 @@ pub enum Message {
     SnippetsQueryChanged(String),
     /// A Manage Snippets row was clicked, by position.
     SnippetSelected(usize),
+    /// Manage Snippets' detail pane for a snippet arrived.
+    SnippetDetailLoaded(crate::snippets_page::Detail),
     /// Create Extension finished, for the extension called `title`: where
     /// it was written, or why not.
     ExtensionCreated {
@@ -307,6 +309,8 @@ pub enum Message {
     ProgramRan(Result<(), String>),
     /// The script commands arrived, or why they could not be listed.
     ScriptsLoaded(Result<Vec<compass_core::script_scan::ScriptItem>, String>),
+    /// The script commands' icons arrived, `(id, icon URL)`, or why not.
+    ScriptIconsLoaded(Result<Vec<(String, String)>, String>),
     /// The Rhai scripts arrived, or why they could not be listed.
     RhaiScriptsLoaded(Result<Vec<compass_core::rhai_scripts::RhaiScriptItem>, String>),
     /// The launch an extension asked for arrived, or why it could not.
@@ -514,4 +518,60 @@ pub enum Message {
         /// The chosen paths.
         result: Result<Vec<String>, String>,
     },
+    /// Something in the settings view.
+    Settings(crate::settings_page::SettingsMessage),
+    /// A tick while the HUD is up, at this time.
+    HudTick(std::time::Instant),
+    /// An action that hides the launcher finished: on success it hides,
+    /// with this HUD where there is one (`Quit Files`, `Wallpaper set`); on
+    /// failure the reason shows in the view.
+    ActionDone(Option<crate::hud::Hud>, Result<(), String>),
+    /// The first-run flow's Continue (or Finish on its last step).
+    OnboardingContinue,
+    /// The first-run flow's Back.
+    OnboardingBack,
+    /// A step dot was clicked.
+    OnboardingJump(usize),
+    /// A theme was chosen in the first-run flow.
+    OnboardingTheme(crate::onboarding_page::ThemeOption),
+    /// One of the first-run flow's links was clicked.
+    OnboardingOpen(&'static str),
+    /// The link opened, or why not.
+    OnboardingLinkOpened(Result<(), String>),
+    /// Configure Fallback Commands' filter changed.
+    FallbacksQueryChanged(String),
+    /// A row of Configure Fallback Commands was clicked: its action runs.
+    FallbackSelected(usize),
+    /// Show Installed Extensions' filter changed.
+    ExtensionsQueryChanged(String),
+    /// Search Builtin Icons' filter changed.
+    IconsQueryChanged(String),
+    /// A row of Show Installed Extensions or Search Builtin Icons was
+    /// clicked: its first action runs.
+    VicinaeRowSelected(usize),
+    /// An extension was uninstalled from Show Installed Extensions, or why
+    /// not.
+    ExtensionUninstalled {
+        /// The extension's id.
+        id: String,
+        /// Whether it went.
+        result: Result<(), String>,
+    },
+    /// Inspect Local Storage's filter changed.
+    StorageQueryChanged(String),
+    /// Manage OAuth Token Sets' filter changed.
+    TokensQueryChanged(String),
+    /// Inspect Local Storage's namespaces arrived, or why not.
+    StorageNamespacesLoaded(Result<Vec<String>, String>),
+    /// A namespace's items arrived, or why not.
+    StorageItemsLoaded {
+        /// The namespace.
+        namespace: String,
+        /// Its items.
+        result: Result<Vec<crate::backend::StorageItemRow>, String>,
+    },
+    /// Manage OAuth Token Sets' list arrived, or why not.
+    TokenSetsLoaded(Result<Vec<crate::backend::TokenSetRow>, String>),
+    /// A token set was removed, or why not.
+    TokenSetRemoved(Result<(), String>),
 }

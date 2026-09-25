@@ -111,6 +111,8 @@ impl ApplicationBackend for DaemonBackend {
             RootEdit::Disable => compass_ipc::RootItemEdit::Disable,
             RootEdit::ResetRanking => compass_ipc::RootItemEdit::ResetRanking,
             RootEdit::Shortcut(shortcut) => compass_ipc::RootItemEdit::Shortcut(shortcut),
+            RootEdit::Enabled(enabled) => compass_ipc::RootItemEdit::Enabled(enabled),
+            RootEdit::Fallback(enabled) => compass_ipc::RootItemEdit::Fallback(enabled),
         };
         Box::pin(async move {
             match self
@@ -277,6 +279,88 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn local_storage_namespaces(&self) -> BackendFuture<'_, Vec<String>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::LocalStorageNamespaces, "Reading local storage")
+                .await?
+            {
+                compass_ipc::Response::LocalStorageNamespaces { namespaces } => Ok(namespaces),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn local_storage_items(
+        &self,
+        namespace: String,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::StorageItemRow>> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::LocalStorageItems { namespace },
+                    "Reading local storage",
+                )
+                .await?
+            {
+                compass_ipc::Response::LocalStorageItems { items } => Ok(items
+                    .into_iter()
+                    .map(|item| compass_ui::backend::StorageItemRow {
+                        key: item.key,
+                        value: item.value,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn oauth_token_sets(&self) -> BackendFuture<'_, Vec<compass_ui::backend::TokenSetRow>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::OAuthTokenSets, "Reading the token sets")
+                .await?
+            {
+                compass_ipc::Response::OAuthTokenSets { sets } => Ok(sets
+                    .into_iter()
+                    .map(|set| compass_ui::backend::TokenSetRow {
+                        extension_id: set.extension_id,
+                        provider_id: set.provider_id,
+                        access_token: set.access_token,
+                        refresh_token: set.refresh_token,
+                        id_token: set.id_token,
+                        scope: set.scope,
+                        expires_at: set.expires_at,
+                        expired: set.expired,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn remove_oauth_token_set(
+        &self,
+        extension_id: String,
+        provider_id: Option<String>,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::RemoveOAuthTokenSet {
+                        extension_id,
+                        provider_id,
+                    },
+                    "Removing the token set",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn file_actions(&self, path: String) -> BackendFuture<'_, compass_ui::backend::FileActions> {
         Box::pin(async move {
             match self
@@ -418,6 +502,37 @@ impl ApplicationBackend for DaemonBackend {
         Box::pin(async move {
             match self
                 .ask(Request::SetFont { family }, "Setting the font")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_setting(&self, key: String, value: serde_json::Value) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let value_json = value.to_string();
+            match self
+                .ask(
+                    Request::SetSetting { key, value_json },
+                    "Saving the setting",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_provider_enabled(&self, provider: String, enabled: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::SetProviderEnabled { provider, enabled },
+                    "Changing the provider",
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
@@ -1030,6 +1145,37 @@ impl ApplicationBackend for DaemonBackend {
                 .await?
             {
                 compass_ipc::Response::Text { text } => Ok(text),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn preview_snippet(
+        &self,
+        id: String,
+        arguments: Vec<(String, String)>,
+    ) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::PreviewSnippet { id, arguments },
+                    "Previewing the snippet",
+                )
+                .await?
+            {
+                compass_ipc::Response::Text { text } => Ok(text),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn script_icons(&self) -> BackendFuture<'_, Vec<(String, String)>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ScriptIcons, "Listing script icons")
+                .await?
+            {
+                compass_ipc::Response::ScriptIcons { icons } => Ok(icons),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
         })

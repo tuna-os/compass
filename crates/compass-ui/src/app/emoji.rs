@@ -69,7 +69,7 @@ impl LauncherApp {
         let text = page.display(glyph);
         page.register_visit(glyph);
         self.panel = None;
-        Task::batch([iced::clipboard::write(text), self.conceal()])
+        self.copy_with_hud(text)
     }
 
     /// Pastes the selected glyph into the window the launcher hides back to
@@ -86,7 +86,7 @@ impl LauncherApp {
         page.register_visit(glyph);
         self.panel = None;
         let Some(backend) = self.backend.clone() else {
-            return Task::batch([iced::clipboard::write(text), self.conceal()]);
+            return self.copy_with_hud(text);
         };
         let pasted = text.clone();
         Task::perform(
@@ -108,7 +108,7 @@ impl LauncherApp {
             Ok(()) => self.conceal(),
             Err(reason) => {
                 tracing::debug!(%reason, "paste refused; copying the glyph instead");
-                Task::batch([iced::clipboard::write(text), self.conceal()])
+                self.copy_with_hud(text)
             }
         }
     }

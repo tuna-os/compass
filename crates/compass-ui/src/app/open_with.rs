@@ -43,6 +43,7 @@ impl LauncherApp {
             Page::Files(page) => page.notice = Some(reason),
             Page::Clipboard(page) => page.notice = Some(reason),
             Page::OpenWith(page) => page.notice = Some(reason),
+            Page::Windows(page) => page.notice = Some(reason),
             _ => self.error = Some(reason),
         }
     }

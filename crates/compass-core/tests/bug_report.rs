@@ -243,3 +243,42 @@ fn each_list_offers_the_switch_that_is_not_already_on() {
         "Enable fallback"
     );
 }
+
+// --- os-release and the whole link ----------------------------------------
+
+#[test]
+fn os_release_gives_the_pretty_name_and_version_unquoted() {
+    use compass_core::bug_report::parse_os_release;
+    let text = "NAME=\"Fedora Linux\"\nVERSION=\"42 (Silverblue)\"\nID=fedora\nPRETTY_NAME=\"Fedora Linux 42 (Silverblue)\"\n";
+    assert_eq!(
+        parse_os_release(text),
+        Some((
+            "Fedora Linux 42 (Silverblue)".to_owned(),
+            "42 (Silverblue)".to_owned()
+        ))
+    );
+    assert_eq!(
+        parse_os_release("PRETTY_NAME='Arch Linux'\n"),
+        Some(("Arch Linux".to_owned(), String::new())),
+        "no VERSION on a rolling release"
+    );
+    assert_eq!(
+        parse_os_release("ID=nixos\n"),
+        None,
+        "invalid without a name"
+    );
+}
+
+#[test]
+fn the_report_link_carries_the_title_body_and_type() {
+    use compass_core::bug_report::report_url;
+    let url = url::Url::parse(&report_url(Some("Crash on start"), &info())).unwrap();
+    assert!(url.as_str().starts_with(CREATE_ISSUE_URL));
+    let pairs: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+    assert_eq!(pairs[0], ("title".to_owned(), "Crash on start".to_owned()));
+    assert_eq!(pairs[1].0, "body");
+    assert!(pairs[1].1.contains("- OS: Bluefin - 42"));
+    assert_eq!(pairs[2], ("type".to_owned(), ISSUE_TYPE.to_owned()));
+    let untitled = url::Url::parse(&report_url(None, &info())).unwrap();
+    assert_eq!(untitled.query_pairs().next().unwrap().0, "body");
+}

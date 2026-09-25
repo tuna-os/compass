@@ -211,6 +211,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             emoji_skin_tone,
             emoji_default_action,
             clock,
+            favicon_service,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -240,6 +241,9 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     emoji_skin_tone(&config),
                     emoji_default_action(&config),
                     clock(&config),
+                    compass_core::favicon::Service::from_config(
+                        config.unknown_fields().get("favicon_service"),
+                    ),
                 )
             }
             Err(error) => {
@@ -259,6 +263,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     None,
                     emoji_default_action(&compass_core::Config::default()),
                     clock(&compass_core::Config::default()),
+                    compass_core::favicon::Service::default(),
                 )
             }
         };
@@ -343,6 +348,9 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             emoji_default_action,
             search_history_path: compass_core::root_view::default_history_path(),
             clock,
+            favicon_service,
+            remote_icons: true,
+            onboarding: onboarding_due(),
             ..compass_ui::AppFlags::default()
         };
 
@@ -378,6 +386,15 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
 ///
 /// No compositor to ask (a probe that fails) is `xdg_toplevel`, which is what
 /// Iced would have tried anyway, so its own error reaches the user unchanged.
+/// Where the first-run flow is recorded, when it is due: `onboarding.json`
+/// older than the flow and `COMPASS_NO_ONBOARDING` unset, as the C++ shows
+/// its onboarding window at server start in a build with `ENABLE_ONBOARDING`.
+fn onboarding_due() -> Option<std::path::PathBuf> {
+    use compass_core::onboarding;
+    let disabled = onboarding::disabled_by(std::env::var_os(onboarding::DISABLE_ENV).as_deref());
+    onboarding::default_path().filter(|path| onboarding::should_show(path, disabled))
+}
+
 /// Whether each power command asks first, from its `confirm` preference
 /// (`providers.power.entrypoints.<id>.preferences`) or its own default.
 fn power_asks(config: &compass_core::Config) -> std::collections::BTreeMap<String, bool> {
@@ -552,6 +569,10 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
             // rather than silently dropped.
             if compass_worker_host::oauth_service::Redirect::parse(&url).is_ok() {
                 ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
+                return Ok(ExitCode::from(EXIT_OK));
+            }
+            if compass_core::settings_catalog::parse_settings_link(&url).is_some() {
+                ipc::send_ack(&socket, compass_ipc::Request::OpenDeeplink { url }).await?;
                 return Ok(ExitCode::from(EXIT_OK));
             }
             match compass_core::store_listing::parse_extension_link(&url) {

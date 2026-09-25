@@ -26,6 +26,7 @@ const ALIAS: &str = "root.alias";
 const COPY_ID: &str = "root.copy-id";
 const SHORTCUT: &str = "root.shortcut";
 const DISABLE: &str = "root.disable";
+const PREFERENCES: &str = "root.preferences";
 
 /// The heading over the favourites.
 pub(super) const FAVORITES_HEADING: &str = "Favorites";
@@ -198,6 +199,7 @@ impl LauncherApp {
         }
         item.push(Action::new("Set alias").with_id(ALIAS));
         item.push(Action::new("Set Global Shortcut").with_id(SHORTCUT));
+        item.push(Action::new("Open Preferences").with_id(PREFERENCES));
         item.push(Action::new("Copy ID").with_id(COPY_ID));
         item.push(
             Action::new("Disable item")
@@ -265,6 +267,12 @@ impl LauncherApp {
             ALIAS => {
                 self.panel = None;
                 return Some(self.open_alias_form(row, id));
+            }
+            // `OpenItemPreferencesAction`: the settings, at the item's
+            // provider.
+            PREFERENCES => {
+                self.panel = None;
+                return Some(self.open_settings(Some(&id)));
             }
             SHORTCUT => {
                 let title = self.root_title(row).unwrap_or_default();
@@ -346,7 +354,10 @@ impl LauncherApp {
     /// The engine's answer to a root edit: search again, or say why not.
     pub(super) fn root_item_edited(&mut self, result: Result<(), String>) -> Task<Message> {
         if let Err(reason) = result {
-            self.error = Some(reason);
+            match &mut self.page {
+                Page::Fallbacks(page) => page.notice = Some(reason),
+                _ => self.error = Some(reason),
+            }
             return Task::none();
         }
         if matches!(self.page, Page::Root) {

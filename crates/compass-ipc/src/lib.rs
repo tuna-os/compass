@@ -61,11 +61,11 @@ pub use protocol::{
     CalculatorEdit, CalculatorGroup, CalculatorRecord, ClipboardDetail, ClipboardEntry,
     ClipboardKind, CommandInfo, DefaultAppEntry, DefaultAppKind, DmenuSpec, DoctorCheck,
     DoctorStatus, ErrorKind, ExtensionAlert, ExtensionToast, ExtensionToastStyle, FileActionInfo,
-    FileHit, FontEntry, InputServerStatus, MediaPlayerAction, MediaPlayerEntry, OpenerEntry,
-    PROTOCOL_VERSION, PreferenceField, PreferenceFieldKind, ProtocolError, QueryHit, Request,
-    RequestEnvelope, Response, ResponseEnvelope, RhaiScriptEntry, RootItemEdit,
-    ScriptArgumentEntry, ScriptEntry, ScriptGrantEntry, ShortcutEntry, SnippetEntry, StoreDetail,
-    StoreEntry, StoreKind, TrayItemInfo, TrayMenuEntry, WindowCommand, WindowInfo,
+    FileHit, FontEntry, InputServerStatus, LocalStorageEntry, MediaPlayerAction, MediaPlayerEntry,
+    OAuthTokenSetEntry, OpenerEntry, PROTOCOL_VERSION, PreferenceField, PreferenceFieldKind,
+    ProtocolError, QueryHit, Request, RequestEnvelope, Response, ResponseEnvelope, RhaiScriptEntry,
+    RootItemEdit, ScriptArgumentEntry, ScriptEntry, ScriptGrantEntry, ShortcutEntry, SnippetEntry,
+    StoreDetail, StoreEntry, StoreKind, TrayItemInfo, TrayMenuEntry, WindowCommand, WindowInfo,
     WindowManagerCapabilities, WindowOutcome, WindowToggle, WorkspaceApp, WorkspaceEntry,
 };
 pub use transport::{

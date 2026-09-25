@@ -695,7 +695,7 @@ PY
         RUST_LOG="info,compass_ui::state=debug,wgpu=debug,wgpu_hal=debug,iced_wgpu=debug,\
 winit=debug,sctk_adwaita=debug,smithay_client_toolkit=debug,wayland_client=debug,calloop=debug" \
         RUST_BACKTRACE=1 \
-        flatpak run --installation="$4" "$5" ui \
+        flatpak run --env=COMPASS_NO_ONBOARDING=1 --installation="$4" "$5" ui \
         > "$6" 2>&1
       echo "$?" > "$7"
     ' _ "$SESSION_USER" "$u" "$(wayland_display)" "$INSTALLATION" "$APP" \

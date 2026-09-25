@@ -78,6 +78,17 @@ pub fn window_sections(row: &crate::backend::WindowRow) -> Vec<PanelSection> {
     sections
 }
 
+/// What the HUD says once an application quits, as `QuitAppAction` and
+/// `ForceQuitAppAction`.
+#[must_use]
+pub fn quit_hud(name: &str, force: bool) -> crate::hud::Hud {
+    crate::hud::Hud::new(if force {
+        format!("Force quit {name}")
+    } else {
+        format!("Quit {name}")
+    })
+}
+
 impl LauncherApp {
     /// Asks whether the application under a just-opened panel runs.
     pub(super) fn app_runtime_task(&self, key: String, desktop_id: String) -> Task<Message> {
@@ -157,6 +168,7 @@ impl LauncherApp {
         }
         let item = self.selected_item()?;
         let (key, desktop_id) = (item.key().to_owned(), item.desktop_id().to_owned());
+        let name = item.name().to_owned();
         let windows = self.windows.clone()?;
         let first = self
             .app_runtime
@@ -182,9 +194,10 @@ impl LauncherApp {
             }
             _ => {
                 let force = id == APP_FORCE_QUIT;
+                let hud = quit_hud(&name, force);
                 Task::perform(
                     async move { windows.quit_app(desktop_id, force).await },
-                    Message::AppQuit,
+                    move |result| Message::ActionDone(Some(hud.clone()), result),
                 )
             }
         };
@@ -209,7 +222,8 @@ impl LauncherApp {
         let Page::Windows(page) = &self.page else {
             return None;
         };
-        let window = page.selected_row()?.id;
+        let selected = page.selected_row()?;
+        let (window, name) = (selected.id, selected.app.clone());
         self.panel = None;
         Some(match id {
             WINDOW_FOCUS => self.activate_selected_window(),
@@ -217,9 +231,10 @@ impl LauncherApp {
             _ => {
                 let windows = self.windows.clone()?;
                 let force = id == WINDOW_FORCE_QUIT;
+                let hud = quit_hud(&name, force);
                 Task::perform(
                     async move { windows.quit_window_app(window, force).await },
-                    Message::AppQuit,
+                    move |result| Message::ActionDone(Some(hud.clone()), result),
                 )
             }
         })

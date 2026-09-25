@@ -43,7 +43,7 @@ impl LauncherApp {
     fn act(&mut self, act: Act) -> Task<Message> {
         self.panel = None;
         match act {
-            Act::CopyPath(path) => Task::batch([iced::clipboard::write(path), self.conceal()]),
+            Act::CopyPath(path) => self.copy_with_hud(path),
             Act::Run {
                 argv,
                 terminal,

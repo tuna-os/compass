@@ -425,6 +425,7 @@ impl LauncherApp {
     pub(super) fn clipboard_detail_pane<'a>(
         &'a self,
         detail: &'a clipboard_page::Detail,
+        query: &'a str,
     ) -> Element<'a, Message> {
         let palette = self.palette();
         let muted = |value: String| {
@@ -438,12 +439,26 @@ impl LauncherApp {
                 return self.file_preview_pane(preview, true);
             }
             (Some(DetailContent::Text(body)), _) => scrollable(
-                container(
-                    text(body.as_str())
+                container({
+                    // The searched words behind the accent at 35%, as
+                    // `TextViewer`'s `highlightColor`.
+                    let mark = iced::Color {
+                        a: 0.35,
+                        ..palette.accent.to_iced()
+                    };
+                    let spans: Vec<iced::widget::text::Span<'a, ()>> =
+                        clipboard_page::highlighted(body, query)
+                            .into_iter()
+                            .map(|(piece, hit)| {
+                                let span = iced::widget::span(piece);
+                                if hit { span.background(mark) } else { span }
+                            })
+                            .collect();
+                    iced::widget::rich_text(spans)
                         .font(iced::Font::MONOSPACE)
                         .size(12)
-                        .color(palette.text.to_iced()),
-                )
+                        .color(palette.text.to_iced())
+                })
                 .padding(8),
             )
             .height(Length::Fill)

@@ -202,6 +202,14 @@ fn describe(request: &Request) -> &'static str {
         Request::CopyFile { .. } => "CopyFile",
         Request::RunExecutable { .. } => "RunExecutable",
         Request::SetWallpaper { .. } => "SetWallpaper",
+        Request::PreviewSnippet { .. } => "PreviewSnippet",
+        Request::ScriptIcons => "ScriptIcons",
+        Request::SetSetting { .. } => "SetSetting",
+        Request::SetProviderEnabled { .. } => "SetProviderEnabled",
+        Request::LocalStorageNamespaces => "LocalStorageNamespaces",
+        Request::LocalStorageItems { .. } => "LocalStorageItems",
+        Request::OAuthTokenSets => "OAuthTokenSets",
+        Request::RemoveOAuthTokenSet { .. } => "RemoveOAuthTokenSet",
     }
 }
 

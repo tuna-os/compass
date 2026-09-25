@@ -86,3 +86,33 @@ code in the extension, so the host never speaks OAuth itself.
 | A `data:` URL notification icon | `data-url` 0.3 (already in the tree through usvg) | **Used**: `DataUrl::process` and `decode_to_vec`, base64 or percent-encoded, with its MIME type. |
 | Fitting a PNG or JPEG into the notification's 128×128 PNG | `image` 0.25, PNG and JPEG only (the decoders `compass-ui` already builds) | **Used**: `load_from_memory`, `resize` (aspect kept), `imageops::overlay` to centre it. |
 | The StatusNotifierItem host and watcher (`SniTrayHost`, `SniWatcher`, ~800 lines of C++) | `system-tray` 0.8 (ironbar's; on the zbus 5 already in the tree, one new package); `stray` 0.1 (zbus 3, unmaintained since 2023) and `ksni` (the *item* side) considered | **Used** (`vicinae::tray_host`). It serves the watcher when the name is free, registers a host, and follows items, their properties and their `dbusmenu` layouts. Handled around it: its `Activate` assumes `/StatusNotifierItem`, so the item's path is read back from the watcher's `RegisteredStatusNotifierItems`; `IconThemePath` is searched with the existing `best_icon`; pixmaps become PNGs with `image`. Its watcher has no claim grace and refuses `busname/path` registrations (PARITY "The gaps pass, icons and tray"). |
+
+## The gaps pass, UI (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Clipping an image to a circle or a rounded rectangle (`applyCircleMask`, `applyRoundedRectMask`) | `image` 0.25 (PNG, JPEG) and `resvg` 0.45 (SVG), both already in the tree; Iced's `image::border_radius` considered | **The crates decode and draw; the clip is hand-written** (`compass_ui::icons::apply_mask`, about 30 lines of coverage over the pixels). `border_radius` only rounds the widget's rectangle, cannot make the inscribed circle of a non-square image, and the tiny-skia renderer (the software fallback and the paint tier) ignores it on images; no maintained crate clips straight-alpha RGBA to these two shapes. |
+| A tile's gradient stops (`applyBackdrop`'s `shifted` in HSL) | `palette` considered | **Hand-written** (`compass_ui::icons::shifted`, the HSL round trip, about 40 lines): `palette` would be a new package for one conversion, and `compass_core::contrast`'s HSL is on Qt's integer scale, which loses the 0.025-hue steps. |
+| Which service a favicon comes from (`FaviconService`) | none needed | **Two URL templates** (`compass_core::favicon`); the fetch and the cache are `compass_ui::remote_image`'s (`ureq`, `sha2`). |
+| Colouring a Markdown code block by its language (KSyntaxHighlighting) | Iced 0.14's `highlighter` feature: `iced_highlighter` over `syntect` 5 with `two-face`'s grammars (`fancy-regex`, pure Rust); six new packages | **Used**: `markdown::parse` highlights fenced blocks itself. The theme is Base16 Ocean, which Iced fixes (PARITY "The gaps pass, UI"). |
+| Finding search words in a text to mark them (`MatchHighlighter`) | `aho-corasick` considered | **Hand-written** (`compass_search::term_ranges`, about 30 lines over the matcher's own case and diacritic fold): the fold has to keep one character for one character so a match's position is the text's, which a byte-level automaton over the raw text cannot do, and folding first means mapping positions back anyway. |
+| A snippet's text with its backslash escape (`PlaceholderString::parse`) | the quicklink parser already ported | **Hand-written, as the quicklink parser is** (`compass_core::placeholder`): the C++ grammar is a bespoke state machine (ids ending at the first non-alphanumeric, first-wins keys, quoted values, a cut-off placeholder dropped) that no templating crate reproduces. |
+
+## The gaps pass: settings (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Reading a setting of `vicinae.json` by its dotted key (`launcher.clock.format`) | `serde_json`'s JSON Pointer (`Value::pointer`) | **Used** (`Config::get_path`): the dotted key becomes a pointer, `~` and `/` escaped. |
+| Writing one, creating the objects on the way and dropping the ones a reset leaves empty | `serde_json` (`pointer_mut` finds, but does not create); `json-patch` 4 considered | **Hand-rolled** (`Config::set_path`, ~40 lines over `serde_json::Map`), then read back through `Config`'s own `Deserialize`, so a wrongly typed known key is refused. `json-patch`'s `add` needs every parent to exist and its `remove` leaves empty parents behind, which would need the same walk around it. |
+| A `vicinae://settings/open?tab=` deeplink | `url` 2 (already used by `parse_launch_link`) | **Used**: `Url::parse` and `query_pairs`, which percent-decode the tab. |
+| The settings view's controls (switch, list, text field, buttons) | `iced` 0.14's `toggler`, `pick_list`, `text_input`, `button` | **Used**; the shortcut recorder is `compass_ui::shortcut_recorder`, the sidebar `compass_ui::settings::SidebarModel`. |
+
+## The gaps pass, HUD and onboarding (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| The HUD's surface | `iced_layershell` 0.19 (already the launcher's layer-shell runtime) | **Used**: a second `NewLayerShell` surface with no keyboard interactivity and `events_transparent`, as `HudWindowLayerShell.qml`. No new crate. |
+| The onboarding record's time stamp | `jiff` 0.2 (already in `compass-ui`) | **Used**: `Timestamp::now().round(Unit::Second)`, which prints Qt's `ISODate` form. |
+| `/etc/os-release`'s `PRETTY_NAME` and `VERSION`, for the bug report | `os-release` 0.1, `etc-os-release` 0.1 | **Hand-read** (`compass_core::bug_report::parse_os_release`, ~20 lines): two `KEY=value` lines unquoted, where either crate adds a file reader and error types this does not need and a new package to the Flatpak's sources. |
+| The bug-report link's query | `url` 2 (already in `compass-core`) | **Used**: `Url::parse_with_params`. |
+| `ext-background-effect-v1` (window-material) | `wayland-protocols` 0.32 `staging` (already in `compass-wayland`) | **Used** (`compass_wayland::material`): the generated client; only the rounded region (`createRoundedRegion`'s loop) is ours. Reaching the launcher's own `wl_surface` would need `wayland-backend`'s `client_system` foreign-display bridge, which is `unsafe`; not done. |

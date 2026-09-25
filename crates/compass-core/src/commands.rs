@@ -91,6 +91,12 @@ pub enum CommandKind {
     SetDefaultTerminal,
     /// Other applications' tray icons and their menus.
     SearchTray,
+    /// The settings view: every setting of `vicinae.json`, by page.
+    OpenSettings,
+    /// One of the Vicinae extension's own commands (`VicinaeExtension`), by
+    /// its C++ id: the fallback manager, the installed extensions, the icon
+    /// gallery, the storage browsers, and the links and files it opens.
+    Vicinae(&'static str),
 }
 
 /// Every builtin command, in the order an empty query lists them. The power
@@ -469,6 +475,120 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &["status", "notifier", "indicator"],
         icon: "app-window-list",
     },
+    // `OpenSettingsCommand`: the vicinae extension's `settings`.
+    BuiltinCommand {
+        kind: CommandKind::OpenSettings,
+        entrypoint: "settings",
+        title: "Open Settings",
+        subtitle: "Every setting of the launcher, its extensions and commands",
+        keywords: &["preferences", "settings", "configure", "options"],
+        icon: "cog",
+    },
+    // `VicinaeExtension`'s own commands, in its registration order.
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("manage-fallback"),
+        entrypoint: "manage-fallback",
+        title: "Configure Fallback Commands",
+        subtitle: "Configure what commands are to be presented as fallback options when nothing matches the search in the root search.",
+        keywords: &[],
+        icon: "undo",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("list-extensions"),
+        entrypoint: "list-extensions",
+        title: "Show Installed Extensions",
+        subtitle: "Show all third-party extensions that have been installed. This includes local extensions as well as extensions downloaded from the stores (vicinae and raycast).",
+        keywords: &[],
+        icon: "plug",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("refresh-apps"),
+        entrypoint: "refresh-apps",
+        title: "Refresh Apps",
+        subtitle: "Force a refresh of the application database. The database should normally automatically update itself on changes, but this can help working around some edge cases.",
+        keywords: &[],
+        icon: "redo",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("report-bug"),
+        entrypoint: "report-bug",
+        title: "Report a Vicinae Bug",
+        subtitle: "Navigate to Vicinae issue creation page with all relevant informations pre-filled.",
+        keywords: &["create issue"],
+        icon: "bug",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("sponsor"),
+        entrypoint: "sponsor",
+        title: "Donate to Vicinae",
+        subtitle: "Open link to Vicinae's GitHub sponsor page",
+        keywords: &["sponsor", "donate"],
+        icon: "heart",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("join-discord-server"),
+        entrypoint: "join-discord-server",
+        title: "Join the Discord Server",
+        subtitle: "Open link to join the official Vicinae discord server.",
+        keywords: &["help", "support"],
+        icon: "discord",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("open-config-file"),
+        entrypoint: "open-config-file",
+        title: "Open Config File",
+        subtitle: "Open the main vicinae configuration file",
+        keywords: &[],
+        icon: "pencil",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("open-default-config"),
+        entrypoint: "open-default-config",
+        title: "Open Default Config File",
+        subtitle: "Open the default vicinae configuration file",
+        keywords: &[],
+        icon: "pencil",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("reload-scripts"),
+        entrypoint: "reload-scripts",
+        title: "Reload Script Directories",
+        subtitle: "Reload script directories",
+        keywords: &[],
+        icon: "code",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("show-logs"),
+        entrypoint: "show-logs",
+        title: "Show Log File",
+        subtitle: "Open the Vicinae log file in your file browser",
+        keywords: &[],
+        icon: "paragraph",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("search-builtin-icons"),
+        entrypoint: "search-builtin-icons",
+        title: "Search Builtin Icons",
+        subtitle: "Search Vicinae builtin set of icons",
+        keywords: &[],
+        icon: "box",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("oauth-token-store"),
+        entrypoint: "oauth-token-store",
+        title: "Manage OAuth Token Sets",
+        subtitle: "Manage OAuth token sets that have been saved by extensions providing OAuth integrations.",
+        keywords: &[],
+        icon: "key",
+    },
+    BuiltinCommand {
+        kind: CommandKind::Vicinae("inspect-local-storage"),
+        entrypoint: "inspect-local-storage",
+        title: "Inspect Local Storage",
+        subtitle: "Browse data stored in Vicinae's local storage. This includes data stored for builtin extensions as well as third-party extensions making use of the LocalStorage API.",
+        keywords: &[],
+        icon: "coin",
+    },
 ];
 
 /// The colour a builtin command's icon tile is filled with: the C++ command's
@@ -516,7 +636,9 @@ impl CommandKind {
             Self::SearchEmojis
             | Self::ExtensionStore
             | Self::ScriptPermissions
-            | Self::SearchTray => Tile::Accent,
+            | Self::SearchTray
+            | Self::OpenSettings
+            | Self::Vicinae(_) => Tile::Accent,
             Self::NowPlaying
             | Self::Media(_)
             | Self::SetDefaultBrowser
@@ -550,10 +672,17 @@ impl BuiltinCommand {
     }
 
     /// Whether the command is left out of the root list until the user
-    /// enables it: `isDefaultDisabled`, which only Browse Apps sets.
+    /// enables it: `isDefaultDisabled`, which Browse Apps and the Vicinae
+    /// extension's inspection commands set.
     #[must_use]
     pub fn default_disabled(&self) -> bool {
-        self.kind == CommandKind::BrowseApps
+        matches!(
+            self.kind,
+            CommandKind::BrowseApps
+                | CommandKind::Vicinae(
+                    "search-builtin-icons" | "oauth-token-store" | "inspect-local-storage"
+                )
+        )
     }
 
     /// Its root-list row.
@@ -606,6 +735,46 @@ pub const CPP_BUILTIN_IDS: &[(&str, CommandKind)] = &[
     ("clipboard:history", CommandKind::ClipboardHistory),
     ("files:search", CommandKind::SearchFiles),
     ("core:search-emojis", CommandKind::SearchEmojis),
+    (
+        "core:manage-fallback",
+        CommandKind::Vicinae("manage-fallback"),
+    ),
+    (
+        "core:list-extensions",
+        CommandKind::Vicinae("list-extensions"),
+    ),
+    ("core:refresh-apps", CommandKind::Vicinae("refresh-apps")),
+    ("core:report-bug", CommandKind::Vicinae("report-bug")),
+    ("core:sponsor", CommandKind::Vicinae("sponsor")),
+    (
+        "core:join-discord-server",
+        CommandKind::Vicinae("join-discord-server"),
+    ),
+    (
+        "core:open-config-file",
+        CommandKind::Vicinae("open-config-file"),
+    ),
+    (
+        "core:open-default-config",
+        CommandKind::Vicinae("open-default-config"),
+    ),
+    (
+        "core:reload-scripts",
+        CommandKind::Vicinae("reload-scripts"),
+    ),
+    ("core:show-logs", CommandKind::Vicinae("show-logs")),
+    (
+        "core:search-builtin-icons",
+        CommandKind::Vicinae("search-builtin-icons"),
+    ),
+    (
+        "core:oauth-token-store",
+        CommandKind::Vicinae("oauth-token-store"),
+    ),
+    (
+        "core:inspect-local-storage",
+        CommandKind::Vicinae("inspect-local-storage"),
+    ),
 ];
 
 /// The id Compass knows an entrypoint by: a C++ builtin's id becomes its
@@ -628,16 +797,33 @@ pub fn canonical_id(id: &str) -> String {
 /// the C++ answers with `isView()`): a command that runs and hides has
 /// nothing to show for it.
 #[must_use]
-pub const fn opens_a_view(kind: CommandKind) -> bool {
-    !matches!(
-        kind,
+pub fn opens_a_view(kind: CommandKind) -> bool {
+    match kind {
         CommandKind::Power(_)
-            | CommandKind::Media(_)
-            | CommandKind::ToggleFullscreen
-            | CommandKind::ToggleFloating
-            | CommandKind::ToggleOverview
-    )
+        | CommandKind::Media(_)
+        | CommandKind::ToggleFullscreen
+        | CommandKind::ToggleFloating
+        | CommandKind::ToggleOverview => false,
+        CommandKind::Vicinae(id) => VICINAE_VIEWS.contains(&id),
+        _ => true,
+    }
 }
+
+/// The Vicinae extension's commands that open a view (`BuiltinViewCommand`);
+/// the rest run and hide, or open something outside the launcher.
+pub const VICINAE_VIEWS: &[&str] = &[
+    "manage-fallback",
+    "list-extensions",
+    "search-builtin-icons",
+    "oauth-token-store",
+    "inspect-local-storage",
+];
+
+/// Where Donate to Vicinae goes (`Omnicast::GH_SPONSOR_LINK`).
+pub const SPONSOR_URL: &str = "https://github.com/sponsors/vicinaehq";
+
+/// Where Join the Discord Server goes (`Omnicast::DISCORD_INVITE_LINK`).
+pub const DISCORD_URL: &str = "https://discord.gg/rP4ecD42p7";
 
 #[cfg(test)]
 mod tests {
@@ -733,6 +919,43 @@ mod tests {
                 assert!(crate::builtin_icon::is_builtin(badge), "{badge}");
             }
         }
+    }
+
+    #[test]
+    fn the_vicinae_extensions_commands_keep_their_cpp_ids() {
+        for id in [
+            "manage-fallback",
+            "list-extensions",
+            "refresh-apps",
+            "report-bug",
+            "sponsor",
+            "join-discord-server",
+            "open-config-file",
+            "open-default-config",
+            "reload-scripts",
+            "show-logs",
+            "search-builtin-icons",
+            "oauth-token-store",
+            "inspect-local-storage",
+        ] {
+            let command = by_id(&format!("commands:{id}")).expect(id);
+            assert_eq!(command.kind, CommandKind::Vicinae(id));
+            assert_eq!(canonical_id(&format!("core:{id}")), command.id());
+            assert_eq!(command.kind.tile(), Tile::Accent);
+            assert_eq!(opens_a_view(command.kind), VICINAE_VIEWS.contains(&id));
+        }
+        for id in [
+            "commands:search-builtin-icons",
+            "commands:oauth-token-store",
+            "commands:inspect-local-storage",
+        ] {
+            assert!(by_id(id).unwrap().default_disabled(), "{id}");
+        }
+        assert!(
+            !by_id("commands:manage-fallback")
+                .unwrap()
+                .default_disabled()
+        );
     }
 
     #[test]

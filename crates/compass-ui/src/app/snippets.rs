@@ -10,7 +10,8 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 
 use super::{
     Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
-    Task, chord_direction, column, container, focus_search, mouse_area, next_selection, scrollable,
+    Space, Task, chord_direction, column, container, focus_search, mouse_area, next_selection, row,
+    scrollable, text,
 };
 use crate::action_panel::Action;
 use crate::preferences_page::Purpose;
@@ -225,9 +226,118 @@ impl LauncherApp {
                 direction,
                 self.wrap_navigation,
             );
-            return crate::scroll::reveal_root_selection();
+            return Task::batch([
+                crate::scroll::reveal_root_selection(),
+                self.snippet_detail_task(),
+            ]);
         }
         Task::none()
+    }
+
+    /// Asks for the detail pane of the selected snippet, unless it is
+    /// already showing: a text snippet expanded without running its shell
+    /// placeholders (`loadDetail`, `updateExpandedText`).
+    pub(super) fn snippet_detail_task(&mut self) -> Task<Message> {
+        let Page::Snippets(page) = &mut self.page else {
+            return Task::none();
+        };
+        let Some(snippet) = page.selected_snippet() else {
+            page.detail = None;
+            return Task::none();
+        };
+        if page.detail.as_ref().is_some_and(|d| d.id == snippet.id) {
+            return Task::none();
+        }
+        let id = snippet.id.clone();
+        if snippet.text().is_none() {
+            page.detail = Some(snippets_page::Detail {
+                id,
+                expanded: Ok(String::new()),
+            });
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move {
+                let expanded = backend.preview_snippet(id.clone(), Vec::new()).await;
+                snippets_page::Detail { id, expanded }
+            },
+            Message::SnippetDetailLoaded,
+        )
+    }
+
+    /// The detail pane beside Manage Snippets' list: the expanded text, then
+    /// the metadata `loadDetail` lists.
+    fn snippet_detail_pane<'a>(
+        &'a self,
+        snippet: &'a crate::backend::Snippet,
+        detail: &'a snippets_page::Detail,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let muted = |value: String| {
+            text(value)
+                .font(self.font())
+                .size(12)
+                .color(palette.muted.to_iced())
+        };
+        let content: Element<'a, Message> = match &detail.expanded {
+            Ok(expanded) => text(expanded.as_str())
+                .font(self.font())
+                .size(13)
+                .color(palette.text.to_iced())
+                .into(),
+            Err(reason) => muted(reason.clone()).into(),
+        };
+        let date = |at: u64| {
+            crate::file_preview::qt_text_date(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(at),
+            )
+            .unwrap_or_default()
+        };
+        let app_name = |id: &str| {
+            self.app_index
+                .applications()
+                .find(|item| {
+                    item.desktop_id() == id
+                        || item.desktop_id().strip_suffix(".desktop") == Some(id)
+                })
+                .map(|item| item.display_name())
+        };
+        let mut fields = column![].spacing(4);
+        for (label, value) in snippets_page::detail_fields(snippet, app_name, date) {
+            fields = fields.push(
+                row![
+                    muted(label.to_owned()),
+                    Space::new().width(Length::Fill),
+                    text(value)
+                        .font(self.font())
+                        .size(12)
+                        .color(palette.text.to_iced()),
+                ]
+                .spacing(12),
+            );
+        }
+        let pane = column![
+            scrollable(container(content).padding(8)).height(Length::Fill),
+            container(fields)
+                .padding(Padding::new(8.0))
+                .style(move |_: &iced::Theme| container::Style {
+                    border: iced::Border {
+                        color: palette.border.to_iced(),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..container::Style::default()
+                }),
+        ]
+        .spacing(6);
+        container(pane)
+            .width(Length::FillPortion(super::preview::PANE_PORTION))
+            .height(Length::Fixed(320.0))
+            .padding(Padding::new(6.0).top(8))
+            .into()
     }
 
     /// Submits a snippet form: its arguments, to copy or paste it, or its
@@ -302,7 +412,20 @@ impl LauncherApp {
                 } else if let Err(reason) = result {
                     self.snippet_notice(reason);
                 }
-                crate::scroll::reveal_root_selection()
+                Task::batch([
+                    crate::scroll::reveal_root_selection(),
+                    self.snippet_detail_task(),
+                ])
+            }
+            Message::SnippetDetailLoaded(detail) => {
+                if let Page::Snippets(page) = &mut self.page
+                    && page
+                        .selected_snippet()
+                        .is_some_and(|snippet| snippet.id == detail.id)
+                {
+                    page.detail = Some(detail);
+                }
+                Task::none()
             }
             Message::SnippetSaved(Ok(snippets)) => {
                 let from_manage = matches!(
@@ -332,7 +455,8 @@ impl LauncherApp {
                 if matches!(self.page, Page::Preferences(_)) {
                     self.page = Page::Root;
                 }
-                Task::batch([iced::clipboard::write(text), self.conceal()])
+                let hud = crate::hud::Hud::new("Copied to clipboard");
+                Task::batch([iced::clipboard::write(text), self.show_hud(hud)])
             }
             Message::SnippetPasted(Ok(())) => {
                 self.parked_snippets = None;
@@ -348,7 +472,10 @@ impl LauncherApp {
                     page.selected = 0;
                     page.refilter();
                 }
-                crate::scroll::reveal_root_selection()
+                Task::batch([
+                    crate::scroll::reveal_root_selection(),
+                    self.snippet_detail_task(),
+                ])
             }
             Message::SnippetSelected(position) => {
                 let Page::Snippets(page) = &mut self.page else {
@@ -402,9 +529,17 @@ impl LauncherApp {
         let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
+        let rows: Element<Message> = match (&page.detail, page.selected_snippet()) {
+            (Some(detail), Some(snippet)) if detail.id == snippet.id => row![
+                container(rows).width(Length::FillPortion(super::preview::LIST_PORTION)),
+                self.snippet_detail_pane(snippet, detail),
+            ]
+            .into(),
+            _ => rows.into(),
+        };
         match &page.notice {
             Some(notice) => column![rows, self.notice(notice)].into(),
-            None => rows.into(),
+            None => rows,
         }
     }
 }

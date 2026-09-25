@@ -102,6 +102,8 @@ fn render(source: &ImageSource, tint: Option<[u8; 4]>, sources: &Sources<'_>) ->
             match compass_ui::icons::file_glyph(Path::new(path), sources.find_icon) {
                 compass_ui::icons::Glyph::Art(art) => file(art.path(), &sources.out_dir),
                 compass_ui::icons::Glyph::Builtin { name, .. } => builtin(&name, tint, sources),
+                // `file_glyph` draws a file or a builtin, never text.
+                compass_ui::icons::Glyph::Text(_) => None,
             }
         }
         ImageSource::Asset(relative) => file(&sources.assets?.join(relative), &sources.out_dir),

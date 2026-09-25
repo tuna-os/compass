@@ -162,6 +162,9 @@ pub enum Glyph {
         /// A second builtin drawn small in the bottom-right corner.
         badge: Option<&'static str>,
     },
+    /// An emoji or another glyph, drawn as text (`ImageURLType::Emoji` and
+    /// `Symbol`).
+    Text(String),
 }
 
 impl Glyph {
@@ -342,6 +345,323 @@ pub fn default_mark() -> Glyph {
         fill: Some(TILE_ACCENTS[3].1),
         tile: None,
         badge: None,
+    }
+}
+
+/// The colour a semantic name (`ImageURL`'s `fill` and `bg_tint`) stands
+/// for in the Vicinae dark theme, `accent` being the palette's; `None` for
+/// the text colours, which follow the row.
+#[must_use]
+pub fn semantic_color(name: &str, accent: crate::design::Rgb) -> Option<crate::design::Rgb> {
+    use compass_core::commands::Tile;
+    let tile = match name {
+        "Red" => Tile::Red,
+        "Orange" => Tile::Orange,
+        "Yellow" => Tile::Yellow,
+        "Green" => Tile::Green,
+        "Cyan" => Tile::Cyan,
+        "Blue" => Tile::Blue,
+        // `ThemeFile::vicinaeDark` gives magenta and purple one colour.
+        "Purple" | "Magenta" => Tile::Purple,
+        "Accent" => return Some(accent),
+        _ => return None,
+    };
+    TILE_ACCENTS
+        .iter()
+        .find(|(candidate, _)| *candidate == tile)
+        .map(|(_, rgb)| *rgb)
+}
+
+/// A literal colour as `QColor(name)` reads the common forms: `#rgb`,
+/// `#rrggbb` and `#aarrggbb` (the alpha dropped).
+fn literal_color(text: &str) -> Option<crate::design::Rgb> {
+    let hex = text.strip_prefix('#')?;
+    let byte = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
+    let nibble = |at: usize| {
+        u8::from_str_radix(hex.get(at..=at)?, 16)
+            .ok()
+            .map(|n| n * 17)
+    };
+    match hex.len() {
+        3 => Some(crate::design::Rgb::new(nibble(0)?, nibble(1)?, nibble(2)?)),
+        6 => Some(crate::design::Rgb::new(byte(0)?, byte(2)?, byte(4)?)),
+        8 => Some(crate::design::Rgb::new(byte(2)?, byte(4)?, byte(6)?)),
+        _ => None,
+    }
+}
+
+fn color_like(
+    color: &compass_core::image_url::ColorLike,
+    accent: crate::design::Rgb,
+) -> Option<crate::design::Rgb> {
+    match color {
+        compass_core::image_url::ColorLike::Semantic(name) => semantic_color(name, accent),
+        compass_core::image_url::ColorLike::Literal(text) => literal_color(text),
+    }
+}
+
+/// What [`url_glyph`] resolves an `ImageURL` against.
+pub struct UrlLookup<'a> {
+    /// An icon theme name to a file.
+    pub find: &'a dyn Fn(&str) -> Option<PathBuf>,
+    /// A remote image's cached file, once it has been fetched.
+    pub remote: &'a dyn Fn(&str) -> Option<PathBuf>,
+    /// Where favicons come from.
+    pub favicon: compass_core::favicon::Service,
+    /// The palette's accent, for `Accent` tints.
+    pub accent: crate::design::Rgb,
+}
+
+impl std::fmt::Debug for UrlLookup<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UrlLookup")
+            .field("favicon", &self.favicon)
+            .field("accent", &self.accent)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The remote URL an `ImageURL` is drawn from, when it is one: an `http`
+/// image, or a favicon through the configured service.
+#[must_use]
+pub fn remote_source(
+    url: &compass_core::image_url::ImageUrl,
+    favicon: compass_core::favicon::Service,
+) -> Option<String> {
+    use compass_core::image_url::ImageUrlType;
+    match url.kind {
+        ImageUrlType::Http => Some(url.name.clone()),
+        ImageUrlType::Favicon => favicon.url(&url.name),
+        _ => None,
+    }
+}
+
+/// An `ImageURL` as a row draws it, as `ImageRenderer` renders each type: a
+/// builtin in its fill on its tint's tile, a file, an emoji or symbol as
+/// text, a theme icon, a fetched image or favicon, a file's type icon;
+/// else its fallback. `None` when nothing can be drawn (yet: a remote image
+/// that has not arrived).
+#[must_use]
+pub fn url_glyph(url: &compass_core::image_url::ImageUrl, lookup: &UrlLookup<'_>) -> Option<Glyph> {
+    use compass_core::image_url::ImageUrlType;
+    let drawn = match url.kind {
+        ImageUrlType::Builtin => {
+            let tile = url
+                .background_tint
+                .as_ref()
+                .and_then(|tint| color_like(tint, lookup.accent))
+                .map(tile_tone);
+            let fill = match tile {
+                Some(tile) => Some(on_tile(tile)),
+                None => url
+                    .fill
+                    .as_ref()
+                    .and_then(|fill| color_like(fill, lookup.accent)),
+            };
+            Some(Glyph::Builtin {
+                name: url.name.clone(),
+                fill,
+                tile,
+                badge: None,
+            })
+        }
+        ImageUrlType::Local => classify(Path::new(&url.name)).map(Glyph::Art),
+        ImageUrlType::Emoji | ImageUrlType::Symbol => {
+            (!url.name.is_empty()).then(|| Glyph::Text(url.name.clone()))
+        }
+        ImageUrlType::System => resolve(&url.name, lookup.find).map(Glyph::Art),
+        ImageUrlType::Http | ImageUrlType::Favicon => remote_source(url, lookup.favicon)
+            .and_then(|remote| (lookup.remote)(&remote))
+            .and_then(|path| classify(&path))
+            .map(Glyph::Art),
+        ImageUrlType::FileIcon => Some(file_glyph(Path::new(&url.name), lookup.find)),
+        _ => None,
+    };
+    drawn.or_else(|| {
+        let fallback = compass_core::image_url::ImageUrl::parse(url.fallback.as_deref()?);
+        fallback.is_valid().then(|| url_glyph(&fallback, lookup))?
+    })
+}
+
+/// The shift `applyBackdrop` gives a tile's colour for each end of its
+/// gradient: hue, saturation and lightness in HSL's 0–1 units.
+fn shifted(color: crate::design::Rgb, dh: f32, ds: f32, dl: f32) -> crate::design::Rgb {
+    let (r, g, b) = (
+        f32::from(color.r) / 255.0,
+        f32::from(color.g) / 255.0,
+        f32::from(color.b) / 255.0,
+    );
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = f32::midpoint(max, min);
+    let d = max - min;
+    let (mut h, s) = if d <= f32::EPSILON {
+        (0.0, 0.0)
+    } else {
+        let s = if l > 0.5 {
+            d / (2.0 - max - min)
+        } else {
+            d / (max + min)
+        };
+        let h = if (max - r).abs() <= f32::EPSILON {
+            ((g - b) / d).rem_euclid(6.0)
+        } else if (max - g).abs() <= f32::EPSILON {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        };
+        (h / 6.0, s)
+    };
+    h = (h + dh + 1.0).rem_euclid(1.0);
+    let s = (s + ds).clamp(0.0, 1.0);
+    let l = (l + dl).clamp(0.0, 1.0);
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h * 6.0).rem_euclid(2.0) - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match (h * 6.0) as u8 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let channel = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    crate::design::Rgb::new(channel(r), channel(g), channel(b))
+}
+
+/// `applyBackdrop`'s tile gradient, top then bottom: the tile a little
+/// lighter and warmer at the top, a little deeper at the bottom.
+#[must_use]
+pub fn tile_gradient(tile: crate::design::Rgb) -> (crate::design::Rgb, crate::design::Rgb) {
+    (
+        shifted(tile, 0.025, -0.03, 0.10),
+        shifted(tile, -0.015, 0.06, -0.05),
+    )
+}
+
+/// The drop shadow under a tile's glyph: its silhouette in black at
+/// `QColor(0, 0, 0, 70)`, moved down by 3.5% of the side.
+pub const TILE_SHADOW_ALPHA: u8 = 70;
+/// How far the shadow sits under the glyph, as a share of the tile's side.
+pub const TILE_SHADOW_OFFSET: f32 = 0.035;
+
+/// The side masked images are drawn at, in pixels: enough for a grid cell
+/// on a doubled display.
+pub const MASK_SIDE: u32 = 128;
+
+/// Clips straight-alpha RGBA `pixels` of `width` by `height` to `mask`, as
+/// `applyCircleMask` and `applyRoundedRectMask` do: the ellipse inscribed in
+/// the image, or a rectangle whose corners are a quarter of the shorter side
+/// round; antialiased over one pixel.
+pub fn apply_mask(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    mask: compass_core::image_url::ImageMask,
+) {
+    use compass_core::image_url::ImageMask;
+    let (w, h) = (width as f32, height as f32);
+    let coverage: Box<dyn Fn(f32, f32) -> f32> = match mask {
+        ImageMask::None => return,
+        ImageMask::Circle => {
+            let (rx, ry) = (w / 2.0, h / 2.0);
+            Box::new(move |x, y| {
+                // The distance to the ellipse's edge, in pixels, near it.
+                let (dx, dy) = ((x - rx) / rx, (y - ry) / ry);
+                let norm = (dx * dx + dy * dy).sqrt();
+                ((1.0 - norm) * rx.min(ry) + 0.5).clamp(0.0, 1.0)
+            })
+        }
+        ImageMask::RoundedRectangle => {
+            let radius = w.min(h) * 0.25;
+            Box::new(move |x, y| {
+                let cx = x.clamp(radius, w - radius);
+                let cy = y.clamp(radius, h - radius);
+                let (dx, dy) = (x - cx, y - cy);
+                (radius - (dx * dx + dy * dy).sqrt() + 0.5).clamp(0.0, 1.0)
+            })
+        }
+    };
+    for (index, pixel) in pixels.chunks_exact_mut(4).enumerate() {
+        let index = index as u32;
+        let (x, y) = ((index % width) as f32 + 0.5, (index / width) as f32 + 0.5);
+        let cover = coverage(x, y);
+        pixel[3] = (f32::from(pixel[3]) * cover).round() as u8;
+    }
+}
+
+/// `art` drawn into at most `side` pixels square, aspect kept, as
+/// straight-alpha RGBA with its width and height; an SVG drawn in `tint`
+/// when given. `None` when the file cannot be read or decoded.
+#[must_use]
+pub fn rasterize(art: &IconArt, side: u32, tint: Option<[u8; 3]>) -> Option<(u32, u32, Vec<u8>)> {
+    match art {
+        IconArt::Raster(path) => {
+            let decoded = image::open(path).ok()?;
+            let fitted = if decoded.width() > side || decoded.height() > side {
+                decoded.resize(side, side, image::imageops::FilterType::Triangle)
+            } else {
+                decoded
+            };
+            let rgba = fitted.to_rgba8();
+            Some((rgba.width(), rgba.height(), rgba.into_raw()))
+        }
+        IconArt::Vector(path) => {
+            use resvg::{tiny_skia, usvg};
+            let data = std::fs::read(path).ok()?;
+            let tree = usvg::Tree::from_data(&data, &usvg::Options::default()).ok()?;
+            let mut pixmap = tiny_skia::Pixmap::new(side, side)?;
+            let size = tree.size();
+            let full = side as f32;
+            let scale = (full / size.width()).min(full / size.height());
+            let transform = tiny_skia::Transform::from_scale(scale, scale).post_translate(
+                (full - size.width() * scale) / 2.0,
+                (full - size.height() * scale) / 2.0,
+            );
+            resvg::render(&tree, transform, &mut pixmap.as_mut());
+            let mut rgba = Vec::with_capacity((side * side * 4) as usize);
+            for pixel in pixmap.pixels() {
+                let straight = pixel.demultiply();
+                let [r, g, b] = tint.unwrap_or([straight.red(), straight.green(), straight.blue()]);
+                rgba.extend_from_slice(&[r, g, b, straight.alpha()]);
+            }
+            Some((side, side, rgba))
+        }
+    }
+}
+
+/// A masked image's file, mask and tint.
+type MaskKey = (PathBuf, compass_core::image_url::ImageMask, Option<[u8; 3]>);
+
+/// `art` clipped to `mask`, ready for `iced::widget::image`, drawn once per
+/// file, mask and tint and kept: `view` asks for it on every frame.
+#[derive(Debug, Default)]
+pub struct MaskedCache {
+    entries: std::sync::Mutex<HashMap<MaskKey, Option<iced::widget::image::Handle>>>,
+}
+
+impl MaskedCache {
+    /// The masked image, drawing it on first ask; `None` when the file
+    /// cannot be drawn.
+    pub fn get(
+        &self,
+        art: &IconArt,
+        mask: compass_core::image_url::ImageMask,
+        tint: Option<[u8; 3]>,
+    ) -> Option<iced::widget::image::Handle> {
+        let key = (art.path().to_path_buf(), mask, tint);
+        let mut entries = self.entries.lock().ok()?;
+        entries
+            .entry(key)
+            .or_insert_with(|| {
+                let (width, height, mut pixels) = rasterize(art, MASK_SIDE, tint)?;
+                apply_mask(&mut pixels, width, height, mask);
+                Some(iced::widget::image::Handle::from_rgba(
+                    width, height, pixels,
+                ))
+            })
+            .clone()
     }
 }
 
@@ -619,6 +939,201 @@ mod tests {
             Some(&Glyph::builtin("blank-document"))
         );
         assert!(cache.cached("/nowhere/b.png").is_none());
+    }
+
+    fn lookup_with<'a>(
+        find: &'a dyn Fn(&str) -> Option<PathBuf>,
+        remote: &'a dyn Fn(&str) -> Option<PathBuf>,
+    ) -> UrlLookup<'a> {
+        UrlLookup {
+            find,
+            remote,
+            favicon: compass_core::favicon::Service::Google,
+            accent: crate::design::Rgb::new(0x35, 0x84, 0xe4),
+        }
+    }
+
+    #[test]
+    fn an_image_url_is_drawn_as_its_type_says() {
+        use compass_core::image_url::{ColorLike, ImageUrl, ImageUrlType};
+        let find = theme(&[("firefox", "/i/firefox.svg")]);
+        let remote = |url: &str| {
+            (url == "https://www.google.com/s2/favicons?domain=example.com&sz=128")
+                .then(|| PathBuf::from("/cache/favicon.png"))
+        };
+        let lookup = lookup_with(&find, &remote);
+
+        let Some(Glyph::Builtin {
+            name, tile, fill, ..
+        }) = url_glyph(
+            &ImageUrl::builtin("link").with_background_tint(ColorLike::Semantic("Purple".into())),
+            &lookup,
+        )
+        else {
+            panic!("a builtin draws a builtin");
+        };
+        assert_eq!(name, "link");
+        let tile = tile.expect("a tinted builtin sits on a tile");
+        assert!(tile.b > tile.g, "purple: {tile:?}");
+        assert_eq!(fill, Some(on_tile(tile)));
+
+        assert_eq!(
+            url_glyph(&ImageUrl::new(ImageUrlType::Emoji, "🎉"), &lookup),
+            Some(Glyph::Text("🎉".into()))
+        );
+        assert_eq!(
+            url_glyph(&ImageUrl::local("/opt/x/logo.png"), &lookup),
+            Some(Glyph::Art(IconArt::Raster("/opt/x/logo.png".into())))
+        );
+        assert_eq!(
+            url_glyph(&ImageUrl::new(ImageUrlType::System, "firefox"), &lookup),
+            Some(Glyph::Art(IconArt::Vector("/i/firefox.svg".into())))
+        );
+        assert_eq!(
+            url_glyph(
+                &ImageUrl::new(ImageUrlType::Favicon, "example.com"),
+                &lookup
+            ),
+            Some(Glyph::Art(IconArt::Raster("/cache/favicon.png".into()))),
+            "a favicon is its service's image, once fetched"
+        );
+        assert_eq!(
+            url_glyph(
+                &ImageUrl::new(ImageUrlType::Favicon, "elsewhere.org")
+                    .with_fallback(&ImageUrl::builtin("link")),
+                &lookup
+            ),
+            Some(Glyph::builtin("link")),
+            "until then, its fallback"
+        );
+        assert_eq!(
+            url_glyph(&ImageUrl::http("https://a.example/b.png"), &lookup),
+            None
+        );
+        assert_eq!(
+            remote_source(
+                &ImageUrl::new(ImageUrlType::Favicon, "example.com"),
+                compass_core::favicon::Service::None
+            ),
+            None,
+            "with favicons off nothing is fetched"
+        );
+    }
+
+    #[test]
+    fn a_tile_is_a_gradient_lighter_at_the_top_and_deeper_at_the_bottom() {
+        use crate::design::Rgb;
+        let lightness = |c: Rgb| {
+            let hsl = compass_core::contrast::to_hsl(to_core(c));
+            i32::from(hsl.lightness)
+        };
+        for tile in [
+            Rgb::new(0x3a, 0x9c, 0x61),
+            Rgb::new(0xb9, 0x54, 0x3b),
+            Rgb::new(128, 132, 138),
+        ] {
+            let tile = tile_tone(tile);
+            let (top, bottom) = tile_gradient(tile);
+            // `+0.10` and `-0.05` of lightness, on Qt's 0..=255 scale.
+            assert!(
+                (lightness(top) - lightness(tile) - 26).abs() <= 2,
+                "{top:?} over {tile:?}"
+            );
+            assert!(
+                (lightness(tile) - lightness(bottom) - 13).abs() <= 2,
+                "{bottom:?} under {tile:?}"
+            );
+        }
+        let white = Rgb::new(255, 255, 255);
+        assert_eq!(tile_gradient(white).0, white, "lightness is clamped");
+    }
+
+    fn opaque(side: u32) -> Vec<u8> {
+        vec![255; (side * side * 4) as usize]
+    }
+
+    fn alpha_at(pixels: &[u8], width: u32, x: u32, y: u32) -> u8 {
+        pixels[((y * width + x) * 4 + 3) as usize]
+    }
+
+    #[test]
+    fn a_circle_mask_clears_the_corners_and_keeps_the_middle() {
+        use compass_core::image_url::ImageMask;
+        let mut pixels = opaque(64);
+        apply_mask(&mut pixels, 64, 64, ImageMask::Circle);
+        assert_eq!(alpha_at(&pixels, 64, 0, 0), 0);
+        assert_eq!(alpha_at(&pixels, 64, 63, 63), 0);
+        assert_eq!(alpha_at(&pixels, 64, 32, 32), 255);
+        assert!(alpha_at(&pixels, 64, 32, 0) >= 250, "the top edge's middle");
+        // Where a circle has cut and a rounded rectangle has not.
+        assert_eq!(alpha_at(&pixels, 64, 6, 6), 0);
+        let edge = alpha_at(&pixels, 64, 9, 9);
+        assert!(edge > 0 && edge < 255, "the edge is antialiased: {edge}");
+    }
+
+    #[test]
+    fn a_rounded_mask_rounds_a_quarter_of_the_side() {
+        use compass_core::image_url::ImageMask;
+        let mut pixels = opaque(64);
+        apply_mask(&mut pixels, 64, 64, ImageMask::RoundedRectangle);
+        assert_eq!(alpha_at(&pixels, 64, 0, 0), 0, "a corner is cut");
+        assert_eq!(alpha_at(&pixels, 64, 6, 6), 255, "a circle would cut here");
+        assert_eq!(
+            alpha_at(&pixels, 64, 16, 0),
+            255,
+            "the straight edge is kept"
+        );
+        let mut untouched = opaque(8);
+        apply_mask(&mut untouched, 8, 8, ImageMask::None);
+        assert_eq!(untouched, opaque(8));
+    }
+
+    #[test]
+    fn a_masked_image_is_drawn_once_from_a_png_or_an_svg() {
+        use compass_core::image_url::ImageMask;
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("avatar.png");
+        image::RgbaImage::from_pixel(256, 128, image::Rgba([10, 20, 30, 255]))
+            .save(&png)
+            .unwrap();
+        let (width, height, _) =
+            rasterize(&IconArt::Raster(png.clone()), MASK_SIDE, None).expect("a png");
+        assert_eq!(
+            (width, height),
+            (MASK_SIDE, MASK_SIDE / 2),
+            "fitted, aspect kept"
+        );
+        let svg = dir.path().join("dot.svg");
+        std::fs::write(
+            &svg,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>"#,
+        )
+        .unwrap();
+        let (_, _, pixels) =
+            rasterize(&IconArt::Vector(svg.clone()), 16, Some([1, 2, 3])).expect("an svg");
+        assert_eq!(&pixels[..4], &[1, 2, 3, 255], "tinted, straight alpha");
+
+        let cache = MaskedCache::default();
+        assert!(
+            cache
+                .get(&IconArt::Raster(png), ImageMask::Circle, None)
+                .is_some()
+        );
+        assert!(
+            cache
+                .get(&IconArt::Vector(svg), ImageMask::RoundedRectangle, None)
+                .is_some()
+        );
+        assert!(
+            cache
+                .get(
+                    &IconArt::Raster(dir.path().join("gone.png")),
+                    ImageMask::Circle,
+                    None
+                )
+                .is_none(),
+            "a file that cannot be drawn is none, and the row keeps its initial"
+        );
     }
 
     #[test]

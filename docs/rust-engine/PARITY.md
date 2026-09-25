@@ -199,10 +199,10 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/vicinae` | `compass-core`, `compass_ui::app::vicinae` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 ## The window
@@ -214,14 +214,14 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 
 | C++ source | lines | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|--:|---|---|:-:|:-:|:-:|:-:|
-| `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 `compass-ui` opens a window, searches applications, moves the selection, launches on Enter and
@@ -231,8 +231,8 @@ clicks, and restores search focus when closed. Copy actions emit native clipboar
 headless tests inspect those writes and exercise the widgets, but delivery to another application
 still needs a desktop check. Since then the launcher has grown a page per builtin, extension
 views (list, grid, detail, form) and dialogs, which is why no row here is ❌ any more (the ledger
-truth pass below). The settings window, onboarding, the HUD and most of the drawn icon set are
-still ahead, so no row but `alert` is fully green.
+truth pass below). The HUD and onboarding landed in "The gaps pass, HUD and onboarding"; `alert`,
+`action-panel` and, since the settings pass, `settings` are the rows fully green.
 
 Three things about this section are worth stating plainly, because a table of ❌s invited the wrong
 reading:
@@ -328,22 +328,30 @@ PLAN §12.0 sizes them and says what blocks each.
   a model and waiting on a decision about what a fork fetches and sends.
 - `src/services/paste`: Still C++-only: synthetic paste on wlroots through the input server's
   `injectPaste`.
-- `src/services/shortcut-inhibit` and `src/services/window-material`: Still C++-only: the
-  keyboard-shortcuts-inhibit and background-effect Wayland plumbing, which is a stub.
+- `src/services/shortcut-inhibit`: Still C++-only: the keyboard-shortcuts-inhibit Wayland plumbing,
+  which is a stub.
+- `src/services/window-material`: the `ext-background-effect-v1` client is ported
+  (`compass_wayland::material`, "The gaps pass, HUD and onboarding"). Still C++-only: applying it
+  to the launcher's own surface, which the toolkits hand out only as a raw pointer (an `unsafe`
+  foreign-display bridge the workspace forbids).
 - `src/services/tray`: Still C++-only: Vicinae's own tray icon.
-- `src/builtins/snippet`: Still C++-only: Manage Snippets' detail pane and the backslash escape
-  for a literal brace.
-- `ui/qml`, `ui/quick`, `ui/views`: Still C++-only: the rest of the view layer — the settings window,
-  onboarding, the HUD, text highlighting in lists and Markdown, the edit-keywords view (the
-  app-selector landed in the views pass), and drag and drop.
-- `ui/settings`, `ui/windows`: Still C++-only: the settings window and its pages (general,
-  appearance, keybinds, extensions) beyond the sidebar model and the preferences form.
+- `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
+  escape).
+- `ui/qml`, `ui/quick`: The HUD and onboarding closed in "The gaps pass, HUD and onboarding".
+  `ui/views` closed in "The gaps pass, UI" below (match and Markdown highlighting, extension
+  grids; the edit-keywords view had landed with clipboard history and the emoji picker, the
+  app-selector in the views pass), the settings pages in "The gaps pass, settings"; dragging
+  out of the window is a declared difference, Iced having no drag out of a window.
+- `ui/settings`: closed in "The gaps pass, settings" below.
+- `ui/windows`: the settings window is a view of the launcher since "The gaps pass, settings"
+  (declared there). The HUD and onboarding closed in "The gaps pass, HUD and onboarding"
+  (onboarding drawn in the launcher card, declared there).
 - `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
-  "The gaps pass, icons and tray". Still C++-only: circle and rounded-rectangle masks, the icons of
-  extension, script and shortcut rows in root search (they show an initial), favicons, and reading
-  a bare icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
+  "The gaps pass, icons and tray"; masks, root rows' icons, favicons, `ImageURL(source)` and the
+  tile's gradient and shadow since "The gaps pass, UI" below.
 - `ui/action-panel`: closed in "The gaps pass, root and actions" below.
-- `ui/bridges`: Still C++-only: images inside an extension's Markdown detail, which are not fetched.
+- `ui/bridges`: closed in "The gaps pass, UI" below (a Markdown detail's images are fetched and
+  drawn).
 
 ### Gaps closed after the truth pass (2026-09-25)
 
@@ -388,8 +396,8 @@ What differs, by row:
 | Row | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | `ui/image` | `renderFileIcon` asks `QMimeDatabase` (`MatchDefault`: the name's globs, then the content's magic) and the type's `iconName` and `genericIconName`, which the shared-mime-info database may override per type. | The type by extension (`mime_guess`, already in the tree), `inode/directory` for a directory; the icon names by shared-mime-info's defaults (`image/png` → `image-png`, generic `image-x-generic`; a directory's generic `folder`). An extensionless file is `application/octet-stream` rather than sniffed, and a type's own `<generic-icon>` is not read. | `a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin`, `mime_icon_names_follow_the_shared_mime_info_defaults` |
-| `ui/image` | A tile is a vertical gradient with a hairline and a drop shadow under the glyph, the tile colour from the theme's semantic colours. | A flat tile with the hairline, in the Vicinae dark theme's accents (the launcher's own palette carries only an accent), clamped into `clampTileTone`'s band; no gradient or shadow. | `a_command_is_drawn_on_its_tile_with_a_light_glyph` |
-| `ui/image` | A clipboard link row shows the site's favicon. | The builtin link icon: favicons are fetched from the network, which the launcher does not do for clipboard rows yet. | `clipboard_rows_and_the_default_mark_use_the_cpps_builtins` |
+| `ui/image` | A tile is a vertical gradient with a hairline and a drop shadow under the glyph, the tile colour from the theme's semantic colours. | The gradient and the shadow since "The gaps pass, UI"; the tile colour is still the Vicinae dark theme's accents (the launcher's own palette carries only an accent), clamped into `clampTileTone`'s band. | `a_command_is_drawn_on_its_tile_with_a_light_glyph`, `a_tile_is_a_gradient_lighter_at_the_top_and_deeper_at_the_bottom` |
+| `ui/image` | A clipboard link row shows the site's favicon. | The same since "The gaps pass, UI": the favicon, the builtin link icon until it has been fetched. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn` |
 | `tray-host` | `SniWatcher` claims the watcher name only after a three-second grace, releases it when another connection queues for it, and accepts an item registered as `busname/path`. | The `system-tray` crate's watcher claims the name at once when it is free and keeps it; it accepts a bus name or an object path (what libappindicator and KDE send) and refuses the combined `busname/path` form. A desktop's own watcher (a bar, KDE, GNOME's AppIndicator extension) is used when it is already there. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
 | `tray-host` | An item is keyed by bus name and path, and its menu fetched with `GetLayout` when the view opens. | Keyed by the bus name it registered from, as the crate keeps it (one item per connection); the menu is the layout the crate follows through `LayoutUpdated`, after an `AboutToShow`. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
 | `ui/image` | Builtin icons are compiled into the binary as Qt resources. | Read from the installed `vicinae/builtin-icons` directory (`compass_core::builtin_icon::directory`); where it is missing a row keeps its initial, as before. | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial` |
@@ -546,9 +554,7 @@ What differs, by row:
 |---|---|---|---|
 | `builtins/root` | The provider view ranks by visits as root search does. | It ranks in the window, without the engine's launch history: matches by score, the empty query in index order. | `a_launch_deeplink_to_a_provider_searches_its_items_alone` |
 | `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
-| `builtins/root` | A fallback row's panel is Open plus Manage Fallback Actions. | Enter opens it; the fallback manager's view is `builtins/vicinae`'s gap. | — |
 | `builtins/vicinae` | Where the platform cannot paste, the picker offers no paste action and `defaultAction` defaults to copy. | The window cannot know before asking, so paste is offered whenever an engine is attached, and a refusal copies; the result is the same glyph on the clipboard. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
-| `builtins/vicinae` | Copying shows the "Copied to clipboard" HUD. | No HUD (the `ui/qml` row's gap); the launcher hides. | — |
 | `builtins/vicinae` | The paste action is titled `Paste to <frontmost app>` with its icon. | `Paste to active window`, the C++'s title when no application is frontmost. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and binding it waits on `global-shortcuts`. | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
 | `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Neither: the engine binds only the launcher's toggle, and the inhibit protocol is `shortcut-inhibit`'s gap. | — |
@@ -607,7 +613,9 @@ Copying the calculator's answer, from the root list or the view's live result, r
 first under the C++'s `live_calc` gate and offers the C++ panel (pin or unpin, copy answer, question,
 or both, delete, delete all). Declared differences: a row's conversion flag comes from the question's
 `to`/`in`/`as`/`->` keyword, since fend reports no answer type; "Delete all entries" deletes, where
-the C++ action's `execute` is empty; success says so in the view rather than a toast or HUD.
+the C++ action's `execute` is empty; pinning and removing say so in the view rather than a toast.
+Copying shows the C++'s HUD ("Answer copied to clipboard", "Copied to clipboard"; see "The gaps pass,
+HUD and onboarding").
 Currency conversion and Refresh Exchange Rates stay unported, blocked on a rate source.
 
 **`src/services/app-runtime`.** `LinuxAppRuntime` over the engine's window providers (IPC v17
@@ -621,8 +629,8 @@ The root row's panel opens at once and gains Focus Window, Close Window, Quit Ap
 Ctrl+Q) and Force Quit Application when the engine says the application runs, as
 `AppRootItem::newActionPanel`; the window switcher gets the C++'s panel (Focus Window, Close Window
 on Ctrl+Q, and Quit and Force Quit for a window whose application is known). Neither asks first,
-as the C++ does not. Declared differences: success hides the launcher without the C++'s HUD
-("Quit Files"), which Compass does not have; Ctrl+Q is shown beside Quit but, as with every
+as the C++ does not; success hides the launcher with the C++'s HUD ("Quit Files", "Force quit
+Files"). Declared differences: Ctrl+Q is shown beside Quit but, as with every
 builtin panel here, the chord is not bound yet, so Quit runs from its row; the pin-window and bring-to-workspace actions are not offered, no provider here
 having the capability. `frontmost` is answered but nothing reads it yet: its C++ reader is the
 global-shortcut inhibition, which is that row's gap.
@@ -666,7 +674,7 @@ Declared differences:
   installed.
 - Paste is offered where the engine has its GNOME Shell client; a wlroots session copies over
   data-control (no synthetic paste there yet, `src/services/paste`'s gap).
-- Success hides the launcher without the C++'s HUD ("Wallpaper set", "Copied to clipboard");
+- Success hides the launcher with the C++'s HUD ("Wallpaper set", "Copied to clipboard");
   failures show under the list rather than as a toast.
 - Dragging a file out of the list: Iced offers no drag out of a window (`src/builtins/clipboard`
   shares this).
@@ -698,12 +706,290 @@ hides. Declared differences:
 - An unnamed niri workspace is called by its number; the C++ shows an empty title.
 - The monitor is shown whenever the compositor names one; the C++ shows it only when it matches a
   Qt screen's name.
-- The applications on a workspace are its accessory as names, not icons (`ui/image`'s gap).
+- The applications on a workspace are its accessory as names, not icons.
 - On GNOME the C++ lists workspaces through its Shell extension's `ListWorkspaces`; Compass's Shell
   extension has no such call, so GNOME offers Switch Windows only. That is a gap in the GNOME
   provider (`src/services/window-manager`), not in this view.
 - Hyprland's classic dispatcher fallback for fullscreen is `fullscreen 0`, which acts on the active
   window: the classic form has no window argument.
+
+### The gaps pass, UI (2026-09-25)
+
+The rest of `ui/image`, the snippet view and the Markdown detail's images, against the C++ in
+`src/server/src/ui/image`, `src/server/src/favicon`, `builtins/snippet` and `utils/placeholder.cpp`
+(IPC v19). A cell flips only with a named module and named tests that fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `ui/image` | Rust ✅ | `compass_core::image_url::{ImageUrl::from_source, SourceLookup}` (`ImageURL(const ImageLikeModel &)` for a bare string: an `icon://`, `file:`, `data:` or `http(s):` URL, an emoji, a glyph of the table, a builtin, a file, an asset, a theme icon); `compass_core::favicon::Service` (`favicon_service`: `twenty`, `google`, `none`); `compass_core::extension_commands::ExtensionCommand::icon_url` (`ExtensionCommand::iconUrl`); `compass_ui::icons::{url_glyph, UrlLookup, remote_source, semantic_color, Glyph::Text, tile_gradient, apply_mask, rasterize, MaskedCache}`; `LauncherApp::{url_icon, warm_urls, root_icon_arrived}` with `shortcut_url` (`RootShortcutItem::iconUrl`'s purple tile) and `clipboard_url` (the favicon with the link builtin as fallback); script icons over IPC v19 `ScriptIcons` (`vicinae::scripts::Scripts::icons`); `Image.mask` read by `compass_worker_host::view_model` and kept per row (`ExtensionPage::mask`) | `a_bare_source_is_read_as_image_url_reads_one`, `a_remote_images_own_query_survives_the_round_trip`, `each_service_asks_for_the_cpps_url_and_none_asks_nothing`, `the_configuration_names_the_service_and_twenty_is_the_default`, `the_icon_is_the_commands_then_the_extensions_then_the_hammer`, `an_image_url_is_drawn_as_its_type_says`, `a_tile_is_a_gradient_lighter_at_the_top_and_deeper_at_the_bottom`, `a_circle_mask_clears_the_corners_and_keeps_the_middle`, `a_rounded_mask_rounds_a_quarter_of_the_side`, `a_masked_image_is_drawn_once_from_a_png_or_an_svg`, `extension_script_and_shortcut_rows_draw_their_icons_in_root_search`, `a_favicon_is_fetched_once_into_the_cache_and_then_drawn`, `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept`, `an_images_mask_is_kept_in_either_spelling`, `script_commands_are_scanned_searched_and_run_in_their_modes` (a real engine) |
+| `src/builtins/snippet` | Rust ✅ | `compass_core::placeholder::{parse_snippet_text, parse}` (`PlaceholderString::parse`, with its backslash escape), used by `vicinae::snippets`, the save path's cursor count and `snippets_page::arguments_form`; the detail pane: `compass_ui::snippets_page::{Detail, detail_fields}`, `compass_ui::app::snippets::{snippet_detail_task, snippet_detail_pane}`, `vicinae::snippets::preview` over IPC v19 `PreviewSnippet` | `an_escaped_brace_is_text_and_not_a_placeholder`, `a_doubled_backslash_is_one_and_the_brace_after_it_opens_a_placeholder`, `another_escaped_character_loses_its_backslash_and_a_trailing_one_stays`, `without_a_backslash_it_reads_as_a_quicklink_does`, `an_escaped_brace_expands_as_a_brace`, `an_escaped_brace_asks_for_no_argument`, `a_preview_shows_a_shell_placeholder_instead_of_running_it`, `the_pane_lists_what_load_detail_lists_in_its_order`, `manage_snippets_shows_the_selected_snippets_detail_pane`, `snippets_are_imported_created_expanded_edited_and_removed` (a real engine) |
+| `ui/bridges` | Rust ✅ | `ExtensionPage::{wanted_images, image_arrived, markdown_art}` fetch a detail's Markdown images through `compass_ui::remote_image`'s cache, drawn by the store page's viewer (`app::stores::StoreMarkdown`) | `a_details_markdown_images_are_fetched_and_drawn` |
+| `ui/views` | Rust ✅ | `compass_search::term_ranges` (`MatchHighlighter`: each search word found literally, ignoring case and accents) with `compass_ui::clipboard_page::highlighted`, drawn as `rich_text` spans behind the accent at 35% in clipboard history's detail text; Markdown code blocks highlighted by their language (Iced's `highlighter` feature, syntect through `two-face`); an extension's grid drawn as a grid (`ExtensionPage::{grid_columns, grid_groups, section_columns, grid_step}`, `LauncherApp::extension_grid`), each section in its own columns, the arrows moving as `SectionGridModel::navigate*`; the edit-keywords view is clipboard history's and the emoji picker's keyword form | `every_occurrence_of_each_term_is_found_ignoring_case_and_accents`, `a_term_does_not_overlap_itself_and_overlapping_terms_merge`, `the_searched_words_are_marked_in_the_detail_text`, `a_code_block_is_highlighted_by_its_language`, `a_grid_moves_by_cell_and_by_its_sections_columns`, `an_extension_grid_is_drawn_as_tiles_and_the_arrows_move_by_cell_and_row`, `the_kind_filter_the_pane_keywords_remove_all_and_monitoring`, `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
+
+**`ui/image` → every `ImageURL` a root row carries.** An extension command's row draws the command's
+icon from the extension's assets, else the extension's, else the hammer on a cyan tile; a script's,
+what the engine resolved from its `@raycast.icon` (an emoji, a file beside the script, an `https`
+image, else `code` on the accent tile); a shortcut's, the `ImageURL` it stored, a builtin on a
+purple tile; a clipboard link, its site's favicon with the link builtin as the fallback. Each is
+resolved once per URL from `update` (`warm_urls`), never in a draw. A remote image (an `https` icon,
+a favicon through `favicon_service`'s service) is fetched once into `compass_ui::remote_image`'s
+cache and the row redrawn when it lands; until then the URL's fallback, else the initial. An
+extension's image string that is not a builtin is read as `ImageURL(source)` reads it, so an emoji
+is drawn as text and a theme icon's name as that icon. `Image.mask` is honoured: the image is drawn
+into pixels (`image` for PNG and JPEG, `resvg` for SVG, both already in the tree) and clipped as
+`applyCircleMask` (the inscribed ellipse) and `applyRoundedRectMask` (a quarter of the shorter side)
+clip it, antialiased; the result is kept per file, mask and tint. A command tile is
+`applyBackdrop`'s: the vertical gradient (`shifted(tile, 0.025, -0.03, 0.10)` to
+`shifted(tile, -0.015, 0.06, -0.05)`), the hairline, and the glyph's silhouette at 70/255 black,
+3.5% of the side lower, under the glyph.
+
+**`src/builtins/snippet` → the pane and the escape.** `\{` is a literal brace and `\\` one
+backslash, as `PlaceholderString::parse` reads them, everywhere a snippet's text is parsed: copying
+and pasting, the arguments form, the save path's `{cursor}` count and keyword expansion. Manage
+Snippets shows `loadDetail`'s pane beside the list, following the selection (a late answer for
+another row is dropped): the text expanded by the engine with `executeShell` off, so a shell
+placeholder reads `$(code)` and nothing runs, then Type, Created at, Updated at (when edited),
+Keyword and Apps.
+
+**`ui/views` → highlighting and grids.** Clipboard history's detail text marks every occurrence of
+each word of the search, as `ClipboardHistoryView` hands `searchTerms` to `TextViewer`'s
+`MatchHighlighter`; a fenced code block in any Markdown the launcher draws (an extension's detail,
+a store README, release notes) is coloured by its language. An extension's `Grid` was drawn as a
+single-column list; it is a grid now, eight columns unless the grid or the section says otherwise,
+Left and Right in reading order, Up and Down by the section's columns into the neighbouring
+section's nearest row, wrapping only where navigation wraps.
+
+**`ui/bridges` → a Markdown detail's images.** An extension's detail view asks for the remote images
+its Markdown shows once, with its rows' images, and draws each where it stands once fetched, the
+placeholder until then, as the store's README does.
+
+What differs, by row:
+
+| Row | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| `ui/image` | `FaviconService` keeps favicons in its own database and `favicon-data/`, and asks its service for 128 px (its fallback to smaller sizes is not connected). | The service's 128 px image through `compass_ui::remote_image`'s cache, as every remote image here is kept (ADR-0017); `none` fetches nothing and the fallback stays. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn`, `each_service_asks_for_the_cpps_url_and_none_asks_nothing` |
+| `ui/image` | A masked image is clipped at the size it is drawn. | Drawn into at most 128 px, clipped, and scaled to the slot. | `a_masked_image_is_drawn_once_from_a_png_or_an_svg` |
+| `ui/image` | An `ImageURL`'s `badge` is drawn on any icon. | On builtin commands' tiles, as before; a badge in a stored `ImageURL` is not drawn. | — |
+| `ui/image` | `ImageURL(source)` tests a relative path against the working directory (`QFile(source).exists()`). | Only an absolute path is a file; a relative one is an asset or a theme name. | `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept` |
+| `ui/image` | Remote icons are fetched by every build. | By the launcher `vicinae` starts (`AppFlags::remote_icons`); off in tests, which never reach the network. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn` |
+| `ui/image` | `QUrl::toString()` escapes a name's `?`, `#` and `%` in an `icon://` URL. | The same (`ImageUrl::to_url`); before this pass an `https` image with a query string did not survive the round trip. | `a_remote_images_own_query_survives_the_round_trip` |
+| `ui/views` | `TextViewer` scrolls to the first match. | The matches are marked; the pane is not scrolled to them. | `the_searched_words_are_marked_in_the_detail_text` |
+| `ui/views` | Code blocks are coloured by KSyntaxHighlighting in the theme's semantic colours. | By syntect's grammars in the Base16 Ocean theme, which Iced's Markdown fixes. | `a_code_block_is_highlighted_by_its_language` |
+| `ui/views` | A grid's cells follow its `aspectRatio`, `fit` and `inset`. | Square tiles, the content at 70% of the tile; the three are read but not applied. | `an_extension_grid_is_drawn_as_tiles_and_the_arrows_move_by_cell_and_row` |
+| `ui/views` | A grid section's title stays pinned as it scrolls, and PageUp/PageDown jump by section. | The title scrolls with its cells; no section jumps. | — |
+| `builtins/snippet` | The pane re-expands as argument values are typed into the search bar's completer. | Manage Snippets has no completer: arguments expand empty. | `manage_snippets_shows_the_selected_snippets_detail_pane` |
+| `builtins/snippet` | The pane lists the keyword's applications as icons with their names as tooltips. | Their names, comma-separated. | `the_pane_lists_what_load_detail_lists_in_its_order` |
+
+### The gaps pass, settings (2026-09-25)
+
+The C++ settings window (`src/server/src/ui/settings`, `ui/windows/settings-window.*` and
+`ui/qml/settings/*.qml`), against its models: `GeneralSettingsModel`, `ExtensionSettingsModel`,
+`PreferenceFormModel`, `ProviderCommandModel`, `KeybindSettingsModel`, `SettingsSidebarModel` and
+`SettingsController` (IPC v19).
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/server/src/ui/settings` | Rust ✅, parity ✅ | `compass_core::settings_catalog` (every setting's key, kind, default and C++ property; the C++ settings with no reader, declared; `parse_settings_link`), `Config::{get_path, set_path, set_provider_enabled}`, `RootEdit::Enabled`; `vicinae::serve::settings` (IPC v19 `SetSetting`, `SetProviderEnabled`, `RootItemEdit::Enabled`); `compass_ui::settings_page` over `compass_ui::settings::SidebarModel`, `compass_ui::app::settings_view` | `the_settings_view_writes_each_setting_and_switch_into_the_configuration` (a real engine over temp XDG dirs: settings written where the engine reads them, refusals write nothing, the switches change root search), `every_cpp_general_settings_property_is_ported_or_declared`, `a_default_the_schema_documents_is_the_same_here`, `applying_writes_the_key_the_engine_reads_and_keeps_the_rest`, `a_value_the_setting_does_not_take_is_refused_and_nothing_changes`, `each_control_writes_the_file_and_the_launcher_follows_at_once`, `the_extension_page_switches_aliases_and_records_shortcuts`, `the_hotkey_is_recorded_into_the_launcher_section`, `with_an_engine_the_engine_writes_and_a_theme_is_kept_or_put_back`, `a_commands_preferences_open_over_the_settings_and_go_back_to_them`, `a_root_rows_open_preferences_opens_the_settings_at_its_provider`, `open_settings_is_a_root_command_and_ctrl_comma_and_escape_leaves`, `a_deeplink_opens_the_tab_it_names`, `settings_page::tests`, `the_settings_switches_turn_an_item_and_a_provider_back_on` |
+
+**What it is.** Open Settings (the vicinae extension's `settings` command, a root command here),
+Ctrl+, from the root (`Keybind::OpenSettings`), a root row's Open Preferences
+(`OpenItemPreferencesAction`, at the item's provider) and `vicinae://settings/open?tab=` (the
+`settings` IPC command, `openTab`'s aliases `keybinds`, `shortcuts` and `extensions` included) open
+the settings: the C++ sidebar (its five pages, a divider, the providers, filtered fuzzily by the
+search field) and the selected page. The pages draw `settings_catalog`'s settings by kind — a
+switch, a list, a number or text field kept on Enter, a folder list, the shortcut recorder for the
+launcher hotkey, the theme list — and every control writes its dotted key through `SetSetting`,
+which the engine checks against the catalogue, writes into `vicinae.json` (a file that does not
+parse is left alone) and applies where it holds the value (the clipboard's preferences, Run
+Terminal Program's default action, the input server, the result count). The window applies what it
+holds itself: the navigation scheme and wrapping, quick launch, the layout preset, icons and tint,
+the clock, the font, the theme (previewed, and put back when the engine refuses it), the power
+confirmations and the emoji picker's preferences. A provider's page is `ExtensionSettingsModel`'s:
+its switch (`SetProviderEnabled`), and for each item its switch (`RootItemEdit::Enabled`), alias,
+recorded shortcut, the preferences form of an extension command (the existing form, returning to
+the settings) and the builtin preferences that belong to it (`clipboard`, `files`, `snippets`,
+Browse Apps, Run Terminal Program, Search Emojis, the power commands; the script directories on the
+Script Commands page). About shows the version and opens the documentation and the bug tracker.
+
+Declared differences:
+
+- **A view of the launcher, not a second window.** `SettingsController::openWindow` opens an
+  independent floating window; Compass shows the same sidebar and pages in the launcher card.
+  A second Iced window would need the resident daemon's per-window views and a second surface on
+  both compositor paths (layer shell and `xdg_toplevel`) for pages that are a sidebar and a form.
+  Escape leaves the settings for the root search.
+- **The C++ settings Compass has no reader for are not offered**, each listed with its reason at
+  the foot of its page (`settings_catalog::NOT_IN_COMPASS`), rather than written to a file that
+  would then look as though it honoured them (the rule `config_migration` follows): Close on
+  Escape, Pop to root on close, Language, usage statistics, Font size, Icon Theme, Window material
+  and opacity, Compact mode, Floating status bar, layer shell, client-side decorations and their
+  rounding, border and shadow, native font rendering, Pop on backspace, Activate on single click,
+  IME handling, Root file search, Favicon fetching, the tray icon, Encrypt sensitive data, and
+  rebinding the launcher's keys (the Keybindings page lists the fixed ones).
+- **Settings only Compass has are offered beside them**: quick launch, the result count, the clock,
+  the colour scheme, the layout preset, application icons and translucency.
+- The launcher hotkey and Close on focus loss are written to `launcher.hotkey` and
+  `launcher.close_on_focus_loss`, the schema's keys; the engine still binds Super+Space and the
+  window does not yet hide on focus loss (`src/services/global-shortcuts`' gap).
+- The font is a text field (empty for the desktop's interface font), where the C++ has a list of
+  the installed families; Browse Fonts' "Set as vicinae font" remains the way to pick from them.
+- A folder list is one field with `:` between folders, where the C++ has a file picker per entry.
+- The clipboard, file index and snippet preferences sit under Clipboard History, Search Files and
+  Manage Snippets on the Commands page, since Compass's builtins are one provider; the C++ shows
+  them on the Clipboard, File Search and Snippets extension pages.
+- A provider's provenance is Built-in, Raycast or Extension; the C++ also tells the Vicinae store
+  from a local build.
+- The file index, snippet and script preferences are read where they are used or when the engine
+  next starts, as `vicinae.json` edited by hand is.
+
+### The gaps pass, HUD and onboarding (2026-09-25)
+
+The view layer's HUD and first-run flow and `src/builtins/vicinae`'s remaining views, from PLAN
+§12.0, against the C++ in `src/server/src/ui` and `builtins/vicinae` (IPC v19). A cell flips only
+with a named module and named tests that fail on a regression.
+
+**The HUD** (`ui/windows/hud-bridge.*`, `ui/qml/hud`). `compass_ui::hud` holds the pill's state:
+what it says (a line and a builtin icon or an emoji), which surface is its own, and its deadline,
+1.5 s after the last message, which a new message moves as `m_timer.start()` restarts the C++'s. The
+surface is a second layer surface (`crate::surface::open_hud`: namespace `vicinae-hud`, the `top`
+layer, unanchored so centred, on the active output, no keyboard interactivity and transparent to
+the pointer, as `HudWindowLayerShell.qml`), drawn by `LauncherApp::view_for` as `HudWindow.qml`'s
+pill: the background at 90%, the divider for its edge, a 16 px icon and a line elided at 270 px. It
+is offered where the C++ offers it on Linux, a layer-shell presentation
+(`Environment::isHudSupported`); on GNOME's toplevel `showHud` only hides, and so does Compass.
+`LauncherApp::show_hud` is `NavigationController::showHud`: it hides the launcher and puts up the
+pill. It is wired where the C++ calls it: Quit and Force Quit ("Quit Files", "Force quit Files"),
+the calculator's copies ("Answer copied to clipboard"), `CopyToClipboardAction`'s copies ("Copied to
+clipboard" with its icon: the emoji picker, including a refused paste's copy, Browse Apps, Run
+Terminal Program, Search Files, Calculator History's rows), clipboard history's copy ("Selection
+copied to clipboard"), a shortcut's and a snippet's copy, and Set as wallpaper ("Wallpaper set").
+The engine's own HUDs (the media commands, a `silent` script's line, a Rhai script's `hud`, Set
+Default Browser and Terminal) go to the window as IPC v19 `WindowCommand::Hud`, which the window
+answers `Failed` where it has no HUD; the engine then posts the transient notification it posted
+before.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `ui/qml`, `ui/quick`, `ui/windows` | — (the HUD is closed; the settings window keeps each amber) | `compass_ui::hud`, `compass_ui::app::hud` (`show_hud`, `copy_with_hud`, `view_for`), `compass_ui::surface::{open_hud, layer::hud_settings}`, `vicinae::serve::show_hud` over `WindowCommand::Hud` | `a_second_message_reuses_the_surface_and_restarts_the_timer`, `a_surface_closed_under_it_is_forgotten`, `the_hud_surface_takes_no_keyboard_and_no_pointer`, `a_toplevel_presentation_opens_no_hud_surface`, `quit_and_force_quit_hide_with_the_cpps_hud`, `a_copied_answer_shows_the_calculators_hud_until_its_time_is_up`, `without_a_hud_a_copy_only_hides_and_an_exiting_launcher_shows_none`, `the_hud_surface_is_not_taken_for_the_launcher_window`, `the_engines_hud_is_refused_where_the_presentation_has_none`, `a_refused_paste_copies_the_glyph_with_the_copy_hud`, `a_set_wallpaper_and_a_copied_file_say_so_and_running_does_not`, `the_engines_hud_reaches_the_launchers_hud` (a real engine and a fake window) |
+
+Declared differences:
+
+- The surface is a fixed 336×48 with the pill centred in it, rather than sized to the pill: a layer
+  surface's size is asked for before anything is laid out, and the rest of it is transparent and
+  takes no input.
+- An extension's `showHUD` is still a desktop notification: the extension host runs outside the
+  window's reach (`HeadlessShell`), and the launcher has hidden by then.
+- Where there is no HUD, the engine's HUDs become a transient notification rather than nothing.
+- Set Default Terminal's HUD has no icon (the C++'s is a green `$` symbol, which the builtin set does
+  not have).
+
+**Onboarding** (`ui/windows/onboarding-window.*`, `ui/qml/onboarding`). `compass_core::onboarding`
+is `OnboardingWindow`'s gate and record and the QML's step logic: the flow is due when
+`$XDG_STATE_HOME/vicinae/onboarding.json` records a version older than `ONBOARDING_VERSION` (1) or
+cannot be read, and finishing writes `{"version":1,"completedAt":"…"}` there, the C++'s own file,
+so a person who finished it under either engine is not asked again. The steps are the QML's on
+Linux: "Welcome to Vicinae", "Make it your own" (the theme, kept as Set Theme keeps it, and the
+global hotkey row) and "Setup complete" (GitHub and Sponsor), with Back, the step dots (a click
+jumps), Continue and Finish; Enter continues and Escape closes without recording, so the next start
+asks again. `vicinae` passes the state file to the window when the flow is due
+(`AppFlags::onboarding`), and the window opens on it at start even when started hidden, as the C++
+shows its window at server start. `COMPASS_NO_ONBOARDING` is the C++'s `ENABLE_ONBOARDING=OFF`, and
+the VM tier, the sway harness and the session bench set it.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `ui/qml`, `ui/quick`, `ui/windows` | — (onboarding is closed; the settings window keeps each amber) | `compass_core::onboarding` (`should_show`, `mark_completed`, `Flow`), `compass_ui::onboarding_page`, `compass_ui::app::onboarding`, `vicinae::onboarding_due` | `it_is_due_until_the_current_version_is_recorded`, `the_cpps_own_file_is_read`, `linux_has_three_steps_and_continue_finishes_on_the_last`, `the_permissions_step_is_macos_only`, `the_switch_reads_like_a_boolean_environment_variable`, `a_due_onboarding_opens_the_window_even_when_started_hidden`, `finishing_the_onboarding_records_it_and_hides`, `escape_closes_the_onboarding_without_recording_it`, `every_onboarding_step_draws_its_heading_and_buttons` |
+
+Declared differences:
+
+- The flow is drawn in the launcher's card rather than a 700×480 window of its own: the launcher has
+  one surface, and a second toplevel would be a second window for the compositor to place. Finishing
+  hides the card, as finishing hides the C++'s window.
+- The global hotkey row takes the C++'s branch for a platform without global shortcuts ("Bind a key
+  to "vicinae toggle"" and Open Docs): the engine binds its toggle through the portal, with no
+  recorder to change it from here (`src/services/global-shortcuts`' gap). The last step's sentence
+  follows.
+- The macOS permissions step and Launch at login are not offered, as on the C++'s Linux build.
+
+**`src/builtins/vicinae`'s remaining views** (`VicinaeExtension`). Each command is a builtin under
+its C++ id (`commands:<id>`, and `core:<id>` names it too), as `CommandKind::Vicinae`, dispatched by
+`compass_ui::app::vicinae`:
+
+- **Configure Fallback Commands** (`ManageFallbackViewHost`): the items `isSuitableForFallback`
+  admits (Search Files, every extension command, every quicklink with one argument) in "Enabled", in
+  the configured order (`bug_report::order_enabled`), and "Available"; fuzzy over the title and, at
+  0.3, the keywords. Enter or the panel's one action enables an item first in `fallbacks` or disables
+  it, at once in the window and in `vicinae.json` through IPC v19 `RootItemEdit::Fallback`
+  (`compass_core::root_items::set_fallback`, as `enableFallback` and `disableFallback`). Search Files
+  is written by the C++'s id, `files:search`, and disabled by whichever id names it. A root fallback
+  row's panel is Open (command) and Manage Fallback Actions (`fallbackActionPanel`).
+- **Show Installed Extensions**: every installed extension's manifest, with its provenance badge
+  (Raycast, Vicinae, Local), Uninstall (asking first, as `UninstallExtensionAction`, through the
+  store's uninstall) and Copy Name, ID, Path and Author.
+- **Search Builtin Icons**: every builtin icon, drawn, with Copy Icon Name.
+- **Inspect Local Storage** and **Manage OAuth Token Sets**: the encrypted database's namespaces,
+  then a namespace's keys with Show value; the token sets with "Expired", Remove token set (asking
+  first) and the copies (access, refresh and ID token, scopes, expiration date), over IPC v19
+  `LocalStorageNamespaces`, `LocalStorageItems`, `OAuthTokenSets` and `RemoveOAuthTokenSet`
+  (`vicinae::serve::storage`), refused by name without a keyring as calculator history is.
+- **Refresh Apps**, **Reload Script Directories**: rescan and say so, with the C++'s sentences.
+- **Report a Vicinae Bug**, **Donate to Vicinae**, **Join the Discord Server**: open the link and
+  hide with "Opened in browser"; the report is pre-filled from this build and `/etc/os-release`
+  (`bug_report::{report_url, parse_os_release}`).
+- **Open Config File**, **Open Default Config File** (this engine's defaults written read-only to the
+  runtime directory), **Show Log File** (`compass.log`, in the file browser).
+- **The store intros** (`StoreIntroViewHost`): the Vicinae and Raycast stores open on their intro
+  until "Continue to store", or always with `alwaysShowIntro`.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/builtins/vicinae` | Rust ✅ | `compass_ui::{app::vicinae, fallbacks_page, vicinae_pages}`, `compass_core::commands::CommandKind::Vicinae`, `compass_core::root_items::set_fallback`, `compass_core::bug_report::{report_url, parse_os_release}`, `vicinae::serve::storage` | `configure_fallback_commands_moves_items_between_its_sections`, `enabled_come_first_in_the_configured_order_then_the_available`, `the_filter_narrows_both_sections_and_an_available_row_enables`, `a_fallback_is_enabled_first_and_disabled_as_the_cpp_writes_them`, `the_fallback_manager_writes_the_users_fallbacks` (a real engine), `installed_extensions_are_listed_copied_and_uninstalled_after_asking`, `search_builtin_icons_copies_the_name`, `inspect_local_storage_browses_a_namespace_and_shows_a_value`, `manage_oauth_token_sets_copies_and_removes_after_asking`, `local_storage_lists_its_namespaces_and_their_items_as_text`, `token_sets_are_listed_with_their_expiry_and_removed`, `the_link_and_refresh_commands_do_what_their_cpp_ones_do`, `the_default_config_is_written_read_only_and_replaced`, `the_vicinae_extensions_commands_keep_their_cpp_ids`, `os_release_gives_the_pretty_name_and_version_unquoted`, `the_report_link_carries_the_title_body_and_type`, `the_extension_store_installs_into_root_search_and_uninstalls_after_asking` (the intro) |
+
+Declared differences:
+
+- Open Vicinae Settings is not offered: the settings window is `ui/settings`' gap. Forget Past
+  Vicinae Telemetry is not offered: sending anything is `src/services/telemetry`'s open decision.
+- Report a Vicinae Bug's optional title argument is not asked for; the issue opens untitled. Its
+  "QT Platform" line says `wayland`.
+- The Available section lists Search Files, then the extensions, then the quicklinks, rather than in
+  root search's empty-query order; a filter orders it by score as the C++'s does.
+- A store intro's continuation is remembered in the view memory (`compass-view-state.json`) rather
+  than the command's local storage, and the intro's Markdown has no icon above it.
+- Show Installed Extensions shows each extension's initial rather than its `assets` icon
+  (`ui/image`'s gap).
+- Show value says the value under the list rather than in a toast.
+
+**`src/services/window-material`** (`ExtBackgroundEffectV1Manager`, `createRoundedRegion`).
+`compass_wayland::material::BackgroundEffects` binds `ext_background_effect_manager_v1` (from
+`wayland-protocols`' staging set, already in the tree) with `wl_compositor`, reads the one-shot
+`capabilities` with a roundtrip before reporting blur, and gives each surface one
+`ext_background_effect_surface_v1` whose blur region is sent again only when its parameters change
+(`Applied::{Created, Updated, Unchanged, Unsupported}`, as `compass_core::window_effects` models
+it); `rounded_region` is `createRoundedRegion`'s corner cut, row by row. The row stays amber: the
+launcher's `wl_surface` belongs to winit's or `iced_layershell`'s connection and is exposed only as a
+raw pointer, and bridging it (`Backend::from_foreign_display`, `ObjectId::from_ptr`) is `unsafe`,
+which the workspace forbids. It needs a compositor with the protocol to verify (KWin 6.3, niri;
+Sway has none), which the headless-Sway test covers for the refusal and the VM tier would for the
+rest.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/window-material` | — (the launcher's surface is not reachable safely) | `compass_wayland::material::{BackgroundEffects, rounded_region, supports_blur}` | `the_corners_are_cut_as_the_cpp_cuts_them`, `a_region_off_the_origin_is_cut_where_it_is`, `a_square_region_has_nothing_taken_away`, `blur_is_the_capability_bit`, `background_effect_is_bound_where_advertised_and_refused_by_name_where_not` (headless Sway) |
+
+### The view layer, closed (2026-09-25)
+
+The HUD and onboarding tables above each left `ui/qml`, `ui/quick` and `ui/windows` amber for the
+settings window alone; "The gaps pass, settings" landed it in the same change, so the three rows
+flip to ✅ in both columns on the tests those three sections name: the settings view's
+(`the_settings_view_writes_each_setting_and_switch_into_the_configuration`,
+`every_cpp_general_settings_property_is_ported_or_declared` and the launcher-state tests in
+`compass-ui/src/app/settings_view/tests.rs`), the HUD's and onboarding's (their tables above), on
+top of the resident window and paint tier tests. What stays different is declared where it
+lands: the settings and onboarding drawn in the launcher card rather than windows of their own,
+drag out of the window, which Iced cannot do, and blur behind the launcher
+(`src/services/window-material`, still amber).
+
+### Earlier row notes
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
@@ -2569,7 +2855,7 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`). | The launcher has hidden by then and has no HUD, so the engine posts the same sentence as a transient desktop notification (1.5 s, `transient` hint). Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
+| 1 | Play / Pause, Next Track and Previous Track confirm in the launcher's HUD (`Paused`, `Playing A Song — Artist`, `Next Track`); where there is no HUD (no layer shell) nothing is shown. | The engine sends the sentence to the launcher's HUD (IPC v19 `WindowCommand::Hud`), with the C++'s icon for the player commands; where the window has no HUD it posts a transient desktop notification (1.5 s, `transient` hint) instead of showing nothing. The volume commands' HUD has no icon. Refusals ("No media player is running", "Spotify cannot skip to the next track") show in the launcher, as the power commands' do. | `a_media_command_says_why_it_did_nothing`, `a_media_command_runs_at_once_and_shows_why_it_did_nothing` |
 | 2 | The player commands take an optional `player` argument, fuzzy-matched over the running players (title 1.0, artist 0.8, identity 0.6); Turn Volume Up/Down take an optional `step`. Both are typed inline beside the search field. | The same matching and the same refusals ("No media player matches …", "Invalid step value"), with no argument taking the default player (last acted on, else playing, else first) or ±5. The launcher has no inline argument fields, so Enter runs the command at once and the row's action panel offers "Choose player…" / "Choose step…", a one-field form. | `a_player_argument_picks_the_player_and_now_playing_lists_and_drives_them`, `a_media_command_runs_with_the_player_chosen_in_its_form`, `a_volume_command_runs_pactl_with_the_cpp_arguments` |
 | 3 | Volume goes through `pactl`. | The same `pactl` invocations, through `flatpak-spawn --host` inside the Flatpak, with the C++'s 3 s timeout. `libpulse-binding` was considered and not taken: a C build dependency and a threaded mainloop for five calls the ported `pactl` adapter already makes. | `a_volume_command_runs_pactl_with_the_cpp_arguments` |
 | 4 | Now Playing lists the players ("Players", fuzzy over title, artist and name), with Playing/Paused accessories, the player application's icon, and Play or Pause, Next Track and Previous Track; it reloads on `playersChanged`. | The same list, filter, accessories and actions (Enter is the first); a row shows the player's initial rather than its application's icon, and the list is asked again 300 ms after each action rather than on a bus signal, so a player changed from elsewhere shows when the view is next opened. | `now_playing_lists_the_players_and_controls_the_selected_one`, `a_player_is_found_by_track_artist_or_name_and_stays_selected` |
@@ -2663,7 +2949,7 @@ visits. What differs:
 | 5 | Open with… lists the link's openers in a submenu, and opens the link expanded with the completer's argument values. | An app-selector view (`compass_ui::open_with_page`, IPC v18 `ListOpeners`/`OpenWith`) lists the openers of the stored link, the default first, and opens it expanded; arguments are not asked for first, so a placeholder argument expands empty. | `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application` |
 | 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link), the link re-expanded as the completer's values change. | The pane (`shortcuts_page::detail_fields`) follows the selection; the link is expanded with no arguments, Manage Shortcuts having no completer. | `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `the_pane_lists_what_load_detail_lists_in_its_order` |
 | 7 | The form's link field offers placeholder completions (Selected Text, Clipboard Text, Argument, UUID) and the app list updates to the link's default opener on blur; the default icon previews the favicon. | The field's help text names the placeholders; `default` app and icon are resolved by the engine when saving (favicon for `http*`, else the opener's icon, else the link glyph). | `the_default_icon_is_the_favicon_then_the_opener_then_the_link_glyph` |
-| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text; its fallback panel adds Manage Fallback Actions. | Ranked like every other root item. A `shortcuts:<id>` entry in `fallbacks` whose link takes one argument is a fallback row, in the configured order, opening with the query; Enter only, there is no fallback panel or manager view (`src/builtins/vicinae`'s gap). | `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query` |
+| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text; its fallback panel adds Manage Fallback Actions. | Ranked like every other root item. A `shortcuts:<id>` entry in `fallbacks` whose link takes one argument is a fallback row, in the configured order, opening with the query; its panel is Open and Manage Fallback Actions, which opens Configure Fallback Commands. | `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `configure_fallback_commands_moves_items_between_its_sections` |
 | 9 | The migration from the pre-JSON SQLite `shortcut` table. | Not run: the one-shot import is from Vicinae's JSON file, which already holds a migrated list. | — |
 | 10 | A removal toast ("Removed link") and success toasts after saving. | The list updates in place; failures show in the view. | `manage_shortcuts_filters_edits_and_removes` |
 
@@ -2685,8 +2971,8 @@ arguments by name. What differs:
 | 3 | Copy to clipboard copies text as transient (not recorded in history), and a file snippet as the file. | The launcher writes the expanded text to the clipboard itself; a file snippet copies its path as text. No form creates file snippets (the C++ form does not either). | — |
 | 4 | — | Paste, which the C++ list does not offer: the expansion is put on the clipboard and pasted through the Shell extension, as clipboard history pastes. | `snippets_are_imported_created_expanded_edited_and_removed` |
 | 5 | The form edits the keyword's application list, and offers placeholder completions in the content field. | The list is kept as it was (a duplicate keeps it too); the content field's help text names the placeholders. | `editing_a_snippet_keeps_its_apps_and_returns_to_the_list` |
-| 6 | A detail pane shows the type, the dates, the keyword and its apps, and the expansion as arguments are typed (shell placeholders shown as `$(code)`). | Rows carry the keyword (or the text's first words) as their subtitle; no detail pane yet. | `the_subtitle_is_the_keyword_or_the_first_words` |
-| 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | Parsed with the quicklink parser, which has no escape: `\{` is a backslash and a placeholder. | — |
+| 6 | A detail pane shows the type, the dates, the keyword and its apps, and the expansion as arguments are typed (shell placeholders shown as `$(code)`). | The pane since "The gaps pass, UI" (IPC v19 `PreviewSnippet`): the type, the dates, the keyword, its applications by name, and the text expanded with its shell placeholders shown as `$(code)`. Manage Snippets has no completer, so arguments expand empty (to their defaults); the applications are names rather than icons. | `manage_snippets_shows_the_selected_snippets_detail_pane`, `the_pane_lists_what_load_detail_lists_in_its_order`, `a_preview_shows_a_shell_placeholder_instead_of_running_it`, `snippets_are_imported_created_expanded_edited_and_removed` |
+| 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | The same since "The gaps pass, UI" (`compass_core::placeholder::parse_snippet_text`), for copying, pasting, the form's arguments and keyword expansion; a quicklink's link keeps the quicklink parser, which has none, as `Shortcut::parseLink` does. | `an_escaped_brace_is_text_and_not_a_placeholder`, `a_doubled_backslash_is_one_and_the_brace_after_it_opens_a_placeholder`, `an_escaped_brace_expands_as_a_brace`, `an_escaped_brace_asks_for_no_argument` |
 | 8 | `{argument}` with no `name=` is collected as an argument with an empty name. | Left out of the form; it expands to nothing either way. | `arguments_are_named_once_and_reserved_ids_are_not_arguments` |
 
 ### Input server and keyword expansion — what differs
@@ -2725,7 +3011,7 @@ a script before running it, and runs it in its mode (IPC v13 `ListScripts`, `Run
 `ScriptOutput`, `StopScript`): `fullOutput` streams stdout and stderr with `FORCE_COLOR=1` to a view
 that colours them with the ported tokenizer; `compact` and `inline` take the first stdout line
 within 10 s, an inline line becoming the script's subtitle (kept in
-`compass-script-metadata.json`); `silent` says its line in a transient notification; `terminal` runs
+`compass-script-metadata.json`); `silent` says its line in the launcher's HUD (a transient notification where there is none); `terminal` runs
 in the terminal emulator with the header's options. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
@@ -2733,7 +3019,7 @@ in the terminal emulator with the header's options. What differs:
 | 1 | Every root is pushed on one stack, so the *last* directory is walked first and a packaged script shadows a custom one with the same id, although the preference promises the opposite. | Roots are walked in order, so a custom directory wins. | `the_scan_finds_scripts_ids_them_by_path_and_lets_custom_dirs_win`, `script_commands_are_scanned_searched_and_run_in_their_modes` |
 | 2 | Arguments are completion fields beside the search text; confirmation is an alert. | One form carries both: a field per argument (text, password, dropdown), and the confirmation sentence in its title when the header asks for one. | `a_script_asks_for_its_arguments_or_its_confirmation` |
 | 3 | The directories are watched (100 ms debounce) and rescanned every 15 minutes. | Rescanned at start and each time the launcher is summoned; no watcher. | — |
-| 4 | `compact` and `inline` results are toasts; the window is reopened with the title as search text if it had closed. | The result shows in the root list's notice line; the window is not reopened. `silent`'s HUD is a transient notification, as the media commands' is. | `a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher` |
+| 4 | `compact` and `inline` results are toasts; the window is reopened with the title as search text if it had closed. | The result shows in the root list's notice line; the window is not reopened. `silent`'s line goes to the launcher's HUD, or a transient notification where there is none, as the media commands' does. | `a_compact_script_says_its_first_line_and_a_silent_one_hides_the_launcher` |
 | 5 | The full-output view's action panel runs the script again or kills it, and a toast counts the seconds. | The same two actions (Ctrl+R to run again), and the count is in the view's heading; Escape kills a running script, as leaving the view does. | `a_full_output_script_asks_for_its_argument_and_shows_its_output` |
 | 6 | The root row's panel opens the script in the text editor and its folder in the file browser. | Run and Copy path only. | — |
 | 7 | `refreshTime` (inline) is parsed and validated. | Parsed and validated, and not acted on — nor is it in the C++. | — |

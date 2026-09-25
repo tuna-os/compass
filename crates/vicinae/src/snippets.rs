@@ -188,7 +188,7 @@ pub async fn expand(
     arguments: &[(String, String)],
     clipboard: Option<String>,
 ) -> snippet_expander::Expansion {
-    let parts = compass_core::shortcut::parse_link(text).parts;
+    let parts = compass_core::placeholder::parse_snippet_text(text).parts;
     let commands = snippet_expander::shell_commands(&parts);
     let shell = futures_util::future::join_all(commands.iter().map(run_shell)).await;
     let context = Context {
@@ -205,10 +205,36 @@ pub async fn expand(
     )
 }
 
+/// Expands `text` for Manage Snippets' detail pane: as [`expand`], but a
+/// shell placeholder is shown as its command rather than run
+/// (`executeShell = false`).
+#[must_use]
+pub fn preview(
+    text: &str,
+    arguments: &[(String, String)],
+    clipboard: Option<String>,
+) -> snippet_expander::Expansion {
+    let parts = compass_core::placeholder::parse_snippet_text(text).parts;
+    let context = Context {
+        clipboard: clipboard.unwrap_or_default(),
+        uuid: uuid::Uuid::new_v4().hyphenated().to_string(),
+        now: Some(local_now()),
+        shell: Vec::new(),
+    };
+    snippet_expander::expand(
+        &parts,
+        arguments,
+        snippet_expander::Options {
+            execute_shell: false,
+        },
+        &context,
+    )
+}
+
 /// Whether expanding `text` reads the clipboard.
 #[must_use]
 pub fn needs_clipboard(text: &str) -> bool {
-    compass_core::shortcut::parse_link(text)
+    compass_core::placeholder::parse_snippet_text(text)
         .placeholders
         .iter()
         .any(|placeholder| placeholder.id == snippet_expander::CLIPBOARD_ID)
@@ -246,6 +272,34 @@ mod tests {
         let text = expanded.to_text();
         let year = local_now().year.to_string();
         assert_eq!(text, format!("hi Zoë |clip|{year}"));
+    }
+
+    #[tokio::test]
+    async fn an_escaped_brace_expands_as_a_brace() {
+        let expanded = expand(
+            r"if (x) \{ {name} } \\{clipboard}",
+            &[("name".to_owned(), "go()".to_owned())],
+            Some("clip".to_owned()),
+        )
+        .await;
+        assert_eq!(expanded.to_text(), r"if (x) { go() } \clip");
+        assert!(
+            !needs_clipboard(r"\{clipboard}"),
+            "an escaped placeholder is text"
+        );
+    }
+
+    #[test]
+    fn a_preview_shows_a_shell_placeholder_instead_of_running_it() {
+        let marker = tempfile::tempdir().expect("tempdir");
+        let file = marker.path().join("ran");
+        let text = format!(
+            "{{shell code=\"touch {}\"}} {{name}}",
+            file.to_string_lossy()
+        );
+        let shown = preview(&text, &[("name".to_owned(), "Zoë".to_owned())], None).to_text();
+        assert_eq!(shown, format!("$(touch {}) Zoë", file.to_string_lossy()));
+        assert!(!file.exists(), "a preview runs nothing");
     }
 
     #[tokio::test]

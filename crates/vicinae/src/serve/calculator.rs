@@ -125,8 +125,11 @@ pub fn answer(db: &Connection, request: Request, now: &jiff::Zoned, id: &str) ->
     }
 }
 
-/// Opens the history's database, keyed from the keyring the first time.
-async fn storage(state: &Arc<RwLock<EngineState>>) -> Option<crate::extension_runner::Storage> {
+/// Opens the history's database, keyed from the keyring the first time;
+/// Inspect Local Storage and Manage OAuth Token Sets read the same one.
+pub(super) async fn storage(
+    state: &Arc<RwLock<EngineState>>,
+) -> Option<crate::extension_runner::Storage> {
     let slot = Arc::clone(&state.read().await.calculator);
     let mut slot = slot.lock().await;
     if slot.is_none() {

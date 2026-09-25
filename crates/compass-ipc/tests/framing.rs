@@ -297,6 +297,30 @@ fn all_requests() -> Vec<Request> {
             id: "scripts:hello".into(),
             edit: compass_ipc::RootItemEdit::Shortcut(String::new()),
         },
+        Request::RootItemEdit {
+            id: "scripts:hello".into(),
+            edit: compass_ipc::RootItemEdit::Enabled(true),
+        },
+        Request::SetSetting {
+            key: "launcher.appearance.theme".into(),
+            value_json: "\"tokyo-night\"".into(),
+        },
+        Request::SetSetting {
+            key: "providers.files.preferences.indexingPaths".into(),
+            value_json: "[\"/home/ä/Docs\"]".into(),
+        },
+        Request::SetProviderEnabled {
+            provider: "@zoë/notes".into(),
+            enabled: false,
+        },
+        Request::RootItemEdit {
+            id: "files:search".into(),
+            edit: compass_ipc::RootItemEdit::Fallback(true),
+        },
+        Request::RootItemEdit {
+            id: "@zoë/notes:new".into(),
+            edit: compass_ipc::RootItemEdit::Fallback(false),
+        },
         Request::ListCommands,
         Request::LaunchCommand {
             id: "@zoë/notes:new".into(),
@@ -394,6 +418,24 @@ fn all_requests() -> Vec<Request> {
         },
         Request::SetWallpaper {
             path: "/home/ä/a b.png".into(),
+        },
+        Request::PreviewSnippet {
+            id: "snp-0123456789ab".into(),
+            arguments: vec![("name".into(), "Zoë".into())],
+        },
+        Request::ScriptIcons,
+        Request::LocalStorageNamespaces,
+        Request::LocalStorageItems {
+            namespace: "@zoë/notes".into(),
+        },
+        Request::OAuthTokenSets,
+        Request::RemoveOAuthTokenSet {
+            extension_id: "github".into(),
+            provider_id: Some("GitHub ✓".into()),
+        },
+        Request::RemoveOAuthTokenSet {
+            extension_id: "linear".into(),
+            provider_id: None,
         },
         Request::FsQuery {
             query: "résumé".into(),
@@ -508,6 +550,14 @@ fn all_responses() -> Vec<Response> {
             "vicinae://extensions/zoë/clock".into(),
         )),
         Response::Window(WindowCommand::Describe),
+        Response::Window(WindowCommand::Hud {
+            text: "Quit Fichiers ✓".into(),
+            icon: Some("copy-clipboard".into()),
+        }),
+        Response::Window(WindowCommand::Hud {
+            text: "Clipboard cleared".into(),
+            icon: None,
+        }),
         Response::Commands {
             commands: vec![compass_ipc::CommandInfo {
                 id: "@zoë/notes:new".into(),
@@ -560,12 +610,36 @@ fn all_responses() -> Vec<Response> {
                 default: true,
             }],
         },
+        Response::LocalStorageNamespaces {
+            namespaces: vec!["@zoë/notes".into(), "core".into()],
+        },
+        Response::LocalStorageItems {
+            items: vec![compass_ipc::LocalStorageEntry {
+                key: "draft ✍".into(),
+                value: "{\"n\":1}".into(),
+            }],
+        },
+        Response::OAuthTokenSets {
+            sets: vec![compass_ipc::OAuthTokenSetEntry {
+                extension_id: "github".into(),
+                provider_id: Some("GitHub".into()),
+                access_token: "gho_ä".into(),
+                refresh_token: None,
+                id_token: Some("eyJ".into()),
+                scope: Some("repo read:user".into()),
+                expires_at: Some(i64::MAX),
+                expired: false,
+            }],
+        },
         Response::FileActions(compass_ipc::FileActionInfo {
             mime: Some("image/png".into()),
             has_opener: true,
             can_set_wallpaper: false,
             can_paste: true,
         }),
+        Response::ScriptIcons {
+            icons: vec![("hello.sh".into(), "icon://emoji/🎉".into())],
+        },
         Response::AppRuntime {
             running: true,
             frontmost: false,
@@ -1044,6 +1118,14 @@ fn request_variants_are_exhaustive() {
             | Request::CopyFile { .. }
             | Request::RunExecutable { .. }
             | Request::SetWallpaper { .. }
+            | Request::PreviewSnippet { .. }
+            | Request::ScriptIcons
+            | Request::SetSetting { .. }
+            | Request::SetProviderEnabled { .. }
+            | Request::LocalStorageNamespaces
+            | Request::LocalStorageItems { .. }
+            | Request::OAuthTokenSets
+            | Request::RemoveOAuthTokenSet { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1104,6 +1186,10 @@ fn response_variants_are_exhaustive() {
             | Response::Workspaces { .. }
             | Response::Openers { .. }
             | Response::FileActions(_)
+            | Response::ScriptIcons { .. }
+            | Response::LocalStorageNamespaces { .. }
+            | Response::LocalStorageItems { .. }
+            | Response::OAuthTokenSets { .. }
             | Response::Window(_) => {}
         }
     }

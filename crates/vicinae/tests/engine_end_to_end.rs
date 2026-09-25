@@ -484,6 +484,44 @@ fn the_default_browser_and_terminal_are_listed_and_set_in_the_users_files() {
 }
 
 #[test]
+fn the_fallback_manager_writes_the_users_fallbacks() {
+    use compass_ipc::{Request, Response, RootItemEdit};
+    let daemon = Daemon::start_with_config(&[("a.desktop", &entry("Alpha", ""))], "{}");
+    let edit = |id: &str, edit| {
+        daemon.request(Request::RootItemEdit {
+            id: id.to_owned(),
+            edit,
+        })
+    };
+    let written = || -> serde_json::Value {
+        let path = daemon._dirs.path().join("config/vicinae/vicinae.json");
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    assert_eq!(
+        edit("applications:a", RootItemEdit::Fallback(true)),
+        Response::Ack
+    );
+    assert_eq!(
+        written()["fallbacks"],
+        serde_json::json!(["applications:a", "files:search"]),
+        "first, before the default"
+    );
+    assert_eq!(
+        edit("files:search", RootItemEdit::Fallback(false)),
+        Response::Ack,
+        "Search Files by the C++'s id, which names no root item here"
+    );
+    assert_eq!(
+        written()["fallbacks"],
+        serde_json::json!(["applications:a"])
+    );
+    assert!(matches!(
+        edit("nothing:here", RootItemEdit::Fallback(true)),
+        Response::Error(_)
+    ));
+}
+
+#[test]
 fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() {
     use compass_ipc::{Request, Response};
     let entries = [
@@ -1125,6 +1163,34 @@ fn each_command_reaches_the_window_as_itself() {
             compass_ipc::WindowCommand::Toggle,
         ]
     );
+}
+
+#[test]
+fn the_engines_hud_reaches_the_launchers_hud() {
+    use compass_ipc::{DefaultAppKind, Request, Response, WindowCommand};
+    let web = entry("Web", "MimeType=x-scheme-handler/https;\n");
+    let daemon = Daemon::start(&[("web.desktop", web.as_str())]);
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Hidden);
+    assert_eq!(
+        daemon.request(Request::SetDefaultApp {
+            kind: DefaultAppKind::Browser,
+            id: "web.desktop".to_owned(),
+        }),
+        Response::Ack
+    );
+    let expected = WindowCommand::Hud {
+        text: "Default browser changed".to_owned(),
+        icon: Some("globe-01".to_owned()),
+    };
+    let deadline = std::time::Instant::now() + STARTUP_TIMEOUT;
+    while !window.seen().contains(&expected) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no HUD reached the window: {:?}",
+            window.seen()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }
 
 #[test]
@@ -3703,6 +3769,15 @@ fn snippets_are_imported_created_expanded_edited_and_removed() {
     assert!(year >= 2024, "{text}");
     assert_eq!(text, format!("Hello Zoë, {year} shell-ran"));
 
+    // Manage Snippets' pane shows the shell placeholder rather than running it.
+    let Response::Text { text } = daemon.request(Request::PreviewSnippet {
+        id: greeting.id.clone(),
+        arguments: vec![("name".into(), "Zoë".into())],
+    }) else {
+        panic!("not previewed");
+    };
+    assert_eq!(text, format!("Hello Zoë, {year} $(echo shell-ran)"));
+
     // Pasting needs the Shell extension, and this engine has no session bus.
     let (kind, _) = refused(daemon.request(Request::PasteSnippet {
         id: greeting.id.clone(),
@@ -3808,7 +3883,13 @@ fn script_commands_are_scanned_searched_and_run_in_their_modes() {
             "# @raycast.argument1 {\"type\":\"text\",\"placeholder\":\"who\"}\n\
              printf '\\033[32mgreen\\033[0m %s https://x.test\\n' \"$1\"; echo err >&2",
         );
-        write(&dir, "inline.sh", "inline", "Queue Size", "echo '42 items'");
+        write(
+            &dir,
+            "inline.sh",
+            "inline",
+            "Queue Size",
+            "# @raycast.icon 🎉\necho '42 items'",
+        );
         write(
             &dir,
             "compact.sh",
@@ -3848,6 +3929,18 @@ fn script_commands_are_scanned_searched_and_run_in_their_modes() {
     );
     let full = scripts.iter().find(|s| s.id == "full.sh").unwrap();
     assert_eq!(full.arguments.len(), 1);
+    let Response::ScriptIcons { icons } = daemon.request(Request::ScriptIcons) else {
+        panic!("no script icons");
+    };
+    assert_eq!(icons.len(), 4, "one per script: {icons:?}");
+    for (id, icon) in &icons {
+        let want = if id == "inline.sh" {
+            "icon://emoji/🎉"
+        } else {
+            "icon://omnicast/code?bg_tint=accent"
+        };
+        assert_eq!(icon, want, "{id}: an emoji header, else the default");
+    }
     assert_eq!(full.arguments[0].placeholder.as_deref(), Some("who"));
 
     let Response::QueryResults { hits } = daemon.request(Request::Query {
@@ -4010,6 +4103,145 @@ fn create_extension_writes_the_boilerplate_under_home() {
         "{}",
         err.message
     );
+}
+
+#[test]
+fn the_settings_view_writes_each_setting_and_switch_into_the_configuration() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let entries = [
+        ("alpha.desktop", entry("Alpha Editor", "")),
+        ("beta.desktop", entry("Beta Editor", "")),
+    ];
+    let entries = entries
+        .iter()
+        .map(|(id, body)| (*id, body.as_str()))
+        .collect::<Vec<_>>();
+    let config_file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&entries, r#"{"mystery": {"kept": true}}"#, |root| {
+        config_file
+            .set(root.join("config/vicinae/vicinae.json"))
+            .unwrap();
+        Vec::new()
+    });
+    let saved = || {
+        compass_core::Config::load_from(config_file.get().unwrap())
+            .expect("the file stays a configuration")
+    };
+    let set = |key: &str, value: serde_json::Value| {
+        daemon.request(Request::SetSetting {
+            key: key.into(),
+            value_json: value.to_string(),
+        })
+    };
+
+    assert_eq!(
+        set("launcher.wrap_navigation", serde_json::json!(true)),
+        Response::Ack
+    );
+    assert_eq!(
+        set("launcher.keybinding", serde_json::json!("emacs")),
+        Response::Ack
+    );
+    assert_eq!(
+        set("launcher.hotkey", serde_json::json!("alt+space")),
+        Response::Ack
+    );
+    assert_eq!(
+        set("launcher.appearance.theme", serde_json::json!("Nord")),
+        Response::Ack
+    );
+    assert_eq!(
+        set(
+            "providers.clipboard.preferences.evictionThreshold",
+            serde_json::json!("86400")
+        ),
+        Response::Ack
+    );
+    let config = saved();
+    assert!(config.launcher().wrap_navigation());
+    assert_eq!(config.launcher().keybinding(), "emacs");
+    assert_eq!(config.launcher().hotkey(), "alt+space");
+    assert_eq!(config.launcher().appearance().theme(), "nord");
+    assert_eq!(
+        config.get_path("providers.clipboard.preferences.evictionThreshold"),
+        Some(serde_json::json!("86400"))
+    );
+    assert_eq!(
+        config.get_path("mystery.kept"),
+        Some(serde_json::json!(true))
+    );
+
+    assert_eq!(
+        set("launcher.wrap_navigation", serde_json::Value::Null),
+        Response::Ack
+    );
+    assert!(!saved().launcher().wrap_navigation(), "null resets it");
+
+    for (key, value) in [
+        ("launcher.keybinding", serde_json::json!("qwerty")),
+        (
+            "launcher.appearance.theme",
+            serde_json::json!("no-such-theme"),
+        ),
+        ("launcher.window_opacity", serde_json::json!(0.5)),
+    ] {
+        let Response::Error(err) = set(key, value) else {
+            panic!("{key} should be refused");
+        };
+        assert_eq!(err.kind, ErrorKind::BadRequest, "{key}: {}", err.message);
+    }
+    assert_eq!(
+        saved().launcher().keybinding(),
+        "emacs",
+        "a refusal writes nothing"
+    );
+
+    let ids = |query: &str| -> Vec<String> {
+        let Response::QueryResults { hits } = daemon.request(Request::Query { text: query.into() })
+        else {
+            panic!("expected query results");
+        };
+        hits.into_iter()
+            .map(|hit| hit.id)
+            .filter(|id| id.starts_with("applications:"))
+            .collect()
+    };
+    assert_eq!(
+        daemon.request(Request::RootItemEdit {
+            id: "applications:alpha".into(),
+            edit: compass_ipc::RootItemEdit::Disable,
+        }),
+        Response::Ack
+    );
+    assert_eq!(ids("Editor"), ["applications:beta"]);
+    assert_eq!(
+        daemon.request(Request::RootItemEdit {
+            id: "applications:alpha".into(),
+            edit: compass_ipc::RootItemEdit::Enabled(true),
+        }),
+        Response::Ack
+    );
+    assert_eq!(ids("Editor").len(), 2, "the switch turns it back on");
+    assert_eq!(
+        daemon.request(Request::SetProviderEnabled {
+            provider: "applications".into(),
+            enabled: false,
+        }),
+        Response::Ack
+    );
+    assert!(ids("Editor").is_empty(), "the whole provider is off");
+    assert_eq!(
+        saved().root_config().providers["applications"].enabled,
+        Some(false)
+    );
+    assert_eq!(
+        daemon.request(Request::SetProviderEnabled {
+            provider: "applications".into(),
+            enabled: true,
+        }),
+        Response::Ack
+    );
+    assert_eq!(ids("Editor").len(), 2);
 }
 
 #[test]
