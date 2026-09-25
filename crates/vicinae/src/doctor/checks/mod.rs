@@ -41,8 +41,8 @@ pub mod wlroots;
 pub use a11y::{A11Y_BUS_NAME, A11Y_OBJECT_PATH, A11Y_STATUS_INTERFACE, screen_reader};
 pub use desktop::{
     EXTENSION_CONTRACT_VERSION, EXTENSION_DEGRADATION, EXTENSION_INTERFACE, EXTENSION_OBJECT_PATH,
-    GNOME_SHELL_BUS_NAME, GNOME_SHELL_OBJECT_PATH, LEGACY_WINDOWS_INTERFACE, desktop_environment,
-    is_gnome, shell_extension,
+    GNOME_SHELL_BUS_NAME, GNOME_SHELL_OBJECT_PATH, KWIN_BUS_NAME, LEGACY_WINDOWS_INTERFACE,
+    desktop_environment, is_gnome, is_kde, kwin, shell_extension,
 };
 pub use input::{InputServerFacts, input_server};
 pub use portal::{

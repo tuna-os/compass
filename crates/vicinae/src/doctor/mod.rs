@@ -93,6 +93,7 @@ pub async fn run<B: BusProbe, F: FsProbe>(inputs: &Inputs<'_, B, F>) -> Report {
         checks::desktop_portal(bus).await,
         checks::global_shortcuts(bus).await,
         checks::shell_extension(env, bus).await,
+        checks::kwin(env, bus).await,
         checks::wlroots(env, wayland.as_ref(), bus).await,
         checks::flatpak(fs),
         checks::input_server(fs, input_server),
@@ -325,7 +326,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), count, "duplicate check names");
-        assert_eq!(count, 14);
+        assert_eq!(count, 15);
         assert!(
             report
                 .checks

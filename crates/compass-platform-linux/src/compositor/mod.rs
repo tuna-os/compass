@@ -1,7 +1,8 @@
-//! Compositor IPC for the wlroots family members that have one.
+//! Compositor IPC for the compositors that have one: Hyprland and niri over
+//! their sockets, KWin over the session bus.
 //!
-//! Ports the C++ Hyprland and niri window-manager providers
-//! (`src/server/src/services/window-manager/{hyprland,niri}`). The toplevel
+//! Ports the C++ Hyprland, niri and KDE window-manager providers
+//! (`src/server/src/services/window-manager/{hyprland,niri,kde}`). The toplevel
 //! protocols every wlroots compositor carries list windows with a title and
 //! an app id and nothing else; these two compositors also answer over their
 //! own sockets with what the protocols leave out — the owning pid, the
@@ -14,11 +15,16 @@
 //!
 //! [`Provider::detect`] chooses from the environment the compositor exports
 //! to its clients, in the C++ order (Hyprland is a candidate before niri).
+//! KWin is the exception on both counts: its provider keeps a tracker script
+//! running inside KWin, so it is started, asynchronously, with
+//! [`kwin::Kwin::start`] when [`kwin::is_plasma_wayland`] says so, and
+//! wrapped as [`Provider::Kwin`].
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub mod hyprland;
+pub mod kwin;
 pub mod niri;
 
 /// How long one request may take to answer.
@@ -109,6 +115,8 @@ pub enum Provider {
     Hyprland(hyprland::Hyprland),
     /// niri, over `$NIRI_SOCKET`.
     Niri(niri::Niri),
+    /// KWin, over its scripting interface on the session bus.
+    Kwin(kwin::Kwin),
 }
 
 impl Provider {
@@ -139,6 +147,7 @@ impl Provider {
         match self {
             Self::Hyprland(_) => "hyprland",
             Self::Niri(_) => "niri",
+            Self::Kwin(_) => "kde",
         }
     }
 
@@ -148,15 +157,17 @@ impl Provider {
         match self {
             Self::Hyprland(_) => "Hyprland",
             Self::Niri(_) => "niri",
+            Self::Kwin(_) => "KDE",
         }
     }
 
-    /// The socket it talks to.
+    /// The socket it talks to; KWin has none (it is on the session bus).
     #[must_use]
-    pub fn socket(&self) -> &Path {
+    pub fn socket(&self) -> Option<&Path> {
         match self {
-            Self::Hyprland(hyprland) => hyprland.socket(),
-            Self::Niri(niri) => niri.socket(),
+            Self::Hyprland(hyprland) => Some(hyprland.socket()),
+            Self::Niri(niri) => Some(niri.socket()),
+            Self::Kwin(_) => None,
         }
     }
 
@@ -170,6 +181,7 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.windows(),
             Self::Niri(niri) => niri.windows(),
+            Self::Kwin(kwin) => Ok(kwin.windows()),
         }
     }
 
@@ -182,12 +194,14 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.focused_window(),
             Self::Niri(niri) => niri.focused_window(),
+            Self::Kwin(kwin) => Ok(kwin.focused_window()),
         }
     }
 
     /// The window the person was last in on the active workspace, skipping
     /// the processes and classes in `own`: Hyprland's `getFrontmostWindowSync`
-    /// (lowest `focusHistoryID`), niri's focused window else its most recent.
+    /// (lowest `focusHistoryID`), niri's focused window else its most recent,
+    /// KWin's most recently activated on the current desktop.
     ///
     /// # Errors
     ///
@@ -196,6 +210,10 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.frontmost_window(own),
             Self::Niri(niri) => niri.frontmost_window(own),
+            Self::Kwin(kwin) => {
+                let current = kwin.current_desktop_blocking().ok().flatten();
+                Ok(kwin.recent_window(own, current.as_ref().map(|d| d.id.as_str())))
+            }
         }
     }
 
@@ -208,6 +226,7 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.workspaces(),
             Self::Niri(niri) => niri.workspaces(),
+            Self::Kwin(kwin) => kwin.desktops_blocking(),
         }
     }
 
@@ -221,6 +240,7 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.active_workspace(),
             Self::Niri(niri) => niri.active_workspace(),
+            Self::Kwin(kwin) => kwin.current_desktop_blocking(),
         }
     }
 
@@ -233,6 +253,7 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.focus_window(id),
             Self::Niri(niri) => niri.focus_window(id),
+            Self::Kwin(kwin) => kwin.act_blocking(id, kwin::Action::Focus),
         }
     }
 
@@ -245,6 +266,7 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.close_window(id),
             Self::Niri(niri) => niri.close_window(id),
+            Self::Kwin(kwin) => kwin.act_blocking(id, kwin::Action::Close),
         }
     }
 
@@ -257,19 +279,22 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.focus_workspace(id),
             Self::Niri(niri) => niri.focus_workspace(id),
+            Self::Kwin(kwin) => kwin.switch_desktop_blocking(id),
         }
     }
 
     /// What the compositor can do beyond listing and focusing, as the C++
-    /// providers' `capabilities()` and `hasWorkspaces()` answer: both have
-    /// workspaces, fullscreen and floating; only niri has an overview.
+    /// providers' `capabilities()` and `hasWorkspaces()` answer: Hyprland and
+    /// niri have workspaces, fullscreen and floating, and only niri an
+    /// overview. KWin (where the C++ declares none of these) has virtual
+    /// desktops, fullscreen and an overview; it floats every window already.
     #[must_use]
     pub const fn capabilities(&self) -> WmCapabilities {
         WmCapabilities {
             workspaces: true,
             fullscreen: true,
-            floating: true,
-            overview: matches!(self, Self::Niri(_)),
+            floating: !matches!(self, Self::Kwin(_)),
+            overview: !matches!(self, Self::Hyprland(_)),
         }
     }
 
@@ -282,6 +307,7 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.toggle_fullscreen(id),
             Self::Niri(niri) => niri.toggle_fullscreen(id),
+            Self::Kwin(kwin) => kwin.act_blocking(id, kwin::Action::Fullscreen),
         }
     }
 
@@ -289,11 +315,13 @@ impl Provider {
     ///
     /// # Errors
     ///
-    /// As [`Self::focus_window`].
+    /// As [`Self::focus_window`], and on KWin, which has no tiling to float
+    /// out of (see [`Self::capabilities`]).
     pub fn toggle_floating(&self, id: &str) -> Result<(), IpcError> {
         match self {
             Self::Hyprland(hyprland) => hyprland.toggle_floating(id),
             Self::Niri(niri) => niri.toggle_floating(id),
+            Self::Kwin(_) => Err(IpcError::Refused("KWin has no floating toggle".into())),
         }
     }
 
@@ -307,6 +335,7 @@ impl Provider {
         match self {
             Self::Hyprland(_) => Err(IpcError::Refused("Hyprland has no overview".into())),
             Self::Niri(niri) => niri.toggle_overview(),
+            Self::Kwin(kwin) => kwin.overview_blocking(),
         }
     }
 
@@ -316,6 +345,7 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.ping(),
             Self::Niri(niri) => niri.ping(),
+            Self::Kwin(kwin) => kwin.ping(),
         }
     }
 }

@@ -33,24 +33,68 @@ static DETECTED: OnceLock<Option<Wlroots>> = OnceLock::new();
 
 static COMPOSITOR: OnceLock<Option<Provider>> = OnceLock::new();
 
-/// The compositor's own IPC (Hyprland's socket, niri's), when the
-/// environment names one: the C++ window-manager providers, chosen as the
-/// C++ chooses them, before the toplevel protocols. Decided from the
-/// environment alone, so it needs no Wayland display and no round trip.
+/// The KWin provider, once [`start_kwin`] has it running.
+static KWIN: OnceLock<Provider> = OnceLock::new();
+
+/// The compositor's own IPC (Hyprland's socket, niri's, KWin's scripting),
+/// when there is one: the C++ window-manager providers, chosen as the C++
+/// chooses them, before the toplevel protocols. Hyprland and niri are
+/// decided from the environment alone, so they need no Wayland display and
+/// no round trip; KWin is whatever [`start_kwin`] started.
 pub fn compositor() -> Option<&'static Provider> {
+    if let Some(kwin) = KWIN.get() {
+        return Some(kwin);
+    }
     COMPOSITOR
         .get_or_init(|| {
             let provider = Provider::detect();
             if let Some(provider) = &provider {
                 tracing::info!(
                     compositor = provider.display_name(),
-                    socket = %provider.socket().display(),
+                    socket = ?provider.socket(),
                     "compositor IPC"
                 );
             }
             provider
         })
         .as_ref()
+}
+
+/// How long starting the KWin provider may take: a KWin that never answers
+/// `loadScript` must not leave a task waiting for ever.
+const KWIN_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// On a Plasma Wayland session (`Environment::isWaylandPlasmaDesktop`),
+/// starts the KWin provider on the session bus and makes it [`compositor`];
+/// elsewhere nothing. Once per process, from start-up.
+pub async fn start_kwin() {
+    use compass_platform_linux::compositor::kwin::{Kwin, is_plasma_wayland};
+    if KWIN.get().is_some() || !is_plasma_wayland(|name| std::env::var_os(name)) {
+        return;
+    }
+    let started = tokio::time::timeout(KWIN_START_TIMEOUT, async {
+        let connection = zbus::Connection::session()
+            .await
+            .map_err(|err| err.to_string())?;
+        Kwin::start(connection).await.map_err(|err| err.to_string())
+    })
+    .await
+    .unwrap_or_else(|_| Err("KWin did not answer in time".to_owned()));
+    match started {
+        Ok(kwin) => {
+            tracing::info!("compositor IPC: KWin scripting");
+            let _ = KWIN.set(Provider::Kwin(kwin));
+        }
+        Err(err) => tracing::warn!(error = %err, "KDE window management unavailable"),
+    }
+}
+
+/// Unloads the KWin tracker script, when [`start_kwin`] loaded one: the C++
+/// provider's `aboutToQuit`.
+pub async fn stop_kwin() {
+    if let Some(Provider::Kwin(kwin)) = KWIN.get() {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), kwin.stop()).await;
+    }
 }
 
 /// The wlroots session, or `None` on GNOME, on another compositor, or with

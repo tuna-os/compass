@@ -312,6 +312,7 @@ async fn doctor_json_is_valid_json_with_a_stable_shape() {
         "portal.desktop",
         "portal.global-shortcuts",
         "gnome.shell-extension",
+        "kde.kwin",
         "flatpak.sandbox",
         "xdg.application-dirs",
     ] {
@@ -435,7 +436,7 @@ async fn doctor_check_only_json_still_emits_the_full_report() {
     .await;
     assert_eq!(output.status.code(), Some(1));
     let value: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("json");
-    assert_eq!(value["checks"].as_array().expect("checks").len(), 14);
+    assert_eq!(value["checks"].as_array().expect("checks").len(), 15);
 }
 
 #[tokio::test]

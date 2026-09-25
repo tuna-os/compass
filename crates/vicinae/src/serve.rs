@@ -2411,9 +2411,15 @@ pub(crate) async fn forward(slot: &WindowSlot, command: WindowCommand, what: &st
     }
 }
 
-/// `ListWindows`: over Wayland on a wlroots compositor, through the Shell
-/// extension everywhere else.
+/// `ListWindows`: from KWin's tracker on Plasma, over Wayland on a wlroots
+/// compositor, through the Shell extension everywhere else.
 pub(crate) async fn list_windows(state: &Arc<RwLock<EngineState>>) -> Response {
+    {
+        let state = state.read().await;
+        if let Some(response) = crate::window_service::kwin_list(&state.index).await {
+            return response;
+        }
+    }
     // wlroots compositors list windows over Wayland; never on GNOME.
     if crate::wlroots::detect().await.is_some() {
         let state = state.read().await;
@@ -2450,6 +2456,9 @@ pub(crate) async fn act_on_window(
     } else {
         "Switching to a window"
     };
+    if let Some(response) = crate::window_service::kwin_act(id, close, what).await {
+        return response;
+    }
     if let Some(response) = crate::window_service::wlroots_act(id, close, what).await {
         return response;
     }
@@ -3549,6 +3558,10 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
         tokio::spawn(crate::snippet_expansion::run(Arc::clone(&state), enabled));
     }
 
+    // KWin's tracker, for window switching on Plasma: detached, like the
+    // Shell client, so a slow KWin never holds up the socket.
+    tokio::spawn(crate::wlroots::start_kwin());
+
     // The Shell extension, for window switching. Connecting only fails with
     // no session bus at all; an absent extension is reported per request.
     {
@@ -3604,7 +3617,9 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
         )
     };
 
-    serving.await.context("serving the engine socket")?;
+    let served = serving.await.context("serving the engine socket");
+    crate::wlroots::stop_kwin().await;
+    served?;
     tracing::info!("engine stopped");
     Ok(())
 }

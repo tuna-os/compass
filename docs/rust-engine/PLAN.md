@@ -2480,7 +2480,7 @@ subsystem. "None" under *blocked by* means only the work.
 | ~~`src/services/root-item-manager`, `src/builtins/root`~~ | **Done in the gaps passes** (`PARITY.md`, "The gaps pass, root and actions"): the provider search view, every fallback, the alias completer, per-item shortcuts (IPC v18) | — | — |
 | `src/services/shortcut-inhibit`, `window-material` | the keyboard-shortcuts-inhibit protocol (a stub); for `window-material`, the ~~`ext-background-effect-v1` client~~ (**done**, `compass_wayland::material`) and applying it to the launcher's surface | medium | a compositor that advertises them (VM tier); reaching the toolkit's `wl_surface` without `unsafe` |
 | `src/services/tray` (~~`tray-host`~~) | Vicinae's own tray icon (~~the StatusNotifierWatcher plumbing and the tray search view~~: **done in the gaps pass**, `vicinae::tray_host` over `system-tray`, IPC v18; `PARITY.md`, "The gaps pass, icons and tray") | medium | the tray icon needs a decision (a launcher that lives in a tray or not) |
-| `src/services/window-manager` | the KDE and X11 providers; GNOME's workspace list (the Shell extension has no `ListWorkspaces`) | medium (X11 large) | KDE needs KWin (VM tier); X11 needs the supported-or-not decision |
+| `src/services/window-manager` | ~~the KDE provider~~ (**done in the KDE pass**, `compass_platform_linux::compositor::kwin`; `PARITY.md`, "The gaps pass, KDE"; real KWin is VM tier); the X11 provider; GNOME's workspace list (the Shell extension has no `ListWorkspaces`) | large (X11) | X11 needs the supported-or-not decision: the C++ `x11/` provider is 1,163 lines of XCB/EWMH (client list, active window, desktops and their names, close, sticky, move to desktop, a root `PropertyNotify` listener); a port would use `x11rb` 0.13 (already in `Cargo.lock` through winit), be about 600–800 lines, and test against `Xvfb` with a small EWMH window manager — but X11 also means the launcher window, hotkey and clipboard on X11, which the Rust engine has none of, so the window manager alone buys little |
 | ~~`src/builtins/wm`~~ | **Done in the views pass** (`PARITY.md`, "The gaps pass, views"): Switch Workspaces and the fullscreen, floating and overview toggles (IPC v18) | — | — |
 | ~~`src/builtins/file`~~ | **Done in the views pass**: the rest of the action panel and the loading indicator (IPC v18); drag stays a declared difference (Iced has no drag out of a window) | — | — |
 | ~~`src/builtins/shortcut`~~ | **Done in the views pass**: Open with… (the app-selector view, IPC v18), the detail pane, shortcuts as fallback rows | — | — |
@@ -2507,6 +2507,11 @@ Closed in the views pass (`PARITY.md`, "The gaps pass, views", IPC v18): Switch 
 window toggles, shortcuts' Open with…, detail pane and fallback rows, Search Files' action panel
 and loading indicator, and clipboard history's Open and Open with…, over one app-selector view
 (125 → 129 of 156).
+
+Closed in the KDE pass (`PARITY.md`, "The gaps pass, KDE (2026-09-25)", no IPC change): the KWin
+window-manager provider — windows, focus, close, virtual desktops as workspaces, fullscreen and the
+overview — over KWin scripting on the session bus, with a `kde.kwin` doctor check. No row flips: the
+window-manager row stays amber for X11 and GNOME's workspace list (145 of 156, 93%).
 
 Closed in the settings pass (`PARITY.md`, "The gaps pass, settings", IPC v19 `SetSetting`,
 `SetProviderEnabled`, `RootItemEdit::Enabled`): the settings window's sidebar and pages as a view of

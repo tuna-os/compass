@@ -59,6 +59,13 @@ code in the extension, so the host never speaks OAuth itself.
 | niri's socket: `Windows`, `Workspaces`, `FocusedWindow`, the focus/close/workspace actions | `niri-ipc` 26.4 (niri's own crate, GPL-3.0-or-later; serde and serde_json only, default features off) | **Used** for every type: the requests are its `Request`/`Action`, the replies its `Reply`, `Window` and `Workspace`. The one gap is taken around it: `niri_ipc::socket::Socket` sets no timeout, so `compass_platform_linux::compositor::niri` opens the `UnixStream` itself, writes the crate's serialisation and reads one line under a 2 s timeout. Its structs require the fields niri 25.08+ sends (`layout`, `focus_timestamp`); an older niri answers in a shape it cannot read, which is reported and treated as no windows (PARITY "wlroots" #3). |
 | Hyprland's request socket: `clients`, `workspaces`, `activeworkspace`, `activewindow`, `dispatch` | `hyprland` 0.4.0-beta.3 (hyprland-rs) | **Hand-rolled** (`compass_platform_linux::compositor::hyprland`, ~300 lines incl. docs). The wire is "connect, write one command, read to EOF", so what a crate would bring is the data types and dispatchers, and both regress the C++: its `Client` is strict and narrow — `at`/`size` as `i16`, `focusHistoryID` as `i8`, a required `fullscreen` enum and `swallowing` address — where the C++ reads eight fields leniently, so a Hyprland release that adds or retypes a field fails the whole list; and its dispatchers speak the classic `dispatch focuswindow address:…` while the C++ dispatches Hyprland's Lua expressions (`hl.dsp.focus({ window = … })`). It is also a beta, pulling `tokio`, `async-stream`, `derive_more` and a proc-macro crate. The replies here are `serde` structs with every field optional and unknown ones ignored. |
 
+### The gaps pass, KDE: KWin (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| KWin's scripting interface, its virtual desktops, kglobalaccel, and serving the tracker's callbacks | `zbus` 5 (already in the tree) | **Used** for all of it: dynamic `zbus::Proxy` calls to `org.kde.kwin.Scripting`/`org.kde.kwin.Script`, `org.kde.KWin.VirtualDesktopManager`'s properties and `org.kde.kglobalaccel.Component`, and a `#[zbus::interface]` object for `org.vicinae.WindowTracker`; the name watch is `zbus::fdo::DBusProxy`'s `NameOwnerChanged`. No KWin client crate exists on crates.io (the KDE-side crates are Qt bindings); what is hand-written (`compass_platform_linux::compositor::kwin`) is the tracker's cache and the two scripts, which are the C++'s JavaScript. |
+| The script file KWin reads | `tempfile` 3 (already a workspace dependency) | **Used**, as `QTemporaryFile` in the C++. |
+
 ## Phase 5 Track A: the extension stores (2026-09-24)
 
 | Need | Crate | Decision |

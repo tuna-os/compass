@@ -293,7 +293,7 @@ shortcuts, the power commands' two preferences, and a notification's urgency and
 | `src/services/selection` | Rust ✅ | data-control on wlroots, the Shell extension on GNOME | `the_primary_selection_is_its_text_or_nothing`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `on_sway_a_shortcut_expands_the_selected_text` |
 | `src/services/snippet` | Rust ✅ | `compass_core::{snippet_store, snippet_expander}`, `compass-input-server` | `snippets_are_imported_created_expanded_edited_and_removed`, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
 | `src/services/wallpaper` | Rust ✅ | `compass_core::wallpaper`, `vicinae::extension_wallpaper` (all six Linux backends) | `compass-core/tests/wallpaper.rs`, `a_failing_command_says_its_stderr_else_its_code` |
-| `src/services/window-manager` | Rust 🟡, parity ✅ | dispatch plus GNOME, wlroots, Hyprland and niri; not KDE or X11 | `compass-core/tests/window_manager.rs`, `compositor_ipc.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
+| `src/services/window-manager` | Rust 🟡, parity ✅ | dispatch plus GNOME, wlroots, Hyprland, niri and KDE (KWin, "The gaps pass, KDE"); not X11, nor GNOME's workspace list | `compass-core/tests/window_manager.rs`, `compositor_ipc.rs`, `compass-platform-linux/tests/kwin.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
 | `src/builtins/developer` | both ✅ | Create Extension end to end | `a_valid_form_writes_the_boilerplate_and_an_invalid_one_says_why`, `create_extension_sends_the_form_and_shows_where_it_went` |
 | `src/builtins/font` | parity ✅ | Browse Fonts | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font` |
 | `src/builtins/power-management` | both ✅ | the plan, both preferences, the dialog | `the_confirm_preference_decides_whether_a_power_command_asks`, `a_power_command_with_a_custom_program_runs_it_instead` |
@@ -841,6 +841,69 @@ Declared differences:
   from a local build.
 - The file index, snippet and script preferences are read where they are used or when the engine
   next starts, as `vicinae.json` edited by hand is.
+
+### The gaps pass, KDE (2026-09-25)
+
+The KDE window-manager provider, from PLAN §12.0's `src/services/window-manager` row, against the
+C++ in `src/server/src/services/window-manager/kde/`. No IPC change: KWin's windows reach the
+switcher, Switch Workspaces, the toggles and `WindowManagement` through the existing requests.
+
+**How it works, as the C++.** KWin has no socket and no D-Bus call that lists windows, so the engine
+owns `org.vicinae.WindowTracker` on the session bus and loads a tracker script into KWin over
+`org.kde.kwin.Scripting` (`loadScript` of a temporary file, then `run` on `/Scripting/Script<n>`,
+the file kept until `run` answers because KWin opens it then). The script walks
+`workspace.stackingOrder` once and forwards `windowAdded`, `windowRemoved`, `windowActivated` and
+each window's `captionChanged` with `callDBus`; the engine answers from what it has been told. A
+tracker left by an earlier run is unloaded first, the tracker is reloaded whenever `org.kde.KWin`
+gets an owner (KWin restarted) and its windows forgotten when it loses one, and it is unloaded when
+the engine stops. Focusing a window is a one-shot script (`workspace.activeWindow = w`) loaded, run
+and unloaded under a unique plugin name. Chosen as the C++ chooses it: `kde` in
+`$XDG_CURRENT_DESKTOP` on a Wayland session (`Environment::isWaylandPlasmaDesktop`).
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/window-manager` | — (stays `Rust ✓` 🟡: the X11 provider and GNOME's workspace list remain) | `compass_platform_linux::compositor::kwin` (`Kwin`, the tracker object, the scripts), `Provider::Kwin`, `vicinae::wlroots::{start_kwin, stop_kwin}`, `vicinae::window_service::{kwin_list, kwin_windows, kwin_act}`, the `kde.kwin` doctor check | `the_tracker_lists_kwins_normal_windows_and_which_is_active`, `focus_close_and_fullscreen_are_one_shot_scripts_unloaded_after`, `virtual_desktops_are_the_workspaces_and_the_overview_is_kwins_shortcut`, `a_kwin_restart_forgets_its_windows_and_reloads_the_tracker`, `a_second_tracker_is_refused_the_name_and_stop_gives_it_up`, `plasma_on_wayland_is_a_kde_entry_and_a_display`, `a_one_shot_script_quotes_its_target`, `handles_are_numbered_once_and_never_reused`, `kwin_windows_leave_out_the_launcher_and_number_their_desktop`, `kwin_with_its_desktops_passes_and_counts_them`, `kwin_absent_on_plasma_warns_and_elsewhere_is_not_asked`, `kwin_without_virtual_desktops_warns_that_there_are_no_workspaces` |
+
+The tests run against a private `dbus-daemon` with a fake `org.kde.KWin`
+(`compass-platform-linux/tests/kwin.rs`): it answers the scripting interface as KWin does (a number
+from `loadScript`, a `run` that reads the file it was given) and, having no JavaScript engine,
+replays what KWin would do running each script — the tracker's `add`/`activated` calls, a one-shot's
+change and the signal it causes. That the scripts themselves are correct JavaScript against KWin's
+API is **VM tier**: real KWin (Plasma 6) is the only proof, and no KWin runs in CI.
+
+Declared differences, beyond the C++:
+
+- **More than the C++ offers.** The C++ provider lists and focuses windows and declares no
+  capabilities (`canClose` is false, no workspaces). Compass also closes windows (`closeWindow()`),
+  toggles fullscreen (`fullScreen`), lists and switches virtual desktops as workspaces through KWin's
+  own `org.kde.KWin.VirtualDesktopManager` (`desktops`, `current`), and opens the overview through
+  kglobalaccel's `invokeShortcut("Overview")` on `/component/kwin`. The tracker's `add` therefore
+  carries two more arguments than the C++'s (the window's first desktop id, empty on all desktops,
+  and whether it is fullscreen) and is re-sent on `desktopsChanged` and `fullScreenChanged`.
+- **No floating toggle.** KWin floats every window already; `ToggleFloating` is refused by name and
+  the capability is off.
+- **Window handles.** KWin's ids are UUIDs and the engine's window requests carry a `u32`, so each
+  UUID is numbered the first time it is seen and the number is never reused in the process, across
+  KWin restarts included.
+- **"The window the person was in"** for the toggles is the most recently activated window, not the
+  launcher's, on the current desktop (or on all desktops), from the tracker's activation order.
+- **No geometry.** The tracker does not follow `frameGeometryChanged` (it fires on every step of a
+  drag), so KWin windows report no bounds to `WindowManagement`.
+- **Start-up is detached.** The C++ starts the provider synchronously; Compass starts it on a task
+  after the socket is bound (bounded to 10 s), so a KWin that never answers costs window switching,
+  never the engine. Until it is up, window requests go the non-KDE way.
+- **The tracker trusts its callers**, as the C++'s does: any session-bus client may call
+  `org.vicinae.WindowTracker`. And the script file is written to the temporary directory, as the
+  C++ writes it; inside the Flatpak that is the sandbox's own `/tmp`, which KWin cannot read, so
+  KDE window management there needs a path KWin can see (VM tier, with the Flatpak).
+- `vicinae doctor` gains `kde.kwin` (the C++ has no doctor): whether KWin owns its name and how many
+  virtual desktops it reports, a warning without either, and a warning for KDE on X11.
+
+**X11 is not implemented** (the decision whether X11 is supported is the user's). What it would
+take is recorded in PLAN §12.0: the C++ `x11/` provider is 1,163 lines over XCB and EWMH
+(`_NET_CLIENT_LIST`, `_NET_ACTIVE_WINDOW`, `_NET_WM_DESKTOP`, `_NET_CURRENT_DESKTOP`,
+`_NET_DESKTOP_NAMES`, `WM_DELETE_WINDOW`, `_NET_WM_STATE_STICKY`) with a `PropertyNotify` listener
+on the root window.
 
 ### The gaps pass, HUD and onboarding (2026-09-25)
 
@@ -2298,7 +2361,8 @@ crate has no harness for. Recorded rather than left looking covered.
 have since landed — GNOME through the Shell extension (`compass-shell`), the wlroots
 foreign-toplevel list (`compass_wayland::toplevel`), and Hyprland and niri over their own IPC
 (`compass_platform_linux::compositor`) — so the row is `Rust ✓` 🟡 and `parity test ✓` ✅.
-Still C++-only: the KDE and X11 providers. The section below is kept as the record of the dispatch port.
+Still C++-only: the X11 provider (the KDE provider landed in "The gaps pass, KDE (2026-09-25)").
+The section below is kept as the record of the dispatch port.
 
 `compass-core::window_manager` is a complete port of `window-manager.cpp` — which backend gets
 picked, and the focus bookkeeping that lets the launcher act on the window the user was in *before*

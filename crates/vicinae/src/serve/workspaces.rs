@@ -1,6 +1,6 @@
 //! The window-management extension's other commands: Switch Workspaces and
 //! the fullscreen, floating and overview toggles (`src/builtins/wm/`), over
-//! the compositor's own IPC (Hyprland, niri).
+//! the compositor's own IPC (Hyprland, niri, KWin).
 //!
 //! Workspaces are described as `SwitchWorkspacesViewHost::refreshWindows`
 //! builds them: each with its window count and the applications with a
@@ -95,7 +95,7 @@ pub fn on_active_workspace(window: Option<&str>, active: Option<&str>) -> bool {
 fn unsupported() -> ProtocolError {
     ProtocolError::new(
         ErrorKind::Unsupported,
-        "Window management needs Hyprland or niri, and this session is neither",
+        "Window management needs Hyprland, niri or KDE Plasma, and this session is none of them",
     )
 }
 
