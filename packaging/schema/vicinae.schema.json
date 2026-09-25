@@ -127,6 +127,29 @@
       },
       "type": "object"
     },
+    "GlobalShortcutsConfig": {
+      "additionalProperties": true,
+      "description": "The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose\n`toggle` is [`LauncherConfig::hotkey`] here).",
+      "properties": {
+        "inhibit_apps": {
+          "default": [],
+          "description": "While one of these applications is focused, every global shortcut is\nreleased so its keys reach the application: a virtual machine or a\nremote desktop. Desktop file ids, e.g. `org.gnome.Boxes.desktop`.",
+          "examples": [
+            [
+              "org.gnome.Boxes.desktop"
+            ]
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "InputServerConfig": {
       "additionalProperties": true,
       "description": "The `input_server` section: the keyboard helper behind snippet keyword\nexpansion (`vicinae-input-server`).",
@@ -327,6 +350,10 @@
         "array",
         "null"
       ]
+    },
+    "global_shortcuts": {
+      "$ref": "#/$defs/GlobalShortcutsConfig",
+      "description": "The global shortcuts, beyond the launcher hotkey."
     },
     "input_server": {
       "$ref": "#/$defs/InputServerConfig",

@@ -31,15 +31,17 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use compass_core::Config;
 use compass_core::global_shortcuts::{self, Action, Binding, Reconciler};
+use compass_core::key_combo::KeyCombo;
 use compass_ipc::{Response, WindowCommand};
 use compass_portals::{
     PortalConfig, Portals, ShortcutBinder, ShortcutDescriptor, ShortcutEvent, ShortcutsOutcome,
     Trigger,
 };
-use tokio::sync::{RwLock, mpsc, watch};
+use tokio::sync::{RwLock, mpsc, oneshot, watch};
 
 use crate::serve::{EngineState, forward};
 
@@ -49,18 +51,66 @@ use crate::serve::{EngineState, forward};
 pub struct Control {
     generation: watch::Sender<u64>,
     capturing: watch::Sender<bool>,
+    frontmost: watch::Sender<Option<String>>,
+    probes: std::sync::Mutex<Option<mpsc::UnboundedSender<Probe>>>,
 }
+
+/// A combination the recorder captured, and where the backend's answer
+/// goes.
+type Probe = (KeyCombo, oneshot::Sender<Option<String>>);
+
+/// How long the recorder waits for the backend's answer to a probe before
+/// taking the combination.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl Default for Control {
     fn default() -> Self {
         Self {
             generation: watch::Sender::new(0),
             capturing: watch::Sender::new(false),
+            frontmost: watch::Sender::new(None),
+            probes: std::sync::Mutex::new(None),
         }
     }
 }
 
 impl Control {
+    /// The focused application changed to `app` (its desktop id, when it
+    /// was recognised): `AppRuntime::frontmostAppChanged`.
+    pub fn set_frontmost(&self, app: Option<String>) {
+        self.frontmost.send_if_modified(|current| {
+            let changed = *current != app;
+            *current = app;
+            changed
+        });
+    }
+
+    /// Whether the running backend would bind `combo`
+    /// (`GlobalShortcutService::probeBind`): the desktop's refusal, or
+    /// `None` when it would, when no backend runs, or when it does not
+    /// answer in time.
+    pub async fn probe(&self, combo: KeyCombo) -> Option<String> {
+        let sender = self
+            .probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()?;
+        let (reply, answer) = oneshot::channel();
+        sender.send((combo, reply)).ok()?;
+        tokio::time::timeout(PROBE_TIMEOUT, answer)
+            .await
+            .ok()?
+            .ok()
+            .flatten()
+    }
+
+    fn serve_probes(&self, sender: Option<mpsc::UnboundedSender<Probe>>) {
+        *self
+            .probes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = sender;
+    }
+
     /// The configuration changed: bind what it now says (`configChanged`).
     pub fn reload(&self) {
         self.generation.send_modify(|generation| *generation += 1);
@@ -96,6 +146,21 @@ pub trait Backend: Send {
     fn flush(&mut self) -> impl Future<Output = Vec<(String, String)>> + Send {
         async { Vec::new() }
     }
+
+    /// Whether the desktop would bind `binding`: binds it and releases it at
+    /// once (`probeBind`).
+    fn probe(&mut self, binding: &Binding) -> impl Future<Output = Result<(), String>> + Send {
+        async move {
+            let bound = self.bind(binding).await;
+            self.unbind(&binding.id).await;
+            let failed = self.flush().await;
+            bound?;
+            match failed.into_iter().find(|(id, _)| *id == binding.id) {
+                Some((_, reason)) => Err(reason),
+                None => Ok(()),
+            }
+        }
+    }
 }
 
 /// A backend kept in step with the configuration.
@@ -104,6 +169,7 @@ pub struct Service<B> {
     backend: B,
     reconciler: Reconciler,
     capturing: bool,
+    inhibited: bool,
 }
 
 impl<B: Backend> Service<B> {
@@ -113,7 +179,53 @@ impl<B: Backend> Service<B> {
             backend,
             reconciler: Reconciler::default(),
             capturing: false,
+            inhibited: false,
         }
+    }
+
+    /// Whether the recorder is capturing.
+    #[must_use]
+    pub fn capturing(&self) -> bool {
+        self.capturing
+    }
+
+    /// `updateInhibition`: every binding is released while the focused
+    /// application is one `global_shortcuts.inhibit_apps` lists, so its keys
+    /// reach it, and `desired` is bound again once it is not. While the
+    /// recorder captures nothing is bound anyway, and its end binds or not
+    /// as this says.
+    pub async fn set_inhibited(&mut self, inhibited: bool, desired: &BTreeMap<String, Binding>) {
+        if self.inhibited == inhibited {
+            return;
+        }
+        self.inhibited = inhibited;
+        tracing::info!(
+            inhibited,
+            "global shortcuts paused for the focused application"
+        );
+        if self.capturing {
+            return;
+        }
+        if inhibited {
+            self.backend.unbind_all().await;
+            self.backend.flush().await;
+            self.reconciler.clear();
+        } else {
+            self.reconcile(desired).await;
+        }
+    }
+
+    /// `probeBind`: the desktop's refusal of `combo`, or `None` when it
+    /// would bind it. Only while the recorder captures, when nothing else is
+    /// bound for the probe to collide with.
+    pub async fn probe(&mut self, combo: &KeyCombo) -> Option<String> {
+        if !self.capturing {
+            return None;
+        }
+        self.backend
+            .probe(&global_shortcuts::probe(combo))
+            .await
+            .err()
     }
 
     /// The backend, for tests.
@@ -122,9 +234,9 @@ impl<B: Backend> Service<B> {
     }
 
     /// `reconcile`: releases what is no longer wanted and binds what is new.
-    /// Nothing while capturing.
+    /// Nothing while capturing or paused.
     pub async fn reconcile(&mut self, desired: &BTreeMap<String, Binding>) {
-        if self.capturing {
+        if self.capturing || self.inhibited {
             return;
         }
         let plan = self.reconciler.plan(desired);
@@ -234,9 +346,23 @@ pub async fn serve<B, F, Fut>(
     let control = state.read().await.global_shortcuts();
     let mut generation = control.generation.subscribe();
     let mut capturing = control.capturing.subscribe();
-    service
-        .reconcile(&desired(&state, &config().await).await)
-        .await;
+    let mut frontmost = control.frontmost.subscribe();
+    let (probes_tx, mut probes) = mpsc::unbounded_channel::<Probe>();
+    control.serve_probes(Some(probes_tx));
+    let paused = |config: &Config, frontmost: &watch::Receiver<Option<String>>| {
+        global_shortcuts::inhibited(
+            config.global_shortcuts().inhibit_apps(),
+            frontmost.borrow().as_deref(),
+        )
+    };
+    {
+        let config = config().await;
+        let desired = desired(&state, &config).await;
+        service
+            .set_inhibited(paused(&config, &frontmost), &desired)
+            .await;
+        service.reconcile(&desired).await;
+    }
     loop {
         tokio::select! {
             press = presses.recv() => {
@@ -254,7 +380,10 @@ pub async fn serve<B, F, Fut>(
                 if changed.is_err() {
                     break;
                 }
-                service.reconcile(&desired(&state, &config().await).await).await;
+                let config = config().await;
+                let desired = desired(&state, &config).await;
+                service.set_inhibited(paused(&config, &frontmost), &desired).await;
+                service.reconcile(&desired).await;
             }
             changed = capturing.changed() => {
                 if changed.is_err() {
@@ -264,14 +393,35 @@ pub async fn serve<B, F, Fut>(
                 let desired = desired(&state, &config().await).await;
                 service.set_capturing(on, &desired).await;
             }
+            changed = frontmost.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                frontmost.borrow_and_update();
+                let config = config().await;
+                let desired = desired(&state, &config).await;
+                service.set_inhibited(paused(&config, &frontmost), &desired).await;
+            }
+            Some((combo, reply)) = probes.recv() => {
+                // The recorder says it captures before it probes; take that
+                // first if this loop has not yet.
+                let on = *capturing.borrow_and_update();
+                if on != service.capturing() {
+                    let desired = desired(&state, &config().await).await;
+                    service.set_capturing(on, &desired).await;
+                }
+                let _ = reply.send(service.probe(&combo).await);
+            }
         }
     }
+    control.serve_probes(None);
     tracing::info!("global shortcuts: the backend went away; they are unbound");
 }
 
 /// Binds the configuration's global shortcuts for as long as the engine
 /// runs.
 pub async fn run(state: Arc<RwLock<EngineState>>) {
+    tokio::spawn(follow_frontmost(Arc::clone(&state)));
     let (presses_tx, presses) = mpsc::unbounded_channel();
     if let Some(backend) = connect_wayland(presses_tx.clone()).await {
         serve(state, Service::new(backend), presses, load_config).await;
@@ -286,6 +436,18 @@ pub async fn run(state: Arc<RwLock<EngineState>>) {
         None => "bind `vicinae toggle` to a key in your desktop's settings".to_owned(),
     };
     tracing::warn!("no global shortcut backend; {hint}. `vicinae doctor` explains the options");
+}
+
+/// Tells the service which application is focused, now and each time focus
+/// moves, from the window-manager providers ([`crate::frontmost`]).
+async fn follow_frontmost(state: Arc<RwLock<EngineState>>) {
+    let report = |state: Arc<RwLock<EngineState>>| async move {
+        let app = crate::frontmost::frontmost(&state).await.app_id;
+        state.read().await.global_shortcuts().set_frontmost(app);
+    };
+    report(Arc::clone(&state)).await;
+    let watched = Arc::clone(&state);
+    crate::frontmost::watch(watched, || report(Arc::clone(&state))).await;
 }
 
 /// `xx-hotkey-v1` or `vicinae-hotkey-v1`, on any Wayland compositor but
@@ -485,6 +647,13 @@ impl Backend for PortalBackend {
     async fn unbind_all(&mut self) {
         self.set.clear();
         self.dirty = true;
+    }
+
+    /// The portal binds a whole set behind the desktop's own dialog, where
+    /// the person picks the trigger, so there is nothing to ask ahead of it:
+    /// a probe would open that dialog for a throwaway shortcut.
+    async fn probe(&mut self, _binding: &Binding) -> Result<(), String> {
+        Ok(())
     }
 
     async fn flush(&mut self) -> Vec<(String, String)> {
@@ -733,6 +902,185 @@ mod tests {
             .await
             .expect("the service ends with its presses")
             .expect("no panic");
+    }
+
+    #[tokio::test]
+    async fn a_listed_application_in_front_releases_every_shortcut_until_it_leaves() {
+        let fake = Fake::default();
+        let mut service = Service::new(fake.clone());
+        let desired = wanted("{}");
+        service.reconcile(&desired).await;
+        service.set_inhibited(true, &desired).await;
+        assert_eq!(
+            service.action("toggle"),
+            None,
+            "the keys reach the application"
+        );
+        service.reconcile(&desired).await;
+        service.set_inhibited(true, &desired).await;
+        service.set_inhibited(false, &desired).await;
+        assert_eq!(
+            fake.log(),
+            [
+                "bind toggle super+space",
+                "unbind all",
+                "bind toggle super+space"
+            ],
+            "nothing is bound while paused, and it is bound once after"
+        );
+        assert_eq!(service.action("toggle"), Some(Action::ToggleLauncher));
+
+        // Paused while the recorder captures: its end binds nothing.
+        service.set_capturing(true, &desired).await;
+        service.set_inhibited(true, &desired).await;
+        service.set_capturing(false, &desired).await;
+        assert_eq!(fake.log()[3..], ["unbind all"]);
+        assert_eq!(service.action("toggle"), None);
+    }
+
+    #[tokio::test]
+    async fn a_probe_binds_and_releases_the_combination_and_says_why_it_was_refused() {
+        let fake = Fake {
+            refuse: vec![global_shortcuts::PROBE_ID.to_owned()],
+            ..Fake::default()
+        };
+        let mut service = Service::new(fake.clone());
+        let combo = KeyCombo::parse("super+Q").unwrap();
+        assert_eq!(
+            service.probe(&combo).await,
+            None,
+            "not capturing: nothing is asked"
+        );
+        assert!(fake.log().is_empty());
+
+        service.set_capturing(true, &wanted("{}")).await;
+        assert_eq!(service.probe(&combo).await.as_deref(), Some("taken"));
+        assert_eq!(
+            fake.log()[1..],
+            ["bind @probe super+Q", "unbind @probe"],
+            "bound and released at once"
+        );
+
+        let mut taking = Service::new(Fake::default());
+        taking.set_capturing(true, &wanted("{}")).await;
+        assert_eq!(taking.probe(&combo).await, None);
+    }
+
+    /// Starts `serve` over `fake` with `json` as the configuration, and
+    /// waits for its first bind.
+    async fn serving(
+        state: &Arc<RwLock<EngineState>>,
+        fake: &Fake,
+        json: &str,
+    ) -> (mpsc::UnboundedSender<String>, tokio::task::JoinHandle<()>) {
+        let (presses_tx, presses) = mpsc::unbounded_channel();
+        let json = json.to_owned();
+        let task = tokio::spawn(serve(
+            Arc::clone(state),
+            Service::new(fake.clone()),
+            presses,
+            move || {
+                let config = config(&json);
+                async move { config }
+            },
+        ));
+        until(fake, |log| !log.is_empty()).await;
+        (presses_tx, task)
+    }
+
+    async fn until(fake: &Fake, done: impl Fn(&[String]) -> bool) -> Vec<String> {
+        for _ in 0..400 {
+            let log = fake.log();
+            if done(&log) {
+                return log;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("the service never got there: {:?}", fake.log());
+    }
+
+    #[tokio::test]
+    async fn the_frontmost_application_pauses_the_shortcuts_the_configuration_names() {
+        let state = engine();
+        let fake = Fake::default();
+        let control = state.read().await.global_shortcuts();
+        let (presses_tx, task) = serving(
+            &state,
+            &fake,
+            r#"{"global_shortcuts": {"inhibit_apps": ["org.gnome.Boxes.desktop"]}}"#,
+        )
+        .await;
+
+        control.set_frontmost(Some("firefox.desktop".into()));
+        control.set_frontmost(Some("org.gnome.Boxes.desktop".into()));
+        until(&fake, |log| log.last().is_some_and(|l| l == "unbind all")).await;
+        control.set_frontmost(Some("firefox.desktop".into()));
+        let log = until(&fake, |log| log.len() == 3).await;
+        assert_eq!(
+            log,
+            [
+                "bind toggle super+space",
+                "unbind all",
+                "bind toggle super+space"
+            ]
+        );
+
+        drop(presses_tx);
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the service ends with its presses")
+            .expect("no panic");
+    }
+
+    #[tokio::test]
+    async fn the_recorders_probe_reaches_the_backend_over_ipc() {
+        let state = engine();
+        let probe = |trigger: &str| {
+            crate::serve::handle(
+                &state,
+                compass_ipc::Request::ProbeShortcut {
+                    trigger: trigger.to_owned(),
+                },
+            )
+        };
+        assert_eq!(
+            probe("super+Q").await,
+            Response::ShortcutProbe { refusal: None },
+            "no backend: nothing to refuse it"
+        );
+        assert!(matches!(
+            probe("not a key").await,
+            Response::Error(ref err) if err.kind == ErrorKind::BadRequest
+        ));
+
+        let fake = Fake {
+            refuse: vec![global_shortcuts::PROBE_ID.to_owned()],
+            ..Fake::default()
+        };
+        let (presses_tx, task) = serving(&state, &fake, "{}").await;
+        let _ = crate::serve::handle(
+            &state,
+            compass_ipc::Request::ShortcutCapture { capturing: true },
+        )
+        .await;
+        assert_eq!(
+            probe("super+Q").await,
+            Response::ShortcutProbe {
+                refusal: Some("taken".to_owned())
+            }
+        );
+        assert!(fake.log().contains(&"bind @probe super+Q".to_owned()));
+
+        drop(presses_tx);
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the service ends with its presses")
+            .expect("no panic");
+        assert_eq!(
+            probe("super+Q").await,
+            Response::ShortcutProbe { refusal: None },
+            "the service is gone"
+        );
     }
 
     #[tokio::test]

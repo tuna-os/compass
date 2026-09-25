@@ -152,7 +152,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/global-shortcuts` | `compass-core::global_shortcuts`, `compass-wayland::hotkey`, `compass-portals`, `vicinae::global_shortcuts` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/global-shortcuts` | `compass-core::global_shortcuts`, `compass-wayland::hotkey`, `compass-portals`, `vicinae::global_shortcuts` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/input-server` | `vicinae::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -180,7 +180,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/update` | `compass-core::update`, `vicinae::updates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/window-material` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 ## Builtins
@@ -293,7 +293,7 @@ shortcuts, the power commands' two preferences, and a notification's urgency and
 | `src/services/selection` | Rust ✅ | data-control on wlroots, the Shell extension on GNOME | `the_primary_selection_is_its_text_or_nothing`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `on_sway_a_shortcut_expands_the_selected_text` |
 | `src/services/snippet` | Rust ✅ | `compass_core::{snippet_store, snippet_expander}`, `compass-input-server` | `snippets_are_imported_created_expanded_edited_and_removed`, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
 | `src/services/wallpaper` | Rust ✅ | `compass_core::wallpaper`, `vicinae::extension_wallpaper` (all six Linux backends) | `compass-core/tests/wallpaper.rs`, `a_failing_command_says_its_stderr_else_its_code` |
-| `src/services/window-manager` | Rust 🟡, parity ✅ | dispatch plus GNOME, wlroots, Hyprland, niri and KDE (KWin, "The gaps pass, KDE"); not GNOME's workspace list (X11 is n/a, "Product decisions") | `compass-core/tests/window_manager.rs`, `compositor_ipc.rs`, `compass-platform-linux/tests/kwin.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
+| `src/services/window-manager` | Rust ✅, parity ✅ | dispatch plus GNOME, wlroots, Hyprland, niri and KDE (KWin, "The gaps pass, KDE"), and GNOME's workspaces ("The gaps pass, GNOME workspaces and shortcut probes"); X11 is n/a ("Product decisions") | `compass-core/tests/window_manager.rs`, `on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension`, `compositor_ipc.rs`, `compass-platform-linux/tests/kwin.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
 | `src/builtins/developer` | both ✅ | Create Extension end to end | `a_valid_form_writes_the_boilerplate_and_an_invalid_one_says_why`, `create_extension_sends_the_form_and_shows_where_it_went` |
 | `src/builtins/font` | parity ✅ | Browse Fonts | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font` |
 | `src/builtins/power-management` | both ✅ | the plan, both preferences, the dialog | `the_confirm_preference_decides_whether_a_power_command_asks`, `a_power_command_with_a_custom_program_runs_it_instead` |
@@ -323,8 +323,9 @@ PLAN §12.0 sizes them and says what blocks each.
   one, a remote one) to a temporary PNG landed after it (see "Gaps closed after the truth pass").
 - `src/services/global-shortcuts`: per-command global shortcuts, `vicinae-hotkey-v1`, the
   launcher hotkey from the configuration, close on focus loss and conflict detection landed in "The
-  gaps pass, global shortcuts". Still C++-only: `globalShortcuts.inhibitApps`, and the
-  recorder's `probeBind`. The X11 backend is n/a: Compass is Wayland only ("Product decisions").
+  gaps pass, global shortcuts", and `globalShortcuts.inhibitApps` and the recorder's `probeBind` in
+  "The gaps pass, GNOME workspaces and shortcut probes". The X11 backend is n/a: Compass is
+  Wayland only ("Product decisions"), so nothing is left.
 - `src/services/news`, `src/services/telemetry`: n/a in both columns. A hard fork: no news feed,
   no telemetry, by decision 2026-09-25 ("Product decisions"). The C++ models stay in
   `compass-core` (`news`, `telemetry`) as the record of the port and for the store's base URL;
@@ -1222,9 +1223,11 @@ Declared differences:
   settings view or the action panel: the engine does not watch `vicinae.json` as `config::Manager`
   does.
 - The recorder cannot tell the compositor refused a combination (`probeBind`): the engine logs the
-  refusal when it binds, and the shortcut stays in the configuration.
+  refusal when it binds, and the shortcut stays in the configuration. (Closed in "The gaps pass,
+  GNOME workspaces and shortcut probes".)
 - `globalShortcuts.inhibitApps` (suspending every shortcut while a listed application is frontmost)
-  is not in Compass's configuration and not ported.
+  is not in Compass's configuration and not ported. (Closed in the same pass, as
+  `global_shortcuts.inhibit_apps`.)
 - The conflict check does not know whether the desktop has a backend: the C++ reports no conflict
   where global shortcuts are unsupported, Compass always checks.
 - A command whose arguments are required is refused by name, as `cmd launch` refuses it, where the
@@ -1367,6 +1370,91 @@ refused, each readable unconfined; a write into the password store refused).
 
 Suite 1's ledger does not change: its `HOME` is empty, so `ssh`, `pass`, `niri` and the `hypr*`
 keybinding lists find nothing to read under either policy, as row 6 always said.
+
+### The gaps pass, GNOME workspaces and shortcut probes (2026-09-25)
+
+Three of the `Still C++-only:` items PLAN §12.0 listed under `src/services/window-manager` and
+`src/services/global-shortcuts`, against `GnomeWindowManager::listWorkspaces`,
+`GlobalShortcutService::{updateInhibition, computeInhibited, probeBind}` and
+`GlobalShortcutBridge::validate` (IPC v21: `Request::ProbeShortcut`, `Response::ShortcutProbe`,
+both appended last). **No cell flips**: both rows stay `Rust ✓` 🟡 for X11 alone, which is the open
+X11 decision, so the ledger stays at 148 of 156.
+
+**GNOME's workspaces: the Shell extension's contract v4.** Mutter's workspaces are reached only
+from inside the Shell, so the extension's windows interface gains `ListWorkspaces()` (an `aa{sv}`
+per workspace in order: `index`, `name` from `Meta.prefs_get_workspace_name`, `active`,
+`has_fullscreen`) and `ActivateWorkspace(i)` (`Meta.Workspace.activate`), and `WindowsChanged` now
+also fires on `active-workspace-changed`, `workspace-added` and `workspace-removed`, so Switch
+Workspaces refreshes as windows do. The C++ provider's unversioned surface had `ListWorkspaces`
+and `GetActiveWorkspace` as JSON strings; here the active one is a key of each entry. The engine
+still speaks contract 3 (`compass_shell::OLDEST_CONTRACT_VERSION`): an extension a release behind
+switches windows, reads the clipboard and pastes as before, and a workspace call is refused before
+it reaches the bus (`ShellError::TooOld`), which the engine words as "update the extension".
+`vicinae doctor`'s `gnome.shell-extension` reports `extension present, contract v4`, and warns
+for v3 that Switch Workspaces needs the update. With no compositor IPC (Hyprland, niri, KWin) and
+the extension answering, `WindowManagerCapabilities`, `ListWorkspaces` and `FocusWorkspace` go to
+the extension (`vicinae::serve::workspaces::{gnome, gnome_workspace, gnome_window}`): each
+workspace counts its windows and names each application on it once, as on the other compositors.
+
+**`globalShortcuts.inhibitApps`** is `global_shortcuts.inhibit_apps` in `vicinae.json` (schema,
+the migration from `settings.json` carries it, and the settings view's General page lists it as
+"Pause shortcuts in", a list of application ids). While the focused application's desktop id is
+listed, every global shortcut is released so its keys reach it (`Service::set_inhibited`, as
+`updateInhibition`): nothing binds while paused, not a reload and not the end of a recording,
+and the configuration is bound again once it is not. The focused application comes from the
+window-manager providers (`vicinae::frontmost`, factored out of snippet expansion, which uses the
+same answer): the toplevel list on wlroots, KWin's tracker, the Shell extension on GNOME, each
+window recognised in the app index as `AppRuntime::frontmostApp` recognises it.
+
+**`probeBind`.** When a recorder (the action panel's or the settings view's) captures a combination
+that passes the conflict check, it asks the engine (`Request::ProbeShortcut`) and shows
+"Checking..." until the answer: the engine binds the combination under `@probe` and releases it at
+once, while every other binding is suspended for the capture, and the desktop's refusal is shown in
+the recorder as the error it keeps recording under, as `validate` returns it. Only a combination
+the desktop takes is saved.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/window-manager` | — (stays `Rust ✓` 🟡: the X11 provider) | `compass_shell` contract v4 (`ShellClient::{list_workspaces, activate_workspace}`, `Workspace`, `Availability::supports`, `ShellError::TooOld`, `OLDEST_CONTRACT_VERSION`, `WORKSPACES_SINCE`), the extension's `ListWorkspaces` and `ActivateWorkspace`, `vicinae::serve::workspaces::{gnome, gnome_workspace, gnome_window}`, `vicinae::window_service::refusal`, the `gnome.shell-extension` doctor check | `workspaces_are_listed_and_switched_through_the_extension`, `an_extension_a_release_behind_switches_windows_but_refuses_workspaces`, `every_contract_member_is_reached_through_the_proxy`, `the_contract_is_exactly_these_members`, `served_interfaces_match_the_checked_in_xml` (a private `dbus-daemon` and the mock Shell); `an_extension_a_release_behind_is_available_without_workspaces`, `a_workspace_needs_its_index_and_defaults_the_rest`; `list_workspaces_fills_every_key_the_client_decodes`, `a_workspace_switch_tells_the_client_to_look_again`, `the_vm_tier_asks_for_the_workspaces`, `the_extension_speaks_this_contract_version`, `the_vm_tier_waits_for_this_contract_version`; `on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension`, `an_extension_a_release_behind_offers_no_switch_workspaces_and_says_to_update` (the engine against the mock Shell); `an_extension_too_old_for_workspaces_is_asked_to_update`, `extension_at_contract_v4_passes_and_one_a_release_behind_warns_about_workspaces` |
+| `src/services/global-shortcuts` | — (stays `Rust ✓` 🟡: the X11 backend) | `compass_core::config::GlobalShortcutsConfig`, `compass_core::global_shortcuts::{inhibited, probe, PROBE_ID}`, `compass_core::settings_catalog::Kind::Names`, `vicinae::global_shortcuts` (`Service::{set_inhibited, probe}`, `Backend::probe`, `Control::{set_frontmost, probe}`), `vicinae::frontmost`, `compass_ui::shortcut_recorder` (`Outcome::Probe`, `probed`), `compass_ui::app::global_shortcuts::{probe_shortcut, shortcut_probed}` | `a_listed_frontmost_application_pauses_the_shortcuts`, `a_probe_binds_the_combination_under_its_own_id`, `the_apps_that_pause_the_shortcuts_are_names_the_engine_reads`, `the_migrated_file_round_trips_through_the_rust_reader`, `every_shared_setting_is_carried_across`; `a_listed_application_in_front_releases_every_shortcut_until_it_leaves`, `the_frontmost_application_pauses_the_shortcuts_the_configuration_names`, `a_probe_binds_and_releases_the_combination_and_says_why_it_was_refused`, `the_recorders_probe_reaches_the_backend_over_ipc`; `a_combination_the_desktop_refuses_is_shown_and_recording_goes_on`, `the_recorder_shows_the_desktops_refusal_and_keeps_what_it_takes`, `a_chord_is_recorded_in_the_cpps_spelling`; `every_request_variant_round_trips`, `request_variants_are_exhaustive`, `response_variants_are_exhaustive` |
+
+Declared differences:
+
+- **GNOME switches workspaces; the C++ does not.** `GnomeWindowManager` lists GNOME's workspaces
+  but leaves `focusWorkspaceSync` empty, so choosing one did nothing; the extension's
+  `ActivateWorkspace` switches to it. An unnamed workspace is called by its number, as on the
+  other compositors here, where the C++ says "Workspace N" (Mutter's own default name usually
+  arrives first anyway).
+- **Contract negotiation is a range, not an equality.** Before this pass the engine used an
+  extension only at exactly its own contract version; it now uses any version from 3 to 4 and
+  refuses per call what an older one lacks. `vicinae doctor` warns rather than fails for v3.
+- **`inhibit_apps` accepts an id with or without `.desktop`.** The C++ compares the desktop file id
+  exactly (`org.gnome.Boxes.desktop`); `org.gnome.Boxes` matches it too here.
+- **KWin's focus is looked at twice a second** for inhibition (and for snippet expansion, which
+  had no KWin path before): its tracker keeps windows in memory and signals nothing the engine
+  can wait on. The toplevel list on wlroots and `WindowsChanged` on GNOME are waited on, as before.
+- **The portal is not probed.** It binds a whole set behind the desktop's own dialog, where the
+  person picks the trigger, so a probe would open that dialog for a throwaway shortcut; the
+  recorder takes the combination and the desktop decides when it binds. No backend (X11, or
+  none found) answers nothing, as `probeBind` does when `isSupported()` is false.
+- **An engine that does not answer a probe within 3 s**, or cannot be reached, lets the recorder
+  keep the combination, as it did before this pass.
+
+VM tier (declared): the extension's `ListWorkspaces` and `ActivateWorkspace` against GNOME Shell 50
+and 51 (`packaging/vmtest/checks.sh shell-extension` now calls both and gates on the reply's shape);
+inhibition following focus on a real session; a compositor refusing a probe (no released one
+carries `xx-hotkey-v1` or `vicinae-hotkey-v1`).
+
+### Global shortcuts and the window manager, closed (2026-09-25)
+
+"The gaps pass, GNOME workspaces and shortcut probes" left both rows amber for X11 alone, and the
+product decisions made X11 n/a (Compass is Wayland only) in the same change, so both flip to
+`Rust ✓` ✅ on the tests their sections name: for `src/services/global-shortcuts` the backends,
+reconcile and conflict tests of "The gaps pass, global shortcuts" with the `inhibit_apps` and
+probe tests; for `src/services/window-manager` the GNOME, wlroots, Hyprland, niri and KWin provider
+tests with `on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension`. What stays
+unverified here is VM-tier and declared in those sections: GNOME's portal grant and the extension's
+workspace calls on real GNOME, a compositor refusing a probe, and real KWin.
 
 ### Earlier row notes
 

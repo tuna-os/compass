@@ -277,14 +277,14 @@ PY
         --method org.freedesktop.DBus.Properties.Get \
         org.gnome.Shell.Extensions.Vicinae.Windows Version
     }
-    contract_up() { case "$(contract_version 2>/dev/null)" in *"uint32 3>"*) return 0 ;; esac; return 1; }
+    contract_up() { case "$(contract_version 2>/dev/null)" in *"uint32 4>"*) return 0 ;; esac; return 1; }
 
     if ! as_user gnome-extensions enable "$uuid"; then
       echo "gnome-extensions could not enable $uuid" >&2
       as_user gnome-extensions list --details >&2 2>&1 || true
       exit 1
     fi
-    if ! wait_for "the Compass extension to export contract v2" 60 contract_up; then
+    if ! wait_for "the Compass extension to export contract v4" 60 contract_up; then
       echo "Version reads: $(contract_version 2>&1 || true)" >&2
       as_user gnome-extensions info "$uuid" >&2 2>&1 || true
       exit 1
@@ -306,6 +306,40 @@ PY
       "(@aa{sv} [],)" | "([{"*"}],)") ;;
       *) echo "ListWindows returned something that is not an array of windows" >&2; exit 1 ;;
     esac
+
+    # Contract 4: GNOME always has at least one workspace, so the reply is a
+    # non-empty aa{sv} whose first entry is index 0, and exactly one entry is
+    # active. A fresh session is on the first workspace, so switching to
+    # index 0 is a no-op the Shell must still accept, answered with `()`.
+    if ! workspaces="$(as_user gdbus call --session \
+      --dest org.gnome.Shell \
+      --object-path /org/gnome/Shell/Extensions/Vicinae/Windows \
+      --method org.gnome.Shell.Extensions.Vicinae.Windows.ListWorkspaces 2>&1)"; then
+      echo "ListWorkspaces failed: $workspaces" >&2
+      exit 1
+    fi
+    echo "ListWorkspaces: $workspaces"
+    case "$workspaces" in
+      "([{'index': <0>"*"}],)") ;;
+      *) echo "ListWorkspaces returned something that is not the workspaces from 0" >&2; exit 1 ;;
+    esac
+    actives="$(grep -o "'active': <true>" <<< "$workspaces" | wc -l || true)"
+    if [ "$actives" -ne 1 ]; then
+      echo "ListWorkspaces marked $actives workspaces active, not one" >&2
+      exit 1
+    fi
+    if ! switched="$(as_user gdbus call --session \
+      --dest org.gnome.Shell \
+      --object-path /org/gnome/Shell/Extensions/Vicinae/Windows \
+      --method org.gnome.Shell.Extensions.Vicinae.Windows.ActivateWorkspace 0 2>&1)"; then
+      echo "ActivateWorkspace failed: $switched" >&2
+      exit 1
+    fi
+    echo "ActivateWorkspace 0: $switched"
+    if [ "$switched" != "()" ]; then
+      echo "ActivateWorkspace answered $switched, not ()" >&2
+      exit 1
+    fi
     ;;
 
   # Spike B (#3): the same question on the target kernel. The Flatpak CI job

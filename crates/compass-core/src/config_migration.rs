@@ -232,7 +232,7 @@ impl Kind {
 /// `providers` is copied whole: the C++ and Rust shapes agree on `enabled` and on `entrypoints`
 /// with `enabled`, `alias` and `shortcut`, and the per-provider `preferences` the Rust root
 /// manager does not read yet survive as unknown fields rather than being lost.
-const DIRECT: [(&str, &str, Kind); 12] = [
+const DIRECT: [(&str, &str, Kind); 13] = [
     (
         "launcher_window.clock.enabled",
         "launcher.clock.enabled",
@@ -256,6 +256,11 @@ const DIRECT: [(&str, &str, Kind); 12] = [
     ("wrap_navigation", "launcher.wrap_navigation", Kind::Bool),
     ("keybinding", "launcher.keybinding", Kind::String),
     ("global_shortcuts.toggle", "launcher.hotkey", Kind::String),
+    (
+        "global_shortcuts.inhibit_apps",
+        "global_shortcuts.inhibit_apps",
+        Kind::Strings,
+    ),
     ("favorites", "favorites", Kind::Strings),
     ("fallbacks", "fallbacks", Kind::Strings),
     ("providers", "providers", Kind::Object),

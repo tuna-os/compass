@@ -587,4 +587,7 @@ pub enum Message {
     /// The engine's answer to the recorder suspending or resuming the
     /// global shortcuts.
     ShortcutCaptureSet(Result<(), String>),
+    /// The engine's answer to the recorder asking whether the desktop would
+    /// bind a combination: the combination, and the refusal if any.
+    ShortcutProbed(String, Result<Option<String>, String>),
 }

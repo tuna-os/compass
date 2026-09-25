@@ -564,6 +564,21 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn probe_shortcut(&self, trigger: String) -> BackendFuture<'_, Option<String>> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ProbeShortcut { trigger },
+                    "Asking the desktop about the shortcut",
+                )
+                .await?
+            {
+                compass_ipc::Response::ShortcutProbe { refusal } => Ok(refusal),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn set_shortcut_capture(&self, capturing: bool) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self

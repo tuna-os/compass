@@ -96,6 +96,46 @@ impl MockWindow {
     }
 }
 
+/// A workspace as the mock will report it (contract 4).
+#[derive(Debug, Clone)]
+pub struct MockWorkspace {
+    pub index: i32,
+    pub name: String,
+    pub active: bool,
+}
+
+impl MockWorkspace {
+    pub fn new(index: i32, name: &str) -> Self {
+        Self {
+            index,
+            name: name.to_owned(),
+            active: false,
+        }
+    }
+
+    pub fn active(mut self) -> Self {
+        self.active = true;
+        self
+    }
+
+    fn to_dict(&self) -> HashMap<String, OwnedValue> {
+        HashMap::from([
+            (
+                contract::workspace_key::INDEX.to_owned(),
+                OwnedValue::from(self.index),
+            ),
+            (
+                contract::workspace_key::NAME.to_owned(),
+                OwnedValue::try_from(Value::from(self.name.clone())).expect("string"),
+            ),
+            (
+                contract::workspace_key::ACTIVE.to_owned(),
+                OwnedValue::from(self.active),
+            ),
+        ])
+    }
+}
+
 /// Everything a test wants to inspect or steer about the mock.
 #[derive(Debug, Default)]
 pub struct MockState {
@@ -107,6 +147,8 @@ pub struct MockState {
     pub pastes: Vec<Vec<String>>,
     /// What `GetPrimarySelection` answers.
     pub primary: String,
+    /// What `ListWorkspaces` answers.
+    pub workspaces: Vec<MockWorkspace>,
 }
 
 pub type SharedState = Arc<Mutex<MockState>>;
@@ -144,6 +186,26 @@ impl WindowsService {
 
     #[zbus(signal)]
     async fn windows_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+
+    fn list_workspaces(&self) -> Vec<HashMap<String, OwnedValue>> {
+        let state = self.state.lock().expect("mock state");
+        state
+            .workspaces
+            .iter()
+            .map(MockWorkspace::to_dict)
+            .collect()
+    }
+
+    fn activate_workspace(&self, index: i32) {
+        let mut state = self.state.lock().expect("mock state");
+        state.calls.push((
+            "ActivateWorkspace",
+            u32::try_from(index).unwrap_or(u32::MAX),
+        ));
+        for workspace in &mut state.workspaces {
+            workspace.active = workspace.index == index;
+        }
+    }
 }
 
 /// A placeholder object so that a mock with neither contract interface still
@@ -277,6 +339,10 @@ impl MockShell {
 
     pub fn set_clipboard(&self, data: &[u8], mime_type: &str) {
         self.state.lock().expect("mock state").clipboard = (data.to_vec(), mime_type.to_owned());
+    }
+
+    pub fn set_workspaces(&self, workspaces: Vec<MockWorkspace>) {
+        self.state.lock().expect("mock state").workspaces = workspaces;
     }
 
     pub fn set_primary_selection(&self, text: &str) {

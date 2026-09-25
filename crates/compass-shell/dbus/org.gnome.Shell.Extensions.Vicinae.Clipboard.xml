@@ -23,6 +23,7 @@
         an extension's getSelectedText() answers. Mutter implements no
         data-control, and a Wayland client may only read the primary selection
         while it has keyboard focus, which the engine never has.
+    4 - unchanged. Windows gained ListWorkspaces and ActivateWorkspace.
 -->
 <node>
   <interface name="org.gnome.Shell.Extensions.Vicinae.Clipboard">

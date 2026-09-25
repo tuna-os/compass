@@ -33,6 +33,7 @@ pub mod extension_windows;
 pub mod file_manager;
 pub mod file_search;
 pub mod fonts;
+pub mod frontmost;
 pub mod global_shortcuts;
 pub mod indexer_client;
 pub mod indexer_service;

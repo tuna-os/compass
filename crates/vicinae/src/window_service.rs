@@ -286,6 +286,13 @@ pub fn refusal(err: &ShellError, what: &str) -> ProtocolError {
                  `vicinae doctor` shows how to install it"
             ),
         ),
+        ShellError::TooOld { found, needed, .. } => ProtocolError::new(
+            ErrorKind::Unsupported,
+            format!(
+                "{what} needs contract v{needed} of the Compass GNOME Shell extension, and the \
+                 installed one speaks v{found}. Update the extension; `vicinae doctor` says how"
+            ),
+        ),
         other => ProtocolError::new(ErrorKind::Internal, format!("{what} failed: {other}")),
     }
 }
@@ -457,5 +464,24 @@ mod tests {
             refusal.message
         );
         assert!(refusal.message.contains("vicinae doctor"));
+    }
+
+    #[test]
+    fn an_extension_too_old_for_workspaces_is_asked_to_update() {
+        let refusal = refusal(
+            &ShellError::TooOld {
+                method: "ListWorkspaces",
+                found: 3,
+                needed: 4,
+            },
+            "Switch Workspaces",
+        );
+        assert_eq!(refusal.kind, ErrorKind::Unsupported);
+        assert!(
+            refusal.message.contains("contract v4") && refusal.message.contains("speaks v3"),
+            "{}",
+            refusal.message
+        );
+        assert!(refusal.message.contains("Update the extension"));
     }
 }

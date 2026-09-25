@@ -17,9 +17,14 @@
 //! mirrored by [`contract`] and [`proxy`]:
 //!
 //! - `org.gnome.Shell.Extensions.Vicinae.Windows`: `Version`, `ListWindows`,
-//!   `ActivateWindow`, `CloseWindow`, `WindowsChanged`.
+//!   `ActivateWindow`, `CloseWindow`, `WindowsChanged`, and from contract 4
+//!   `ListWorkspaces` and `ActivateWorkspace`.
 //! - `org.gnome.Shell.Extensions.Vicinae.Clipboard`: `Version`,
-//!   `GetClipboard`, `SetClipboard`, `ClipboardChanged`.
+//!   `GetClipboard`, `SetClipboard`, `Paste`, `GetPrimarySelection`,
+//!   `ClipboardChanged`.
+//!
+//! An extension one contract behind ([`OLDEST_CONTRACT_VERSION`]) is still
+//! used; a call it predates is refused with [`ShellError::TooOld`].
 //!
 //! # Degradation is the normal case
 //!
@@ -75,8 +80,8 @@ pub use client::{
     Backoff, CapabilityStream, ClipboardStream, ShellClient, ShellConfig, WindowsChangedStream,
 };
 pub use contract::{
-    CLIPBOARD_INTERFACE, CLIPBOARD_PATH, CONTRACT_VERSION, SHELL_SERVICE, WINDOWS_INTERFACE,
-    WINDOWS_PATH,
+    CLIPBOARD_INTERFACE, CLIPBOARD_PATH, CONTRACT_VERSION, OLDEST_CONTRACT_VERSION, SHELL_SERVICE,
+    WINDOWS_INTERFACE, WINDOWS_PATH, WORKSPACES_SINCE,
 };
 pub use error::{Result, ShellError};
-pub use model::{ClipboardChange, ClipboardContent, Frame, Window, WindowId};
+pub use model::{ClipboardChange, ClipboardContent, Frame, Window, WindowId, Workspace};

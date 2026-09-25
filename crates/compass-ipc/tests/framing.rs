@@ -445,6 +445,12 @@ fn all_requests() -> Vec<Request> {
         },
         Request::ExchangeRates,
         Request::RefreshExchangeRates,
+        Request::ProbeShortcut {
+            trigger: "super+shift+K".into(),
+        },
+        Request::ProbeShortcut {
+            trigger: "ctrl+alt+é".into(),
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -658,6 +664,10 @@ fn all_responses() -> Vec<Response> {
         Response::UpdateStatus {
             current: String::new(),
             available: None,
+        },
+        Response::ShortcutProbe { refusal: None },
+        Response::ShortcutProbe {
+            refusal: Some("Already bound by the desktop ✗".into()),
         },
         Response::FileActions(compass_ipc::FileActionInfo {
             mime: Some("image/png".into()),
@@ -1159,6 +1169,7 @@ fn request_variants_are_exhaustive() {
             | Request::SkipUpdate { .. }
             | Request::ExchangeRates
             | Request::RefreshExchangeRates
+            | Request::ProbeShortcut { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1225,6 +1236,7 @@ fn response_variants_are_exhaustive() {
             | Response::OAuthTokenSets { .. }
             | Response::UpdateStatus { .. }
             | Response::ExchangeRates { .. }
+            | Response::ShortcutProbe { .. }
             | Response::Window(_) => {}
         }
     }

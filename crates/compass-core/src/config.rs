@@ -759,6 +759,46 @@ impl TrayConfig {
     }
 }
 
+/// The `global_shortcuts` section (the C++ `config::GlobalShortcuts`, whose
+/// `toggle` is [`LauncherConfig::hotkey`] here).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GlobalShortcutsConfig {
+    /// While one of these applications is focused, every global shortcut is
+    /// released so its keys reach the application: a virtual machine or a
+    /// remote desktop. Desktop file ids, e.g. `org.gnome.Boxes.desktop`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = [], "examples" = [["org.gnome.Boxes.desktop"]]))]
+    inhibit_apps: Option<Vec<String>>,
+
+    /// Keys this build does not know about, preserved verbatim.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+impl GlobalShortcutsConfig {
+    /// The applications that pause the global shortcuts. Defaults to none.
+    #[must_use]
+    pub fn inhibit_apps(&self) -> &[String] {
+        self.inhibit_apps.as_deref().unwrap_or(&[])
+    }
+
+    /// Sets `global_shortcuts.inhibit_apps`. `None` removes the key.
+    pub fn set_inhibit_apps(&mut self, value: Option<Vec<String>>) -> &mut Self {
+        self.inhibit_apps = value;
+        self
+    }
+
+    /// Whether the section carries nothing at all, known or unknown.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let Self {
+            inhibit_apps,
+            unknown,
+        } = self;
+        inhibit_apps.is_none() && unknown.is_empty()
+    }
+}
+
 /// A parsed `vicinae.json`.
 ///
 /// [`Config::default`] is the fully-defaulted configuration and is what an empty file produces.
@@ -789,6 +829,9 @@ pub struct Config {
     /// Compass's own tray icon.
     #[serde(default, skip_serializing_if = "TrayConfig::is_empty")]
     tray: TrayConfig,
+    /// The global shortcuts, beyond the launcher hotkey.
+    #[serde(default, skip_serializing_if = "GlobalShortcutsConfig::is_empty")]
+    global_shortcuts: GlobalShortcutsConfig,
 
     /// Top level keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -1026,6 +1069,17 @@ impl Config {
     /// The `tray` section, mutably.
     pub fn tray_mut(&mut self) -> &mut TrayConfig {
         &mut self.tray
+    }
+
+    /// The `global_shortcuts` section.
+    #[must_use]
+    pub fn global_shortcuts(&self) -> &GlobalShortcutsConfig {
+        &self.global_shortcuts
+    }
+
+    /// The `global_shortcuts` section, mutably.
+    pub fn global_shortcuts_mut(&mut self) -> &mut GlobalShortcutsConfig {
+        &mut self.global_shortcuts
     }
 
     /// The `extensions` section.

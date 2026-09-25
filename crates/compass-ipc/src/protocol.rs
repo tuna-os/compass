@@ -90,7 +90,9 @@ use serde::{Deserialize, Serialize};
 /// newer Compass release is out ([`Request::UpdateStatus`],
 /// [`Response::UpdateStatus`]) and skipping it ([`Request::SkipUpdate`]), and currency conversion's exchange rates
 /// ([`Request::ExchangeRates`], [`Request::RefreshExchangeRates`], both
-/// answered with [`Response::ExchangeRates`]).
+/// answered with [`Response::ExchangeRates`]), and the recorder asking whether the
+/// desktop would bind a combination ([`Request::ProbeShortcut`],
+/// [`Response::ShortcutProbe`]).
 pub const PROTOCOL_VERSION: u16 = 21;
 
 /// A client-to-server frame.
@@ -1026,6 +1028,14 @@ pub enum Request {
     /// an error saying why the fetch failed (the rates held are kept).
     /// (v21.)
     RefreshExchangeRates,
+    /// The shortcut recorder captured `trigger`: would the desktop bind it
+    /// (`GlobalShortcutService::probeBind`)? Asked while capturing, so the
+    /// probe binds and releases it at once. Answered with
+    /// [`Response::ShortcutProbe`]. (v21.)
+    ProbeShortcut {
+        /// The combination, as the configuration spells it.
+        trigger: String,
+    },
 }
 
 /// A newer Compass release, in a [`Response::UpdateStatus`]. (v21.)
@@ -1542,6 +1552,12 @@ pub enum Response {
     ExchangeRates {
         /// The rates.
         rates: Option<ExchangeRateTable>,
+    },
+    /// Answer to [`Request::ProbeShortcut`]: why the desktop refused the
+    /// combination, or `None` when it would bind it or cannot say. (v21.)
+    ShortcutProbe {
+        /// The desktop's reason.
+        refusal: Option<String>,
     },
 }
 

@@ -5886,6 +5886,158 @@ fn killed(child: &mut Child) -> bool {
     false
 }
 
+/// Asks `request` until the engine, which reaches the Shell extension in the
+/// background, answers something `done` accepts.
+fn until_answered(
+    daemon: &Daemon,
+    request: &compass_ipc::Request,
+    done: impl Fn(&compass_ipc::Response) -> bool,
+) -> compass_ipc::Response {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    loop {
+        let response = daemon.request(request.clone());
+        if done(&response) {
+            return response;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the engine never reached the extension: {response:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension() {
+    use compass_ipc::{Request, Response};
+    use shell_mock::{MockOptions, MockShell, MockWindow, MockWorkspace};
+    let Some(bus) = shell_bus::start_or_skip(
+        "on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension",
+    ) else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let shell = runtime
+        .block_on(MockShell::start(bus.address(), MockOptions::default()))
+        .expect("the mock shell");
+    shell.set_workspaces(vec![
+        MockWorkspace::new(0, "Mail").active(),
+        MockWorkspace::new(1, ""),
+    ]);
+    shell.set_windows(vec![
+        MockWindow::new(1, "firefox", "Inbox").focused(),
+        MockWindow::new(2, "firefox", "Docs"),
+        MockWindow {
+            workspace: Some(1),
+            ..MockWindow::new(3, "unknown-app", "Elsewhere")
+        },
+    ]);
+    let address = bus.address().to_owned();
+    let daemon = Daemon::start_prepared(
+        &[(
+            "firefox.desktop",
+            &entry("Firefox", "StartupWMClass=firefox\nIcon=firefox\n"),
+        )],
+        "{}",
+        move |_| vec![("DBUS_SESSION_BUS_ADDRESS", address.into())],
+    );
+
+    let caps = until_answered(
+        &daemon,
+        &Request::WindowManagerCapabilities,
+        |r| matches!(r, Response::WindowManagerCapabilities(caps) if caps.workspaces),
+    );
+    let Response::WindowManagerCapabilities(caps) = caps else {
+        unreachable!()
+    };
+    assert!(
+        !caps.fullscreen && !caps.floating && !caps.overview,
+        "GNOME offers Switch Workspaces only: {caps:?}"
+    );
+
+    let Response::Workspaces { workspaces } = daemon.request(Request::ListWorkspaces) else {
+        panic!("no workspaces");
+    };
+    assert_eq!(
+        workspaces
+            .iter()
+            .map(|w| (w.id.as_str(), w.name.as_str(), w.window_count, w.active))
+            .collect::<Vec<_>>(),
+        [("0", "Mail", 2, true), ("1", "2", 1, false)],
+        "named by GNOME, else counted from one"
+    );
+    assert_eq!(
+        workspaces[0]
+            .apps
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Firefox"],
+        "each application once"
+    );
+
+    assert_eq!(
+        daemon.request(Request::FocusWorkspace { id: "1".into() }),
+        Response::Ack
+    );
+    assert_eq!(shell.calls(), [("ActivateWorkspace", 1)]);
+    let Response::Workspaces { workspaces } = daemon.request(Request::ListWorkspaces) else {
+        panic!("no workspaces");
+    };
+    assert!(workspaces[1].active && !workspaces[0].active);
+    drop(daemon);
+}
+
+#[test]
+fn an_extension_a_release_behind_offers_no_switch_workspaces_and_says_to_update() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use shell_mock::{MockOptions, MockShell, MockWindow};
+    let Some(bus) = shell_bus::start_or_skip(
+        "an_extension_a_release_behind_offers_no_switch_workspaces_and_says_to_update",
+    ) else {
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let shell = runtime
+        .block_on(MockShell::start(
+            bus.address(),
+            MockOptions {
+                version: 3,
+                ..MockOptions::default()
+            },
+        ))
+        .expect("the mock shell");
+    shell.set_windows(vec![MockWindow::new(1, "firefox", "Inbox").focused()]);
+    let address = bus.address().to_owned();
+    let daemon = Daemon::start_prepared(&[], "{}", move |_| {
+        vec![("DBUS_SESSION_BUS_ADDRESS", address.into())]
+    });
+
+    // Window switching still works with the older extension.
+    until_answered(
+        &daemon,
+        &Request::ListWindows,
+        |r| matches!(r, Response::Windows { windows } if windows.len() == 1),
+    );
+    assert_eq!(
+        daemon.request(Request::WindowManagerCapabilities),
+        Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities::default())
+    );
+    match daemon.request(Request::ListWorkspaces) {
+        Response::Error(err) => {
+            assert_eq!(err.kind, ErrorKind::Unsupported);
+            assert!(
+                err.message.contains("Update the extension"),
+                "{}",
+                err.message
+            );
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(shell.calls().is_empty());
+    drop(daemon);
+}
+
 #[test]
 fn quit_closes_an_applications_windows_and_force_quit_kills_their_processes() {
     use compass_ipc::{ErrorKind, Request, Response};

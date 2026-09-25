@@ -130,8 +130,21 @@ impl LauncherApp {
                 .map(|(id, title, shortcut)| (id.as_str(), title.as_str(), shortcut.as_str())),
         );
         let target = target.clone();
+        self.settings_recorder_outcome(target, outcome)
+    }
+
+    /// What the settings view's recorder, recording for `target`, said to do.
+    pub(super) fn settings_recorder_outcome(
+        &mut self,
+        target: RecordTarget,
+        outcome: RecorderOutcome,
+    ) -> Task<Message> {
+        let Page::Settings(page) = &mut self.page else {
+            return Task::none();
+        };
         match outcome {
             RecorderOutcome::Recording => Task::none(),
+            RecorderOutcome::Probe(trigger) => self.probe_shortcut(trigger),
             RecorderOutcome::Back => {
                 page.recorder = None;
                 focus_search()
@@ -634,11 +647,12 @@ impl LauncherApp {
                     ))))
                     .into()
             }
-            Kind::Number { .. } | Kind::Text | Kind::Paths | Kind::Font => {
+            Kind::Number { .. } | Kind::Text | Kind::Paths | Kind::Names | Kind::Font => {
                 let submit = key.clone();
                 let placeholder = if setting.placeholder.is_empty() {
                     match setting.kind {
                         Kind::Paths => "Folders, separated by :",
+                        Kind::Names => "Application ids, separated by ,",
                         _ => "",
                     }
                 } else {

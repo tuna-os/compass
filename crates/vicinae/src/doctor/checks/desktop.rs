@@ -23,6 +23,9 @@ pub const EXTENSION_OBJECT_PATH: &str = compass_shell::WINDOWS_PATH;
 pub const EXTENSION_INTERFACE: &str = compass_shell::WINDOWS_INTERFACE;
 /// Contract version this build speaks.
 pub const EXTENSION_CONTRACT_VERSION: u32 = compass_shell::CONTRACT_VERSION;
+/// The oldest contract version this build still uses, without what came
+/// after it.
+pub const EXTENSION_OLDEST_CONTRACT_VERSION: u32 = compass_shell::OLDEST_CONTRACT_VERSION;
 
 /// Interface name of the pre-existing, unversioned window-management contract
 /// that the C++ engine talks to (`src/server/.../gnome-window-manager.hpp`).
@@ -222,6 +225,22 @@ pub async fn shell_extension<B: BusProbe>(env: &Env, bus: &B) -> DoctorCheck {
                 DoctorStatus::Ok,
                 format!("extension present, contract v{found}"),
             ),
+            Ok(found)
+                if (EXTENSION_OLDEST_CONTRACT_VERSION..EXTENSION_CONTRACT_VERSION)
+                    .contains(&found) =>
+            {
+                check(
+                    NAME,
+                    DoctorStatus::Warn,
+                    format!(
+                        "extension present, contract v{found}, a release behind this build's \
+                     v{EXTENSION_CONTRACT_VERSION}: window switching, clipboard history and \
+                     paste work, Switch Workspaces does not. Update \
+                     compass@tuna-os.github.io: extensions/gnome-shell/README.md in the \
+                     Compass repository says how"
+                    ),
+                )
+            }
             Ok(found) => check(
                 NAME,
                 DoctorStatus::Warn,
@@ -441,6 +460,20 @@ mod tests {
         let c = shell_extension(&gnome_env(), &bus).await;
         assert_eq!(c.status, DoctorStatus::Ok);
         assert!(detail(&c).contains("extension present"));
+    }
+
+    #[tokio::test]
+    async fn extension_at_contract_v4_passes_and_one_a_release_behind_warns_about_workspaces() {
+        let c = shell_extension(&gnome_env(), &extension_bus("4")).await;
+        assert_eq!(c.status, DoctorStatus::Ok);
+        assert_eq!(detail(&c), "extension present, contract v4");
+
+        let c = shell_extension(&gnome_env(), &extension_bus("3")).await;
+        assert_eq!(c.status, DoctorStatus::Warn);
+        let d = detail(&c);
+        assert!(d.starts_with("extension present, contract v3"), "{d}");
+        assert!(d.contains("Switch Workspaces does not"), "{d}");
+        assert!(!d.contains("version mismatch"), "{d}");
     }
 
     #[tokio::test]

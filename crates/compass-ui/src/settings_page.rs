@@ -310,7 +310,11 @@ impl SettingsPage {
                 .iter()
                 .filter_map(serde_json::Value::as_str)
                 .collect::<Vec<_>>()
-                .join(":"),
+                .join(if setting.kind == settings_catalog::Kind::Names {
+                    ", "
+                } else {
+                    ":"
+                }),
             serde_json::Value::Null => String::new(),
             other => other.to_string(),
         }
@@ -339,6 +343,14 @@ impl SettingsPage {
                     .map(str::trim)
                     .filter(|path| !path.is_empty())
                     .map(|path| serde_json::Value::String(path.to_owned()))
+                    .collect(),
+            ),
+            Kind::Names => serde_json::Value::Array(
+                draft
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(|name| serde_json::Value::String(name.to_owned()))
                     .collect(),
             ),
             Kind::Font if draft.trim().is_empty() => serde_json::Value::Null,

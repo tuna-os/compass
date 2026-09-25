@@ -121,7 +121,13 @@ fn the_contract_is_exactly_these_members() {
     let windows = introspect::parse(contract::WINDOWS_XML, WINDOWS_INTERFACE).expect("windows XML");
     assert_eq!(
         windows.methods.keys().collect::<Vec<_>>(),
-        ["ActivateWindow", "CloseWindow", "ListWindows"],
+        [
+            "ActivateWindow",
+            "ActivateWorkspace",
+            "CloseWindow",
+            "ListWindows",
+            "ListWorkspaces"
+        ],
         "the windows contract gained or lost a method"
     );
     assert_eq!(
@@ -143,6 +149,22 @@ fn the_contract_is_exactly_these_members() {
             name: Some("windows".into()),
             ty: "aa{sv}".into(),
             direction: "out".into()
+        }]
+    );
+    assert_eq!(
+        windows.methods["ListWorkspaces"],
+        [Arg {
+            name: Some("workspaces".into()),
+            ty: "aa{sv}".into(),
+            direction: "out".into()
+        }]
+    );
+    assert_eq!(
+        windows.methods["ActivateWorkspace"],
+        [Arg {
+            name: Some("index".into()),
+            ty: "i".into(),
+            direction: "in".into()
         }]
     );
 
@@ -249,6 +271,23 @@ async fn every_contract_member_is_reached_through_the_proxy() {
         "the mock did not see both window methods"
     );
 
+    // Windows.ListWorkspaces and Windows.ActivateWorkspace (contract 4)
+    shell.set_workspaces(vec![
+        mock::MockWorkspace::new(0, "Mail").active(),
+        mock::MockWorkspace::new(1, "Code"),
+    ]);
+    let workspaces = client.list_workspaces().await.expect("ListWorkspaces");
+    assert_eq!(workspaces.len(), 2);
+    client
+        .activate_workspace(1)
+        .await
+        .expect("ActivateWorkspace");
+    assert_eq!(
+        shell.calls().last(),
+        Some(&("ActivateWorkspace", 1)),
+        "the mock did not see the workspace switch"
+    );
+
     // Clipboard.SetClipboard and Clipboard.GetClipboard
     let written = compass_shell::ClipboardContent::text("hello");
     client.set_clipboard(&written).await.expect("SetClipboard");
@@ -303,7 +342,7 @@ async fn every_contract_member_is_reached_through_the_proxy() {
         introspect::parse(contract::WINDOWS_XML, WINDOWS_INTERFACE).expect("windows XML");
     let clipboard_iface =
         introspect::parse(contract::CLIPBOARD_XML, CLIPBOARD_INTERFACE).expect("clipboard XML");
-    const EXERCISED_METHODS: usize = 7; // List/Activate/Close + Get/SetClipboard/Paste/GetPrimarySelection
+    const EXERCISED_METHODS: usize = 9; // List/Activate/Close + List/ActivateWorkspace + Get/SetClipboard/Paste/GetPrimarySelection
     const EXERCISED_SIGNALS: usize = 2;
     assert_eq!(
         windows_iface.methods.len() + clipboard_iface.methods.len(),

@@ -107,6 +107,9 @@ pub enum Kind {
     Text,
     /// A list of paths, one per line in the view; a JSON array of strings.
     Paths,
+    /// A list of names (application ids), comma-separated in the view; a
+    /// JSON array of strings.
+    Names,
     /// A key combination, recorded; a JSON string in `KeyCombo`'s spelling.
     Shortcut,
     /// A theme's name, from the themes the view lists; a JSON string.
@@ -390,6 +393,13 @@ pub fn catalog() -> Vec<Setting> {
             )
             .kind(Kind::Shortcut, json!(crate::config::DEFAULT_HOTKEY))
             .cpp("toggleShortcut"),
+        Setting::new("global_shortcuts.inhibit_apps", core(General), "Behavior")
+            .label(
+                "Pause shortcuts in",
+                "While one of these applications is focused, global shortcuts are released so its keys reach it.",
+            )
+            .kind(Kind::Names, json!([]))
+            .placeholder("org.gnome.Boxes.desktop"),
         Setting::new("launcher.close_on_focus_loss", core(General), "Behavior")
             .label("Close on focus loss", "")
             .kind(
@@ -823,6 +833,19 @@ pub fn validate(setting: &Setting, value: Value) -> Result<Option<Value>, String
             }
             _ => Err(refuse(setting, "a list of folders")),
         },
+        Kind::Names => match value.as_array() {
+            Some(items) if items.iter().all(Value::is_string) => {
+                let kept: Vec<Value> = items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(|name| Value::String(name.to_owned()))
+                    .collect();
+                Ok(Some(Value::Array(kept)))
+            }
+            _ => Err(refuse(setting, "a list of application ids")),
+        },
         Kind::Shortcut => match value.as_str().map(str::trim) {
             Some("") => Ok(None),
             Some(shortcut) if crate::key_combo::KeyCombo::parse(shortcut).is_some() => {
@@ -1014,6 +1037,24 @@ mod tests {
             None,
         );
         assert_eq!(settings.paths, ["/home/u/docs", "/srv"]);
+    }
+
+    #[test]
+    fn the_apps_that_pause_the_shortcuts_are_names_the_engine_reads() {
+        let mut config = Config::default();
+        apply(
+            &mut config,
+            "global_shortcuts.inhibit_apps",
+            json!([" org.gnome.Boxes.desktop ", "", "steam.desktop"]),
+        )
+        .unwrap();
+        assert_eq!(
+            config.global_shortcuts().inhibit_apps(),
+            ["org.gnome.Boxes.desktop", "steam.desktop"]
+        );
+        assert!(apply(&mut config, "global_shortcuts.inhibit_apps", json!("steam")).is_err());
+        apply(&mut config, "global_shortcuts.inhibit_apps", Value::Null).unwrap();
+        assert_eq!(config, Config::default());
     }
 
     #[test]

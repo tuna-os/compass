@@ -2814,6 +2814,18 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let rates = Arc::clone(&state.read().await.exchange_rates);
             rates.answer(request).await
         }
+        Request::ProbeShortcut { trigger } => {
+            let Some(combo) = compass_core::key_combo::KeyCombo::parse(&trigger) else {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("{trigger:?} is not a key combination"),
+                ));
+            };
+            let control = state.read().await.global_shortcuts();
+            Response::ShortcutProbe {
+                refusal: control.probe(combo).await,
+            }
+        }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => {

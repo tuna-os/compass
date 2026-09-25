@@ -3013,6 +3013,7 @@ impl LauncherApp {
                 }
                 Task::none()
             }
+            Message::ShortcutProbed(trigger, result) => self.shortcut_probed(&trigger, result),
             Message::WindowCapabilities(_)
             | Message::WorkspacesQueryChanged(_)
             | Message::WorkspacesLoaded(_)
@@ -7180,6 +7181,10 @@ mod tests {
         default_apps: Vec<crate::backend::DefaultAppRow>,
         /// The recorder's capture, as the engine was told it.
         captures: std::sync::Mutex<Vec<bool>>,
+        /// What the desktop says of every probed combination, and the
+        /// combinations probed.
+        probe_refusal: Option<String>,
+        probes: std::sync::Mutex<Vec<String>>,
         /// The defaults set: `(kind, id)`.
         defaults_set: std::sync::Mutex<Vec<(crate::backend::DefaultApp, String)>>,
         keys: Vec<String>,
@@ -7292,6 +7297,15 @@ mod tests {
         fn set_shortcut_capture(&self, capturing: bool) -> crate::backend::BackendFuture<'_, ()> {
             self.captures.lock().unwrap().push(capturing);
             Box::pin(async { Ok(()) })
+        }
+
+        fn probe_shortcut(
+            &self,
+            trigger: String,
+        ) -> crate::backend::BackendFuture<'_, Option<String>> {
+            self.probes.lock().unwrap().push(trigger);
+            let refusal = self.probe_refusal.clone();
+            Box::pin(async move { Ok(refusal) })
         }
 
         fn edit_root_item(
@@ -10710,6 +10724,64 @@ mod tests {
         settle(&mut app, task);
         assert!(!app.capture_reported());
         assert_eq!(backend.captures.lock().unwrap().as_slice(), [true, false]);
+    }
+
+    #[test]
+    fn the_recorder_shows_the_desktops_refusal_and_keeps_what_it_takes() {
+        use iced::keyboard::{Key, Modifiers};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let open = |backend: Arc<TestBackend>| {
+            let mut app = app(dir.path());
+            let _ = app.update(Message::QueryChanged("firefox".into()));
+            let id = app.root_id(app.selected_row().unwrap()).unwrap();
+            let _ = app.update(Message::TogglePanel);
+            let row = app
+                .panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .expect("the panel offers a shortcut");
+            app.backend = Some(backend);
+            let task = app.update(Message::PanelClicked(row));
+            settle(&mut app, task);
+            (app, id)
+        };
+
+        let refusing = Arc::new(TestBackend {
+            probe_refusal: Some("The compositor has already bound super+Q".into()),
+            ..TestBackend::default()
+        });
+        let (mut app, _) = open(refusing.clone());
+        let task = app.update(key_event(true, Key::Character("q".into()), Modifiers::LOGO));
+        settle(&mut app, task);
+        assert_eq!(refusing.probes.lock().unwrap().as_slice(), ["super+Q"]);
+        let recorder = app
+            .panel
+            .as_ref()
+            .and_then(|p| p.recorder.as_ref())
+            .expect("the recorder stays open");
+        assert_eq!(recorder.status, "The compositor has already bound super+Q");
+        assert!(recorder.error);
+        assert!(
+            refusing.root_edits.lock().unwrap().is_empty(),
+            "nothing kept"
+        );
+
+        let taking = Arc::new(TestBackend::default());
+        let (mut app, id) = open(taking.clone());
+        let task = app.update(key_event(true, Key::Character("q".into()), Modifiers::LOGO));
+        settle(&mut app, task);
+        assert_eq!(taking.probes.lock().unwrap().as_slice(), ["super+Q"]);
+        assert!(
+            app.panel.is_none(),
+            "a combination the desktop takes is kept"
+        );
+        assert_eq!(
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.shortcut.clone())
+                .as_deref(),
+            Some("super+Q")
+        );
     }
 
     #[test]

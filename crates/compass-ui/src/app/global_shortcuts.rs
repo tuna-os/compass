@@ -67,6 +67,51 @@ impl LauncherApp {
         self.capture_reported
     }
 
+    /// Asks the engine whether the desktop would bind `trigger`, which a
+    /// recorder captured (`probeBind`). Without an engine nothing is bound,
+    /// so there is nobody to refuse it and the answer is given at once.
+    pub(super) fn probe_shortcut(&mut self, trigger: String) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return self.shortcut_probed(&trigger, Ok(None));
+        };
+        Task::perform(
+            async move {
+                let result = backend.probe_shortcut(trigger.clone()).await;
+                (trigger, result)
+            },
+            |(trigger, result)| Message::ShortcutProbed(trigger, result),
+        )
+    }
+
+    /// The engine's answer about `trigger`, handed to whichever recorder
+    /// asked. An engine that could not be asked stands in nobody's way.
+    pub(super) fn shortcut_probed(
+        &mut self,
+        trigger: &str,
+        result: Result<Option<String>, String>,
+    ) -> Task<Message> {
+        let refusal = result.unwrap_or_else(|error| {
+            tracing::warn!(%error, "could not ask whether the desktop would bind the shortcut");
+            None
+        });
+        if let Some(recorder) = self
+            .panel
+            .as_mut()
+            .and_then(|panel| panel.recorder.as_mut())
+        {
+            let outcome = recorder.probed(trigger, refusal);
+            return self.panel_recorder_outcome(outcome);
+        }
+        if let Page::Settings(page) = &mut self.page
+            && let Some((target, recorder)) = page.recorder.as_mut()
+        {
+            let outcome = recorder.probed(trigger, refusal);
+            let target = target.clone();
+            return self.settings_recorder_outcome(target, outcome);
+        }
+        Task::none()
+    }
+
     /// Every root item's id, title and stored shortcut, for the recorder's
     /// conflict check.
     pub(super) fn recorder_bound(&self) -> Vec<(String, String, String)> {

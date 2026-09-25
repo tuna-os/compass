@@ -69,6 +69,14 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Ok(()) })
     }
 
+    /// Whether the desktop would bind `trigger`, which the recorder just
+    /// captured (`GlobalShortcutBridge::validate`'s `probeBind`): its
+    /// refusal, or `None`. `None` without an engine, which binds nothing.
+    fn probe_shortcut(&self, trigger: String) -> BackendFuture<'_, Option<String>> {
+        let _ = trigger;
+        Box::pin(async { Ok(None) })
+    }
+
     /// Turns a whole provider's items on or off in root search.
     fn set_provider_enabled(&self, provider: String, enabled: bool) -> BackendFuture<'_, ()> {
         let _ = (provider, enabled);

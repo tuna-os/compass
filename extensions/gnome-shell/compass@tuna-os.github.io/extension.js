@@ -1,8 +1,9 @@
 // Compass <-> GNOME Shell helper extension.
 //
 // Implements the versioned contract in ./dbus (the same files as
-// crates/compass-shell/dbus, which a test keeps identical): windows and the
-// clipboard, the two things Mutter gives no other application a way to reach.
+// crates/compass-shell/dbus, which a test keeps identical): windows (and
+// their workspaces) and the clipboard, the things Mutter gives no other
+// application a way to reach.
 // Deliberately small, so a GNOME release breaks this file rather than the
 // launcher. Anything not in the contract does not belong here.
 
@@ -16,7 +17,7 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-const CONTRACT_VERSION = 3;
+const CONTRACT_VERSION = 4;
 const WINDOWS_PATH = '/org/gnome/Shell/Extensions/Vicinae/Windows';
 const CLIPBOARD_PATH = '/org/gnome/Shell/Extensions/Vicinae/Clipboard';
 
@@ -97,6 +98,34 @@ class WindowsService {
             window.delete(global.get_current_time());
     }
 
+    // Contract 4. The name is what GNOME's preferences call it: the
+    // `workspace-names` setting, else Mutter's own "Workspace N".
+    ListWorkspaces() {
+        const manager = global.workspace_manager;
+        const active = manager.get_active_workspace_index();
+        const workspaces = [];
+        for (let index = 0; index < manager.get_n_workspaces(); index++) {
+            const workspace = manager.get_workspace_by_index(index);
+            const fullscreen = workspace
+                ? workspace.list_windows().some(window => window.is_fullscreen())
+                : false;
+            workspaces.push({
+                index: new GLib.Variant('i', index),
+                name: new GLib.Variant('s', Meta.prefs_get_workspace_name(index) ?? ''),
+                active: new GLib.Variant('b', index === active),
+                has_fullscreen: new GLib.Variant('b', fullscreen),
+            });
+        }
+        return workspaces;
+    }
+
+    ActivateWorkspace(index) {
+        const manager = global.workspace_manager;
+        if (index < 0 || index >= manager.get_n_workspaces())
+            return;
+        manager.get_workspace_by_index(index)?.activate(global.get_current_time());
+    }
+
     _find(id) {
         return global.display
             .get_tab_list(Meta.TabList.NORMAL_ALL, null)
@@ -112,6 +141,9 @@ class WindowsService {
             changed();
         })]);
         this._signals.push([display, display.connect('notify::focus-window', changed)]);
+        const manager = global.workspace_manager;
+        for (const signal of ['active-workspace-changed', 'workspace-added', 'workspace-removed'])
+            this._signals.push([manager, manager.connect(signal, changed)]);
         for (const window of display.get_tab_list(Meta.TabList.NORMAL_ALL, null))
             this._watch(window);
     }

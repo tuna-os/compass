@@ -134,7 +134,7 @@ pub mod window_switcher;
 pub mod xdg_dirs;
 
 pub use apps::{AppIndex, AppIndexBuilder, AppItem, RootHit, SkipReason, SkippedEntry};
-pub use config::{Config, ConfigError, ExtensionsConfig, LauncherConfig};
+pub use config::{Config, ConfigError, ExtensionsConfig, GlobalShortcutsConfig, LauncherConfig};
 pub use frecency::{
     Clock, FrecencyError, FrecencyRecord, FrecencyStore, JsonFrecencyStore, ManualClock,
     SystemClock,

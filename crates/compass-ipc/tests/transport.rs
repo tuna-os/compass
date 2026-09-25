@@ -169,6 +169,7 @@ async fn echo_handler(request: Request) -> Response {
         Request::ExchangeRates | Request::RefreshExchangeRates => {
             Response::ExchangeRates { rates: None }
         }
+        Request::ProbeShortcut { .. } => Response::ShortcutProbe { refusal: None },
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
         Request::FileActions { .. } => {

@@ -327,8 +327,14 @@ impl LauncherApp {
                 .iter()
                 .map(|(id, title, shortcut)| (id.as_str(), title.as_str(), shortcut.as_str())),
         );
+        self.panel_recorder_outcome(outcome)
+    }
+
+    /// What the action panel's recorder said to do.
+    pub(super) fn panel_recorder_outcome(&mut self, outcome: RecorderOutcome) -> Task<Message> {
         match outcome {
             RecorderOutcome::Recording => Task::none(),
+            RecorderOutcome::Probe(trigger) => self.probe_shortcut(trigger),
             RecorderOutcome::Back => {
                 if let Some(panel) = self.panel.as_mut() {
                     panel.recorder = None;
@@ -336,7 +342,14 @@ impl LauncherApp {
                 iced::widget::operation::focus(super::PANEL_INPUT)
             }
             RecorderOutcome::Save(shortcut) => {
-                let id = recorder.id.clone();
+                let Some(id) = self
+                    .panel
+                    .as_ref()
+                    .and_then(|panel| panel.recorder.as_ref())
+                    .map(|recorder| recorder.id.clone())
+                else {
+                    return Task::none();
+                };
                 self.panel = None;
                 self.edit_root_item(id, RootEdit::Shortcut(shortcut))
             }

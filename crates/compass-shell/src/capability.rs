@@ -6,7 +6,7 @@
 //! (PLAN.md 3.5.1), so a missing extension is modelled as data, not as an
 //! error.
 
-use crate::contract::CONTRACT_VERSION;
+use crate::contract::{CONTRACT_VERSION, OLDEST_CONTRACT_VERSION, WORKSPACES_SINCE};
 
 /// Whether one capability of the shell extension is usable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,10 +30,14 @@ pub enum Availability {
 }
 
 impl Availability {
-    /// Classify a `Version` property read.
+    /// Classify a `Version` property read: any version from
+    /// [`OLDEST_CONTRACT_VERSION`] to [`CONTRACT_VERSION`] is usable, and
+    /// what it lacks is decided per call ([`Self::supports`]).
     pub fn from_probe(result: std::result::Result<u32, zbus::Error>) -> Self {
         match result {
-            Ok(version) if version == CONTRACT_VERSION => Self::Available { version },
+            Ok(version) if (OLDEST_CONTRACT_VERSION..=CONTRACT_VERSION).contains(&version) => {
+                Self::Available { version }
+            }
             Ok(found) => Self::VersionMismatch {
                 found,
                 expected: CONTRACT_VERSION,
@@ -57,6 +61,11 @@ impl Availability {
             _ => None,
         }
     }
+
+    /// Whether the extension is usable and speaks at least contract `since`.
+    pub fn supports(self, since: u32) -> bool {
+        self.version().is_some_and(|version| version >= since)
+    }
 }
 
 impl std::fmt::Display for Availability {
@@ -66,7 +75,8 @@ impl std::fmt::Display for Availability {
             Self::Absent => write!(f, "absent"),
             Self::VersionMismatch { found, expected } => write!(
                 f,
-                "version mismatch (extension speaks v{found}, this build speaks v{expected})"
+                "version mismatch (extension speaks v{found}, this build speaks \
+                 v{OLDEST_CONTRACT_VERSION} to v{expected})"
             ),
         }
     }
@@ -103,6 +113,9 @@ impl ShellCapabilities {
         if !self.windows.is_available() {
             out.push(DegradedFeature::WindowSwitching);
         }
+        if !self.windows.supports(WORKSPACES_SINCE) {
+            out.push(DegradedFeature::WorkspaceSwitching);
+        }
         if !self.clipboard.is_available() {
             out.push(DegradedFeature::ClipboardHistory);
             out.push(DegradedFeature::Paste);
@@ -123,6 +136,8 @@ impl Default for ShellCapabilities {
 pub enum DegradedFeature {
     /// Listing, switching to and closing other applications' windows.
     WindowSwitching,
+    /// Listing and switching workspaces (contract 4).
+    WorkspaceSwitching,
     /// Recording a history of copied items.
     ClipboardHistory,
     /// Pasting into the previously focused window.
@@ -134,6 +149,7 @@ impl DegradedFeature {
     pub fn title(self) -> &'static str {
         match self {
             Self::WindowSwitching => "Window switching",
+            Self::WorkspaceSwitching => "Switch Workspaces",
             Self::ClipboardHistory => "Clipboard history",
             Self::Paste => "Paste into the focused window",
         }
@@ -148,6 +164,11 @@ impl DegradedFeature {
                  ext-foreign-toplevel-list-v1 nor wlr-foreign-toplevel-management, and \
                  org.gnome.Shell.Introspect.GetWindows is allowlisted to the portal backends, so \
                  the helper extension is the only source of a window list on GNOME."
+            }
+            Self::WorkspaceSwitching => {
+                "Compass cannot list or switch workspaces. GNOME's workspaces are reached only \
+                 through the helper extension, and only from contract v4; an extension a \
+                 release behind still switches windows but not workspaces."
             }
             Self::ClipboardHistory => {
                 "Compass cannot observe copies, so clipboard history records nothing while the \
@@ -191,6 +212,30 @@ mod tests {
     }
 
     #[test]
+    fn an_extension_a_release_behind_is_available_without_workspaces() {
+        let behind = Availability::from_probe(Ok(OLDEST_CONTRACT_VERSION));
+        assert_eq!(
+            behind,
+            Availability::Available {
+                version: OLDEST_CONTRACT_VERSION
+            }
+        );
+        assert!(!behind.supports(WORKSPACES_SINCE));
+        assert!(Availability::from_probe(Ok(WORKSPACES_SINCE)).supports(WORKSPACES_SINCE));
+        assert!(!Availability::Absent.supports(OLDEST_CONTRACT_VERSION));
+        assert!(matches!(
+            Availability::from_probe(Ok(OLDEST_CONTRACT_VERSION - 1)),
+            Availability::VersionMismatch { .. }
+        ));
+
+        let caps = ShellCapabilities {
+            windows: behind,
+            clipboard: behind,
+        };
+        assert_eq!(caps.degraded(), vec![DegradedFeature::WorkspaceSwitching]);
+    }
+
+    #[test]
     fn probe_errors_are_an_absence() {
         let availability = Availability::from_probe(Err(zbus::Error::Unsupported));
         assert_eq!(availability, Availability::Absent);
@@ -203,6 +248,7 @@ mod tests {
             both.degraded(),
             vec![
                 DegradedFeature::WindowSwitching,
+                DegradedFeature::WorkspaceSwitching,
                 DegradedFeature::ClipboardHistory,
                 DegradedFeature::Paste
             ]
@@ -217,7 +263,10 @@ mod tests {
         };
         assert_eq!(
             clipboard_only.degraded(),
-            vec![DegradedFeature::WindowSwitching]
+            vec![
+                DegradedFeature::WindowSwitching,
+                DegradedFeature::WorkspaceSwitching
+            ]
         );
         assert!(clipboard_only.any_available());
 
