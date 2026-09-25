@@ -59,6 +59,9 @@ impl LauncherApp {
     /// or the Raycast store's for `raycast://`), as the C++ pushes a detail
     /// host over the root.
     pub(super) fn open_deeplink(&mut self, url: &str) -> Task<Message> {
+        if let Some(link) = compass_core::root_items::parse_launch_link(url) {
+            return self.open_launch_link(link);
+        }
         let Some(Ok(link)) = compass_core::store_listing::parse_extension_link(url) else {
             tracing::warn!(%url, "a deeplink the launcher does not handle");
             return Task::none();

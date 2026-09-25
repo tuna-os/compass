@@ -198,6 +198,44 @@ pub async fn describe_window(state: &Arc<RwLock<EngineState>>) -> Response {
     }
 }
 
+/// The `launch` deeplink (`IpcCommandHandler`'s `launch` command):
+/// `toggle=true` hides an open window instead; a provider's id opens the
+/// window's provider search view; `<provider>/<entrypoint>` launches that
+/// item as `cmd launch` does, with `fallbackText` as its query.
+pub async fn open_launch_link(
+    state: &Arc<RwLock<EngineState>>,
+    url: String,
+    link: compass_core::root_items::LaunchLink,
+) -> Response {
+    if link.toggle
+        && matches!(
+            describe_window(state).await,
+            Response::WindowState { open: true }
+        )
+    {
+        let slot = state.read().await.window_slot();
+        return super::forward(&slot, WindowCommand::Hide, "hide a window").await;
+    }
+    let target = {
+        let state = state.read().await;
+        link.target(|id| state.index.has_provider(id))
+    };
+    match target {
+        Ok(compass_core::root_items::LaunchTarget::Provider(_)) => {
+            let slot = state.read().await.window_slot();
+            super::forward(&slot, WindowCommand::Deeplink(url), "open a deeplink").await
+        }
+        Ok(compass_core::root_items::LaunchTarget::Entrypoint(id)) => {
+            let known = state.read().await.index.root(&id).is_some();
+            if !known {
+                return bad_request(format!("{id} does not refer to a valid entrypoint"));
+            }
+            launch_command(state, id, &[], None, link.fallback_text).await
+        }
+        Err(reason) => bad_request(reason),
+    }
+}
+
 /// `fsQuery`: the index alone, at most `limit` rows.
 pub async fn fs_query(
     state: &Arc<RwLock<EngineState>>,

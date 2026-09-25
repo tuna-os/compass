@@ -74,6 +74,20 @@ pub struct WmWorkspace {
     pub has_fullscreen: bool,
 }
 
+/// What a compositor can do, as the C++ `AbstractWindowManager` capability
+/// flags that gate the window-management commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WmCapabilities {
+    /// It has workspaces to switch between.
+    pub workspaces: bool,
+    /// A window can be made fullscreen.
+    pub fullscreen: bool,
+    /// A window can be floated.
+    pub floating: bool,
+    /// It has an overview to open.
+    pub overview: bool,
+}
+
 /// Why a request got no answer.
 #[derive(Debug, thiserror::Error)]
 pub enum IpcError {
@@ -243,6 +257,56 @@ impl Provider {
         match self {
             Self::Hyprland(hyprland) => hyprland.focus_workspace(id),
             Self::Niri(niri) => niri.focus_workspace(id),
+        }
+    }
+
+    /// What the compositor can do beyond listing and focusing, as the C++
+    /// providers' `capabilities()` and `hasWorkspaces()` answer: both have
+    /// workspaces, fullscreen and floating; only niri has an overview.
+    #[must_use]
+    pub const fn capabilities(&self) -> WmCapabilities {
+        WmCapabilities {
+            workspaces: true,
+            fullscreen: true,
+            floating: true,
+            overview: matches!(self, Self::Niri(_)),
+        }
+    }
+
+    /// Toggles the window `id` in and out of fullscreen.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::focus_window`].
+    pub fn toggle_fullscreen(&self, id: &str) -> Result<(), IpcError> {
+        match self {
+            Self::Hyprland(hyprland) => hyprland.toggle_fullscreen(id),
+            Self::Niri(niri) => niri.toggle_fullscreen(id),
+        }
+    }
+
+    /// Floats the window `id`, or tiles it again.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::focus_window`].
+    pub fn toggle_floating(&self, id: &str) -> Result<(), IpcError> {
+        match self {
+            Self::Hyprland(hyprland) => hyprland.toggle_floating(id),
+            Self::Niri(niri) => niri.toggle_floating(id),
+        }
+    }
+
+    /// Opens or closes the overview.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::focus_window`], and on Hyprland, which has none (see
+    /// [`Self::capabilities`]).
+    pub fn toggle_overview(&self) -> Result<(), IpcError> {
+        match self {
+            Self::Hyprland(_) => Err(IpcError::Refused("Hyprland has no overview".into())),
+            Self::Niri(niri) => niri.toggle_overview(),
         }
     }
 

@@ -31,10 +31,12 @@ mod clipboard;
 mod developer;
 mod dmenu;
 mod emoji;
+mod file_actions;
 mod fonts;
 mod grants;
 mod launch;
 mod media;
+mod open_with;
 mod preview;
 mod programs;
 mod rhai;
@@ -45,6 +47,8 @@ mod shortcuts;
 mod snippets;
 mod stores;
 mod themes;
+mod tray;
+mod workspaces;
 
 /// The search field's widget id.
 ///
@@ -236,12 +240,22 @@ pub struct AppFlags {
     pub power_asks: std::collections::BTreeMap<String, bool>,
     /// Browse Apps' `showHidden` and `sortAlphabetically` preferences.
     pub browse_apps: compass_core::browse_apps::Options,
+    /// The configuration file commands read their preferences from when
+    /// they open (Browse Apps); `None` keeps the ones given at start.
+    pub config_path: Option<std::path::PathBuf>,
     /// Where the emoji picker's visits, pins, tones and keywords are kept
     /// (`compass_core::glyph_service::default_path`); `None` keeps them in
     /// memory, as tests do.
     pub glyph_path: Option<std::path::PathBuf>,
+    /// Where the builtin icon set is installed
+    /// ([`compass_core::builtin_icon::directory`]); `None` draws initials
+    /// where a builtin icon would go.
+    pub builtin_icons: Option<std::path::PathBuf>,
     /// The emoji picker's `skinTone` preference, as a tone id.
     pub emoji_skin_tone: Option<String>,
+    /// The picker's `defaultAction` preference, `paste` unless set: what
+    /// Enter does over a glyph.
+    pub emoji_default_action: String,
     /// Where the root search's history is kept
     /// (`compass_core::root_view::default_history_path`); `None` keeps it in
     /// memory, as tests do.
@@ -337,8 +351,11 @@ impl Default for AppFlags {
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
+            config_path: None,
             glyph_path: None,
+            builtin_icons: None,
             emoji_skin_tone: None,
+            emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
             search_history_path: None,
             clock: None,
             icons: compass_core::config::DEFAULT_ICONS,
@@ -383,6 +400,8 @@ pub struct PanelState {
     pub rows: Vec<Row>,
     /// The selected row, or -1.
     pub selected: isize,
+    /// The shortcut recorder, when it has taken the panel's place.
+    pub recorder: Option<crate::shortcut_recorder::ShortcutRecorder>,
 }
 
 impl PanelState {
@@ -396,6 +415,7 @@ impl PanelState {
             filter: String::new(),
             rows,
             selected,
+            recorder: None,
         }
     }
 
@@ -544,8 +564,34 @@ pub enum RootRow {
     Script(usize),
     /// A Rhai script, as its index in `AppIndex::rhai_scripts`.
     RhaiScript(usize),
-    /// A fallback command offered for the query, under "Use "…" with...".
-    Fallback(&'static compass_core::commands::BuiltinCommand),
+    /// A fallback offered for the query, under "Use "…" with...".
+    Fallback(Fallback),
+}
+
+/// A root item offered as a fallback for the query (`RootFallbackSection`):
+/// an entry of `fallbacks` that `isSuitableForFallback`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fallback {
+    /// A builtin command that can take the query: Search Files.
+    Command(&'static compass_core::commands::BuiltinCommand),
+    /// An extension's command, opened with the query as its fallback text,
+    /// as its index in `AppIndex::extensions`.
+    Extension(usize),
+    /// A quicklink with exactly one argument, opened with the query as it,
+    /// as its index in `AppIndex::shortcuts`.
+    Shortcut(usize),
+}
+
+/// The provider search view (`ProviderSearchViewHost`): root search over one
+/// provider's items, opened by a `vicinae://launch/<provider>` deeplink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderScope {
+    /// The provider's id.
+    pub id: String,
+    /// Its display name, the view's title.
+    pub title: String,
+    /// `Search <title>`.
+    pub placeholder: String,
 }
 
 /// Which view the card shows.
@@ -557,6 +603,10 @@ enum Page {
     Clipboard(crate::clipboard_page::ClipboardPage),
     /// The window switcher.
     Windows(crate::windows_page::WindowsPage),
+    /// Switch Workspaces.
+    Workspaces(crate::workspaces_page::WorkspacesPage),
+    /// "Open with…": the applications that open a target.
+    OpenWith(crate::open_with_page::OpenWithPage),
     /// The emoji and symbol picker.
     Emoji(crate::emoji_page::EmojiPage),
     /// Search Files.
@@ -587,6 +637,8 @@ enum Page {
     NowPlaying(crate::media_page::NowPlayingPage),
     /// Script Permissions.
     Grants(crate::grants_page::GrantsPage),
+    /// Search Tray.
+    Tray(crate::tray_page::TrayPage),
     /// Browse Apps, Set Default Browser or Set Default Terminal.
     Apps(crate::apps_page::AppsPage),
     /// Calculator History.
@@ -739,6 +791,10 @@ pub struct LauncherApp {
     confirm: Option<Confirm>,
     /// Clipboard History while its keyword form is open.
     parked_clipboard: Option<crate::clipboard_page::ClipboardPage>,
+    /// The view "Open with…" was opened over, to go back to.
+    open_with_return: Option<Box<Page>>,
+    /// The MIME type of the file the open panel is over, for Copy mime type.
+    file_mime: Option<String>,
     /// Which view is showing. See [`Page`].
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
@@ -773,8 +829,10 @@ pub struct LauncherApp {
     theme_dirs: Vec<std::path::PathBuf>,
     /// What views remember between openings.
     view_memory: crate::view_memory::ViewMemory,
-    /// The fallback commands a non-empty query offers.
-    fallbacks: Vec<&'static compass_core::commands::BuiltinCommand>,
+    /// The `fallbacks` entries a non-empty query offers, as ids.
+    fallbacks: Vec<String>,
+    /// The provider search view, when root search is showing one provider.
+    provider_scope: Option<ProviderScope>,
     /// Each Rhai script's manifest icon, resolved, by script id.
     rhai_icons: std::collections::HashMap<String, crate::extension_page::RowIcon>,
     /// Previously persisted theme for live-preview cancellation (#153).
@@ -800,10 +858,14 @@ pub struct LauncherApp {
     power_asks: std::collections::BTreeMap<String, bool>,
     /// See [`AppFlags::browse_apps`].
     browse_apps: compass_core::browse_apps::Options,
+    /// See [`AppFlags::config_path`].
+    config_path: Option<std::path::PathBuf>,
     /// See [`AppFlags::glyph_path`].
     glyph_path: Option<std::path::PathBuf>,
     /// See [`AppFlags::emoji_skin_tone`].
     emoji_skin_tone: Option<String>,
+    /// See [`AppFlags::emoji_default_action`].
+    emoji_default_action: String,
     /// The emoji picker while its keyword form is open.
     parked_emoji: Option<crate::emoji_page::EmojiPage>,
     /// See [`AppFlags::search_history_path`].
@@ -862,6 +924,10 @@ pub struct LauncherApp {
     /// Warmed from `update`, never from `view`: resolving a name walks the
     /// theme directories, which is disk work that does not belong in a draw.
     icon_cache: crate::icons::IconCache,
+    /// Where the builtin icon set is installed, read once at startup.
+    builtin_icons: Option<std::path::PathBuf>,
+    /// File-type icons for file rows, by path, warmed as `icon_cache` is.
+    file_glyphs: crate::icons::FileGlyphCache,
     /// Which navigation chords are in force. See [`compass_core::keybinding`].
     ///
     /// Held rather than read per keystroke because it comes from the user's
@@ -1047,19 +1113,18 @@ impl LauncherApp {
             .unwrap_or_default();
         app.search_history_path = flags.search_history_path;
         app.clock = flags.clock;
-        app.fallbacks = flags
-            .fallbacks
-            .iter()
-            .filter_map(|id| compass_core::commands::fallback(id))
-            .collect();
+        app.fallbacks = flags.fallbacks;
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
         app.quick_launch = flags.quick_launch;
         app.power_asks = flags.power_asks;
         app.browse_apps = flags.browse_apps;
+        app.config_path = flags.config_path;
         app.glyph_path = flags.glyph_path;
+        app.builtin_icons = flags.builtin_icons;
         app.emoji_skin_tone = flags.emoji_skin_tone;
+        app.emoji_default_action = flags.emoji_default_action;
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
@@ -1108,6 +1173,8 @@ impl LauncherApp {
             power_confirm: None,
             confirm: None,
             parked_clipboard: None,
+            open_with_return: None,
+            file_mime: None,
             page: Page::Root,
             clipboard: None,
             windows: None,
@@ -1130,6 +1197,7 @@ impl LauncherApp {
             theme_dirs: Vec::new(),
             view_memory: crate::view_memory::ViewMemory::default(),
             fallbacks: Vec::new(),
+            provider_scope: None,
             rhai_icons: std::collections::HashMap::new(),
             theme_preview: None,
             appearance: Appearance::Light,
@@ -1140,8 +1208,10 @@ impl LauncherApp {
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
             power_asks: std::collections::BTreeMap::new(),
+            config_path: None,
             browse_apps: compass_core::browse_apps::Options::default(),
             glyph_path: None,
+            emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
             emoji_skin_tone: None,
             search_history_path: None,
             search_history: compass_core::root_view::SearchHistory::default(),
@@ -1155,6 +1225,8 @@ impl LauncherApp {
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
+            builtin_icons: None,
+            file_glyphs: crate::icons::FileGlyphCache::default(),
             geometry: design::GEOMETRY,
             field_rule: false,
             tint: false,
@@ -1245,6 +1317,8 @@ impl LauncherApp {
         }
         self.parked_fonts = None;
         self.parked_store = None;
+        self.provider_scope = None;
+        self.open_with_return = None;
         let dismissed = self.cancel_dmenu();
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
@@ -1415,8 +1489,9 @@ impl LauncherApp {
                     .map_or("", |script| script.title.as_str());
                 line.push_str(&format!(" selected_title={title:?}"));
             }
-            Some(RootRow::Fallback(command)) => {
-                line.push_str(&format!(" selected_title={:?} fallback", command.title));
+            Some(RootRow::Fallback(fallback)) => {
+                let title = self.fallback_title(fallback).unwrap_or_default();
+                line.push_str(&format!(" selected_title={title:?} fallback"));
             }
             None => line.push_str(" selected_title=none"),
         }
@@ -1471,6 +1546,14 @@ impl LauncherApp {
         if let Page::Windows(page) = &self.page {
             line.push_str(&format!(
                 " page=windows windows_query={:?} windows_shown={} windows_selected={}",
+                page.query,
+                page.shown.len(),
+                page.selected
+            ));
+        }
+        if let Page::Workspaces(page) = &self.page {
+            line.push_str(&format!(
+                " page=workspaces workspaces_query={:?} workspaces_shown={} workspaces_selected={}",
                 page.query,
                 page.shown.len(),
                 page.selected
@@ -1987,8 +2070,8 @@ impl LauncherApp {
                 if let Some(RootRow::RhaiScript(index)) = self.selected_row() {
                     return self.open_rhai_script_at(index);
                 }
-                if let Some(RootRow::Fallback(command)) = self.selected_row() {
-                    return self.open_fallback(command);
+                if let Some(RootRow::Fallback(fallback)) = self.selected_row() {
+                    return self.open_fallback(fallback);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -2073,6 +2156,7 @@ impl LauncherApp {
                     self.refresh_rhai_scripts_task(),
                     self.refresh_subtitles_task(),
                     self.catalog_task(),
+                    self.window_capabilities_task(),
                     self.apply_dmenu_size(),
                 ])
             }
@@ -2119,6 +2203,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_grants_panel() {
                     return task;
+                } else if let Some(task) = self.open_tray_panel() {
+                    return task;
                 } else if let Some(task) = self.open_apps_panel() {
                     return task;
                 } else if let Some(task) = self.open_emoji_panel() {
@@ -2128,6 +2214,10 @@ impl LauncherApp {
                 } else if let Some(task) = self.open_windows_panel() {
                     return task;
                 } else if let Some(task) = self.open_calculator_panel() {
+                    return task;
+                } else if let Some(task) = self.open_workspaces_panel() {
+                    return task;
+                } else if let Some(task) = self.open_files_panel() {
                     return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
@@ -2204,12 +2294,15 @@ impl LauncherApp {
                         .or_else(|| self.media_panel_action(&id))
                         .or_else(|| self.theme_panel_action(&id))
                         .or_else(|| self.grants_panel_action(&id))
+                        .or_else(|| self.tray_panel_action(&id))
                         .or_else(|| self.apps_panel_action(&id))
                         .or_else(|| self.emoji_panel_action(&id))
                         .or_else(|| self.clipboard_panel_action(&id))
                         .or_else(|| self.root_panel_action(&id))
                         .or_else(|| self.windows_panel_action(&id))
                         .or_else(|| self.calculator_panel_action(&id))
+                        .or_else(|| self.workspaces_panel_action(&id))
+                        .or_else(|| self.file_panel_action(&id))
                         .or_else(|| self.app_runtime_action(&id))
                 {
                     return task;
@@ -2420,6 +2513,7 @@ impl LauncherApp {
                         .extension(&id)
                         .map(|command| command.extension_dir.join("assets"));
                     page.leaves_on_end = compass_core::rhai_scripts::script_id(&id).is_some();
+                    page.icon_lookup = Some(self.icon_lookup.clone());
                     let surface = self.palette().surface.to_iced();
                     page.prefers_dark =
                         0.299 * surface.r + 0.587 * surface.g + 0.114 * surface.b < 0.5;
@@ -2587,6 +2681,7 @@ impl LauncherApp {
                 Task::none()
             }
             Message::ClipboardPasted(Ok(())) => self.conceal(),
+            Message::EmojiPasted { text, result } => self.emoji_pasted(text, result),
             Message::ClipboardEntryChanged(Ok(())) => self.clipboard_search_task(),
             Message::ClipboardEntryChanged(Err(reason)) => {
                 if let Page::Clipboard(page) = &mut self.page {
@@ -2621,7 +2716,8 @@ impl LauncherApp {
             | Message::ShortcutOpened(_)
             | Message::ShortcutExpanded(_)
             | Message::ShortcutsQueryChanged(_)
-            | Message::ShortcutSelected(_) => self.shortcut_message(message),
+            | Message::ShortcutSelected(_)
+            | Message::ShortcutDetailLoaded(_) => self.shortcut_message(message),
             Message::SnippetsLoaded(_)
             | Message::SnippetSaved(_)
             | Message::SnippetExpanded(_)
@@ -2638,13 +2734,28 @@ impl LauncherApp {
             Message::AppsQueryChanged(_)
             | Message::AppsSelected(_)
             | Message::DefaultAppsLoaded(_)
-            | Message::DefaultAppSet(_) => self.apps_message(message),
+            | Message::DefaultAppSet(_)
+            | Message::BrowseAppRuntime { .. } => self.apps_message(message),
             Message::CatalogGeneration(Ok(generation)) => self.catalog_moved(generation),
             Message::CatalogGeneration(Err(error)) => {
                 tracing::debug!(%error, "no catalog generation");
                 Task::none()
             }
             Message::AppRuntimeLoaded { .. } | Message::AppQuit(_) => self.runtime_message(message),
+            Message::WindowCapabilities(_)
+            | Message::WorkspacesQueryChanged(_)
+            | Message::WorkspacesLoaded(_)
+            | Message::WorkspaceSelected(_)
+            | Message::WorkspaceFocused(_)
+            | Message::WindowToggled(_) => self.workspaces_message(message),
+            Message::FileActionsLoaded { .. } | Message::FileActionDone(_) => {
+                self.file_actions_message(message)
+            }
+            Message::OpenWithTarget(_)
+            | Message::OpenersLoaded(_)
+            | Message::OpenWithQueryChanged(_)
+            | Message::OpenWithSelected(_)
+            | Message::OpenedWith(_) => self.open_with_message(message),
             Message::CalculatorQueryChanged(_)
             | Message::CalculatorLoaded { .. }
             | Message::CalculatorSelected(_)
@@ -2653,6 +2764,11 @@ impl LauncherApp {
             | Message::GrantsQueryChanged(_)
             | Message::GrantSelected(_)
             | Message::GrantRevoked(_) => self.grants_message(message),
+            Message::TrayItemsLoaded(_)
+            | Message::TrayMenuLoaded { .. }
+            | Message::TrayQueryChanged(_)
+            | Message::TraySelected(_)
+            | Message::TrayActed(_) => self.tray_message(message),
             Message::NowPlayingLoaded(_)
             | Message::NowPlayingQueryChanged(_)
             | Message::NowPlayingSelected(_)
@@ -2698,6 +2814,9 @@ impl LauncherApp {
                 if let Some(task) = self.back_from_clipboard_keywords() {
                     return task;
                 }
+                if let Some(task) = self.back_from_open_with() {
+                    return task;
+                }
                 if let Some(task) = self.back_from_alias_form() {
                     return task;
                 }
@@ -2737,6 +2856,7 @@ impl LauncherApp {
                 if let Page::Files(page) = &mut self.page {
                     page.apply(generation, result);
                 }
+                self.warm_file_icons();
                 crate::scroll::reveal_root_selection()
             }
             Message::FilesSelected(position) => {
@@ -2782,6 +2902,7 @@ impl LauncherApp {
                 if let Page::Windows(page) = &mut self.page {
                     page.apply(result, std::process::id());
                 }
+                self.warm_window_icons();
                 crate::scroll::reveal_root_selection()
             }
             Message::WindowSelected(position) => {
@@ -2807,6 +2928,15 @@ impl LauncherApp {
                     page.notice = Some(reason.clone());
                 }
                 self.list_windows_task()
+            }
+            // The shortcut recorder takes every key, releases included.
+            Message::Keyboard(event)
+                if self
+                    .panel
+                    .as_ref()
+                    .is_some_and(|panel| panel.recorder.is_some()) =>
+            {
+                self.recorder_event(&event)
             }
             Message::Keyboard(iced::keyboard::Event::KeyPressed {
                 ref key, modifiers, ..
@@ -2945,11 +3075,20 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Grants(_)) {
                     return self.grants_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Tray(_)) {
+                    return self.tray_page_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::Apps(_)) {
                     return self.apps_page_key(key, modifiers);
                 }
                 if !panel_key && matches!(self.page, Page::Calculator(_)) {
                     return self.calculator_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Workspaces(_)) {
+                    return self.workspaces_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::OpenWith(_)) {
+                    return self.open_with_key(key, modifiers);
                 }
                 if !panel_key && matches!(self.page, Page::NowPlaying(_)) {
                     return self.now_playing_key(key, modifiers);
@@ -3173,7 +3312,9 @@ impl LauncherApp {
     fn search_field(&self) -> (&str, &str, Option<OnInput>) {
         match &self.page {
             Page::Root => (
-                "Search…",
+                self.provider_scope
+                    .as_ref()
+                    .map_or("Search…", |scope| scope.placeholder.as_str()),
                 &self.query,
                 self.panel
                     .is_none()
@@ -3193,6 +3334,16 @@ impl LauncherApp {
                 "Search windows…",
                 &page.query,
                 Some(Message::WindowsQueryChanged as OnInput),
+            ),
+            Page::Workspaces(page) => (
+                crate::workspaces_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::WorkspacesQueryChanged as OnInput),
+            ),
+            Page::OpenWith(page) => (
+                crate::open_with_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::OpenWithQueryChanged as OnInput),
             ),
             Page::Files(page) => (
                 "Search for files…",
@@ -3229,6 +3380,15 @@ impl LauncherApp {
                 crate::grants_page::PLACEHOLDER,
                 &page.query,
                 Some(Message::GrantsQueryChanged as OnInput),
+            ),
+            Page::Tray(page) => (
+                if page.menu_key().is_some() {
+                    crate::tray_page::MENU_PLACEHOLDER
+                } else {
+                    crate::tray_page::PLACEHOLDER
+                },
+                &page.query,
+                Some(Message::TrayQueryChanged as OnInput),
             ),
             Page::Apps(page) => (
                 page.placeholder(),
@@ -3352,6 +3512,10 @@ impl LauncherApp {
             self.emoji_body(page)
         } else if let Page::Windows(page) = &self.page {
             self.windows_body(page)
+        } else if let Page::Workspaces(page) = &self.page {
+            self.workspaces_body(page)
+        } else if let Page::OpenWith(page) = &self.page {
+            self.open_with_body(page)
         } else if let Page::Files(page) = &self.page {
             self.files_body(page)
         } else if let Page::Shortcuts(page) = &self.page {
@@ -3366,6 +3530,8 @@ impl LauncherApp {
             self.dmenu_body(page)
         } else if let Page::Grants(page) = &self.page {
             self.grants_body(page)
+        } else if let Page::Tray(page) = &self.page {
+            self.tray_body(page)
         } else if let Page::Apps(page) = &self.page {
             self.apps_body(page)
         } else if let Page::Calculator(page) = &self.page {
@@ -3407,7 +3573,7 @@ impl LauncherApp {
                         self.result_row(item, selected)
                     }
                     RootRow::Command(command) => self.list_row(
-                        self.initial_badge(command.title, selected),
+                        self.command_icon(command, selected),
                         command.title.to_owned(),
                         self.subtitles.then(|| command.subtitle.to_owned()),
                         selected,
@@ -3465,7 +3631,10 @@ impl LauncherApp {
                             selected,
                         )
                     }
-                    RootRow::Fallback(command) => {
+                    RootRow::Fallback(fallback) => {
+                        let Some(title) = self.fallback_title(*fallback) else {
+                            continue;
+                        };
                         if position == 0
                             || !matches!(self.results.get(position - 1), Some(RootRow::Fallback(_)))
                         {
@@ -3479,10 +3648,18 @@ impl LauncherApp {
                                 .padding(Padding::new(4.0).left(10)),
                             );
                         }
+                        let subtitle = match fallback {
+                            Fallback::Command(command) => command.subtitle.to_owned(),
+                            Fallback::Extension(_) => "Command".to_owned(),
+                            Fallback::Shortcut(_) => "Shortcut".to_owned(),
+                        };
                         self.list_row(
-                            self.initial_badge(command.title, selected),
-                            command.title.to_owned(),
-                            self.subtitles.then(|| command.subtitle.to_owned()),
+                            match fallback {
+                                Fallback::Command(command) => self.command_icon(command, selected),
+                                _ => self.initial_badge(&title, selected),
+                            },
+                            title,
+                            self.subtitles.then_some(subtitle),
                             selected,
                         )
                     }
@@ -3711,7 +3888,7 @@ impl LauncherApp {
                 window.title.clone()
             };
             let row = self.list_row(
-                self.initial_badge(&window.app, selected),
+                self.window_icon(window, selected),
                 title,
                 self.subtitles.then(|| window.app.clone()),
                 selected,
@@ -3757,6 +3934,15 @@ impl LauncherApp {
         .width(Length::Fill)
         .align_x(Alignment::End)
         .padding(Padding::new(4.0).right(10));
+        // The loading indicator (`setLoading`): a query is out.
+        let indicator = container(
+            text(if page.searching { "Searching…" } else { "" })
+                .font(self.font())
+                .size(12)
+                .color(self.palette().muted.to_iced()),
+        )
+        .padding(Padding::new(8.0).left(12));
+        let filter = row![indicator, filter];
         let empty = match &page.status {
             Status::Loading => Some("Searching files…"),
             Status::Failed(reason) => Some(reason.as_str()),
@@ -3780,7 +3966,13 @@ impl LauncherApp {
                 .subtitles
                 .then(|| crate::files_page::subtitle(file, home.as_deref()));
             let row = self.list_row(
-                self.initial_badge(&file.category, selected),
+                self.glyph_or_initial(
+                    self.icons
+                        .then(|| self.file_glyphs.cached(&file.path))
+                        .flatten(),
+                    &file.name,
+                    selected,
+                ),
                 file.name.clone(),
                 subtitle,
                 selected,
@@ -3845,7 +4037,13 @@ impl LauncherApp {
                 .subtitles
                 .then(|| crate::clipboard_page::subtitle(entry));
             let row = self.list_row(
-                self.initial_badge(crate::clipboard_page::subtitle(entry).as_str(), selected),
+                self.glyph_or_initial(
+                    self.icons
+                        .then(|| crate::icons::clipboard_glyph(entry.kind))
+                        .as_ref(),
+                    crate::clipboard_page::subtitle(entry).as_str(),
+                    selected,
+                ),
                 entry.preview.clone(),
                 subtitle,
                 selected,
@@ -3989,6 +4187,189 @@ impl LauncherApp {
             }
         };
         container(art).width(size).height(size).into()
+    }
+
+    /// A builtin command's icon slot: its icon on its C++ tile when icons are
+    /// on and the builtin set is installed, its initial otherwise.
+    fn command_icon(
+        &self,
+        command: &compass_core::commands::BuiltinCommand,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = self
+            .icons
+            .then(|| crate::icons::command_glyph(command, self.palette().accent));
+        self.glyph_or_initial(glyph.as_ref(), command.title, selected)
+    }
+
+    /// A window's icon slot: its application's icon, else `AppWindow`
+    /// (`SwitchWindowsSection::displayIcon`).
+    fn window_icon(
+        &self,
+        window: &crate::backend::WindowRow,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = self.icons.then(|| {
+            self.window_app(window)
+                .and_then(|item| self.row_art(item))
+                .cloned()
+                .map_or_else(
+                    || crate::icons::Glyph::builtin("app-window"),
+                    crate::icons::Glyph::Art,
+                )
+        });
+        self.glyph_or_initial(glyph.as_ref(), &window.app, selected)
+    }
+
+    /// The application a window belongs to, when the engine recognised it.
+    fn window_app(&self, window: &crate::backend::WindowRow) -> Option<&AppItem> {
+        if !window.app_known {
+            return None;
+        }
+        self.app_index
+            .items()
+            .iter()
+            .find(|item| item.name() == window.app)
+    }
+
+    /// `glyph` drawn in the row's icon slot, or `title`'s initial when there
+    /// is none or it cannot be drawn (a builtin with no installed icon set).
+    fn glyph_or_initial(
+        &self,
+        glyph: Option<&crate::icons::Glyph>,
+        title: &str,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        glyph
+            .and_then(|glyph| self.glyph(glyph, selected, f32::from(self.geometry.icon_size)))
+            .unwrap_or_else(|| self.initial_badge(title, selected))
+    }
+
+    /// The builtin icon `name` as an SVG of `size`, drawn in `color`.
+    fn builtin_svg(
+        &self,
+        name: &str,
+        color: Color,
+        size: f32,
+    ) -> Option<Element<'static, Message>> {
+        let file = self
+            .builtin_icons
+            .as_ref()?
+            .join(compass_core::builtin_icon::file_name(name)?);
+        Some(
+            svg(file)
+                .width(Length::Fixed(size))
+                .height(Length::Fixed(size))
+                .style(move |_: &Theme, _| iced::widget::svg::Style { color: Some(color) })
+                .into(),
+        )
+    }
+
+    /// A [`crate::icons::Glyph`] drawn in a square of `size`.
+    ///
+    /// A tile is `applyBackdrop`'s rounded square (a quarter of the side),
+    /// with the glyph inset by 19% of it as `backdropContentSize`; a badge is
+    /// `applyBadge`'s black disc, 44% of the side, 4% in from the corner,
+    /// carrying the badge glyph in white.
+    fn glyph(
+        &self,
+        glyph: &crate::icons::Glyph,
+        selected: bool,
+        size: f32,
+    ) -> Option<Element<'static, Message>> {
+        use crate::icons::Glyph;
+        let square = Length::Fixed(size);
+        match glyph {
+            Glyph::Art(art) => {
+                let drawn: Element<'static, Message> = match art {
+                    crate::icons::IconArt::Raster(path) => image(path.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into(),
+                    crate::icons::IconArt::Vector(path) => svg(path.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into(),
+                };
+                Some(container(drawn).width(square).height(square).into())
+            }
+            Glyph::Builtin {
+                name,
+                fill,
+                tile,
+                badge,
+            } => {
+                let palette = self.palette();
+                let text_color = if selected {
+                    palette.selection_text
+                } else {
+                    palette.text
+                };
+                let base: Element<'static, Message> = match tile {
+                    None => container(self.builtin_svg(
+                        name,
+                        fill.unwrap_or(text_color).to_iced(),
+                        size * 0.8,
+                    )?)
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    Some(tile) => {
+                        let tile = tile.to_iced();
+                        let inner = size * (1.0 - 2.0 * 0.19);
+                        container(
+                            self.builtin_svg(
+                                name,
+                                fill.unwrap_or(crate::design::Rgb::new(255, 255, 255))
+                                    .to_iced(),
+                                inner,
+                            )?,
+                        )
+                        .width(square)
+                        .height(square)
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center)
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(tile.into()),
+                            border: Border {
+                                color: Color::from_rgba8(255, 255, 255, 30.0 / 255.0),
+                                width: (size / 32.0).max(1.0),
+                                radius: (size * 0.25).into(),
+                            },
+                            ..container::Style::default()
+                        })
+                        .into()
+                    }
+                };
+                let Some(badge) = badge else {
+                    return Some(base);
+                };
+                let diameter = size * 0.44;
+                let disc = container(self.builtin_svg(badge, Color::WHITE, diameter * 0.56)?)
+                    .width(Length::Fixed(diameter))
+                    .height(Length::Fixed(diameter))
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Color::BLACK.into()),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: (diameter / 2.0).into(),
+                        },
+                        ..container::Style::default()
+                    });
+                let corner = container(disc)
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::End)
+                    .padding(size * 0.04);
+                Some(iced::widget::stack![base, corner].into())
+            }
+        }
     }
 
     /// The first letter of `title` in a tinted square, for a row with no art.
@@ -4142,9 +4523,12 @@ impl LauncherApp {
     /// A floating card at the bottom right, the way Raycast's sits. Headers
     /// and dividers are drawn as themselves rather than as indented text, and
     /// the selection is the same filled rectangle the result list uses.
-    fn view_panel(&self, panel: &PanelState) -> Element<'_, Message> {
+    fn view_panel<'a>(&'a self, panel: &'a PanelState) -> Element<'a, Message> {
         let geometry = self.geometry;
         let palette = self.palette();
+        if let Some(recorder) = &panel.recorder {
+            return self.view_recorder(recorder);
+        }
         let filter = text_input("Search…", &panel.filter)
             .id(PANEL_INPUT)
             .font(self.font())
@@ -4242,6 +4626,79 @@ impl LauncherApp {
         .into()
     }
 
+    /// The shortcut recorder in the panel's place (`ShortcutRecorderPanel`):
+    /// the item's title, then the chord or the current shortcut, the status
+    /// line and, while the item has a shortcut, how to remove it.
+    fn view_recorder<'a>(
+        &'a self,
+        recorder: &'a crate::shortcut_recorder::ShortcutRecorder,
+    ) -> Element<'a, Message> {
+        let geometry = self.geometry;
+        let palette = self.palette();
+        let small = f32::from(geometry.subtitle_size);
+        let title = container(
+            text(recorder.title.clone())
+                .font(self.font())
+                .size(f32::from(geometry.title_size))
+                .color(palette.text.to_iced()),
+        )
+        .height(design::panel_metric("filter-height"))
+        .align_y(Alignment::Center)
+        .padding(Padding::new(0.0).left(design::panel_metric("inset")));
+        let divider = container(Space::new().height(Length::Fixed(1.0)))
+            .width(Length::Fill)
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.border.to_iced().into()),
+                ..container::Style::default()
+            });
+        let mut capture = column![].spacing(5).align_x(Alignment::Center);
+        if !recorder.tokens.is_empty() {
+            capture = capture.push(
+                text(recorder.tokens.join(" "))
+                    .font(self.font())
+                    .size(f32::from(geometry.title_size))
+                    .color(palette.text.to_iced()),
+            );
+        }
+        let status = if recorder.error {
+            iced::Color::from_rgb8(0xe5, 0x48, 0x4d)
+        } else {
+            palette.text.to_iced()
+        };
+        capture = capture.push(
+            text(recorder.status.clone())
+                .font(self.font())
+                .size(small)
+                .color(status),
+        );
+        if recorder.current.is_some() {
+            capture = capture.push(
+                text(crate::shortcut_recorder::REMOVE_HINT)
+                    .font(self.font())
+                    .size(small)
+                    .color(palette.muted.to_iced()),
+            );
+        }
+        let capture = container(capture)
+            .width(Length::Fill)
+            .height(Length::Fixed(130.0))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+        container(column![title, divider, capture])
+            .width(Length::Fixed(design::panel_metric("width")))
+            .padding(design::panel_metric("padding"))
+            .style(move |_: &Theme| container::Style {
+                background: Some(palette.surface.to_iced().into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     /// One action row, with its shortcut right-aligned.
     fn panel_item(
         &self,
@@ -4315,7 +4772,11 @@ impl LauncherApp {
     fn search_task(&mut self) -> Task<Message> {
         self.cancel_search();
         self.error = None;
-        if let Some(backend) = self.backend.clone() {
+        // The provider search view ranks here: the engine's search is the
+        // whole root list.
+        if let Some(backend) = self.backend.clone()
+            && self.provider_scope.is_none()
+        {
             self.results.clear();
             self.selected = 0;
             let query = self.query.clone();
@@ -4373,6 +4834,24 @@ impl LauncherApp {
                 title: title.clone(),
                 result,
             },
+        )
+    }
+
+    /// An extension command offered as a fallback: launched through the
+    /// engine with the query as its fallback text, which comes back as a
+    /// launch like any other (`OpenBuiltinCommandAction` forwarding the
+    /// search text).
+    fn run_extension_fallback(&mut self, index: usize, query: String) -> Task<Message> {
+        let Some(command) = self.app_index.extensions().get(index) else {
+            return Task::none();
+        };
+        let Some(backend) = self.backend.clone() else {
+            return self.run_extension_command(index);
+        };
+        let id = command.id.clone();
+        Task::perform(
+            async move { backend.launch_command(id, Some(query)).await },
+            Message::BuiltinCommandDone,
         )
     }
 
@@ -4913,6 +5392,7 @@ impl LauncherApp {
             CommandKind::Media(id) => Task::batch([record, self.run_media(command, id, None)]),
             CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
             CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
+            CommandKind::SearchTray => Task::batch([record, self.open_search_tray()]),
             CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
             CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
             CommandKind::SetDefaultBrowser => Task::batch([
@@ -4956,6 +5436,19 @@ impl LauncherApp {
                 self.page = Page::Windows(crate::windows_page::WindowsPage::default());
                 Task::batch([record, self.list_windows_task(), focus_search()])
             }
+            CommandKind::SwitchWorkspaces => Task::batch([record, self.open_switch_workspaces()]),
+            CommandKind::ToggleFullscreen => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Fullscreen),
+            ]),
+            CommandKind::ToggleFloating => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Floating),
+            ]),
+            CommandKind::ToggleOverview => Task::batch([
+                record,
+                self.run_window_toggle(crate::backend::WindowToggle::Overview),
+            ]),
         }
     }
 
@@ -5184,7 +5677,12 @@ impl LauncherApp {
 
     /// Re-rank locally when no daemon backend is attached.
     fn search(&mut self) {
-        if self.query.trim().is_empty() {
+        let options = compass_core::root_items::SearchOptions {
+            provider_id: self.provider_scope.as_ref().map(|scope| scope.id.clone()),
+            ..compass_core::root_items::SearchOptions::default()
+        };
+        self.favorites_len = 0;
+        if self.query.trim().is_empty() && options.provider_id.is_none() {
             self.results.clear();
             self.selected = 0;
             self.apply_favorites();
@@ -5193,7 +5691,7 @@ impl LauncherApp {
 
         self.results = self
             .app_index
-            .search_root_all(&self.query, None)
+            .search_root_with(&self.query, None, &options)
             .into_iter()
             .map(|hit| match hit {
                 compass_core::RootHit::App(app) => RootRow::App(app.index),
@@ -5232,37 +5730,89 @@ impl LauncherApp {
         // different list, and keeping its position would silently select an
         // unrelated application.
         self.selected = 0;
-        self.apply_calculator();
-        self.apply_fallbacks();
+        if self.provider_scope.is_none() {
+            self.apply_calculator();
+            self.apply_fallbacks();
+        }
         self.warm_icons();
     }
 
-    /// Offers the fallback commands under the results for a non-empty query,
-    /// as `RootFallbackSection` does.
+    /// Offers the fallbacks under the results for a non-empty query, as
+    /// `RootFallbackSection` does.
     fn apply_fallbacks(&mut self) {
         self.results
             .retain(|row| !matches!(row, RootRow::Fallback(_)));
-        if self.query.trim().is_empty() {
+        if self.query.trim().is_empty() || self.provider_scope.is_some() {
             return;
         }
-        self.results
-            .extend(self.fallbacks.iter().copied().map(RootRow::Fallback));
+        let fallbacks: Vec<RootRow> = self
+            .fallbacks
+            .iter()
+            .filter_map(|id| self.resolve_fallback(id))
+            .map(RootRow::Fallback)
+            .collect();
+        self.results.extend(fallbacks);
     }
 
-    /// Runs a fallback command with the query: Search Files opens searching
-    /// for it.
-    fn open_fallback(
-        &mut self,
-        command: &'static compass_core::commands::BuiltinCommand,
-    ) -> Task<Message> {
+    /// The fallback a `fallbacks` entry names here, when it names an item
+    /// that can be one (`isSuitableForFallback`): Search Files, any
+    /// extension command, or a quicklink with exactly one argument.
+    fn resolve_fallback(&self, id: &str) -> Option<Fallback> {
+        if let Some(command) = compass_core::commands::fallback(id) {
+            return Some(Fallback::Command(command));
+        }
+        if let Some(index) = self
+            .app_index
+            .extensions()
+            .iter()
+            .position(|command| command.id == id)
+        {
+            return Some(Fallback::Extension(index));
+        }
+        let shortcut = self.app_index.shortcut_by_entrypoint(id)?;
+        if shortcut.link.arguments.len() != 1 {
+            return None;
+        }
+        self.app_index
+            .shortcuts()
+            .iter()
+            .position(|known| known.id == shortcut.id)
+            .map(Fallback::Shortcut)
+    }
+
+    /// What a fallback row says.
+    fn fallback_title(&self, fallback: Fallback) -> Option<String> {
+        Some(match fallback {
+            Fallback::Command(command) => command.title.to_owned(),
+            Fallback::Extension(index) => self.app_index.extensions().get(index)?.title.clone(),
+            Fallback::Shortcut(index) => {
+                crate::shortcuts_page::display_name(self.app_index.shortcuts().get(index)?)
+                    .to_owned()
+            }
+        })
+    }
+
+    /// Runs a fallback with the query: Search Files opens searching for it,
+    /// an extension command opens with it as its fallback text
+    /// (`OpenBuiltinCommandAction::setForwardSearchText`), and a quicklink
+    /// opens with it as its argument (`OpenShortcutFromSearchText`).
+    fn open_fallback(&mut self, fallback: Fallback) -> Task<Message> {
         use compass_core::commands::CommandKind;
         self.panel = None;
-        match command.kind {
-            CommandKind::SearchFiles => {
-                let query = self.query.clone();
-                self.open_search_files(query)
+        let query = self.query.clone();
+        match fallback {
+            Fallback::Command(command) => match command.kind {
+                CommandKind::SearchFiles => self.open_search_files(query),
+                _ => self.open_command(command),
+            },
+            Fallback::Extension(index) => self.run_extension_fallback(index, query),
+            Fallback::Shortcut(index) => {
+                let Some(shortcut) = self.app_index.shortcuts().get(index) else {
+                    return Task::none();
+                };
+                let id = shortcut.id.clone();
+                self.send_open_shortcut(id, vec![query])
             }
-            _ => self.open_command(command),
         }
     }
 
@@ -5320,6 +5870,39 @@ impl LauncherApp {
             .collect();
         let find = self.icon_lookup.clone();
         self.icon_cache.warm(names, &|name| find.find(name));
+    }
+
+    /// Resolve the file-type icons of Search Files' rows.
+    fn warm_file_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Files(page) = &self.page else {
+            return;
+        };
+        let find = self.icon_lookup.clone();
+        self.file_glyphs
+            .warm(page.rows.iter().map(|file| file.path.as_str()), &|name| {
+                find.find(name)
+            });
+    }
+
+    /// Resolve the icons of the windows' applications.
+    fn warm_window_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Windows(page) = &self.page else {
+            return;
+        };
+        let names: Vec<String> = page
+            .all
+            .iter()
+            .filter_map(|window| self.window_app(window)?.icon().map(str::to_owned))
+            .collect();
+        let find = self.icon_lookup.clone();
+        self.icon_cache
+            .warm(names.iter().map(String::as_str), &|name| find.find(name));
     }
 }
 
@@ -5766,6 +6349,10 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct TestBackend {
+        /// Other applications' tray icons.
+        tray: Vec<crate::backend::TrayItemRow>,
+        /// What the tray was asked to do.
+        tray_calls: std::sync::Mutex<Vec<String>>,
         /// What the default pickers offer.
         default_apps: Vec<crate::backend::DefaultAppRow>,
         /// The defaults set: `(kind, id)`.
@@ -5799,6 +6386,13 @@ mod tests {
         /// The calculator's history, one group, and what changed it.
         calculations: std::sync::Mutex<Vec<crate::backend::CalculatorRow>>,
         calculator_edits: std::sync::Mutex<Vec<crate::backend::CalculatorChange>>,
+        /// What "Open with…" offers, and what it was asked to open.
+        openers: Vec<crate::backend::OpenerRow>,
+        opener_lookups: std::sync::Mutex<Vec<String>>,
+        opened_with: std::sync::Mutex<Vec<(String, String)>>,
+        /// What a file's panel depends on, and the file actions asked for.
+        file_info: crate::backend::FileActions,
+        file_calls: std::sync::Mutex<Vec<(&'static str, String)>>,
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
@@ -5818,6 +6412,12 @@ mod tests {
         shortcuts: std::sync::Mutex<Vec<crate::backend::Shortcut>>,
         /// The shortcuts opened, with their arguments.
         opened_shortcuts: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+        /// The root items launched through the engine, with their text.
+        launched: std::sync::Mutex<Vec<(String, Option<String>)>>,
+        /// The text pasted.
+        pasted: std::sync::Mutex<Vec<String>>,
+        /// Whether a paste is refused, as where the engine cannot paste.
+        refuse_paste: bool,
         /// The shortcuts saved, as the form sent them.
         drafts: std::sync::Mutex<Vec<crate::backend::ShortcutDraft>>,
         /// The snippet store.
@@ -5931,6 +6531,40 @@ mod tests {
             })
         }
 
+        fn file_actions(
+            &self,
+            _path: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::FileActions> {
+            Box::pin(async move { Ok(self.file_info.clone()) })
+        }
+
+        fn copy_file(&self, path: String, paste: bool) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let what = if paste { "paste" } else { "copy" };
+                self.file_calls.lock().unwrap().push((what, path));
+                Ok(())
+            })
+        }
+
+        fn run_executable(
+            &self,
+            path: String,
+            make_executable: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                assert!(make_executable);
+                self.file_calls.lock().unwrap().push(("run", path));
+                Ok(())
+            })
+        }
+
+        fn set_wallpaper(&self, path: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.file_calls.lock().unwrap().push(("wallpaper", path));
+                Err("Failed to set wallpaper: no backend".to_owned())
+            })
+        }
+
         fn search_files(
             &self,
             query: String,
@@ -6023,6 +6657,58 @@ mod tests {
             &self,
         ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
             Box::pin(async move { Ok(self.grants.lock().unwrap().clone()) })
+        }
+
+        fn tray_items(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TrayItemRow>> {
+            Box::pin(async move { Ok(self.tray.clone()) })
+        }
+
+        fn tray_activate(
+            &self,
+            key: String,
+            secondary: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.tray_calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("activate {key} {secondary}"));
+                Ok(())
+            })
+        }
+
+        fn tray_menu(
+            &self,
+            key: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TrayMenuRow>> {
+            Box::pin(async move {
+                self.tray_calls.lock().unwrap().push(format!("menu {key}"));
+                Ok(vec![
+                    crate::backend::TrayMenuRow {
+                        id: 1,
+                        label: "Open Chat".into(),
+                        ..crate::backend::TrayMenuRow::default()
+                    },
+                    crate::backend::TrayMenuRow {
+                        id: 3,
+                        label: "Status › Away".into(),
+                        toggled: Some(true),
+                        ..crate::backend::TrayMenuRow::default()
+                    },
+                ])
+            })
+        }
+
+        fn tray_trigger(&self, key: String, id: i32) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.tray_calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("trigger {key} {id}"));
+                Ok(())
+            })
         }
 
         fn calculator_history(
@@ -6414,6 +7100,23 @@ mod tests {
             })
         }
 
+        fn list_openers(
+            &self,
+            target: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::OpenerRow>> {
+            Box::pin(async move {
+                self.opener_lookups.lock().unwrap().push(target);
+                Ok(self.openers.clone())
+            })
+        }
+
+        fn open_with(&self, app: String, target: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened_with.lock().unwrap().push((app, target));
+                Ok(())
+            })
+        }
+
         fn open_shortcut(
             &self,
             id: String,
@@ -6421,6 +7124,27 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened_shortcuts.lock().unwrap().push((id, arguments));
+                Ok(())
+            })
+        }
+
+        fn paste_text(&self, text: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if self.refuse_paste {
+                    return Err("Pasting needs the GNOME Shell extension".to_owned());
+                }
+                self.pasted.lock().unwrap().push(text);
+                Ok(())
+            })
+        }
+
+        fn launch_command(
+            &self,
+            id: String,
+            query: Option<String>,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.launched.lock().unwrap().push((id, query));
                 Ok(())
             })
         }
@@ -8444,6 +9168,326 @@ mod tests {
     const FAVORITES_HEADING_FOR_TESTS: &str = "Favorites";
 
     #[test]
+    fn the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot() {
+        use iced::keyboard::key::Named;
+        let command = compass_core::commands::by_id("commands:search-emojis").expect("command");
+        let picker = |backend: Arc<TestBackend>, default_action: &str| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let mut app = app(dir.path());
+            app.glyph_path = Some(dir.path().join("emojis.json"));
+            app.backend = Some(backend);
+            app.emoji_default_action = default_action.to_owned();
+            let _ = app.open_command(command);
+            let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+            (app, dir)
+        };
+
+        // Paste is the default: first in the panel, on Enter, and nothing is
+        // copied by the window.
+        let backend = Arc::new(TestBackend::default());
+        let (mut app, _dir) = picker(backend.clone(), "paste");
+        let _ = app.update(Message::TogglePanel);
+        let first = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.sections.first()?.actions.first().cloned())
+            .expect("an action");
+        assert_eq!(first.title, "Paste to active window");
+        assert_eq!(first.shortcut.as_deref(), Some("enter"));
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(pressed(Named::Enter));
+        let copied = settle(&mut app, task);
+        assert_eq!(backend.pasted.lock().unwrap().as_slice(), ["👋"]);
+        assert!(copied.is_empty(), "{copied:?}");
+        let Page::Root = app.page else {
+            panic!("the picker hides once pasted: {}", app.state_line());
+        };
+
+        // Refused (no Shell extension): the glyph is copied instead.
+        let backend = Arc::new(TestBackend {
+            refuse_paste: true,
+            ..TestBackend::default()
+        });
+        let (mut app, _dir) = picker(backend.clone(), "paste");
+        let task = app.update(pressed(Named::Enter));
+        assert_eq!(settle(&mut app, task), ["👋"]);
+        assert!(backend.pasted.lock().unwrap().is_empty());
+
+        // `defaultAction: copy` puts copy first and on Enter.
+        let backend = Arc::new(TestBackend::default());
+        let (mut app, _dir) = picker(backend.clone(), "copy");
+        let task = app.update(pressed(Named::Enter));
+        assert_eq!(settle(&mut app, task), ["👋"]);
+        assert!(backend.pasted.lock().unwrap().is_empty());
+        let _ = app.open_command(command);
+        let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(titles[..2], ["Copy", "Paste to active window"]);
+    }
+
+    fn key_event(
+        pressed: bool,
+        key: iced::keyboard::Key,
+        modifiers: iced::keyboard::Modifiers,
+    ) -> Message {
+        let physical = iced::keyboard::key::Physical::Unidentified(
+            iced::keyboard::key::NativeCode::Unidentified,
+        );
+        Message::Keyboard(if pressed {
+            iced::keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: physical,
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            }
+        } else {
+            iced::keyboard::Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: physical,
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+            }
+        })
+    }
+
+    #[test]
+    fn the_root_panel_records_an_items_shortcut_and_backspace_removes_it() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let id = app.root_id(app.selected_row().unwrap()).unwrap();
+        let open_recorder = |app: &mut LauncherApp| {
+            let _ = app.update(Message::TogglePanel);
+            let row = app
+                .panel
+                .as_ref()
+                .and_then(|panel| panel.row_titled("Set Global Shortcut"))
+                .expect("the panel offers a shortcut");
+            let _ = app.update(Message::PanelClicked(row));
+            assert!(
+                app.panel.as_ref().is_some_and(|p| p.recorder.is_some()),
+                "the recorder takes the panel's place"
+            );
+        };
+        open_recorder(&mut app);
+
+        // A bare letter is refused and typed nowhere; Control, then K.
+        let _ = app.update(key_event(
+            true,
+            Key::Character("k".into()),
+            Modifiers::empty(),
+        ));
+        let recorder = app
+            .panel
+            .as_ref()
+            .and_then(|p| p.recorder.as_ref())
+            .unwrap();
+        assert_eq!(recorder.status, compass_core::key_combo::MODIFIER_REQUIRED);
+        assert_eq!(app.query, "firefox");
+        let _ = app.update(key_event(true, Key::Named(Named::Control), Modifiers::CTRL));
+        let _ = app.update(key_event(true, Key::Character("k".into()), Modifiers::CTRL));
+        assert!(app.panel.is_none(), "an accepted shortcut closes the panel");
+        let shortcut = |app: &LauncherApp| {
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.shortcut.clone())
+        };
+        assert_eq!(shortcut(&app).as_deref(), Some("control+K"));
+        let (provider, entrypoint) = compass_core::root_items::split_entrypoint_id(&id).unwrap();
+        assert_eq!(
+            app.root_config.providers[provider].entrypoints[entrypoint]
+                .shortcut
+                .as_deref(),
+            Some("control+K")
+        );
+
+        // Escape goes back to the actions; Backspace removes the shortcut.
+        let _ = app.update(key_event(
+            false,
+            Key::Named(Named::Control),
+            Modifiers::empty(),
+        ));
+        open_recorder(&mut app);
+        let _ = app.update(key_event(
+            true,
+            Key::Named(Named::Escape),
+            Modifiers::empty(),
+        ));
+        assert!(app.panel.as_ref().is_some_and(|p| p.recorder.is_none()));
+        let _ = app.update(Message::TogglePanel);
+        open_recorder(&mut app);
+        let _ = app.update(key_event(
+            true,
+            Key::Named(Named::Backspace),
+            Modifiers::empty(),
+        ));
+        assert!(app.panel.is_none());
+        assert_eq!(shortcut(&app), None);
+    }
+
+    #[test]
+    fn a_launch_deeplink_to_a_provider_searches_its_items_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = extension_app(dir.path(), Arc::new(TestBackend::default()));
+
+        let task = app.open_deeplink("vicinae://launch/@someone/hello?fallbackText=wri");
+        settle(&mut app, task);
+        assert_eq!(app.search_field().0, "Search Hello");
+        assert_eq!(app.query, "wri");
+        assert_eq!(app.results, [RootRow::Extension(0)], "{}", app.state_line());
+
+        // The empty query lists every item of the provider, and nothing else:
+        // no favourites, no calculator, no fallbacks.
+        let task = app.open_deeplink("vicinae://launch/applications/");
+        settle(&mut app, task);
+        assert_eq!(app.search_field().0, "Search Applications");
+        assert_eq!(app.results.len(), 3, "{}", app.state_line());
+        assert!(app.results.iter().all(|row| matches!(row, RootRow::App(_))));
+        let _ = app.update(Message::QueryChanged("fire".into()));
+        assert!(
+            app.results.iter().all(|row| matches!(row, RootRow::App(_))),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(app.results.len(), 1);
+
+        // Leaving closes it: the next summon is the root again.
+        let _ = app.update(Message::Dismiss);
+        assert_eq!(app.provider_scope, None);
+        assert_eq!(app.search_field().0, "Search…");
+
+        let _ = app.open_deeplink("vicinae://launch/nothing");
+        assert_eq!(
+            app.error.as_deref(),
+            Some(compass_core::root_items::INVALID_LAUNCH_LINK)
+        );
+    }
+
+    #[test]
+    fn a_launch_deeplink_to_an_item_launches_it_with_its_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        let task = app.open_deeplink("vicinae://launch/@someone/hello/write?fallbackText=hi+there");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.launched.lock().unwrap().as_slice(),
+            [(
+                "@someone/hello:write".to_owned(),
+                Some("hi there".to_owned())
+            )]
+        );
+        assert_eq!(app.provider_scope, None);
+    }
+
+    #[test]
+    fn fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        app.fallbacks = vec![
+            "shortcuts:sct-news".into(),
+            "shortcuts:sct-docs".into(),
+            "files:search".into(),
+        ];
+        app.query = "serde".into();
+        app.search();
+        let fallbacks: Vec<RootRow> = app
+            .results
+            .iter()
+            .copied()
+            .filter(|row| matches!(row, RootRow::Fallback(_)))
+            .collect();
+        let docs = app
+            .app_index
+            .shortcuts()
+            .iter()
+            .position(|shortcut| shortcut.id == "sct-docs")
+            .unwrap();
+        assert!(
+            matches!(
+                fallbacks.as_slice(),
+                [
+                    RootRow::Fallback(Fallback::Shortcut(at)),
+                    RootRow::Fallback(Fallback::Command(_)),
+                ] if *at == docs
+            ),
+            "a shortcut without exactly one argument is no fallback: {fallbacks:?}"
+        );
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| *row == fallbacks[0])
+            .unwrap();
+        assert!(
+            app.state_line()
+                .contains("selected_title=\"Crate Docs\" fallback")
+        );
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().last(),
+            Some(&("sct-docs".to_owned(), vec!["serde".to_owned()]))
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.fallbacks = vec!["@someone/hello:write".into()];
+        app.query = "zzzz".into();
+        app.search();
+        assert_eq!(
+            app.results.last(),
+            Some(&RootRow::Fallback(Fallback::Extension(0)))
+        );
+        app.selected = app.results.len() - 1;
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.launched.lock().unwrap().as_slice(),
+            [("@someone/hello:write".to_owned(), Some("zzzz".to_owned()))]
+        );
+    }
+
+    #[test]
+    fn an_alias_and_a_space_open_an_items_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, backend) = shortcuts_app(dir.path());
+        compass_core::root_items::apply_edit(
+            &mut app.root_config,
+            "shortcuts:sct-docs",
+            &compass_core::root_items::RootEdit::Alias("cd".into()),
+        );
+        app.app_index.apply_root_config(&app.root_config);
+        app.query = "cd".into();
+        app.search();
+        assert!(
+            matches!(app.selected_row(), Some(RootRow::Shortcut(_))),
+            "{}",
+            app.state_line()
+        );
+        let task = app.update(Message::QueryChanged("cd ".into()));
+        settle(&mut app, task);
+        assert!(
+            matches!(&app.page, Page::Preferences(form)
+                if form.purpose == crate::preferences_page::Purpose::ShortcutArguments),
+            "the space opens the arguments rather than being typed: {}",
+            app.state_line()
+        );
+        assert_eq!(app.query, "cd");
+        assert!(backend.opened_shortcuts.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn a_calculation_that_matches_nothing_is_answered_first() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = app(dir.path());
@@ -8970,7 +10014,7 @@ mod tests {
         app.query = "zebra".into();
         app.search();
         assert!(
-            matches!(app.results.last(), Some(RootRow::Fallback(c))
+            matches!(app.results.last(), Some(RootRow::Fallback(Fallback::Command(c)))
                 if c.kind == compass_core::commands::CommandKind::SearchFiles),
             "{}",
             app.state_line()
@@ -8985,6 +10029,143 @@ mod tests {
         app.query.clear();
         app.search();
         assert!(app.results.is_empty(), "an empty query offers no fallback");
+    }
+
+    #[test]
+    fn search_files_panel_is_the_cpps_file_actions() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![
+                file_row("/home/me/sunset.png", "Images"),
+                file_row("/home/me/Tool.AppImage", "Documents"),
+            ],
+            file_info: crate::backend::FileActions {
+                mime: Some("image/png".into()),
+                has_opener: true,
+                can_set_wallpaper: true,
+                can_paste: true,
+            },
+            openers: vec![opener("gimp.desktop", "GIMP", false)],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "search files", "commands:search-files");
+        assert_eq!(files_page(&app).rows.len(), 2, "{}", app.state_line());
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Open",
+                "Show in file browser",
+                "Open with...",
+                "Set as wallpaper",
+                "Create shortcut",
+                "Paste to active window",
+                "Copy file",
+                "Copy file path",
+                "Copy file name",
+                "Copy mime type",
+            ]
+        );
+        let task = choose(&mut app, "Copy mime type");
+        assert_eq!(settle(&mut app, task), ["image/png"]);
+
+        let reopen = |app: &mut LauncherApp| {
+            let _ = app.update(Message::Command(UiCommand::Show));
+            open_builtin(app, "search files", "commands:search-files");
+            let task = app.update(Message::TogglePanel);
+            settle(app, task);
+        };
+        reopen(&mut app);
+        let task = choose(&mut app, "Copy file name");
+        assert_eq!(settle(&mut app, task), ["sunset.png"]);
+        reopen(&mut app);
+        let task = choose(&mut app, "Copy file");
+        settle(&mut app, task);
+        reopen(&mut app);
+        let task = choose(&mut app, "Paste to active window");
+        settle(&mut app, task);
+        reopen(&mut app);
+        let task = choose(&mut app, "Set as wallpaper");
+        settle(&mut app, task);
+        let Page::Files(page) = &app.page else {
+            panic!("a failure stays: {}", app.state_line());
+        };
+        assert_eq!(
+            page.notice.as_deref(),
+            Some("Failed to set wallpaper: no backend")
+        );
+        assert_eq!(
+            backend.file_calls.lock().unwrap().as_slice(),
+            [
+                ("copy", "/home/me/sunset.png".to_owned()),
+                ("paste", "/home/me/sunset.png".to_owned()),
+                ("wallpaper", "/home/me/sunset.png".to_owned()),
+            ]
+        );
+
+        // Create shortcut opens the form with the file's name and path.
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Create shortcut");
+        settle(&mut app, task);
+        let Page::Preferences(form) = &app.page else {
+            panic!("no shortcut form: {}", app.state_line());
+        };
+        let (name, link, _, _) = crate::shortcuts_page::form_values(form);
+        assert_eq!(
+            (name.as_str(), link.as_str()),
+            ("sunset.png", "/home/me/sunset.png")
+        );
+
+        // Open with… lists the file's openers.
+        reopen(&mut app);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::OpenWith(_)),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(
+            backend
+                .opener_lookups
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("/home/me/sunset.png")
+        );
+
+        // An AppImage runs, and it is primary only when nothing opens it.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "search files", "commands:search-files");
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(panel_titles(&app).contains(&"Run executable".to_owned()));
+        let task = choose(&mut app, "Run executable");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.file_calls.lock().unwrap().last(),
+            Some(&("run", "/home/me/Tool.AppImage".to_owned()))
+        );
+        let sections = super::file_actions::file_panel_sections(
+            "/x/Tool.AppImage",
+            &crate::backend::FileActions::default(),
+        );
+        assert_eq!(sections[0].actions[0].title, "Run executable");
+        assert_eq!(sections[0].actions[0].shortcut.as_deref(), Some("enter"));
+        assert!(
+            !sections
+                .iter()
+                .flat_map(|s| &s.actions)
+                .any(|a| a.title == "Set as wallpaper" || a.title == "Copy mime type")
+        );
     }
 
     #[test]
@@ -9043,6 +10224,153 @@ mod tests {
         assert_eq!(command.id(), id);
         let task = app.update(Message::LaunchSelected);
         settle(app, task);
+    }
+
+    fn opener(id: &str, name: &str, default: bool) -> crate::backend::OpenerRow {
+        crate::backend::OpenerRow {
+            id: id.into(),
+            name: name.into(),
+            icon: None,
+            default,
+        }
+    }
+
+    #[test]
+    fn manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            openers: vec![
+                opener("firefox.desktop", "Firefox", true),
+                opener("chromium.desktop", "Chromium", false),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        open_builtin(&mut app, "manage shortcuts", "commands:manage-shortcuts");
+
+        // The pane follows the selection: the link expanded, the default
+        // application named as such.
+        let Page::Shortcuts(page) = &app.page else {
+            panic!("not on Manage Shortcuts: {}", app.state_line());
+        };
+        let detail = page.detail.clone().expect("a pane for the first row");
+        assert_eq!(detail.id, "sct-docs");
+        assert_eq!(detail.expanded.as_deref(), Ok("https://docs.rs/{crate}|"));
+        assert_eq!(detail.app.as_deref(), Some("Firefox (Default)"));
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        let Page::Shortcuts(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(
+            page.detail.as_ref().map(|d| d.id.as_str()),
+            Some("sct-news")
+        );
+
+        // Open with… lists the applications for the stored link, opens the
+        // expanded one with the chosen application and hides.
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        let Page::OpenWith(page) = &app.page else {
+            panic!("no app selector: {}", app.state_line());
+        };
+        assert_eq!(page.all.len(), 2);
+        assert_eq!(
+            backend
+                .opener_lookups
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("https://news.ycombinator.com")
+        );
+        // Escape goes back to the list, and the selector opens again.
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        let _ = app.update(Message::OpenWithQueryChanged("chrom".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_with.lock().unwrap().as_slice(),
+            [(
+                "chromium.desktop".to_owned(),
+                "https://news.ycombinator.com|".to_owned()
+            )]
+        );
+        assert!(
+            !matches!(app.page, Page::OpenWith(_)),
+            "hidden after opening"
+        );
+    }
+
+    #[test]
+    fn a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.apply(AppFlags {
+            fallbacks: vec![
+                "shortcuts:sct-news".into(),
+                "files:search".into(),
+                "shortcuts:sct-docs".into(),
+            ],
+            ..AppFlags::default()
+        });
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        app.query = "tokio".into();
+        app.search();
+        let fallbacks: Vec<RootRow> = app
+            .results
+            .iter()
+            .copied()
+            .filter(|row| matches!(row, RootRow::Fallback(_)))
+            .collect();
+        assert_eq!(
+            fallbacks.len(),
+            2,
+            "Search Files and the one-argument shortcut, not the one with none: {}",
+            app.state_line()
+        );
+        assert!(
+            matches!(fallbacks[0], RootRow::Fallback(_)),
+            "in configured order"
+        );
+        assert_eq!(fallbacks[1], RootRow::Fallback(Fallback::Shortcut(0)));
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| *row == RootRow::Fallback(Fallback::Shortcut(0)))
+            .unwrap();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().as_slice(),
+            [("sct-docs".to_owned(), vec!["tokio".to_owned()])]
+        );
     }
 
     #[test]
@@ -9630,6 +10958,98 @@ mod tests {
             ["script.clip"]
         );
         assert_eq!(page.notice.as_deref(), Some(crate::grants_page::REVOKED));
+    }
+
+    #[test]
+    fn search_tray_lists_activates_and_browses_an_items_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            tray: vec![
+                crate::backend::TrayItemRow {
+                    key: ":1.7".into(),
+                    title: "Fake Chat".into(),
+                    subtitle: "3 unread messages".into(),
+                    attention: true,
+                    has_menu: true,
+                    ..crate::backend::TrayItemRow::default()
+                },
+                crate::backend::TrayItemRow {
+                    key: ":1.8".into(),
+                    title: "Network".into(),
+                    ..crate::backend::TrayItemRow::default()
+                },
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "search tray", "commands:search-tray");
+        let Page::Tray(page) = &app.page else {
+            panic!("not Search Tray: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Fake Chat").is_ok());
+            assert!(ui.find("3 unread messages").is_ok());
+            assert!(ui.find(crate::tray_page::ATTENTION).is_ok());
+        }
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app
+            .panel
+            .as_ref()
+            .unwrap()
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|a| a.title.clone()))
+            .collect();
+        assert_eq!(titles, ["Activate", "Browse Menu", "Secondary Activate"]);
+        let _ = app.update(Message::TogglePanel);
+
+        let _ = app.update(Message::TrayQueryChanged("network".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.tray_calls.lock().unwrap().as_slice(),
+            ["activate :1.8 false"],
+            "Enter activates"
+        );
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "search tray", "commands:search-tray");
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelFilterChanged("Browse Menu".into()));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        let Page::Tray(page) = &app.page else {
+            panic!("left Search Tray");
+        };
+        assert_eq!(page.menu_key(), Some(":1.7"));
+        assert_eq!(page.entries.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Status › Away").is_ok());
+        }
+        let _ = app.update(Message::TrayQueryChanged("away".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            backend
+                .tray_calls
+                .lock()
+                .unwrap()
+                .contains(&"trigger :1.7 3".to_owned())
+        );
+        assert!(
+            matches!(app.page, Page::Tray(_)),
+            "a toggle keeps the menu open"
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        let Page::Tray(page) = &app.page else {
+            panic!("Escape in a menu left Search Tray");
+        };
+        assert_eq!(page.menu_key(), None, "Escape goes back to the items");
     }
 
     #[test]
@@ -10628,6 +12048,79 @@ mod tests {
     }
 
     #[test]
+    fn a_copied_link_opens_and_opens_with_a_chosen_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut link = clip_row("1", "https://docs.rs/serde");
+        link.kind = crate::backend::ClipboardRowKind::Link;
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![link],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"https://docs.rs/serde".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, backend) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let titles = panel_titles(&app);
+        assert_eq!(
+            titles[..4],
+            [
+                "Paste to active window",
+                "Copy to clipboard",
+                "Open",
+                "Open with..."
+            ]
+        );
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::OpenWith(_)),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(
+            backend.opener_lookups.lock().unwrap().as_slice(),
+            ["https://docs.rs/serde"]
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Clipboard(_)),
+            "Escape returns to the history: {}",
+            app.state_line()
+        );
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Open");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            ["https://docs.rs/serde"]
+        );
+    }
+
+    #[test]
+    fn plain_text_offers_no_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let clipboard = Arc::new(FakeClipboard {
+            rows: vec![clip_row("1", "some text")],
+            content: Some(crate::backend::ClipboardContent {
+                mime_type: "text/plain".into(),
+                data: b"some text".to_vec(),
+            }),
+            ..FakeClipboard::default()
+        });
+        let (mut app, _) = clipboard_app(dir.path(), Some(clipboard));
+        open_clipboard(&mut app);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(!panel_titles(&app).iter().any(|t| t.starts_with("Open")));
+    }
+
+    #[test]
     fn the_kind_filter_the_pane_keywords_remove_all_and_monitoring() {
         let dir = tempfile::tempdir().unwrap();
         let mut image = clip_row("2", "Image");
@@ -11001,9 +12494,45 @@ mod tests {
         quits: std::sync::Mutex<Vec<(String, bool)>>,
         window_quits: std::sync::Mutex<Vec<(u32, bool)>>,
         fail_quit: bool,
+        /// What the window manager can do.
+        caps: compass_core::window_switcher::Capabilities,
+        workspaces: Vec<crate::backend::WorkspaceRow>,
+        focused_workspaces: std::sync::Mutex<Vec<String>>,
+        toggles: std::sync::Mutex<Vec<crate::backend::WindowToggle>>,
+        /// What a toggle answers when it fails.
+        toggle_refusal: Option<&'static str>,
     }
 
     impl crate::backend::WindowBackend for FakeWindows {
+        fn window_manager_capabilities(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, compass_core::window_switcher::Capabilities>
+        {
+            Box::pin(async move { Ok(self.caps) })
+        }
+        fn list_workspaces(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::WorkspaceRow>> {
+            Box::pin(async move { Ok(self.workspaces.clone()) })
+        }
+        fn focus_workspace(&self, id: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.focused_workspaces.lock().unwrap().push(id);
+                Ok(())
+            })
+        }
+        fn toggle_window_state(
+            &self,
+            toggle: crate::backend::WindowToggle,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if let Some(refusal) = self.toggle_refusal {
+                    return Err(refusal.to_owned());
+                }
+                self.toggles.lock().unwrap().push(toggle);
+                Ok(())
+            })
+        }
         fn list_windows(
             &self,
         ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::WindowRow>> {
@@ -11127,6 +12656,7 @@ mod tests {
                 "Reset ranking",
                 "Add to favorites",
                 "Set alias",
+                "Set Global Shortcut",
                 "Copy ID",
                 "Disable item"
             ]
@@ -11247,6 +12777,96 @@ mod tests {
         }
     }
 
+    #[test]
+    fn browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening() {
+        let dir = tempfile::tempdir().unwrap();
+        drop(index(dir.path()));
+        fs::write(
+            dir.path().join("editor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=/bin/true\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("probe.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Probe\nExec=/bin/true\nNoDisplay=true\n",
+        )
+        .unwrap();
+        let config_path = dir.path().join("vicinae.json");
+        let write_config = |show_hidden: bool| {
+            fs::write(
+                &config_path,
+                format!(
+                    r#"{{"providers":{{"commands":{{"entrypoints":{{"browse-apps":
+                        {{"enabled":true,"preferences":{{"showHidden":{show_hidden}}}}}}}}}}}}}"#
+                ),
+            )
+            .unwrap();
+        };
+        write_config(false);
+        let running = crate::backend::AppRuntimeInfo {
+            running: true,
+            frontmost: false,
+            windows: vec![window_row(42, "Draft", "Editor", 7)],
+        };
+        let windows = Arc::new(FakeWindows {
+            running: vec![("editor.desktop".into(), running)],
+            ..FakeWindows::default()
+        });
+        let mut app = LauncherApp::with_index(AppIndex::builder().dir(dir.path()).build());
+        app.apply(AppFlags {
+            windows: Some(windows.clone() as Arc<dyn crate::backend::WindowBackend>),
+            config_path: Some(config_path.clone()),
+            ..AppFlags::default()
+        });
+        let config = compass_core::Config::load_from(&config_path).unwrap();
+        app.app_index.apply_root_config(&config.root_config());
+
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let Page::Apps(page) = &app.page else {
+            panic!("not Browse Apps: {}", app.state_line());
+        };
+        assert_eq!(page.heading(), "Applications (4)");
+
+        // A change to the preference applies the next time the view opens,
+        // without a restart.
+        write_config(true);
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let Page::Apps(page) = &app.page else {
+            panic!("not Browse Apps: {}", app.state_line());
+        };
+        assert_eq!(
+            page.heading(),
+            "Applications (5)",
+            "the hidden entry now shows"
+        );
+
+        // A running application's panel starts with Focus Window, which Enter
+        // runs.
+        let task = app.update(Message::AppsQueryChanged("editor".into()));
+        settle(&mut app, task);
+        let _ = app.open_apps_panel().expect("a panel");
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(titles[..2], ["Focus Window", "Open Application"]);
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(windows.activated.lock().unwrap().as_slice(), [42]);
+
+        // One that does not run opens.
+        open_builtin(&mut app, "browse apps", "commands:browse-apps");
+        let task = app.update(Message::AppsQueryChanged("terminal".into()));
+        settle(&mut app, task);
+        let _ = app.open_apps_panel().expect("a panel");
+        assert_eq!(
+            app.panel.as_ref().unwrap().sections[0].actions[0].title,
+            "Open Application"
+        );
+    }
+
     fn windows_app(
         dir: &std::path::Path,
         windows: Option<Arc<FakeWindows>>,
@@ -11274,6 +12894,115 @@ mod tests {
         );
         let task = app.update(Message::LaunchSelected);
         settle(app, task);
+    }
+
+    #[test]
+    fn workspaces_and_the_toggles_are_offered_where_the_compositor_has_them() {
+        use compass_core::window_switcher::Capabilities;
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = |id: &str, name: &str, apps: &[&str]| crate::backend::WorkspaceRow {
+            id: id.into(),
+            name: name.into(),
+            monitor: Some("DP-1".into()),
+            window_count: apps.len(),
+            apps: apps.iter().map(|a| ((*a).to_owned(), None)).collect(),
+            active: false,
+        };
+        let windows = Arc::new(FakeWindows {
+            caps: Capabilities {
+                workspaces: true,
+                fullscreen: true,
+                toggle_floating: true,
+                ..Capabilities::default()
+            },
+            workspaces: vec![
+                workspace("1", "1", &["Firefox"]),
+                workspace("3", "music", &["Spotify"]),
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows.clone()));
+        let is_command = |app: &LauncherApp, entrypoint: &str| matches!(app.selected_row(), Some(RootRow::Command(c)) if c.entrypoint == entrypoint);
+
+        // Until the engine says what the compositor can do, none is offered.
+        app.query = "switch workspaces".into();
+        app.search();
+        assert!(
+            !is_command(&app, "switch-workspaces"),
+            "{}",
+            app.state_line()
+        );
+        let task = app.window_capabilities_task();
+        settle(&mut app, task);
+        app.search();
+        assert!(
+            is_command(&app, "switch-workspaces"),
+            "{}",
+            app.state_line()
+        );
+        app.query = "toggle overview".into();
+        app.search();
+        assert!(
+            !is_command(&app, "toggle-overview"),
+            "no overview on this compositor"
+        );
+
+        // Switch Workspaces lists them, filters by an application on one,
+        // and Enter switches to it, then hides.
+        app.query = "switch workspaces".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Workspaces(page) = &app.page else {
+            panic!("not on Switch Workspaces: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        let _ = app.update(Message::WorkspacesQueryChanged("spotify".into()));
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(panel_titles(&app), ["Switch to workspace"]);
+        let task = choose(&mut app, "Switch to workspace");
+        settle(&mut app, task);
+        assert_eq!(windows.focused_workspaces.lock().unwrap().as_slice(), ["3"]);
+        assert!(
+            !matches!(app.page, Page::Workspaces(_)),
+            "hidden, and back at the root next time"
+        );
+
+        // A toggle runs from root search.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        app.query = "toggle floating".into();
+        app.search();
+        assert!(is_command(&app, "toggle-floating"));
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            windows.toggles.lock().unwrap().as_slice(),
+            [crate::backend::WindowToggle::Floating]
+        );
+    }
+
+    #[test]
+    fn a_refused_toggle_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            caps: compass_core::window_switcher::Capabilities {
+                fullscreen: true,
+                ..Default::default()
+            },
+            toggle_refusal: Some("Active window is not on the current workspace"),
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        let task = app.window_capabilities_task();
+        settle(&mut app, task);
+        app.query = "toggle fullscreen".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Active window is not on the current workspace")
+        );
     }
 
     #[test]
@@ -11390,6 +13119,171 @@ mod tests {
         assert!(app.error.is_none(), "{:?}", app.error);
         assert!(matches!(app.results.first(), Some(RootRow::Command(_))));
         assert!(matches!(app.results.get(1), Some(RootRow::App(_))));
+    }
+    use super::icon_tests::{app_with_icons, asked, recording};
+    use crate::icons::IconArt;
+    use std::path::{Path, PathBuf};
+
+    fn repo_builtin_icons() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/server/icons")
+            .canonicalize()
+            .expect("the builtin icon set is in the repository")
+    }
+
+    #[test]
+    fn a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.query = "clipboard history".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Command(_))));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(
+                ui.find("C").is_ok(),
+                "with no builtin icon set installed the row keeps its initial"
+            );
+        }
+        app.builtin_icons = Some(repo_builtin_icons());
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Clipboard History").is_ok());
+        assert!(
+            ui.find("C").is_err(),
+            "the builtin icon replaces the initial"
+        );
+    }
+
+    #[test]
+    fn search_files_rows_draw_their_file_type_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = tempfile::tempdir().unwrap();
+        let photo = files.path().join("photo.png");
+        fs::write(&photo, b"x").unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        let (log, lookup) = recording(&["image-png"]);
+        app.icon_lookup = lookup;
+        let page = crate::files_page::FilesPage::default();
+        let generation = page.generation;
+        app.page = Page::Files(page);
+        let row = |path: &Path, category: &str| crate::backend::FileRow {
+            path: path.to_string_lossy().into_owned(),
+            name: path.file_name().unwrap().to_string_lossy().into_owned(),
+            category: category.into(),
+        };
+        let _ = app.update(Message::FilesLoaded {
+            generation,
+            result: Ok(crate::backend::FileResults {
+                heading: "Files".into(),
+                files: vec![row(&photo, "Images"), row(files.path(), "Folders")],
+            }),
+        });
+        assert_eq!(
+            app.file_glyphs.cached(&photo.to_string_lossy()),
+            Some(&crate::icons::Glyph::Art(IconArt::Vector(PathBuf::from(
+                "/i/image-png.svg"
+            ))))
+        );
+        assert_eq!(
+            app.file_glyphs.cached(&files.path().to_string_lossy()),
+            Some(&crate::icons::Glyph::builtin("folder")),
+            "a folder no theme has an icon for draws the builtin folder"
+        );
+        assert!(asked(&log).contains(&"inode-directory".to_owned()));
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("photo.png").is_ok());
+        assert!(ui.find("P").is_err(), "no initial on a file row");
+    }
+
+    #[test]
+    fn a_window_row_draws_its_applications_icon_or_the_app_window_builtin() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Arc::new(FakeWindows {
+            rows: vec![
+                window_row(7, "Downloads", "Firefox", 1),
+                crate::backend::WindowRow {
+                    app_known: false,
+                    ..window_row(9, "xterm", "XTerm", 2)
+                },
+            ],
+            ..FakeWindows::default()
+        });
+        let (mut app, _) = windows_app(dir.path(), Some(windows));
+        let fresh = app_with_icons(dir.path());
+        app.app_index = fresh.app_index;
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        let (log, lookup) = recording(&["firefox"]);
+        app.icon_lookup = lookup;
+        open_windows(&mut app);
+        assert!(asked(&log).contains(&"firefox".to_owned()));
+        let Page::Windows(page) = &app.page else {
+            panic!("not the window switcher: {}", app.state_line());
+        };
+        let firefox = page.all.iter().find(|w| w.id == 7).unwrap();
+        let xterm = page.all.iter().find(|w| w.id == 9).unwrap();
+        assert_eq!(
+            app.window_app(firefox).and_then(|item| app.row_art(item)),
+            Some(&IconArt::Vector(PathBuf::from("/i/firefox.svg")))
+        );
+        assert!(app.window_app(xterm).is_none());
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("X").is_err(), "the unknown window draws AppWindow");
+        assert!(ui.find("F").is_err());
+    }
+
+    #[test]
+    fn the_default_pickers_mark_is_the_green_check_icon() {
+        use crate::backend::DefaultAppRow;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            default_apps: vec![DefaultAppRow {
+                id: "firefox.desktop".into(),
+                name: "Firefox".into(),
+                description: "Browse the web".into(),
+                is_default: true,
+            }],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        app.builtin_icons = Some(repo_builtin_icons());
+        open_builtin(
+            &mut app,
+            "set default browser",
+            "commands:set-default-browser",
+        );
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("Firefox").is_ok());
+        assert!(
+            ui.find("✓ Default").is_err(),
+            "the check icon replaces the text mark"
+        );
+    }
+
+    #[test]
+    fn clipboard_rows_draw_the_builtin_for_their_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.builtin_icons = Some(repo_builtin_icons());
+        let page = crate::clipboard_page::ClipboardPage {
+            rows: vec![crate::backend::ClipboardRow {
+                id: "1".into(),
+                preview: "hello".into(),
+                kind: crate::backend::ClipboardRowKind::Text,
+                pinned: false,
+                url_host: None,
+            }],
+            status: crate::clipboard_page::Status::Ready,
+            ..crate::clipboard_page::ClipboardPage::default()
+        };
+        app.page = Page::Clipboard(page);
+        let mut ui = iced_test::simulator(app.view());
+        assert!(ui.find("hello").is_ok());
+        assert!(ui.find("T").is_err(), "the text builtin, not an initial");
     }
 }
 
@@ -11576,7 +13470,7 @@ mod icon_tests {
     use crate::icons::IconArt;
 
     /// Three entries, two of which name an icon.
-    fn app_with_icons(dir: &std::path::Path) -> LauncherApp {
+    pub(super) fn app_with_icons(dir: &std::path::Path) -> LauncherApp {
         for (file, name, icon) in [
             ("firefox.desktop", "Firefox", Some("firefox")),
             ("files.desktop", "Files", Some("system-file-manager")),
@@ -11595,7 +13489,7 @@ mod icon_tests {
     }
 
     /// A lookup that answers for `hits` and records every name it is asked.
-    fn recording(hits: &[&str]) -> (Arc<Mutex<Vec<String>>>, IconLookup) {
+    pub(super) fn recording(hits: &[&str]) -> (Arc<Mutex<Vec<String>>>, IconLookup) {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&asked);
         let hits: Vec<String> = hits.iter().map(|hit| (*hit).to_owned()).collect();
@@ -11608,7 +13502,7 @@ mod icon_tests {
         (asked, lookup)
     }
 
-    fn asked(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+    pub(super) fn asked(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
         log.lock().expect("lock").clone()
     }
 

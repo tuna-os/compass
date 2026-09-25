@@ -110,6 +110,7 @@ impl ApplicationBackend for DaemonBackend {
             RootEdit::Alias(alias) => compass_ipc::RootItemEdit::Alias(alias),
             RootEdit::Disable => compass_ipc::RootItemEdit::Disable,
             RootEdit::ResetRanking => compass_ipc::RootItemEdit::ResetRanking,
+            RootEdit::Shortcut(shortcut) => compass_ipc::RootItemEdit::Shortcut(shortcut),
         };
         Box::pin(async move {
             match self
@@ -241,6 +242,99 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn list_openers(
+        &self,
+        target: String,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::OpenerRow>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ListOpeners { target }, "Listing applications")
+                .await?
+            {
+                compass_ipc::Response::Openers { apps } => Ok(apps
+                    .into_iter()
+                    .map(|app| compass_ui::backend::OpenerRow {
+                        id: app.id,
+                        name: app.name,
+                        icon: app.icon,
+                        default: app.default,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn open_with(&self, app: String, target: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::OpenWith { app, target }, "Opening")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn file_actions(&self, path: String) -> BackendFuture<'_, compass_ui::backend::FileActions> {
+        Box::pin(async move {
+            match self
+                .ask(Request::FileActions { path }, "Reading the file")
+                .await?
+            {
+                compass_ipc::Response::FileActions(info) => Ok(compass_ui::backend::FileActions {
+                    mime: info.mime,
+                    has_opener: info.has_opener,
+                    can_set_wallpaper: info.can_set_wallpaper,
+                    can_paste: info.can_paste,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn copy_file(&self, path: String, paste: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::CopyFile { path, paste }, "Copying the file")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn run_executable(&self, path: String, make_executable: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let request = Request::RunExecutable {
+                path,
+                make_executable,
+            };
+            match self.ask(request, "Running the executable").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_wallpaper(&self, path: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask_within(
+                    Request::SetWallpaper { path },
+                    "Setting the wallpaper",
+                    Duration::from_secs(35),
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn list_default_apps(
         &self,
         kind: compass_ui::backend::DefaultApp,
@@ -324,6 +418,78 @@ impl ApplicationBackend for DaemonBackend {
         Box::pin(async move {
             match self
                 .ask(Request::SetFont { family }, "Setting the font")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn tray_items(&self) -> BackendFuture<'_, Vec<compass_ui::backend::TrayItemRow>> {
+        Box::pin(async move {
+            match self.ask(Request::TrayItems, "Listing tray items").await? {
+                compass_ipc::Response::TrayItems { items } => Ok(items
+                    .into_iter()
+                    .map(|item| compass_ui::backend::TrayItemRow {
+                        key: item.key,
+                        title: item.title,
+                        subtitle: item.subtitle,
+                        attention: item.attention,
+                        has_menu: item.has_menu,
+                        item_is_menu: item.item_is_menu,
+                        icon_path: item.icon_path,
+                        icon_name: item.icon_name,
+                        icon_png: item.icon_png,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn tray_activate(&self, key: String, secondary: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::TrayActivate { key, secondary },
+                    "Activating the tray item",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn tray_menu(&self, key: String) -> BackendFuture<'_, Vec<compass_ui::backend::TrayMenuRow>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::TrayMenu { key }, "Reading the tray menu")
+                .await?
+            {
+                compass_ipc::Response::TrayMenu { entries } => Ok(entries
+                    .into_iter()
+                    .map(|entry| compass_ui::backend::TrayMenuRow {
+                        id: entry.id,
+                        label: entry.label,
+                        toggled: entry.toggled,
+                        icon_name: entry.icon_name,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn tray_trigger(&self, key: String, id: i32) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::TrayTriggerMenu { key, id },
+                    "Running the menu entry",
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
@@ -869,6 +1035,15 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn paste_text(&self, text: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self.ask(Request::PasteText { text }, "Pasting").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn paste_snippet(&self, id: String, arguments: Vec<(String, String)>) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self
@@ -912,6 +1087,21 @@ impl ApplicationBackend for DaemonBackend {
                 self.ask(Request::RemoveShortcut { id }, "Removing the shortcut")
                     .await?,
             )
+        })
+    }
+
+    fn launch_command(&self, id: String, query: Option<String>) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let request = Request::LaunchCommand {
+                id,
+                args: Vec::new(),
+                cwd: None,
+                query,
+            };
+            match self.ask(request, "Launching the command").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
         })
     }
 
@@ -1504,6 +1694,90 @@ impl WindowBackend for DaemonBackend {
         Box::pin(async move {
             match self
                 .ask(Request::QuitWindowApp { window, force }, "Quitting")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn window_manager_capabilities(
+        &self,
+    ) -> BackendFuture<'_, compass_core::window_switcher::Capabilities> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::WindowManagerCapabilities,
+                    "Asking what the window manager can do",
+                )
+                .await?
+            {
+                compass_ipc::Response::WindowManagerCapabilities(caps) => {
+                    Ok(compass_core::window_switcher::Capabilities {
+                        workspaces: caps.workspaces,
+                        fullscreen: caps.fullscreen,
+                        toggle_floating: caps.floating,
+                        toggle_overview: caps.overview,
+                        ..compass_core::window_switcher::Capabilities::default()
+                    })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn list_workspaces(&self) -> BackendFuture<'_, Vec<compass_ui::backend::WorkspaceRow>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ListWorkspaces, "Listing workspaces")
+                .await?
+            {
+                compass_ipc::Response::Workspaces { workspaces } => Ok(workspaces
+                    .into_iter()
+                    .map(|workspace| compass_ui::backend::WorkspaceRow {
+                        id: workspace.id,
+                        name: workspace.name,
+                        monitor: workspace.monitor,
+                        window_count: workspace.window_count as usize,
+                        apps: workspace
+                            .apps
+                            .into_iter()
+                            .map(|app| (app.name, app.icon))
+                            .collect(),
+                        active: workspace.active,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn focus_workspace(&self, id: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::FocusWorkspace { id }, "Switching workspaces")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn toggle_window_state(
+        &self,
+        toggle: compass_ui::backend::WindowToggle,
+    ) -> BackendFuture<'_, ()> {
+        use compass_ui::backend::WindowToggle;
+        Box::pin(async move {
+            let toggle = match toggle {
+                WindowToggle::Fullscreen => compass_ipc::WindowToggle::Fullscreen,
+                WindowToggle::Floating => compass_ipc::WindowToggle::Floating,
+                WindowToggle::Overview => compass_ipc::WindowToggle::Overview,
+            };
+            match self
+                .ask(Request::ToggleWindowState { toggle }, "Toggling")
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

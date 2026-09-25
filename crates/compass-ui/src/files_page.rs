@@ -43,6 +43,9 @@ pub struct FilesPage {
     pub preview: Option<crate::file_preview::FilePreview>,
     /// The file the preview was read from.
     preview_path: Option<String>,
+    /// A query is out and its answer has not come: the view's loading
+    /// indicator (`setLoading`).
+    pub searching: bool,
 }
 
 impl Default for FilesPage {
@@ -58,8 +61,18 @@ impl Default for FilesPage {
             category: None,
             preview: None,
             preview_path: None,
+            searching: true,
         }
     }
+}
+
+/// Whether Run executable is offered for `path`: an AppImage, which the
+/// C++ makes executable on the fly (`AUTO_EXECUTABLE_EXTENSIONS`).
+#[must_use]
+pub fn runs_as_executable(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|ext| ext == "AppImage")
 }
 
 impl FilesPage {
@@ -74,6 +87,7 @@ impl FilesPage {
         self.query = query;
         self.notice = None;
         self.generation = self.generation.wrapping_add(1);
+        self.searching = true;
         self.generation
     }
 
@@ -83,6 +97,7 @@ impl FilesPage {
         if generation != self.generation {
             return false;
         }
+        self.searching = false;
         self.selected = 0;
         match result {
             Ok(results) => {
@@ -107,6 +122,7 @@ impl FilesPage {
             && compass_core::file_search::category_for_key(key).is_some())
         .then(|| key.to_owned());
         self.generation = self.generation.wrapping_add(1);
+        self.searching = true;
         self.generation
     }
 
@@ -191,6 +207,7 @@ mod tests {
         ));
         assert!(page.rows.is_empty());
         assert_eq!(page.status, Status::Loading);
+        assert!(page.searching, "the indicator stays until the last answer");
         assert!(page.apply(
             second,
             Ok(FileResults {
@@ -203,6 +220,11 @@ mod tests {
             Some("report.pdf")
         );
         assert_eq!(page.heading, "Results");
+        assert!(!page.searching);
+        page.set_category("Images");
+        assert!(page.searching, "a new filter asks again");
+        assert!(runs_as_executable("/opt/Tool.AppImage"));
+        assert!(!runs_as_executable("/opt/tool.sh"));
     }
 
     #[test]

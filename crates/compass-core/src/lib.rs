@@ -73,6 +73,7 @@ pub mod index_reconcile;
 pub mod input_server;
 pub mod internal_commands;
 pub mod io_pacer;
+pub mod key_combo;
 pub mod keybinding;
 pub mod list_navigation;
 pub mod manifest;

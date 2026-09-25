@@ -516,6 +516,7 @@ impl AppIndexBuilder {
             extension_dirs: self.extension_dirs,
             scan,
             hidden,
+            window_capabilities: crate::window_switcher::Capabilities::default(),
         }
     }
 
@@ -729,6 +730,9 @@ pub struct AppIndex {
     /// Applications installed but not shown (`NoDisplay`, or for another
     /// desktop), in scan order; never in the root.
     hidden: Vec<AppItem>,
+    /// What the compositor's window manager can do, which decides the
+    /// window-management commands root search offers; none until told.
+    window_capabilities: crate::window_switcher::Capabilities,
 }
 
 /// One row of a root search over applications and commands.
@@ -796,6 +800,19 @@ pub struct ApplicationRootHit<'a> {
 }
 
 impl AppIndex {
+    /// Sets what the window manager can do: root search offers Switch
+    /// Workspaces and the toggles only where the C++
+    /// `WindowManagementExtension` registers them.
+    pub fn set_window_capabilities(&mut self, caps: crate::window_switcher::Capabilities) {
+        self.window_capabilities = caps;
+    }
+
+    /// What [`Self::set_window_capabilities`] last set.
+    #[must_use]
+    pub const fn window_capabilities(&self) -> crate::window_switcher::Capabilities {
+        self.window_capabilities
+    }
+
     /// Applies user settings without changing catalog positions or launch keys.
     pub fn apply_root_config(&mut self, config: &crate::root_items::RootConfig) {
         self.root_config = config.clone();
@@ -867,6 +884,51 @@ impl AppIndex {
         pattern: &str,
         history: Option<&dyn crate::FrecencyStore>,
     ) -> Vec<RootHit<'_>> {
+        self.search_root_with(
+            pattern,
+            history,
+            &crate::root_items::SearchOptions::default(),
+        )
+    }
+
+    /// Whether any root item, enabled or not, comes from the provider `id`
+    /// (`findProviderById` for the providers that have items).
+    #[must_use]
+    pub fn has_provider(&self, id: &str) -> bool {
+        self.roots.iter().any(|root| root.meta.provider_id == id)
+    }
+
+    /// A provider's display name: the one each C++ root provider gives
+    /// itself, and an extension's title for an extension. `None` for a
+    /// provider no root item comes from.
+    #[must_use]
+    pub fn provider_title(&self, id: &str) -> Option<String> {
+        if !self.has_provider(id) {
+            return None;
+        }
+        Some(match id {
+            crate::root_items::APPS_PROVIDER_ID => "Applications".to_owned(),
+            crate::shortcut::SHORTCUTS_PROVIDER_ID => "Shortcuts".to_owned(),
+            crate::script_scan::SCRIPTS_PROVIDER_ID => "Script Commands".to_owned(),
+            crate::rhai_scripts::RHAI_PROVIDER_ID => "Rhai Scripts".to_owned(),
+            crate::commands::COMMANDS_PROVIDER_ID => "Commands".to_owned(),
+            _ => self
+                .extensions
+                .iter()
+                .find(|command| command.provider_id == id)
+                .map_or_else(|| id.to_owned(), |command| command.extension_title.clone()),
+        })
+    }
+
+    /// [`Self::search_root_all`] with the search's options: the provider
+    /// search view's (`providerId`) among them.
+    #[must_use]
+    pub fn search_root_with(
+        &self,
+        pattern: &str,
+        history: Option<&dyn crate::FrecencyStore>,
+        options: &crate::root_items::SearchOptions,
+    ) -> Vec<RootHit<'_>> {
         let now = history.map_or(0, crate::FrecencyStore::now);
         let key = |index: usize| -> &str {
             match self.root_indices.get(index) {
@@ -879,67 +941,68 @@ impl AppIndex {
                 .and_then(|store| store.record(key(index)))
                 .map_or(0.0, |record| record.score_at(now))
         };
-        crate::root_items::search_with_frecency(
-            &self.roots,
-            pattern,
-            &crate::root_items::SearchOptions::default(),
-            frecency,
-        )
-        .into_iter()
-        .filter_map(|hit| {
-            let match_score = if pattern.trim().is_empty() {
-                0
-            } else {
-                (hit.score - compass_search::FRECENCY_WEIGHT * frecency(hit.index, hit.item))
-                    .round()
-                    .clamp(0.0, 100.0) as u32
-            };
-            let entrypoint_id = &self.roots[hit.index].id;
-            match self.root_indices.get(hit.index) {
-                Some(&index) => Some(RootHit::App(ApplicationRootHit {
-                    item: &self.items[index],
-                    index,
-                    entrypoint_id,
-                    match_score,
-                })),
-                None => crate::commands::by_id(entrypoint_id)
-                    .map(|command| RootHit::Command {
-                        command,
+        crate::root_items::search_with_frecency(&self.roots, pattern, options, frecency)
+            .into_iter()
+            .filter_map(|hit| {
+                let match_score = if pattern.trim().is_empty() {
+                    0
+                } else {
+                    (hit.score - compass_search::FRECENCY_WEIGHT * frecency(hit.index, hit.item))
+                        .round()
+                        .clamp(0.0, 100.0) as u32
+                };
+                let entrypoint_id = &self.roots[hit.index].id;
+                match self.root_indices.get(hit.index) {
+                    Some(&index) => Some(RootHit::App(ApplicationRootHit {
+                        item: &self.items[index],
+                        index,
+                        entrypoint_id,
                         match_score,
-                    })
-                    .or_else(|| {
-                        self.extension(entrypoint_id)
-                            .map(|command| RootHit::Extension {
-                                command,
-                                match_score,
-                            })
-                    })
-                    .or_else(|| {
-                        self.shortcut_by_entrypoint(entrypoint_id).map(|shortcut| {
-                            RootHit::Shortcut {
-                                shortcut,
-                                match_score,
-                            }
+                    })),
+                    None => crate::commands::by_id(entrypoint_id)
+                        .filter(|command| {
+                            crate::window_switcher::command_offered(
+                                command.kind,
+                                self.window_capabilities,
+                            )
                         })
-                    })
-                    .or_else(|| {
-                        self.script_by_entrypoint(entrypoint_id)
-                            .map(|script| RootHit::Script {
-                                script,
-                                match_score,
-                            })
-                    })
-                    .or_else(|| {
-                        self.rhai_script_by_entrypoint(entrypoint_id).map(|script| {
-                            RootHit::RhaiScript {
-                                script,
-                                match_score,
-                            }
+                        .map(|command| RootHit::Command {
+                            command,
+                            match_score,
                         })
-                    }),
-            }
-        })
-        .collect()
+                        .or_else(|| {
+                            self.extension(entrypoint_id)
+                                .map(|command| RootHit::Extension {
+                                    command,
+                                    match_score,
+                                })
+                        })
+                        .or_else(|| {
+                            self.shortcut_by_entrypoint(entrypoint_id).map(|shortcut| {
+                                RootHit::Shortcut {
+                                    shortcut,
+                                    match_score,
+                                }
+                            })
+                        })
+                        .or_else(|| {
+                            self.script_by_entrypoint(entrypoint_id)
+                                .map(|script| RootHit::Script {
+                                    script,
+                                    match_score,
+                                })
+                        })
+                        .or_else(|| {
+                            self.rhai_script_by_entrypoint(entrypoint_id).map(|script| {
+                                RootHit::RhaiScript {
+                                    script,
+                                    match_score,
+                                }
+                            })
+                        }),
+                }
+            })
+            .collect()
     }
 
     /// The root row an entrypoint id names, with the metadata the

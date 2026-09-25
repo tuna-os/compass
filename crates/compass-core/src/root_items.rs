@@ -475,6 +475,9 @@ impl RootItem {
         // favourites keeps dropping it. Clearing it first is the fix.
         self.meta.favorite_idx = config.favorites.iter().position(|fav| *fav == id);
         self.meta.fallback = config.fallbacks.contains(&id);
+        // Cleared first for the same reason: a shortcut taken off an item
+        // must not survive until a restart.
+        self.meta.shortcut = None;
 
         if let Some(item) = item_config {
             if let Some(enabled) = item.enabled {
@@ -483,7 +486,7 @@ impl RootItem {
             if let Some(alias) = &item.alias {
                 self.meta.alias = Some(alias.clone());
             }
-            if let Some(shortcut) = &item.shortcut {
+            if let Some(shortcut) = item.shortcut.as_ref().filter(|s| !s.is_empty()) {
                 self.meta.shortcut = Some(shortcut.clone());
             }
         }
@@ -638,6 +641,9 @@ pub enum RootEdit {
     Disable,
     /// Forget its visits (`resetRanking`); nothing in the configuration.
     ResetRanking,
+    /// Give it a keyboard shortcut, in `KeyCombo::to_config_string`'s
+    /// spelling, or take it away with an empty one (`setShortcut`).
+    Shortcut(String),
 }
 
 /// Applies `edit` to `config` for the item `id`, as the C++ root item
@@ -702,6 +708,20 @@ pub fn apply_edit(config: &mut RootConfig, id: &str, edit: &RootEdit) -> bool {
             true
         }
         RootEdit::ResetRanking => false,
+        RootEdit::Shortcut(shortcut) => {
+            let Some((provider, entrypoint)) = split_entrypoint_id(id) else {
+                return false;
+            };
+            let entry = config
+                .providers
+                .entry(provider.to_owned())
+                .or_default()
+                .entrypoints
+                .entry(entrypoint.to_owned())
+                .or_default();
+            entry.shortcut = (!shortcut.is_empty()).then(|| shortcut.clone());
+            true
+        }
     }
 }
 
@@ -711,6 +731,84 @@ pub fn apply_edit(config: &mut RootConfig, id: &str, edit: &RootEdit) -> bool {
 pub fn deeplink(id: &str) -> Option<String> {
     let (provider, entrypoint) = split_entrypoint_id(id)?;
     Some(format!("vicinae://launch/{provider}/{entrypoint}"))
+}
+
+/// A `vicinae://launch/...` deeplink, read as `IpcCommandHandler` reads the
+/// `launch` command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchLink {
+    /// The path after `launch/`, percent-decoded, without a trailing slash:
+    /// a provider id, or `<provider>/<entrypoint>`.
+    pub path: String,
+    /// `fallbackText`, typed into the view that opens; `None` when absent or
+    /// empty.
+    pub fallback_text: Option<String>,
+    /// `toggle=true`: close the window instead when it is open.
+    pub toggle: bool,
+}
+
+/// What a [`LaunchLink`] opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchTarget {
+    /// A search over one provider's items (`ProviderSearchViewHost`).
+    Provider(String),
+    /// One item, by its `provider:entrypoint` id.
+    Entrypoint(String),
+}
+
+/// The C++'s answer to a launch path with no `/` that names no provider.
+pub const INVALID_LAUNCH_LINK: &str = "Invalid format for launch deeplink";
+
+/// Reads a launch deeplink. `None` for a URL that is not one (another
+/// scheme, or another command).
+#[must_use]
+pub fn parse_launch_link(link: &str) -> Option<LaunchLink> {
+    let url = url::Url::parse(link).ok()?;
+    if !matches!(url.scheme(), "vicinae" | "raycast" | "com.raycast")
+        || url.host_str() != Some("launch")
+    {
+        return None;
+    }
+    let path = percent_encoding::percent_decode_str(url.path())
+        .decode_utf8_lossy()
+        .into_owned();
+    let path = path.strip_prefix('/').unwrap_or(&path);
+    let path = path.strip_suffix('/').unwrap_or(path).to_owned();
+    let mut fallback_text = None;
+    let mut toggle = false;
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "fallbackText" if !value.is_empty() => fallback_text = Some(value.into_owned()),
+            "toggle" => toggle = value == "true",
+            _ => {}
+        }
+    }
+    Some(LaunchLink {
+        path,
+        fallback_text,
+        toggle,
+    })
+}
+
+impl LaunchLink {
+    /// What the link opens: the provider its whole path names, else the item
+    /// its last `/` splits it into, as `findProviderById` then
+    /// `find_last_of('/')` decide.
+    ///
+    /// # Errors
+    ///
+    /// [`INVALID_LAUNCH_LINK`] for a path that is neither.
+    pub fn target(&self, is_provider: impl Fn(&str) -> bool) -> Result<LaunchTarget, String> {
+        if is_provider(&self.path) {
+            return Ok(LaunchTarget::Provider(self.path.clone()));
+        }
+        match self.path.rsplit_once('/') {
+            Some((provider, entrypoint)) => Ok(LaunchTarget::Entrypoint(entrypoint_id(
+                provider, entrypoint,
+            ))),
+            None => Err(INVALID_LAUNCH_LINK.to_owned()),
+        }
+    }
 }
 
 /// Turn one item on or off.

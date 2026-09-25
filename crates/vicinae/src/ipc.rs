@@ -187,6 +187,21 @@ fn describe(request: &Request) -> &'static str {
         Request::CalculatorHistory { .. } => "CalculatorHistory",
         Request::AddCalculatorRecord { .. } => "AddCalculatorRecord",
         Request::EditCalculatorHistory { .. } => "EditCalculatorHistory",
+        Request::TrayItems => "TrayItems",
+        Request::TrayActivate { .. } => "TrayActivate",
+        Request::TrayMenu { .. } => "TrayMenu",
+        Request::TrayTriggerMenu { .. } => "TrayTriggerMenu",
+        Request::PasteText { .. } => "PasteText",
+        Request::WindowManagerCapabilities => "WindowManagerCapabilities",
+        Request::ListWorkspaces => "ListWorkspaces",
+        Request::FocusWorkspace { .. } => "FocusWorkspace",
+        Request::ToggleWindowState { .. } => "ToggleWindowState",
+        Request::ListOpeners { .. } => "ListOpeners",
+        Request::OpenWith { .. } => "OpenWith",
+        Request::FileActions { .. } => "FileActions",
+        Request::CopyFile { .. } => "CopyFile",
+        Request::RunExecutable { .. } => "RunExecutable",
+        Request::SetWallpaper { .. } => "SetWallpaper",
     }
 }
 

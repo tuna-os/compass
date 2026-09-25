@@ -7087,6 +7087,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/system-tray/system-tray-0.8.9.crate",
+        "sha256": "ab761caca0fb6cb7c57e09df241eb26ea8cdc63df88f1badca4818494f74d55f",
+        "dest": "cargo/vendor/system-tray-0.8.9"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"ab761caca0fb6cb7c57e09df241eb26ea8cdc63df88f1badca4818494f74d55f\", \"files\": {}}",
+        "dest": "cargo/vendor/system-tray-0.8.9",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/tap/tap-1.0.1.crate",
         "sha256": "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369",
         "dest": "cargo/vendor/tap-1.0.1"

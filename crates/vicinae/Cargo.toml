@@ -73,8 +73,15 @@ uuid = { version = "1", features = ["v4"] }
 ureq.workspace = true
 # Drawing a builtin or SVG icon into a notification's PNG (already in the tree through iced's SVG).
 resvg = { version = "0.45", default-features = false }
+# A notification icon's PNG or JPEG fitted into that PNG (the decoders compass-ui already builds).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# A `data:` URL notification icon (already in the tree through usvg).
+data-url = "0.3"
+# The StatusNotifierItem host and its watcher, over the zbus 5 already in the tree.
+system-tray = "0.8"
 
 [dev-dependencies]
+base64.workspace = true
 iced = { version = "0.14", features = ["tokio"] }
 iced_winit = "0.14"
 compass-testkit.workspace = true

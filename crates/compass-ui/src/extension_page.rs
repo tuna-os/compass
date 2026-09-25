@@ -88,6 +88,9 @@ pub struct ExtensionPage {
     pub assets: Option<std::path::PathBuf>,
     /// Whether the launcher is dark, for themed images.
     pub prefers_dark: bool,
+    /// How a file icon's theme name becomes a file; `None` draws the
+    /// builtin fallback without looking in a theme.
+    pub icon_lookup: Option<crate::app::IconLookup>,
     /// Each row's icon, by `(section, item)` like the list.
     pub icons: Vec<Vec<Option<RowIcon>>>,
     /// Rows whose icon is a remote image, and its URL.
@@ -129,6 +132,7 @@ impl ExtensionPage {
             editors: std::collections::BTreeMap::new(),
             assets: None,
             prefers_dark: false,
+            icon_lookup: None,
             icons: Vec::new(),
             remote_rows: std::collections::BTreeMap::new(),
             remote_art: std::collections::HashMap::new(),
@@ -301,7 +305,7 @@ impl ExtensionPage {
     /// The file an `Image` is drawn from: a builtin icon, a file in the
     /// extension's assets, or a `file://` URL. A remote URL is resolved
     /// separately, once it has been fetched ([`Self::remote_url`]); a file
-    /// icon falls back to the row's initial.
+    /// icon is its file-type icon ([`crate::icons::file_glyph`]).
     fn image_icon(&self, image: &compass_extension_api::view::Image) -> Option<RowIcon> {
         use compass_extension_api::view::ImageSource;
         let tint = image.tint.as_ref().and_then(color_of);
@@ -319,7 +323,22 @@ impl ExtensionPage {
                 let path = std::path::PathBuf::from(url.strip_prefix("file://")?);
                 (path.is_file().then_some(path)?, false)
             }
-            ImageSource::FileIcon(_) | ImageSource::Themed { .. } => return None,
+            ImageSource::FileIcon(file) => {
+                let find = |name: &str| self.icon_lookup.as_ref()?.find(name);
+                match crate::icons::file_glyph(std::path::Path::new(file), &find) {
+                    crate::icons::Glyph::Art(art) => {
+                        return Some(RowIcon::Art {
+                            art,
+                            monochrome: false,
+                            tint,
+                        });
+                    }
+                    crate::icons::Glyph::Builtin { name, .. } => {
+                        (compass_core::builtin_icon::path(&name)?, true)
+                    }
+                }
+            }
+            ImageSource::Themed { .. } => return None,
         };
         Some(RowIcon::Art {
             art: crate::icons::classify(&path)?,

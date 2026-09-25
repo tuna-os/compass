@@ -1284,3 +1284,49 @@ fn an_alias_and_the_switch_are_written_under_the_items_provider_and_merged() {
         Some("vicinae://launch/applications/org.gnome.Nautilus")
     );
 }
+
+// --- the `launch` deeplink ------------------------------------------------
+
+use compass_core::root_items::{INVALID_LAUNCH_LINK, LaunchTarget, parse_launch_link};
+
+#[test]
+fn a_launch_link_names_a_provider_or_an_item_with_its_text() {
+    let providers = ["applications", "@zoë/notes"];
+    let is_provider = |id: &str| providers.contains(&id);
+
+    let link =
+        parse_launch_link("vicinae://launch/applications/?fallbackText=fire+fox&toggle=true")
+            .expect("a launch link");
+    assert_eq!(link.path, "applications");
+    assert_eq!(link.fallback_text.as_deref(), Some("fire fox"));
+    assert!(link.toggle);
+    assert_eq!(
+        link.target(is_provider),
+        Ok(LaunchTarget::Provider("applications".into()))
+    );
+
+    // A provider id with a slash in it is still the provider; one more
+    // segment is its item, split at the last slash.
+    let link = parse_launch_link("vicinae://launch/@zo%C3%AB/notes").unwrap();
+    assert_eq!(
+        link.target(is_provider),
+        Ok(LaunchTarget::Provider("@zoë/notes".into()))
+    );
+    let link = parse_launch_link("vicinae://launch/@zo%C3%AB/notes/list?fallbackText=").unwrap();
+    assert_eq!(link.fallback_text, None, "an empty text is none");
+    assert!(!link.toggle);
+    assert_eq!(
+        link.target(is_provider),
+        Ok(LaunchTarget::Entrypoint("@zoë/notes:list".into()))
+    );
+
+    let link = parse_launch_link("vicinae://launch/nothing").unwrap();
+    assert_eq!(
+        link.target(is_provider),
+        Err(INVALID_LAUNCH_LINK.to_owned())
+    );
+
+    assert_eq!(parse_launch_link("vicinae://extensions/a/b"), None);
+    assert_eq!(parse_launch_link("https://launch/applications"), None);
+    assert_eq!(parse_launch_link("not a url"), None);
+}

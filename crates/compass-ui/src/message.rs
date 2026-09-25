@@ -58,6 +58,14 @@ pub enum Message {
     /// The engine armed a paste of the selected entry, or could not; on a
     /// refusal the entry is copied instead.
     ClipboardPasted(Result<(), String>),
+    /// The engine pasted a glyph from the emoji picker, or could not; on a
+    /// refusal the glyph is copied instead.
+    EmojiPasted {
+        /// The glyph, as it would be copied.
+        text: String,
+        /// The engine's answer.
+        result: Result<(), String>,
+    },
     /// The engine started an extension command, or said why it could not.
     ExtensionCommandStarted {
         /// The command's entrypoint id.
@@ -216,12 +224,34 @@ pub enum Message {
     FontsCategoryChanged(String),
     /// "Set as vicinae font" was saved, with the family, or could not be.
     FontSet(Result<String, String>),
+    /// Search Tray's items arrived.
+    TrayItemsLoaded(Result<Vec<crate::backend::TrayItemRow>, String>),
+    /// A tray item's menu arrived.
+    TrayMenuLoaded {
+        /// The item's key.
+        key: String,
+        /// Its entries, or why not.
+        result: Result<Vec<crate::backend::TrayMenuRow>, String>,
+    },
+    /// Search Tray's filter changed.
+    TrayQueryChanged(String),
+    /// A Search Tray row was clicked, by position in the shown list.
+    TraySelected(usize),
+    /// A tray action ran: `true` when the launcher should close.
+    TrayActed(Result<bool, String>),
     /// Script Permissions' list arrived.
     GrantsLoaded(Result<Vec<crate::backend::ScriptGrant>, String>),
     /// Browse Apps' or a default picker's filter changed.
     AppsQueryChanged(String),
     /// A row of Browse Apps or a default picker was clicked.
     AppsSelected(usize),
+    /// Whether Browse Apps' selected application has windows open.
+    BrowseAppRuntime {
+        /// The application's desktop id, so a late answer is dropped.
+        id: String,
+        /// Its windows.
+        result: Result<crate::backend::AppRuntimeInfo, String>,
+    },
     /// A default picker's candidates arrived.
     DefaultAppsLoaded(Result<Vec<crate::backend::DefaultAppRow>, String>),
     /// A default picker's choice was written, or could not be.
@@ -328,6 +358,41 @@ pub enum Message {
     WindowActivated(Result<(), String>),
     /// Closing a window finished; the list is reloaded either way.
     ShellWindowClosed(Result<(), String>),
+    /// What the window manager can do, which decides the window-management
+    /// commands root search offers.
+    WindowCapabilities(Result<compass_core::window_switcher::Capabilities, String>),
+    /// Switch Workspaces' filter changed.
+    WorkspacesQueryChanged(String),
+    /// The workspaces arrived, or why they could not be listed.
+    WorkspacesLoaded(Result<Vec<crate::backend::WorkspaceRow>, String>),
+    /// A workspace row was clicked, by position.
+    WorkspaceSelected(usize),
+    /// Switching to a workspace finished.
+    WorkspaceFocused(Result<(), String>),
+    /// A fullscreen, floating or overview toggle finished.
+    WindowToggled(Result<(), String>),
+    /// What "Open with…" opens and what its applications are looked up by,
+    /// once worked out (a shortcut's link is expanded first).
+    OpenWithTarget(Result<(String, String), String>),
+    /// "Open with…"'s applications arrived.
+    OpenersLoaded(Result<Vec<crate::backend::OpenerRow>, String>),
+    /// "Open with…"'s filter changed.
+    OpenWithQueryChanged(String),
+    /// An "Open with…" row was clicked, by position.
+    OpenWithSelected(usize),
+    /// Opening with the chosen application finished.
+    OpenedWith(Result<(), String>),
+    /// What the selected file's action panel depends on arrived.
+    FileActionsLoaded {
+        /// The file it describes, so a late answer for another is dropped.
+        path: String,
+        /// What the panel depends on, or why it is unknown.
+        result: Result<crate::backend::FileActions, String>,
+    },
+    /// A file action that hides the launcher on success finished.
+    FileActionDone(Result<(), String>),
+    /// Manage Shortcuts' detail pane for a shortcut arrived.
+    ShortcutDetailLoaded(crate::shortcuts_page::Detail),
     /// Whether the application under the root row's panel runs, by its key.
     AppRuntimeLoaded {
         /// The application's key, so a late answer for another row is dropped.

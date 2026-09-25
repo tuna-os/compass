@@ -72,6 +72,45 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// The applications that open `target` (a path or a URL), the default
+    /// first: what "Open with…" lists.
+    fn list_openers(&self, target: String) -> BackendFuture<'_, Vec<OpenerRow>> {
+        let _ = target;
+        Box::pin(async { Err(OPEN_WITH_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Opens `target` with the application `app`. An error is the sentence
+    /// to show.
+    fn open_with(&self, app: String, target: String) -> BackendFuture<'_, ()> {
+        let _ = (app, target);
+        Box::pin(async { Err(OPEN_WITH_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// What a file's action panel depends on.
+    fn file_actions(&self, path: String) -> BackendFuture<'_, FileActions> {
+        let _ = path;
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Puts a file on the clipboard as a file, and with `paste` pastes it
+    /// into the focused window. An error is the sentence to show.
+    fn copy_file(&self, path: String, paste: bool) -> BackendFuture<'_, ()> {
+        let _ = (path, paste);
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Runs a file as a program, making it executable first when asked.
+    fn run_executable(&self, path: String, make_executable: bool) -> BackendFuture<'_, ()> {
+        let _ = (path, make_executable);
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Makes an image the wallpaper.
+    fn set_wallpaper(&self, path: String) -> BackendFuture<'_, ()> {
+        let _ = path;
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
     /// What a default picker offers, the current default first.
     fn list_default_apps(&self, kind: DefaultApp) -> BackendFuture<'_, Vec<DefaultAppRow>> {
         let _ = kind;
@@ -105,6 +144,29 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// Pins, unpins or removes a remembered calculation, or all of them.
     fn edit_calculator_history(&self, change: CalculatorChange) -> BackendFuture<'_, ()> {
         let _ = change;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Other applications' tray icons, for Search Tray.
+    fn tray_items(&self) -> BackendFuture<'_, Vec<TrayItemRow>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Activates a tray item, or its secondary activation.
+    fn tray_activate(&self, key: String, secondary: bool) -> BackendFuture<'_, ()> {
+        let _ = (key, secondary);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// A tray item's menu, flattened.
+    fn tray_menu(&self, key: String) -> BackendFuture<'_, Vec<TrayMenuRow>> {
+        let _ = key;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Clicks one entry of a tray item's menu.
+    fn tray_trigger(&self, key: String, id: i32) -> BackendFuture<'_, ()> {
+        let _ = (key, id);
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
@@ -155,6 +217,27 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     fn remove_shortcut(&self, id: String) -> BackendFuture<'_, Vec<Shortcut>> {
         let _ = id;
         Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Launches a root item through the engine, as `vicinae cmd launch`
+    /// does: an extension command comes back to the window as a launch, with
+    /// `query` as its fallback text.
+    fn launch_command(&self, id: String, query: Option<String>) -> BackendFuture<'_, ()> {
+        let _ = (id, query);
+        Box::pin(async {
+            Err(
+                "Launching a command needs the Compass engine, and this window is \
+                 running without one"
+                    .to_owned(),
+            )
+        })
+    }
+
+    /// Puts `text` on the clipboard and pastes it where the person was. An
+    /// error means the engine cannot paste here, and the caller copies.
+    fn paste_text(&self, text: String) -> BackendFuture<'_, ()> {
+        let _ = text;
+        Box::pin(async { Err("Pasting needs the Compass engine".to_owned()) })
     }
 
     /// Opens a shortcut with its arguments. An error is the sentence to show.
@@ -493,6 +576,42 @@ pub struct ScriptGrant {
     pub capabilities: Vec<String>,
     /// The same, in the consent prompt's words.
     pub descriptions: Vec<String>,
+}
+
+/// One application's tray icon, as Search Tray lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrayItemRow {
+    /// What the other tray calls name it by.
+    pub key: String,
+    /// Its title, else its id.
+    pub title: String,
+    /// Its tooltip.
+    pub subtitle: String,
+    /// It is asking for attention.
+    pub attention: bool,
+    /// It has a menu to browse.
+    pub has_menu: bool,
+    /// The whole item is a menu.
+    pub item_is_menu: bool,
+    /// Its icon as a file.
+    pub icon_path: Option<String>,
+    /// Its icon as a theme name.
+    pub icon_name: Option<String>,
+    /// Its icon as PNG bytes.
+    pub icon_png: Option<Vec<u8>>,
+}
+
+/// One clickable entry of a tray item's menu.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrayMenuRow {
+    /// Its id, for [`ApplicationBackend::tray_trigger`].
+    pub id: i32,
+    /// Its label, after its submenus'.
+    pub label: String,
+    /// For a toggle, whether it is on.
+    pub toggled: Option<bool>,
+    /// Its icon's theme name.
+    pub icon_name: Option<String>,
 }
 
 /// One running media player, as Now Playing lists it.
@@ -1078,4 +1197,92 @@ pub trait WindowBackend: std::fmt::Debug + Send + Sync {
         let _ = (window, force);
         Box::pin(async { Err("Quitting applications needs the engine".to_owned()) })
     }
+
+    /// What the compositor's window manager can do, which decides the
+    /// window-management commands root search offers.
+    fn window_manager_capabilities(
+        &self,
+    ) -> BackendFuture<'_, compass_core::window_switcher::Capabilities> {
+        Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// The workspaces, for Switch Workspaces.
+    fn list_workspaces(&self) -> BackendFuture<'_, Vec<WorkspaceRow>> {
+        Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Switch to a workspace, by its id.
+    fn focus_workspace(&self, id: String) -> BackendFuture<'_, ()> {
+        let _ = id;
+        Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Toggle fullscreen or floating on the window the person was in, or
+    /// the overview. An error is the sentence to show.
+    fn toggle_window_state(&self, toggle: WindowToggle) -> BackendFuture<'_, ()> {
+        let _ = toggle;
+        Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
+    }
+}
+
+/// What a file's action panel depends on (`FileActions::actionPanel`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileActions {
+    /// Its MIME type.
+    pub mime: Option<String>,
+    /// Whether an application opens it.
+    pub has_opener: bool,
+    /// Whether the wallpaper can be set on this desktop.
+    pub can_set_wallpaper: bool,
+    /// Whether the engine can paste into the focused window.
+    pub can_paste: bool,
+}
+
+/// What "Open with…" says without an engine.
+pub const OPEN_WITH_NEEDS_ENGINE: &str =
+    "Open with needs the Compass engine, and this window is running without one";
+
+/// An application "Open with…" offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenerRow {
+    /// Its desktop id.
+    pub id: String,
+    /// Its display name.
+    pub name: String,
+    /// Its icon name.
+    pub icon: Option<String>,
+    /// Whether it is the default for the target's type.
+    pub default: bool,
+}
+
+/// What a window-management request says without an engine.
+pub const WORKSPACES_NEED_ENGINE: &str =
+    "Window management needs the Compass engine, and this window is running without one";
+
+/// What a window-management toggle acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowToggle {
+    /// The window in and out of fullscreen.
+    Fullscreen,
+    /// The window between floating and tiled.
+    Floating,
+    /// The compositor's overview.
+    Overview,
+}
+
+/// One workspace, as Switch Workspaces draws it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspaceRow {
+    /// The compositor's id, to switch to it.
+    pub id: String,
+    /// What it is called.
+    pub name: String,
+    /// The monitor it is on.
+    pub monitor: Option<String>,
+    /// How many windows are on it.
+    pub window_count: usize,
+    /// The applications with a window on it, as (name, icon).
+    pub apps: Vec<(String, Option<String>)>,
+    /// Whether it is the active one.
+    pub active: bool,
 }

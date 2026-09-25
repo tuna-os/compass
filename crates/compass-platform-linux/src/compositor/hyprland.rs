@@ -308,6 +308,35 @@ impl Hyprland {
         )
     }
 
+    /// `toggleFullscreen`: the window `address`, else (the classic form) the
+    /// active window, which is the one the commands pass.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::focus_window`].
+    pub fn toggle_fullscreen(&self, address: &str) -> Result<(), IpcError> {
+        self.dispatch(
+            &format!(
+                r#"hl.dsp.window.fullscreen({{ action = "toggle", window = "address:{address}" }})"#
+            ),
+            "fullscreen 0",
+        )
+    }
+
+    /// `toggleFloating`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::focus_window`].
+    pub fn toggle_floating(&self, address: &str) -> Result<(), IpcError> {
+        self.dispatch(
+            &format!(
+                r#"hl.dsp.window.float({{ action = "toggle", window = "address:{address}" }})"#
+            ),
+            &format!("togglefloating address:{address}"),
+        )
+    }
+
     /// Whether Hyprland answers `version`. (The C++ `ping` always says yes.)
     #[must_use]
     pub fn ping(&self) -> bool {

@@ -8,11 +8,12 @@ use compass_core::root_view;
 
 use super::{
     Confirm, ConfirmAction, Direction, LauncherApp, Message, Page, PanelSection, PanelState,
-    RootRow, Task, focus_search,
+    ProviderScope, RootRow, Task, focus_search,
 };
 use crate::action_panel::Action;
 use crate::backend::{PreferenceInput, PreferenceInputKind};
 use crate::preferences_page::{FieldValue, PreferencesPage, Purpose};
+use crate::shortcut_recorder::{Outcome as RecorderOutcome, ShortcutRecorder};
 
 const OPEN: &str = "root.open";
 const COPY_DEEPLINK: &str = "root.copy-deeplink";
@@ -23,6 +24,7 @@ const FAVORITE_DOWN: &str = "root.favorite-down";
 const FAVORITE_UP: &str = "root.favorite-up";
 const ALIAS: &str = "root.alias";
 const COPY_ID: &str = "root.copy-id";
+const SHORTCUT: &str = "root.shortcut";
 const DISABLE: &str = "root.disable";
 
 /// The heading over the favourites.
@@ -148,34 +150,12 @@ impl LauncherApp {
     /// application's, or opening), then the item actions every root item has
     /// (`RootSearchActionGenerator::generateActions`).
     pub(super) fn open_root_panel(&mut self) -> Option<Task<Message>> {
-        let sections = self.root_panel_sections(false)?;
-        self.panel = Some(PanelState::new(sections));
-        let focus = iced::widget::operation::focus(super::PANEL_INPUT);
-        let app = match (self.selected_row(), self.selected_item()) {
-            (Some(RootRow::App(_)), Some(item)) => {
-                Some((item.key().to_owned(), item.desktop_id().to_owned()))
-            }
-            _ => None,
-        };
-        let Some((key, desktop_id)) = app else {
-            return Some(focus);
-        };
-        self.app_runtime = None;
-        Some(Task::batch([focus, self.app_runtime_task(key, desktop_id)]))
-    }
-
-    /// The sections of [`Self::open_root_panel`]'s panel; `running` adds a
-    /// running application's actions (`super::runtime::running_sections`).
-    pub(super) fn root_panel_sections(&self, running: bool) -> Option<Vec<PanelSection>> {
         if !matches!(self.page, Page::Root) {
             return None;
         }
         let row = self.selected_row()?;
         let id = self.root_id(row)?;
         let mut sections = match (row, self.selected_item()) {
-            (RootRow::App(_), Some(item)) if running => {
-                super::runtime::running_sections(super::actions_for_app(item))
-            }
             (RootRow::App(_), Some(item)) => super::actions_for_app(item),
             _ => vec![PanelSection {
                 name: String::new(),
@@ -217,6 +197,7 @@ impl LauncherApp {
             }
         }
         item.push(Action::new("Set alias").with_id(ALIAS));
+        item.push(Action::new("Set Global Shortcut").with_id(SHORTCUT));
         item.push(Action::new("Copy ID").with_id(COPY_ID));
         item.push(
             Action::new("Disable item")
@@ -227,7 +208,16 @@ impl LauncherApp {
             name: String::new(),
             actions: item,
         });
-        Some(sections)
+        self.panel = Some(PanelState::new(sections));
+        let focus = iced::widget::operation::focus(super::PANEL_INPUT);
+        // An application's panel grows its running-only actions once the
+        // engine says it runs (`AppRootItem::newActionPanel`).
+        if let (RootRow::App(_), Some(item)) = (row, self.selected_item()) {
+            let (key, desktop_id) = (item.key().to_owned(), item.desktop_id().to_owned());
+            self.app_runtime = None;
+            return Some(Task::batch([focus, self.app_runtime_task(key, desktop_id)]));
+        }
+        Some(focus)
     }
 
     /// Runs a root item action, if `action` is one.
@@ -276,10 +266,63 @@ impl LauncherApp {
                 self.panel = None;
                 return Some(self.open_alias_form(row, id));
             }
+            SHORTCUT => {
+                let title = self.root_title(row).unwrap_or_default();
+                let current = self
+                    .app_index
+                    .root(&id)
+                    .and_then(|root| root.meta.shortcut.clone());
+                if let Some(panel) = self.panel.as_mut() {
+                    panel.recorder = Some(ShortcutRecorder::new(id, title, current));
+                }
+                return Some(Task::none());
+            }
             _ => return None,
         };
         self.panel = None;
         Some(task)
+    }
+
+    /// A key event while the shortcut recorder shows: an accepted chord is
+    /// kept for the item and closes the panel, Escape goes back to the
+    /// actions (`SetRootItemShortcutAction`'s accept handler, `setShortcut`).
+    pub(super) fn recorder_event(&mut self, event: &iced::keyboard::Event) -> Task<Message> {
+        let bound: Vec<(String, String, String)> = self
+            .app_index
+            .roots()
+            .iter()
+            .filter_map(|root| {
+                let shortcut = root.meta.shortcut.clone()?;
+                Some((root.id.clone(), root.title.clone(), shortcut))
+            })
+            .collect();
+        let Some(recorder) = self
+            .panel
+            .as_mut()
+            .and_then(|panel| panel.recorder.as_mut())
+        else {
+            return Task::none();
+        };
+        let outcome = recorder.key(
+            event,
+            bound
+                .iter()
+                .map(|(id, title, shortcut)| (id.as_str(), title.as_str(), shortcut.as_str())),
+        );
+        match outcome {
+            RecorderOutcome::Recording => Task::none(),
+            RecorderOutcome::Back => {
+                if let Some(panel) = self.panel.as_mut() {
+                    panel.recorder = None;
+                }
+                iced::widget::operation::focus(super::PANEL_INPUT)
+            }
+            RecorderOutcome::Save(shortcut) => {
+                let id = recorder.id.clone();
+                self.panel = None;
+                self.edit_root_item(id, RootEdit::Shortcut(shortcut))
+            }
+        }
     }
 
     /// Applies `edit` to this window's root settings at once, and asks the
@@ -347,7 +390,8 @@ impl LauncherApp {
     fn root_title(&self, row: RootRow) -> Option<String> {
         Some(match row {
             RootRow::App(index) => self.app_index.items().get(index)?.name().to_owned(),
-            RootRow::Command(command) | RootRow::Fallback(command) => command.title.to_owned(),
+            RootRow::Command(command) => command.title.to_owned(),
+            RootRow::Fallback(fallback) => return self.fallback_title(fallback),
             RootRow::Extension(index) => self.app_index.extensions().get(index)?.title.clone(),
             RootRow::Shortcut(index) => {
                 crate::shortcuts_page::display_name(self.app_index.shortcuts().get(index)?)
@@ -403,9 +447,32 @@ impl LauncherApp {
         }
     }
 
+    /// Whether the row takes arguments, which the C++ asks for in the search
+    /// bar's completer and this launcher in an arguments form.
+    fn has_completer(&self, row: RootRow) -> bool {
+        let index = &self.app_index;
+        match row {
+            RootRow::Shortcut(at) => index
+                .shortcuts()
+                .get(at)
+                .is_some_and(|shortcut| !shortcut.link.arguments.is_empty()),
+            RootRow::Extension(at) => index
+                .extensions()
+                .get(at)
+                .is_some_and(|command| !command.arguments.is_empty()),
+            RootRow::Script(at) => index
+                .scripts()
+                .get(at)
+                .is_some_and(|script| !script.arguments.is_empty()),
+            _ => false,
+        }
+    }
+
     /// The space-bar alias shortcut (`tryAliasFastTrack`): a space typed
     /// after exactly the selected item's alias opens it rather than being
-    /// typed. `None` lets the text through.
+    /// typed. An item that takes arguments opens its arguments form, where
+    /// the C++ focuses the completer's first field (nothing has been typed
+    /// into it yet, as the form is not open). `None` lets the text through.
     pub(super) fn alias_space(&mut self, typed: &str) -> Option<Task<Message>> {
         if !matches!(self.page, Page::Root) || self.panel.is_some() {
             return None;
@@ -419,11 +486,15 @@ impl LauncherApp {
         let outcome = root_view::space_outcome(
             &self.query,
             alias.as_deref(),
-            false,
+            self.has_completer(row),
             true,
             self.supports_alias_space(row),
         );
-        (outcome == root_view::SpaceOutcome::Activate).then(|| self.update(Message::LaunchSelected))
+        matches!(
+            outcome,
+            root_view::SpaceOutcome::Activate | root_view::SpaceOutcome::FocusCompleter
+        )
+        .then(|| self.update(Message::LaunchSelected))
     }
 
     /// Remembers the search an action ran from (`beforeActionExecuted`).
@@ -467,6 +538,55 @@ impl LauncherApp {
                 Some(Task::none())
             }
         }
+    }
+
+    /// A `vicinae://launch/...` deeplink the engine handed over: a
+    /// provider's search view, or an item launched with the link's text.
+    pub(super) fn open_launch_link(
+        &mut self,
+        link: compass_core::root_items::LaunchLink,
+    ) -> Task<Message> {
+        use compass_core::root_items::LaunchTarget;
+        let index = &self.app_index;
+        match link.target(|id| index.has_provider(id)) {
+            Ok(LaunchTarget::Provider(id)) => self.open_provider_search(&id, link.fallback_text),
+            Ok(LaunchTarget::Entrypoint(id)) => {
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                let query = link.fallback_text;
+                Task::perform(
+                    async move { backend.launch_command(id, query).await },
+                    Message::BuiltinCommandDone,
+                )
+            }
+            Err(reason) => {
+                self.error = Some(reason);
+                Task::none()
+            }
+        }
+    }
+
+    /// Opens the provider search view (`ProviderSearchViewHost`): root search
+    /// over the items of `id` alone, every one of them for the empty query,
+    /// titled `Search <provider>`, with `text` typed in. Leaving it closes
+    /// the window, as the deeplink's `setInstantDismiss` does.
+    pub(super) fn open_provider_search(&mut self, id: &str, text: Option<String>) -> Task<Message> {
+        let Some(title) = self.app_index.provider_title(id) else {
+            self.error = Some(format!("No provider has the id {id}"));
+            return Task::none();
+        };
+        let closing = self.close_extension_view();
+        self.panel = None;
+        self.page = Page::Root;
+        self.history_offset = None;
+        self.provider_scope = Some(ProviderScope {
+            id: id.to_owned(),
+            placeholder: format!("Search {title}"),
+            title,
+        });
+        self.query = text.unwrap_or_default();
+        Task::batch([closing, self.search_task(), focus_search()])
     }
 
     /// A second passed: redraws the clock when it is due

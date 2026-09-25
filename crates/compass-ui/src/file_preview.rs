@@ -115,7 +115,7 @@ fn read_text(path: &Path) -> Option<String> {
 
 /// A time as `QDateTime::toString()` (`Qt::TextDate`) writes it in the local
 /// zone: `Wed May 20 03:40:13 1998`.
-fn qt_text_date(time: std::time::SystemTime) -> Option<String> {
+pub(crate) fn qt_text_date(time: std::time::SystemTime) -> Option<String> {
     let at = jiff::Timestamp::try_from(time)
         .ok()?
         .to_zoned(jiff::tz::TimeZone::system());

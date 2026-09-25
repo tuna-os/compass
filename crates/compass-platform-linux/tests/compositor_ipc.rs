@@ -249,6 +249,59 @@ fn niri_actions_are_sent_as_niri_serialises_them() {
 }
 
 #[test]
+fn niri_toggles_fullscreen_floating_and_the_overview() {
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, niri) = niri(dir.path());
+    let provider = Provider::Niri(niri);
+    provider.toggle_fullscreen("7").unwrap();
+    provider.toggle_floating("4").unwrap();
+    provider.toggle_overview().unwrap();
+    assert!(provider.toggle_floating("0x55").is_err(), "not a niri id");
+    let seen: Vec<serde_json::Value> = fake
+        .seen()
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            serde_json::json!({"Action": {"FullscreenWindow": {"id": 7}}}),
+            serde_json::json!({"Action": {"ToggleWindowFloating": {"id": 4}}}),
+            serde_json::json!({"Action": {"ToggleOverview": {}}}),
+        ]
+    );
+    let caps = provider.capabilities();
+    assert!(caps.workspaces && caps.fullscreen && caps.floating && caps.overview);
+}
+
+#[test]
+fn hyprland_toggles_a_window_and_has_no_overview() {
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, hyprland) = fake_hyprland(dir.path(), "ok");
+    let provider = Provider::Hyprland(hyprland);
+    provider.toggle_fullscreen("0x5581c8a4f310").unwrap();
+    provider.toggle_floating("0x5581c8a4f310").unwrap();
+    assert!(provider.toggle_overview().is_err());
+    assert_eq!(
+        fake.seen(),
+        [
+            r#"dispatch hl.dsp.window.fullscreen({ action = "toggle", window = "address:0x5581c8a4f310" })"#,
+            r#"dispatch hl.dsp.window.float({ action = "toggle", window = "address:0x5581c8a4f310" })"#,
+        ]
+    );
+    let caps = provider.capabilities();
+    assert!(caps.workspaces && caps.fullscreen && caps.floating);
+    assert!(!caps.overview, "only niri registers Toggle Overview");
+
+    let dir = tempfile::tempdir().unwrap();
+    let (fake, hyprland) = fake_hyprland(dir.path(), "Invalid dispatcher");
+    hyprland.toggle_floating("0xa").unwrap();
+    hyprland.toggle_fullscreen("0xa").unwrap();
+    assert_eq!(fake.seen()[1], "dispatch togglefloating address:0xa");
+    assert_eq!(fake.seen()[3], "dispatch fullscreen 0");
+}
+
+#[test]
 fn a_niri_refusal_is_its_message() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("niri.sock");

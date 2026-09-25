@@ -39,6 +39,15 @@ pub enum CommandKind {
     ClipboardHistory,
     /// Focus an open window.
     SwitchWindows,
+    /// Switch to another workspace. Offered only where the compositor has
+    /// workspaces (see [`crate::window_switcher::command_offered`]).
+    SwitchWorkspaces,
+    /// Toggle fullscreen on the window the person was in.
+    ToggleFullscreen,
+    /// Float the window the person was in, or tile it again.
+    ToggleFloating,
+    /// Open or close the compositor's overview.
+    ToggleOverview,
     /// Find an emoji or symbol and copy it.
     SearchEmojis,
     /// Search the file index and open a file.
@@ -80,6 +89,8 @@ pub enum CommandKind {
     SetDefaultBrowser,
     /// Choose the terminal commands run in.
     SetDefaultTerminal,
+    /// Other applications' tray icons and their menus.
+    SearchTray,
 }
 
 /// Every builtin command, in the order an empty query lists them. The power
@@ -103,6 +114,38 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             "windows", "window", "switch", "focus", "alt tab", "switcher",
         ],
         icon: "switch-windows",
+    },
+    BuiltinCommand {
+        kind: CommandKind::SwitchWorkspaces,
+        entrypoint: "switch-workspaces",
+        title: "Switch Workspaces",
+        subtitle: "Go to another workspace",
+        keywords: crate::window_switcher::SWITCH_WORKSPACES_KEYWORDS,
+        icon: "carousel",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleFullscreen,
+        entrypoint: "toggle-fullscreen",
+        title: "Toggle Fullscreen",
+        subtitle: "Make the active window fullscreen, or not",
+        keywords: &["fullscreen", "window", "maximize"],
+        icon: "fullscreen",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleFloating,
+        entrypoint: "toggle-floating",
+        title: "Toggle Floating",
+        subtitle: "Float the active window, or tile it",
+        keywords: &["floating", "float", "tile", "window"],
+        icon: "floating-window",
+    },
+    BuiltinCommand {
+        kind: CommandKind::ToggleOverview,
+        entrypoint: "toggle-overview",
+        title: "Toggle Overview",
+        subtitle: "Open or close the overview",
+        keywords: &["overview", "expose", "workspaces"],
+        icon: "overview",
     },
     BuiltinCommand {
         kind: CommandKind::SearchEmojis,
@@ -417,7 +460,86 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &[],
         icon: "globe-01",
     },
+    // `SearchTrayCommand`: the vicinae extension's, over the tray host.
+    BuiltinCommand {
+        kind: CommandKind::SearchTray,
+        entrypoint: "search-tray",
+        title: "Search Tray",
+        subtitle: "Browse system tray items and trigger their menu actions",
+        keywords: &["status", "notifier", "indicator"],
+        icon: "app-window-list",
+    },
 ];
+
+/// The colour a builtin command's icon tile is filled with: the C++ command's
+/// `setBackgroundTint`, a theme accent or the literal grey `(128, 132, 138)`
+/// the media and default-app commands use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tile {
+    /// `SemanticColor::Red`.
+    Red,
+    /// `SemanticColor::Orange`.
+    Orange,
+    /// `SemanticColor::Yellow`.
+    Yellow,
+    /// `SemanticColor::Green`.
+    Green,
+    /// `SemanticColor::Cyan`.
+    Cyan,
+    /// `SemanticColor::Blue`.
+    Blue,
+    /// `SemanticColor::Purple`.
+    Purple,
+    /// `SemanticColor::Accent` (`Omnicast::ACCENT_COLOR`).
+    Accent,
+    /// `QColor(128, 132, 138)`.
+    Gray,
+}
+
+impl CommandKind {
+    /// The tile behind the command's icon, as its C++ `iconUrl()` sets it.
+    #[must_use]
+    pub fn tile(self) -> Tile {
+        match self {
+            Self::ClipboardHistory | Self::RaycastStore => Tile::Red,
+            Self::SearchFiles => Tile::Yellow,
+            Self::SwitchWindows
+            | Self::SwitchWorkspaces
+            | Self::ToggleFullscreen
+            | Self::ToggleFloating
+            | Self::ToggleOverview
+            | Self::CalculatorHistory => Tile::Blue,
+            Self::CreateShortcut | Self::ManageShortcuts | Self::SetTheme => Tile::Purple,
+            Self::CreateSnippet | Self::ManageSnippets | Self::BrowseFonts => Tile::Orange,
+            Self::CreateExtension => Tile::Green,
+            Self::RunProgram | Self::BrowseApps => Tile::Cyan,
+            Self::SearchEmojis
+            | Self::ExtensionStore
+            | Self::ScriptPermissions
+            | Self::SearchTray => Tile::Accent,
+            Self::NowPlaying
+            | Self::Media(_)
+            | Self::SetDefaultBrowser
+            | Self::SetDefaultTerminal => Tile::Gray,
+            Self::Power(id) => match id {
+                "power-off" | "logout" => Tile::Red,
+                "soft-reboot" => Tile::Cyan,
+                _ => Tile::Accent,
+            },
+        }
+    }
+
+    /// The small builtin icon drawn in the tile's corner, as the C++'s
+    /// `setBadge`: a plus on the create commands, an arrow on the stores.
+    #[must_use]
+    pub fn badge(self) -> Option<&'static str> {
+        match self {
+            Self::CreateShortcut | Self::CreateSnippet | Self::CreateExtension => Some("plus"),
+            Self::ExtensionStore | Self::RaycastStore => Some("arrow-down"),
+            _ => None,
+        }
+    }
+}
 
 impl BuiltinCommand {
     /// The `commands:<entrypoint>` id that addresses it in root search, on the
@@ -507,7 +629,14 @@ pub fn canonical_id(id: &str) -> String {
 /// nothing to show for it.
 #[must_use]
 pub const fn opens_a_view(kind: CommandKind) -> bool {
-    !matches!(kind, CommandKind::Power(_) | CommandKind::Media(_))
+    !matches!(
+        kind,
+        CommandKind::Power(_)
+            | CommandKind::Media(_)
+            | CommandKind::ToggleFullscreen
+            | CommandKind::ToggleFloating
+            | CommandKind::ToggleOverview
+    )
 }
 
 #[cfg(test)]
@@ -582,6 +711,28 @@ mod tests {
             Some(CommandKind::ClipboardHistory)
         );
         assert!(by_id("applications:clipboard-history").is_none());
+    }
+
+    #[test]
+    fn each_command_keeps_the_cpps_tile_and_badge() {
+        let tile = |id: &str| by_id(id).map(|c| c.kind.tile());
+        assert_eq!(tile("commands:clipboard-history"), Some(Tile::Red));
+        assert_eq!(tile("commands:search-files"), Some(Tile::Yellow));
+        assert_eq!(tile("commands:manage-snippets"), Some(Tile::Orange));
+        assert_eq!(tile("commands:set-theme"), Some(Tile::Purple));
+        assert_eq!(tile("commands:browse-apps"), Some(Tile::Cyan));
+        assert_eq!(tile("commands:set-default-browser"), Some(Tile::Gray));
+        assert_eq!(CommandKind::Power("power-off").tile(), Tile::Red);
+        assert_eq!(CommandKind::Power("lock").tile(), Tile::Accent);
+        assert_eq!(CommandKind::Power("soft-reboot").tile(), Tile::Cyan);
+        assert_eq!(CommandKind::CreateSnippet.badge(), Some("plus"));
+        assert_eq!(CommandKind::ExtensionStore.badge(), Some("arrow-down"));
+        assert_eq!(CommandKind::ManageSnippets.badge(), None);
+        for command in BUILTIN_COMMANDS {
+            if let Some(badge) = command.kind.badge() {
+                assert!(crate::builtin_icon::is_builtin(badge), "{badge}");
+            }
+        }
     }
 
     #[test]

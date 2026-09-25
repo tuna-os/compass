@@ -51,6 +51,7 @@ pub mod snippet_expansion;
 pub mod snippets;
 pub mod spike;
 pub mod stores;
+pub mod tray_host;
 pub mod typography;
 pub mod ui_backend;
 mod ui_instance;
@@ -208,6 +209,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             power_asks,
             browse_apps,
             emoji_skin_tone,
+            emoji_default_action,
             clock,
         ) = match compass_core::Config::load() {
             Ok(config) => {
@@ -236,6 +238,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                         ),
                     ),
                     emoji_skin_tone(&config),
+                    emoji_default_action(&config),
                     clock(&config),
                 )
             }
@@ -254,6 +257,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     power_asks(&compass_core::Config::default()),
                     compass_core::browse_apps::Options::default(),
                     None,
+                    emoji_default_action(&compass_core::Config::default()),
                     clock(&compass_core::Config::default()),
                 )
             }
@@ -332,8 +336,11 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             fallbacks,
             power_asks,
             browse_apps,
+            config_path: compass_core::config::default_config_path().ok(),
             glyph_path: compass_core::glyph_service::default_path(),
+            builtin_icons: compass_core::builtin_icon::directory(),
             emoji_skin_tone,
+            emoji_default_action,
             search_history_path: compass_core::root_view::default_history_path(),
             clock,
             ..compass_ui::AppFlags::default()
@@ -394,6 +401,15 @@ fn emoji_skin_tone(config: &compass_core::Config) -> Option<String> {
         .get("skinTone")?
         .as_str()
         .map(str::to_owned)
+}
+
+/// The emoji picker's `defaultAction`, `paste` unless the file says `copy`.
+fn emoji_default_action(config: &compass_core::Config) -> String {
+    config
+        .entrypoint_preferences("core", "search-emojis")
+        .and_then(|preferences| preferences.get("defaultAction")?.as_str())
+        .unwrap_or(compass_core::emoji_grid::DEFAULT_ACTION_PASTE)
+        .to_owned()
 }
 
 /// The root search's clock, from `launcher.clock`; `None` when it is off.

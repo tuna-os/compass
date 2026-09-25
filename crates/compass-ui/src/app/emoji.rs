@@ -17,10 +17,10 @@ const KEYWORDS_DESCRIPTION: &str = "Additional keywords that will be used to ind
 impl LauncherApp {
     /// Opens Search Emojis & Symbols over what the person has done with it.
     pub(super) fn open_emoji_picker(&mut self) -> Task<Message> {
-        self.page = Page::Emoji(EmojiPage::open(
-            self.glyph_path.clone(),
-            self.emoji_skin_tone.as_deref(),
-        ));
+        let mut page = EmojiPage::open(self.glyph_path.clone(), self.emoji_skin_tone.as_deref());
+        page.supports_paste = self.backend.is_some();
+        page.default_action = self.emoji_default_action.clone();
+        self.page = Page::Emoji(page);
         focus_search()
     }
 
@@ -36,7 +36,13 @@ impl LauncherApp {
             Key::Named(Named::ArrowDown) => Some(Direction::Down),
             Key::Named(Named::ArrowUp) => Some(Direction::Up),
             Key::Named(Named::Escape) => return self.update(Message::Back),
-            Key::Named(Named::Enter) => return self.copy_selected_emoji(),
+            Key::Named(Named::Enter) => {
+                return if page.supports_paste && page.default_action == "paste" {
+                    self.paste_selected_emoji()
+                } else {
+                    self.copy_selected_emoji()
+                };
+            }
             _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
         };
         if let Some(direction) = direction {
@@ -66,6 +72,47 @@ impl LauncherApp {
         Task::batch([iced::clipboard::write(text), self.conceal()])
     }
 
+    /// Pastes the selected glyph into the window the launcher hides back to
+    /// (`PasteToFocusedWindowAction`), counting the pick; where the engine
+    /// cannot paste, it is copied instead.
+    pub(super) fn paste_selected_emoji(&mut self) -> Task<Message> {
+        let Page::Emoji(page) = &mut self.page else {
+            return Task::none();
+        };
+        let Some(glyph) = page.selected_glyph() else {
+            return Task::none();
+        };
+        let text = page.display(glyph);
+        page.register_visit(glyph);
+        self.panel = None;
+        let Some(backend) = self.backend.clone() else {
+            return Task::batch([iced::clipboard::write(text), self.conceal()]);
+        };
+        let pasted = text.clone();
+        Task::perform(
+            async move { backend.paste_text(pasted).await },
+            move |result| Message::EmojiPasted {
+                text: text.clone(),
+                result,
+            },
+        )
+    }
+
+    /// The engine's answer to a paste: hide, or copy where it could not.
+    pub(super) fn emoji_pasted(
+        &mut self,
+        text: String,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        match result {
+            Ok(()) => self.conceal(),
+            Err(reason) => {
+                tracing::debug!(%reason, "paste refused; copying the glyph instead");
+                Task::batch([iced::clipboard::write(text), self.conceal()])
+            }
+        }
+    }
+
     /// The panel over the selected glyph.
     pub(super) fn open_emoji_panel(&mut self) -> Option<Task<Message>> {
         let Page::Emoji(page) = &self.page else {
@@ -88,6 +135,7 @@ impl LauncherApp {
         let copy = |text: String| Task::batch([iced::clipboard::write(text), focus_search()]);
         let task = match id {
             actions::COPY => return Some(self.copy_selected_emoji()),
+            actions::PASTE => return Some(self.paste_selected_emoji()),
             actions::COPY_NAME => copy(glyph.name.to_owned()),
             actions::COPY_CODEPOINT => copy(compass_core::emoji_grid::formatted_codepoint(
                 glyph.character,

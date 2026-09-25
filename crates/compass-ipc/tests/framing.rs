@@ -289,6 +289,14 @@ fn all_requests() -> Vec<Request> {
             id: "commands:clipboard-history".into(),
             edit: compass_ipc::RootItemEdit::ResetRanking,
         },
+        Request::RootItemEdit {
+            id: "@zoë/notes:list".into(),
+            edit: compass_ipc::RootItemEdit::Shortcut("super+control+alt+shift+Ö".into()),
+        },
+        Request::RootItemEdit {
+            id: "scripts:hello".into(),
+            edit: compass_ipc::RootItemEdit::Shortcut(String::new()),
+        },
         Request::ListCommands,
         Request::LaunchCommand {
             id: "@zoë/notes:new".into(),
@@ -338,6 +346,54 @@ fn all_requests() -> Vec<Request> {
         },
         Request::EditCalculatorHistory {
             edit: compass_ipc::CalculatorEdit::RemoveAll,
+        },
+        Request::TrayItems,
+        Request::TrayActivate {
+            key: ":1.42/StatusNotifierItem".into(),
+            secondary: true,
+        },
+        Request::TrayMenu {
+            key: "org.kde.StatusNotifierItem-7-1/StatusNotifierItem".into(),
+        },
+        Request::TrayTriggerMenu {
+            key: ":1.42/StatusNotifierItem".into(),
+            id: i32::MIN,
+        },
+        Request::PasteText {
+            text: "👍🏽 zoë".into(),
+        },
+        Request::WindowManagerCapabilities,
+        Request::ListWorkspaces,
+        Request::FocusWorkspace { id: "ä-3".into() },
+        Request::ToggleWindowState {
+            toggle: compass_ipc::WindowToggle::Fullscreen,
+        },
+        Request::ToggleWindowState {
+            toggle: compass_ipc::WindowToggle::Floating,
+        },
+        Request::ToggleWindowState {
+            toggle: compass_ipc::WindowToggle::Overview,
+        },
+        Request::ListOpeners {
+            target: "https://example.com/?q={query}".into(),
+        },
+        Request::OpenWith {
+            app: "org.gnome.Loupe.desktop".into(),
+            target: "/home/ä/a b.png".into(),
+        },
+        Request::FileActions {
+            path: "/home/ä/a b.png".into(),
+        },
+        Request::CopyFile {
+            path: "/home/ä/a b.png".into(),
+            paste: true,
+        },
+        Request::RunExecutable {
+            path: "/home/ä/Tool.AppImage".into(),
+            make_executable: true,
+        },
+        Request::SetWallpaper {
+            path: "/home/ä/a b.png".into(),
         },
         Request::FsQuery {
             query: "résumé".into(),
@@ -477,6 +533,39 @@ fn all_responses() -> Vec<Response> {
                 }],
             }],
         },
+        Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities {
+            workspaces: true,
+            fullscreen: true,
+            floating: false,
+            overview: true,
+        }),
+        Response::Workspaces {
+            workspaces: vec![compass_ipc::WorkspaceEntry {
+                id: "3".into(),
+                name: "müsic".into(),
+                monitor: Some("HDMI-A-1".into()),
+                window_count: 2,
+                apps: vec![compass_ipc::WorkspaceApp {
+                    name: "Spotify".into(),
+                    icon: None,
+                }],
+                active: false,
+            }],
+        },
+        Response::Openers {
+            apps: vec![compass_ipc::OpenerEntry {
+                id: "org.gnome.Loupe.desktop".into(),
+                name: "Image Viewer".into(),
+                icon: Some("org.gnome.Loupe".into()),
+                default: true,
+            }],
+        },
+        Response::FileActions(compass_ipc::FileActionInfo {
+            mime: Some("image/png".into()),
+            has_opener: true,
+            can_set_wallpaper: false,
+            can_paste: true,
+        }),
         Response::AppRuntime {
             running: true,
             frontmost: false,
@@ -490,6 +579,27 @@ fn all_responses() -> Vec<Response> {
                 workspace: Some(1),
                 focused: false,
                 can_close: true,
+            }],
+        },
+        Response::TrayItems {
+            items: vec![compass_ipc::TrayItemInfo {
+                key: ":1.42/StatusNotifierItem".into(),
+                title: "Réseau".into(),
+                subtitle: "Connecté".into(),
+                attention: true,
+                has_menu: true,
+                item_is_menu: false,
+                icon_path: Some("/tmp/ä.png".into()),
+                icon_name: Some("nm-signal-100".into()),
+                icon_png: Some(vec![0x89, b'P', b'N', b'G']),
+            }],
+        },
+        Response::TrayMenu {
+            entries: vec![compass_ipc::TrayMenuEntry {
+                id: -1,
+                label: "Vitesse › Rapide".into(),
+                toggled: Some(false),
+                icon_name: None,
             }],
         },
         Response::CommandLaunch {
@@ -919,6 +1029,21 @@ fn request_variants_are_exhaustive() {
             | Request::CalculatorHistory { .. }
             | Request::AddCalculatorRecord { .. }
             | Request::EditCalculatorHistory { .. }
+            | Request::TrayItems
+            | Request::TrayActivate { .. }
+            | Request::TrayMenu { .. }
+            | Request::TrayTriggerMenu { .. }
+            | Request::PasteText { .. }
+            | Request::WindowManagerCapabilities
+            | Request::ListWorkspaces
+            | Request::FocusWorkspace { .. }
+            | Request::ToggleWindowState { .. }
+            | Request::ListOpeners { .. }
+            | Request::OpenWith { .. }
+            | Request::FileActions { .. }
+            | Request::CopyFile { .. }
+            | Request::RunExecutable { .. }
+            | Request::SetWallpaper { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -973,6 +1098,12 @@ fn response_variants_are_exhaustive() {
             | Response::CommandLaunch { .. }
             | Response::AppRuntime { .. }
             | Response::CalculatorHistory { .. }
+            | Response::TrayItems { .. }
+            | Response::TrayMenu { .. }
+            | Response::WindowManagerCapabilities(_)
+            | Response::Workspaces { .. }
+            | Response::Openers { .. }
+            | Response::FileActions(_)
             | Response::Window(_) => {}
         }
     }

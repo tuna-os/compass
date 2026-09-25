@@ -167,7 +167,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
+| `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ⏳ |
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -176,7 +176,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/tray-host` | `compass-core`, `vicinae::tray_host` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/update` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -189,21 +189,21 @@ whether a real GNOME session grants the shortcut we ask for.
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/builtins/calculator` | `compass-core`, `compass_ui::calculator_page` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 ## The window
 
@@ -220,7 +220,7 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 | `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
-| `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
 | `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
@@ -334,14 +334,15 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/builtins/snippet`: Still C++-only: Manage Snippets' detail pane and the backslash escape
   for a literal brace.
 - `ui/qml`, `ui/quick`, `ui/views`: Still C++-only: the rest of the view layer — the settings window,
-  onboarding, the HUD, text highlighting in lists and Markdown, the edit-keywords and app-selector
-  views, and drag and drop.
+  onboarding, the HUD, text highlighting in lists and Markdown, the edit-keywords view (the
+  app-selector landed in the views pass), and drag and drop.
 - `ui/settings`, `ui/windows`: Still C++-only: the settings window and its pages (general,
   appearance, keybinds, extensions) beyond the sidebar model and the preferences form.
-- `ui/image`: Still C++-only: drawing the builtin icon set and file-type icons (builtin commands,
-  windows, files and clipboard entries show an initial), masks, tints and badges, and reading a bare
-  icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
-- `ui/action-panel`: Still C++-only: the shortcut recorder panel.
+- `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
+  "The gaps pass, icons and tray". Still C++-only: circle and rounded-rectangle masks, the icons of
+  extension, script and shortcut rows in root search (they show an initial), favicons, and reading
+  a bare icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
+- `ui/action-panel`: closed in "The gaps pass, root and actions" below.
 - `ui/bridges`: Still C++-only: images inside an extension's Markdown detail, which are not fetched.
 
 ### Gaps closed after the truth pass (2026-09-25)
@@ -362,13 +363,36 @@ What differs, by row:
 | Row | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | `app-service` | `QFileSystemWatcher` on each application directory itself, so a file added in a subdirectory (`applications/kde4/`) waits for the next change at the top. | The watch is recursive, as the scan it triggers is. | `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none` |
-| `builtins/system` | Browse Apps' panel starts with Focus Window when the application has a window open. | Not offered: the launcher has no per-application window lookup yet (Switch Windows is its own view). | — |
-| `builtins/system` | Browse Apps reads `showHidden` and `sortAlphabetically` each time it opens. | Read when the window starts, like the power commands' preferences; a change applies after a restart of the window. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
+| `builtins/system` | Browse Apps' panel starts with Focus Window when the application has a window open. | The same since "The gaps pass, root and actions". | `browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening` |
+| `builtins/system` | Browse Apps reads `showHidden` and `sortAlphabetically` each time it opens. | The same since "The gaps pass, root and actions". | `browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening` |
 | `builtins/system` | Unsorted, the list is `m_apps` in scan order, hidden entries among the rest. | Unsorted, the shown applications in scan order, then the hidden ones. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
-| `builtins/system` | The current default carries a green check icon. | A `✓ Default` accessory in text, the drawn icon set being `ui/image`'s gap. | `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one` |
-| `desktop-notification` | Every icon is rendered to a 128×128 PNG, with the theme's side of a themed image, and a file icon or `data:` URL drawn as the launcher would. | A PNG or JPEG file (on disk, an asset, or fetched) is passed as it is and scaled by the notification server; a themed image uses its light side (a notification has no theme); a file icon and a `data:` URL go without an icon. | `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` |
+| `builtins/system` | The current default carries a green check icon. | The same icon (`CheckCircle` in green) since "The gaps pass, icons and tray"; the `✓ Default` text only where the builtin icon set is not installed. | `the_default_pickers_mark_is_the_green_check_icon` |
+| `desktop-notification` | Every icon is rendered to a 128×128 PNG, with the theme's side of a themed image, and a file icon or `data:` URL drawn as the launcher would. | Since "The gaps pass, icons and tray" every source is: a PNG or JPEG is fitted into the 128×128 PNG, a file icon and a `data:` URL drawn. A file that does not decode is still passed as it is, for the server to try; a themed image uses its light side (a notification has no theme). | `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn`, `a_data_url_is_decoded_and_drawn_into_the_square`, `a_file_icon_is_the_themes_mime_icon_or_the_builtin_document` |
 | `extension-registry` | `QFileSystemWatcher` on each extension directory: an extension appearing is seen, a `package.json` written into it afterwards is not, so `vicinae develop` (which creates the directory before building) waits for the next change or its own deeplink. | Each extension's directory is watched too, for its `package.json` only; a bundle being written is not a rescan. | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` |
 | `app-service` | One process: `appsChanged` reloads the root items the window shows. | Two: the engine rescans on the watch; the window asks for the catalog generation on every summon and rescans its own index when it moved, so an open window catches up on its next summon. | `a_moved_catalog_generation_rescans_and_the_same_one_does_not` |
+
+### The gaps pass, icons and tray (2026-09-25)
+
+Three gaps from PLAN §12.0, ported from `src/server/src/ui/image`, `services/ui` and
+`services/tray-host`, one commit each (IPC v18 for the tray). The rule is the truth pass's: a cell
+flips only with a named Rust module and named tests that would fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `ui/image` | none (see its note) | `compass_ui::icons::{Glyph, command_glyph, file_glyph, clipboard_glyph, default_mark, FileGlyphCache, tile_tone, on_tile}`; `compass_core::commands::{Tile, CommandKind::tile, CommandKind::badge}`; `LauncherApp::glyph` draws a builtin in the row's colour, or on the command's tile (`applyBackdrop`'s rounded square, the glyph inset 19% in `getTonalContrastColor(tile, 5, 0.1)`) with `applyBadge`'s black disc | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial`, `search_files_rows_draw_their_file_type_icons`, `a_window_row_draws_its_applications_icon_or_the_app_window_builtin`, `the_default_pickers_mark_is_the_green_check_icon`, `clipboard_rows_draw_the_builtin_for_their_kind`, `icons::tests::{a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin, a_command_is_drawn_on_its_tile_with_a_light_glyph, a_grey_tile_stays_grey_and_accent_follows_the_palette, clipboard_rows_and_the_default_mark_use_the_cpps_builtins, file_glyphs_are_resolved_once_per_path}`, `each_command_keeps_the_cpps_tile_and_badge` |
+| `src/services/tray-host` | Rust ✅ | `vicinae::tray_host::TrayHost` over the `system-tray` crate (its `StatusNotifierWatcher` when none owns the name, host registration, item and menu tracking), started with the engine; an item's own object path read back from the watcher for `Activate`/`SecondaryActivate`; `IconThemePath` searched (`find_in_theme_path`, with `compass_core::tray_host::best_icon`); the largest pixmap made a PNG (`pixmap_png`). Served over IPC v18 `TrayItems`, `TrayActivate`, `TrayMenu`, `TrayTriggerMenu`; drawn by Search Tray (`commands:search-tray`, `compass_ui::{tray_page, app::tray}`) with the C++ panel (Activate, Browse Menu, Secondary Activate; a menu-only item only browses), the Attention accessory, and the flattened menu (`compass_core::tray_host::flatten_menu`) whose toggles keep it open | `the_tray_host_lists_activates_and_browses_another_applications_item` (a private `dbus-daemon`, a fake item at a non-default path with a `dbusmenu`), `with_no_session_bus_the_tray_is_refused_by_name`, `tray_host::tests::{an_items_path_is_read_back_from_the_watchers_list, the_largest_pixmap_becomes_a_png_with_its_channels_reordered, an_icon_shipped_in_the_items_theme_path_is_found_there_svg_first}`, `search_tray_lists_activates_and_browses_an_items_menu`, `tray_page::tests::*`, `a_tray_menu_is_flattened_with_its_submenus_labels`, `a_tray_rows_title_falls_back_to_its_id_and_its_subtitle_to_the_tooltip_body` |
+| `src/services/desktop-notification` | already ✅; its declared difference closed | `vicinae::notification_icon`: a `data:` URL decoded with `data-url` (already in the tree through usvg), a file icon through `compass_ui::icons::file_glyph`, and a PNG or JPEG fitted into the 128×128 PNG with `image` | `a_data_url_is_decoded_and_drawn_into_the_square`, `a_file_icon_is_the_themes_mime_icon_or_the_builtin_document`, `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` |
+
+What differs, by row:
+
+| Row | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| `ui/image` | `renderFileIcon` asks `QMimeDatabase` (`MatchDefault`: the name's globs, then the content's magic) and the type's `iconName` and `genericIconName`, which the shared-mime-info database may override per type. | The type by extension (`mime_guess`, already in the tree), `inode/directory` for a directory; the icon names by shared-mime-info's defaults (`image/png` → `image-png`, generic `image-x-generic`; a directory's generic `folder`). An extensionless file is `application/octet-stream` rather than sniffed, and a type's own `<generic-icon>` is not read. | `a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin`, `mime_icon_names_follow_the_shared_mime_info_defaults` |
+| `ui/image` | A tile is a vertical gradient with a hairline and a drop shadow under the glyph, the tile colour from the theme's semantic colours. | A flat tile with the hairline, in the Vicinae dark theme's accents (the launcher's own palette carries only an accent), clamped into `clampTileTone`'s band; no gradient or shadow. | `a_command_is_drawn_on_its_tile_with_a_light_glyph` |
+| `ui/image` | A clipboard link row shows the site's favicon. | The builtin link icon: favicons are fetched from the network, which the launcher does not do for clipboard rows yet. | `clipboard_rows_and_the_default_mark_use_the_cpps_builtins` |
+| `tray-host` | `SniWatcher` claims the watcher name only after a three-second grace, releases it when another connection queues for it, and accepts an item registered as `busname/path`. | The `system-tray` crate's watcher claims the name at once when it is free and keeps it; it accepts a bus name or an object path (what libappindicator and KDE send) and refuses the combined `busname/path` form. A desktop's own watcher (a bar, KDE, GNOME's AppIndicator extension) is used when it is already there. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
+| `tray-host` | An item is keyed by bus name and path, and its menu fetched with `GetLayout` when the view opens. | Keyed by the bus name it registered from, as the crate keeps it (one item per connection); the menu is the layout the crate follows through `LayoutUpdated`, after an `AboutToShow`. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
+| `ui/image` | Builtin icons are compiled into the binary as Qt resources. | Read from the installed `vicinae/builtin-icons` directory (`compass_core::builtin_icon::directory`); where it is missing a row keeps its initial, as before. | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial` |
 
 ### The gaps pass: glyphs, clipboard, root (2026-09-25)
 
@@ -379,7 +403,7 @@ with a named module and named tests that fail on a regression.
 |---|---|---|---|
 | `src/services/glyph-service` | Rust ✅ | `compass_core::glyph_service` (file I/O, `score`), `compass_ui::emoji_page`, `compass_ui::app::emoji` | `tests/glyph_service.rs` (`the_cpp_file_is_read_with_its_camel_case_keys`, `the_file_is_written_and_read_back_and_a_missing_one_is_empty`, `a_visit_raises_a_glyph_among_matches_and_a_keyword_makes_it_match`), `emoji_page::tests` (pins and visits head the empty query, keywords, per-glyph tones, the panel), `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
 | `src/services/clipboard` | Rust ✅ | `compass_clipboard::retention`, `compass_clipboard::store::entry`, `vicinae::clipboard_service::{Settings, Control, run_eviction}`, `ClipboardStore::{evict, remove_all, detail, set_keywords, history_of_kind}` | `retention::tests`, `eviction_removes_what_is_older_than_the_threshold_and_reports_the_next`, `remove_all_spares_tagged_entries_when_asked_and_unlinks_the_rest`, `nothing_is_recorded_while_monitoring_is_off`, `the_preferences_are_read_with_the_cpp_defaults`, `pausing_the_clipboard_is_answered_and_kept_as_the_monitoring_preference` |
-| `src/builtins/clipboard` | — (open actions and drag remain) | `compass_ui::clipboard_page`, `compass_ui::app::clipboard` | `clipboard_page::tests` (filter vocabulary, `format_size`, the pane's content, stale answers), `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
+| `src/builtins/clipboard` | — (the open actions landed in the views pass; drag is declared there) | `compass_ui::clipboard_page`, `compass_ui::app::clipboard` | `clipboard_page::tests` (filter vocabulary, `format_size`, the pane's content, stale answers), `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
 | `src/builtins/root`, `src/services/root-item-manager` | — (the provider search view; per-item shortcuts and other fallbacks remain) | `compass_core::root_items::{apply_edit, deeplink}`, `Config::{favorite_ids, apply_root_edit}`, `root_view::SearchHistory`, `ClockConfig`, `compass_ui::app::root`, IPC `RootItemEdit` | `favouriting_inserts_first_and_moving_swaps_within_the_list_only`, `an_alias_and_the_switch_are_written_under_the_items_provider_and_merged`, `the_root_panel_writes_favorites_whole_and_an_items_alias_and_switch`, `the_search_history_keeps_one_of_each_newest_first_in_the_cpp_shape`, `the_clock_is_on_every_minute_in_hh_mm_unless_set`, `the_root_panel_favourites_aliases_and_the_up_arrow_recalls_searches` |
 
 **`src/services/clipboard` → retention and monitoring.** The clipboard extension's preferences
@@ -413,9 +437,9 @@ wrapping) walks back through past searches, kept in the C++'s own file,
 `$XDG_DATA_HOME/vicinae/search-history.json` (`{"entries":[{"q","ts"}]}`, one of each, newest
 first, 1000 at most), which a search is added to when a row runs from it. The clock shows under the
 list in `launcher.clock`'s format (`hh:mm` unless set; `settings.json`'s
-`launcher_window.clock` migrates to it), redrawn on multiples of its interval. Still C++-only: the
-provider search view (`searchGroupedByProvider` is ported, the view over it is not), and the
-completer branch of the space shortcut, as root rows have no argument completer here yet.
+`launcher_window.clock` migrates to it), redrawn on multiples of its interval. The provider search
+view, the other fallbacks and the completer branch of the space shortcut landed after it (see "The
+gaps pass, root and actions").
 
 **`src/builtins/clipboard` → the rest of the view.** The kind filter is a dropdown above the list;
 it asks the engine for one kind (`ClipboardHistoryOfKind`, the query's `kind` filter), clears the
@@ -442,7 +466,94 @@ in its own tone, else the picker's `skinTone` preference
 copy, copy name, codepoint and category, the keyword form (Ctrl+E), reset ranking, pin or unpin,
 and the skin-tone section. Not ported, and deliberately: the one-off migration from the legacy
 `visited_emoji` table of `omni.db`, which only a database from before the JSON file holds; and the
-picker's paste action, which the `src/builtins/vicinae` note carries.
+picker's paste action, which landed after it (see "The gaps pass, root and actions").
+
+### The gaps pass, root and actions (2026-09-25)
+
+The rest of the root view, the action panel's shortcut recorder, the emoji picker's paste action
+and Browse Apps' Focus Window, one commit each against `src/server/src/builtins/root`,
+`ui/action-panel`, `builtins/vicinae` and `builtins/system`. A cell flips only with a named module
+and named tests that fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/builtins/root`, `src/services/root-item-manager` | Rust ✅ (the per-item shortcut in the row below) | `compass_core::root_items::{parse_launch_link, LaunchLink::target}`, `AppIndex::{search_root_with, has_provider, provider_title}`, `compass_ui::app::{Fallback, ProviderScope}`, `compass_ui::app::root::{open_launch_link, open_provider_search, has_completer}`, `vicinae::serve::launch::open_launch_link` | `a_launch_link_names_a_provider_or_an_item_with_its_text`, `a_launch_deeplink_to_a_provider_searches_its_items_alone`, `a_launch_deeplink_to_an_item_launches_it_with_its_text`, `fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query`, `an_alias_and_a_space_open_an_items_arguments` |
+| `ui/action-panel`, and the per-item shortcuts of `src/builtins/root` and `src/services/root-item-manager` | Rust ✅ | `compass_core::key_combo` (`Keyboard::Shortcut`'s spelling and parser, the capture's chord tracking, `shortcut_conflict::validate`), `compass_ui::shortcut_recorder`, `compass_ui::app::root::recorder_event`, `RootEdit::Shortcut` over IPC v18 `RootItemEdit::Shortcut`, `Config::apply_root_edit`, `RootItem::merge_config` | `a_combination_is_stored_in_the_cpps_spelling_and_read_back`, `a_recording_is_a_key_with_modifiers_or_modifiers_released_alone`, `a_combination_needs_a_modifier_and_must_not_be_anothers`, `the_badge_names_the_modifiers_then_the_key`, `shortcut_recorder::tests` (four), `the_root_panel_records_an_items_shortcut_and_backspace_removes_it`, `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
+| `src/builtins/vicinae` | — (the picker half is done; the other views remain) | `compass_ui::app::emoji::{paste_selected_emoji, emoji_pasted}`, `EmojiPage::{supports_paste, default_action}` over `compass_core::emoji_grid::main_actions`, `vicinae::serve::paste_text` over IPC v18 `Request::PasteText` | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot`, `window_requests_without_a_session_bus_are_refused_by_name` |
+| `src/builtins/system` | — (already Rust ✅; two declared differences closed) | `compass_ui::app::apps::{open_browse_apps, apps_runtime_task}`, `AppsPage::running`, `AppFlags::config_path`, over `vicinae::serve::app_runtime` (IPC v17 `AppRuntime`) | `browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening` |
+
+**The provider search view (`ProviderSearchViewHost`).** `vicinae://launch/<provider>` — the link
+`vicinae deeplink` sends and a desktop shortcut can carry — opens root search over that provider's
+items alone (`search(text, {.providerId})`), every one of them for the empty query, with no
+favourites, calculator or fallbacks, the field reading `Search <provider>` and the link's
+`fallbackText` typed in. Leaving it closes the window, as the deeplink's `setInstantDismiss` does.
+`vicinae://launch/<provider>/<entrypoint>` launches the item as `cmd launch` does, with
+`fallbackText` as its query; `toggle=true` hides an open window instead; a path that names no
+provider and has no `/` is refused with the C++'s "Invalid format for launch deeplink". The engine
+reads the link (`Request::OpenDeeplink`, no new variant) and hands the window only what is the
+window's.
+
+**Fallbacks (`RootFallbackSection`).** Every `fallbacks` entry the C++ would offer
+(`isSuitableForFallback`): Search Files, any extension command, and a quicklink with exactly one
+argument. An extension command is launched through the engine with the query as its fallback text
+(`OpenBuiltinCommandAction::setForwardSearchText`), the way `cmd launch --query` reaches it; a
+quicklink opens with the query as its argument (`OpenShortcutFromSearchText`).
+
+**The completer branch of the space shortcut.** An item that takes arguments (a quicklink, an
+extension command or a script command with any) opens its arguments form when its alias is typed
+and then a space, where the C++ focuses the search bar's completer; with nothing yet typed into the
+form, which is the C++'s "every completion value empty" condition.
+
+**The shortcut recorder (`SetRootItemShortcutAction`, `ShortcutRecorderPanelView`).** The root
+row's panel offers Set Global Shortcut after Set alias. It turns the panel into the recorder: the
+item's title, the shortcut it has (or the chord being held), and a status line. A key with a
+modifier, a function key, or modifiers pressed and let go on their own is a combination
+(`handleKey`); a bare key is refused with "Modifier required", and one another root item has with
+`Already bound to "<title>"`. An accepted one is written as `Shortcut::toString` spells it
+(`super+control+alt+shift+KEY`) to `providers.<p>.entrypoints.<e>.shortcut` in `vicinae.json`, and
+the panel closes; Escape goes back to the actions; Backspace, while the item has a shortcut,
+removes it. Binding the shortcut to the desktop is `src/services/global-shortcuts`' row, which is
+where it stays: the configuration is written as the C++ writes it, so either engine binds it.
+
+**The emoji picker's paste (`PasteToFocusedWindowAction`).** The panel is `buildEmojiActionPanel`'s
+with paste in it: Paste to active window and Copy, in the order the `defaultAction` preference
+(`providers.core.entrypoints.search-emojis.preferences`, `paste` unless set) puts them, the first on
+Enter. Pasting counts a visit, as copying does, and hands the glyph in its tone to the engine
+(`Request::PasteText`), which puts it on the clipboard and pastes it through the Shell extension
+into the window the launcher hides back to, as it pastes a clipboard entry or a snippet. Where the
+engine cannot paste (no Shell extension: the wlroots family, a missing session bus) it refuses by
+name and the window copies the glyph instead, which is where the C++'s `pasteContent` leaves it too:
+copied first, then "the current platform cannot paste".
+
+**Browse Apps: Focus Window, and the preferences read on opening.** As the selection moves (and
+when the view opens) the window asks the engine whether the selected application runs
+(`Request::AppRuntime`, the app runtime's `isRunning`); when it has a window open, the panel starts
+with Focus Window, which Enter runs, raising its first window as `activeWindows.front()` does; an
+answer for a row no longer selected is dropped, and one that arrives with the panel open joins it.
+`showHidden` and `sortAlphabetically` are read from `vicinae.json` each time the view opens, as
+`BrowseAppsView` reads them, rather than when the window starts; a file that cannot be read keeps
+the ones the window started with.
+
+**A regression found on the way.** The root row's panel (the first gaps pass) had taken over the
+panel an application's row opens, so Quit, Force Quit, Focus Window and Close Window (the
+app-runtime commit) never joined it. The engine is asked again when the root panel opens over an
+application, and the running-only actions are added to the panel as it is, root actions and all
+(`a_running_applications_panel_offers_quit_and_force_quit_and_they_reach_the_engine`).
+
+What differs, by row:
+
+| Row | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| `builtins/root` | The provider view ranks by visits as root search does. | It ranks in the window, without the engine's launch history: matches by score, the empty query in index order. | `a_launch_deeplink_to_a_provider_searches_its_items_alone` |
+| `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
+| `builtins/root` | A fallback row's panel is Open plus Manage Fallback Actions. | Enter opens it; the fallback manager's view is `builtins/vicinae`'s gap. | — |
+| `builtins/vicinae` | Where the platform cannot paste, the picker offers no paste action and `defaultAction` defaults to copy. | The window cannot know before asking, so paste is offered whenever an engine is attached, and a refusal copies; the result is the same glyph on the clipboard. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
+| `builtins/vicinae` | Copying shows the "Copied to clipboard" HUD. | No HUD (the `ui/qml` row's gap); the launcher hides. | — |
+| `builtins/vicinae` | The paste action is titled `Paste to <frontmost app>` with its icon. | `Paste to active window`, the C++'s title when no application is frontmost. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
+| `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and binding it waits on `global-shortcuts`. | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
+| `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Neither: the engine binds only the launcher's toggle, and the inhibit protocol is `shortcut-inhibit`'s gap. | — |
+| `ui/action-panel` | "Already bound" also checks the launcher's own keybinds (`KeybindManager`). | Only other root items' shortcuts: the launcher's keybinds are not configurable here. | `a_combination_needs_a_modifier_and_must_not_be_anothers` |
+| `root-item-manager` | Clearing a shortcut writes `""`, which comes back as an empty shortcut after a restart. | Cleared as absent, and an empty stored one reads as none (see "`compass-core::root_items`"). | `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
 
 ### The gaps pass (2026-09-25)
 
@@ -515,6 +626,84 @@ as the C++ does not. Declared differences: success hides the launcher without th
 builtin panel here, the chord is not bound yet, so Quit runs from its row; the pin-window and bring-to-workspace actions are not offered, no provider here
 having the capability. `frontmost` is answered but nothing reads it yet: its C++ reader is the
 global-shortcut inhibition, which is that row's gap.
+
+### The gaps pass, views (2026-09-25)
+
+The builtins' remaining views, from PLAN §12.0, one commit each against the C++ in
+`src/server/src/builtins` (IPC v18). A cell flips only with a named module and named tests that
+fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/builtins/shortcut` | Rust ✅ | `compass_ui::{open_with_page, app::open_with}` (the app-selector), `vicinae::serve::openers` over `EngineApps` (IPC v18 `ListOpeners`, `OpenWith`), `compass_ui::shortcuts_page::{Detail, detail_fields, suitable_for_fallback}`, `compass_ui::app::shortcuts` (the pane, Open with…), `RootRow::ShortcutFallback` | `open_with_lists_what_opens_a_target_the_default_first` (a real engine over temp XDG dirs), `the_default_opener_comes_first_and_is_marked`, `open_with_launches_the_chosen_application_and_refuses_an_unknown_one`, `open_with_page::tests`, `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `the_pane_lists_what_load_detail_lists_in_its_order` |
+| `src/builtins/file` | Rust ✅ | `compass_ui::app::file_actions` (`file_panel_sections`, the actions), `compass_ui::files_page::{runs_as_executable, FilesPage::searching}`, `vicinae::serve::files` (IPC v18 `FileActions`, `CopyFile`, `RunExecutable`, `SetWallpaper`), Open with… through `compass_ui::app::open_with` | `search_files_panel_is_the_cpps_file_actions`, `a_files_panel_learns_its_mime_type_and_an_appimage_is_made_executable_and_run` (a real engine; the AppImage is a script in the test's tempdir), `an_executable_is_given_the_owners_execute_permission`, `a_file_is_copied_as_its_escaped_file_uri`, `a_superseded_answer_is_dropped` |
+| `src/builtins/clipboard` | Rust ✅ | `compass_ui::clipboard_page::{open_target, OpenTarget}`, `compass_ui::app::clipboard` (Open, Open with… through `compass_ui::app::open_with`) | `a_link_or_one_existing_file_is_what_open_acts_on`, `a_copied_link_opens_and_opens_with_a_chosen_application`, `plain_text_offers_no_open`, with the gaps pass's `clipboard_page::tests` and `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
+| `src/builtins/wm` | Rust ✅ | `compass_platform_linux::compositor` (`Provider::{capabilities, toggle_fullscreen, toggle_floating, toggle_overview}`), `vicinae::serve::workspaces`, `compass_core::window_switcher::command_offered`, `AppIndex::set_window_capabilities`, `compass_ui::{workspaces_page, app::workspaces}` | `niri_toggles_fullscreen_floating_and_the_overview`, `hyprland_toggles_a_window_and_has_no_overview` (fake sockets replaying captured replies), `workspaces_count_their_windows_and_name_their_applications_once`, `a_toggle_acts_on_the_active_window_and_refuses_one_elsewhere`, `a_window_on_another_workspace_is_not_on_the_active_one`, `without_a_compositor_everything_is_refused_and_nothing_is_offered`, `a_window_command_is_offered_only_where_it_is_registered`, `workspaces_page::tests`, `workspaces_and_the_toggles_are_offered_where_the_compositor_has_them`, `a_refused_toggle_says_why` |
+
+**`src/builtins/shortcut`.** "Open with…" is a view of its own, the app-selector the
+`ui/views` row names: the applications that open a target, the default first and marked, filtered
+fuzzily as typed; Enter opens the target with the chosen one and hides, Escape goes back to the
+view it was opened over. The C++ has it as a panel submenu (`OpenWithAction`,
+`OpenCompletedShortcutWithAction`); a view gives it the same search and keys as every other list
+here. Search Files and clipboard history open the same view. The shortcut panel (root row and
+Manage Shortcuts) offers it after Open (Ctrl+O): the openers of the stored link, the link expanded.
+Manage Shortcuts' detail pane shows the link expanded and `loadDetail`'s metadata: Name,
+Application (with `(Default)` for the default opener), Opened, Last Opened (`Never`), Created at,
+dates as `QDateTime::toString()` writes them. Shortcut fallbacks: see the shortcut table, rows 5, 6
+and 8.
+
+**`src/builtins/file`.** Search Files' panel is `FileActions::actionPanel`'s, in its order: Open
+(when an application opens the file), Run executable (an AppImage, made executable first, primary
+when nothing opens it), Show in file browser (Ctrl+Enter), Open with… (Ctrl+O, the app-selector),
+Set as wallpaper (an image, where a wallpaper backend answers; Ctrl+Shift+W), Create shortcut (the
+form with the file's name and path); then Paste to active window (where the engine can paste),
+Copy file (a `text/uri-list`, Ctrl+Shift+C), Copy file path, Copy file name and Copy mime type. The
+panel asks the engine first (`FileActions`: the MIME type, an opener, the wallpaper backend, paste),
+then opens. "Searching…" shows beside the category filter while a query is out, as `setLoading`.
+Declared differences:
+
+- The file browser action is always offered; the C++ offers it only when a file browser is
+  installed.
+- Paste is offered where the engine has its GNOME Shell client; a wlroots session copies over
+  data-control (no synthetic paste there yet, `src/services/paste`'s gap).
+- Success hides the launcher without the C++'s HUD ("Wallpaper set", "Copied to clipboard");
+  failures show under the list rather than as a toast.
+- Dragging a file out of the list: Iced offers no drag out of a window (`src/builtins/clipboard`
+  shares this).
+
+**`src/builtins/clipboard`.** A link, or a copy of exactly one file that still exists (its
+`file://` URI decoded as `QUrl::path` decodes it), offers Open (Ctrl+O) and Open with…
+(Ctrl+Shift+O, the app-selector) after the copy and paste actions, as `actionPanel` adds them.
+Declared differences: Open is offered whether or not a default application claims the target (the
+C++ adds it only then); without one the engine's refusal shows under the list. The target is read
+from the detail pane's content, so the two appear once the pane has loaded. Dragging an entry out
+stays unported: Iced has no drag out of a window.
+
+**`src/builtins/wm`.** Switch Workspaces, Toggle Fullscreen, Toggle Floating and Toggle Overview
+are builtins, offered in root search only where `WindowManagementExtension` registers them: the
+window asks the engine what the compositor can do (IPC v18 `WindowManagerCapabilities`) each time
+it opens, and until it hears, offers none of them, as the C++'s dummy window manager does. Hyprland
+has workspaces, fullscreen and floating; niri those and the overview. Switch Workspaces lists the
+compositor's workspaces (`ListWorkspaces`) under "Open Workspaces", each with its window count and
+monitor (`3 windows - DP-1`, `empty`) and the applications with a window on it, searchable by name,
+monitor and application at the C++'s weights; Enter or the panel's "Switch to workspace" switches
+(`FocusWorkspace`) and hides. A toggle (`ToggleWindowState`) acts on the window the person was in,
+the launcher's own left out, and is refused with the C++'s sentences ("No window to fullscreen",
+"No window to toggle", "Active window is not on the current workspace"); on success the launcher
+hides. Declared differences:
+
+- The C++ toggles `getFocusedWindowSync()`; here the target is the provider's frontmost window
+  skipping the launcher (on Hyprland the most recent on the active workspace, on niri the focused
+  one else the most recent), since niri reports no focused window while a layer surface has focus.
+- An unnamed niri workspace is called by its number; the C++ shows an empty title.
+- The monitor is shown whenever the compositor names one; the C++ shows it only when it matches a
+  Qt screen's name.
+- The applications on a workspace are its accessory as names, not icons (`ui/image`'s gap).
+- On GNOME the C++ lists workspaces through its Shell extension's `ListWorkspaces`; Compass's Shell
+  extension has no such call, so GNOME offers Switch Windows only. That is a gap in the GNOME
+  provider (`src/services/window-manager`), not in this view.
+- Hyprland's classic dispatcher fallback for fullscreen is `fullscreen 0`, which acts on the active
+  window: the classic form has no window argument.
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
@@ -602,8 +791,8 @@ icon, but **not** the name — the `default` icon being stored as whatever it re
 as the word, the favicon-over-opener rule for `http*` links, and the three link completions with the
 cursor offset that lands inside `{argument name="|"}`. Duplicating takes the *create* path, as the
 C++ does by branching on `Mode::Edit` alone. The form, the favicon and Manage Shortcuts' panel run
-in the launcher ("Shortcuts — what the port does not have yet"). Still C++-only: the Open with…
-submenu, Manage Shortcuts' detail pane, and shortcuts as fallback rows.
+in the launcher ("Shortcuts — what the port does not have yet"). Open with…, Manage Shortcuts'
+detail pane and shortcuts as fallback rows landed in the views pass (see "The gaps pass, views").
 
 **`src/builtins/font` → `compass-core::font_browser`** — the grid model's decisions are ported:
 the category dropdown (only categories some installed font belongs to, "All" at index 0, the
@@ -780,9 +969,9 @@ rather than by relevance, because a fallback's position decides which of them an
 — any other order would show a ranking that is not the one in force.
 
 The emoji picker and both stores are in the launcher now, the picker with the visits, pins, tones
-and keywords `glyph-service` keeps. Still C++-only: the picker's paste action (it copies), the
+and keywords `glyph-service` keeps, and its paste action. Still C++-only: the
 installed-extensions list, the OAuth
-token store and local-storage browser views, the tray search, the builtin-icon gallery, the fallback
+token store and local-storage browser views, the builtin-icon gallery, the fallback
 manager's view, and the small commands (report a bug, refresh apps, open the config file, the
 store's intro page).
 
@@ -817,10 +1006,10 @@ would make every press of space over an empty search box activate whatever was s
 test for it now.
 
 Root search now ranks applications, builtin commands, extension commands, scripts, shortcuts and
-Rhai scripts, with the calculator and the Search Files fallback. Still C++-only: favourites in the
-list, the title-bar clock, the space-bar alias and the up-arrow history this module models, the
-provider search view, the alias form, and the root row's panel beyond opening (favourite, alias,
-disable, reset ranking, quit).
+Rhai scripts, with the calculator and the fallbacks. Favourites, the clock, the space-bar alias,
+the up-arrow history, the alias form, the row's panel, the provider search view and every kind of
+fallback have landed since (see "The gaps pass: glyphs, clipboard, root" and "The gaps pass, root
+and actions").
 
 **`src/builtins/clipboard` → `compass-clipboard::history_view`** — the history command's own
 decisions. The ledger had this row down for `compass-core`; it landed in `compass-clipboard`
@@ -862,9 +1051,9 @@ carriage return — looked correct. The stub now names the paths it knows.
 
 Clipboard History is in the launcher: search, copy, paste, pin and remove
 (`compass-ui::clipboard_page`), and since the gaps pass the kind filter, the detail pane, keyword
-editing, remove-all and the monitoring switch (see "The gaps pass"). Still C++-only: the open
-actions (Open, Open with…), and the drag payload — blocked rather than pending, because Iced has no
-drag-and-drop out of its window.
+editing, remove-all and the monitoring switch (see "The gaps pass"), and since the views pass Open
+and Open with… (see "The gaps pass, views"). The drag payload is a declared difference, blocked
+because Iced has no drag-and-drop out of its window.
 
 **`src/builtins/raycast` → `compass-core::raycast_store_view`** — the store's two views. Its API
 client was already ported (`compass-core::raycast_store`); this is what the views do with what it
@@ -989,9 +1178,9 @@ comparison. Rebuilding the index is written and deliberately unregistered in the
 saying the indexer's timed sweeps and deleting its cache directory have the same effect; the port
 keeps it unregistered for the same reason, and a test pins that.
 
-The indexer behind it is ported (`src/file-indexer`, now green). Still C++-only: the rest of the
-action panel (Open with…, Run executable, Set as wallpaper, Create shortcut, Paste and the four
-copies), the scan-progress indicator and the drag payload.
+The indexer behind it is ported (`src/file-indexer`, now green). The rest of the action panel and
+the loading indicator landed in the views pass (see "The gaps pass, views"); the drag payload is a
+declared difference there, Iced having no drag out of a window.
 
 **`src/builtins/media` → `compass-core::media_commands`** — which commands exist on which platform,
 how a player is chosen from what was typed, what the on-screen display says, and which speaker glyph
@@ -1066,8 +1255,9 @@ port writes `1 window` and `3 windows`: what every translated locale already doe
 would do if the entry existed. A test pins it.
 
 Switch Windows runs end to end over the ported providers (GNOME through the Shell extension, the
-wlroots foreign-toplevel list, Hyprland and niri). Still C++-only: Switch Workspaces, and the
-toggle-floating, toggle-fullscreen and toggle-overview commands.
+wlroots foreign-toplevel list, Hyprland and niri). Switch Workspaces and the toggle-floating,
+toggle-fullscreen and toggle-overview commands landed in the views pass (see "The gaps pass,
+views").
 
 **`src/builtins/calculator` → `compass-core::calculator_history`, and the grouping in
 `compass-local-storage::calculator`** — the view's own decisions and the half of `CalculatorService`
@@ -1385,8 +1575,9 @@ payload is no icon rather than an empty one — which would draw as a blank spac
 application meant nothing at all. The menu itself is the root node's *children*: returning the root
 would put an unnamed entry above every menu.
 
-Still C++-only: the DBus plumbing (the StatusNotifierWatcher registration, the `GetLayout` call and
-the property-change signals), which belongs to whoever owns the bus connection.
+The DBus plumbing (the StatusNotifierWatcher registration, the menu layout and the property-change
+signals) landed in "The gaps pass, icons and tray", as `vicinae::tray_host` over the `system-tray`
+crate.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
 itself (ADR-0014). SQLCipher is `rusqlite`'s `bundled-sqlcipher` build (`libsqlite3-sys` 0.38,
@@ -2469,10 +2660,10 @@ visits. What differs:
 | 2 | An argument left empty expands to nothing, even with a `default=` — `expandShortcut` never reads the default. | It expands to its default. | `arguments_fill_their_placeholders_in_order` |
 | 3 | `{date}` is reserved (so not an argument) and then falls into the expansion's argument branch, eating the next argument's value. | Expands to nothing; the arguments stay aligned with their placeholders. | `reserved_placeholders_take_their_values` |
 | 4 | `{selection}`/`{selected}` read the focused application's selection. | The same: the primary selection, read as `getSelectedText` reads it (data-control on wlroots, the Shell extension on GNOME), and nothing when there is none. `{clipboard}` is read through the GNOME Shell extension, and is empty without it. | `on_sway_a_shortcut_expands_the_selected_text` |
-| 5 | Open with… lists the link's openers in a submenu. | Not yet; a shortcut opens with its stored application, else the default opener, else the browser. | `the_app_is_the_named_one_or_the_opener_or_the_browser` |
-| 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link). | Rows carry the link as their subtitle; no detail pane yet. | — |
+| 5 | Open with… lists the link's openers in a submenu, and opens the link expanded with the completer's argument values. | An app-selector view (`compass_ui::open_with_page`, IPC v18 `ListOpeners`/`OpenWith`) lists the openers of the stored link, the default first, and opens it expanded; arguments are not asked for first, so a placeholder argument expands empty. | `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application` |
+| 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link), the link re-expanded as the completer's values change. | The pane (`shortcuts_page::detail_fields`) follows the selection; the link is expanded with no arguments, Manage Shortcuts having no completer. | `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `the_pane_lists_what_load_detail_lists_in_its_order` |
 | 7 | The form's link field offers placeholder completions (Selected Text, Clipboard Text, Argument, UUID) and the app list updates to the link's default opener on blur; the default icon previews the favicon. | The field's help text names the placeholders; `default` app and icon are resolved by the engine when saving (favicon for `http*`, else the opener's icon, else the link glyph). | `the_default_icon_is_the_favicon_then_the_opener_then_the_link_glyph` |
-| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text. | Ranked like every other root item; no fallback rows yet. | — |
+| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text; its fallback panel adds Manage Fallback Actions. | Ranked like every other root item. A `shortcuts:<id>` entry in `fallbacks` whose link takes one argument is a fallback row, in the configured order, opening with the query; Enter only, there is no fallback panel or manager view (`src/builtins/vicinae`'s gap). | `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query` |
 | 9 | The migration from the pre-JSON SQLite `shortcut` table. | Not run: the one-shot import is from Vicinae's JSON file, which already holds a migrated list. | — |
 | 10 | A removal toast ("Removed link") and success toasts after saving. | The list updates in place; failures show in the view. | `manage_shortcuts_filters_edits_and_removes` |
 

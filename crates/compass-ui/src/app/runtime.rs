@@ -105,20 +105,31 @@ impl LauncherApp {
                         return Task::none();
                     }
                 };
-                let Some(item) = self.selected_item().filter(|item| item.key() == key) else {
-                    return Task::none();
-                };
-                if !info.running || self.panel.is_none() {
+                if self.selected_item().is_none_or(|item| item.key() != key) {
                     return Task::none();
                 }
-                let filter = self
-                    .panel
-                    .as_ref()
-                    .map(|panel| panel.filter.clone())
-                    .unwrap_or_default();
-                let sections = self
-                    .root_panel_sections(true)
-                    .unwrap_or_else(|| running_sections(super::actions_for_app(item)));
+                let Some(open) = self.panel.as_ref() else {
+                    return Task::none();
+                };
+                let already = open.sections.iter().any(|section| {
+                    section
+                        .actions
+                        .iter()
+                        .any(|a| a.id.as_deref() == Some(APP_QUIT))
+                });
+                if !info.running || already {
+                    return Task::none();
+                }
+                // Into the panel as it is, the root row's item actions and
+                // all, keeping what has been typed into its filter.
+                let filter = open.filter.clone();
+                let mut sections = running_sections(open.sections.clone());
+                // The lifecycle section goes before the root row's item actions,
+                // which `RootSearchActionGenerator` appends last.
+                if matches!(self.page, Page::Root) && sections.len() >= 3 {
+                    let at = sections.len() - 1;
+                    sections.swap(at - 1, at);
+                }
                 let mut panel = PanelState::new(sections);
                 panel.set_filter(filter);
                 self.panel = Some(panel);

@@ -909,6 +909,7 @@ dependencies = [
  "toml",
  "tracing",
  "unicode-normalization",
+ "url",
  "zip",
 ]
 
@@ -1172,6 +1173,7 @@ dependencies = [
  "image",
  "insta",
  "jiff",
+ "mime_guess",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1181,6 +1183,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "url",
  "winit",
 ]
 
@@ -5826,6 +5829,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-tray"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab761caca0fb6cb7c57e09df241eb26ea8cdc63df88f1badca4818494f74d55f"
+dependencies = [
+ "cfg-if",
+ "futures-lite",
+ "serde",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "zbus",
+]
+
+[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6462,6 +6480,7 @@ name = "vicinae"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
  "compass-clipboard",
  "compass-core",
@@ -6485,11 +6504,13 @@ dependencies = [
  "compass-wayland",
  "compass-worker-host",
  "compass-xdg",
+ "data-url",
  "fontdb",
  "futures-util",
  "getrandom 0.3.4",
  "iced",
  "iced_winit",
+ "image",
  "jiff",
  "landlock",
  "libc",
@@ -6502,6 +6523,7 @@ dependencies = [
  "seccompiler",
  "serde",
  "serde_json",
+ "system-tray",
  "tempfile",
  "thiserror 2.0.20",
  "tiny_http",

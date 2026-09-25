@@ -42,7 +42,10 @@ use crate::engine::Engine;
 
 mod app_runtime;
 mod calculator;
+mod files;
 mod launch;
+mod openers;
+mod workspaces;
 
 /// The at-most-one launcher window this engine drives.
 ///
@@ -135,6 +138,8 @@ pub struct EngineState {
     catalog_generation: u64,
     /// The calculator history's database, once the keyring opened it.
     calculator: Arc<tokio::sync::Mutex<Option<crate::extension_runner::Storage>>>,
+    /// Other applications' tray icons (`SniTrayHost`).
+    tray: Arc<crate::tray_host::TrayHost>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -256,6 +261,7 @@ impl EngineState {
             launches: Arc::default(),
             catalog_generation: 0,
             calculator: Arc::default(),
+            tray: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -323,6 +329,7 @@ impl EngineState {
             launches: Arc::default(),
             catalog_generation: 0,
             calculator: Arc::default(),
+            tray: Arc::default(),
         }
     }
 
@@ -1031,6 +1038,7 @@ fn edit_root_item(
         compass_ipc::RootItemEdit::Alias(alias) => RootEdit::Alias(alias),
         compass_ipc::RootItemEdit::Disable => RootEdit::Disable,
         compass_ipc::RootItemEdit::ResetRanking => RootEdit::ResetRanking,
+        compass_ipc::RootItemEdit::Shortcut(shortcut) => RootEdit::Shortcut(shortcut),
     };
     let mut state = state.blocking_write();
     if state.index.root(id).is_none() {
@@ -1072,6 +1080,34 @@ fn edit_root_item(
     }
     state.index.apply_root_config(&config.root_config());
     Response::Ack
+}
+
+/// `PasteService::pasteContent` for text the engine did not store (the
+/// emoji picker's glyph): on the clipboard, then pasted into the window that
+/// takes focus. Without the Shell extension there is no paste, and the
+/// window copies instead.
+async fn paste_text(state: &Arc<RwLock<EngineState>>, text: String) -> Response {
+    const WHAT: &str = "Pasting";
+    let (shell, terminals) = {
+        let state = state.read().await;
+        (
+            state.shell.clone(),
+            compass_core::app_service::AppService::new(&state.index).terminal_window_classes(),
+        )
+    };
+    let Some(shell) = shell else {
+        return Response::Error(crate::window_service::no_bus(WHAT));
+    };
+    let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
+    let content = compass_shell::ClipboardContent::text(text);
+    let pasted = match shell.set_clipboard(&content).await {
+        Ok(()) => shell.paste(&terminals).await,
+        Err(err) => Err(err),
+    };
+    match pasted {
+        Ok(()) => Response::Ack,
+        Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
+    }
 }
 
 fn clipboard_unavailable() -> Response {
@@ -2620,6 +2656,31 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         request @ (Request::CalculatorHistory { .. }
         | Request::AddCalculatorRecord { .. }
         | Request::EditCalculatorHistory { .. }) => calculator::handle(state, request).await,
+        request @ (Request::TrayItems
+        | Request::TrayActivate { .. }
+        | Request::TrayMenu { .. }
+        | Request::TrayTriggerMenu { .. }) => {
+            let tray = Arc::clone(&state.read().await.tray);
+            tray_request(&tray, request).await
+        }
+        request @ (Request::WindowManagerCapabilities
+        | Request::ListWorkspaces
+        | Request::FocusWorkspace { .. }
+        | Request::ToggleWindowState { .. }) => workspaces::handle(state, request).await,
+        Request::ListOpeners { target } => {
+            let apps = engine_apps(state).await;
+            Response::Openers {
+                apps: openers::openers(&apps, &target),
+            }
+        }
+        Request::OpenWith { app, target } => {
+            let apps = engine_apps(state).await;
+            openers::open_with(&apps, &app, &target)
+        }
+        request @ (Request::FileActions { .. }
+        | Request::CopyFile { .. }
+        | Request::RunExecutable { .. }
+        | Request::SetWallpaper { .. }) => files::handle(state, request).await,
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id, None).await,
@@ -2744,6 +2805,9 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
         Request::OpenDeeplink { url } => {
+            if let Some(link) = compass_core::root_items::parse_launch_link(&url) {
+                return launch::open_launch_link(state, url, link).await;
+            }
             match compass_core::store_listing::parse_extension_link(&url) {
                 Some(Ok(_)) => {
                     let slot = state.read().await.window_slot();
@@ -3031,6 +3095,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
             }
         }
+        Request::PasteText { text } => paste_text(state, text).await,
         Request::ExpandShortcut { id, arguments } => {
             match expand_shortcut(state, &id, &arguments).await {
                 Ok((_, expanded)) => Response::Text { text: expanded },
@@ -3392,6 +3457,13 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     // Rhai scripts' hot reload.
     tokio::spawn(crate::rhai_scripts::watch(Arc::clone(&state)));
 
+    // Other applications' tray icons, followed from start-up as the C++
+    // host does, so Search Tray lists them at once.
+    {
+        let tray = Arc::clone(&state.read().await.tray);
+        tokio::spawn(async move { tray.start().await });
+    }
+
     // Applications installed or removed while the engine runs.
     tokio::spawn(crate::catalog_watch::watch_applications(Arc::clone(&state)));
     // An extension a developer builds into place.
@@ -3463,4 +3535,33 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     serving.await.context("serving the engine socket")?;
     tracing::info!("engine stopped");
     Ok(())
+}
+
+/// Answers the tray requests from the engine's [`crate::tray_host::TrayHost`].
+async fn tray_request(tray: &crate::tray_host::TrayHost, request: Request) -> Response {
+    let refused = |reason: String| {
+        let kind = if reason == crate::tray_host::UNAVAILABLE {
+            ErrorKind::Unsupported
+        } else {
+            ErrorKind::Internal
+        };
+        Response::Error(ProtocolError::new(kind, reason))
+    };
+    let acked = |result: Result<(), String>| result.map_or_else(refused, |()| Response::Ack);
+    match request {
+        Request::TrayItems => tray
+            .items()
+            .await
+            .map_or_else(refused, |items| Response::TrayItems { items }),
+        Request::TrayActivate { key, secondary } => acked(tray.activate(&key, secondary).await),
+        Request::TrayMenu { key } => tray
+            .menu(&key)
+            .await
+            .map_or_else(refused, |entries| Response::TrayMenu { entries }),
+        Request::TrayTriggerMenu { key, id } => acked(tray.trigger(&key, id).await),
+        _ => Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "not a tray request",
+        )),
+    }
 }
