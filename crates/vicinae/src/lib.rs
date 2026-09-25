@@ -461,14 +461,21 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         }
 
         Command::Deeplink { url } => {
-            // Only the OAuth redirect so far; every other deeplink the C++
-            // takes (extensions, themes, the store) is refused by name rather
-            // than silently dropped.
-            if compass_worker_host::oauth_service::Redirect::parse(&url).is_err() {
-                anyhow::bail!("Compass does not handle this deeplink yet: {url}");
+            // The OAuth redirect and the store's extensions links; every other
+            // deeplink the C++ takes (themes, commands) is refused by name
+            // rather than silently dropped.
+            if compass_worker_host::oauth_service::Redirect::parse(&url).is_ok() {
+                ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
+                return Ok(ExitCode::from(EXIT_OK));
             }
-            ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
-            Ok(ExitCode::from(EXIT_OK))
+            match compass_core::store_listing::parse_extension_link(&url) {
+                Some(Ok(_)) => {
+                    ipc::send_ack(&socket, compass_ipc::Request::OpenDeeplink { url }).await?;
+                    Ok(ExitCode::from(EXIT_OK))
+                }
+                Some(Err(usage)) => anyhow::bail!("{usage}"),
+                None => anyhow::bail!("Compass does not handle this deeplink yet: {url}"),
+            }
         }
 
         Command::Conformance {

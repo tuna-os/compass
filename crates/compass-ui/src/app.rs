@@ -1506,20 +1506,24 @@ impl LauncherApp {
         // one reply. Set before any branch so every path answers exactly once.
         self.awaiting = true;
 
-        let dmenu = match command {
-            UiCommand::Dmenu(token) => self.start_dmenu(token),
-            UiCommand::Launch(token) => self.start_launch(token),
+        let opened = match &command {
+            UiCommand::Dmenu(token) => self.start_dmenu(*token),
+            UiCommand::Launch(token) => self.start_launch(*token),
+            UiCommand::Deeplink(url) => self.open_deeplink(url),
             _ => Task::none(),
         };
-        let shown = self.obey_visibility(command);
-        Task::batch([dmenu, shown])
+        let shown = self.obey_visibility(&command);
+        Task::batch([opened, shown])
     }
 
     /// The visibility half of [`Self::obey`]: every command but `Hide`
     /// shows the window, `Toggle` depending on where it is.
-    fn obey_visibility(&mut self, command: UiCommand) -> Task<Message> {
+    fn obey_visibility(&mut self, command: &UiCommand) -> Task<Message> {
         let show = match command {
-            UiCommand::Show | UiCommand::Dmenu(_) | UiCommand::Launch(_) => true,
+            UiCommand::Show
+            | UiCommand::Dmenu(_)
+            | UiCommand::Launch(_)
+            | UiCommand::Deeplink(_) => true,
             UiCommand::Hide => false,
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
@@ -2431,7 +2435,8 @@ impl LauncherApp {
             | Message::StoreDetailLoaded(_)
             | Message::StoreInstalled(_)
             | Message::StoreUninstalled { .. }
-            | Message::StoreUrlOpened(_) => self.store_message(message),
+            | Message::StoreUrlOpened(_)
+            | Message::StoreConfirmAnswered(_) => self.store_message(message),
             Message::Back => {
                 // Escape on a dmenu list dismisses it and the launcher, as the
                 // C++'s instant dismiss does.
@@ -3675,6 +3680,30 @@ impl LauncherApp {
         accessory: Option<String>,
         selected: bool,
     ) -> Element<'a, Message> {
+        let colour = if selected {
+            self.palette().selection_text
+        } else {
+            self.palette().muted
+        };
+        let accessory = accessory.filter(|text| !text.is_empty()).map(|accessory| {
+            text(accessory)
+                .font(self.font())
+                .size(f32::from(self.geometry.subtitle_size))
+                .color(colour.to_iced())
+                .into()
+        });
+        self.list_row_parts(icon, title, subtitle, accessory, selected)
+    }
+
+    /// [`Self::list_row_with`], with any element at the row's right.
+    fn list_row_parts<'a>(
+        &'a self,
+        icon: Element<'a, Message>,
+        title: String,
+        subtitle: Option<String>,
+        accessory: Option<Element<'a, Message>>,
+        selected: bool,
+    ) -> Element<'a, Message> {
         let geometry = self.geometry;
         let palette = self.palette();
         let title_color = if selected {
@@ -3703,15 +3732,8 @@ impl LauncherApp {
             );
         }
 
-        let line = match accessory.filter(|text| !text.is_empty()) {
-            Some(accessory) => row![
-                icon,
-                labels.width(Length::Fill),
-                text(accessory)
-                    .font(self.font())
-                    .size(f32::from(geometry.subtitle_size))
-                    .color(subtitle_color.to_iced())
-            ],
+        let line = match accessory {
+            Some(accessory) => row![icon, labels.width(Length::Fill), accessory],
             None => row![icon, labels],
         }
         .spacing(12)
@@ -8527,6 +8549,71 @@ mod tests {
             store_dir: Some(dir.to_path_buf()),
             ..TestBackend::default()
         })
+    }
+
+    #[test]
+    fn a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog() {
+        let dir = tempfile::tempdir().unwrap();
+        let extensions = dir.path().join("extensions");
+        fs::create_dir_all(&extensions).unwrap();
+        let backend = store_backend(&extensions);
+        {
+            let mut rows = backend.store_rows.lock().unwrap();
+            rows[1].installed = true;
+            rows[1].compat = Some(1);
+        }
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.window = Some(window::Id::unique());
+        let task = app.update(Message::Command(UiCommand::Deeplink(
+            "raycast://extensions/zoe/timer".into(),
+        )));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!(
+                "the deeplink did not open a detail page: {}",
+                app.state_line()
+            );
+        };
+        assert_eq!(detail.store, crate::backend::Store::Raycast);
+        assert_eq!(detail.detail.row.name, "timer");
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelActivate);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(detail.confirm, "the panel's uninstall asks first");
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Are you sure?").is_ok());
+            assert!(ui.find("Uninstall Timer").is_ok(), "a dialog with buttons");
+        }
+        let task = app.update(Message::StoreConfirmAnswered(false));
+        settle(&mut app, task);
+        let Page::StoreDetail(detail) = &app.page else {
+            panic!("left the detail page");
+        };
+        assert!(
+            !detail.confirm && detail.detail.row.installed,
+            "Cancel keeps it"
+        );
+
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        let Page::Store(_) = &app.page else {
+            panic!("Escape did not go to the list: {}", app.state_line());
+        };
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Partial").is_ok(), "the tier beside its dot");
+        }
+
+        let bad = app.update(Message::Command(UiCommand::Deeplink(
+            "vicinae://extensions/only-one".into(),
+        )));
+        settle(&mut app, bad);
     }
 
     #[test]

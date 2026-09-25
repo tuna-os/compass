@@ -6496,6 +6496,7 @@ dependencies = [
  "notify",
  "notify-rust",
  "oo7",
+ "pulldown-cmark",
  "seccompiler",
  "serde",
  "serde_json",

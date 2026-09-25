@@ -49,6 +49,49 @@ pub const INSTALLED: &str = "Extension installed";
 /// What an install in progress says.
 pub const DOWNLOADING: &str = "Downloading extension...";
 
+/// The colour a compatibility tier's dot is drawn in, as RGB: green,
+/// orange, red, and grey for unknown.
+#[must_use]
+pub const fn compat_colour(tier: u8) -> (u8, u8, u8) {
+    match tier {
+        0 => (0x3a, 0x9c, 0x61),
+        1 => (0xf0, 0x88, 0x3e),
+        2 => (0xb9, 0x54, 0x3b),
+        _ => (0x8a, 0x8a, 0x8a),
+    }
+}
+
+/// The text of a row's accessory before the compatibility dot: installed or
+/// out of date, and the download count.
+#[must_use]
+pub fn status_text(row: &StoreRow) -> String {
+    let mut parts = Vec::new();
+    if row.update_available {
+        parts.push("Update available".to_owned());
+    } else if row.installed {
+        parts.push("Installed".to_owned());
+    }
+    if !row.downloads.is_empty() {
+        parts.push(format!("↓ {}", row.downloads));
+    }
+    parts.join(" · ")
+}
+
+/// Every image URL a Markdown document shows, in order.
+#[must_use]
+pub fn markdown_images(items: &[iced::widget::markdown::Item]) -> Vec<String> {
+    use iced::widget::markdown::Item;
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            Item::Image { url, .. } => out.push(url.clone()),
+            Item::Quote(inner) => out.extend(markdown_images(inner)),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// The words a compatibility tier is shown as.
 #[must_use]
 pub const fn compat_label(tier: u8) -> &'static str {
@@ -241,12 +284,20 @@ impl StorePage {
         }
     }
 
-    /// The rows' icon URLs not yet asked for.
+    /// The rows' icon and avatar URLs not yet asked for.
     pub fn wanted_images(&mut self, dark: bool) -> Vec<String> {
         let urls: Vec<String> = self
             .rows
             .iter()
-            .filter_map(|row| icon_url(row, dark).map(str::to_owned))
+            .flat_map(|row| {
+                [
+                    icon_url(row, dark).map(str::to_owned),
+                    row.author_avatar
+                        .clone()
+                        .filter(|url| crate::remote_image::is_remote(url)),
+                ]
+            })
+            .flatten()
             .collect();
         self.images.wanted(urls.iter().map(String::as_str))
     }
@@ -291,19 +342,17 @@ impl StoreDetailPage {
         }
     }
 
-    /// The icon and screenshot URLs not yet asked for.
+    /// The icon, avatar, screenshot and README image URLs not yet asked
+    /// for.
     pub fn wanted_images(&mut self, dark: bool) -> Vec<String> {
         let mut urls: Vec<String> = icon_url(&self.detail.row, dark)
             .map(str::to_owned)
             .into_iter()
             .collect();
-        urls.extend(
-            self.detail
-                .screenshots
-                .iter()
-                .filter(|url| crate::remote_image::is_remote(url))
-                .cloned(),
-        );
+        urls.extend(self.detail.row.author_avatar.clone());
+        urls.extend(self.detail.screenshots.iter().cloned());
+        urls.extend(markdown_images(&self.markdown));
+        urls.retain(|url| crate::remote_image::is_remote(url));
         self.images.wanted(urls.iter().map(String::as_str))
     }
 }

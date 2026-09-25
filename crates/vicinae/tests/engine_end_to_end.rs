@@ -2546,6 +2546,41 @@ exit 0
     );
 }
 
+#[test]
+fn an_extensions_deeplink_goes_to_the_window_and_a_malformed_one_is_refused() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let open = |url: &str| {
+        daemon.request(Request::OpenDeeplink {
+            url: url.to_owned(),
+        })
+    };
+    let Response::Error(err) = open("vicinae://extensions/only-one") else {
+        panic!("a link with one segment was not refused");
+    };
+    assert_eq!(
+        (err.kind, err.message.as_str()),
+        (
+            ErrorKind::BadRequest,
+            compass_core::store_listing::EXTENSION_LINK_USAGE
+        )
+    );
+    let Response::Error(err) = open("vicinae://theme/set/x") else {
+        panic!("a deeplink the launcher does not handle was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+    // A good link goes to the window, and there is none attached here.
+    let Response::Error(err) = open("raycast://extensions/thomas/spotify-player") else {
+        panic!("a deeplink with no window to show it was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(
+        err.message.contains("no launcher window"),
+        "{}",
+        err.message
+    );
+}
+
 /// A file manager that records what it was asked to show.
 struct FakeFileManager {
     shown: std::sync::Arc<std::sync::Mutex<Vec<String>>>,

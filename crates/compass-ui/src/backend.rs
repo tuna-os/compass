@@ -448,6 +448,8 @@ pub struct StoreRow {
     pub update_available: bool,
     /// Its Raycast compatibility tier, where there is a sheet.
     pub compat: Option<u8>,
+    /// Its author's avatar URL.
+    pub author_avatar: Option<String>,
 }
 
 /// One store extension's detail page.

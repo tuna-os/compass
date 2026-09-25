@@ -39,7 +39,7 @@ use tokio::sync::mpsc;
 /// Mirrors `compass_ipc::WindowCommand` without depending on it, for the reason
 /// in the module docs. `vicinae` converts between them in one place, and a test
 /// there fails if the two ever disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiCommand {
     /// Become visible and take focus.
     Show,
@@ -51,6 +51,8 @@ pub enum UiCommand {
     Dmenu(u64),
     /// Show, and take the launch an extension asked for under this token.
     Launch(u64),
+    /// Show, at what a deeplink names: a store extension's detail page.
+    Deeplink(String),
 }
 
 /// What the window reports back, as the state it ended in.

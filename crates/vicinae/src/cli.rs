@@ -187,9 +187,11 @@ pub enum Command {
     /// Hand a deeplink to the running engine.
     ///
     /// What the desktop runs for `raycast://`, `com.raycast:` and `vicinae://`
-    /// URLs, and what a bare `vicinae <url>` becomes. Today it carries an
-    /// OAuth provider's redirect (`raycast://oauth?code=…&state=…`) back to
-    /// the extension that asked; other deeplinks are refused by name.
+    /// URLs, and what a bare `vicinae <url>` becomes. It carries an OAuth
+    /// provider's redirect (`raycast://oauth?code=…&state=…`) back to the
+    /// extension that asked, and opens a store extension's detail page for
+    /// `vicinae://extensions/<author>/<name>` (the Raycast store's for the
+    /// `raycast://` spellings); other deeplinks are refused by name.
     Deeplink {
         /// The URL, verbatim.
         url: String,

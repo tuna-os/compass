@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 /// [`Request::ExtensionLaunchFetch`]), its subtitle override in root search
 /// ([`Request::ExtensionSubtitles`]), and a command's preferences form without
 /// running it ([`Request::ExtensionPreferences`]); version 16, media arguments,
-/// Now Playing and the launcher's font.
+/// Now Playing, the launcher's font, store avatars and extension deeplinks.
 pub const PROTOCOL_VERSION: u16 = 16;
 
 /// A client-to-server frame.
@@ -614,6 +614,14 @@ pub enum Request {
         /// The family's name.
         family: String,
     },
+    /// A deeplink the launcher handles (`vicinae://extensions/<author>/<name>`
+    /// and its `raycast://` spellings), pushed to the window as
+    /// [`WindowCommand::Deeplink`]. Answered with [`Response::Ack`] once the
+    /// window shows it; one it does not handle is a bad request.
+    OpenDeeplink {
+        /// The URL.
+        url: String,
+    },
 }
 
 /// What the engine answers.
@@ -945,6 +953,8 @@ pub struct StoreEntry {
     /// Its Raycast compatibility tier (0 compatible, 1 partial,
     /// 2 incompatible, 3 unknown); `None` where there is no sheet.
     pub compat: Option<u8>,
+    /// Its author's avatar URL, when the store has one. (v16.)
+    pub author_avatar: Option<String>,
 }
 
 /// One extension's detail page.
@@ -1073,7 +1083,7 @@ pub struct FileHit {
 }
 
 /// What the engine asks an attached window to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WindowCommand {
     /// Become visible and take focus.
     Show,
@@ -1089,6 +1099,9 @@ pub enum WindowCommand {
     /// Show, and take the launch an extension asked for under this token:
     /// fetched with [`Request::ExtensionLaunchFetch`]. Answered like `Show`.
     Launch(u64),
+    /// Show, at what the deeplink names (a store extension's detail page).
+    /// Answered, like `Show`, with [`WindowOutcome::Shown`]. (v16.)
+    Deeplink(String),
 }
 
 /// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and

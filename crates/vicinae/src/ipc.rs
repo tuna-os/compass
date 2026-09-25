@@ -148,6 +148,7 @@ fn describe(request: &Request) -> &'static str {
         Request::ListMediaPlayers => "ListMediaPlayers",
         Request::ControlMediaPlayer { .. } => "ControlMediaPlayer",
         Request::SetFont { .. } => "SetFont",
+        Request::OpenDeeplink { .. } => "OpenDeeplink",
         Request::Dmenu { .. } => "Dmenu",
         Request::DmenuFetch { .. } => "DmenuFetch",
         Request::DmenuChoose { .. } => "DmenuChoose",

@@ -192,6 +192,8 @@ pub enum Message {
     FontsCategoryChanged(String),
     /// "Set as vicinae font" was saved, with the family, or could not be.
     FontSet(Result<String, String>),
+    /// The uninstall dialog was answered: `true` uninstalls.
+    StoreConfirmAnswered(bool),
     /// A Browse Fonts row was clicked, by position.
     FontSelected(usize),
     /// A family's specimen arrived, or why not.

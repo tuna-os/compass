@@ -104,6 +104,7 @@ async fn echo_handler(request: Request) -> Response {
         | Request::RunMediaCommandWith { .. }
         | Request::ControlMediaPlayer { .. }
         | Request::SetFont { .. }
+        | Request::OpenDeeplink { .. }
         | Request::ExtensionEvent { .. }
         | Request::ExtensionPop { .. }
         | Request::SetExtensionPreferences { .. }

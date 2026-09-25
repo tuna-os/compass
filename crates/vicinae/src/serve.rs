@@ -2274,6 +2274,21 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 }
             }
         }
+        Request::OpenDeeplink { url } => {
+            match compass_core::store_listing::parse_extension_link(&url) {
+                Some(Ok(_)) => {
+                    let slot = state.read().await.window_slot();
+                    forward(&slot, WindowCommand::Deeplink(url), "open a deeplink").await
+                }
+                Some(Err(usage)) => {
+                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, usage))
+                }
+                None => Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    format!("Compass does not handle this deeplink yet: {url}"),
+                )),
+            }
+        }
         Request::DmenuFetch { token } => match state.read().await.dmenus.spec(token) {
             Some(spec) => Response::DmenuList { spec },
             None => Response::Error(ProtocolError::new(

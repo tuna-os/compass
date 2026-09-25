@@ -41,6 +41,7 @@ fn store_row(entry: compass_ipc::StoreEntry) -> compass_ui::backend::StoreRow {
         installed: entry.installed,
         update_available: entry.update_available,
         compat: entry.compat,
+        author_avatar: entry.author_avatar,
     }
 }
 

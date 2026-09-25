@@ -238,6 +238,9 @@ fn all_requests() -> Vec<Request> {
         Request::SetFont {
             family: "Noto Sans ไทย".into(),
         },
+        Request::OpenDeeplink {
+            url: "vicinae://extensions/zoë/clock".into(),
+        },
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -279,6 +282,7 @@ fn store_entry() -> compass_ipc::StoreEntry {
         installed: true,
         update_available: true,
         compat: Some(1),
+        author_avatar: Some("https://example.com/zoë.png".into()),
     }
 }
 
@@ -341,6 +345,9 @@ fn all_responses() -> Vec<Response> {
         Response::Window(WindowCommand::Toggle),
         Response::Window(WindowCommand::Dmenu(u64::MAX)),
         Response::Window(WindowCommand::Launch(u64::MAX)),
+        Response::Window(WindowCommand::Deeplink(
+            "vicinae://extensions/zoë/clock".into(),
+        )),
         Response::ClipboardHistory { entries: vec![] },
         Response::ClipboardHistory {
             entries: vec![
@@ -705,6 +712,7 @@ fn request_variants_are_exhaustive() {
             | Request::RunMediaCommandWith { .. }
             | Request::ListMediaPlayers
             | Request::SetFont { .. }
+            | Request::OpenDeeplink { .. }
             | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }
