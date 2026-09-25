@@ -44,8 +44,8 @@ use serde::{Deserialize, Serialize};
 /// or opening its preferences in the launcher ([`WindowCommand::Launch`],
 /// [`Request::ExtensionLaunchFetch`]), its subtitle override in root search
 /// ([`Request::ExtensionSubtitles`]), and a command's preferences form without
-/// running it ([`Request::ExtensionPreferences`]); version 16, media arguments and Now
-/// Playing.
+/// running it ([`Request::ExtensionPreferences`]); version 16, media arguments,
+/// Now Playing and the launcher's font.
 pub const PROTOCOL_VERSION: u16 = 16;
 
 /// A client-to-server frame.
@@ -607,6 +607,12 @@ pub enum Request {
         player: String,
         /// What to do.
         action: MediaPlayerAction,
+    },
+    /// "Set as vicinae font": write `font.normal.family` to `vicinae.json`.
+    /// Answered with [`Response::Ack`]; an empty family is a bad request.
+    SetFont {
+        /// The family's name.
+        family: String,
     },
 }
 

@@ -2385,6 +2385,33 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 )),
             }
         }
+        Request::SetFont { family } => {
+            let family = family.trim().to_owned();
+            if family.is_empty() {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::BadRequest,
+                    "a font family is needed",
+                ));
+            }
+            let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                let mut config = Config::load().unwrap_or_default();
+                config.set_font_family(&family);
+                config.save_to(compass_core::config::default_config_path()?)?;
+                Ok(())
+            })
+            .await;
+            match saved {
+                Ok(Ok(())) => Response::Ack,
+                Ok(Err(error)) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("could not save the font: {error}"),
+                )),
+                Err(error) => Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("saving the font failed: {error}"),
+                )),
+            }
+        }
         Request::SetTheme { theme } => {
             let _ = tokio::task::spawn_blocking(compass_ui::theme::load_default_user_themes).await;
             let Some(parsed) = compass_ui::theme::Theme::from_name(&theme) else {

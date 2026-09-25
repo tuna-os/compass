@@ -139,6 +139,70 @@ pub fn static_family(family: &str) -> &'static str {
     leaked
 }
 
+/// A move in the grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridMove {
+    /// One tile back.
+    Left,
+    /// One tile on.
+    Right,
+    /// One row up.
+    Up,
+    /// One row down.
+    Down,
+}
+
+/// Where the selection goes in a grid of `len` tiles, `columns` wide.
+///
+/// Left and Right step through the tiles in reading order and, with `wrap`,
+/// run from one end to the other. Up and Down keep the column: a row up from
+/// the first row wraps to the same column of the last row; a row down from a
+/// tile with nothing below it lands on the last tile when there is a shorter
+/// row below, and wraps to the first row from the last.
+#[must_use]
+pub fn grid_step(len: usize, current: usize, columns: usize, step: GridMove, wrap: bool) -> usize {
+    if len == 0 || columns == 0 {
+        return 0;
+    }
+    let current = current.min(len - 1);
+    let last_row = (len - 1) / columns;
+    let (row, column) = (current / columns, current % columns);
+    match step {
+        GridMove::Left if current > 0 => current - 1,
+        GridMove::Left => {
+            if wrap {
+                len - 1
+            } else {
+                current
+            }
+        }
+        GridMove::Right if current + 1 < len => current + 1,
+        GridMove::Right => {
+            if wrap {
+                0
+            } else {
+                current
+            }
+        }
+        GridMove::Up if row > 0 => current - columns,
+        GridMove::Up => {
+            if wrap {
+                (last_row * columns + column).min(len - 1)
+            } else {
+                current
+            }
+        }
+        GridMove::Down if row < last_row => (current + columns).min(len - 1),
+        GridMove::Down => {
+            if wrap {
+                column
+            } else {
+                current
+            }
+        }
+    }
+}
+
 /// One line of a specimen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecimenLine {
@@ -198,6 +262,30 @@ pub struct FontPreviewPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_grid_moves_by_tile_and_by_row() {
+        // 14 tiles, 6 wide: rows of 6, 6 and 2.
+        assert_eq!(grid_step(14, 0, 6, GridMove::Right, false), 1);
+        assert_eq!(
+            grid_step(14, 5, 6, GridMove::Right, false),
+            6,
+            "reading order"
+        );
+        assert_eq!(grid_step(14, 2, 6, GridMove::Down, false), 8);
+        assert_eq!(
+            grid_step(14, 9, 6, GridMove::Down, false),
+            13,
+            "a shorter row below"
+        );
+        assert_eq!(grid_step(14, 13, 6, GridMove::Down, false), 13);
+        assert_eq!(grid_step(14, 13, 6, GridMove::Down, true), 1);
+        assert_eq!(grid_step(14, 1, 6, GridMove::Up, true), 13);
+        assert_eq!(grid_step(14, 4, 6, GridMove::Up, true), 13, "clamped");
+        assert_eq!(grid_step(14, 0, 6, GridMove::Left, true), 13);
+        assert_eq!(grid_step(14, 0, 6, GridMove::Left, false), 0);
+        assert_eq!(grid_step(0, 3, 6, GridMove::Down, true), 0);
+    }
     use crate::backend::FontListEntry;
 
     fn list() -> FontList {

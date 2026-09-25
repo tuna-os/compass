@@ -3600,6 +3600,18 @@ fn set_theme_keeps_the_theme_in_the_configuration() {
     );
     let saved = std::fs::read_to_string(config_file.get().unwrap()).unwrap();
     assert!(saved.contains("\"harbour\""), "{saved}");
+
+    // "Set as vicinae font" writes `font.normal.family` beside it.
+    assert_eq!(
+        daemon.request(Request::SetFont {
+            family: "Fira Sans".into()
+        }),
+        Response::Ack
+    );
+    let saved = std::fs::read_to_string(config_file.get().unwrap()).unwrap();
+    let parsed = compass_core::Config::parse(&saved, std::path::Path::new("vicinae.json")).unwrap();
+    assert_eq!(parsed.font_family(), Some("Fira Sans"));
+    assert!(saved.contains("\"harbour\""), "the theme is kept: {saved}");
     assert_eq!(
         daemon.request(Request::SetTheme {
             theme: "Tokyo-Night".into()

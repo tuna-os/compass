@@ -777,6 +777,42 @@ impl Config {
         &self.unknown
     }
 
+    /// `font.normal.family`, when it names a family: `auto` and `system`
+    /// (and no value) mean the launcher picks, which here is the desktop's
+    /// interface font.
+    #[must_use]
+    pub fn font_family(&self) -> Option<&str> {
+        let family = self
+            .unknown
+            .get("font")?
+            .get("normal")?
+            .get("family")?
+            .as_str()?
+            .trim();
+        (!family.is_empty() && family != "auto" && family != "system").then_some(family)
+    }
+
+    /// Sets `font.normal.family`, keeping the rest of the `font` object (its
+    /// `rendering` and `normal.size`), as "Set as vicinae font" merges it.
+    pub fn set_font_family(&mut self, family: &str) -> &mut Self {
+        if !matches!(self.unknown.get("font"), Some(Value::Object(_))) {
+            self.unknown
+                .insert("font".to_owned(), Value::Object(serde_json::Map::new()));
+        }
+        if let Some(Value::Object(font)) = self.unknown.get_mut("font") {
+            let normal = font
+                .entry("normal")
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            if !normal.is_object() {
+                *normal = Value::Object(serde_json::Map::new());
+            }
+            if let Some(normal) = normal.as_object_mut() {
+                normal.insert("family".to_owned(), Value::String(family.to_owned()));
+            }
+        }
+        self
+    }
+
     /// Parses `data`. An empty or whitespace-only input yields the default configuration.
     ///
     /// `path` is used only to build error messages.

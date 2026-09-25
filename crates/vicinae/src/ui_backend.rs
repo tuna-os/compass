@@ -108,6 +108,18 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn set_font(&self, family: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::SetFont { family }, "Setting the font")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn list_media_players(&self) -> BackendFuture<'_, Vec<compass_ui::backend::MediaPlayerRow>> {
         Box::pin(async move {
             match self

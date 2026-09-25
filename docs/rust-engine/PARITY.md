@@ -192,7 +192,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | 🟡 | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
@@ -201,7 +201,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | 🟡 | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
@@ -340,8 +340,9 @@ index-minus-one arithmetic, and the remembered choice that is restored only when
 the two headings with their counts, the search that scores the display name alone, the missing-glyph
 placeholder and the colour-font rule that leaves an emoji font untinted, and the action panel whose
 *primary* action is Preview rather than apply. The thirty-three-category table itself belongs to
-`src/services/font-service`, which is its own row. Still C++-only: the grid widget and the specimen
-view.
+`src/services/font-service`, which is its own row. The grid (six columns), the specimen view,
+"Set as vicinae font" and the remembered category are in the launcher; what differs is under
+"Browse Fonts" below.
 
 **`src/builtins/developer` → `compass-core::create_extension`** — the Create Extension form's
 validation and what follows it: all six checks run every time so every mistake shows at once, the
@@ -356,7 +357,8 @@ other when it does not match), the sort that only happens when something is type
 description weights with the id *not* searchable, the `Default theme description` fallback
 subtitle, the eight palette swatches in the row's order, the action panel's two conditional
 actions, and the live preview — selecting a row applies the theme and leaving the view puts the
-configured one back. Still C++-only: the view host and the swatch rendering.
+configured one back. The view, the swatches and the theme files are in the launcher and
+`compass-core::theme_file`; what differs is under "Set Theme" below.
 
 **`src/builtins/power-management` → `compass-core::power_commands`** — the catalogue and the run
 plan are ported: eight commands in registration order with their titles, long descriptions and
@@ -2280,9 +2282,9 @@ panel offers "Preview font" and "Copy font family". What differs:
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | A family's scripts come from `QFontDatabase::writingSystems`, which on Linux is fontconfig's language coverage. | Read from the font's character map (`ttf-parser`), one or two sample characters per script (`font_service::SCRIPT_SAMPLES`), over the fonts `fontdb` finds on the fontconfig path. A font whose coverage claims and cmap disagree can land in a different category. | `a_font_file_is_found_and_classified_by_what_it_covers`, `browse_fonts_lists_families_and_previews_one` |
-| 2 | A six-column grid of glyph tiles. | A list: glyph, name, and its category as the subtitle. | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
-| 3 | "Set as vicinae font" sets the launcher's font. | Not offered: the launcher follows the desktop's interface font and has no font setting yet. | — |
-| 4 | The chosen category is remembered across openings (`fontCategory` in local storage). | Kept while the launcher is shown (across a preview); a new opening starts at "All". | `browse_fonts_filters_previews_and_goes_back_to_the_same_list` |
+| 2 | A six-column grid of glyph tiles. | The same (`font_browser::COLUMNS`): each tile the glyph in the family over its name; arrows move along a row and between rows keeping the column (`fonts_page::grid_step`). | `the_grid_moves_by_tile_and_by_row`, `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font` |
+| 3 | "Set as vicinae font" merges `font.normal.family` into `vicinae.json`, and the launcher redraws in it. | The same write (IPC v16 `SetFont`, keeping the rest of `font`), and this window switches at once. A configured family now wins over the desktop's interface font at start, which the launcher then stops following; `auto` and `system` mean the desktop's (the C++'s `auto` is its bundled Inter, which Compass does not ship). | `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font`, `set_theme_keeps_the_theme_in_the_configuration` |
+| 4 | The chosen category is remembered across openings (`fontCategory` in the command's local storage), restored only when some font still has it. | Remembered across openings and restarts with the same restore rule (`index_for_saved`), in `$XDG_STATE_HOME/vicinae/compass-view-state.json` rather than the command's local storage: that is the engine's encrypted database, which needs the login keyring, and a filter is not a secret. | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `a_value_survives_a_new_process` |
 | 5 | The specimen is Markdown rendered in the family. | The same Markdown read back line by line (heading, regular, bold, italic, rule) and drawn in the family; bold and italic ask the renderer for that face, which synthesises nothing when the family has none. | `a_specimen_reads_back_as_lines` |
 
 ### Rhai scripts — a Compass addition, with no C++ counterpart

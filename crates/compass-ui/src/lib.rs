@@ -45,6 +45,7 @@ pub mod surface;
 pub mod theme;
 pub mod themes_page;
 pub mod typography;
+pub mod view_memory;
 pub mod windows_page;
 
 pub use app::{AppFlags, Dismissal, LauncherApp, next_selection};

@@ -235,6 +235,9 @@ fn all_requests() -> Vec<Request> {
             argument: Some("spötify".into()),
         },
         Request::ListMediaPlayers,
+        Request::SetFont {
+            family: "Noto Sans ไทย".into(),
+        },
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -701,6 +704,7 @@ fn request_variants_are_exhaustive() {
             | Request::ExtensionPreferences { .. }
             | Request::RunMediaCommandWith { .. }
             | Request::ListMediaPlayers
+            | Request::SetFont { .. }
             | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }

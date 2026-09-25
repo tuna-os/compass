@@ -35,6 +35,13 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// "Set as vicinae font": makes `family` the launcher's font in the
+    /// configuration.
+    fn set_font(&self, family: String) -> BackendFuture<'_, ()> {
+        let _ = family;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The running media players, for Now Playing.
     fn list_media_players(&self) -> BackendFuture<'_, Vec<MediaPlayerRow>> {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })

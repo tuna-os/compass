@@ -196,6 +196,9 @@ pub struct AppFlags {
     pub theme: crate::theme::Theme,
     /// Where Set Theme looks for theme files; none in tests.
     pub theme_dirs: Vec<std::path::PathBuf>,
+    /// The file views' remembered filters are kept in; `None` keeps them in
+    /// memory, as tests do.
+    pub view_state_path: Option<std::path::PathBuf>,
     /// Window configuration.
     pub window_config: window::Settings,
     /// How to launch the selected application.
@@ -288,6 +291,7 @@ impl Default for AppFlags {
         Self {
             theme: crate::theme::Theme::System,
             theme_dirs: Vec::new(),
+            view_state_path: None,
             window_config: window::Settings {
                 size: iced::Size::new(
                     f32::from(GEOMETRY.card_width + 2 * design::SHADOW_PADDING),
@@ -679,6 +683,8 @@ pub struct LauncherApp {
     theme_choice: crate::theme::Theme,
     /// Where Set Theme looks for theme files.
     theme_dirs: Vec<std::path::PathBuf>,
+    /// What views remember between openings.
+    view_memory: crate::view_memory::ViewMemory,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -926,6 +932,7 @@ impl LauncherApp {
         app.exit_on_engine_disconnect = flags.exit_on_engine_disconnect;
         app.theme_choice = flags.theme;
         app.theme_dirs = flags.theme_dirs;
+        app.view_memory = crate::view_memory::ViewMemory::load(flags.view_state_path);
         app.appearance = flags.appearance;
         app.appearance_link = flags.appearance_link;
         app.font_family = flags.font_family;
@@ -979,6 +986,7 @@ impl LauncherApp {
             window_config: AppFlags::default().window_config,
             theme_choice: crate::theme::Theme::System,
             theme_dirs: Vec::new(),
+            view_memory: crate::view_memory::ViewMemory::default(),
             theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
@@ -2392,6 +2400,7 @@ impl LauncherApp {
             Message::FontsLoaded(_)
             | Message::FontsQueryChanged(_)
             | Message::FontsCategoryChanged(_)
+            | Message::FontSet(_)
             | Message::FontSelected(_)
             | Message::FontSpecimenLoaded { .. } => self.font_message(message),
             Message::StoreLoaded { .. }
@@ -5043,6 +5052,8 @@ mod tests {
         played: std::sync::Mutex<Vec<String>>,
         /// The players Now Playing lists.
         players: std::sync::Mutex<Vec<crate::backend::MediaPlayerRow>>,
+        /// The families "Set as vicinae font" saved.
+        fonts_set: std::sync::Mutex<Vec<String>>,
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
@@ -5234,6 +5245,13 @@ mod tests {
                     ],
                     categories: vec!["Latin".into(), "Monospace".into()],
                 })
+            })
+        }
+
+        fn set_font(&self, family: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.fonts_set.lock().unwrap().push(family);
+                Ok(())
             })
         }
 
@@ -8218,6 +8236,54 @@ mod tests {
             settle(&mut app, task),
             ["JetBrains Mono"],
             "Copy font family"
+        );
+    }
+
+    #[test]
+    fn browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut app, "browse fonts", "commands:browse-fonts");
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowRight));
+        settle(&mut app, task);
+        let Page::Fonts(page) = &app.page else {
+            panic!("not Browse Fonts: {}", app.state_line());
+        };
+        assert_eq!(page.selected, 1, "Right moves along the row");
+        let _ = app.view();
+
+        let task = app.update(Message::FontsCategoryChanged("Monospace".into()));
+        settle(&mut app, task);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let _ = app.update(Message::PanelMove(Direction::Down));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.fonts_set.lock().unwrap().as_slice(),
+            ["JetBrains Mono"]
+        );
+        assert_eq!(app.font_family.as_deref(), Some("JetBrains Mono"));
+
+        let task = app.update(Message::Dismiss);
+        settle(&mut app, task);
+        let mut reopened = LauncherApp::with_index(index(dir.path()));
+        reopened.backend = Some(backend);
+        reopened.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut reopened, "browse fonts", "commands:browse-fonts");
+        let Page::Fonts(page) = &reopened.page else {
+            panic!("not Browse Fonts: {}", reopened.state_line());
+        };
+        assert_eq!(
+            page.category.as_deref(),
+            Some("Monospace"),
+            "the category is remembered across processes"
         );
     }
 

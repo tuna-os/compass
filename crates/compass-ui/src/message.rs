@@ -188,6 +188,8 @@ pub enum Message {
     FontsQueryChanged(String),
     /// Browse Fonts' category filter changed, to the option titled so.
     FontsCategoryChanged(String),
+    /// "Set as vicinae font" was saved, with the family, or could not be.
+    FontSet(Result<String, String>),
     /// A Browse Fonts row was clicked, by position.
     FontSelected(usize),
     /// A family's specimen arrived, or why not.

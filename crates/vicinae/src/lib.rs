@@ -189,6 +189,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             color_scheme,
             theme_choice,
             root_config,
+            configured_font,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -206,6 +207,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     appearance.color_scheme().to_owned(),
                     compass_ui::theme::Theme::from_name(appearance.theme()).unwrap_or_default(),
                     config.root_config(),
+                    config.font_family().map(str::to_owned),
                 )
             }
             Err(error) => {
@@ -218,6 +220,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_core::config::DEFAULT_COLOR_SCHEME.to_owned(),
                     compass_ui::theme::Theme::System,
                     compass_core::root_items::RootConfig::default(),
+                    None,
                 )
             }
         };
@@ -250,7 +253,12 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
 
         // The interface typeface: portal first, gsettings fallback, same
         // 250 ms budget as above so a wedged portal never blocks startup.
-        let (font_family, typography_link) = typography::follow();
+        // A family set in `font.normal.family` ("Set as vicinae font") wins
+        // over the desktop's, which is then not followed.
+        let (font_family, typography_link) = match configured_font {
+            Some(family) => (Some(family), None),
+            None => typography::follow(),
+        };
 
         // One adapter serves both: application search and clipboard history
         // go to the same engine over the same socket.
@@ -286,6 +294,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             font_family,
             typography_link,
             theme_dirs: compass_core::theme_file::default_search_dirs(),
+            view_state_path: compass_ui::view_memory::default_path(),
             ..compass_ui::AppFlags::default()
         };
 

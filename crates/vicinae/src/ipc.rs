@@ -147,6 +147,7 @@ fn describe(request: &Request) -> &'static str {
         Request::RunMediaCommandWith { .. } => "RunMediaCommandWith",
         Request::ListMediaPlayers => "ListMediaPlayers",
         Request::ControlMediaPlayer { .. } => "ControlMediaPlayer",
+        Request::SetFont { .. } => "SetFont",
         Request::Dmenu { .. } => "Dmenu",
         Request::DmenuFetch { .. } => "DmenuFetch",
         Request::DmenuChoose { .. } => "DmenuChoose",
