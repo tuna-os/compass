@@ -91,7 +91,6 @@ pub fn matching_windows<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn app(desktop_id: &str, wm_class: Option<&str>, display_name: &str) -> AppIdentity {
         AppIdentity {
@@ -99,23 +98,6 @@ mod tests {
             startup_wm_class: wm_class.map(ToOwned::to_owned),
             display_name: display_name.to_owned(),
         }
-    }
-
-    #[test]
-    fn the_cpp_still_removes_every_dot_desktop() {
-        // `QString::remove` is not `chopped`; if the C++ ever switches to
-        // stripping only a suffix, this port has to switch with it.
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("two levels below the repository root")
-            .join("src/server/src/services/app-service/xdg/xdg-app.hpp");
-        let cpp = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        assert!(
-            cpp.contains(r#"s.toLower().remove(".desktop")"#),
-            "the C++ normalisation has changed"
-        );
     }
 
     #[test]

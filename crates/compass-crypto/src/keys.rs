@@ -19,8 +19,8 @@
 //! > otherwise the affected database files must be deleted to reset.
 //!
 //! That is a user losing their clipboard history to a typo. So these constants
-//! are not retyped and trusted — `tests/cpp_constants.rs` reads them back out
-//! of the C++ sources and fails if either side moves.
+//! are pinned to upstream Vicinae's by `tests/upstream_constants.rs`, which
+//! fails if they move.
 //!
 //! # What is deliberately not here yet
 //!

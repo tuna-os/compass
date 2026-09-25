@@ -86,7 +86,7 @@ install -Dm644 "$repo_root/packaging/systemd/compass.service" \
 
 # The Icon.* set extensions draw with, found through $XDG_DATA_DIRS as
 # compass/builtin-icons (compass_core::builtin_icon).
-install -Dm644 -t "$share/compass/builtin-icons" "$repo_root"/src/server/icons/*.svg
+install -Dm644 -t "$share/compass/builtin-icons" "$repo_root"/extra/builtin-icons/*.svg
 
 # The published compass.json schema, so an editor can be pointed at a local
 # copy that matches the installed build.

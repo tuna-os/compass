@@ -24,7 +24,7 @@ on:
       - scripts/build-extension-runtime.sh
       - flake.nix
       - flake.lock
-      - nix/compass.nix
+      - packaging/nix/compass.nix
       - crates/**
       - Cargo.toml
       - Cargo.lock
@@ -87,11 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build
-        env:
-          CXX: g++-14
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq g++-14
           ./scripts/build-extension-runtime.sh
           test -s src/typescript/extension-manager/dist/runtime.js
       - uses: actions/upload-artifact@v4

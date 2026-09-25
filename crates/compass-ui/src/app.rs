@@ -15327,7 +15327,7 @@ mod tests {
 
     fn repo_builtin_icons() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/server/icons")
+            .join("../../extra/builtin-icons")
             .canonicalize()
             .expect("the builtin icon set is in the repository")
     }

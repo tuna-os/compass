@@ -189,35 +189,11 @@ pub fn navigation(scheme: Scheme, chord: Chord) -> Option<Direction> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
-
-    const CPP: &str = "src/server/src/services/keybinding/keybinding-service.hpp";
-
-    fn read_cpp() -> String {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("two levels below the repository root")
-            .join(CPP);
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-    }
 
     #[test]
-    fn the_default_on_linux_is_vim_and_the_cpp_still_says_so() {
-        // The single most surprising line in the port. If the C++ ever stops
-        // defaulting to vim off macOS, this fails here rather than by users
-        // losing Ctrl+J.
-        let cpp = read_cpp();
-        let tail = cpp
-            .split("static KeyBindingMode getMode")
-            .nth(1)
-            .expect("getMode is still there");
-        let body = tail.split("\n  }").next().expect("its body");
-        assert!(
-            body.contains("return KeyBindingMode::Vim;"),
-            "{CPP}'s getMode no longer falls back to Vim: {body}"
-        );
-
+    fn the_default_on_linux_is_vim() {
+        // The single most surprising line in the port: off macOS the default
+        // is vim, so Ctrl+J moves down.
         assert_eq!(Scheme::from_config("default"), Scheme::platform_default());
         assert_eq!(Scheme::from_config(""), Scheme::platform_default());
         assert_eq!(Scheme::from_config("nonsense"), Scheme::platform_default());

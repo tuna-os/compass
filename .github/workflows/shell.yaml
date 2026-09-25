@@ -42,9 +42,6 @@ jobs:
       # not this project's to fix — failing the build on somebody else's shell
       # is how a lint job gets turned off. These directories are the ones
       # the Rust port added, so a warning in them is ours and is a defect.
-      # scripts/runners/bluefin is named specifically rather than
-      # scripts/runners, because that directory also holds the inherited arch/
-      # and appimage/ scripts, which are not.
       #
       # THIS LIST IS THE COST OF THAT PRECISION: a new directory of our own
       # scripts is NOT covered until it is named here, and nothing fails to
@@ -57,7 +54,7 @@ jobs:
       # assembled by string-interpolating a path into a shell command.
       - name: Collect
         run: |
-          find packaging/vmtest packaging/appimage scripts/vmtest scripts/tier2 scripts/flatpak scripts/packaging scripts/runners/bluefin -name '*.sh' -type f | sort > /tmp/ours.txt
+          find packaging/vmtest packaging/appimage scripts/vmtest scripts/tier2 scripts/flatpak scripts/packaging -name '*.sh' -type f | sort > /tmp/ours.txt
           test -s /tmp/ours.txt || { echo "::error::no scripts found — the paths have moved"; exit 1; }
           sed 's/^/  /' /tmp/ours.txt
 

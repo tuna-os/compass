@@ -3,7 +3,7 @@
 // score, take the top 20. Single-threaded, as upstream ranks.
 //
 // Build (no Qt, no CMake; vicinae::fuzzy is header-only):
-//   c++ -std=c++23 -O2 -Isrc/lib/fuzzy/include -o cpp-rank scripts/bench/fuzzy/cpp_rank.cpp
+//   c++ -std=c++23 -O2 -Iscripts/bench/upstream/fuzzy/include -o cpp-rank scripts/bench/fuzzy/cpp_rank.cpp
 // Run:
 //   cpp-rank HAYSTACK ITERATIONS QUERY...
 // Prints one tab-separated line per query: query, matches, median_ns, p95_ns.

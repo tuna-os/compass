@@ -16,21 +16,17 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration {
         id: "001_init.sql",
         version: 1,
-        sql: include_str!("../../../src/server/database/vicinae/migrations/001_init.sql"),
+        sql: include_str!("../migrations/vicinae/001_init.sql"),
     },
     Migration {
         id: "002_add_recent_files.sql",
         version: 2,
-        sql: include_str!(
-            "../../../src/server/database/vicinae/migrations/002_add_recent_files.sql"
-        ),
+        sql: include_str!("../migrations/vicinae/002_add_recent_files.sql"),
     },
     Migration {
         id: "003_add_oauth_token_store.sql",
         version: 3,
-        sql: include_str!(
-            "../../../src/server/database/vicinae/migrations/003_add_oauth_token_store.sql"
-        ),
+        sql: include_str!("../migrations/vicinae/003_add_oauth_token_store.sql"),
     },
 ];
 
@@ -55,7 +51,7 @@ mod tests {
 
     #[test]
     fn the_embedded_content_hashes_to_what_the_cpp_engine_recorded() {
-        // `md5sum` over src/server/database/vicinae/migrations/. Pinned so that
+        // `md5sum` over crates/compass-db/migrations/vicinae/. Pinned so that
         // editing an applied migration fails here, at development time, rather
         // than against a user's existing database -- where the runtime check
         // would compare two copies that had moved together.

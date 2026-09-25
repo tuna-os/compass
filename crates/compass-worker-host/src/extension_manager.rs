@@ -2,10 +2,10 @@
 //!
 //! [`crate::rpc`] knows the envelope; this knows what goes inside it for the
 //! one service the host talks to. Both sides of that conversation are
-//! generated from `figura/manager.fig` — the worker's from
-//! `src/lib/figura/src/codegen/typescript.hpp`, the C++ engine's from the glaze
-//! generator — so this is the third implementation of one IDL, and the tests
-//! below read the IDL rather than restating it.
+//! generated from `figura/manager.fig` — the worker's by the figura generator
+//! (`crates/compass-figura`), the C++ engine's by its glaze generator until
+//! that engine was removed — so this is another implementation of one IDL, and
+//! the tests below read the IDL rather than restating it.
 //!
 //! # Two details that are not guessable and were read out of the generator
 //!
@@ -256,7 +256,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     const FIG: &str = "figura/manager.fig";
-    const CODEGEN: &str = "src/lib/figura/src/codegen/typescript.hpp";
+    const WORKER_SERVER: &str = "src/typescript/extension-manager/src/proto/manager.ts";
+    const WORKER_CLIENT: &str = "src/typescript/extension-manager/src/proto/api.ts";
 
     fn repo_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -456,14 +457,14 @@ mod tests {
         // Everything below assumes it. If the generator switched to positional
         // params, or to passing a single struct unwrapped, every call in this
         // module would reach a handler with undefined arguments and no error.
-        let codegen = read(CODEGEN);
         assert!(
-            codegen.contains(r#"oss << "\t\treturn this.transport.request(" << std::quoted(methodName) << ", { ";"#),
-            "{CODEGEN} no longer builds a named params object for requests"
+            read(WORKER_CLIENT)
+                .contains(r#"return this.transport.request("Storage/get", { key});"#),
+            "{WORKER_CLIENT} no longer builds a named params object for requests"
         );
         assert!(
-            codegen.contains(r#"oss << "msg.params." << p.name;"#),
-            "{CODEGEN} no longer routes server-side params by parameter name"
+            read(WORKER_SERVER).contains("this.Manager.unload(msg.params.session_id)"),
+            "{WORKER_SERVER} no longer routes server-side params by parameter name"
         );
     }
 

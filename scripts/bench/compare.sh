@@ -38,7 +38,7 @@ cargo build --release --locked -p compass -p compass-testkit -p compass-sandbox 
   --bin compass --bin compass-file-indexer --bin fuzzy-throughput --bin compass-sandbox-exec
 target=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
 
-c++ -std=c++23 -O2 -I"$root/src/lib/fuzzy/include" -o "$out/cpp-rank" "$root/scripts/bench/fuzzy/cpp_rank.cpp"
+c++ -std=c++23 -O2 -I"$root/scripts/bench/upstream/fuzzy/include" -o "$out/cpp-rank" "$root/scripts/bench/fuzzy/cpp_rank.cpp"
 
 {
   echo "commit: $(git -C "$root" rev-parse HEAD)$(git -C "$root" diff --quiet HEAD || echo ' (dirty)')"

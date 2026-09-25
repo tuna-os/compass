@@ -26,7 +26,7 @@ use anyhow::{Context, Result, bail};
 use compass_search::{Query, WeightedField, score_weighted};
 use compass_testkit::corpus::{Provenance, desktop_entries};
 
-/// Matches `fuzzy::MIN_QUALITY` in `src/lib/fuzzy/include/fuzzy/fuzzy-searchable.hpp`.
+/// Matches `fuzzy::MIN_QUALITY` in upstream `fuzzy-searchable.hpp` (`scripts/bench/upstream/fuzzy`).
 ///
 /// Duplicated deliberately rather than plumbed across the language boundary: if
 /// the C++ constant changes, this diff should go red and say so, not silently
@@ -224,7 +224,8 @@ fn main() -> Result<()> {
     }
     let probe = probe.context(
         "pass --probe <path to vicinae-fuzzy-probe>; build it with \
-         `c++ -std=c++23 -O2 -Isrc/lib/fuzzy/include -o probe src/lib/fuzzy/probe/main.cpp`",
+         `c++ -std=c++23 -O2 -Iscripts/bench/upstream/fuzzy/include -o probe \
+         scripts/bench/probes/fuzzy-probe.cpp`",
     )?;
 
     let items = corpus_items();

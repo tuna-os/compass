@@ -28,3 +28,4 @@ drifting away from a recorded decision is not.
 | [0018](./0018-the-open-calls-decided.md) | Screen-reader users keep the accessible engine until the Rust one has a tree; Phase 1's gate reworded; one-person plan; rustcast was a seed; the parity gate keeps blocking; nothing reported upstream | Accepted |
 | [0019](./0019-an-unsafe-bridge-for-the-launchers-surface.md) | One `unsafe` bridge from a toolkit window's raw handles to wayland-client proxies, in `compass-wayland-foreign`, for blur behind the launcher | Accepted |
 | [0020](./0020-phase-7-rebrand.md) | The Phase 7 rebrand: `org.tunaos.compass`, the `compass` command and `~/.config/compass`, with a one-time move of the `vicinae` directories; `@vicinae/api`, `vicinae://`, the Vicinae Store and `VICINAE_*` fallbacks stay | Accepted |
+| [0021](./0021-remove-the-cpp-engine.md) | The C++ engine leaves the repository; upstream Vicinae releases are the benchmark and differential reference | Accepted |
