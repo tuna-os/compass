@@ -24,6 +24,57 @@ pub struct ShortcutsPage {
     pub selected: usize,
     /// Why the last action did not happen, until the next keystroke.
     pub notice: Option<String>,
+    /// The detail pane for the selected shortcut, once the engine answered.
+    pub detail: Option<Detail>,
+}
+
+/// What the detail pane shows beyond the stored shortcut
+/// (`ManageShortcutsViewHost::loadDetail`): the link expanded and the
+/// application that opens it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Detail {
+    /// The shortcut's id, so a late answer for another row is dropped.
+    pub id: String,
+    /// The link with its placeholders filled, or why it could not be.
+    pub expanded: Result<String, String>,
+    /// The application's name, `(Default)` after it when it is the
+    /// default opener rather than a chosen one.
+    pub app: Option<String>,
+}
+
+/// The pane's metadata, as `loadDetail` lists it: name, application (when
+/// one resolves), how often and when it was last opened, and when it was
+/// created. `date` writes a Unix time as `QDateTime::toString()` does.
+#[must_use]
+pub fn detail_fields(
+    shortcut: &CachedShortcut,
+    app: Option<&str>,
+    date: impl Fn(u64) -> String,
+) -> Vec<(&'static str, String)> {
+    let mut fields = vec![("Name", shortcut.name.clone())];
+    if let Some(app) = app {
+        fields.push(("Application", app.to_owned()));
+    }
+    fields.push(("Opened", shortcut.open_count.to_string()));
+    fields.push((
+        "Last Opened",
+        shortcut
+            .last_opened_at
+            .map_or_else(|| "Never".to_owned(), &date),
+    ));
+    fields.push(("Created at", date(shortcut.created_at)));
+    fields
+}
+
+/// The application line: a chosen one by name, the default one with
+/// `(Default)` after it.
+#[must_use]
+pub fn app_label(name: &str, default: bool) -> String {
+    if default {
+        format!("{name} (Default)")
+    } else {
+        name.to_owned()
+    }
 }
 
 impl ShortcutsPage {
@@ -246,6 +297,13 @@ pub fn arguments_form(shortcut: &CachedShortcut) -> Option<PreferencesPage> {
     ))
 }
 
+/// Whether a shortcut can be a fallback: its link takes exactly one
+/// argument, which the query fills (`RootShortcutItem::isSuitableForFallback`).
+#[must_use]
+pub fn suitable_for_fallback(shortcut: &CachedShortcut) -> bool {
+    shortcut.link.arguments.len() == 1
+}
+
 /// The argument values an arguments form holds, in order.
 #[must_use]
 pub fn argument_values(page: &PreferencesPage) -> Vec<String> {
@@ -301,6 +359,30 @@ mod tests {
         page.query = "docs.rs".into();
         page.refilter(&all);
         assert_eq!(page.selected_index(), Some(1), "the link is searched too");
+    }
+
+    #[test]
+    fn the_pane_lists_what_load_detail_lists_in_its_order() {
+        let mut docs = shortcut("sct-1", "Docs", "https://docs.rs/{crate}");
+        docs.open_count = 3;
+        docs.created_at = 10;
+        let date = |at: u64| format!("t{at}");
+        assert_eq!(
+            detail_fields(&docs, Some("Firefox (Default)"), date),
+            [
+                ("Name", "Docs".to_owned()),
+                ("Application", "Firefox (Default)".to_owned()),
+                ("Opened", "3".to_owned()),
+                ("Last Opened", "Never".to_owned()),
+                ("Created at", "t10".to_owned()),
+            ]
+        );
+        docs.last_opened_at = Some(20);
+        let fields = detail_fields(&docs, None, date);
+        assert!(!fields.iter().any(|(label, _)| *label == "Application"));
+        assert!(fields.contains(&("Last Opened", "t20".to_owned())));
+        assert_eq!(app_label("Firefox", true), "Firefox (Default)");
+        assert_eq!(app_label("Firefox", false), "Firefox");
     }
 
     #[test]

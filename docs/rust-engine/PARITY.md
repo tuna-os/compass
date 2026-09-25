@@ -198,7 +198,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -334,8 +334,8 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/builtins/snippet`: Still C++-only: Manage Snippets' detail pane and the backslash escape
   for a literal brace.
 - `ui/qml`, `ui/quick`, `ui/views`: Still C++-only: the rest of the view layer — the settings window,
-  onboarding, the HUD, text highlighting in lists and Markdown, the edit-keywords and app-selector
-  views, and drag and drop.
+  onboarding, the HUD, text highlighting in lists and Markdown, the edit-keywords view (the
+  app-selector landed in the views pass), and drag and drop.
 - `ui/settings`, `ui/windows`: Still C++-only: the settings window and its pages (general,
   appearance, keybinds, extensions) beyond the sidebar model and the preferences form.
 - `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
@@ -635,7 +635,20 @@ fail on a regression.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
+| `src/builtins/shortcut` | Rust ✅ | `compass_ui::{open_with_page, app::open_with}` (the app-selector), `vicinae::serve::openers` over `EngineApps` (IPC v18 `ListOpeners`, `OpenWith`), `compass_ui::shortcuts_page::{Detail, detail_fields, suitable_for_fallback}`, `compass_ui::app::shortcuts` (the pane, Open with…), `RootRow::ShortcutFallback` | `open_with_lists_what_opens_a_target_the_default_first` (a real engine over temp XDG dirs), `the_default_opener_comes_first_and_is_marked`, `open_with_launches_the_chosen_application_and_refuses_an_unknown_one`, `open_with_page::tests`, `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `the_pane_lists_what_load_detail_lists_in_its_order` |
 | `src/builtins/wm` | Rust ✅ | `compass_platform_linux::compositor` (`Provider::{capabilities, toggle_fullscreen, toggle_floating, toggle_overview}`), `vicinae::serve::workspaces`, `compass_core::window_switcher::command_offered`, `AppIndex::set_window_capabilities`, `compass_ui::{workspaces_page, app::workspaces}` | `niri_toggles_fullscreen_floating_and_the_overview`, `hyprland_toggles_a_window_and_has_no_overview` (fake sockets replaying captured replies), `workspaces_count_their_windows_and_name_their_applications_once`, `a_toggle_acts_on_the_active_window_and_refuses_one_elsewhere`, `a_window_on_another_workspace_is_not_on_the_active_one`, `without_a_compositor_everything_is_refused_and_nothing_is_offered`, `a_window_command_is_offered_only_where_it_is_registered`, `workspaces_page::tests`, `workspaces_and_the_toggles_are_offered_where_the_compositor_has_them`, `a_refused_toggle_says_why` |
+
+**`src/builtins/shortcut`.** "Open with…" is a view of its own, the app-selector the
+`ui/views` row names: the applications that open a target, the default first and marked, filtered
+fuzzily as typed; Enter opens the target with the chosen one and hides, Escape goes back to the
+view it was opened over. The C++ has it as a panel submenu (`OpenWithAction`,
+`OpenCompletedShortcutWithAction`); a view gives it the same search and keys as every other list
+here. Search Files and clipboard history open the same view. The shortcut panel (root row and
+Manage Shortcuts) offers it after Open (Ctrl+O): the openers of the stored link, the link expanded.
+Manage Shortcuts' detail pane shows the link expanded and `loadDetail`'s metadata: Name,
+Application (with `(Default)` for the default opener), Opened, Last Opened (`Never`), Created at,
+dates as `QDateTime::toString()` writes them. Shortcut fallbacks: see the shortcut table, rows 5, 6
+and 8.
 
 **`src/builtins/wm`.** Switch Workspaces, Toggle Fullscreen, Toggle Floating and Toggle Overview
 are builtins, offered in root search only where `WindowManagementExtension` registers them: the
@@ -749,8 +762,8 @@ icon, but **not** the name — the `default` icon being stored as whatever it re
 as the word, the favicon-over-opener rule for `http*` links, and the three link completions with the
 cursor offset that lands inside `{argument name="|"}`. Duplicating takes the *create* path, as the
 C++ does by branching on `Mode::Edit` alone. The form, the favicon and Manage Shortcuts' panel run
-in the launcher ("Shortcuts — what the port does not have yet"). Still C++-only: the Open with…
-submenu, Manage Shortcuts' detail pane, and shortcuts as fallback rows.
+in the launcher ("Shortcuts — what the port does not have yet"). Open with…, Manage Shortcuts'
+detail pane and shortcuts as fallback rows landed in the views pass (see "The gaps pass, views").
 
 **`src/builtins/font` → `compass-core::font_browser`** — the grid model's decisions are ported:
 the category dropdown (only categories some installed font belongs to, "All" at index 0, the
@@ -2618,10 +2631,10 @@ visits. What differs:
 | 2 | An argument left empty expands to nothing, even with a `default=` — `expandShortcut` never reads the default. | It expands to its default. | `arguments_fill_their_placeholders_in_order` |
 | 3 | `{date}` is reserved (so not an argument) and then falls into the expansion's argument branch, eating the next argument's value. | Expands to nothing; the arguments stay aligned with their placeholders. | `reserved_placeholders_take_their_values` |
 | 4 | `{selection}`/`{selected}` read the focused application's selection. | The same: the primary selection, read as `getSelectedText` reads it (data-control on wlroots, the Shell extension on GNOME), and nothing when there is none. `{clipboard}` is read through the GNOME Shell extension, and is empty without it. | `on_sway_a_shortcut_expands_the_selected_text` |
-| 5 | Open with… lists the link's openers in a submenu. | Not yet; a shortcut opens with its stored application, else the default opener, else the browser. | `the_app_is_the_named_one_or_the_opener_or_the_browser` |
-| 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link). | Rows carry the link as their subtitle; no detail pane yet. | — |
+| 5 | Open with… lists the link's openers in a submenu, and opens the link expanded with the completer's argument values. | An app-selector view (`compass_ui::open_with_page`, IPC v18 `ListOpeners`/`OpenWith`) lists the openers of the stored link, the default first, and opens it expanded; arguments are not asked for first, so a placeholder argument expands empty. | `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application` |
+| 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link), the link re-expanded as the completer's values change. | The pane (`shortcuts_page::detail_fields`) follows the selection; the link is expanded with no arguments, Manage Shortcuts having no completer. | `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `the_pane_lists_what_load_detail_lists_in_its_order` |
 | 7 | The form's link field offers placeholder completions (Selected Text, Clipboard Text, Argument, UUID) and the app list updates to the link's default opener on blur; the default icon previews the favicon. | The field's help text names the placeholders; `default` app and icon are resolved by the engine when saving (favicon for `http*`, else the opener's icon, else the link glyph). | `the_default_icon_is_the_favicon_then_the_opener_then_the_link_glyph` |
-| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text. | Ranked like every other root item; no fallback rows yet. | — |
+| 8 | Root rows weigh shortcuts at `baseScoreWeight` 1.4, and a shortcut with one argument can be a fallback command that opens with the search text; its fallback panel adds Manage Fallback Actions. | Ranked like every other root item. A `shortcuts:<id>` entry in `fallbacks` whose link takes one argument is a fallback row, in the configured order, opening with the query; Enter only, there is no fallback panel or manager view (`src/builtins/vicinae`'s gap). | `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query` |
 | 9 | The migration from the pre-JSON SQLite `shortcut` table. | Not run: the one-shot import is from Vicinae's JSON file, which already holds a migrated list. | — |
 | 10 | A removal toast ("Removed link") and success toasts after saving. | The list updates in place; failures show in the view. | `manage_shortcuts_filters_edits_and_removes` |
 

@@ -149,9 +149,11 @@ async fn echo_handler(request: Request) -> Response {
         | Request::PasteText { .. }
         | Request::FocusWorkspace { .. }
         | Request::ToggleWindowState { .. }
+        | Request::OpenWith { .. }
         | Request::SetTheme { .. } => Response::Ack,
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
+        Request::ListOpeners { .. } => Response::Openers { apps: vec![] },
         Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
         Request::WindowManagerCapabilities => {
             Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities::default())

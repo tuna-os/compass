@@ -2483,7 +2483,7 @@ subsystem. "None" under *blocked by* means only the work.
 | `src/services/window-manager` | the KDE and X11 providers; GNOME's workspace list (the Shell extension has no `ListWorkspaces`) | medium (X11 large) | KDE needs KWin (VM tier); X11 needs the supported-or-not decision |
 | ~~`src/builtins/wm`~~ | **Done in the views pass** (`PARITY.md`, "The gaps pass, views"): Switch Workspaces and the fullscreen, floating and overview toggles (IPC v18) | — | — |
 | `src/builtins/file` | the rest of the action panel (Open with…, Run executable, Set as wallpaper, Create shortcut, Paste, four copies), the scan indicator, drag | medium (each action small) | drag, as above |
-| `src/builtins/shortcut` | Open with…, the detail pane, shortcuts as fallback rows | medium | none |
+| ~~`src/builtins/shortcut`~~ | **Done in the views pass**: Open with… (the app-selector view, IPC v18), the detail pane, shortcuts as fallback rows | — | — |
 | `src/builtins/snippet` | the detail pane; the `\{` escape | small (escape) and medium (pane) | the escape changes the shared placeholder parser's grammar, which needs its own look |
 | ~~`src/builtins/system`~~ | **Done** (Browse Apps, Set Default Browser, Set Default Terminal; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/builtins/vicinae` | installed extensions, the OAuth token and local-storage browsers, ~~tray search~~ (done with `tray-host`), builtin-icon gallery, fallback manager view, report bug, refresh apps, open config, the store intro | large (many small views) | none |

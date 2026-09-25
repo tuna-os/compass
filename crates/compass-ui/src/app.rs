@@ -35,6 +35,7 @@ mod fonts;
 mod grants;
 mod launch;
 mod media;
+mod open_with;
 mod preview;
 mod programs;
 mod rhai;
@@ -603,6 +604,8 @@ enum Page {
     Windows(crate::windows_page::WindowsPage),
     /// Switch Workspaces.
     Workspaces(crate::workspaces_page::WorkspacesPage),
+    /// "Open with…": the applications that open a target.
+    OpenWith(crate::open_with_page::OpenWithPage),
     /// The emoji and symbol picker.
     Emoji(crate::emoji_page::EmojiPage),
     /// Search Files.
@@ -787,6 +790,8 @@ pub struct LauncherApp {
     confirm: Option<Confirm>,
     /// Clipboard History while its keyword form is open.
     parked_clipboard: Option<crate::clipboard_page::ClipboardPage>,
+    /// The view "Open with…" was opened over, to go back to.
+    open_with_return: Option<Box<Page>>,
     /// Which view is showing. See [`Page`].
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
@@ -1165,6 +1170,7 @@ impl LauncherApp {
             power_confirm: None,
             confirm: None,
             parked_clipboard: None,
+            open_with_return: None,
             page: Page::Root,
             clipboard: None,
             windows: None,
@@ -1308,6 +1314,7 @@ impl LauncherApp {
         self.parked_fonts = None;
         self.parked_store = None;
         self.provider_scope = None;
+        self.open_with_return = None;
         let dismissed = self.cancel_dmenu();
         let closing = Task::batch([dismissed, self.close_extension_view()]);
         // A summon starts at the root, whatever view was open when it hid.
@@ -2702,7 +2709,8 @@ impl LauncherApp {
             | Message::ShortcutOpened(_)
             | Message::ShortcutExpanded(_)
             | Message::ShortcutsQueryChanged(_)
-            | Message::ShortcutSelected(_) => self.shortcut_message(message),
+            | Message::ShortcutSelected(_)
+            | Message::ShortcutDetailLoaded(_) => self.shortcut_message(message),
             Message::SnippetsLoaded(_)
             | Message::SnippetSaved(_)
             | Message::SnippetExpanded(_)
@@ -2733,6 +2741,11 @@ impl LauncherApp {
             | Message::WorkspaceSelected(_)
             | Message::WorkspaceFocused(_)
             | Message::WindowToggled(_) => self.workspaces_message(message),
+            Message::OpenWithTarget(_)
+            | Message::OpenersLoaded(_)
+            | Message::OpenWithQueryChanged(_)
+            | Message::OpenWithSelected(_)
+            | Message::OpenedWith(_) => self.open_with_message(message),
             Message::CalculatorQueryChanged(_)
             | Message::CalculatorLoaded { .. }
             | Message::CalculatorSelected(_)
@@ -2789,6 +2802,9 @@ impl LauncherApp {
                     return task;
                 }
                 if let Some(task) = self.back_from_clipboard_keywords() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_open_with() {
                     return task;
                 }
                 if let Some(task) = self.back_from_alias_form() {
@@ -3061,6 +3077,9 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Workspaces(_)) {
                     return self.workspaces_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::OpenWith(_)) {
+                    return self.open_with_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::NowPlaying(_)) {
                     return self.now_playing_key(key, modifiers);
                 }
@@ -3311,6 +3330,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::WorkspacesQueryChanged as OnInput),
             ),
+            Page::OpenWith(page) => (
+                crate::open_with_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::OpenWithQueryChanged as OnInput),
+            ),
             Page::Files(page) => (
                 "Search for files…",
                 &page.query,
@@ -3480,6 +3504,8 @@ impl LauncherApp {
             self.windows_body(page)
         } else if let Page::Workspaces(page) = &self.page {
             self.workspaces_body(page)
+        } else if let Page::OpenWith(page) = &self.page {
+            self.open_with_body(page)
         } else if let Page::Files(page) = &self.page {
             self.files_body(page)
         } else if let Page::Shortcuts(page) = &self.page {
@@ -6341,6 +6367,10 @@ mod tests {
         /// The calculator's history, one group, and what changed it.
         calculations: std::sync::Mutex<Vec<crate::backend::CalculatorRow>>,
         calculator_edits: std::sync::Mutex<Vec<crate::backend::CalculatorChange>>,
+        /// What "Open with…" offers, and what it was asked to open.
+        openers: Vec<crate::backend::OpenerRow>,
+        opener_lookups: std::sync::Mutex<Vec<String>>,
+        opened_with: std::sync::Mutex<Vec<(String, String)>>,
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
@@ -7011,6 +7041,23 @@ mod tests {
                 let mut shortcuts = self.shortcuts.lock().unwrap();
                 shortcuts.retain(|s| s.id != id);
                 Ok(shortcuts.clone())
+            })
+        }
+
+        fn list_openers(
+            &self,
+            target: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::OpenerRow>> {
+            Box::pin(async move {
+                self.opener_lookups.lock().unwrap().push(target);
+                Ok(self.openers.clone())
+            })
+        }
+
+        fn open_with(&self, app: String, target: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.opened_with.lock().unwrap().push((app, target));
+                Ok(())
             })
         }
 
@@ -9984,6 +10031,153 @@ mod tests {
         assert_eq!(command.id(), id);
         let task = app.update(Message::LaunchSelected);
         settle(app, task);
+    }
+
+    fn opener(id: &str, name: &str, default: bool) -> crate::backend::OpenerRow {
+        crate::backend::OpenerRow {
+            id: id.into(),
+            name: name.into(),
+            icon: None,
+            default,
+        }
+    }
+
+    #[test]
+    fn manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            openers: vec![
+                opener("firefox.desktop", "Firefox", true),
+                opener("chromium.desktop", "Chromium", false),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        open_builtin(&mut app, "manage shortcuts", "commands:manage-shortcuts");
+
+        // The pane follows the selection: the link expanded, the default
+        // application named as such.
+        let Page::Shortcuts(page) = &app.page else {
+            panic!("not on Manage Shortcuts: {}", app.state_line());
+        };
+        let detail = page.detail.clone().expect("a pane for the first row");
+        assert_eq!(detail.id, "sct-docs");
+        assert_eq!(detail.expanded.as_deref(), Ok("https://docs.rs/{crate}|"));
+        assert_eq!(detail.app.as_deref(), Some("Firefox (Default)"));
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        let Page::Shortcuts(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(
+            page.detail.as_ref().map(|d| d.id.as_str()),
+            Some("sct-news")
+        );
+
+        // Open with… lists the applications for the stored link, opens the
+        // expanded one with the chosen application and hides.
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        let Page::OpenWith(page) = &app.page else {
+            panic!("no app selector: {}", app.state_line());
+        };
+        assert_eq!(page.all.len(), 2);
+        assert_eq!(
+            backend
+                .opener_lookups
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("https://news.ycombinator.com")
+        );
+        // Escape goes back to the list, and the selector opens again.
+        let task = app.update(pressed(iced::keyboard::key::Named::Escape));
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::Shortcuts(_)),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        let _ = app.update(Message::OpenWithQueryChanged("chrom".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_with.lock().unwrap().as_slice(),
+            [(
+                "chromium.desktop".to_owned(),
+                "https://news.ycombinator.com|".to_owned()
+            )]
+        );
+        assert!(
+            !matches!(app.page, Page::OpenWith(_)),
+            "hidden after opening"
+        );
+    }
+
+    #[test]
+    fn a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            shortcuts: std::sync::Mutex::new(vec![
+                stored_shortcut("sct-docs", "Crate Docs", "https://docs.rs/{crate}"),
+                stored_shortcut("sct-news", "Hacker News", "https://news.ycombinator.com"),
+            ]),
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.apply(AppFlags {
+            fallbacks: vec![
+                "shortcuts:sct-news".into(),
+                "files:search".into(),
+                "shortcuts:sct-docs".into(),
+            ],
+            ..AppFlags::default()
+        });
+        app.backend = Some(backend.clone());
+        let task = app.refresh_shortcuts_task();
+        settle(&mut app, task);
+        app.query = "tokio".into();
+        app.search();
+        let fallbacks: Vec<RootRow> = app
+            .results
+            .iter()
+            .copied()
+            .filter(|row| matches!(row, RootRow::Fallback(_)))
+            .collect();
+        assert_eq!(
+            fallbacks.len(),
+            2,
+            "Search Files and the one-argument shortcut, not the one with none: {}",
+            app.state_line()
+        );
+        assert!(
+            matches!(fallbacks[0], RootRow::Fallback(_)),
+            "in configured order"
+        );
+        assert_eq!(fallbacks[1], RootRow::Fallback(Fallback::Shortcut(0)));
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| *row == RootRow::Fallback(Fallback::Shortcut(0)))
+            .unwrap();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.opened_shortcuts.lock().unwrap().as_slice(),
+            [("sct-docs".to_owned(), vec!["tokio".to_owned()])]
+        );
     }
 
     #[test]

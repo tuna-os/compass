@@ -10,20 +10,21 @@ use iced::keyboard::{Key, Modifiers, key::Named};
 
 use super::{
     Direction, Element, LauncherApp, Length, Message, Padding, Page, PanelSection, PanelState,
-    RootRow, Task, chord_direction, column, container, focus_search, mouse_area, next_selection,
-    scrollable,
+    RootRow, Space, Task, chord_direction, column, container, focus_search, mouse_area,
+    next_selection, row, scrollable, text,
 };
 use crate::action_panel::Action;
 use crate::shortcuts_page::{self, ShortcutsPage};
 
 const OPEN: &str = "shortcut.open";
+const OPEN_WITH: &str = "shortcut.open-with";
 const COPY: &str = "shortcut.copy";
 const EDIT: &str = "shortcut.edit";
 const DUPLICATE: &str = "shortcut.duplicate";
 const REMOVE: &str = "shortcut.remove";
 
 /// The actions a shortcut row offers, as `RootShortcutItem::newActionPanel`
-/// arranges them (less "Open with…", which is not ported).
+/// arranges them.
 pub(super) fn panel_sections(in_manage: bool) -> Vec<PanelSection> {
     vec![
         PanelSection {
@@ -32,6 +33,9 @@ pub(super) fn panel_sections(in_manage: bool) -> Vec<PanelSection> {
                 Action::new("Open shortcut")
                     .with_id(OPEN)
                     .with_shortcut("enter"),
+                Action::new("Open with...")
+                    .with_id(OPEN_WITH)
+                    .with_shortcut("ctrl+o"),
                 Action::new("Copy shortcut").with_id(COPY),
             ],
         },
@@ -102,6 +106,7 @@ impl LauncherApp {
         );
         if let Page::Shortcuts(page) = &mut self.page {
             page.refilter(self.app_index.shortcuts());
+            page.detail = None;
         }
     }
 
@@ -110,7 +115,11 @@ impl LauncherApp {
         let mut page = self.parked_shortcuts.take().unwrap_or_default();
         page.refilter(self.app_index.shortcuts());
         self.page = Page::Shortcuts(page);
-        Task::batch([self.refresh_shortcuts_task(), focus_search()])
+        Task::batch([
+            self.refresh_shortcuts_task(),
+            self.shortcut_detail_task(),
+            focus_search(),
+        ])
     }
 
     /// Opens the shortcut form: creating, or editing or duplicating the
@@ -201,6 +210,76 @@ impl LauncherApp {
         )
     }
 
+    /// "Open with…" over the shortcut at `index`
+    /// (`OpenCompletedShortcutWithAction`): its link expanded, the
+    /// applications looked up by the link as stored.
+    fn open_shortcut_with(&mut self, index: usize) -> Task<Message> {
+        let (Some(shortcut), Some(backend)) =
+            (self.app_index.shortcuts().get(index), self.backend.clone())
+        else {
+            return Task::none();
+        };
+        let (id, raw) = (shortcut.id.clone(), shortcut.link.raw.clone());
+        self.panel = None;
+        Task::perform(
+            async move {
+                let expanded = backend.expand_shortcut(id, Vec::new()).await?;
+                Ok((expanded, raw))
+            },
+            Message::OpenWithTarget,
+        )
+    }
+
+    /// Asks for the detail pane of the selected shortcut in Manage
+    /// Shortcuts, unless it is already showing: the link expanded, and the
+    /// application that opens it (`loadDetail`).
+    pub(super) fn shortcut_detail_task(&mut self) -> Task<Message> {
+        let Page::Shortcuts(page) = &self.page else {
+            return Task::none();
+        };
+        let Some(shortcut) = page
+            .selected_index()
+            .and_then(|index| self.app_index.shortcuts().get(index))
+        else {
+            return Task::none();
+        };
+        if page.detail.as_ref().is_some_and(|d| d.id == shortcut.id) {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        let chosen = (shortcut.app != compass_core::shortcut_form::DEFAULT_APP)
+            .then(|| {
+                self.app_index
+                    .applications()
+                    .find(|item| {
+                        item.desktop_id() == shortcut.app
+                            || item.desktop_id().strip_suffix(".desktop") == Some(&shortcut.app)
+                    })
+                    .map(|item| shortcuts_page::app_label(&item.display_name(), false))
+            })
+            .flatten();
+        let (id, raw) = (shortcut.id.clone(), shortcut.link.raw.clone());
+        let is_default = shortcut.app == compass_core::shortcut_form::DEFAULT_APP;
+        Task::perform(
+            async move {
+                let expanded = backend.expand_shortcut(id.clone(), Vec::new()).await;
+                let app = if is_default {
+                    backend.list_openers(raw).await.ok().and_then(|apps| {
+                        apps.into_iter()
+                            .find(|app| app.default)
+                            .map(|app| shortcuts_page::app_label(&app.name, true))
+                    })
+                } else {
+                    chosen
+                };
+                shortcuts_page::Detail { id, expanded, app }
+            },
+            Message::ShortcutDetailLoaded,
+        )
+    }
+
     /// Removes the shortcut at `index`.
     fn remove_shortcut_at(&mut self, index: usize) -> Task<Message> {
         let (Some(shortcut), Some(backend)) =
@@ -222,6 +301,7 @@ impl LauncherApp {
         let from_manage = matches!(self.page, Page::Shortcuts(_));
         let task = match id {
             OPEN => self.open_shortcut_at(index),
+            OPEN_WITH => self.open_shortcut_with(index),
             COPY => self.copy_shortcut_at(index),
             EDIT => self.open_shortcut_form(Mode::Edit, Some(index), from_manage),
             DUPLICATE => self.open_shortcut_form(Mode::Duplicate, Some(index), from_manage),
@@ -291,7 +371,10 @@ impl LauncherApp {
                 direction,
                 self.wrap_navigation,
             );
-            return crate::scroll::reveal_root_selection();
+            return Task::batch([
+                crate::scroll::reveal_root_selection(),
+                self.shortcut_detail_task(),
+            ]);
         }
         Task::none()
     }
@@ -368,6 +451,17 @@ impl LauncherApp {
         match message {
             Message::ShortcutsLoaded(Ok(shortcuts)) => {
                 self.apply_shortcuts(shortcuts);
+                self.shortcut_detail_task()
+            }
+            Message::ShortcutDetailLoaded(detail) => {
+                if let Page::Shortcuts(page) = &mut self.page
+                    && page
+                        .selected_index()
+                        .and_then(|index| self.app_index.shortcuts().get(index))
+                        .is_some_and(|shortcut| shortcut.id == detail.id)
+                {
+                    page.detail = Some(detail);
+                }
                 Task::none()
             }
             Message::ShortcutsLoaded(Err(reason)) => {
@@ -426,7 +520,10 @@ impl LauncherApp {
                     page.selected = 0;
                     page.refilter(self.app_index.shortcuts());
                 }
-                crate::scroll::reveal_root_selection()
+                Task::batch([
+                    crate::scroll::reveal_root_selection(),
+                    self.shortcut_detail_task(),
+                ])
             }
             Message::ShortcutSelected(position) => {
                 let Page::Shortcuts(page) = &mut self.page else {
@@ -443,6 +540,69 @@ impl LauncherApp {
             }
             _ => Task::none(),
         }
+    }
+
+    /// The detail pane beside Manage Shortcuts' list: the link expanded,
+    /// then the metadata `loadDetail` lists.
+    fn shortcut_detail_pane<'a>(
+        &'a self,
+        shortcut: &'a compass_core::shortcut_service::CachedShortcut,
+        detail: &'a shortcuts_page::Detail,
+    ) -> Element<'a, Message> {
+        let palette = self.palette();
+        let muted = |value: String| {
+            text(value)
+                .font(self.font())
+                .size(12)
+                .color(palette.muted.to_iced())
+        };
+        let content: Element<'a, Message> = match &detail.expanded {
+            Ok(link) => text(link.as_str())
+                .font(iced::Font::MONOSPACE)
+                .size(12)
+                .color(palette.text.to_iced())
+                .into(),
+            Err(reason) => muted(reason.clone()).into(),
+        };
+        let mut fields = column![].spacing(4);
+        let date = |at: u64| {
+            crate::file_preview::qt_text_date(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(at),
+            )
+            .unwrap_or_default()
+        };
+        for (label, value) in shortcuts_page::detail_fields(shortcut, detail.app.as_deref(), date) {
+            fields = fields.push(
+                row![
+                    muted(label.to_owned()),
+                    Space::new().width(Length::Fill),
+                    text(value)
+                        .font(self.font())
+                        .size(12)
+                        .color(palette.text.to_iced()),
+                ]
+                .spacing(12),
+            );
+        }
+        let pane = column![
+            scrollable(container(content).padding(8)).height(Length::Fill),
+            container(fields)
+                .padding(Padding::new(8.0))
+                .style(move |_: &iced::Theme| container::Style {
+                    border: iced::Border {
+                        color: palette.border.to_iced(),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..container::Style::default()
+                }),
+        ]
+        .spacing(6);
+        container(pane)
+            .width(Length::FillPortion(super::preview::PANE_PORTION))
+            .height(Length::Fixed(320.0))
+            .padding(Padding::new(6.0).top(8))
+            .into()
     }
 
     /// Manage Shortcuts' body.
@@ -484,9 +644,20 @@ impl LauncherApp {
         let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
+        let shortcut = page
+            .selected_index()
+            .and_then(|index| self.app_index.shortcuts().get(index));
+        let rows: Element<Message> = match (&page.detail, shortcut) {
+            (Some(detail), Some(shortcut)) if detail.id == shortcut.id => row![
+                container(rows).width(Length::FillPortion(super::preview::LIST_PORTION)),
+                self.shortcut_detail_pane(shortcut, detail),
+            ]
+            .into(),
+            _ => rows.into(),
+        };
         match &page.notice {
             Some(notice) => column![rows, self.notice(notice)].into(),
-            None => rows.into(),
+            None => rows,
         }
     }
 }

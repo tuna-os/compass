@@ -6122,3 +6122,42 @@ fn with_no_session_bus_the_tray_is_refused_by_name() {
     };
     assert_eq!(err.kind, ErrorKind::Unsupported);
 }
+
+#[test]
+fn open_with_lists_what_opens_a_target_the_default_first() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let web = entry("Web", "MimeType=x-scheme-handler/https;text/html;\n");
+    let surf = entry("Surf", "MimeType=x-scheme-handler/https;\n");
+    let editor = entry("Editor", "MimeType=text/plain;\n");
+    let daemon = Daemon::start(&[
+        ("web.desktop", web.as_str()),
+        ("surf.desktop", surf.as_str()),
+        ("editor.desktop", editor.as_str()),
+    ]);
+    let config = daemon._dirs.path().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("mimeapps.list"),
+        "[Default Applications]\nx-scheme-handler/https=web.desktop\n",
+    )
+    .unwrap();
+    let Response::Openers { apps } = daemon.request(Request::ListOpeners {
+        target: "https://docs.rs/{crate}".into(),
+    }) else {
+        panic!("no openers");
+    };
+    assert_eq!(
+        apps.iter()
+            .map(|app| (app.id.as_str(), app.default))
+            .collect::<Vec<_>>(),
+        [("web.desktop", true), ("surf.desktop", false)],
+        "what opens https, the default first, not the editor"
+    );
+    assert!(matches!(
+        daemon.request(Request::OpenWith {
+            app: "nothing.desktop".into(),
+            target: "https://docs.rs".into(),
+        }),
+        Response::Error(e) if e.kind == ErrorKind::BadRequest
+    ));
+}

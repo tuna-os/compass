@@ -72,6 +72,20 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// The applications that open `target` (a path or a URL), the default
+    /// first: what "Open with…" lists.
+    fn list_openers(&self, target: String) -> BackendFuture<'_, Vec<OpenerRow>> {
+        let _ = target;
+        Box::pin(async { Err(OPEN_WITH_NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Opens `target` with the application `app`. An error is the sentence
+    /// to show.
+    fn open_with(&self, app: String, target: String) -> BackendFuture<'_, ()> {
+        let _ = (app, target);
+        Box::pin(async { Err(OPEN_WITH_NEEDS_ENGINE.to_owned()) })
+    }
+
     /// What a default picker offers, the current default first.
     fn list_default_apps(&self, kind: DefaultApp) -> BackendFuture<'_, Vec<DefaultAppRow>> {
         let _ = kind;
@@ -1184,6 +1198,23 @@ pub trait WindowBackend: std::fmt::Debug + Send + Sync {
         let _ = toggle;
         Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
     }
+}
+
+/// What "Open with…" says without an engine.
+pub const OPEN_WITH_NEEDS_ENGINE: &str =
+    "Open with needs the Compass engine, and this window is running without one";
+
+/// An application "Open with…" offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenerRow {
+    /// Its desktop id.
+    pub id: String,
+    /// Its display name.
+    pub name: String,
+    /// Its icon name.
+    pub icon: Option<String>,
+    /// Whether it is the default for the target's type.
+    pub default: bool,
 }
 
 /// What a window-management request says without an engine.

@@ -196,6 +196,8 @@ fn describe(request: &Request) -> &'static str {
         Request::ListWorkspaces => "ListWorkspaces",
         Request::FocusWorkspace { .. } => "FocusWorkspace",
         Request::ToggleWindowState { .. } => "ToggleWindowState",
+        Request::ListOpeners { .. } => "ListOpeners",
+        Request::OpenWith { .. } => "OpenWith",
     }
 }
 

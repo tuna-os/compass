@@ -242,6 +242,41 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn list_openers(
+        &self,
+        target: String,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::OpenerRow>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ListOpeners { target }, "Listing applications")
+                .await?
+            {
+                compass_ipc::Response::Openers { apps } => Ok(apps
+                    .into_iter()
+                    .map(|app| compass_ui::backend::OpenerRow {
+                        id: app.id,
+                        name: app.name,
+                        icon: app.icon,
+                        default: app.default,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn open_with(&self, app: String, target: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::OpenWith { app, target }, "Opening")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn list_default_apps(
         &self,
         kind: compass_ui::backend::DefaultApp,

@@ -371,6 +371,19 @@ pub enum Message {
     WorkspaceFocused(Result<(), String>),
     /// A fullscreen, floating or overview toggle finished.
     WindowToggled(Result<(), String>),
+    /// What "Open with…" opens and what its applications are looked up by,
+    /// once worked out (a shortcut's link is expanded first).
+    OpenWithTarget(Result<(String, String), String>),
+    /// "Open with…"'s applications arrived.
+    OpenersLoaded(Result<Vec<crate::backend::OpenerRow>, String>),
+    /// "Open with…"'s filter changed.
+    OpenWithQueryChanged(String),
+    /// An "Open with…" row was clicked, by position.
+    OpenWithSelected(usize),
+    /// Opening with the chosen application finished.
+    OpenedWith(Result<(), String>),
+    /// Manage Shortcuts' detail pane for a shortcut arrived.
+    ShortcutDetailLoaded(crate::shortcuts_page::Detail),
     /// Whether the application under the root row's panel runs, by its key.
     AppRuntimeLoaded {
         /// The application's key, so a late answer for another row is dropped.

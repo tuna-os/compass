@@ -374,6 +374,13 @@ fn all_requests() -> Vec<Request> {
         Request::ToggleWindowState {
             toggle: compass_ipc::WindowToggle::Overview,
         },
+        Request::ListOpeners {
+            target: "https://example.com/?q={query}".into(),
+        },
+        Request::OpenWith {
+            app: "org.gnome.Loupe.desktop".into(),
+            target: "/home/ä/a b.png".into(),
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -529,6 +536,14 @@ fn all_responses() -> Vec<Response> {
                     icon: None,
                 }],
                 active: false,
+            }],
+        },
+        Response::Openers {
+            apps: vec![compass_ipc::OpenerEntry {
+                id: "org.gnome.Loupe.desktop".into(),
+                name: "Image Viewer".into(),
+                icon: Some("org.gnome.Loupe".into()),
+                default: true,
             }],
         },
         Response::AppRuntime {
@@ -1003,6 +1018,8 @@ fn request_variants_are_exhaustive() {
             | Request::ListWorkspaces
             | Request::FocusWorkspace { .. }
             | Request::ToggleWindowState { .. }
+            | Request::ListOpeners { .. }
+            | Request::OpenWith { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1061,6 +1078,7 @@ fn response_variants_are_exhaustive() {
             | Response::TrayMenu { .. }
             | Response::WindowManagerCapabilities(_)
             | Response::Workspaces { .. }
+            | Response::Openers { .. }
             | Response::Window(_) => {}
         }
     }

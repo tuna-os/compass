@@ -73,7 +73,8 @@ use serde::{Deserialize, Serialize};
 /// window-management commands' capabilities, Switch Workspaces and the
 /// fullscreen, floating and overview toggles
 /// ([`Request::WindowManagerCapabilities`], [`Request::ListWorkspaces`],
-/// [`Request::FocusWorkspace`], [`Request::ToggleWindowState`]).
+/// [`Request::FocusWorkspace`], [`Request::ToggleWindowState`]), and "Open with…"'s applications
+/// ([`Request::ListOpeners`], [`Request::OpenWith`]).
 pub const PROTOCOL_VERSION: u16 = 18;
 
 /// A client-to-server frame.
@@ -882,6 +883,34 @@ pub enum Request {
         /// What to toggle.
         toggle: WindowToggle,
     },
+    /// The applications that open `target` (a path or a URL), for "Open
+    /// with…". Answered with [`Response::Openers`]. (v18.)
+    ListOpeners {
+        /// What would be opened.
+        target: String,
+    },
+    /// Open `target` with the application `app` (an [`OpenerEntry::id`]).
+    /// Answered with [`Response::Ack`]; an unknown id is a bad request.
+    /// (v18.)
+    OpenWith {
+        /// The application's desktop id.
+        app: String,
+        /// What to open.
+        target: String,
+    },
+}
+
+/// An application in a [`Response::Openers`]. (v18.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenerEntry {
+    /// Its desktop id, for [`Request::OpenWith`].
+    pub id: String,
+    /// Its display name.
+    pub name: String,
+    /// Its icon name.
+    pub icon: Option<String>,
+    /// Whether it is the default for the target's type.
+    pub default: bool,
 }
 
 /// One application's tray icon (`TrayItem`), as the tray view lists it.
@@ -1300,6 +1329,11 @@ pub enum Response {
     Workspaces {
         /// Every workspace.
         workspaces: Vec<WorkspaceEntry>,
+    },
+    /// Answer to [`Request::ListOpeners`]: the default first. (v18.)
+    Openers {
+        /// The applications.
+        apps: Vec<OpenerEntry>,
     },
 }
 

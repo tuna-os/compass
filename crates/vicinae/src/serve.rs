@@ -43,6 +43,7 @@ use crate::engine::Engine;
 mod app_runtime;
 mod calculator;
 mod launch;
+mod openers;
 mod workspaces;
 
 /// The at-most-one launcher window this engine drives.
@@ -2665,6 +2666,16 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         | Request::ListWorkspaces
         | Request::FocusWorkspace { .. }
         | Request::ToggleWindowState { .. }) => workspaces::handle(state, request).await,
+        Request::ListOpeners { target } => {
+            let apps = engine_apps(state).await;
+            Response::Openers {
+                apps: openers::openers(&apps, &target),
+            }
+        }
+        Request::OpenWith { app, target } => {
+            let apps = engine_apps(state).await;
+            openers::open_with(&apps, &app, &target)
+        }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id, None).await,
