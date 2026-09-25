@@ -191,7 +191,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/calculator` | `compass-core`, `compass_ui::calculator_page` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/file` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -636,6 +636,7 @@ fail on a regression.
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/builtins/shortcut` | Rust ✅ | `compass_ui::{open_with_page, app::open_with}` (the app-selector), `vicinae::serve::openers` over `EngineApps` (IPC v18 `ListOpeners`, `OpenWith`), `compass_ui::shortcuts_page::{Detail, detail_fields, suitable_for_fallback}`, `compass_ui::app::shortcuts` (the pane, Open with…), `RootRow::ShortcutFallback` | `open_with_lists_what_opens_a_target_the_default_first` (a real engine over temp XDG dirs), `the_default_opener_comes_first_and_is_marked`, `open_with_launches_the_chosen_application_and_refuses_an_unknown_one`, `open_with_page::tests`, `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `the_pane_lists_what_load_detail_lists_in_its_order` |
+| `src/builtins/file` | Rust ✅ | `compass_ui::app::file_actions` (`file_panel_sections`, the actions), `compass_ui::files_page::{runs_as_executable, FilesPage::searching}`, `vicinae::serve::files` (IPC v18 `FileActions`, `CopyFile`, `RunExecutable`, `SetWallpaper`), Open with… through `compass_ui::app::open_with` | `search_files_panel_is_the_cpps_file_actions`, `a_files_panel_learns_its_mime_type_and_an_appimage_is_made_executable_and_run` (a real engine; the AppImage is a script in the test's tempdir), `an_executable_is_given_the_owners_execute_permission`, `a_file_is_copied_as_its_escaped_file_uri`, `a_superseded_answer_is_dropped` |
 | `src/builtins/wm` | Rust ✅ | `compass_platform_linux::compositor` (`Provider::{capabilities, toggle_fullscreen, toggle_floating, toggle_overview}`), `vicinae::serve::workspaces`, `compass_core::window_switcher::command_offered`, `AppIndex::set_window_capabilities`, `compass_ui::{workspaces_page, app::workspaces}` | `niri_toggles_fullscreen_floating_and_the_overview`, `hyprland_toggles_a_window_and_has_no_overview` (fake sockets replaying captured replies), `workspaces_count_their_windows_and_name_their_applications_once`, `a_toggle_acts_on_the_active_window_and_refuses_one_elsewhere`, `a_window_on_another_workspace_is_not_on_the_active_one`, `without_a_compositor_everything_is_refused_and_nothing_is_offered`, `a_window_command_is_offered_only_where_it_is_registered`, `workspaces_page::tests`, `workspaces_and_the_toggles_are_offered_where_the_compositor_has_them`, `a_refused_toggle_says_why` |
 
 **`src/builtins/shortcut`.** "Open with…" is a view of its own, the app-selector the
@@ -649,6 +650,25 @@ Manage Shortcuts' detail pane shows the link expanded and `loadDetail`'s metadat
 Application (with `(Default)` for the default opener), Opened, Last Opened (`Never`), Created at,
 dates as `QDateTime::toString()` writes them. Shortcut fallbacks: see the shortcut table, rows 5, 6
 and 8.
+
+**`src/builtins/file`.** Search Files' panel is `FileActions::actionPanel`'s, in its order: Open
+(when an application opens the file), Run executable (an AppImage, made executable first, primary
+when nothing opens it), Show in file browser (Ctrl+Enter), Open with… (Ctrl+O, the app-selector),
+Set as wallpaper (an image, where a wallpaper backend answers; Ctrl+Shift+W), Create shortcut (the
+form with the file's name and path); then Paste to active window (where the engine can paste),
+Copy file (a `text/uri-list`, Ctrl+Shift+C), Copy file path, Copy file name and Copy mime type. The
+panel asks the engine first (`FileActions`: the MIME type, an opener, the wallpaper backend, paste),
+then opens. "Searching…" shows beside the category filter while a query is out, as `setLoading`.
+Declared differences:
+
+- The file browser action is always offered; the C++ offers it only when a file browser is
+  installed.
+- Paste is offered where the engine has its GNOME Shell client; a wlroots session copies over
+  data-control (no synthetic paste there yet, `src/services/paste`'s gap).
+- Success hides the launcher without the C++'s HUD ("Wallpaper set", "Copied to clipboard");
+  failures show under the list rather than as a toast.
+- Dragging a file out of the list: Iced offers no drag out of a window (`src/builtins/clipboard`
+  shares this).
 
 **`src/builtins/wm`.** Switch Workspaces, Toggle Fullscreen, Toggle Floating and Toggle Overview
 are builtins, offered in root search only where `WindowManagementExtension` registers them: the
@@ -1149,9 +1169,9 @@ comparison. Rebuilding the index is written and deliberately unregistered in the
 saying the indexer's timed sweeps and deleting its cache directory have the same effect; the port
 keeps it unregistered for the same reason, and a test pins that.
 
-The indexer behind it is ported (`src/file-indexer`, now green). Still C++-only: the rest of the
-action panel (Open with…, Run executable, Set as wallpaper, Create shortcut, Paste and the four
-copies), the scan-progress indicator and the drag payload.
+The indexer behind it is ported (`src/file-indexer`, now green). The rest of the action panel and
+the loading indicator landed in the views pass (see "The gaps pass, views"); the drag payload is a
+declared difference there, Iced having no drag out of a window.
 
 **`src/builtins/media` → `compass-core::media_commands`** — which commands exist on which platform,
 how a player is chosen from what was typed, what the on-screen display says, and which speaker glyph

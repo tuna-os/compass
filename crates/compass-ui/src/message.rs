@@ -382,6 +382,15 @@ pub enum Message {
     OpenWithSelected(usize),
     /// Opening with the chosen application finished.
     OpenedWith(Result<(), String>),
+    /// What the selected file's action panel depends on arrived.
+    FileActionsLoaded {
+        /// The file it describes, so a late answer for another is dropped.
+        path: String,
+        /// What the panel depends on, or why it is unknown.
+        result: Result<crate::backend::FileActions, String>,
+    },
+    /// A file action that hides the launcher on success finished.
+    FileActionDone(Result<(), String>),
     /// Manage Shortcuts' detail pane for a shortcut arrived.
     ShortcutDetailLoaded(crate::shortcuts_page::Detail),
     /// Whether the application under the root row's panel runs, by its key.

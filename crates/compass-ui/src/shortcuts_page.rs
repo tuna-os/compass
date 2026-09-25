@@ -297,6 +297,18 @@ pub fn arguments_form(shortcut: &CachedShortcut) -> Option<PreferencesPage> {
     ))
 }
 
+/// Fills a create form's name and link, as `CreateShortcutAction`'s
+/// prefill does (a file's path and name, from Search Files).
+pub fn prefill(page: &mut PreferencesPage, name: &str, link: &str) {
+    for (field, value) in page.fields.iter().zip(page.values.iter_mut()) {
+        if field.name == NAME_FIELD {
+            *value = FieldValue::Text(name.to_owned());
+        } else if field.name == LINK_FIELD {
+            *value = FieldValue::Text(link.to_owned());
+        }
+    }
+}
+
 /// Whether a shortcut can be a fallback: its link takes exactly one
 /// argument, which the query fills (`RootShortcutItem::isSuitableForFallback`).
 #[must_use]

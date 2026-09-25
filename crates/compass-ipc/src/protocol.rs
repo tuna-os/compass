@@ -74,7 +74,9 @@ use serde::{Deserialize, Serialize};
 /// fullscreen, floating and overview toggles
 /// ([`Request::WindowManagerCapabilities`], [`Request::ListWorkspaces`],
 /// [`Request::FocusWorkspace`], [`Request::ToggleWindowState`]), and "Open with…"'s applications
-/// ([`Request::ListOpeners`], [`Request::OpenWith`]).
+/// ([`Request::ListOpeners`], [`Request::OpenWith`]), and a file's action
+/// panel ([`Request::FileActions`], [`Request::CopyFile`],
+/// [`Request::RunExecutable`], [`Request::SetWallpaper`]).
 pub const PROTOCOL_VERSION: u16 = 18;
 
 /// A client-to-server frame.
@@ -898,6 +900,50 @@ pub enum Request {
         /// What to open.
         target: String,
     },
+    /// What a file's action panel depends on (`FileActions::actionPanel`):
+    /// its MIME type and what this session can do with it. Answered with
+    /// [`Response::FileActions`]. (v18.)
+    FileActions {
+        /// The file's absolute path.
+        path: String,
+    },
+    /// Put a file on the clipboard as a file (a `text/uri-list`), and with
+    /// `paste`, paste it into the focused window. Answered with
+    /// [`Response::Ack`]. (v18.)
+    CopyFile {
+        /// The file's absolute path.
+        path: String,
+        /// Paste it too.
+        paste: bool,
+    },
+    /// Run a file as a program, first making it executable when asked (an
+    /// AppImage). Answered with [`Response::Ack`], or refused with the
+    /// sentence to show. (v18.)
+    RunExecutable {
+        /// The file's absolute path.
+        path: String,
+        /// Give it the owner's execute permission first.
+        make_executable: bool,
+    },
+    /// Make an image the wallpaper. Answered with [`Response::Ack`], or
+    /// refused with the backend's reason. (v18.)
+    SetWallpaper {
+        /// The image's absolute path.
+        path: String,
+    },
+}
+
+/// Answer to [`Request::FileActions`]. (v18.)
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct FileActionInfo {
+    /// Its MIME type.
+    pub mime: Option<String>,
+    /// Whether an application opens it.
+    pub has_opener: bool,
+    /// Whether this desktop's wallpaper can be set.
+    pub can_set_wallpaper: bool,
+    /// Whether the engine can paste into the focused window.
+    pub can_paste: bool,
 }
 
 /// An application in a [`Response::Openers`]. (v18.)
@@ -1335,6 +1381,8 @@ pub enum Response {
         /// The applications.
         apps: Vec<OpenerEntry>,
     },
+    /// Answer to [`Request::FileActions`]. (v18.)
+    FileActions(FileActionInfo),
 }
 
 /// Which system default a picker sets.

@@ -277,6 +277,64 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn file_actions(&self, path: String) -> BackendFuture<'_, compass_ui::backend::FileActions> {
+        Box::pin(async move {
+            match self
+                .ask(Request::FileActions { path }, "Reading the file")
+                .await?
+            {
+                compass_ipc::Response::FileActions(info) => Ok(compass_ui::backend::FileActions {
+                    mime: info.mime,
+                    has_opener: info.has_opener,
+                    can_set_wallpaper: info.can_set_wallpaper,
+                    can_paste: info.can_paste,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn copy_file(&self, path: String, paste: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::CopyFile { path, paste }, "Copying the file")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn run_executable(&self, path: String, make_executable: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let request = Request::RunExecutable {
+                path,
+                make_executable,
+            };
+            match self.ask(request, "Running the executable").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_wallpaper(&self, path: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask_within(
+                    Request::SetWallpaper { path },
+                    "Setting the wallpaper",
+                    Duration::from_secs(35),
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn list_default_apps(
         &self,
         kind: compass_ui::backend::DefaultApp,

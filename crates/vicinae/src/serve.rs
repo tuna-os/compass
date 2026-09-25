@@ -42,6 +42,7 @@ use crate::engine::Engine;
 
 mod app_runtime;
 mod calculator;
+mod files;
 mod launch;
 mod openers;
 mod workspaces;
@@ -2676,6 +2677,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             let apps = engine_apps(state).await;
             openers::open_with(&apps, &app, &target)
         }
+        request @ (Request::FileActions { .. }
+        | Request::CopyFile { .. }
+        | Request::RunExecutable { .. }
+        | Request::SetWallpaper { .. }) => files::handle(state, request).await,
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id, None).await,

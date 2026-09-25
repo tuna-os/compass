@@ -150,9 +150,15 @@ async fn echo_handler(request: Request) -> Response {
         | Request::FocusWorkspace { .. }
         | Request::ToggleWindowState { .. }
         | Request::OpenWith { .. }
+        | Request::CopyFile { .. }
+        | Request::RunExecutable { .. }
+        | Request::SetWallpaper { .. }
         | Request::SetTheme { .. } => Response::Ack,
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
+        Request::FileActions { .. } => {
+            Response::FileActions(compass_ipc::FileActionInfo::default())
+        }
         Request::ListOpeners { .. } => Response::Openers { apps: vec![] },
         Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
         Request::WindowManagerCapabilities => {

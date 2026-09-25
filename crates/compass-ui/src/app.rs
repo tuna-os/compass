@@ -31,6 +31,7 @@ mod clipboard;
 mod developer;
 mod dmenu;
 mod emoji;
+mod file_actions;
 mod fonts;
 mod grants;
 mod launch;
@@ -792,6 +793,8 @@ pub struct LauncherApp {
     parked_clipboard: Option<crate::clipboard_page::ClipboardPage>,
     /// The view "Open with…" was opened over, to go back to.
     open_with_return: Option<Box<Page>>,
+    /// The MIME type of the file the open panel is over, for Copy mime type.
+    file_mime: Option<String>,
     /// Which view is showing. See [`Page`].
     page: Page,
     /// Clipboard history. See [`AppFlags::clipboard`].
@@ -1171,6 +1174,7 @@ impl LauncherApp {
             confirm: None,
             parked_clipboard: None,
             open_with_return: None,
+            file_mime: None,
             page: Page::Root,
             clipboard: None,
             windows: None,
@@ -2213,6 +2217,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_workspaces_panel() {
                     return task;
+                } else if let Some(task) = self.open_files_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -2296,6 +2302,7 @@ impl LauncherApp {
                         .or_else(|| self.windows_panel_action(&id))
                         .or_else(|| self.calculator_panel_action(&id))
                         .or_else(|| self.workspaces_panel_action(&id))
+                        .or_else(|| self.file_panel_action(&id))
                         .or_else(|| self.app_runtime_action(&id))
                 {
                     return task;
@@ -2741,6 +2748,9 @@ impl LauncherApp {
             | Message::WorkspaceSelected(_)
             | Message::WorkspaceFocused(_)
             | Message::WindowToggled(_) => self.workspaces_message(message),
+            Message::FileActionsLoaded { .. } | Message::FileActionDone(_) => {
+                self.file_actions_message(message)
+            }
             Message::OpenWithTarget(_)
             | Message::OpenersLoaded(_)
             | Message::OpenWithQueryChanged(_)
@@ -3924,6 +3934,15 @@ impl LauncherApp {
         .width(Length::Fill)
         .align_x(Alignment::End)
         .padding(Padding::new(4.0).right(10));
+        // The loading indicator (`setLoading`): a query is out.
+        let indicator = container(
+            text(if page.searching { "Searching…" } else { "" })
+                .font(self.font())
+                .size(12)
+                .color(self.palette().muted.to_iced()),
+        )
+        .padding(Padding::new(8.0).left(12));
+        let filter = row![indicator, filter];
         let empty = match &page.status {
             Status::Loading => Some("Searching files…"),
             Status::Failed(reason) => Some(reason.as_str()),
@@ -6371,6 +6390,9 @@ mod tests {
         openers: Vec<crate::backend::OpenerRow>,
         opener_lookups: std::sync::Mutex<Vec<String>>,
         opened_with: std::sync::Mutex<Vec<(String, String)>>,
+        /// What a file's panel depends on, and the file actions asked for.
+        file_info: crate::backend::FileActions,
+        file_calls: std::sync::Mutex<Vec<(&'static str, String)>>,
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
@@ -6506,6 +6528,40 @@ mod tests {
                 }
                 self.controlled.lock().unwrap().push((player, action));
                 Ok(())
+            })
+        }
+
+        fn file_actions(
+            &self,
+            _path: String,
+        ) -> crate::backend::BackendFuture<'_, crate::backend::FileActions> {
+            Box::pin(async move { Ok(self.file_info.clone()) })
+        }
+
+        fn copy_file(&self, path: String, paste: bool) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let what = if paste { "paste" } else { "copy" };
+                self.file_calls.lock().unwrap().push((what, path));
+                Ok(())
+            })
+        }
+
+        fn run_executable(
+            &self,
+            path: String,
+            make_executable: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                assert!(make_executable);
+                self.file_calls.lock().unwrap().push(("run", path));
+                Ok(())
+            })
+        }
+
+        fn set_wallpaper(&self, path: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.file_calls.lock().unwrap().push(("wallpaper", path));
+                Err("Failed to set wallpaper: no backend".to_owned())
             })
         }
 
@@ -9973,6 +10029,143 @@ mod tests {
         app.query.clear();
         app.search();
         assert!(app.results.is_empty(), "an empty query offers no fallback");
+    }
+
+    #[test]
+    fn search_files_panel_is_the_cpps_file_actions() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![
+                file_row("/home/me/sunset.png", "Images"),
+                file_row("/home/me/Tool.AppImage", "Documents"),
+            ],
+            file_info: crate::backend::FileActions {
+                mime: Some("image/png".into()),
+                has_opener: true,
+                can_set_wallpaper: true,
+                can_paste: true,
+            },
+            openers: vec![opener("gimp.desktop", "GIMP", false)],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "search files", "commands:search-files");
+        assert_eq!(files_page(&app).rows.len(), 2, "{}", app.state_line());
+
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Open",
+                "Show in file browser",
+                "Open with...",
+                "Set as wallpaper",
+                "Create shortcut",
+                "Paste to active window",
+                "Copy file",
+                "Copy file path",
+                "Copy file name",
+                "Copy mime type",
+            ]
+        );
+        let task = choose(&mut app, "Copy mime type");
+        assert_eq!(settle(&mut app, task), ["image/png"]);
+
+        let reopen = |app: &mut LauncherApp| {
+            let _ = app.update(Message::Command(UiCommand::Show));
+            open_builtin(app, "search files", "commands:search-files");
+            let task = app.update(Message::TogglePanel);
+            settle(app, task);
+        };
+        reopen(&mut app);
+        let task = choose(&mut app, "Copy file name");
+        assert_eq!(settle(&mut app, task), ["sunset.png"]);
+        reopen(&mut app);
+        let task = choose(&mut app, "Copy file");
+        settle(&mut app, task);
+        reopen(&mut app);
+        let task = choose(&mut app, "Paste to active window");
+        settle(&mut app, task);
+        reopen(&mut app);
+        let task = choose(&mut app, "Set as wallpaper");
+        settle(&mut app, task);
+        let Page::Files(page) = &app.page else {
+            panic!("a failure stays: {}", app.state_line());
+        };
+        assert_eq!(
+            page.notice.as_deref(),
+            Some("Failed to set wallpaper: no backend")
+        );
+        assert_eq!(
+            backend.file_calls.lock().unwrap().as_slice(),
+            [
+                ("copy", "/home/me/sunset.png".to_owned()),
+                ("paste", "/home/me/sunset.png".to_owned()),
+                ("wallpaper", "/home/me/sunset.png".to_owned()),
+            ]
+        );
+
+        // Create shortcut opens the form with the file's name and path.
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let task = choose(&mut app, "Create shortcut");
+        settle(&mut app, task);
+        let Page::Preferences(form) = &app.page else {
+            panic!("no shortcut form: {}", app.state_line());
+        };
+        let (name, link, _, _) = crate::shortcuts_page::form_values(form);
+        assert_eq!(
+            (name.as_str(), link.as_str()),
+            ("sunset.png", "/home/me/sunset.png")
+        );
+
+        // Open with… lists the file's openers.
+        reopen(&mut app);
+        let task = choose(&mut app, "Open with...");
+        settle(&mut app, task);
+        assert!(
+            matches!(app.page, Page::OpenWith(_)),
+            "{}",
+            app.state_line()
+        );
+        assert_eq!(
+            backend
+                .opener_lookups
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("/home/me/sunset.png")
+        );
+
+        // An AppImage runs, and it is primary only when nothing opens it.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "search files", "commands:search-files");
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        assert!(panel_titles(&app).contains(&"Run executable".to_owned()));
+        let task = choose(&mut app, "Run executable");
+        settle(&mut app, task);
+        assert_eq!(
+            backend.file_calls.lock().unwrap().last(),
+            Some(&("run", "/home/me/Tool.AppImage".to_owned()))
+        );
+        let sections = super::file_actions::file_panel_sections(
+            "/x/Tool.AppImage",
+            &crate::backend::FileActions::default(),
+        );
+        assert_eq!(sections[0].actions[0].title, "Run executable");
+        assert_eq!(sections[0].actions[0].shortcut.as_deref(), Some("enter"));
+        assert!(
+            !sections
+                .iter()
+                .flat_map(|s| &s.actions)
+                .any(|a| a.title == "Set as wallpaper" || a.title == "Copy mime type")
+        );
     }
 
     #[test]

@@ -86,6 +86,31 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(OPEN_WITH_NEEDS_ENGINE.to_owned()) })
     }
 
+    /// What a file's action panel depends on.
+    fn file_actions(&self, path: String) -> BackendFuture<'_, FileActions> {
+        let _ = path;
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Puts a file on the clipboard as a file, and with `paste` pastes it
+    /// into the focused window. An error is the sentence to show.
+    fn copy_file(&self, path: String, paste: bool) -> BackendFuture<'_, ()> {
+        let _ = (path, paste);
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Runs a file as a program, making it executable first when asked.
+    fn run_executable(&self, path: String, make_executable: bool) -> BackendFuture<'_, ()> {
+        let _ = (path, make_executable);
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Makes an image the wallpaper.
+    fn set_wallpaper(&self, path: String) -> BackendFuture<'_, ()> {
+        let _ = path;
+        Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
+    }
+
     /// What a default picker offers, the current default first.
     fn list_default_apps(&self, kind: DefaultApp) -> BackendFuture<'_, Vec<DefaultAppRow>> {
         let _ = kind;
@@ -1198,6 +1223,19 @@ pub trait WindowBackend: std::fmt::Debug + Send + Sync {
         let _ = toggle;
         Box::pin(async { Err(WORKSPACES_NEED_ENGINE.to_owned()) })
     }
+}
+
+/// What a file's action panel depends on (`FileActions::actionPanel`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileActions {
+    /// Its MIME type.
+    pub mime: Option<String>,
+    /// Whether an application opens it.
+    pub has_opener: bool,
+    /// Whether the wallpaper can be set on this desktop.
+    pub can_set_wallpaper: bool,
+    /// Whether the engine can paste into the focused window.
+    pub can_paste: bool,
 }
 
 /// What "Open with…" says without an engine.

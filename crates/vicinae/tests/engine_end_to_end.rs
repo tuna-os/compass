@@ -6161,3 +6161,49 @@ fn open_with_lists_what_opens_a_target_the_default_first() {
         Response::Error(e) if e.kind == ErrorKind::BadRequest
     ));
 }
+
+#[test]
+fn a_files_panel_learns_its_mime_type_and_an_appimage_is_made_executable_and_run() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    use std::os::unix::fs::PermissionsExt;
+    let daemon = Daemon::start(&[]);
+    let home = daemon._dirs.path();
+    let image = home.join("sunset.png");
+    std::fs::write(&image, b"\x89PNG").unwrap();
+    let Response::FileActions(info) = daemon.request(Request::FileActions {
+        path: image.to_string_lossy().into_owned(),
+    }) else {
+        panic!("no file actions");
+    };
+    assert_eq!(info.mime.as_deref(), Some("image/png"));
+    assert!(!info.has_opener, "no application is installed");
+
+    let marker = home.join("ran");
+    let tool = home.join("Tool.AppImage");
+    std::fs::write(
+        &tool,
+        format!("#!/bin/sh\necho ran > '{}'\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(
+        daemon.request(Request::RunExecutable {
+            path: tool.to_string_lossy().into_owned(),
+            make_executable: true,
+        }),
+        Response::Ack
+    );
+    assert_ne!(
+        std::fs::metadata(&tool).unwrap().permissions().mode() & 0o100,
+        0
+    );
+    wait_for_content(&marker);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "ran\n");
+
+    assert!(matches!(
+        daemon.request(Request::SetWallpaper {
+            path: home.join("gone.png").to_string_lossy().into_owned(),
+        }),
+        Response::Error(e) if e.kind == ErrorKind::BadRequest
+    ));
+}

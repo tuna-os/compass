@@ -381,6 +381,20 @@ fn all_requests() -> Vec<Request> {
             app: "org.gnome.Loupe.desktop".into(),
             target: "/home/ä/a b.png".into(),
         },
+        Request::FileActions {
+            path: "/home/ä/a b.png".into(),
+        },
+        Request::CopyFile {
+            path: "/home/ä/a b.png".into(),
+            paste: true,
+        },
+        Request::RunExecutable {
+            path: "/home/ä/Tool.AppImage".into(),
+            make_executable: true,
+        },
+        Request::SetWallpaper {
+            path: "/home/ä/a b.png".into(),
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -546,6 +560,12 @@ fn all_responses() -> Vec<Response> {
                 default: true,
             }],
         },
+        Response::FileActions(compass_ipc::FileActionInfo {
+            mime: Some("image/png".into()),
+            has_opener: true,
+            can_set_wallpaper: false,
+            can_paste: true,
+        }),
         Response::AppRuntime {
             running: true,
             frontmost: false,
@@ -1020,6 +1040,10 @@ fn request_variants_are_exhaustive() {
             | Request::ToggleWindowState { .. }
             | Request::ListOpeners { .. }
             | Request::OpenWith { .. }
+            | Request::FileActions { .. }
+            | Request::CopyFile { .. }
+            | Request::RunExecutable { .. }
+            | Request::SetWallpaper { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1079,6 +1103,7 @@ fn response_variants_are_exhaustive() {
             | Response::WindowManagerCapabilities(_)
             | Response::Workspaces { .. }
             | Response::Openers { .. }
+            | Response::FileActions(_)
             | Response::Window(_) => {}
         }
     }

@@ -198,6 +198,10 @@ fn describe(request: &Request) -> &'static str {
         Request::ToggleWindowState { .. } => "ToggleWindowState",
         Request::ListOpeners { .. } => "ListOpeners",
         Request::OpenWith { .. } => "OpenWith",
+        Request::FileActions { .. } => "FileActions",
+        Request::CopyFile { .. } => "CopyFile",
+        Request::RunExecutable { .. } => "RunExecutable",
+        Request::SetWallpaper { .. } => "SetWallpaper",
     }
 }
 
