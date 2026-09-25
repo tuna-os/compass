@@ -484,6 +484,12 @@ async fn run_power_command(id: &str) -> Response {
             command.failed_message,
         ))
     };
+    // Read when run, as the C++ reads `preferenceValues()` in `execute`.
+    let config = Config::load().unwrap_or_default();
+    let preferences = config.entrypoint_preferences(compass_core::power_commands::EXTENSION_ID, id);
+    if let Some(program) = compass_core::power_commands::custom_program(preferences) {
+        return run_custom_power_program(program.to_owned()).await;
+    }
     let system = match zbus::Connection::system().await {
         Ok(connection) => connection,
         Err(err) => return failed(&err),
@@ -528,6 +534,36 @@ async fn run_power_command(id: &str) -> Response {
     match result {
         Ok(()) => Response::Ack,
         Err(err) => failed(&err),
+    }
+}
+
+/// Runs a power command's `customProgram` in its place, as
+/// `AppService::shellProcess` does: `$SHELL -c program` (else `/bin/sh`), on
+/// the host, waited for. Like `QProcess::waitForFinished`, only a program
+/// that could not start or was killed by a signal is a failure; its exit code
+/// is its own business.
+async fn run_custom_power_program(program: String) -> Response {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
+    let run = {
+        let program = program.clone();
+        tokio::task::spawn_blocking(move || {
+            compass_platform_linux::host_command(&shell)
+                .args(["-c", &program])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+        })
+    };
+    match run.await {
+        Ok(Ok(status)) if status.code().is_some() => Response::Ack,
+        outcome => {
+            tracing::warn!(?outcome, program, "custom power program failed");
+            Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                compass_core::power_commands::custom_program_failure(&program),
+            ))
+        }
     }
 }
 
@@ -1122,6 +1158,9 @@ async fn expand_shortcut(
         (shortcut.clone(), state.shell.clone())
     };
     let mut reserved = crate::shortcuts::Reserved::default();
+    if crate::shortcuts::needs_selection(&shortcut) {
+        reserved.selection = primary_selection(shell.clone()).await;
+    }
     if crate::shortcuts::needs_clipboard(&shortcut) {
         match shell {
             Some(shell) => match shell.clipboard().await {
@@ -1133,6 +1172,29 @@ async fn expand_shortcut(
     }
     let expanded = compass_core::shortcut::expand(&shortcut.link, arguments, &reserved);
     Ok((shortcut, expanded))
+}
+
+/// The selected text, read where `getSelectedText` reads it: the primary
+/// selection over data-control on a wlroots compositor, else through the
+/// Shell extension on GNOME. `None` when nothing is selected or there is
+/// nowhere to read from, which a link expands to nothing, as the C++'s does.
+async fn primary_selection(shell: Option<Arc<compass_shell::ShellClient>>) -> Option<String> {
+    if crate::wlroots::session().is_some_and(|wlroots| wlroots.capabilities.data_control) {
+        return tokio::task::spawn_blocking(compass_wayland::clipboard::read_primary_text)
+            .await
+            .ok()?
+            .unwrap_or_else(|error| {
+                tracing::info!(%error, "could not read the primary selection");
+                None
+            });
+    }
+    match shell?.primary_selection().await {
+        Ok(text) => text,
+        Err(error) => {
+            tracing::info!(%error, "could not read the primary selection");
+            None
+        }
+    }
 }
 
 /// Opens a shortcut, as `OpenShortcutAction::execute` does: expand, find the

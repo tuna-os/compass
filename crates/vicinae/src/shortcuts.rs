@@ -102,12 +102,16 @@ pub fn now() -> u64 {
 
 /// The reserved placeholders' values for one expansion.
 ///
-/// The clipboard is read before expanding (reading it is a D-Bus call), and
-/// only when the link has `{clipboard}`.
+/// The clipboard and the selection are read before expanding (reading either
+/// is a D-Bus or Wayland round trip), and only when the link has
+/// `{clipboard}`, or `{selection}`/`{selected}`.
 #[derive(Debug, Default)]
 pub struct Reserved {
     /// The clipboard's text, when the link needs it and it could be read.
     pub clipboard: Option<String>,
+    /// The selected text (the primary selection, as `getSelectedText` reads
+    /// it), when the link needs it and there was one.
+    pub selection: Option<String>,
 }
 
 impl compass_core::shortcut::Reserved for Reserved {
@@ -115,10 +119,8 @@ impl compass_core::shortcut::Reserved for Reserved {
         self.clipboard.clone()
     }
 
-    // Reading the focused application's selection needs the selection
-    // service, which is not ported (PARITY, Shortcuts).
     fn selection(&self) -> Option<String> {
-        None
+        self.selection.clone()
     }
 
     fn uuid(&self) -> String {
@@ -134,6 +136,16 @@ pub fn needs_clipboard(shortcut: &CachedShortcut) -> bool {
         .placeholders
         .iter()
         .any(|placeholder| placeholder.id == "clipboard")
+}
+
+/// Whether a link reads the selected text when expanded.
+#[must_use]
+pub fn needs_selection(shortcut: &CachedShortcut) -> bool {
+    shortcut
+        .link
+        .placeholders
+        .iter()
+        .any(|placeholder| matches!(placeholder.id.as_str(), "selection" | "selected"))
 }
 
 /// The browser, as `XdgAppDatabase::webBrowser` finds it: what opens

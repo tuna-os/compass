@@ -192,6 +192,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             root_config,
             configured_font,
             fallbacks,
+            power_asks,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -211,6 +212,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     config.root_config(),
                     config.font_family().map(str::to_owned),
                     config.fallback_ids(),
+                    power_asks(&config),
                 )
             }
             Err(error) => {
@@ -225,6 +227,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_core::root_items::RootConfig::default(),
                     None,
                     compass_core::Config::default().fallback_ids(),
+                    power_asks(&compass_core::Config::default()),
                 )
             }
         };
@@ -300,6 +303,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             theme_dirs: compass_core::theme_file::default_search_dirs(),
             view_state_path: compass_ui::view_memory::default_path(),
             fallbacks,
+            power_asks,
             ..compass_ui::AppFlags::default()
         };
 
@@ -335,6 +339,19 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
 ///
 /// No compositor to ask (a probe that fails) is `xdg_toplevel`, which is what
 /// Iced would have tried anyway, so its own error reaches the user unchanged.
+/// Whether each power command asks first, from its `confirm` preference
+/// (`providers.power.entrypoints.<id>.preferences`) or its own default.
+fn power_asks(config: &compass_core::Config) -> std::collections::BTreeMap<String, bool> {
+    use compass_core::power_commands::{COMMANDS, EXTENSION_ID, should_confirm};
+    COMMANDS
+        .iter()
+        .map(|command| {
+            let preferences = config.entrypoint_preferences(EXTENSION_ID, command.id);
+            (command.id.to_owned(), should_confirm(command, preferences))
+        })
+        .collect()
+}
+
 fn launcher_surface() -> compass_wayland::SurfaceKind {
     match compass_wayland::Session::detect() {
         Ok(session) => compass_wayland::select_surface(

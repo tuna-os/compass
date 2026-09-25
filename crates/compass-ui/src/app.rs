@@ -224,6 +224,10 @@ pub struct AppFlags {
     pub wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result, from `launcher.quick_launch`.
     pub quick_launch: bool,
+    /// Whether each power command asks first, by id, as its `confirm`
+    /// preference resolves (`compass_core::power_commands::should_confirm`).
+    /// A command missing here asks by its own default.
+    pub power_asks: std::collections::BTreeMap<String, bool>,
     /// When the process started, for the cold-start figure (#13).
     ///
     /// `None` in a test or anywhere nobody is timing, which simply means no
@@ -311,6 +315,7 @@ impl Default for AppFlags {
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
+            power_asks: std::collections::BTreeMap::new(),
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             appearance_preset: crate::preset::resolve(None, None, None),
@@ -716,6 +721,8 @@ pub struct LauncherApp {
     wrap_navigation: bool,
     /// Whether Ctrl+1..9 launches the Nth result. See [`AppFlags::quick_launch`].
     quick_launch: bool,
+    /// See [`AppFlags::power_asks`].
+    power_asks: std::collections::BTreeMap<String, bool>,
     /// Sizes and spacing, from the resolved appearance preset (#84).
     ///
     /// Held rather than read from [`design::GEOMETRY`] at each draw: a preset
@@ -938,6 +945,7 @@ impl LauncherApp {
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
         app.quick_launch = flags.quick_launch;
+        app.power_asks = flags.power_asks;
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
@@ -1014,6 +1022,7 @@ impl LauncherApp {
             keybinding: compass_core::keybinding::Scheme::default(),
             wrap_navigation: compass_core::config::DEFAULT_WRAP_NAVIGATION,
             quick_launch: compass_core::config::DEFAULT_QUICK_LAUNCH,
+            power_asks: std::collections::BTreeMap::new(),
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
@@ -4520,7 +4529,12 @@ impl LauncherApp {
                 let Some(power) = compass_core::power_commands::command(id) else {
                     return record;
                 };
-                if power.confirm_by_default {
+                let asks = self
+                    .power_asks
+                    .get(power.id)
+                    .copied()
+                    .unwrap_or(power.confirm_by_default);
+                if asks {
                     self.power_confirm = Some(power);
                     return record;
                 }
@@ -7440,6 +7454,43 @@ mod tests {
         while let Some(message) = pending.pop() {
             pending.extend(task_messages(app.update(message)));
         }
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+    }
+
+    #[test]
+    fn the_confirm_preference_decides_whether_a_power_command_asks() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["commands:reboot".to_owned(), "commands:lock".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.power_asks = [("reboot".to_owned(), false), ("lock".to_owned(), true)].into();
+        let launch = |app: &mut LauncherApp, query: &str, entrypoint: &str| {
+            for message in task_messages(app.update(Message::QueryChanged(query.into()))) {
+                let _ = app.update(message);
+            }
+            app.selected = app
+                .results
+                .iter()
+                .position(|row| matches!(row, RootRow::Command(c) if c.entrypoint == entrypoint))
+                .expect("the command is in root search");
+            let mut pending = task_messages(app.update(Message::LaunchSelected));
+            while let Some(message) = pending.pop() {
+                pending.extend(task_messages(app.update(message)));
+            }
+        };
+
+        launch(&mut app, "reboot", "reboot");
+        assert!(app.power_confirm.is_none(), "reboot was told not to ask");
+        assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
+
+        launch(&mut app, "lock", "lock");
+        assert_eq!(
+            app.power_confirm.map(|power| power.id),
+            Some("lock"),
+            "lock was told to ask, though by default it does not"
+        );
         assert_eq!(backend.powered.lock().unwrap().as_slice(), ["reboot"]);
     }
 

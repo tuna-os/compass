@@ -2403,6 +2403,46 @@ fn a_power_command_answers_with_its_own_sentences_and_never_touches_this_machine
 }
 
 #[test]
+fn a_power_command_with_a_custom_program_runs_it_instead() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let config = r#"{"providers": {"power": {"entrypoints": {
+        "reboot": {"preferences": {"customProgram": "touch \"$HOME/rebooted\""}},
+        "suspend": {"preferences": {"customProgram": ""}}
+    }}}}"#;
+    let mut home = None;
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], config, |root| {
+        home = Some(root.to_path_buf());
+        vec![
+            (
+                "DBUS_SYSTEM_BUS_ADDRESS",
+                "unix:path=/nonexistent/compass-test-system-bus".into(),
+            ),
+            ("SHELL", "/bin/sh".into()),
+        ]
+    });
+    let home = home.expect("the daemon's home");
+    assert_eq!(
+        daemon.request(Request::RunPowerCommand {
+            id: "reboot".into()
+        }),
+        Response::Ack
+    );
+    assert!(
+        home.join("rebooted").exists(),
+        "the program ran in place of logind"
+    );
+    // An empty program is no program: the built-in call is made, and with no
+    // system bus it fails with the command's own sentence.
+    let Response::Error(err) = daemon.request(Request::RunPowerCommand {
+        id: "suspend".into(),
+    }) else {
+        panic!("a suspend with no logind was not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Internal);
+    assert_eq!(err.message, "Failed to suspend");
+}
+
+#[test]
 fn a_media_command_says_why_it_did_nothing() {
     use compass_ipc::{ErrorKind, Request, Response};
     use std::io::{BufRead, BufReader};

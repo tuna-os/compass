@@ -428,3 +428,48 @@ fn the_lists_are_looked_for_in_config_then_data_fallbacks() {
         ]
     );
 }
+
+// --- choosing the terminal: `src/lib/xdgpp/tests/xdg-terminal-exec.cpp` --
+
+#[test]
+fn a_chosen_terminal_is_written_to_an_empty_file() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("xdg-terminals.list");
+    compass_xdg::terminal::set_default_terminal(&path, "test", None).expect("written");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read back"),
+        "# Configured by the Vicinae launcher\ntest\n"
+    );
+}
+
+#[test]
+fn a_chosen_terminal_goes_above_every_existing_entry() {
+    assert_eq!(
+        compass_xdg::terminal::with_default_terminal("org.someone.something\n", "test", None),
+        "# Configured by the Vicinae launcher\ntest\norg.someone.something\n"
+    );
+}
+
+#[test]
+fn choosing_again_replaces_the_previous_choice_and_keeps_comments() {
+    assert_eq!(
+        compass_xdg::terminal::with_default_terminal(
+            "# Configured by the Vicinae launcher\n# This is some comment\n\
+             org.someone.something\norg.somethingelse.unrelated\n",
+            "test",
+            None
+        ),
+        "# Configured by the Vicinae launcher\n# This is some comment\n\
+         test\norg.somethingelse.unrelated\n"
+    );
+}
+
+#[test]
+fn a_chosen_action_is_written_after_a_colon_and_reads_back() {
+    let written =
+        compass_xdg::terminal::with_default_terminal("", "kitty.desktop", Some("new-window"));
+    let entries = compass_xdg::terminal::parse_terminals_list(&written);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, "kitty.desktop");
+    assert_eq!(entries[0].action.as_deref(), Some("new-window"));
+}

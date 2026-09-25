@@ -116,19 +116,19 @@ whether a real GNOME session grants the shortcut we ask for.
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
+| `src/lib/xdgpp` | `compass-xdg` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/lib/fuzzy` | `compass-search` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
 | `src/lib/crypto` | `compass-crypto` | Phase 3 | ✅ | ✅ | ✅ | ⏳ |
-| `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/lib/glyph` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/lib/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ✅ | 🟡 | ⏳ |
+| `src/lib/vicinae-ipc` | `compass-ipc` | Phase 2 | ✅ | ✅ | ✅ | ⏳ |
 | `src/lib/figura` | `compass-ipc` | Phase 2 | ✅ | n/a | n/a | ⏳ |
-| `src/lib/common` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
-| `src/lib/linux-utils` | `compass-platform-linux` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
-| `src/lib/soulver` | `—` | n/a (macOS) | ✅ | ❌ | ❌ | ❌ |
-| `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/lib/common` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
+| `src/lib/linux-utils` | `compass-platform-linux` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
+| `src/lib/soulver` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
+| `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
+| `src/file-indexer` | `compass-db`, `vicinae-file-indexer` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/snippet` | `compass-input-server` (`vicinae-input-server`), `compass-core::snippet` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 
@@ -139,48 +139,48 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/app-runtime` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/app-service` | `compass-core` | Phase 1 | ✅ | 🟡 | ✅ | ⏳ |
 | `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/calculator-service` | `compass-local-storage` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/font-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/input-server` | `vicinae::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/media-control` | `compass-media` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/media-control` | `compass-media` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/menu-bar` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/news` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/paste` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
-| `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/raycast` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/root-item-manager` | `compass-core` | Phase 2 | ✅ | 🟡 | ✅ | ⏳ |
-| `src/services/script-command` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/selection` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/selection` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/update` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
-| `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ❌ | ❌ | ❌ |
+| `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/window-material` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
 ## Builtins
@@ -190,18 +190,18 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | 🟡 | ❌ |
+| `src/builtins/font` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/internal` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/media` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/power-management` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | 🟡 | ❌ |
+| `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/system` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/wm` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 
@@ -214,25 +214,27 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 
 | C++ source | lines | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|--:|---|---|:-:|:-:|:-:|:-:|
-| `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ❌ | ❌ |
-| `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ❌ | ❌ | ❌ |
-| `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 `compass-ui` opens a window, searches applications, moves the selection, launches on Enter and
 dismisses on Escape. It also draws themed application icons and an action panel. The panel now
 has its own focused fuzzy filter, dispatches Open and both copy actions by stable IDs, accepts
 clicks, and restores search focus when closed. Copy actions emit native clipboard writes;
 headless tests inspect those writes and exercise the widgets, but delivery to another application
-still needs a desktop check. The general command/view stack, settings and extension views remain
-unfinished, so these UI rows are not fully green.
+still needs a desktop check. Since then the launcher has grown a page per builtin, extension
+views (list, grid, detail, form) and dialogs, which is why no row here is ❌ any more (the ledger
+truth pass below). The settings window, onboarding, the HUD and most of the drawn icon set are
+still ahead, so no row but `alert` is fully green.
 
-Three things about this section are worth stating plainly, because a table of ❌s invites the wrong
+Three things about this section are worth stating plainly, because a table of ❌s invited the wrong
 reading:
 
 - **These rows are not all ports.** ADR-0001 chose Iced over Qt Widgets and QML, so most of this
@@ -248,17 +250,116 @@ reading:
 
 Tracked here so a 🟡 does not quietly become a ✅.
 
-**`src/lib/xdgpp` → `compass-xdg`** — the desktop-entry, locale, value, reader and exec layers are
-ported (47 C++ cases, verbatim inputs). Still C++-only:
+### The ledger truth pass (2026-09-25)
 
-- the `xdg-terminal-exec` draft extension's *parsing* beyond what `Reader` gives (the
-  `X-TerminalArg*` keys now have typed reading and a per-terminal table in `compass-xdg::terminal` —
-  26 tests, 17 controls);
-- the sibling modules below (the `DesktopFile` layer itself is now ported as
-  `compass_xdg::desktop_file`: `relativeId`, `fromId`'s two-candidate lookup, and the standalone
-  filename id, with 24 tests and 16 controls);
-- the sibling modules `env`, `file`, `mime`, `special` (`bookmark` and `file-uri`, reading and
-  writing, are `compass_xdg::bookmarks`).
+Every `Rust ✓` and `parity test ✓` cell that was 🟡 or ❌ was checked against the code, because much
+had landed since the notes were written and many of them described a port that no longer existed.
+The ledger went from **75 of 158 (47%) to 116 of 156 (74%)**. The countable total fell by two
+because `src/lib/soulver` is a macOS-only calculator backend and was marked ❌/❌ where the other
+macOS rows (`autostart`, `menu-bar`, `permissions`) are n/a.
+
+The rule the flips follow: `Rust ✓` is ✅ only where the Rust covers the row's Linux scope, with
+anything that behaves differently declared in this file; `parity test ✓` is ✅ where the Rust that
+exists has named tests that fail on a regression (ADR-0017), which is the reading the rest of the
+ledger already used for rows whose model landed before their backend. For the window rows that
+reading is applied only where the tested part is the row's core: `qml`, `quick` and `settings` stay
+🟡 in both columns because what is tested there is a sliver of the row. Five gaps were closed in the
+same pass rather than listed: the two `xdgpp` writers, `glyph`'s `is_emoji`, `{selection}` in
+shortcuts, the power commands' two preferences, and a notification's urgency and file icon.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/lib/xdgpp` | Rust ✅ | `compass_xdg::{mimeapps_writer, terminal}` joined the rest | `mimeapps_writer::tests` (`mime.cpp`'s writer cases), `a_chosen_terminal_*` and `choosing_again_replaces_the_previous_choice_and_keeps_comments` (`xdg-terminal-exec.cpp`), `tests/special.rs` (`special.cpp`) |
+| `src/lib/glyph` | Rust ✅ | `compass_core::glyph::is_emoji`, a declared difference in method | `tests/glyph.rs`: `special-cases.cpp` and `tones.cpp` verbatim |
+| `src/lib/vicinae-ipc` | parity ✅ | `compass-ipc` | `framing` (`every_request_variant_round_trips`, `an_oversized_length_prefix_is_rejected_without_allocating`), `transport` (`a_stale_socket_is_reclaimed`), `proptests`; the C++ suite is one case with no assertion |
+| `src/lib/common` | Rust ✅ | `compass_ipc::path` (`ensurePrivateDir`, the per-user fallback), `compass_core::file_category`, `vicinae::cli` (`isAppDeeplink`), `vicinae::indexer_client` (`findHelperProgram`); `clipboard-protocol.hpp` framed a helper process the Rust does not have | `socket_dir::a_symlink_is_refused_without_being_followed`, `a_world_writable_directory_is_refused`, `file_category::every_list_is_the_cpps_exactly`, `a_bare_deeplink_becomes_the_deeplink_command`, `helper_search_covers_the_installed_layout` |
+| `src/lib/linux-utils` | Rust ✅ | `compass_platform_linux::keyboard`, and the device and keymap in `compass-input-server` | `the_virtual_keyboard_is_created_and_the_server_does_not_read_itself`, `xkbcommon_agrees_with_the_table`, `a_shifted_keystroke_is_exactly_this_sequence` |
+| `src/lib/soulver` | n/a | macOS only | — |
+| `src/cli` | parity ✅ | `vicinae::cli` | `window_commands_send_the_matching_request`, `ping_reports_the_protocol_version_and_pid`, `commands_without_a_daemon_explain_themselves`, `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
+| `src/file-indexer` | both ✅ | `compass-db`, `vicinae::{indexer_service, indexer_watch}`, `vicinae-file-indexer` | `query_quality.rs` (23/23), `query_round_trips_through_a_fake_helper`, `configure_replies_null_and_scans_notify`, `search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query` |
+| `src/data-control-server` | Rust ✅ | `compass_wayland::{data_control, clipboard}` | `a_copy_is_seen_by_the_watcher_and_round_trips_through_wl_clipboard_rs`, `a_password_manager_copy_is_marked_concealed` (headless Sway) |
+| `src/services/audio-control` | Rust ✅ | `compass_core::audio_control` over the engine's host `pactl` | `compass-core/tests/audio_control.rs`, `a_volume_command_runs_pactl_with_the_cpp_arguments` |
+| `src/services/clipboard` | parity ✅ | `compass-clipboard`, `vicinae::clipboard_service` | see "Why `parity test ✓` is now ✅" below |
+| `src/services/extension-store` | Rust ✅ | `compass_core::extension_store`, `vicinae::stores` | `the_vicinae_store_lists_installs_into_root_search_and_uninstalls`, `a_search_containing_an_ampersand_stays_one_parameter` |
+| `src/services/file-chooser` | Rust ✅ | `compass_portals::file_chooser`, served to extensions' `FilePicker` | `file_chooser::tests` (`outcomes_expose_paths_only_when_selected`, `percent_escapes_decode`) |
+| `src/services/files-service` | Rust ✅ | `compass_xdg::bookmarks` (recent files), `vicinae::indexer_client` (the indexer) | `recording_an_access_adds_then_bumps_and_keeps_the_rest`, `search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly` |
+| `src/services/font-service` | Rust ✅ | `compass_core::font_service`, `vicinae::fonts` | `a_font_file_is_found_and_classified_by_what_it_covers`, `browse_fonts_lists_families_and_previews_one` |
+| `src/services/image-fetcher` | Rust ✅ | `compass_ui::remote_image` (declared under "Extension views" #1) | `a_stored_image_is_found_again_and_a_different_url_is_not`, `pruning_removes_the_oldest_until_the_budget_holds` |
+| `src/services/media-control` | Rust ✅ | `compass-media`, Now Playing | `now_playing_lists_the_players_and_controls_the_selected_one`, `a_player_argument_picks_the_player_and_now_playing_lists_and_drives_them` |
+| `src/services/oauth` | Rust ✅ | `compass-oauth-store`, `compass_worker_host::oauth_service` (authorize) | `a_token_set_round_trips`, `one_extension_cannot_read_anothers_tokens`, `an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it` |
+| `src/services/power-manager` | Rust ✅ | `compass_power::PowerManager` (every call the abstract manager declares) | `logind_replies_are_read_rather_than_counted`, `the_capability_reply_is_read_and_not_merely_counted` |
+| `src/services/raycast` | Rust ✅ | `compass_core::raycast_store`, `vicinae::stores` | `the_raycast_store_badges_compatibility_and_notices_an_update` |
+| `src/services/script-command` | Rust ✅ | `compass_core::script_scan`, `vicinae::scripts` (rescan on summon, declared) | `script_commands_are_scanned_searched_and_run_in_their_modes` |
+| `src/services/selection` | Rust ✅ | data-control on wlroots, the Shell extension on GNOME | `the_primary_selection_is_its_text_or_nothing`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `on_sway_a_shortcut_expands_the_selected_text` |
+| `src/services/snippet` | Rust ✅ | `compass_core::{snippet_store, snippet_expander}`, `compass-input-server` | `snippets_are_imported_created_expanded_edited_and_removed`, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
+| `src/services/wallpaper` | Rust ✅ | `compass_core::wallpaper`, `vicinae::extension_wallpaper` (all six Linux backends) | `compass-core/tests/wallpaper.rs`, `a_failing_command_says_its_stderr_else_its_code` |
+| `src/services/window-manager` | Rust 🟡, parity ✅ | dispatch plus GNOME, wlroots, Hyprland and niri; not KDE or X11 | `compass-core/tests/window_manager.rs`, `compositor_ipc.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
+| `src/builtins/developer` | both ✅ | Create Extension end to end | `a_valid_form_writes_the_boilerplate_and_an_invalid_one_says_why`, `create_extension_sends_the_form_and_shows_where_it_went` |
+| `src/builtins/font` | parity ✅ | Browse Fonts | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font` |
+| `src/builtins/power-management` | both ✅ | the plan, both preferences, the dialog | `the_confirm_preference_decides_whether_a_power_command_asks`, `a_power_command_with_a_custom_program_runs_it_instead` |
+| `src/builtins/raycast` | Rust ✅ | the Raycast store's views | `the_raycast_store_badges_compatibility_and_notices_an_update`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
+| `src/builtins/shortcut` | parity ✅ | Create and Manage Shortcuts | `a_shortcut_in_root_search_asks_for_its_argument_then_opens`, `manage_shortcuts_filters_edits_and_removes` |
+| `src/builtins/snippet` | parity ✅ | Create and Manage Snippets | `manage_snippets_copies_asking_for_arguments_first`, `editing_a_snippet_keeps_its_apps_and_returns_to_the_list` |
+| `src/builtins/system` | parity ✅ | Run Terminal Program, the Browse Apps model | `run_terminal_program_lists_path_and_runs_directly_or_refuses`, `compass-core/tests/browse_apps.rs` |
+| `src/builtins/theme` | parity ✅ | Set Theme | `set_theme_keeps_the_theme_in_the_configuration`, `a_theme_file_is_read_and_resolved_with_its_derivations` |
+| `ui/views` | Rust 🟡, parity ✅ | root sections, dmenu, the list and grid pages | `compass-ui/tests/root_list.rs`, `dmenu_page::tests`, `the_grid_moves_by_tile_and_by_row` |
+| `ui/image` | Rust 🟡, parity ✅ | `compass_core::{image_url, contrast}`, `compass_ui::{icons, remote_image}` | `icons::tests`, `row_icons_resolve_assets_file_urls_themes_and_colour_cells` |
+| `ui/windows` | parity ✅ | the resident launcher window | `compass-ui/tests/resident.rs`, `compass-ui/tests/paint.rs` |
+| `ui/action-panel` | Rust 🟡, parity ✅ | `compass_ui::action_panel` | `compass-ui/tests/action_panel.rs` (sections, filter, shortcuts, `in_launcher::*`) |
+| `ui/bridges` | Rust 🟡, parity ✅ | extension views drawn from the view tree | `the_host_filters_fuzzily_and_enter_runs_the_selected_rows_first_action`, `a_form_keeps_typing_over_stale_echoes_and_submits_its_values` |
+| `ui/alert` | Rust ✅ | `compass_core::alert`, the launcher's dialog | `a_second_alert_cancels_the_first_and_reports_it`, `a_replaced_alert_and_one_navigated_away_from_both_answer_no` |
+| `ui/qml`, `ui/quick`, `ui/settings` | Rust 🟡, parity 🟡 | Iced replacements for part of each | widget tests and the paint tier, over a small part of each row |
+
+**Rows still amber that had no note saying why.** Each sentence names only what is genuinely missing;
+PLAN §12.0 sizes them and says what blocks each.
+
+- `src/cli`: Still C++-only: `launch`, `app ls`, `cmd ls`/`cmd launch`, `version`, `logs`, `state
+  open`, `server`, the file-index `query`, `theme check`/`template`/`paths`, `script
+  template`/`check` and `config default`.
+- `src/services/app-runtime`: Still C++-only: Quit and Force Quit for a running application, and the
+  running and frontmost answers the root row would use for them.
+- `src/services/calculator-service`: see `src/builtins/calculator` above.
+- `src/services/desktop-notification`: the urgency and an icon that is a file are passed since this
+  pass (`a_notification_carries_the_urgency_and_an_icon_file`). Still C++-only: rendering any other
+  icon (a builtin one, a remote one) to a temporary PNG so that it can be passed too.
+- `src/services/global-shortcuts`: Still C++-only: per-command global shortcuts from the
+  configuration, the `vicinae-hotkey-v1` and X11 backends, and conflict detection.
+- `src/services/glyph-service`: Still C++-only: wiring its model into the emoji picker, so that
+  visits, pins, custom keywords and each glyph's tone are remembered.
+- `src/services/news`, `src/services/update`, `src/services/telemetry`: Still C++-only: fetching
+  and showing the news notices, the update check, and sending the telemetry record, each ported as
+  a model and waiting on a decision about what a fork fetches and sends.
+- `src/services/paste`: Still C++-only: synthetic paste on wlroots through the input server's
+  `injectPaste`.
+- `src/services/shortcut-inhibit` and `src/services/window-material`: Still C++-only: the
+  keyboard-shortcuts-inhibit and background-effect Wayland plumbing, which is a stub.
+- `src/services/tray`: Still C++-only: Vicinae's own tray icon.
+- `src/builtins/snippet`: Still C++-only: Manage Snippets' detail pane and the backslash escape
+  for a literal brace.
+- `ui/qml`, `ui/quick`, `ui/views`: Still C++-only: the rest of the view layer — the settings window,
+  onboarding, the HUD, text highlighting in lists and Markdown, the edit-keywords and app-selector
+  views, and drag and drop.
+- `ui/settings`, `ui/windows`: Still C++-only: the settings window and its pages (general,
+  appearance, keybinds, extensions) beyond the sidebar model and the preferences form.
+- `ui/image`: Still C++-only: drawing the builtin icon set and file-type icons (builtin commands,
+  windows, files and clipboard entries show an initial), masks, tints and badges, and reading a bare
+  icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
+- `ui/action-panel`: Still C++-only: the shortcut recorder panel.
+- `ui/bridges`: Still C++-only: images inside an extension's Markdown detail, which are not fetched.
+
+**`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
+value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
+(`compass_xdg::desktop_file`: `relativeId`, `fromId`'s two-candidate lookup and the standalone
+filename id, 24 tests and 16 controls); `bookmark` and `file-uri`, reading and writing
+(`compass_xdg::bookmarks`); `mime` reading (`compass_xdg::mimeapps`) and its writer,
+`setDefaultApplication` (`compass_xdg::mimeapps_writer`, `mime.cpp`'s three writer cases verbatim);
+the `xdg-terminal-exec` list, its `X-TerminalArg*` table and its writer, `setDefaultTerminal`
+(`compass_xdg::terminal`, the three `xdg-terminal-exec.cpp` cases verbatim at the end of
+`tests/terminal.rs`); and `env` (`compass_xdg::xdg_dirs`, the runtime directory being
+`compass-ipc`'s). `special.cpp`'s four real-world files — Wine's escaped path, single quotes, empty
+values, a locale with no translation of its own — are `tests/special.rs`. The two writers were the
+last of it; nothing calls them yet, because Set Default Browser and Set Default Terminal are not
+built (see `src/builtins/system`).
 
 
 #### An unresolved disagreement: two desktop file id schemes
@@ -332,8 +433,9 @@ prefills (`Copy of %1` only when duplicating, the quoted navigation titles), the
 icon, but **not** the name — the `default` icon being stored as whatever it resolved to rather than
 as the word, the favicon-over-opener rule for `http*` links, and the three link completions with the
 cursor offset that lands inside `{argument name="|"}`. Duplicating takes the *create* path, as the
-C++ does by branching on `Mode::Edit` alone. Still C++-only: the QML form, the favicon request, and
-the manage-shortcuts list's action panel.
+C++ does by branching on `Mode::Edit` alone. The form, the favicon and Manage Shortcuts' panel run
+in the launcher ("Shortcuts — what the port does not have yet"). Still C++-only: the Open with…
+submenu, Manage Shortcuts' detail pane, and shortcuts as fallback rows.
 
 **`src/builtins/font` → `compass-core::font_browser`** — the grid model's decisions are ported:
 the category dropdown (only categories some installed font belongs to, "All" at index 0, the
@@ -349,8 +451,9 @@ placeholder and the colour-font rule that leaves an emoji font untinted, and the
 validation and what follows it: all six checks run every time so every mistake shows at once, the
 description is held to 16 characters where the rest need 3, the location is the one check that asks
 the filesystem, `expandPath` handles `~` and `~/` only (so `~root/x` is taken literally and fails),
-and a success *replaces* the form on the navigation stack rather than stacking on it. Still
-C++-only: the QML form itself, the boilerplate generator, and the success view's contents.
+and a success *replaces* the form on the navigation stack rather than stacking on it. **The row is
+green**: the form, the boilerplate generator and the success view run in the launcher, with what
+differs declared under "Create Extension" below.
 
 **`src/builtins/theme` → `compass-core::theme_picker`** — the list model and the view's own logic
 are ported: the current/available split (and that the configured theme is filtered out like any
@@ -366,16 +469,24 @@ plan are ported: eight commands in registration order with their titles, long de
 keywords, the `confirm` preference (on for everything but Lock), the `customProgram` escape hatch
 that exists only where a shell makes sense, and the two failure messages per command — whose
 "can't" / "cannot" wording is inconsistent and stays that way, because these strings are
-translated. The logind calls behind them are `compass-power`. Still C++-only: wiring the plan to a
-confirmation dialog and a toast.
+translated. The logind calls behind them are `compass-power`. **The row is green**: the plan runs
+end to end — the launcher asks in a dialog when the `confirm` preference says so
+(`a_power_command_asks_first_and_only_a_yes_runs_it`,
+`the_confirm_preference_decides_whether_a_power_command_asks`), the engine runs `customProgram`
+with `$SHELL -c` on the host in place of logind when one is set
+(`a_power_command_with_a_custom_program_runs_it_instead`), and a refusal comes back as the command's
+own sentence (`a_power_command_answers_with_its_own_sentences_and_never_touches_this_machine`). Both
+preferences are read from `providers.power.entrypoints.<id>.preferences`, where the C++ keeps them;
+there is no settings page to edit them yet.
 
 **`src/builtins/system` → `compass-core::browse_apps`** — the "Search Applications" builtin's
 *model* is ported: the field weights (name 1.0, description 0.5, keywords 0.3 — **not** the root
 list's 0.6), the `Hidden` accessory for a `NoDisplay` entry, and the action panel as data: focus the
 first open window if there is one, open (clearing the search), each desktop action with
 `control+shift+1..9` for the first nine only, then open-location behind the `action.open` keybind,
-copy id, copy location. Still C++-only: the view host, the list widget, and the three other views in
-that directory (`system-run`, `set-default-browser`, `set-default-terminal`).
+copy id, copy location. Run Terminal Program is in the launcher ("System: Run Terminal Program"
+below). Still C++-only: the Browse Apps view over this model, Set Default Browser and Set Default
+Terminal (whose file writers are now `compass-xdg`'s).
 
 **`src/services/shortcut` → `compass-core::shortcut`** — `Shortcut::parseLink`'s state machine and
 `insertPlaceholder`'s argument rules are ported: literal text and placeholders in order, reserved
@@ -457,9 +568,13 @@ than truncated *and not retried* with the other spelling.
 
 One test here is not control-backed and says so in place: the offers come back in lexicographic
 order because the C++ collects into a `std::set` and the port returns a `BTreeSet`, so the ordering
-is a guarantee of the type rather than behaviour a mutation could change. Still C++-only: the
-Wayland plumbing itself — the registry, the seat, the data device and offer objects, the pipe
-reads, and the process that carries them.
+is a guarantee of the type rather than behaviour a mutation could change. **The row is green**: the
+Wayland plumbing is `compass_wayland::clipboard` — `ext-data-control-v1`, else
+`zwlr_data_control_manager_v1`, in the engine's process rather than a helper's — tested on headless
+Sway (`a_copy_is_seen_by_the_watcher_and_round_trips_through_wl_clipboard_rs`,
+`a_password_manager_copy_is_marked_concealed`,
+`the_primary_selection_reads_back_and_is_not_the_clipboard`). What it records differently is
+declared under "wlroots" #4.
 
 **`src/builtins/vicinae` → `compass-core::{emoji_grid, bug_report}`** — the largest builtin
 directory (2,800 lines across 45 files). Two of its pieces are ported, the two with arithmetic and
@@ -496,9 +611,11 @@ would be showing switches that do nothing. The enabled list is ordered by the st
 rather than by relevance, because a fallback's position decides which of them answers a query first
 — any other order would show a ranking that is not the one in force.
 
-Still C++-only, and it is most of the directory: the store views and detail host, the installed
-extensions list, the OAuth token store, the local-storage browser, the menu-bar and tray searches,
-the builtin-icon gallery, and the extension registration in `vicinae-extension.cpp`.
+The emoji picker and both stores are in the launcher now (the picker without the remembered tones,
+pins and visits `glyph-service` keeps). Still C++-only: the installed-extensions list, the OAuth
+token store and local-storage browser views, the tray search, the builtin-icon gallery, the fallback
+manager's view, and the small commands (report a bug, refresh apps, open the config file, the
+store's intro page).
 
 **`src/builtins/root` → `compass-core::root_view`** — the root list's own behaviour: the clock in
 the title bar, the space-bar alias shortcut, and reaching back through past searches with the up
@@ -530,9 +647,11 @@ alias — the one case that separates an absent alias from an empty one, where t
 would make every press of space over an empty search box activate whatever was selected. There is a
 test for it now.
 
-Still C++-only: the search sources and their models (`root-search-sources.cpp`,
-`root-search-model.cpp`, 768 lines between them), the provider search view, and everything the
-actions do.
+Root search now ranks applications, builtin commands, extension commands, scripts, shortcuts and
+Rhai scripts, with the calculator and the Search Files fallback. Still C++-only: favourites in the
+list, the title-bar clock, the space-bar alias and the up-arrow history this module models, the
+provider search view, the alias form, and the root row's panel beyond opening (favourite, alias,
+disable, reset ranking, quit).
 
 **`src/builtins/clipboard` → `compass-clipboard::history_view`** — the history command's own
 decisions. The ledger had this row down for `compass-core`; it landed in `compass-clipboard`
@@ -572,7 +691,9 @@ One fixture was too permissive and a control caught it: an `exists` stub that ac
 let a mangled path through, so splitting the URI list on the wrong separator — which leaves a stray
 carriage return — looked correct. The stub now names the paths it knows.
 
-Still C++-only: the QML views, the detail pane, the drag payload, and the actions' effects.
+Clipboard History is in the launcher: search, copy, paste, pin and remove
+(`compass-ui::clipboard_page`). Still C++-only: the kind filter, the detail pane, keyword editing,
+the open actions, remove-all and the drag payload.
 
 **`src/builtins/raycast` → `compass-core::raycast_store_view`** — the store's two views. Its API
 client was already ported (`compass-core::raycast_store`); this is what the views do with what it
@@ -607,8 +728,11 @@ One line was written and then removed because a control could not make it fail: 
 printing a whole number without its fraction. Rust's `f64` `Display` already does that, the same way
 `QString::arg(float)` does.
 
-Still C++-only: the HTTP calls themselves and the QML views. The install-from-zip path is
-ported in `compass-core::extension_install`, below.
+**The row is green**: the HTTP calls are the engine's (`vicinae::stores`, over `ureq`) and the views
+the launcher's, with what differs declared under "Extension Store and Raycast Store" below
+(`the_raycast_store_badges_compatibility_and_notices_an_update`,
+`a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog`). The install-from-zip path
+is ported in `compass-core::extension_install`, below.
 
 **`src/services/extension-registry` → `compass-core::extension_install`** — `installFromZip`. The
 archive arrives from the network, so the whole shape exists for one property: **a bad download must
@@ -632,7 +756,9 @@ its replacement was broken. `may_have_removed_previous` answers true for a faile
 one failure that happens after the target is removed — because "the install did not happen" and "the
 extension is now missing" send someone looking in different places.
 
-Still C++-only: the download itself, the registry's bookkeeping around the install, and the views.
+The download, the install and uninstall and the rescan after either now run through the stores
+(`the_vicinae_store_lists_installs_into_root_search_and_uninstalls`). Still C++-only: the directory
+watch that notices an extension appearing outside the store, such as a developer's build.
 
 **`src/builtins/internal` → `compass-core::internal_commands`** — a hidden extension holding one
 command: a fixed Markdown document rendered to check that every construct the renderer claims to
@@ -690,8 +816,9 @@ comparison. Rebuilding the index is written and deliberately unregistered in the
 saying the indexer's timed sweeps and deleting its cache directory have the same effect; the port
 keeps it unregistered for the same reason, and a test pins that.
 
-Still C++-only: the indexer behind the search, the drag payload
-and the per-platform preference sets.
+The indexer behind it is ported (`src/file-indexer`, now green). Still C++-only: the rest of the
+action panel (Open with…, Run executable, Set as wallpaper, Create shortcut, Paste and the four
+copies), the scan-progress indicator and the drag payload.
 
 **`src/builtins/media` → `compass-core::media_commands`** — which commands exist on which platform,
 how a player is chosen from what was typed, what the on-screen display says, and which speaker glyph
@@ -765,7 +892,9 @@ English therefore reads `3 window(s)`, with the translator's placeholder left in
 port writes `1 window` and `3 windows`: what every translated locale already does, and what English
 would do if the entry existed. A test pins it.
 
-Still C++-only: the window manager providers themselves and everything the actions do.
+Switch Windows runs end to end over the ported providers (GNOME through the Shell extension, the
+wlroots foreign-toplevel list, Hyprland and niri). Still C++-only: Switch Workspaces, and the
+toggle-floating, toggle-fullscreen and toggle-overview commands.
 
 **`src/builtins/calculator` → `compass-core::calculator_history`, and the grouping in
 `compass-local-storage::calculator`** — the view's own decisions and the half of `CalculatorService`
@@ -795,8 +924,9 @@ The calendar arithmetic is **not** ported: `group_records_by_time` takes the eig
 as an argument rather than reading a clock. Computing them belongs to whoever owns the clock, and
 keeping them out is what lets the scan be tested without freezing a timezone. The `dividers` vector
 the C++ declares at the top of that function is dead — nothing reads it — and is not carried over.
-Still C++-only: the backends (unported by design, see the crate docs), the preference dropdown that
-selects one, and the refresh-rates command.
+Still C++-only: the history view over this model, the backends (unported by design: fend answers
+instead, see the crate docs), the preference dropdown that selects one, currency conversion, and
+the refresh-rates command.
 
 **`src/services/script-command` → `compass-core::script_scan`** — the header parser was already
 ported (`src/lib/script-command`); this is the layer around it. The scan's rules are ported with
@@ -845,8 +975,12 @@ the malformed escape that distinguishes "swallow everything until `[`" from the 
 And `ESC[287m` is red, because the accumulator is a `uint8_t` and 287 wraps to 31 — with 999,
 wrapping and saturating are indistinguishable.
 
-Still C++-only: the service's own Qt machinery (the filesystem watcher, its 100 ms debounce and the
-15-minute refresh), the script actions and the executor view host.
+**The service row is green**: the scan runs in the engine at start and on each summon, which
+replaces the watcher, its 100 ms debounce and the 15-minute refresh (declared as "Script commands"
+#3), and the executor is the launcher's script view
+(`script_commands_are_scanned_searched_and_run_in_their_modes`,
+`the_scan_finds_scripts_ids_them_by_path_and_lets_custom_dirs_win`). What a script's root row does
+not have yet — its two file actions and its own icon — is listed there too, as #6 and #9.
 
 
 **`compass-xdg::terminal`** — how to run a command inside a terminal emulator, from
@@ -872,9 +1006,10 @@ opens, it just gets no title, directory or hold. Guessing more would not be an i
 **`src/services/app-service` → `compass-core::app_service`, with the MIME hierarchy in
 `compass-xdg::mime_subclasses`** — the lookups are ported:
 `findById` (with its `.desktop` retry), `findByClass`, `find`'s id-then-class order,
-`findCuratedOpeners`' dedupe by display name, and `list`'s case-insensitive sort. Still C++-only:
-everything that starts a process (launch, the file browser, the terminal), which belongs to whoever
-owns the session rather than to a lookup table.
+`findCuratedOpeners`' dedupe by display name, and `list`'s case-insensitive sort. Launching, the
+file browser (`ShowItems`) and the terminal (`compass-xdg::terminal`) are the engine's now.
+Still C++-only: the watch on the application directories (an application installed while the engine runs
+appears only after a restart), the text-editor and file-browser lookups, and `setWebBrowser`.
 
 `findOpeners` / `findDefaultOpener` are no longer among them. The per-type lookup was already in
 `compass-xdg::mimeapps`; what was missing was the **parent-chain walk**, which the C++ gets from
@@ -1042,8 +1177,9 @@ though it worked until the launcher restarts, and then the item has an empty sho
 none. This port writes `None`, and two tests pin it — one on the write, one on the round trip
 through a merge.
 
-Still C++-only: loading items from the providers themselves, which is the extension registry, the
-application database and the rest of the backends rather than logic.
+The providers load now (applications, builtins, extensions, scripts, shortcuts, Rhai scripts).
+Still C++-only: favourites, per-item keyboard shortcuts and the fallbacks other than Search Files,
+whose settings are parsed and merged but not acted on, and the search history the up arrow reaches.
 
 **`src/services/tray-host` → `compass-core::tray_host`** — `TrayItem` and `TrayMenuItem` are
 ported: the item key is the bus name *and* the object path, because one application can export
@@ -1110,22 +1246,26 @@ It runs on `compass-sqlcipher-sys`: SQLCipher 4 through `rusqlite`, and `vendor/
 same tokenizer C the C++ engine links ([ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md)),
 so both engines read and write the same encrypted files with the same tokenizer.
 
-**Still C++-only, and the reason the row is 🟡:** `clipboard-service.cpp` — the Wayland selection
-watcher, payload storage on disk, and the encryption of those payloads. That is the layer *above*
-the database, and it is the caller that unlinks the blobs whose ids `evict_older_than` now reliably
-returns.
+The layer above the database is the engine's now (`vicinae::clipboard_service`): the selection is
+watched through the Shell extension on GNOME and over data-control on wlroots, and payloads are
+stored on disk encrypted under Compass's own keyring key (`a_recorded_copy_is_listed_and_found`, the
+encrypted-at-rest assertions beside it). Still C++-only: eviction by age and its timer (the caller
+that would unlink the blobs `evict_older_than` reports), the monitoring switch, and the
+ignore-passwords and record-all-offers preferences.
 
 Four C++ bugs are fixed rather than reproduced, each pinned by a control that fails when the
 original shape is put back: the eviction blob leak, `tryBubbleUpSelection` answering from a
 connection-wide counter, the migration checksum that was written and never compared, and
 `runMigrations` swallowing its own failures. All four are in the divergences table below.
 
-**Why `parity test ✓` is 🟡 rather than ✅.** `vicinae::fuzzy` and `vicinae::crypto` each compile
-standalone, which is what lets CI diff the real C++ implementation against ours. `clipboard-db.cpp`
-does not — it pulls in Qt, `db::Database` and `MigrationManager` — so there is no C++ binary to
-diff against. What exists instead: every assertion is shown to fail against a deliberately wrong
-port, and the tests run against real SQLCipher files rather than SQL strings. That is strong
-evidence and it is not a differential, which is what the amber says.
+**Why `parity test ✓` is now ✅.** `vicinae::fuzzy` and `vicinae::crypto` each compile standalone,
+which is what lets CI diff the real C++ implementation against ours. `clipboard-db.cpp` does not —
+it pulls in Qt, `db::Database` and `MigrationManager` — so there is no C++ binary to diff against,
+and until the ledger truth pass that kept this cell amber. Under ADR-0017 an absolute test that
+fails on a regression is what the column asks for, and that is what exists: every assertion is
+shown to fail against a deliberately wrong port, and the tests run against real SQLCipher files
+rather than SQL strings (`compass-clipboard`'s `write_path`, `query_reads_history`,
+`migrations_apply` and `ingest` suites).
 
 The gap worth naming is `QString` iterating UTF-16 code units, so a non-BMP character counts as
 *two* word characters: `"a😀"` is a trigram run to the C++ engine and would not be to a port walking
@@ -1334,7 +1474,12 @@ a generation the C++ completes. It is a bug worth fixing upstream, not worth div
 test is named for what it protects, and is the one that should fail when the C++ starts checking
 that return value.
 
-### `src/server/src/ui/image` stays ❌ although its wire format and its contrast maths are ported
+### `src/server/src/ui/image` — its wire format and its contrast maths
+
+**Since the ledger truth pass (2026-09-25) the row is `Rust ✓` 🟡 and `parity test ✓` ✅**: themed
+application icons (`compass_ui::icons`) and remote images (`compass_ui::remote_image`) are drawn
+now, and what is still missing is listed there. The section below is the record of the two ports it
+describes.
 
 `compass-core::image_url` is a complete port of `url.cpp` — the `icon://` scheme every icon in the
 system is referred to by — and `compass-core::contrast` of `contrast-helper.hpp`, which picks a
@@ -1373,8 +1518,9 @@ before the last dot: `a.tar.gz` becomes `a@dark.tar.gz`, and `~/.local/share/log
 
 ### The first view-layer work: the root list's sections and selection
 
-Every row still 🟡 is 🟡 for the same reason — the model is ported and tested, and the *backend* is
-not. Counted across the notes below, what is left is views (4), providers (3), QML (2), MPRIS and
+(Written before the backends landed; the ledger truth pass above has the current state, and
+`scripts/ci/parity-score.py` the current breakdown.) Every row still 🟡 is 🟡 for the same reason —
+the model is ported and tested, and the *backend* is not. Counted across the notes below, what is left is views (4), providers (3), QML (2), MPRIS and
 HTTP. That is the engine rather than more transcription, and it is where the remaining Phase 5
 percentage lives.
 
@@ -1492,7 +1638,13 @@ through a Task and clears the field only when `Message::Closed` returns, and wit
 `on_dismiss` exits instead. Proving it needs an app built around a live `EngineLink`, which this
 crate has no harness for. Recorded rather than left looking covered.
 
-### `src/services/window-manager` stays ❌ although its dispatch layer is ported
+### `src/services/window-manager` — the dispatch layer, and then the providers
+
+**Superseded by the ledger truth pass (2026-09-25):** the providers this section says are missing
+have since landed — GNOME through the Shell extension (`compass-shell`), the wlroots
+foreign-toplevel list (`compass_wayland::toplevel`), and Hyprland and niri over their own IPC
+(`compass_platform_linux::compositor`) — so the row is `Rust ✓` 🟡 and `parity test ✓` ✅.
+Still C++-only: the KDE and X11 providers. The section below is kept as the record of the dispatch port.
 
 `compass-core::window_manager` is a complete port of `window-manager.cpp` — which backend gets
 picked, and the focus bookkeeping that lets the launcher act on the window the user was in *before*
@@ -1533,7 +1685,20 @@ that a document window titled after its file will not match, but it is what find
 carries no usable class. And the remembered window is checked by **id** on every refresh, which is
 what catches a window the compositor destroyed and replaced rather than moved.
 
-### `src/file-indexer` stays ❌ although part of it is ported
+### `src/file-indexer` — ported in parts, and then whole
+
+**Superseded by the ledger truth pass (2026-09-25): the row is green.** What this section calls the
+missing four fifths has landed: the SQLite schema and writer (`compass_db::db_writer`,
+`sqlite_writer`), the query engine and its pool (`query_engine`, `query_reader`, `query_pool`), the
+scanners and dispatcher (`indexer_scanner`, `incremental_scanner`, `scan_dispatcher`), the indexer
+itself (`compass_db::file_indexer`), the watcher (`vicinae::indexer_watch` over
+`compass_platform_linux::dir_watcher`), the JSON-RPC service (`vicinae::indexer_service`) and the
+process (`vicinae-file-indexer`). `query-quality.cpp` is `compass-db/tests/query_quality.rs`
+(23/23), `main.cpp`'s cases are spread over `compass-core`'s `vocabulary`, `query_policy`,
+`io_pacer` and `scan_roots` suites, and the whole path is driven end to end by
+`search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query`. The one
+behavioural difference, typo correction without `spellfix1`, is declared under `compass-db` below.
+The section is kept as the record of how the pieces were ported.
 
 `compass-core::entry_filter` is a complete port of `entry-filter.cpp` — the rules deciding which
 directory entries the indexer walks into — `compass-core::file_walk` of `filesystem-walker.cpp`,
@@ -2126,7 +2291,7 @@ visits. What differs:
 | 1 | Arguments are completion fields beside the search text of the selected root row. | A form with one field per argument opens when the shortcut is launched; required unless it has a `default=`. | `a_shortcut_in_root_search_asks_for_its_argument_then_opens` |
 | 2 | An argument left empty expands to nothing, even with a `default=` — `expandShortcut` never reads the default. | It expands to its default. | `arguments_fill_their_placeholders_in_order` |
 | 3 | `{date}` is reserved (so not an argument) and then falls into the expansion's argument branch, eating the next argument's value. | Expands to nothing; the arguments stay aligned with their placeholders. | `reserved_placeholders_take_their_values` |
-| 4 | `{selection}`/`{selected}` read the focused application's selection. | Expand to nothing: the selection service is not ported. `{clipboard}` is read through the GNOME Shell extension, and is empty without it. | — |
+| 4 | `{selection}`/`{selected}` read the focused application's selection. | The same: the primary selection, read as `getSelectedText` reads it (data-control on wlroots, the Shell extension on GNOME), and nothing when there is none. `{clipboard}` is read through the GNOME Shell extension, and is empty without it. | `on_sway_a_shortcut_expands_the_selected_text` |
 | 5 | Open with… lists the link's openers in a submenu. | Not yet; a shortcut opens with its stored application, else the default opener, else the browser. | `the_app_is_the_named_one_or_the_opener_or_the_browser` |
 | 6 | Manage Shortcuts shows a detail pane (application, times opened, last opened, created, the expanded link). | Rows carry the link as their subtitle; no detail pane yet. | — |
 | 7 | The form's link field offers placeholder completions (Selected Text, Clipboard Text, Argument, UUID) and the app list updates to the link's default opener on blur; the default icon previews the favicon. | The field's help text names the placeholders; `default` app and icon are resolved by the engine when saving (favicon for `http*`, else the opener's icon, else the link glyph). | `the_default_icon_is_the_favicon_then_the_opener_then_the_link_glyph` |
