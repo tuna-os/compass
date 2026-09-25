@@ -1,0 +1,126 @@
+# Publishes the Flatpak to the TunaOS remote (https://tunaos.org/flatpak/).
+#
+# It does not build anything. flatpak.yaml is the one definition of how the
+# Flatpak is built, and it already builds, installs and smoke-tests it on every
+# push to main that touches the engine. This takes the single-file bundle that
+# run uploaded, turns it into the OCI image the remote serves, pushes that to
+# ghcr.io/tuna-os/compass, and records its digest in the remote's index, which
+# lives in tuna-os/docs (static/flatpak/index/static).
+#
+# Rebuilding here instead would mean a second copy of the build — the
+# extension runtime step, the runtime cache, the SDK versions — that drifts
+# from the first. Publishing what was tested is also the point.
+#
+# The app ID stays com.vicinae.Vicinae (ADR-0012); the registry path is
+# tuna-os/compass. The index keys on the registry path, so they need not match.
+name: Publish Flatpak
+
+on:
+  workflow_run:
+    workflows: [Flatpak]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: A successful Flatpak run on main to publish (default the latest)
+        required: false
+
+concurrency:
+  group: publish-flatpak
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    # Only a green build of main, and only a push or a manual run of it: a
+    # pull request's bundle, or the one the VM tier builds, is never published.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       contains(fromJSON('["push", "workflow_dispatch"]'), github.event.workflow_run.event))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    env:
+      APP_ID: com.vicinae.Vicinae
+      IMAGE: ghcr.io/tuna-os/compass
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Which run
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_RUN: ${{ github.event.workflow_run.id }}
+          INPUT_RUN: ${{ inputs.run-id }}
+        run: |
+          run="${EVENT_RUN:-$INPUT_RUN}"
+          if [ -z "$run" ]; then
+            run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow flatpak.yaml \
+                     --branch main --status success --limit 1 \
+                     --json databaseId --jq '.[0].databaseId')"
+          fi
+          test -n "$run" || { echo "::error::no successful Flatpak run on main to publish"; exit 1; }
+          echo "id=$run" >> "$GITHUB_OUTPUT"
+          echo "publishing the bundle from run $run"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: bundle
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
+
+      - name: Install flatpak and skopeo
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq flatpak ostree skopeo
+
+      # The bundle carries the commit flatpak-builder made, including the
+      # AppStream data and icons it composed from our metainfo. build-bundle
+      # --oci writes those into the image config as org.freedesktop.appstream.*
+      # labels, which is where a software centre reads the app's name, icon and
+      # licence from on an OCI remote.
+      - name: Export the OCI image
+        run: |
+          ostree --repo=repo init --mode=archive-z2
+          flatpak build-import-bundle repo "bundle/$APP_ID.flatpak"
+          flatpak build-bundle --oci --arch=x86_64 repo compass.oci "$APP_ID"
+          python3 -c "
+          import json, pathlib
+          oci = pathlib.Path('compass.oci')
+          blobs = oci / 'blobs' / 'sha256'
+          digest = json.loads((oci / 'index.json').read_text())['manifests'][0]['digest']
+          manifest = json.loads((blobs / digest.split(':')[1]).read_text())
+          config = json.loads((blobs / manifest['config']['digest'].split(':')[1]).read_text())
+          labels = sorted(config['config']['Labels'])
+          print(digest)
+          print('\n'.join('  ' + label for label in labels))
+          missing = [l for l in ('org.freedesktop.appstream.appdata', 'org.freedesktop.appstream.icon-128') if l not in labels]
+          if missing:
+              raise SystemExit(f'no AppStream labels on the image: {missing}; software centres would show a bare app id')
+          "
+
+      - name: Push to GHCR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GITHUB_TOKEN" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+          skopeo copy oci:compass.oci "docker://$IMAGE:latest"
+
+      # The org's shared step: clones tuna-os/docs, updates this app's entry in
+      # static/flatpak/index/static and pushes, retrying when another app's
+      # publish lands first.
+      - name: Update the remote's index (tuna-os/docs)
+        uses: tuna-os/.github/.github/actions/publish-flatpak-index@main
+        with:
+          oci-dir: compass.oci
+          repo-name: tuna-os/compass
+          tags: latest
+          token: ${{ secrets.FLATPAK_INDEX_TOKEN }}
