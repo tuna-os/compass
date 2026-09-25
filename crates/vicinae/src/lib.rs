@@ -56,6 +56,7 @@ pub mod tray_host;
 pub mod typography;
 pub mod ui_backend;
 mod ui_instance;
+pub mod updates;
 pub mod vicinae_import;
 pub mod window;
 pub mod window_service;

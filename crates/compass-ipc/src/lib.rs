@@ -65,8 +65,9 @@ pub use protocol::{
     OAuthTokenSetEntry, OpenerEntry, PROTOCOL_VERSION, PreferenceField, PreferenceFieldKind,
     ProtocolError, QueryHit, Request, RequestEnvelope, Response, ResponseEnvelope, RhaiScriptEntry,
     RootItemEdit, ScriptArgumentEntry, ScriptEntry, ScriptGrantEntry, ShortcutEntry, SnippetEntry,
-    StoreDetail, StoreEntry, StoreKind, TrayItemInfo, TrayMenuEntry, WindowCommand, WindowInfo,
-    WindowManagerCapabilities, WindowOutcome, WindowToggle, WorkspaceApp, WorkspaceEntry,
+    StoreDetail, StoreEntry, StoreKind, TrayItemInfo, TrayMenuEntry, UpdateOffer, WindowCommand,
+    WindowInfo, WindowManagerCapabilities, WindowOutcome, WindowToggle, WorkspaceApp,
+    WorkspaceEntry,
 };
 pub use transport::{
     Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,

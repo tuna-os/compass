@@ -131,6 +131,8 @@ pub struct EngineState {
     shell_slot: crate::rhai_host::ShellSlot,
     /// The extension stores.
     stores: Arc<crate::stores::Stores>,
+    /// The update check.
+    updates: Arc<crate::updates::Updates>,
     /// Snippet keyword expansion and its input server, once started.
     expander: Option<Arc<crate::snippet_expansion::Expander>>,
     /// Launches extensions asked for, and their commands' subtitle overrides.
@@ -262,6 +264,7 @@ impl EngineState {
             rhai,
             shell_slot,
             stores: Arc::default(),
+            updates: Arc::default(),
             expander: None,
             launches: Arc::default(),
             catalog_generation: 0,
@@ -331,6 +334,7 @@ impl EngineState {
             rhai: Arc::default(),
             shell_slot: crate::rhai_host::ShellSlot::default(),
             stores: Arc::default(),
+            updates: Arc::new(crate::updates::Updates::offline()),
             expander: None,
             launches: Arc::default(),
             catalog_generation: 0,
@@ -2766,6 +2770,29 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 .global_shortcuts()
                 .set_capturing(capturing);
             Response::Ack
+        }
+        Request::UpdateStatus => {
+            let updates = Arc::clone(&state.read().await.updates);
+            // Read when asked, so turning the setting off stops the next check.
+            let enabled = Config::load()
+                .map(|config| config.launcher().check_for_updates())
+                .unwrap_or(compass_core::config::DEFAULT_CHECK_FOR_UPDATES);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| {
+                    i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
+                });
+            Response::UpdateStatus {
+                current: updates.current().to_owned(),
+                available: updates.status(enabled, now).await,
+            }
+        }
+        Request::SkipUpdate { tag } => {
+            let updates = Arc::clone(&state.read().await.updates);
+            match updates.skip(&tag) {
+                Ok(()) => Response::Ack,
+                Err(message) => Response::Error(ProtocolError::new(ErrorKind::Internal, message)),
+            }
         }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,

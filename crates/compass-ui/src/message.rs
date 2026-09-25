@@ -317,6 +317,10 @@ pub enum Message {
     LaunchFetched(Result<crate::backend::ExtensionLaunch, String>),
     /// The subtitles extensions set for their commands arrived.
     ExtensionSubtitlesLoaded(Result<Vec<(String, String)>, String>),
+    /// The engine's answer to whether a newer Compass release is out.
+    UpdateStatusLoaded(Result<Option<crate::backend::UpdateOffer>, String>),
+    /// "Skip This Version" finished for the tag.
+    UpdateSkipped(String, Result<(), String>),
     /// A command's preferences form arrived, to edit without running it.
     PreferencesOpened {
         /// The command's root id.

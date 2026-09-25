@@ -11,6 +11,7 @@
 //!     "keybinding": "default",
 //!     "wrap_navigation": false,
 //!     "quick_launch": true,
+//!     "check_for_updates": true,
 //!     "appearance": { "color_scheme": "system", "preset": "gnome", "icons": false }
 //!   },
 //!   "extensions": {
@@ -68,6 +69,14 @@ pub const DEFAULT_WRAP_NAVIGATION: bool = false;
 /// rather than under an `appearance` section because it is behaviour, not
 /// appearance: it changes what a keystroke does, not what a row looks like.
 pub const DEFAULT_QUICK_LAUNCH: bool = true;
+
+/// Default for `launcher.check_for_updates`.
+///
+/// On: the engine asks Compass's GitHub releases at most every six hours
+/// whether a newer one is out, and the root search says so. The C++ has no
+/// switch (it checks wherever it can install); a fork that only checks gives
+/// the person who does not want the request a way to refuse it.
+pub const DEFAULT_CHECK_FOR_UPDATES: bool = true;
 
 /// Default for `launcher.appearance.preset`.
 ///
@@ -243,6 +252,10 @@ pub struct LauncherConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = DEFAULT_QUICK_LAUNCH))]
     quick_launch: Option<bool>,
+    /// Whether Compass checks its GitHub releases for a newer version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_CHECK_FOR_UPDATES))]
+    check_for_updates: Option<bool>,
     /// Colour mode and row presentation.
     #[serde(default, skip_serializing_if = "AppearanceConfig::is_empty")]
     appearance: AppearanceConfig,
@@ -507,6 +520,14 @@ impl LauncherConfig {
         self.quick_launch.unwrap_or(DEFAULT_QUICK_LAUNCH)
     }
 
+    /// Whether Compass checks for a newer release.
+    ///
+    /// Defaults to [`DEFAULT_CHECK_FOR_UPDATES`].
+    #[must_use]
+    pub fn check_for_updates(&self) -> bool {
+        self.check_for_updates.unwrap_or(DEFAULT_CHECK_FOR_UPDATES)
+    }
+
     /// The scheme [`keybinding`](Self::keybinding) names.
     #[must_use]
     pub fn keybinding_scheme(&self) -> crate::keybinding::Scheme {
@@ -575,6 +596,7 @@ impl LauncherConfig {
             keybinding,
             wrap_navigation,
             quick_launch,
+            check_for_updates,
             appearance,
             clock,
             unknown,
@@ -585,6 +607,7 @@ impl LauncherConfig {
             && keybinding.is_none()
             && wrap_navigation.is_none()
             && quick_launch.is_none()
+            && check_for_updates.is_none()
             && appearance.is_empty()
             && clock.is_empty()
             && unknown.is_empty()

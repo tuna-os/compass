@@ -68,7 +68,7 @@ impl LauncherApp {
             RootRow::RhaiScript(index) => {
                 Some(self.app_index.rhai_scripts().get(index)?.entrypoint_id())
             }
-            RootRow::Calculator | RootRow::Fallback(_) => None,
+            RootRow::Calculator | RootRow::Fallback(_) | RootRow::Update => None,
         }
     }
 
@@ -136,9 +136,25 @@ impl LauncherApp {
 
     /// The heading drawn above the root row at `position`, if a section
     /// starts there: only the empty query has sections, and only when it
-    /// has favourites.
+    /// has favourites or an update.
     pub(super) fn root_heading_at(&self, position: usize) -> Option<&'static str> {
-        if self.favorites_len == 0 || !self.query.is_empty() {
+        if !self.query.is_empty() {
+            return None;
+        }
+        // The Update section, when it leads, heads its row and moves the
+        // others down one (`RootUpdateSection` before the favourites).
+        let position = if self.update_shown() {
+            if position == 0 {
+                return Some(super::release_check::UPDATE_HEADING);
+            }
+            if position == 1 && self.favorites_len == 0 {
+                return Some(SUGGESTIONS_HEADING);
+            }
+            position - 1
+        } else {
+            position
+        };
+        if self.favorites_len == 0 {
             return None;
         }
         if position == 0 {
@@ -404,7 +420,7 @@ impl LauncherApp {
             }
             RootRow::Script(index) => self.app_index.scripts().get(index)?.title.clone(),
             RootRow::RhaiScript(index) => self.app_index.rhai_scripts().get(index)?.title.clone(),
-            RootRow::Calculator => return None,
+            RootRow::Calculator | RootRow::Update => return None,
         })
     }
 

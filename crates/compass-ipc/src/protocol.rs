@@ -86,8 +86,10 @@ use serde::{Deserialize, Serialize};
 /// [`Request::LocalStorageItems`], [`Request::OAuthTokenSets`],
 /// [`Request::RemoveOAuthTokenSet`]); version 20, the shortcut recorder
 /// suspending the global shortcuts while it captures
-/// ([`Request::ShortcutCapture`]).
-pub const PROTOCOL_VERSION: u16 = 20;
+/// ([`Request::ShortcutCapture`]); version 21, the update check: whether a
+/// newer Compass release is out ([`Request::UpdateStatus`],
+/// [`Response::UpdateStatus`]) and skipping it ([`Request::SkipUpdate`]).
+pub const PROTOCOL_VERSION: u16 = 21;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1002,6 +1004,29 @@ pub enum Request {
         /// Whether the recorder is capturing.
         capturing: bool,
     },
+    /// Whether a newer Compass release is out, as the root search's Update
+    /// section shows it (`UpdateService::available`). The engine asks the
+    /// release feed when its last answer is older than six hours and
+    /// `launcher.check_for_updates` is on. Answered with
+    /// [`Response::UpdateStatus`]. (v21.)
+    UpdateStatus,
+    /// Never offer the release `tag` again (`skipAvailableVersion`).
+    /// Answered with [`Response::Ack`]. (v21.)
+    SkipUpdate {
+        /// The release's tag, as [`UpdateOffer::tag`] gave it.
+        tag: String,
+    },
+}
+
+/// A newer Compass release, in a [`Response::UpdateStatus`]. (v21.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateOffer {
+    /// The release's tag, such as `v1.2.0`.
+    pub tag: String,
+    /// The tag without its leading `v`, for showing.
+    pub version: String,
+    /// The release page.
+    pub release_url: String,
 }
 
 /// Answer to [`Request::FileActions`]. (v18.)
@@ -1480,6 +1505,14 @@ pub enum Response {
     OAuthTokenSets {
         /// The token sets.
         sets: Vec<OAuthTokenSetEntry>,
+    },
+    /// Answer to [`Request::UpdateStatus`]. (v21.)
+    UpdateStatus {
+        /// The version the engine is, such as `v0.1.0`.
+        current: String,
+        /// The newer release, or `None`: up to date, checking off, or the
+        /// feed not reached.
+        available: Option<UpdateOffer>,
     },
 }
 

@@ -48,7 +48,7 @@ const fn store(kind: StoreKind) -> Store {
     }
 }
 
-fn agent() -> &'static ureq::Agent {
+pub(crate) fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
         use ureq::tls::{RootCerts, TlsConfig, TlsProvider};

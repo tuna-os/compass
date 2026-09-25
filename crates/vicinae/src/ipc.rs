@@ -211,6 +211,8 @@ fn describe(request: &Request) -> &'static str {
         Request::OAuthTokenSets => "OAuthTokenSets",
         Request::RemoveOAuthTokenSet { .. } => "RemoveOAuthTokenSet",
         Request::ShortcutCapture { .. } => "ShortcutCapture",
+        Request::UpdateStatus => "UpdateStatus",
+        Request::SkipUpdate { .. } => "SkipUpdate",
     }
 }
 

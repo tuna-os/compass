@@ -219,7 +219,7 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         cpp: "telemetrySystemInfo",
         page: CorePage::General,
         label: "Basic usage statistics",
-        reason: "Compass sends no telemetry",
+        reason: "Compass sends no telemetry (a hard fork: no telemetry, by decision)",
     },
     NotPorted {
         cpp: "fontSize",
@@ -415,6 +415,12 @@ pub fn catalog() -> Vec<Setting> {
                 Kind::Number { min: 0, max: 500 },
                 json!(crate::config::DEFAULT_MAX_RESULTS),
             ),
+        Setting::new("launcher.check_for_updates", core(General), "Updates")
+            .label(
+                "Check for updates",
+                "Ask Compass's GitHub releases, at most every six hours, whether a newer version is out.",
+            )
+            .kind(Kind::Toggle, json!(crate::config::DEFAULT_CHECK_FOR_UPDATES)),
         Setting::new("launcher.clock.enabled", core(General), "Clock")
             .label("Show the clock", "The time, in the root search's status bar.")
             .kind(Kind::Toggle, json!(crate::config::DEFAULT_CLOCK_ENABLED)),

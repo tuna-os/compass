@@ -439,6 +439,10 @@ fn all_requests() -> Vec<Request> {
         },
         Request::ShortcutCapture { capturing: true },
         Request::ShortcutCapture { capturing: false },
+        Request::UpdateStatus,
+        Request::SkipUpdate {
+            tag: "v1.2.0-ü".into(),
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -632,6 +636,18 @@ fn all_responses() -> Vec<Response> {
                 expires_at: Some(i64::MAX),
                 expired: false,
             }],
+        },
+        Response::UpdateStatus {
+            current: "v0.1.0".into(),
+            available: Some(compass_ipc::UpdateOffer {
+                tag: "v1.2.0".into(),
+                version: "1.2.0".into(),
+                release_url: "https://github.com/tuna-os/compass/releases/tag/v1.2.0".into(),
+            }),
+        },
+        Response::UpdateStatus {
+            current: String::new(),
+            available: None,
         },
         Response::FileActions(compass_ipc::FileActionInfo {
             mime: Some("image/png".into()),
@@ -1129,6 +1145,8 @@ fn request_variants_are_exhaustive() {
             | Request::OAuthTokenSets
             | Request::RemoveOAuthTokenSet { .. }
             | Request::ShortcutCapture { .. }
+            | Request::UpdateStatus
+            | Request::SkipUpdate { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1193,6 +1211,7 @@ fn response_variants_are_exhaustive() {
             | Response::LocalStorageNamespaces { .. }
             | Response::LocalStorageItems { .. }
             | Response::OAuthTokenSets { .. }
+            | Response::UpdateStatus { .. }
             | Response::Window(_) => {}
         }
     }

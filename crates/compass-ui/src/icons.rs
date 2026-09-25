@@ -248,6 +248,19 @@ pub fn on_tile(tile: crate::design::Rgb) -> crate::design::Rgb {
     ))
 }
 
+/// The root search's Update row: `download` on a blue tile
+/// (`RootUpdateSection::itemIcon`).
+#[must_use]
+pub fn update_glyph(accent: crate::design::Rgb) -> Glyph {
+    let tile = tile_color(compass_core::commands::Tile::Blue, accent);
+    Glyph::Builtin {
+        name: "download".to_owned(),
+        fill: Some(on_tile(tile)),
+        tile: Some(tile),
+        badge: None,
+    }
+}
+
 /// A builtin command's glyph: its icon on its C++ tile, with its badge.
 #[must_use]
 pub fn command_glyph(

@@ -700,19 +700,33 @@ impl LauncherApp {
                             .font(self.font())
                             .size(12)
                             .color(muted),
-                    )
-                    .push(
+                    );
+                if let Some(offer) = &self.update {
+                    body = body.push(
                         row![
-                            button(text("Documentation").font(self.font()).size(13))
-                                .on_press(settings(SettingsMessage::OpenUrl(DOCS_URL.to_owned()))),
-                            button(text("Report a Bug").font(self.font()).size(13)).on_press(
-                                settings(SettingsMessage::OpenUrl(
-                                    compass_core::bug_report::CREATE_ISSUE_URL.to_owned()
-                                ))
+                            text(super::release_check::title(offer))
+                                .font(self.font())
+                                .size(13),
+                            button(text("View Release Notes").font(self.font()).size(13)).on_press(
+                                settings(SettingsMessage::OpenUrl(offer.release_url.clone()))
                             ),
                         ]
-                        .spacing(8),
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
                     );
+                }
+                body = body.push(
+                    row![
+                        button(text("Documentation").font(self.font()).size(13))
+                            .on_press(settings(SettingsMessage::OpenUrl(DOCS_URL.to_owned()))),
+                        button(text("Report a Bug").font(self.font()).size(13)).on_press(settings(
+                            SettingsMessage::OpenUrl(
+                                compass_core::bug_report::CREATE_ISSUE_URL.to_owned()
+                            )
+                        )),
+                    ]
+                    .spacing(8),
+                );
             }
             CorePage::Keybindings => {
                 for (name, description, keys) in settings_catalog::KEYBINDINGS {

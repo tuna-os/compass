@@ -150,6 +150,14 @@
           "$ref": "#/$defs/AppearanceConfig",
           "description": "Colour mode and row presentation."
         },
+        "check_for_updates": {
+          "default": true,
+          "description": "Whether Compass checks its GitHub releases for a newer version.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "clock": {
           "$ref": "#/$defs/ClockConfig",
           "description": "The clock the root search shows in its status bar."

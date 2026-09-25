@@ -75,6 +75,7 @@ fn every_documented_key_is_in_the_schema_with_its_default() {
         (&["launcher", "keybinding"], Value::from("default")),
         (&["launcher", "wrap_navigation"], Value::from(false)),
         (&["launcher", "quick_launch"], Value::from(true)),
+        (&["launcher", "check_for_updates"], Value::from(true)),
         (
             &["launcher", "appearance", "color_scheme"],
             Value::from("system"),

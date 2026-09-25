@@ -37,6 +37,10 @@ const NO_SESSION_BUS: &str = "unix:path=/nonexistent/compass-test-no-session-bus
 /// catching.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A release feed nothing listens on (the discard port), so an engine a
+/// test starts never asks GitHub.
+const NO_UPDATE_FEED: &str = "http://127.0.0.1:9/releases/latest";
+
 fn binary() -> PathBuf {
     // The integration-test binary lives next to the crate's binaries.
     let mut path = std::env::current_exe().expect("test binary path");
@@ -63,6 +67,7 @@ fn graphical_session_starts_an_engine_and_reaps_only_its_own_child() {
         .env("XDG_CACHE_HOME", dir.path().join(".cache"))
         .env("HOME", dir.path())
         .env_remove("XDG_STATE_HOME")
+        .env("VICINAE_UPDATE_FEED_URL", NO_UPDATE_FEED)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -222,6 +227,9 @@ impl Daemon {
             // stands in for vicinae-input-server unless a test brings its
             // own fake.
             .env("VICINAE_INPUT_SERVER_BIN", "/bin/true")
+            // Nor GitHub: the update check asks a closed local port unless a
+            // test brings its own feed.
+            .env("VICINAE_UPDATE_FEED_URL", NO_UPDATE_FEED)
             .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -6438,4 +6446,119 @@ fn a_files_panel_learns_its_mime_type_and_an_appimage_is_made_executable_and_run
         }),
         Response::Error(e) if e.kind == ErrorKind::BadRequest
     ));
+}
+
+// ---- The update check, against a local feed ----
+
+/// A local stand-in for `api.github.com/repos/tuna-os/compass/releases/latest`,
+/// counting how often it is asked.
+struct FakeFeed {
+    url: String,
+    asked: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    _server: std::sync::Arc<tiny_http::Server>,
+}
+
+impl FakeFeed {
+    fn start(tag: &'static str) -> FakeFeed {
+        let server =
+            std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("fake feed"));
+        let port = server.server_addr().to_ip().expect("ip").port();
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (thread_server, count) = (
+            std::sync::Arc::clone(&server),
+            std::sync::Arc::clone(&asked),
+        );
+        std::thread::spawn(move || {
+            for request in thread_server.incoming_requests() {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = serde_json::json!({
+                    "tag_name": tag,
+                    "html_url": format!("https://github.com/tuna-os/compass/releases/tag/{tag}"),
+                    "draft": false,
+                    "prerelease": false,
+                    "assets": [],
+                })
+                .to_string();
+                let _ = request.respond(tiny_http::Response::from_string(body));
+            }
+        });
+        FakeFeed {
+            url: format!("http://127.0.0.1:{port}/repos/tuna-os/compass/releases/latest"),
+            asked,
+            _server: server,
+        }
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn start_engine(&self, config: &str) -> Daemon {
+        let url = self.url.clone();
+        Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], config, move |_| {
+            vec![
+                ("VICINAE_UPDATE_FEED_URL", url.into()),
+                ("VICINAE_UPDATE_VERSION", "v0.1.0".into()),
+            ]
+        })
+    }
+}
+
+fn update_status(daemon: &Daemon) -> (String, Option<compass_ipc::UpdateOffer>) {
+    let compass_ipc::Response::UpdateStatus { current, available } =
+        daemon.request(compass_ipc::Request::UpdateStatus)
+    else {
+        panic!("no update status");
+    };
+    (current, available)
+}
+
+#[test]
+fn a_newer_release_is_offered_once_checked_and_skipping_it_is_remembered() {
+    let feed = FakeFeed::start("v0.2.0");
+    let daemon = feed.start_engine("{}");
+
+    let (current, offer) = update_status(&daemon);
+    assert_eq!(current, "v0.1.0");
+    let offer = offer.expect("offered");
+    assert_eq!(offer.tag, "v0.2.0");
+    assert_eq!(offer.version, "0.2.0");
+    assert_eq!(
+        offer.release_url,
+        "https://github.com/tuna-os/compass/releases/tag/v0.2.0"
+    );
+    assert!(update_status(&daemon).1.is_some());
+    assert_eq!(feed.asked(), 1, "the second answer came from the cache");
+    assert!(
+        daemon
+            ._dirs
+            .path()
+            .join(".cache/vicinae/latest-release.json")
+            .is_file(),
+        "the check is remembered under the cache directory"
+    );
+
+    assert_eq!(
+        daemon.request(compass_ipc::Request::SkipUpdate {
+            tag: "v0.2.0".into()
+        }),
+        compass_ipc::Response::Ack
+    );
+    assert_eq!(update_status(&daemon).1, None, "skipped");
+    let state = std::fs::read_to_string(
+        daemon
+            ._dirs
+            .path()
+            .join(".local/state/vicinae/updates.json"),
+    )
+    .expect("the state file");
+    assert!(state.contains("\"skippedVersion\":\"v0.2.0\""), "{state}");
+}
+
+#[test]
+fn with_update_checks_off_the_feed_is_never_asked() {
+    let feed = FakeFeed::start("v0.2.0");
+    let daemon = feed.start_engine(r#"{"launcher": {"check_for_updates": false}}"#);
+    assert_eq!(update_status(&daemon).1, None);
+    assert_eq!(feed.asked(), 0);
 }

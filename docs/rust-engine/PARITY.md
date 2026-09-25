@@ -161,7 +161,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/media-control` | `compass-media` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/menu-bar` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/news` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/news` | `—` | n/a (decision) | ✅ | n/a | n/a | ❌ |
 | `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/paste` | `compass-core`, `vicinae::paste`, `compass-wayland::virtual_keyboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
@@ -173,11 +173,11 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/shortcut-inhibit` | `compass-core`, `compass-wayland::keyboard_inhibit` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/telemetry` | `—` | n/a (decision) | ✅ | n/a | n/a | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/tray-host` | `compass-core`, `vicinae::tray_host` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/update` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/update` | `compass-core::update`, `vicinae::updates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
@@ -293,7 +293,7 @@ shortcuts, the power commands' two preferences, and a notification's urgency and
 | `src/services/selection` | Rust ✅ | data-control on wlroots, the Shell extension on GNOME | `the_primary_selection_is_its_text_or_nothing`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `on_sway_a_shortcut_expands_the_selected_text` |
 | `src/services/snippet` | Rust ✅ | `compass_core::{snippet_store, snippet_expander}`, `compass-input-server` | `snippets_are_imported_created_expanded_edited_and_removed`, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
 | `src/services/wallpaper` | Rust ✅ | `compass_core::wallpaper`, `vicinae::extension_wallpaper` (all six Linux backends) | `compass-core/tests/wallpaper.rs`, `a_failing_command_says_its_stderr_else_its_code` |
-| `src/services/window-manager` | Rust 🟡, parity ✅ | dispatch plus GNOME, wlroots, Hyprland, niri and KDE (KWin, "The gaps pass, KDE"); not X11, nor GNOME's workspace list | `compass-core/tests/window_manager.rs`, `compositor_ipc.rs`, `compass-platform-linux/tests/kwin.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
+| `src/services/window-manager` | Rust 🟡, parity ✅ | dispatch plus GNOME, wlroots, Hyprland, niri and KDE (KWin, "The gaps pass, KDE"); not GNOME's workspace list (X11 is n/a, "Product decisions") | `compass-core/tests/window_manager.rs`, `compositor_ipc.rs`, `compass-platform-linux/tests/kwin.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
 | `src/builtins/developer` | both ✅ | Create Extension end to end | `a_valid_form_writes_the_boilerplate_and_an_invalid_one_says_why`, `create_extension_sends_the_form_and_shows_where_it_went` |
 | `src/builtins/font` | parity ✅ | Browse Fonts | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font` |
 | `src/builtins/power-management` | both ✅ | the plan, both preferences, the dialog | `the_confirm_preference_decides_whether_a_power_command_asks`, `a_power_command_with_a_custom_program_runs_it_instead` |
@@ -323,11 +323,14 @@ PLAN §12.0 sizes them and says what blocks each.
   one, a remote one) to a temporary PNG landed after it (see "Gaps closed after the truth pass").
 - `src/services/global-shortcuts`: per-command global shortcuts, `vicinae-hotkey-v1`, the
   launcher hotkey from the configuration, close on focus loss and conflict detection landed in "The
-  gaps pass, global shortcuts". Still C++-only: the X11 backend (the X11 decision),
-  `globalShortcuts.inhibitApps`, and the recorder's `probeBind`.
-- `src/services/news`, `src/services/update`, `src/services/telemetry`: Still C++-only: fetching
-  and showing the news notices, the update check, and sending the telemetry record, each ported as
-  a model and waiting on a decision about what a fork fetches and sends.
+  gaps pass, global shortcuts". Still C++-only: `globalShortcuts.inhibitApps`, and the
+  recorder's `probeBind`. The X11 backend is n/a: Compass is Wayland only ("Product decisions").
+- `src/services/news`, `src/services/telemetry`: n/a in both columns. A hard fork: no news feed,
+  no telemetry, by decision 2026-09-25 ("Product decisions"). The C++ models stay in
+  `compass-core` (`news`, `telemetry`) as the record of the port and for the store's base URL;
+  nothing fetches or sends them.
+- `src/services/update`: closed in "Product decisions" below: Compass checks its own GitHub
+  releases and says so in the root search; it never installs.
 - `src/services/paste`: synthetic paste on wlroots closed in "The gaps pass, wlroots paste and
   inhibit" (the input server's `injectPaste`, else `zwp_virtual_keyboard_v1`).
 - `src/services/shortcut-inhibit`: the keyboard-shortcuts-inhibit client and the recorder's use of
@@ -354,6 +357,42 @@ PLAN §12.0 sizes them and says what blocks each.
 - `ui/action-panel`: closed in "The gaps pass, root and actions" below.
 - `ui/bridges`: closed in "The gaps pass, UI" below (a Markdown detail's images are fetched and
   drawn).
+
+### Product decisions: updates, news, telemetry, X11 (2026-09-25)
+
+Four rows waited on a decision rather than on work. The maintainer decided them on 2026-09-25:
+
+1. **Update check only.** Compass checks GitHub releases of `tuna-os/compass` for a newer version
+   and says so; the package manager that installed it installs it.
+2. **No news, no telemetry.** A hard fork: no news feed, no telemetry, by decision 2026-09-25.
+   `src/services/news` and `src/services/telemetry` are n/a in both columns.
+3. **Wayland only: no X11.** Global shortcuts' X11 backend and the window manager's X11 provider
+   are n/a. Neither row flips on it: global shortcuts keeps `inhibitApps` and `probeBind`
+   (`Rust ✓` 🟡), and the window manager keeps GNOME's workspace list (the Shell extension's
+   contract has no `ListWorkspaces`), so both stay amber for those alone.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/update` | Rust 🟡 → ✅ | `compass_core::update` (`ReleaseCheck`, `CheckCache`, `load_cache`/`save_cache`, the feed at `repos/tuna-os/compass/releases/latest`), `vicinae::updates` (`Updates`, `GithubFeed` over the engine's `ureq` agent, `ReleaseFeed`), IPC v21 `Request::UpdateStatus`/`Response::UpdateStatus` and `Request::SkipUpdate`, `launcher.check_for_updates`, `compass_ui::app::release_check` (the root search's Update row and its panel) | `a_release_check_offers_any_newer_published_release_without_an_asset`, `a_release_check_keeps_every_other_gate`, `a_check_is_fresh_for_six_hours_and_not_after`, `the_check_cache_round_trips_and_a_bad_one_is_empty`, `compass_reads_its_own_releases`; `a_newer_release_is_offered_and_asked_for_once_in_six_hours`, `checking_off_asks_nothing`, `a_build_that_is_not_a_release_asks_nothing`, `a_skipped_release_is_not_offered_but_the_next_one_is`, `an_unreachable_feed_keeps_the_last_answer_and_waits_six_hours`, `the_github_feed_reads_the_release_from_its_url` (a local `tiny_http` feed), `the_github_feed_reports_a_refusal`; `a_newer_release_is_offered_once_checked_and_skipping_it_is_remembered`, `with_update_checks_off_the_feed_is_never_asked` (a real engine against a local feed); `a_newer_release_leads_the_empty_query_and_its_panel_opens_or_skips_it` |
+| `src/services/news` | Rust, parity 🟡/✅ → n/a | — | — |
+| `src/services/telemetry` | Rust, parity 🟡/✅ → n/a | — | — |
+
+No test reaches the network: the engine tests point `VICINAE_UPDATE_FEED_URL` at a local
+`tiny_http` feed or a closed local port, and an engine built around a test's index has a feed that
+is never reached (`Updates::offline`).
+
+What differs from `UpdateService`:
+
+| Row | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| `update` | Checks only where it can install (`checksSupported` needs the installer): macOS; on Linux the `NullUpdateInstaller` turns checking off. | Checks on Linux, installing nothing (`ReleaseCheck`): any newer published release is an offer, whatever its assets. | `a_release_check_offers_any_newer_published_release_without_an_asset` |
+| `update` | The feed is `vicinaehq/vicinae`'s releases. | `tuna-os/compass`'s, compared against Compass's own version (`v` and `CARGO_PKG_VERSION`); `VICINAE_UPDATE_FEED_URL` and `VICINAE_UPDATE_VERSION` still override both. | `compass_reads_its_own_releases`, `a_newer_release_is_offered_once_checked_and_skipping_it_is_remembered` |
+| `update` | Checks at start-up and every six hours on a timer, whether or not anyone looks; nothing is kept between runs but the skipped version. | Checks when the launcher opens and the last check is six hours old or more; the last answer (and when it was asked) is kept in `$XDG_CACHE_HOME/vicinae/latest-release.json`, so a restarted engine does not ask again, and a failed check waits six hours too, keeping the release from the one before. An engine nobody opens a launcher on never asks. | `a_newer_release_is_offered_and_asked_for_once_in_six_hours`, `an_unreachable_feed_keeps_the_last_answer_and_waits_six_hours` |
+| `update` | No switch. | `launcher.check_for_updates` (on by default, on the settings view's General page): off, nothing is asked. | `checking_off_asks_nothing`, `with_update_checks_off_the_feed_is_never_asked` |
+| `update` | The Update row's primary action installs (Install Update); View Release Notes second; Skip This Version (`Keybind::RemoveAction`) toasts "Skipped %1". | View Release Notes is primary (Enter), Skip This Version on Ctrl+X; the row going is the answer, without a toast (the launcher has none that leaves it open). The title says "Compass %1 is available". | `a_newer_release_leads_the_empty_query_and_its_panel_opens_or_skips_it` |
+| `update` | The tray's "Check for Updates…" item. | Not offered: Compass has no tray icon of its own (`src/services/tray`). | — |
+| `builtins/vicinae` | Forget Past Vicinae Telemetry. | Not offered, and never will be: Compass sends none. | `the_vicinae_extensions_commands_keep_their_cpp_ids` |
+| `global-shortcuts`, `window-manager` | X11 backends (`x11/`). | None: Compass is Wayland only. | — |
 
 ### Gaps closed after the truth pass (2026-09-25)
 
@@ -866,7 +905,7 @@ and unloaded under a unique plugin name. Chosen as the C++ chooses it: `kde` in
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/window-manager` | — (stays `Rust ✓` 🟡: the X11 provider and GNOME's workspace list remain) | `compass_platform_linux::compositor::kwin` (`Kwin`, the tracker object, the scripts), `Provider::Kwin`, `vicinae::wlroots::{start_kwin, stop_kwin}`, `vicinae::window_service::{kwin_list, kwin_windows, kwin_act}`, the `kde.kwin` doctor check | `the_tracker_lists_kwins_normal_windows_and_which_is_active`, `focus_close_and_fullscreen_are_one_shot_scripts_unloaded_after`, `virtual_desktops_are_the_workspaces_and_the_overview_is_kwins_shortcut`, `a_kwin_restart_forgets_its_windows_and_reloads_the_tracker`, `a_second_tracker_is_refused_the_name_and_stop_gives_it_up`, `plasma_on_wayland_is_a_kde_entry_and_a_display`, `a_one_shot_script_quotes_its_target`, `handles_are_numbered_once_and_never_reused`, `kwin_windows_leave_out_the_launcher_and_number_their_desktop`, `kwin_with_its_desktops_passes_and_counts_them`, `kwin_absent_on_plasma_warns_and_elsewhere_is_not_asked`, `kwin_without_virtual_desktops_warns_that_there_are_no_workspaces` |
+| `src/services/window-manager` | — (stays `Rust ✓` 🟡: GNOME's workspace list remains; X11 has since been decided n/a, "Product decisions") | `compass_platform_linux::compositor::kwin` (`Kwin`, the tracker object, the scripts), `Provider::Kwin`, `vicinae::wlroots::{start_kwin, stop_kwin}`, `vicinae::window_service::{kwin_list, kwin_windows, kwin_act}`, the `kde.kwin` doctor check | `the_tracker_lists_kwins_normal_windows_and_which_is_active`, `focus_close_and_fullscreen_are_one_shot_scripts_unloaded_after`, `virtual_desktops_are_the_workspaces_and_the_overview_is_kwins_shortcut`, `a_kwin_restart_forgets_its_windows_and_reloads_the_tracker`, `a_second_tracker_is_refused_the_name_and_stop_gives_it_up`, `plasma_on_wayland_is_a_kde_entry_and_a_display`, `a_one_shot_script_quotes_its_target`, `handles_are_numbered_once_and_never_reused`, `kwin_windows_leave_out_the_launcher_and_number_their_desktop`, `kwin_with_its_desktops_passes_and_counts_them`, `kwin_absent_on_plasma_warns_and_elsewhere_is_not_asked`, `kwin_without_virtual_desktops_warns_that_there_are_no_workspaces` |
 
 The tests run against a private `dbus-daemon` with a fake `org.kde.KWin`
 (`compass-platform-linux/tests/kwin.rs`): it answers the scripting interface as KWin does (a number
@@ -903,8 +942,8 @@ Declared differences, beyond the C++:
 - `vicinae doctor` gains `kde.kwin` (the C++ has no doctor): whether KWin owns its name and how many
   virtual desktops it reports, a warning without either, and a warning for KDE on X11.
 
-**X11 is not implemented** (the decision whether X11 is supported is the user's). What it would
-take is recorded in PLAN §12.0: the C++ `x11/` provider is 1,163 lines over XCB and EWMH
+**X11 is not implemented**, and since "Product decisions" (2026-09-25) will not be: Compass is
+Wayland only. What it would have taken is recorded in PLAN §12.0: the C++ `x11/` provider is 1,163 lines over XCB and EWMH
 (`_NET_CLIENT_LIST`, `_NET_ACTIVE_WINDOW`, `_NET_WM_DESKTOP`, `_NET_CURRENT_DESKTOP`,
 `_NET_DESKTOP_NAMES`, `WM_DELETE_WINDOW`, `_NET_WM_STATE_STICKY`) with a `PropertyNotify` listener
 on the root window.
@@ -1015,7 +1054,8 @@ its C++ id (`commands:<id>`, and `core:<id>` names it too), as `CommandKind::Vic
 Declared differences:
 
 - Open Vicinae Settings is not offered: the settings window is `ui/settings`' gap. Forget Past
-  Vicinae Telemetry is not offered: sending anything is `src/services/telemetry`'s open decision.
+  Vicinae Telemetry is not offered: Compass sends no telemetry (a hard fork, by decision
+  2026-09-25; "Product decisions").
 - Report a Vicinae Bug's optional title argument is not asked for; the issue opens untitled. Its
   "QT Platform" line says `wayland`.
 - The Available section lists Search Files, then the extensions, then the quicklinks, rather than in
@@ -1189,8 +1229,8 @@ Declared differences:
   where global shortcuts are unsupported, Compass always checks.
 - A command whose arguments are required is refused by name, as `cmd launch` refuses it, where the
   C++ opens its arguments form.
-- X11 has no backend: no X11 path exists in the tree (`x11rb` is only winit's), and whether Compass
-  supports X11 at all is the open X11 decision (PLAN §12.0).
+- X11 has no backend: no X11 path exists in the tree (`x11rb` is only winit's), and Compass is
+  Wayland only (decided 2026-09-25, "Product decisions").
 
 VM tier (declared, not verifiable in a container): GNOME's portal grant dialog on the first bind and
 whether `xdg-desktop-portal-gnome` honours the preferred trigger; a real compositor carrying
@@ -2506,7 +2546,9 @@ crate has no harness for. Recorded rather than left looking covered.
 have since landed — GNOME through the Shell extension (`compass-shell`), the wlroots
 foreign-toplevel list (`compass_wayland::toplevel`), and Hyprland and niri over their own IPC
 (`compass_platform_linux::compositor`) — so the row is `Rust ✓` 🟡 and `parity test ✓` ✅.
-Still C++-only: the X11 provider (the KDE provider landed in "The gaps pass, KDE (2026-09-25)").
+Still C++-only: GNOME's workspace list (the Shell extension's contract has no `ListWorkspaces`).
+The KDE provider landed in "The gaps pass, KDE (2026-09-25)"; the X11 provider is n/a, Compass
+being Wayland only ("Product decisions").
 The section below is kept as the record of the dispatch port.
 
 `compass-core::window_manager` is a complete port of `window-manager.cpp` — which backend gets

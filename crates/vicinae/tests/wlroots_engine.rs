@@ -67,6 +67,12 @@ impl Engine {
             // Never the invoking session's compositor socket.
             .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
             .env_remove("NIRI_SOCKET")
+            // Nor GitHub: the launcher asks for the update status when it
+            // opens, and a closed local port answers it.
+            .env(
+                "VICINAE_UPDATE_FEED_URL",
+                "http://127.0.0.1:9/releases/latest",
+            )
             .envs(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::null())

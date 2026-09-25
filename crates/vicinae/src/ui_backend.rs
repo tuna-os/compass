@@ -12,6 +12,10 @@ use compass_ui::backend::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How long the update check may take: the engine may be asking the release
+/// feed, which it allows 15 seconds.
+const UPDATE_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// How long a store listing or detail page may take: it is fetched from the
 /// network, where two seconds is not enough.
 const STORE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -533,6 +537,41 @@ impl ApplicationBackend for DaemonBackend {
                     Request::ShortcutCapture { capturing },
                     "Suspending the global shortcuts",
                 )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn update_status(&self) -> BackendFuture<'_, Option<compass_ui::backend::UpdateOffer>> {
+        Box::pin(async move {
+            match self
+                .ask_within(
+                    Request::UpdateStatus,
+                    "Checking for updates",
+                    UPDATE_TIMEOUT,
+                )
+                .await?
+            {
+                compass_ipc::Response::UpdateStatus { current, available } => {
+                    Ok(available.map(|offer| compass_ui::backend::UpdateOffer {
+                        tag: offer.tag,
+                        version: offer.version,
+                        release_url: offer.release_url,
+                        current,
+                    }))
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn skip_update(&self, tag: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(Request::SkipUpdate { tag }, "Skipping the update")
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),
