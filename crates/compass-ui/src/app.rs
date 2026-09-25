@@ -7355,7 +7355,7 @@ mod tests {
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend);
         app.view_memory.set(
-            crate::vicinae_pages::intro_key(crate::backend::Store::Vicinae),
+            crate::compass_pages::intro_key(crate::backend::Store::Vicinae),
             "true",
         );
         app.query = "extension store".into();
