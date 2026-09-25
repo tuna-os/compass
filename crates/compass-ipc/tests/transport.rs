@@ -1,7 +1,7 @@
 //! End-to-end tests over real Unix domain sockets.
 //!
 //! Every test binds inside its own temporary directory, so the developer's
-//! live `$XDG_RUNTIME_DIR/vicinae/ipc.sock` is never touched.
+//! live `$XDG_RUNTIME_DIR/compass/ipc.sock` is never touched.
 //!
 //! Synchronisation is done with `tokio::sync` primitives, never sleeps. The
 //! only timeouts present are failure guards: if the code under test deadlocks,
@@ -51,7 +51,7 @@ impl TempDir {
         &self.path
     }
 
-    /// The canonical `<dir>/vicinae/ipc.sock` location inside this tempdir.
+    /// The canonical `<dir>/compass/ipc.sock` location inside this tempdir.
     fn socket(&self) -> SocketPath {
         SocketPath::in_dir(&self.path)
     }
@@ -349,12 +349,12 @@ async fn client_connects_sends_and_receives() {
 async fn the_socket_lands_at_the_documented_path_inside_the_injected_dir() {
     let dir = TempDir::new();
     let socket = dir.socket();
-    assert_eq!(socket.as_path(), dir.path().join("vicinae/ipc.sock"));
+    assert_eq!(socket.as_path(), dir.path().join("compass/ipc.sock"));
 
     let (server, stop) = spawn_echo_server(&socket).await;
     assert!(socket.as_path().exists());
     // The parent directory is created for us, owner-only.
-    assert!(dir.path().join("vicinae").is_dir());
+    assert!(dir.path().join("compass").is_dir());
 
     stop.send(()).unwrap();
     server.await.unwrap();

@@ -344,14 +344,15 @@ pub fn search_fields<'a>(
     fields
 }
 
-/// Where the C++ keeps the metadata: `$XDG_DATA_HOME/vicinae/emojis/emojis.json`
+/// Where the C++ keeps the metadata, `$XDG_DATA_HOME/vicinae/emojis/emojis.json`, which the
+/// startup migration moves under `compass`
 /// (`Omnicast::dataDir() / "emojis" / "emojis.json"`). Shared with it, so a
 /// person moving between the engines keeps their pins and counts.
 #[must_use]
 pub fn default_path() -> Option<std::path::PathBuf> {
     Some(
         crate::xdg_dirs::data_home()?
-            .join("vicinae")
+            .join("compass")
             .join("emojis")
             .join("emojis.json"),
     )

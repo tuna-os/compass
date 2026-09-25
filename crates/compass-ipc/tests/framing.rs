@@ -954,7 +954,7 @@ fn all_responses() -> Vec<Response> {
             running: false,
             injection: false,
             keywords: 3,
-            helper: Some("/usr/libexec/vicinae/vicinae-input-server".into()),
+            helper: Some("/usr/libexec/compass/compass-input-server".into()),
             problem: Some("inside a Flatpak: /dev/input is unreachable".into()),
         }),
         Response::InputServerStatus(compass_ipc::InputServerStatus::default()),

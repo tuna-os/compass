@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 struct ParityConfig {
     /// Path to the C++ vicinae binary.
     cpp_engine: PathBuf,
-    /// Path to the Rust vicinae binary.
+    /// Path to the Rust `compass` binary.
     rust_engine: PathBuf,
     /// Corpus directory.
     corpus_dir: PathBuf,
@@ -102,7 +102,7 @@ fn main() -> Result<()> {
 
     let mut config = ParityConfig {
         cpp_engine: PathBuf::from("./build/bin/vicinae"),
-        rust_engine: PathBuf::from("./target/release/vicinae"),
+        rust_engine: PathBuf::from("./target/release/compass"),
         corpus_dir: PathBuf::from("crates/compass-testkit/corpus/desktop-entries"),
         output_dir: None,
         selftest: false,
@@ -605,7 +605,7 @@ impl Drop for StagedCorpus {
 /// ranking command. The harness used to exec the binary once per query with
 /// nothing listening, so every call returned
 ///
-///   error: no Compass engine is listening on /tmp/vicinae-default/ipc.sock
+///   error: no Compass engine is listening on /tmp/compass-default/ipc.sock
 ///
 /// and Suite 0 could never have produced a single comparison. Each engine now
 /// gets its own `serve` on its own socket, so the two cannot reach each other's
@@ -670,7 +670,7 @@ impl Flavour {
                 ("QT_QPA_PLATFORM", "offscreen"),
                 ("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1"),
             ],
-            Self::Rust => &[("VICINAE_DISABLE_AUTO_RATE_REFRESH", "1")],
+            Self::Rust => &[("COMPASS_DISABLE_AUTO_RATE_REFRESH", "1")],
         }
     }
 
@@ -737,7 +737,7 @@ impl Flavour {
     /// The argv that asks a server to stop, if it has one.
     ///
     /// The C++ CLI has no `shutdown` subcommand, so there is nothing to ask and
-    /// the caller goes straight to killing the child. `vicinae server` `exec`s
+    /// the caller goes straight to killing the child. `compass server` `exec`s
     /// the server binary rather than forking it, so the PID we spawned *is* the
     /// server -- which is the opposite of the Flatpak case that caught out
     /// `prove-smoke.sh`, and worth stating because the two look alike.
@@ -934,7 +934,7 @@ impl Drop for RunningEngine {
 /// working invocation into a failing one. Suite 0 selects an engine by choosing
 /// which path to exec, which is what `--cpp` and `--rust` are for.
 ///
-/// `crates/vicinae/src/cli.rs` pins this argv, because an argv assembled in one
+/// `crates/compass/src/cli.rs` pins this argv, because an argv assembled in one
 /// crate and parsed in another has no compiler between the two.
 fn run_search(
     engine: &RunningEngine,
@@ -1498,7 +1498,7 @@ mod tests {
 
     /// The two engines' argv, pinned.
     ///
-    /// Neither CLI accepts the other's. `crates/vicinae/src/cli.rs` pins the
+    /// Neither CLI accepts the other's. `crates/compass/src/cli.rs` pins the
     /// Rust half from its own side; this pins both from here, because the
     /// C++ half has no Rust parser to check it and its every earlier version
     /// was assembled from §8.1's prose and was wrong.

@@ -28,7 +28,7 @@
 //!   than we can use.
 //! - [`Availability::NotQueryable`] — we could not ask: no session bus, the
 //!   probe timed out, or the answer was malformed. This says nothing about
-//!   whether a backend exists, and `vicinae doctor` must not claim otherwise.
+//!   whether a backend exists, and `compass doctor` must not claim otherwise.
 //!
 //! [`PortalCapabilities::degraded`] turns that into the list of product
 //! features the user actually loses.

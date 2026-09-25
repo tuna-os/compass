@@ -1,6 +1,6 @@
 //! Unix-domain-socket IPC for the Compass engine.
 //!
-//! This is the socket the `vicinae` CLI, the browser native host and any other
+//! This is the socket the `compass` CLI, the browser native host and any other
 //! local client use to talk to the running engine. It replaces the C++
 //! `src/lib/vicinae-ipc` (glaze JSON-RPC over a hand-rolled 4-byte prefix, with
 //! the `figura` code generator on top). Per ADR-0002 in
@@ -13,7 +13,7 @@
 //!   by a postcard body, as a [`tokio_util::codec`] `Encoder`/`Decoder`, with a
 //!   hard maximum frame size.
 //! * [`protocol`] — the versioned [`Request`]/[`Response`] envelopes.
-//! * [`path`] — resolving `$XDG_RUNTIME_DIR/vicinae/ipc.sock`, injectable for
+//! * [`path`] — resolving `$XDG_RUNTIME_DIR/compass/ipc.sock`, injectable for
 //!   tests.
 //! * [`transport`] — [`Listener`] (which is also the single-instance lock),
 //!   [`Client`], the serve loop, and the reversed [`WindowLink`]/[`WindowClient`]

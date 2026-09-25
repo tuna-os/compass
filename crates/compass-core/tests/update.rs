@@ -64,8 +64,8 @@ fn the_constants_are_the_cpp_ones() {
     assert_eq!(CHECK_INTERVAL_SECS, 6 * 3600, "six hours");
     assert_eq!(RELAUNCH_DELAY_MS, 800);
     assert_eq!(STATE_FILE, "updates.json");
-    assert_eq!(FEED_URL_ENV, "VICINAE_UPDATE_FEED_URL");
-    assert_eq!(VERSION_OVERRIDE_ENV, "VICINAE_UPDATE_VERSION");
+    assert_eq!(FEED_URL_ENV, "COMPASS_UPDATE_FEED_URL");
+    assert_eq!(VERSION_OVERRIDE_ENV, "COMPASS_UPDATE_VERSION");
     assert_eq!(INSTALLED_TITLE, "Update installed");
     assert_eq!(INSTALLED_BODY, "Restarting…");
     assert_eq!(FAILED_TITLE, "Update failed");
@@ -378,7 +378,7 @@ fn the_displayed_version_drops_only_a_leading_v() {
 fn the_download_toast_names_the_tag() {
     assert_eq!(
         UpdateService::<Installer>::downloading_toast("v1.1.0"),
-        "Downloading Vicinae v1.1.0…"
+        "Downloading Compass v1.1.0…"
     );
 }
 
@@ -388,7 +388,7 @@ fn progress_is_only_shown_when_the_total_is_known() {
     // C++ guards with `if (total > 0)`.
     assert_eq!(
         UpdateService::<Installer>::downloading_progress_toast("v1.1.0", 50, 200).as_deref(),
-        Some("Downloading Vicinae v1.1.0… 25%")
+        Some("Downloading Compass v1.1.0… 25%")
     );
     assert_eq!(
         UpdateService::<Installer>::downloading_progress_toast("v1.1.0", 50, 0),

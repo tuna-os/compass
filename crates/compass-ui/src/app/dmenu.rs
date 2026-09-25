@@ -1,5 +1,5 @@
 //! The dmenu view in the launcher: shown when the engine pushes a
-//! `vicinae dmenu` list, answered when the person chooses or dismisses it.
+//! `compass dmenu` list, answered when the person chooses or dismisses it.
 //!
 //! A child module of `app` so it can reach the launcher's state without
 //! widening it; the decisions that do not need that state are in

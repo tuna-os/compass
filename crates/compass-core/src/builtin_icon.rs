@@ -48,7 +48,7 @@ pub fn file_name(name: &str) -> Option<String> {
 }
 
 /// Where the icon files are: `$COMPASS_BUILTIN_ICONS`, else the first
-/// `vicinae/builtin-icons` under `$XDG_DATA_HOME` or `$XDG_DATA_DIRS` (the
+/// `compass/builtin-icons` under `$XDG_DATA_HOME` or `$XDG_DATA_DIRS` (the
 /// Flatpak installs them under `/app/share`).
 #[must_use]
 pub fn directory() -> Option<std::path::PathBuf> {
@@ -75,7 +75,7 @@ pub fn directory_in(
     data_home
         .into_iter()
         .chain(data_dirs.split(':').map(std::path::PathBuf::from))
-        .map(|dir| dir.join("vicinae/builtin-icons"))
+        .map(|dir| dir.join("compass/builtin-icons"))
         .find(|dir| dir.is_dir())
 }
 
@@ -94,11 +94,11 @@ mod tests {
     fn the_icons_are_found_under_the_first_data_dir_that_has_them() {
         let none = tempfile::tempdir().unwrap();
         let app = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(app.path().join("vicinae/builtin-icons")).unwrap();
+        std::fs::create_dir_all(app.path().join("compass/builtin-icons")).unwrap();
         let dirs = format!("{}:{}", none.path().display(), app.path().display());
         assert_eq!(
             directory_in(None, None, Some(&dirs)),
-            Some(app.path().join("vicinae/builtin-icons")),
+            Some(app.path().join("compass/builtin-icons")),
             "the Flatpak's /app/share is one of $XDG_DATA_DIRS"
         );
         assert_eq!(

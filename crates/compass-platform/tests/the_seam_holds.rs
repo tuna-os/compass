@@ -40,7 +40,7 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // only because the bridge needs `unsafe` (ADR-0019). Other platforms'
     // `WindowMaterial` implementations would be their own crates.
     "compass-wayland-foreign",
-    "vicinae",
+    "compass",
     // The test harness drives Linux surfaces on purpose.
     "compass-testkit",
     // Same story: logind is the Linux mechanism, and the C++ has a separate
@@ -54,7 +54,7 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // cgroups are the Linux mechanism the way MPRIS is the Linux protocol —
     // the C++ has a separate supervisor per platform.
     "compass-worker-host",
-    // vicinae-input-server: evdev and uinput are the Linux mechanism for
+    // compass-input-server: evdev and uinput are the Linux mechanism for
     // reading and injecting keys; the C++ has a separate snippet server for
     // macOS and Windows, and so will the ports of those.
     "compass-input-server",
@@ -165,7 +165,7 @@ fn no_shared_crate_depends_on_a_linux_only_crate() {
          ADR-0013 commits macOS and Windows to their own phases. An edge like this makes that \
          work more expensive and is invisible in review, which is how `compass-ui` ended up \
          carrying compass-portals and compass-wayland without using either. Put the \
-         implementation behind a trait in compass-platform and select it in the `vicinae` \
+         implementation behind a trait in compass-platform and select it in the `compass` \
          binary; if the crate genuinely is a platform backend, add it to MAY_BE_LINUX_BOUND and \
          say why.",
         violations.join("\n  ")

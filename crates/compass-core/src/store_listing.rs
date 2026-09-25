@@ -232,7 +232,8 @@ pub fn readme_source_url(url: &str) -> String {
 }
 
 /// A deeplink into a store extension's detail page:
-/// `vicinae://extensions/<author>/<name>`, or its `raycast://` and
+/// `compass://extensions/<author>/<name>` (or `vicinae://`, which extensions
+/// and the Vicinae store emit), or its `raycast://` and
 /// `com.raycast:` spellings, which open the Raycast store's page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtensionLink {
@@ -245,7 +246,7 @@ pub struct ExtensionLink {
 }
 
 /// The usage sentence the C++ answers a malformed extensions link with.
-pub const EXTENSION_LINK_USAGE: &str = "Usage: vicinae://extensions/<author>/<extension-name>";
+pub const EXTENSION_LINK_USAGE: &str = "Usage: compass://extensions/<author>/<extension-name>";
 
 /// Reads an extensions deeplink, as `IpcCommandHandler` does for the
 /// `extensions` command: two path segments, percent-decoded. `None` for a
@@ -255,7 +256,7 @@ pub const EXTENSION_LINK_USAGE: &str = "Usage: vicinae://extensions/<author>/<ex
 pub fn parse_extension_link(url: &str) -> Option<Result<ExtensionLink, &'static str>> {
     let (scheme, rest) = url.split_once(':')?;
     let raycast = match scheme {
-        "vicinae" => false,
+        "compass" | "vicinae" => false,
         "raycast" | "com.raycast" => true,
         _ => return None,
     };
@@ -378,6 +379,11 @@ mod tests {
                 author: "zoë".into(),
                 name: "clock".into()
             }))
+        );
+        assert_eq!(
+            parse_extension_link("compass://extensions/zoë/clock"),
+            parse_extension_link("vicinae://extensions/zoë/clock"),
+            "compass: and vicinae: both name the Vicinae store"
         );
         assert_eq!(
             parse_extension_link("raycast://extensions/thomas/spotify-player?x=1"),

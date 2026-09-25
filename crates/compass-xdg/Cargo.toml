@@ -16,6 +16,7 @@ roxmltree.workspace = true
 xmlwriter = "0.1"
 mime_guess.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 dirs = { workspace = true }
 
 [dev-dependencies]

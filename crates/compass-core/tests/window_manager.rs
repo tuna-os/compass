@@ -10,7 +10,7 @@ use compass_core::window_manager::{
 };
 
 const OWN_PID: u32 = 4242;
-const APP_ID: &str = "vicinae";
+const APP_ID: &str = "compass";
 
 fn window(id: &str) -> Window {
     Window {
@@ -115,7 +115,7 @@ fn the_class_fallback_ignores_case() {
     // case.
     let no_pid = Window {
         pid: None,
-        wm_class: "Vicinae".to_owned(),
+        wm_class: "Compass".to_owned(),
         ..window("x")
     };
     assert!(is_own_window(&no_pid, OWN_PID, APP_ID));

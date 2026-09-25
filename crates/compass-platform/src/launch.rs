@@ -12,7 +12,7 @@
 //! the seam exists is written against the shape this crate has today.
 //!
 //! The Linux implementation now lives in `compass-platform-linux` and is
-//! selected in the `vicinae` binary. This crate names what a launcher *is*.
+//! selected in the `compass` binary. This crate names what a launcher *is*.
 //!
 //! # Why the future is boxed
 //!
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn the_null_launcher_is_an_app_launcher() {
         // Compiles only if NullLauncher satisfies the object-safe trait, which
-        // is the property the composition in `vicinae` depends on.
+        // is the property the composition in `compass` depends on.
         let launcher: std::sync::Arc<dyn AppLauncher> = std::sync::Arc::new(NullLauncher);
         assert_eq!(format!("{launcher:?}"), "NullLauncher");
     }

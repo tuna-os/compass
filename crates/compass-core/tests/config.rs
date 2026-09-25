@@ -1,4 +1,4 @@
-//! `vicinae.json`: defaults, partial files, error messages, and forward compatibility.
+//! `compass.json`: defaults, partial files, error messages, and forward compatibility.
 
 use compass_core::config::{
     DEFAULT_AUTO_UPDATE, DEFAULT_CLOSE_ON_FOCUS_LOSS, DEFAULT_COLOR_SCHEME, DEFAULT_HOTKEY,
@@ -8,7 +8,7 @@ use compass_core::{Config, ConfigError};
 use std::path::Path;
 
 fn parse(json: &str) -> Config {
-    Config::parse(json, Path::new("/test/vicinae.json")).expect("valid config")
+    Config::parse(json, Path::new("/test/compass.json")).expect("valid config")
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn an_empty_file_produces_the_defaults() {
 #[test]
 fn a_missing_file_produces_the_defaults() {
     let dir = tempfile::tempdir().unwrap();
-    let config = Config::load_from(dir.path().join("vicinae.json")).unwrap();
+    let config = Config::load_from(dir.path().join("compass.json")).unwrap();
     assert_all_defaults(&config);
 }
 
@@ -356,7 +356,7 @@ fn every_known_key_survives_a_round_trip_on_its_own() {
 #[test]
 fn unknown_fields_survive_an_edit_by_an_older_build() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("vicinae").join("vicinae.json");
+    let path = dir.path().join("compass").join("compass.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         &path,
@@ -398,7 +398,7 @@ fn clearing_a_field_restores_its_default() {
 
 #[test]
 fn malformed_json_names_the_problem_and_where_it_is() {
-    let path = Path::new("/test/vicinae.json");
+    let path = Path::new("/test/compass.json");
     let err = Config::parse("{\n  \"launcher\": {\n    \"hotkey\": ,\n  }\n}", path).unwrap_err();
 
     let ConfigError::Parse {
@@ -418,7 +418,7 @@ fn malformed_json_names_the_problem_and_where_it_is() {
     );
 
     let rendered = err.to_string();
-    assert!(rendered.contains("/test/vicinae.json"), "{rendered}");
+    assert!(rendered.contains("/test/compass.json"), "{rendered}");
     assert!(rendered.contains("line 3"), "{rendered}");
     assert!(rendered.contains("expected value"), "{rendered}");
 }
@@ -427,7 +427,7 @@ fn malformed_json_names_the_problem_and_where_it_is() {
 fn a_wrongly_typed_field_is_a_clear_error() {
     let err = Config::parse(
         r#"{"launcher": {"max_results": "lots"}}"#,
-        Path::new("/test/vicinae.json"),
+        Path::new("/test/compass.json"),
     )
     .unwrap_err();
 
@@ -441,7 +441,7 @@ fn a_wrongly_typed_field_is_a_clear_error() {
 
 #[test]
 fn a_top_level_non_object_is_a_clear_error() {
-    let err = Config::parse("[1, 2, 3]", Path::new("/test/vicinae.json")).unwrap_err();
+    let err = Config::parse("[1, 2, 3]", Path::new("/test/compass.json")).unwrap_err();
     assert!(matches!(err, ConfigError::Parse { .. }), "{err:?}");
 }
 
@@ -456,7 +456,7 @@ fn an_unreadable_path_is_distinguished_from_a_missing_one() {
 #[test]
 fn saving_creates_the_parent_directory() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("a").join("b").join("vicinae.json");
+    let path = dir.path().join("a").join("b").join("compass.json");
 
     let mut config = Config::default();
     config.extensions_mut().set_auto_update(Some(false));
@@ -473,7 +473,7 @@ fn saving_creates_the_parent_directory() {
 #[test]
 fn saving_leaves_no_temporary_file_behind() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("vicinae.json");
+    let path = dir.path().join("compass.json");
     Config::default().save_to(&path).unwrap();
 
     let names: Vec<String> = std::fs::read_dir(dir.path())
@@ -481,7 +481,7 @@ fn saving_leaves_no_temporary_file_behind() {
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["vicinae.json"]);
+    assert_eq!(names, ["compass.json"]);
 }
 
 /// `tint` is a *known* key, not an unknown one that survives by accident.

@@ -1,6 +1,6 @@
 //! Where the IPC socket lives.
 //!
-//! The canonical location is `$XDG_RUNTIME_DIR/vicinae/ipc.sock`.
+//! The canonical location is `$XDG_RUNTIME_DIR/compass/ipc.sock`.
 //! `XDG_RUNTIME_DIR` is a per-user, `0700`, tmpfs-backed directory that the
 //! session manager cleans up at logout, which is exactly the lifetime a socket
 //! wants.
@@ -9,7 +9,7 @@
 //!
 //! `XDG_RUNTIME_DIR` is unset in cron jobs, bare `ssh` sessions, some
 //! containers and minimal init setups. When it is missing or empty we fall
-//! back to `/tmp/vicinae-$USER/ipc.sock`, using `$USER`, then `$LOGNAME`, then
+//! back to `/tmp/compass-$USER/ipc.sock`, using `$USER`, then `$LOGNAME`, then
 //! the literal `default` as the name. The username is part of the *directory*
 //! so that two users on one machine cannot collide on a path. This mirrors
 //! what the C++ build does (`/tmp/vicinae`) but adds the per-user suffix,
@@ -28,7 +28,7 @@
 //!
 //! The fallback is a fallback: it survives a reboot, is not cleaned at logout,
 //! and lives on a directory other users can read. Callers that care should log
-//! when [`SocketPath::is_fallback`] is true — `vicinae doctor` does.
+//! when [`SocketPath::is_fallback`] is true — `compass doctor` does.
 //!
 //! Nothing in this module reads the real environment unless you ask it to:
 //! [`SocketPath::in_dir`] builds a path under any directory, which is how the
@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Error, Result};
 
 /// Directory created under the runtime dir (or the fallback root).
-pub const SOCKET_DIR_NAME: &str = "vicinae";
+pub const SOCKET_DIR_NAME: &str = "compass";
 
 /// File name of the socket itself.
 pub const SOCKET_FILE_NAME: &str = "ipc.sock";
@@ -74,7 +74,7 @@ impl SocketPath {
         }
     }
 
-    /// Builds `<dir>/vicinae/ipc.sock`, ignoring the environment entirely.
+    /// Builds `<dir>/compass/ipc.sock`, ignoring the environment entirely.
     ///
     /// This is the injection point: tests pass a temporary directory, the
     /// Flatpak build can pass its sandboxed runtime dir.
@@ -85,7 +85,7 @@ impl SocketPath {
         }
     }
 
-    /// Uses `path` verbatim, with no `vicinae/` component added.
+    /// Uses `path` verbatim, with no `compass/` component added.
     ///
     /// For `--socket /some/where.sock` style overrides.
     pub fn exact(path: impl Into<PathBuf>) -> Self {
@@ -162,7 +162,7 @@ impl std::fmt::Display for SocketPath {
 ///
 /// # Why checking the mode is enough, without checking the owner
 ///
-/// The attack is another local user creating `/tmp/vicinae-victim` before the
+/// The attack is another local user creating `/tmp/compass-victim` before the
 /// victim's first fallback start, so the victim binds its socket inside a
 /// directory the attacker can write to. For that to work the attacker's
 /// directory has to be writable by the victim — which means permissive modes.
@@ -235,11 +235,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn in_dir_appends_vicinae_and_the_socket_name() {
+    fn in_dir_appends_compass_and_the_socket_name() {
         let p = SocketPath::in_dir("/run/user/1000");
-        assert_eq!(p.as_path(), Path::new("/run/user/1000/vicinae/ipc.sock"));
+        assert_eq!(p.as_path(), Path::new("/run/user/1000/compass/ipc.sock"));
         assert!(!p.is_fallback());
-        assert_eq!(p.parent(), Some(Path::new("/run/user/1000/vicinae")));
+        assert_eq!(p.parent(), Some(Path::new("/run/user/1000/compass")));
     }
 
     #[test]
@@ -265,7 +265,7 @@ mod tests {
         let with_xdg = SocketPath::in_dir("/run/user/1000");
         assert_eq!(
             with_xdg.as_path(),
-            Path::new("/run/user/1000/vicinae/ipc.sock")
+            Path::new("/run/user/1000/compass/ipc.sock")
         );
 
         let resolved = SocketPath::from_env();

@@ -10,7 +10,7 @@
 /// the Flatpak installs, so the Shell ties the window to that entry. The
 /// window switcher also recognises its own window by it, because inside the
 /// Flatpak's pid namespace `std::process::id()` is not the pid the Shell sees.
-pub const APP_ID: &str = "com.vicinae.Vicinae";
+pub const APP_ID: &str = "org.tunaos.compass";
 
 pub mod action_panel;
 pub mod app;
@@ -19,6 +19,7 @@ pub mod apps_page;
 pub mod backend;
 pub mod calculator_page;
 pub mod clipboard_page;
+pub mod compass_pages;
 pub mod design;
 pub mod developer_page;
 pub mod dmenu_page;
@@ -57,7 +58,6 @@ pub mod theme;
 pub mod themes_page;
 pub mod tray_page;
 pub mod typography;
-pub mod vicinae_pages;
 pub mod view_memory;
 pub mod windows_page;
 pub mod workspaces_page;
@@ -70,7 +70,7 @@ pub use typography::{TypographyLink, TypographySender};
 ///
 /// Takes over the calling thread: Iced's event loop owns it, and on Wayland it
 /// must be the process's main thread. That constraint is the whole reason this
-/// is a separate entry point rather than something `vicinae serve` calls — see
+/// is a separate entry point rather than something `compass serve` calls — see
 /// ADR-0011.
 ///
 /// # Errors
@@ -156,7 +156,7 @@ pub fn run_resident(
     .run()
 }
 
-/// What the `vicinae` binary hands [`run_resident_layer_shell`]: the
+/// What the `compass` binary hands [`run_resident_layer_shell`]: the
 /// Wayland connection it made for the launcher, and the shortcut inhibitor it
 /// bound on that connection. Either may be missing; the toolkit then connects
 /// itself, and the shortcut recorder does not inhibit.

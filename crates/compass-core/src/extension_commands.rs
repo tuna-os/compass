@@ -247,21 +247,21 @@ impl ExtensionCommand {
     }
 }
 
-/// `vicinae cmd launch <id> [args…]`'s positional values as the command's
+/// `compass cmd launch <id> [args…]`'s positional values as the command's
 /// arguments, by name: the C++ `buildLaunchArguments`. Too many values, a
 /// dropdown value that is not one of its options, and a required argument
 /// left out are each refused with the C++'s sentence and a usage line.
 ///
 /// # Errors
 ///
-/// That sentence, then `Usage: vicinae cmd launch <id> <required> [optional]`.
+/// That sentence, then `Usage: compass cmd launch <id> <required> [optional]`.
 pub fn launch_arguments(
     id: &str,
     declared: &[CommandArgument],
     values: &[String],
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let fail = |message: String| {
-        let mut usage = format!("{message}\nUsage: vicinae cmd launch {id}");
+        let mut usage = format!("{message}\nUsage: compass cmd launch {id}");
         for argument in declared {
             let (open, close) = if argument.required {
                 ('<', '>')
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(
             args(&[]),
             Err("Missing required argument 'query'\n\
-                 Usage: vicinae cmd launch @a/x:c <query> [sort]"
+                 Usage: compass cmd launch @a/x:c <query> [sort]"
                 .to_owned())
         );
         assert_eq!(
@@ -412,7 +412,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "Too many arguments: expected at most 0, got 1",
-                "Usage: vicinae cmd launch commands:x"
+                "Usage: compass cmd launch commands:x"
             ]
         );
     }

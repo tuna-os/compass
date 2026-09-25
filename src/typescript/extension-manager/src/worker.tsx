@@ -126,8 +126,10 @@ const loadEnviron = (
 		extensionName: data.extension_name,
 		ownerOrAuthorName: data.owner_or_author_name,
 		vicinaeVersion: {
-			tag: process.env.VICINAE_VERSION ?? "unknown",
-			commit: process.env.VICINAE_COMMIT ?? "unknown",
+			tag:
+				process.env.COMPASS_VERSION ?? process.env.VICINAE_VERSION ?? "unknown",
+			commit:
+				process.env.COMPASS_COMMIT ?? process.env.VICINAE_COMMIT ?? "unknown",
 		},
 		isRaycast: data.is_raycast,
 	});

@@ -10,7 +10,7 @@ repository.workspace = true
 workspace = true
 
 [[bin]]
-name = "vicinae-input-server"
+name = "compass-input-server"
 path = "src/main.rs"
 
 [dependencies]

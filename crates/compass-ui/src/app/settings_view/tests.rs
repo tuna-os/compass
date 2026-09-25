@@ -46,7 +46,7 @@ fn app(dir: &std::path::Path) -> LauncherApp {
         .unwrap();
     }
     let mut app = LauncherApp::with_index(compass_core::AppIndex::builder().dir(dir).build());
-    app.config_path = Some(dir.join("vicinae.json"));
+    app.config_path = Some(dir.join("compass.json"));
     app
 }
 
@@ -158,7 +158,7 @@ fn a_deeplink_opens_the_tab_it_names() {
 fn each_control_writes_the_file_and_the_launcher_follows_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = app(dir.path());
-    std::fs::write(dir.path().join("vicinae.json"), r#"{"mystery": 1}"#).unwrap();
+    std::fs::write(dir.path().join("compass.json"), r#"{"mystery": 1}"#).unwrap();
     let _ = app.open_settings(Some("advanced"));
 
     send(
@@ -446,7 +446,7 @@ fn with_an_engine_the_engine_writes_and_a_theme_is_kept_or_put_back() {
             backend: Some(engine.clone()),
             ..AppFlags::default()
         });
-        app.config_path = Some(dir.path().join("vicinae.json"));
+        app.config_path = Some(dir.path().join("compass.json"));
         let _ = app.open_settings(Some("appearance"));
         send(
             &mut app,
@@ -472,7 +472,7 @@ fn with_an_engine_the_engine_writes_and_a_theme_is_kept_or_put_back() {
             &[("applications".to_owned(), false)]
         );
         assert!(
-            !dir.path().join("vicinae.json").exists(),
+            !dir.path().join("compass.json").exists(),
             "the engine writes the file, not the window"
         );
     }

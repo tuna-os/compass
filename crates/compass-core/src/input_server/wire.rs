@@ -4,7 +4,7 @@
 //! backend: JSON-RPC 2.0 shaped messages, one per [length-prefixed
 //! frame](super::frame). Compass keeps that wire exactly, so either engine can
 //! drive either helper — the C++ server spawning the Rust
-//! `vicinae-input-server`, or the Rust engine spawning the C++ one — while
+//! `compass-input-server`, or the Rust engine spawning the C++ one — while
 //! both ship side by side (PLAN §5).
 //!
 //! What figura puts on the wire, read off `src/lib/figura/src/codegen/glaze.hpp`:

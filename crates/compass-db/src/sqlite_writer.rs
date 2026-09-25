@@ -588,7 +588,7 @@ pub static WRITER_SCHEMA: &[&str] = &[
 /// never migrated — it is a cache, rebuilt by rescanning. Version 2 replaced the
 /// `spellfix1` virtual table with a plain `vocabulary` table (ADR-0017), which
 /// is also why the file is no longer the C++ engine's: see
-/// `vicinae::indexer_service::DATABASE_FILE_NAME`.
+/// `compass::indexer_service::DATABASE_FILE_NAME`.
 pub const FILE_INDEX_SCHEMA_VERSION: i64 = 2;
 
 /// Applies [`WRITER_SCHEMA`] and stamps [`FILE_INDEX_SCHEMA_VERSION`].

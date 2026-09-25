@@ -8,7 +8,7 @@
 //! inside the Flatpak the directory is not even visible. Rather than widen
 //! the policy for every extension, the runtime's shim forwards the few
 //! programs the engine brokers to this call, and the engine runs them after
-//! asking the person (`crates/vicinae/src/host_commands.rs`).
+//! asking the person (`crates/compass/src/host_commands.rs`).
 //!
 //! So `HostCommand/run` always defers: whether it runs at all is a person's
 //! answer. What arrives is checked here first, and a request that could never

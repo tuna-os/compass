@@ -742,8 +742,8 @@ mod tests {
 /// # Shadowing is by directory name, and the first one wins
 ///
 /// The same extension can exist in several places — a user's own copy under
-/// `$XDG_DATA_HOME/vicinae/extensions` and a packaged one under
-/// `/usr/share/vicinae/extensions`. The C++ keeps the first it sees and logs
+/// `$XDG_DATA_HOME/compass/extensions` and a packaged one under
+/// `/usr/share/compass/extensions`. The C++ keeps the first it sees and logs
 /// that the later one is "shadowed by extension with same directory name in
 /// higher precedence directory", so the user's copy wins. Reproduced, and
 /// reported rather than only logged.
@@ -755,17 +755,16 @@ pub mod registry {
 
     /// The application's own data directory name under each XDG root.
     ///
-    /// Still `vicinae`: it is where the C++ writes, where an installed
-    /// extension already is, and renaming it would strand every extension a
-    /// user has. Changing it is a migration, not a port.
-    pub const DATA_DIR_NAME: &str = "vicinae";
+    /// `compass`. The C++ writes `vicinae`, which the startup migration
+    /// moves here (leaving a symlink), so no installed extension is stranded.
+    pub const DATA_DIR_NAME: &str = "compass";
 
     /// The subdirectory extensions live in.
     pub const EXTENSIONS_SUBDIR: &str = "extensions";
 
     /// Where extensions are looked for, highest precedence first.
     ///
-    /// `$XDG_DATA_HOME/vicinae/extensions`, then each `$XDG_DATA_DIRS`
+    /// `$XDG_DATA_HOME/compass/extensions`, then each `$XDG_DATA_DIRS`
     /// entry's. A system directory that is the same path as the user one is
     /// left out, as `dataSearchPaths` leaves it out.
     #[must_use]
@@ -795,7 +794,7 @@ pub mod registry {
     }
 
     /// Where this user's extensions are installed:
-    /// `$XDG_DATA_HOME/vicinae/extensions`, the directory
+    /// `$XDG_DATA_HOME/compass/extensions`, the directory
     /// `ExtensionRegistry::localExtensionDirectory` names and the first of
     /// [`search_paths`]. `None` without a data home.
     #[must_use]
@@ -804,7 +803,7 @@ pub mod registry {
             .map(|home| home.join(DATA_DIR_NAME).join(EXTENSIONS_SUBDIR))
     }
 
-    /// Where an extension's support files live: `$XDG_DATA_HOME/vicinae/support/<id>`.
+    /// Where an extension's support files live: `$XDG_DATA_HOME/compass/support/<id>`.
     #[must_use]
     pub fn support_directory(id: &str) -> Option<PathBuf> {
         compass_xdg::xdg_dirs::data_home()
@@ -903,9 +902,9 @@ mod registry_tests {
         assert_eq!(
             paths,
             vec![
-                PathBuf::from("/home/u/.local/share/vicinae/extensions"),
-                PathBuf::from("/usr/share/vicinae/extensions"),
-                PathBuf::from("/usr/local/share/vicinae/extensions"),
+                PathBuf::from("/home/u/.local/share/compass/extensions"),
+                PathBuf::from("/usr/share/compass/extensions"),
+                PathBuf::from("/usr/local/share/compass/extensions"),
             ]
         );
     }
@@ -921,8 +920,8 @@ mod registry_tests {
         assert_eq!(
             paths,
             vec![
-                PathBuf::from("/data/vicinae/extensions"),
-                PathBuf::from("/usr/share/vicinae/extensions"),
+                PathBuf::from("/data/compass/extensions"),
+                PathBuf::from("/usr/share/compass/extensions"),
             ]
         );
     }

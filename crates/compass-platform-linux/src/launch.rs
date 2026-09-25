@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn the_linux_launcher_is_an_app_launcher() {
-        // The composition in `vicinae` holds an Arc<dyn AppLauncher>; this
+        // The composition in `compass` holds an Arc<dyn AppLauncher>; this
         // fails to compile if LinuxLauncher stops satisfying it.
         let launcher: std::sync::Arc<dyn AppLauncher> = std::sync::Arc::new(LinuxLauncher);
         assert_eq!(format!("{launcher:?}"), "LinuxLauncher");

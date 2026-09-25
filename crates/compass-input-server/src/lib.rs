@@ -1,10 +1,10 @@
-//! `vicinae-input-server`: the snippet keyword expander's keyboard hook.
+//! `compass-input-server`: the snippet keyword expander's keyboard hook.
 //!
-//! A port of `src/snippet/` (the C++ `vicinae-input-server`). The engine
+//! A port of `src/snippet/` (the C++ `compass-input-server`). The engine
 //! starts this helper, registers the snippet keywords with it, and hears back
 //! when one is typed; it answers with the expansion on the clipboard and asks
 //! the helper to erase the keyword and paste. The helper is separate because
-//! it is the one part of Vicinae that needs to read every keyboard and to
+//! it is the one part of Compass that needs to read every keyboard and to
 //! create a virtual one — privileges that belong on a small program that
 //! speaks only to its parent over stdin and stdout, not on the launcher.
 //!
@@ -21,7 +21,7 @@
 //! # Permissions
 //!
 //! Reading `/dev/input/event*` and writing `/dev/uinput` need either root
-//! or `CAP_DAC_OVERRIDE`. Vicinae installs the helper with
+//! or `CAP_DAC_OVERRIDE`. Compass installs the helper with
 //! `setcap cap_dac_override+ep` (`make postbuild`, the NixOS module's
 //! `security.wrappers`), and so does Compass; see `packaging/README.md`.
 

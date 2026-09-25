@@ -314,7 +314,7 @@ fn the_search_history_keeps_one_of_each_newest_first_in_the_cpp_shape() {
     assert_eq!(history.queries()[0], format!("q{}", MAX_HISTORY_SIZE + 4));
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("vicinae").join("search-history.json");
+    let path = dir.path().join("compass").join("search-history.json");
     let mut small = SearchHistory::default();
     small.add("gimp", 1_700_000_000);
     small.save_file(&path).unwrap();

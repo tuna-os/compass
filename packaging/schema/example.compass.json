@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tuna-os/compass/main/packaging/schema/compass.schema.json",
+  "launcher": {
+    "hotkey": "super+space",
+    "close_on_focus_loss": false,
+    "max_results": 50,
+    "keybinding": "default",
+    "wrap_navigation": false,
+    "quick_launch": true,
+    "appearance": {
+      "color_scheme": "system",
+      "theme": "system",
+      "preset": "gnome",
+      "icons": true,
+      "tint": false
+    }
+  },
+  "extensions": {
+    "auto_update": true,
+    "installed": []
+  },
+  "providers": {
+    "applications": {
+      "enabled": true,
+      "entrypoints": {
+        "org.gnome.Nautilus": { "alias": "files" }
+      }
+    }
+  },
+  "favorites": ["applications:org.gnome.Nautilus"],
+  "fallbacks": []
+}

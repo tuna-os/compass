@@ -1,4 +1,4 @@
-//! Every setting the settings view edits: where it lives in `vicinae.json`,
+//! Every setting the settings view edits: where it lives in `compass.json`,
 //! what it takes, what it is when unset, and which C++ setting it stands for.
 //!
 //! The C++ settings window reads and writes its values through
@@ -121,7 +121,7 @@ pub enum Kind {
 /// One setting.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Setting {
-    /// Its dotted path in `vicinae.json`.
+    /// Its dotted path in `compass.json`.
     pub key: String,
     /// The page it is on.
     pub scope: Scope,
@@ -874,13 +874,13 @@ pub fn apply(config: &mut Config, key: &str, value: Value) -> Result<(), String>
     config.set_path(&setting.key, value)
 }
 
-/// The tab a `vicinae://settings/open` deeplink names (`?tab=`), as
+/// The tab a `compass://settings/open` deeplink (or `vicinae://`) names (`?tab=`), as
 /// `IpcCommandHandler` reads the `settings` command: `Some(None)` opens the
 /// window where it was, `None` is not a settings link.
 #[must_use]
 pub fn parse_settings_link(link: &str) -> Option<Option<String>> {
     let url = url::Url::parse(link).ok()?;
-    if url.scheme() != "vicinae"
+    if !matches!(url.scheme(), "compass" | "vicinae")
         || url.host_str() != Some("settings")
         || !matches!(url.path(), "" | "/" | "/open")
     {
@@ -900,7 +900,7 @@ mod tests {
     use serde_json::json;
 
     fn config(text: &str) -> Config {
-        Config::parse(text, std::path::Path::new("vicinae.json")).expect("valid")
+        Config::parse(text, std::path::Path::new("compass.json")).expect("valid")
     }
 
     #[test]
@@ -1108,6 +1108,8 @@ mod tests {
     #[test]
     fn a_settings_deeplink_names_its_tab() {
         assert_eq!(parse_settings_link("vicinae://settings"), Some(None));
+        assert_eq!(parse_settings_link("compass://settings/open"), Some(None));
+        assert_eq!(parse_settings_link("raycast://settings/open"), None);
         assert_eq!(parse_settings_link("vicinae://settings/open"), Some(None));
         assert_eq!(
             parse_settings_link("vicinae://settings/open?tab=about"),

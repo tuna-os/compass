@@ -24,7 +24,7 @@ pub struct PortalInterface {
     pub minimum_version: u32,
     /// Newest version this crate was written against. A portal reporting more
     /// than this is still [`Availability::Available`] — portal interfaces are
-    /// additive — but it is worth saying so in `vicinae doctor`.
+    /// additive — but it is worth saying so in `compass doctor`.
     pub newest_known_version: u32,
 }
 
@@ -275,7 +275,7 @@ impl PortalCapabilities {
             || self.settings.is_available()
     }
 
-    /// Product features unusable in this state, for `vicinae doctor`.
+    /// Product features unusable in this state, for `compass doctor`.
     pub fn degraded(&self) -> Vec<DegradedFeature> {
         let mut out = Vec::new();
         if !self.global_shortcuts.is_available() {
@@ -326,7 +326,7 @@ impl DegradedFeature {
     }
 
     /// One-line explanation of what the user actually loses, phrased for
-    /// `vicinae doctor`.
+    /// `compass doctor`.
     pub fn explanation(self) -> &'static str {
         match self {
             Self::GlobalHotkeys => {

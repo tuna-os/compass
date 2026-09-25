@@ -73,7 +73,7 @@ fn requested_window(task: iced::Task<Message>) -> iced::window::Id {
 ///
 /// Hiding is not instant and the launcher no longer pretends it is:
 /// `window::close` is a Task, so the window is still on screen until this
-/// arrives. A VM run caught the optimistic version -- `vicinae toggle` reported
+/// arrives. A VM run caught the optimistic version -- `compass toggle` reported
 /// success and the screenshot taken straight afterwards still had the launcher
 /// in it -- so every hide here is driven through the close it really needs.
 fn closed(app: &mut LauncherApp, id: iced::window::Id) {
@@ -104,7 +104,7 @@ fn dismissing_hides_when_an_engine_can_summon_it_back() {
 
 #[test]
 fn dismissing_exits_when_nothing_could_summon_it_back() {
-    // The standalone case: `vicinae ui` with no daemon. Hiding here would leave
+    // The standalone case: `compass ui` with no daemon. Hiding here would leave
     // an invisible process with no way to bring it back.
     let app = LauncherApp::with_index(empty_index());
     assert_eq!(app.on_dismiss(), Dismissal::Exit);

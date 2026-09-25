@@ -46,14 +46,14 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
-    /// "Set as vicinae font": makes `family` the launcher's font in the
+    /// "Set as Compass font": makes `family` the launcher's font in the
     /// configuration.
     fn set_font(&self, family: String) -> BackendFuture<'_, ()> {
         let _ = family;
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
-    /// Writes one setting of `vicinae.json` (a key of
+    /// Writes one setting of `compass.json` (a key of
     /// `compass_core::settings_catalog`), `null` resetting it. An error is
     /// the sentence to show.
     fn set_setting(&self, key: String, value: serde_json::Value) -> BackendFuture<'_, ()> {
@@ -291,7 +291,7 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SHORTCUTS_NEED_ENGINE.to_owned()) })
     }
 
-    /// Launches a root item through the engine, as `vicinae cmd launch`
+    /// Launches a root item through the engine, as `compass cmd launch`
     /// does: an extension command comes back to the window as a launch, with
     /// `query` as its fallback text.
     fn launch_command(&self, id: String, query: Option<String>) -> BackendFuture<'_, ()> {
@@ -453,7 +453,7 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
-    /// The `vicinae dmenu` list the engine holds under `token`.
+    /// The `compass dmenu` list the engine holds under `token`.
     fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
         let _ = token;
         Box::pin(async { Err("dmenu needs the Compass engine".to_owned()) })
@@ -876,7 +876,7 @@ pub struct FontListEntry {
     pub categories: Vec<String>,
 }
 
-/// A `vicinae dmenu` list and its options.
+/// A `compass dmenu` list and its options.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DmenuList {
     /// The entries, one per line.
@@ -1005,7 +1005,7 @@ pub struct ExtensionLaunch {
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
     /// Open its preferences form rather than run it.
     pub preferences: bool,
-    /// What its search starts with (`vicinae cmd launch --query`).
+    /// What its search starts with (`compass cmd launch --query`).
     pub fallback_text: Option<String>,
 }
 

@@ -3,13 +3,13 @@
 //!
 //! Ports the C++ `XxHotkeyGlobalShortcutBackend` and
 //! `VicinaeHotkeyGlobalShortcutBackend`, in the C++ factory's order: the
-//! `xx` protocol when the compositor advertises it, the `vicinae` one when it
+//! `xx` protocol when the compositor advertises it, the `compass` one when it
 //! does not. `xdg-desktop-portal-wlr` ships no GlobalShortcuts backend, so on
 //! a wlroots compositor the portal the GNOME path uses does not exist; these
 //! experimental protocols are the only way for an unprivileged client to
 //! *ask* for a hotkey. Where the compositor carries neither — every released
 //! Sway, Hyprland and niri as of this writing — the user binds
-//! `vicinae toggle` in the compositor's own configuration instead, and
+//! `compass toggle` in the compositor's own configuration instead, and
 //! [`manual_binding_hint`] says how.
 //!
 //! One [`HotkeyClient`] holds one connection for any number of hotkeys, as
@@ -434,13 +434,13 @@ impl Dispatch<VicinaeHotkeyV1, Arc<HotkeyData>> for State {
 #[must_use]
 pub fn manual_binding_hint(current_desktop: Option<&str>) -> String {
     const SWAY: &str =
-        "Sway / i3-style (~/.config/sway/config): bindsym $mod+space exec vicinae toggle";
+        "Sway / i3-style (~/.config/sway/config): bindsym $mod+space exec compass toggle";
     const HYPRLAND: &str =
-        "Hyprland (~/.config/hypr/hyprland.conf): bind = SUPER, SPACE, exec, vicinae toggle";
+        "Hyprland (~/.config/hypr/hyprland.conf): bind = SUPER, SPACE, exec, compass toggle";
     const NIRI: &str =
-        "niri (~/.config/niri/config.kdl), in binds: Mod+Space { spawn \"vicinae\" \"toggle\"; }";
-    const RIVER: &str = "river (init): riverctl map normal Super Space spawn 'vicinae toggle'";
-    const LABWC: &str = "labwc (rc.xml): <keybind key=\"W-space\"><action name=\"Execute\" command=\"vicinae toggle\"/></keybind>";
+        "niri (~/.config/niri/config.kdl), in binds: Mod+Space { spawn \"compass\" \"toggle\"; }";
+    const RIVER: &str = "river (init): riverctl map normal Super Space spawn 'compass toggle'";
+    const LABWC: &str = "labwc (rc.xml): <keybind key=\"W-space\"><action name=\"Execute\" command=\"compass toggle\"/></keybind>";
 
     let desktop = current_desktop.unwrap_or_default().to_ascii_lowercase();
     let one = [
@@ -457,7 +457,7 @@ pub fn manual_binding_hint(current_desktop: Option<&str>) -> String {
     match one {
         Some(hint) => format!("bind the launcher in your compositor: {hint}"),
         None => format!(
-            "bind `vicinae toggle` to a key in your compositor's configuration, e.g. {SWAY}; \
+            "bind `compass toggle` to a key in your compositor's configuration, e.g. {SWAY}; \
              {HYPRLAND}; {NIRI}"
         ),
     }
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn an_unknown_compositor_gets_every_example_and_the_command() {
         let hint = manual_binding_hint(None);
-        assert!(hint.contains("vicinae toggle"));
+        assert!(hint.contains("compass toggle"));
         assert!(hint.contains("bindsym") && hint.contains("SUPER, SPACE"));
     }
 

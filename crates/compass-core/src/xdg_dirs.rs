@@ -24,8 +24,8 @@ pub fn application_dirs() -> Vec<PathBuf> {
 
 /// The extra data roots a Flatpak sandbox needs, with its inputs supplied explicitly.
 ///
-/// Re-exported rather than having `vicinae` depend on `compass-xdg` directly: `compass-core` is
-/// already the seam that crate sits behind, and `vicinae doctor` needs this to report the
+/// Re-exported rather than having `compass` depend on `compass-xdg` directly: `compass-core` is
+/// already the seam that crate sits behind, and `compass doctor` needs this to report the
 /// directories the index really searches.
 #[must_use]
 pub fn sandbox_data_roots_for(in_flatpak: bool, home: Option<&Path>) -> Vec<PathBuf> {
@@ -41,7 +41,7 @@ pub fn data_home() -> Option<PathBuf> {
     }
 }
 
-/// `$XDG_STATE_HOME/vicinae`, falling back to `~/.local/state/vicinae`: the
+/// `$XDG_STATE_HOME/compass`, falling back to `~/.local/state/compass`: the
 /// C++'s `Omnicast::stateDir()`, where the log, the view memory and the
 /// onboarding record live.
 #[must_use]
@@ -50,7 +50,7 @@ pub fn state_dir() -> Option<PathBuf> {
         Some(value) if !value.is_empty() => PathBuf::from(value),
         _ => home_dir()?.join(".local/state"),
     };
-    Some(state.join("vicinae"))
+    Some(state.join("compass"))
 }
 
 /// The home directory, or nothing when even the fallback cannot say.

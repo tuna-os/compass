@@ -5,7 +5,7 @@
 //!
 //! Compass only *checks*: it reads its own releases ([`DEFAULT_FEED_URL`]) and
 //! says when a newer one is out ([`ReleaseCheck`]); installing is the package
-//! manager's job. The engine does the fetching (`vicinae::updates`), at most
+//! manager's job. The engine does the fetching (`compass::updates`), at most
 //! once per [`CHECK_INTERVAL_SECS`], remembering the answer in a [`CheckCache`].
 //!
 //! # Every gate here is a gate against offering the wrong thing
@@ -42,10 +42,10 @@ pub const DEFAULT_FEED_URL: &str = "https://api.github.com/repos/tuna-os/compass
 pub const CACHE_FILE: &str = "latest-release.json";
 
 /// The environment variable that overrides [`DEFAULT_FEED_URL`].
-pub const FEED_URL_ENV: &str = "VICINAE_UPDATE_FEED_URL";
+pub const FEED_URL_ENV: &str = "COMPASS_UPDATE_FEED_URL";
 
 /// The environment variable that overrides the version being compared against.
-pub const VERSION_OVERRIDE_ENV: &str = "VICINAE_UPDATE_VERSION";
+pub const VERSION_OVERRIDE_ENV: &str = "COMPASS_UPDATE_VERSION";
 
 /// The toast shown when an install finishes.
 pub const INSTALLED_TITLE: &str = "Update installed";
@@ -493,7 +493,7 @@ impl<I: UpdateInstaller> UpdateService<I> {
     /// The toast shown while downloading.
     #[must_use]
     pub fn downloading_toast(tag: &str) -> String {
-        format!("Downloading Vicinae {tag}…")
+        format!("Downloading Compass {tag}…")
     }
 
     /// The toast shown while downloading, with progress.
@@ -506,6 +506,6 @@ impl<I: UpdateInstaller> UpdateService<I> {
             return None;
         }
         let percent = received * 100 / total;
-        Some(format!("Downloading Vicinae {tag}… {percent}%"))
+        Some(format!("Downloading Compass {tag}… {percent}%"))
     }
 }

@@ -4,7 +4,7 @@
 //! The launcher window says where its card is and how round its corners are;
 //! how the platform is asked is the platform's (on Wayland,
 //! `ext-background-effect-v1` on the toolkit's own surface, through
-//! `compass-wayland-foreign`), handed to the window by the `vicinae` binary.
+//! `compass-wayland-foreign`), handed to the window by the `compass` binary.
 //! macOS vibrancy and Windows acrylic would be other implementations.
 
 pub use raw_window_handle;

@@ -257,7 +257,7 @@ pub enum Redirect {
 
 impl Redirect {
     /// Reads an `oauth` deeplink: `raycast://oauth?…`,
-    /// `com.raycast:/oauth?…` or `vicinae://oauth?…`.
+    /// `com.raycast:/oauth?…`, `compass://oauth?…` or `vicinae://oauth?…`.
     ///
     /// # Errors
     ///
@@ -266,7 +266,11 @@ impl Redirect {
     pub fn parse(raw: &str) -> Result<Self, String> {
         let url = url::Url::parse(raw).map_err(|err| format!("{raw} is not a URL: {err}"))?;
         let is_oauth = url.host_str() == Some("oauth") || url.path().trim_matches('/') == "oauth";
-        if !matches!(url.scheme(), "raycast" | "com.raycast" | "vicinae") || !is_oauth {
+        if !matches!(
+            url.scheme(),
+            "raycast" | "com.raycast" | "compass" | "vicinae"
+        ) || !is_oauth
+        {
             return Err(format!("{raw} is not an OAuth redirect"));
         }
         let value = |key: &str| {

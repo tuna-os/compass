@@ -157,7 +157,7 @@ impl Theme {
         }
     }
 
-    /// A line saying what it is, for the picker and `vicinae theme list`.
+    /// A line saying what it is, for the picker and `compass theme list`.
     #[must_use]
     pub fn description(self) -> &'static str {
         match self {

@@ -14,7 +14,7 @@
 /// The list is not "applications that look like browsers" but "applications
 /// registered for an `https` URL", which is why an entry that handles links
 /// without being a browser shows up here.
-pub const BROWSER_PROBE_URL: &str = "https://vicinae.com";
+pub const BROWSER_PROBE_URL: &str = "https://tunaos.org/compass";
 
 /// The browser picker's search placeholder.
 pub const BROWSER_PLACEHOLDER: &str = "Select a web browser...";

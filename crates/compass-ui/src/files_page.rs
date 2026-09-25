@@ -1,6 +1,6 @@
 //! The Search Files view: its state, and what it decides.
 //!
-//! What a query answers is the engine's (`vicinae::file_search`); this keeps
+//! What a query answers is the engine's (`compass::file_search`); this keeps
 //! what the view decides on its own — when to wait out the indexer's
 //! debounce, which answer is stale, and what a row's second line says.
 

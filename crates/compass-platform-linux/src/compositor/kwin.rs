@@ -3,7 +3,7 @@
 //! Ports `src/server/src/services/window-manager/kde/`. KWin has no socket
 //! and no D-Bus call that lists windows; what it has is a JavaScript engine
 //! reachable over `org.kde.kwin.Scripting`. So, as the C++ does, the engine
-//! owns `org.vicinae.WindowTracker` on the session bus, hands KWin a tracker
+//! owns `org.tunaos.compass.WindowTracker` on the session bus, hands KWin a tracker
 //! script that walks `workspace.stackingOrder` once and then forwards every
 //! window added, removed, retitled and activated to that name with
 //! `callDBus`, and answers from the cache the calls build. Acting on a window
@@ -43,14 +43,14 @@ pub const SCRIPTING_PATH: &str = "/Scripting";
 pub const SCRIPTING_INTERFACE: &str = "org.kde.kwin.Scripting";
 /// A loaded script's interface: `run`.
 pub const SCRIPT_INTERFACE: &str = "org.kde.kwin.Script";
-/// The name the tracker script reports to, as the C++ owns it.
-pub const TRACKER_SERVICE: &str = "org.vicinae.WindowTracker";
+/// The name the tracker script reports to (the C++ owns `org.vicinae.WindowTracker`).
+pub const TRACKER_SERVICE: &str = "org.tunaos.compass.WindowTracker";
 /// Where the tracker object is served.
 pub const TRACKER_PATH: &str = "/";
 /// The tracker's interface.
-pub const TRACKER_INTERFACE: &str = "org.vicinae.WindowTracker";
+pub const TRACKER_INTERFACE: &str = "org.tunaos.compass.WindowTracker";
 /// The plugin name the tracker script is loaded under.
-pub const TRACKER_PLUGIN: &str = "vicinae-window-tracker";
+pub const TRACKER_PLUGIN: &str = "compass-window-tracker";
 /// Where KWin's virtual-desktop interface lives.
 pub const DESKTOPS_PATH: &str = "/VirtualDesktopManager";
 /// KWin's virtual-desktop interface: `desktops`, `current`.
@@ -70,9 +70,9 @@ pub const OVERVIEW_SHORTCUT: &str = "Overview";
 /// `add` re-sent when either changes.
 pub const TRACKER_JS: &str = r#"
 (function () {
-  const SVC = "org.vicinae.WindowTracker";
+  const SVC = "org.tunaos.compass.WindowTracker";
   const P = "/";
-  const IF = "org.vicinae.WindowTracker";
+  const IF = "org.tunaos.compass.WindowTracker";
 
   function desktopOf(w) {
     if (w.onAllDesktops) return "";
@@ -193,7 +193,7 @@ pub enum StartError {
     #[error("{0}")]
     Bus(#[from] zbus::Error),
     /// Another process owns the tracker's name.
-    #[error("{TRACKER_SERVICE} is owned by another process (another vicinae running?)")]
+    #[error("{TRACKER_SERVICE} is owned by another process (another Compass running?)")]
     NameTaken,
     /// Not started inside a Tokio runtime.
     #[error("the KWin provider needs a Tokio runtime")]
@@ -273,7 +273,7 @@ fn lock(cache: &Mutex<Cache>) -> MutexGuard<'_, Cache> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-#[zbus::interface(name = "org.vicinae.WindowTracker")]
+#[zbus::interface(name = "org.tunaos.compass.WindowTracker")]
 impl TrackerObject {
     /// A window appeared, or changed its caption, desktop or fullscreen state.
     #[zbus(name = "add")]
@@ -499,7 +499,7 @@ impl Kwin {
     /// not at `loadScript`, so the file lives until after.
     async fn load_and_run(&self, source: &str, plugin: &str) -> Result<(), IpcError> {
         let mut file = tempfile::Builder::new()
-            .prefix("vicinae-kwin-")
+            .prefix("compass-kwin-")
             .suffix(".js")
             .tempfile()?;
         file.write_all(source.as_bytes())?;
@@ -547,7 +547,7 @@ impl Kwin {
             .internal_id(id)
             .ok_or_else(|| IpcError::Refused(format!("no window {id}")))?;
         let plugin = format!(
-            "vicinae-{}-{}-{}",
+            "compass-{}-{}-{}",
             action.as_str(),
             std::process::id(),
             ONE_SHOTS.fetch_add(1, Ordering::Relaxed)

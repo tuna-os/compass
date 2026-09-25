@@ -26,7 +26,7 @@ pub const URL_ENV: &str = "COMPASS_EXCHANGE_RATES_URL";
 
 /// Set, the engine never refreshes the rates on its own; Refresh Exchange
 /// Rates still does. The C++'s `Environment::isAutoRateRefreshDisabled`.
-pub const DISABLE_AUTO_REFRESH_ENV: &str = "VICINAE_DISABLE_AUTO_RATE_REFRESH";
+pub const DISABLE_AUTO_REFRESH_ENV: &str = "COMPASS_DISABLE_AUTO_RATE_REFRESH";
 
 /// The currency every rate is quoted against.
 pub const BASE_CURRENCY: &str = "EUR";

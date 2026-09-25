@@ -31,7 +31,7 @@ fn ids(list: &[&str]) -> Vec<String> {
 fn a_launcher_bug_goes_to_the_launchers_tracker() {
     assert_eq!(
         CREATE_ISSUE_URL,
-        "https://github.com/vicinaehq/vicinae/issues/new"
+        "https://github.com/tuna-os/compass/issues/new"
     );
 }
 

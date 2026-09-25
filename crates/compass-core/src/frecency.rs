@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 pub const STORE_VERSION: u32 = 1;
 
 /// Path of the frecency store relative to `$XDG_DATA_HOME`.
-pub const STORE_RELATIVE_PATH: &str = "vicinae/frecency.json";
+pub const STORE_RELATIVE_PATH: &str = "compass/frecency.json";
 
 /// A source of wall-clock time, in unix seconds.
 ///
@@ -356,7 +356,7 @@ impl FrecencyStore for JsonFrecencyStore {
     }
 }
 
-/// `$XDG_DATA_HOME/vicinae/frecency.json`, falling back to `~/.local/share`.
+/// `$XDG_DATA_HOME/compass/frecency.json`, falling back to `~/.local/share`.
 ///
 /// # Errors
 ///

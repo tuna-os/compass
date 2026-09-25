@@ -22,7 +22,7 @@ pub const DURATION: std::time::Duration = std::time::Duration::from_millis(1500)
 
 /// The layer surface's namespace (`LayerShell.Window.scope`), which
 /// compositors match rules on.
-pub const NAMESPACE: &str = "vicinae-hud";
+pub const NAMESPACE: &str = "compass-hud";
 
 /// The HUD surface's size. The pill is centred in it and the rest is
 /// transparent and takes no input; the width is the C++'s widest pill (a

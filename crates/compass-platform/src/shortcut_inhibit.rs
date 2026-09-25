@@ -3,7 +3,7 @@
 //!
 //! The launcher window asks; how the compositor is asked is the platform's
 //! (on Wayland, `compass_wayland::ShortcutInhibit` over
-//! keyboard-shortcuts-inhibit), handed to the window by the `vicinae` binary.
+//! keyboard-shortcuts-inhibit), handed to the window by the `compass` binary.
 
 /// What the launcher window asks of the compositor while a shortcut recorder
 /// records: its shortcuts, so a combination it would act on can be recorded.

@@ -29,6 +29,7 @@ use crate::scroll::scrollable;
 mod apps;
 mod calculator;
 mod clipboard;
+mod compass_commands;
 mod developer;
 mod dmenu;
 mod emoji;
@@ -54,7 +55,6 @@ mod snippets;
 mod stores;
 mod themes;
 mod tray;
-mod vicinae;
 mod workspaces;
 
 /// The search field's widget id.
@@ -251,7 +251,7 @@ pub struct AppFlags {
     /// How to launch the selected application.
     ///
     /// Injected rather than reached for: this crate must not know whether it
-    /// is on Linux. `vicinae` supplies `compass-platform-linux`'s launcher;
+    /// is on Linux. `compass` supplies `compass-platform-linux`'s launcher;
     /// tests supply their own. See ADR-0013.
     pub launcher: Arc<dyn AppLauncher>,
     /// Shared ranking/history service when attached to an engine.
@@ -307,7 +307,7 @@ pub struct AppFlags {
     /// Whether root rows fetch their remote icons (an `https` script icon,
     /// a shortcut's or a clipboard link's favicon) into
     /// [`crate::remote_image`]'s cache. Off by default, so a test never
-    /// reaches the network or the cache under the real home; `vicinae` turns
+    /// reaches the network or the cache under the real home; `compass` turns
     /// it on.
     pub remote_icons: bool,
     /// When the process started, for the cold-start figure (#13).
@@ -346,7 +346,7 @@ pub struct AppFlags {
     pub appearance_link: Option<crate::appearance::AppearanceLink>,
     /// The engine driving this window, when there is one.
     ///
-    /// `None` is the standalone case -- `vicinae ui` run by hand with no daemon
+    /// `None` is the standalone case -- `compass ui` run by hand with no daemon
     /// -- and it changes what dismissing means: with nothing able to summon the
     /// window back, hiding it would strand the process invisible, so it exits.
     pub link: Option<EngineLink>,
@@ -422,7 +422,7 @@ impl Default for AppFlags {
             // Deliberately the launcher that launches nothing. A default that
             // silently picked a real backend would make the platform choice
             // invisible at the call site, which is the arrangement ADR-0013
-            // exists to end. `vicinae` sets this explicitly.
+            // exists to end. `compass` sets this explicitly.
             launcher: Arc::new(NullLauncher),
             backend: None,
             clipboard: None,
@@ -433,7 +433,7 @@ impl Default for AppFlags {
             start_hidden: false,
             onboarding: None,
             // Light, until a desktop says otherwise. This is Adwaita's
-            // documented no-preference fallback; `vicinae` replaces it with
+            // documented no-preference fallback; `compass` replaces it with
             // the portal's native choice before the first frame when possible.
             appearance: Appearance::Light,
             appearance_link: None,
@@ -648,7 +648,7 @@ pub enum Fallback {
 }
 
 /// The provider search view (`ProviderSearchViewHost`): root search over one
-/// provider's items, opened by a `vicinae://launch/<provider>` deeplink.
+/// provider's items, opened by a `compass://launch/<provider>` deeplink.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderScope {
     /// The provider's id.
@@ -684,7 +684,7 @@ enum Page {
     ScriptOutput(crate::script_page::ScriptOutputPage),
     /// Run Terminal Program.
     Programs(crate::programs_page::ProgramsPage),
-    /// A `vicinae dmenu` list.
+    /// A `compass dmenu` list.
     Dmenu(crate::dmenu_page::DmenuPage),
     /// Set Theme.
     Themes(crate::themes_page::ThemesPage),
@@ -719,15 +719,15 @@ enum Page {
     /// Configure Fallback Commands.
     Fallbacks(crate::fallbacks_page::FallbacksPage),
     /// Show Installed Extensions.
-    Extensions(crate::vicinae_pages::ExtensionsPage),
+    Extensions(crate::compass_pages::ExtensionsPage),
     /// Search Builtin Icons.
-    Icons(crate::vicinae_pages::IconsPage),
+    Icons(crate::compass_pages::IconsPage),
     /// Inspect Local Storage.
-    Storage(crate::vicinae_pages::StoragePage),
+    Storage(crate::compass_pages::StoragePage),
     /// Manage OAuth Token Sets.
-    Tokens(crate::vicinae_pages::TokensPage),
+    Tokens(crate::compass_pages::TokensPage),
     /// A store's intro, before its list.
-    StoreIntro(crate::vicinae_pages::StoreIntroPage),
+    StoreIntro(crate::compass_pages::StoreIntroPage),
 }
 
 /// A key press as an extension shortcut: its modifiers and the key's name
@@ -1276,7 +1276,7 @@ impl LauncherApp {
     /// Builds the state and opens the first window, for [`crate::run_resident`].
     ///
     /// Distinct from [`LauncherApp::new`] because `iced::daemon` starts with no
-    /// windows at all: without this, `vicinae ui` with no engine attached would
+    /// windows at all: without this, `compass ui` with no engine attached would
     /// be an invisible process with no way to summon it.
     pub fn boot(flags: AppFlags) -> (Self, Task<Message>) {
         let onboarding = flags.onboarding.clone();
@@ -1507,7 +1507,7 @@ impl LauncherApp {
             // REPORTING HERE WOULD BE OPTIMISTIC, AND IT WAS. `window::close`
             // returns a Task; answering before it runs tells the engine
             // "hidden" while the window is still on screen. A VM run caught it:
-            // `vicinae toggle` reported success and the screenshot taken
+            // `compass toggle` reported success and the screenshot taken
             // straight afterwards still had the launcher in it.
             //
             // `self.window` is deliberately NOT cleared yet. Until the close
@@ -1784,7 +1784,7 @@ impl LauncherApp {
 
     /// The application title.
     pub fn title(&self) -> String {
-        "Vicinae".to_owned()
+        compass_core::tray::APP_NAME.to_owned()
     }
 
     /// The application theme.
@@ -2087,7 +2087,7 @@ impl LauncherApp {
             // It is logged as `first_draw_ms` rather than `first_frame_ms` so
             // nobody reads it as the thing the SLA names.
             //
-            // The elapsed time is from `AppFlags::started_at`, which `vicinae`
+            // The elapsed time is from `AppFlags::started_at`, which `compass`
             // takes on entry -- so it excludes dynamic linking, and a wgpu
             // binary's is not free either. The VM tier measures from spawn to
             // this line and catches both.
@@ -2148,7 +2148,7 @@ impl LauncherApp {
                 Task::none()
             }
             Message::ThemeCommit => {
-                // Persist is handled by vicinae theme set; in-ui commit clears preview backup.
+                // Persist is handled by compass theme set; in-ui commit clears preview backup.
                 self.theme_preview = None;
                 Task::none()
             }
@@ -2398,14 +2398,14 @@ impl LauncherApp {
             }
             Message::ExtensionsQueryChanged(_)
             | Message::IconsQueryChanged(_)
-            | Message::VicinaeRowSelected(_)
+            | Message::CompassRowSelected(_)
             | Message::ExtensionUninstalled { .. }
             | Message::StorageQueryChanged(_)
             | Message::TokensQueryChanged(_)
             | Message::StorageNamespacesLoaded(_)
             | Message::StorageItemsLoaded { .. }
             | Message::TokenSetsLoaded(_)
-            | Message::TokenSetRemoved(_) => self.vicinae_view_message(message),
+            | Message::TokenSetRemoved(_) => self.compass_view_message(message),
             Message::OnboardingContinue
             | Message::OnboardingBack
             | Message::OnboardingJump(_)
@@ -2507,7 +2507,7 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_fallbacks_panel() {
                     return task;
-                } else if let Some(task) = self.open_vicinae_view_panel() {
+                } else if let Some(task) = self.open_compass_view_panel() {
                     return task;
                 } else if let Some(task) = self.open_fallback_row_panel() {
                     return task;
@@ -2603,7 +2603,7 @@ impl LauncherApp {
                         .or_else(|| self.workspaces_panel_action(&id))
                         .or_else(|| self.file_panel_action(&id))
                         .or_else(|| self.app_runtime_action(&id))
-                        .or_else(|| self.vicinae_panel_action(&id))
+                        .or_else(|| self.compass_panel_action(&id))
                 {
                     return task;
                 }
@@ -3463,7 +3463,7 @@ impl LauncherApp {
                         Page::Extensions(_) | Page::Icons(_) | Page::Storage(_) | Page::Tokens(_)
                     )
                 {
-                    return self.vicinae_view_key(key, modifiers);
+                    return self.compass_view_key(key, modifiers);
                 }
                 if !panel_key && matches!(self.page, Page::Workspaces(_)) {
                     return self.workspaces_page_key(key, modifiers);
@@ -3761,26 +3761,26 @@ impl LauncherApp {
                 Some(Message::FallbacksQueryChanged as OnInput),
             ),
             Page::Extensions(page) => (
-                crate::vicinae_pages::EXTENSIONS_PLACEHOLDER,
+                crate::compass_pages::EXTENSIONS_PLACEHOLDER,
                 &page.query,
                 Some(Message::ExtensionsQueryChanged as OnInput),
             ),
             Page::Icons(page) => (
-                crate::vicinae_pages::ICONS_PLACEHOLDER,
+                crate::compass_pages::ICONS_PLACEHOLDER,
                 &page.query,
                 Some(Message::IconsQueryChanged as OnInput),
             ),
             Page::Storage(page) => (
                 if page.browsing.is_some() {
-                    crate::vicinae_pages::ITEMS_PLACEHOLDER
+                    crate::compass_pages::ITEMS_PLACEHOLDER
                 } else {
-                    crate::vicinae_pages::NAMESPACES_PLACEHOLDER
+                    crate::compass_pages::NAMESPACES_PLACEHOLDER
                 },
                 &page.query,
                 Some(Message::StorageQueryChanged as OnInput),
             ),
             Page::Tokens(page) => (
-                crate::vicinae_pages::TOKENS_PLACEHOLDER,
+                crate::compass_pages::TOKENS_PLACEHOLDER,
                 &page.query,
                 Some(Message::TokensQueryChanged as OnInput),
             ),
@@ -3994,7 +3994,7 @@ impl LauncherApp {
             self.calculator_body(page)
         } else if let Page::Fallbacks(page) = &self.page {
             self.fallbacks_body(page)
-        } else if let Some(body) = self.vicinae_view_body() {
+        } else if let Some(body) = self.compass_view_body() {
             body
         } else if let Page::StoreIntro(page) = &self.page {
             self.store_intro_body(page)
@@ -6054,7 +6054,7 @@ impl LauncherApp {
             CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
             CommandKind::SearchTray => Task::batch([record, self.open_search_tray()]),
             CommandKind::OpenSettings => Task::batch([record, self.open_settings(None)]),
-            CommandKind::Vicinae(id) => Task::batch([record, self.open_vicinae_command(id)]),
+            CommandKind::Compass(id) => Task::batch([record, self.open_compass_command(id)]),
             CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
             CommandKind::RefreshExchangeRates => {
                 Task::batch([record, self.refresh_exchange_rates(command)])
@@ -6817,7 +6817,7 @@ mod tests {
         let (app, _) = LauncherApp::boot(AppFlags {
             start_hidden: true,
             link: Some(EngineLink::new(receiver, sender)),
-            onboarding: Some(dir.path().join("vicinae/onboarding.json")),
+            onboarding: Some(dir.path().join("compass/onboarding.json")),
             ..AppFlags::default()
         });
         assert!(app.pending_window.is_some(), "the flow is put on screen");
@@ -6842,7 +6842,7 @@ mod tests {
     fn finishing_the_onboarding_records_it_and_hides() {
         use compass_core::onboarding::{self, Step};
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("vicinae").join(onboarding::FILE_NAME);
+        let path = dir.path().join("compass").join(onboarding::FILE_NAME);
         let backend = Arc::new(TestBackend::default());
         let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
         app.backend = Some(backend.clone());
@@ -6902,7 +6902,7 @@ mod tests {
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.open_onboarding(dir.path().join("onboarding.json"));
         for (step, expected) in [
-            (Step::Welcome, ["Welcome to Vicinae", "Continue"]),
+            (Step::Welcome, ["Welcome to Compass", "Continue"]),
             (Step::Personalize, ["Make it your own", "Open Docs"]),
             (Step::Complete, ["Setup complete", "Finish"]),
         ] {
@@ -7459,7 +7459,7 @@ mod tests {
         played: std::sync::Mutex<Vec<String>>,
         /// The players Now Playing lists.
         players: std::sync::Mutex<Vec<crate::backend::MediaPlayerRow>>,
-        /// The families "Set as vicinae font" saved.
+        /// The families "Set as Compass font" saved.
         fonts_set: std::sync::Mutex<Vec<String>>,
         /// What the user allowed their Rhai scripts.
         grants: std::sync::Mutex<Vec<crate::backend::ScriptGrant>>,
@@ -8625,7 +8625,7 @@ mod tests {
         assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
     }
 
-    /// Turns on the default-disabled Vicinae commands named.
+    /// Turns on the default-disabled Compass commands named.
     fn enable_commands(app: &mut LauncherApp, entrypoints: &[&str]) {
         let entries: Vec<String> = entrypoints
             .iter()
@@ -8759,7 +8759,7 @@ mod tests {
         );
 
         let _ = app.update(Message::Command(UiCommand::Show));
-        open_builtin(&mut app, "report a vicinae bug", "commands:report-bug");
+        open_builtin(&mut app, "report a compass bug", "commands:report-bug");
         let reported = backend.opened_urls.lock().unwrap().last().cloned().unwrap();
         assert!(
             reported.starts_with(compass_core::bug_report::CREATE_ISSUE_URL),
@@ -11205,7 +11205,7 @@ mod tests {
         assert_eq!(app.provider_scope, None);
         assert_eq!(app.search_field().0, "Search…");
 
-        let _ = app.open_deeplink("vicinae://launch/nothing");
+        let _ = app.open_deeplink("compass://launch/nothing");
         assert_eq!(
             app.error.as_deref(),
             Some(compass_core::root_items::INVALID_LAUNCH_LINK)
@@ -13105,7 +13105,7 @@ mod tests {
         let task = app.update(pressed(iced::keyboard::key::Named::Enter));
         settle(&mut app, task);
         assert_eq!(
-            app.view_memory.get(crate::vicinae_pages::intro_key(
+            app.view_memory.get(crate::compass_pages::intro_key(
                 crate::backend::Store::Vicinae
             )),
             Some("true")
@@ -13207,7 +13207,7 @@ mod tests {
         let mut app = LauncherApp::with_index(index(dir.path()));
         app.backend = Some(backend.clone());
         app.view_memory.set(
-            crate::vicinae_pages::intro_key(crate::backend::Store::Raycast),
+            crate::compass_pages::intro_key(crate::backend::Store::Raycast),
             "true",
         );
         open_builtin(&mut app, "raycast store", "commands:raycast-store");
@@ -14992,7 +14992,7 @@ mod tests {
             "[Desktop Entry]\nType=Application\nName=Probe\nExec=/bin/true\nNoDisplay=true\n",
         )
         .unwrap();
-        let config_path = dir.path().join("vicinae.json");
+        let config_path = dir.path().join("compass.json");
         let write_config = |show_hidden: bool| {
             fs::write(
                 &config_path,
@@ -16024,7 +16024,7 @@ mod tint_tests {
 
     #[test]
     fn the_flag_reaches_the_launcher() {
-        // Through `apply`, which is the real assignment list `vicinae::run`
+        // Through `apply`, which is the real assignment list `compass::run`
         // uses -- a helper that set the field itself would be a test of the
         // helper. This is the control #108 recorded and could not close.
         let mut app = LauncherApp::with_index(AppIndex::default());
@@ -16152,7 +16152,7 @@ mod preset_tests {
     use super::*;
     use crate::preset::{self, Preset};
 
-    /// A launcher built from flags, through the code `vicinae` uses.
+    /// A launcher built from flags, through the code `compass` uses.
     ///
     /// `apply` rather than a hand-written assignment list: a helper that set
     /// the fields itself would pass while the real copying silently stopped,
@@ -16824,7 +16824,7 @@ mod view_tests {
         }
     }
 
-    /// A launcher showing results, built through the code `vicinae` uses.
+    /// A launcher showing results, built through the code `compass` uses.
     fn app_showing_results(dir: &std::path::Path, preset_name: &str) -> LauncherApp {
         // Comments matter: the subtitle is what `subtitles` hides, and a
         // fixture without one would make that assertion measure nothing.

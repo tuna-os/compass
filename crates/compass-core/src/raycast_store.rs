@@ -238,7 +238,7 @@ impl Extension {
 /// not empty, [`API_BASE_URL`] otherwise.
 ///
 /// The C++ has no override; one exists here so tests can serve the store
-/// locally, as `VICINAE_API_URL` already lets them serve the Vicinae one.
+/// locally, as `COMPASS_VICINAE_API_URL` already lets them serve the Vicinae one.
 #[must_use]
 pub fn api_base_url(env_value: Option<&str>) -> String {
     env_value

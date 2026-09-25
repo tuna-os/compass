@@ -69,7 +69,7 @@ class ExtensionManager extends manager.ManagerService {
 			"support",
 			load.extension_id,
 		);
-		const supportInternal = path.join(supportPath, ".vicinae"); // for log stream, cli pid file...
+		const supportInternal = path.join(supportPath, ".compass"); // for log stream, cli pid file...
 
 		const stdoutLog = path.join(supportInternal, "stdout.txt");
 		const stderrLog = path.join(supportInternal, "stderr.txt");

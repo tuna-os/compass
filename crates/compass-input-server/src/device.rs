@@ -254,7 +254,7 @@ impl std::fmt::Debug for UinputSink {
 }
 
 impl UinputSink {
-    /// Creates `vicinae-snippet-virtual-keyboard` with every key from
+    /// Creates `compass-snippet-virtual-keyboard` with every key from
     /// `KEY_ESC` to 255, as `UInputKeyboard`'s constructor does.
     ///
     /// # Errors

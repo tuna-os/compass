@@ -277,7 +277,11 @@ pub fn terminals_list_paths(
 
 /// The comment `set_default_terminal` puts above the terminal it chose, and
 /// looks for to replace that choice next time.
-pub const TERMINALS_LIST_HEADER: &str = "# Configured by the Vicinae launcher";
+pub const TERMINALS_LIST_HEADER: &str = "# Configured by the Compass launcher";
+
+/// The header written before the rename (and by the C++ engine), treated as
+/// [`TERMINALS_LIST_HEADER`] and rewritten to it.
+pub const LEGACY_TERMINALS_LIST_HEADER: &str = "# Configured by the Vicinae launcher";
 
 /// `existing` with `app_id` (and its `:action`) made the chosen terminal.
 ///
@@ -305,17 +309,20 @@ pub fn with_default_terminal(existing: &str, app_id: &str, action: Option<&str>)
     let mut replace_next = false;
     for line in existing.lines() {
         let trimmed = line.trim();
+        let is_header = trimmed == TERMINALS_LIST_HEADER || trimmed == LEGACY_TERMINALS_LIST_HEADER;
+        let line = if is_header {
+            TERMINALS_LIST_HEADER
+        } else {
+            line
+        };
         if replace_next && !trimmed.is_empty() && !trimmed.starts_with('#') {
             replace_next = false;
             inserted = true;
             buf.push_str(&entry);
             continue;
         }
-        if !inserted
-            && !trimmed.is_empty()
-            && (!trimmed.starts_with('#') || trimmed == TERMINALS_LIST_HEADER)
-        {
-            if trimmed == TERMINALS_LIST_HEADER {
+        if !inserted && !trimmed.is_empty() && (!trimmed.starts_with('#') || is_header) {
+            if is_header {
                 replace_next = true;
             } else {
                 header(&mut buf);

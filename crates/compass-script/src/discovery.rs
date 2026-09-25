@@ -3,9 +3,8 @@
 //! Mirrors `compass_core::manifest::registry` for Node extensions: an ordered
 //! list of search paths, one directory per script, shadowing by directory
 //! name with the first path winning, dot-directories skipped, and a missing
-//! search path not an error. The only difference is where: scripts are a new
-//! tier with nothing to migrate, so they live under `compass/scripts`, not
-//! `vicinae/extensions`.
+//! search path not an error. They live under `compass/scripts`, beside
+//! `compass/extensions`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

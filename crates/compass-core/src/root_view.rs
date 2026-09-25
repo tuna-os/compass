@@ -229,7 +229,7 @@ pub struct HistoryEntry {
 
 /// The root search's history (`SearchHistory`), newest first, in the C++'s
 /// own file and shape: `{"entries":[{"q":"…","ts":…}]}` at
-/// `$XDG_DATA_HOME/vicinae/search-history.json`.
+/// `$XDG_DATA_HOME/compass/search-history.json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SearchHistory {
     /// The searches, newest first.
@@ -295,7 +295,7 @@ impl SearchHistory {
 pub fn default_history_path() -> Option<std::path::PathBuf> {
     Some(
         crate::xdg_dirs::data_home()?
-            .join("vicinae")
+            .join("compass")
             .join("search-history.json"),
     )
 }

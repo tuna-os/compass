@@ -50,11 +50,11 @@ pub fn should_use_layer_shell(surface: SurfaceKind, feature_enabled: bool) -> bo
     matches!((surface, feature_enabled), (SurfaceKind::LayerShell, true))
 }
 
-/// Environment override: `VICINAE_LAYER_SHELL=0` keeps the `xdg_toplevel`
+/// Environment override: `COMPASS_LAYER_SHELL=0` keeps the `xdg_toplevel`
 /// surface on a wlroots compositor (a layer shell that misbehaves with the
 /// launcher, or a user who wants it tiled). Any other value, or unset, leaves
 /// the decision to the compositor.
-pub const OVERRIDE_ENV: &str = "VICINAE_LAYER_SHELL";
+pub const OVERRIDE_ENV: &str = "COMPASS_LAYER_SHELL";
 
 /// Whether [`OVERRIDE_ENV`]'s value turns the layer shell off.
 #[must_use]

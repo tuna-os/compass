@@ -16,10 +16,10 @@
 //! It is defined by the introspection XML checked in under `dbus/` and
 //! mirrored by [`contract`] and [`proxy`]:
 //!
-//! - `org.gnome.Shell.Extensions.Vicinae.Windows`: `Version`, `ListWindows`,
+//! - `org.tunaos.compass.Shell.Windows`: `Version`, `ListWindows`,
 //!   `ActivateWindow`, `CloseWindow`, `WindowsChanged`, and from contract 4
 //!   `ListWorkspaces` and `ActivateWorkspace`.
-//! - `org.gnome.Shell.Extensions.Vicinae.Clipboard`: `Version`,
+//! - `org.tunaos.compass.Shell.Clipboard`: `Version`,
 //!   `GetClipboard`, `SetClipboard`, `Paste`, `GetPrimarySelection`,
 //!   `ClipboardChanged`.
 //!
@@ -32,7 +32,7 @@
 //! at all. Capabilities are modelled explicitly as [`Availability`], which
 //! distinguishes "absent" from "present but speaking a version we do not",
 //! and [`ShellCapabilities::degraded`] enumerates exactly which product
-//! features are lost for `vicinae doctor` to report. Nothing in the critical
+//! features are lost for `compass doctor` to report. Nothing in the critical
 //! path — app search, launch, calculator, emoji, snippets, file search — may
 //! depend on this crate.
 //!

@@ -2,7 +2,7 @@
 //!
 //! Every frame on the wire is one [`RequestEnvelope`] (client to server) or one
 //! [`ResponseEnvelope`] (server to client). Both carry the [`PROTOCOL_VERSION`]
-//! they were produced with, so an old `vicinae` CLI meeting a new engine — or
+//! they were produced with, so an old `compass` CLI meeting a new engine — or
 //! the reverse — gets a clear [`ErrorKind::VersionMismatch`] instead of a
 //! postcard decode failure or, worse, a silent misinterpretation.
 //!
@@ -77,7 +77,7 @@ use serde::{Deserialize, Serialize};
 /// [`Request::RunExecutable`], [`Request::SetWallpaper`]); version 19,
 /// Manage Snippets' detail pane and script commands' icons in root search
 /// ([`Request::PreviewSnippet`], [`Request::ScriptIcons`]), and the settings
-/// view's writes: one setting of `vicinae.json` ([`Request::SetSetting`]),
+/// view's writes: one setting of `compass.json` ([`Request::SetSetting`]),
 /// a provider's switch ([`Request::SetProviderEnabled`]) and turning a root
 /// item back on ([`RootItemEdit::Enabled`]), and the HUD the engine asks the
 /// window to show ([`WindowCommand::Hud`]), and the fallback manager's switch
@@ -171,7 +171,7 @@ pub enum Request {
         /// Raw search text, exactly as typed.
         text: String,
     },
-    /// Run the self-diagnostic checks behind `vicinae doctor`.
+    /// Run the self-diagnostic checks behind `compass doctor`.
     Doctor,
     /// Ask the engine to shut down cleanly.
     Shutdown,
@@ -366,7 +366,7 @@ pub enum Request {
     },
     /// An OAuth provider redirected back to the launcher: the
     /// `raycast://oauth?code=…&state=…` deeplink (or its `com.raycast:` and
-    /// `vicinae:` spellings) the desktop handed `vicinae`. The engine answers
+    /// `vicinae:` spellings) the desktop handed `compass`. The engine answers
     /// the extension's `OAuth/authorize` whose URL carried that `state`.
     /// [`Response::Ack`] once it has; [`ErrorKind::BadRequest`] when the URL
     /// is not an OAuth redirect or no authorization is waiting on its state.
@@ -501,7 +501,7 @@ pub enum Request {
         /// Keep the terminal open once it exits.
         hold: bool,
     },
-    /// `vicinae dmenu`: show a list in the launcher and wait for the choice.
+    /// `compass dmenu`: show a list in the launcher and wait for the choice.
     /// Answered with [`Response::DmenuOutput`] once the person chose (or
     /// dismissed the list); refused as [`ErrorKind::Unsupported`] when no
     /// launcher window is attached.
@@ -524,7 +524,7 @@ pub enum Request {
         output: Option<String>,
     },
     /// Keep a theme in the configuration (`launcher.appearance.theme`), as
-    /// `vicinae theme set` does. Answered with [`Response::Ack`]; an unknown
+    /// `compass theme set` does. Answered with [`Response::Ack`]; an unknown
     /// name is refused as [`ErrorKind::BadRequest`], and a configuration that
     /// cannot be written as [`ErrorKind::Internal`].
     SetTheme {
@@ -615,7 +615,7 @@ pub enum Request {
     /// [`Response::InputServerStatus`].
     InputServerStatus,
     /// Turn the keyboard helper on or off, as `input_server.enabled` in
-    /// `vicinae.json` (which is written), and answer
+    /// `compass.json` (which is written), and answer
     /// [`Response::InputServerStatus`] once applied.
     SetInputServerEnabled {
         /// Whether it should run.
@@ -660,7 +660,7 @@ pub enum Request {
         /// What to do.
         action: MediaPlayerAction,
     },
-    /// "Set as vicinae font": write `font.normal.family` to `vicinae.json`.
+    /// "Set as Compass font": write `font.normal.family` to `compass.json`.
     /// Answered with [`Response::Ack`]; an empty family is a bad request.
     SetFont {
         /// The family's name.
@@ -755,7 +755,7 @@ pub enum Request {
         edit: RootItemEdit,
     },
     /// Every root item's id and title, sorted by id, as the C++
-    /// `listCommands` answers `vicinae cmd ls`. Answered with
+    /// `listCommands` answers `compass cmd ls`. Answered with
     /// [`Response::Commands`]. (v17.)
     ListCommands,
     /// Run a root item as if it had been picked in root search: an
@@ -789,7 +789,7 @@ pub enum Request {
     /// Whether the launcher window is open. Answered with
     /// [`Response::WindowState`]; with no window attached it is closed. (v17.)
     DescribeWindow,
-    /// The file index, queried directly as `vicinae fs query` does: no
+    /// The file index, queried directly as `compass fs query` does: no
     /// recent files, no direct paths. Answered with [`Response::Files`];
     /// refused as [`ErrorKind::Unsupported`] while the indexer is not
     /// running. (v17.)
@@ -967,7 +967,7 @@ pub enum Request {
     /// The icon of each script command, as `ScriptCommandFile::icon` resolves
     /// its `@raycast.icon`. Answered with [`Response::ScriptIcons`]. (v19.)
     ScriptIcons,
-    /// Write one setting the settings view edits into `vicinae.json` and
+    /// Write one setting the settings view edits into `compass.json` and
     /// apply it: `key` is its dotted path, as `compass_core::settings_catalog`
     /// lists it, and `value_json` its new value, `null` to reset it. Answered
     /// with [`Response::Ack`]; a key that is not a setting, or a value it
@@ -1498,7 +1498,7 @@ pub enum Response {
         windows: Vec<WindowInfo>,
     },
     /// Answer to [`Request::ExtensionLaunchFetch`] for a launch that carries
-    /// fallback text (`vicinae cmd launch --query`). (v17.)
+    /// fallback text (`compass cmd launch --query`). (v17.)
     CommandLaunch {
         /// The item's [`QueryHit::id`].
         id: String,
@@ -1689,7 +1689,7 @@ pub enum CalculatorEdit {
     RemoveAll,
 }
 
-/// One root item, as `vicinae cmd ls` lists it.
+/// One root item, as `compass cmd ls` lists it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandInfo {
     /// Its [`QueryHit::id`].
@@ -1982,7 +1982,7 @@ pub enum WindowCommand {
     },
 }
 
-/// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and
+/// What `compass dmenu` asks the launcher to show: its stdin as a list, and
 /// the C++ CLI's options.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DmenuSpec {
@@ -2191,7 +2191,7 @@ pub enum ClipboardKind {
     Unknown,
 }
 
-/// One diagnostic check performed by `vicinae doctor`.
+/// One diagnostic check performed by `compass doctor`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DoctorCheck {
     /// Short machine-ish name, e.g. `"portal.global-shortcuts"`.
