@@ -116,16 +116,16 @@ void ServiceRegistry::setWallpaperManager(std::unique_ptr<WallpaperManager> mana
   m_wallpaperManager = std::move(manager);
 }
 
-void ServiceRegistry::ServiceRegistry::setRootItemManager(std::unique_ptr<RootItemManager> manager) {
+void ServiceRegistry::setRootItemManager(std::unique_ptr<RootItemManager> manager) {
   m_rootItemManager = std::move(manager);
 }
-void ServiceRegistry::ServiceRegistry::setRaycastStore(std::unique_ptr<RaycastStoreService> service) {
+void ServiceRegistry::setRaycastStore(std::unique_ptr<RaycastStoreService> service) {
   m_raycastStoreService = std::move(service);
 }
-void ServiceRegistry::ServiceRegistry::setVicinaeStore(std::unique_ptr<VicinaeStoreService> service) {
+void ServiceRegistry::setVicinaeStore(std::unique_ptr<VicinaeStoreService> service) {
   m_vicinaeStoreService = std::move(service);
 }
-void ServiceRegistry::ServiceRegistry::setOAuthService(std::unique_ptr<OAuthService> service) {
+void ServiceRegistry::setOAuthService(std::unique_ptr<OAuthService> service) {
   m_oauthService = std::move(service);
 }
 
@@ -133,13 +133,13 @@ void ServiceRegistry::setConfig(std::unique_ptr<config::Manager> cfg) { m_config
 void ServiceRegistry::setShortcutService(std::unique_ptr<ShortcutService> service) {
   m_shortcutService = std::move(service);
 }
-void ServiceRegistry::ServiceRegistry::setCalculatorService(std::unique_ptr<CalculatorService> service) {
+void ServiceRegistry::setCalculatorService(std::unique_ptr<CalculatorService> service) {
   m_calculatorService = std::move(service);
 }
-void ServiceRegistry::ServiceRegistry::setExtensionRegistry(std::unique_ptr<ExtensionRegistry> service) {
+void ServiceRegistry::setExtensionRegistry(std::unique_ptr<ExtensionRegistry> service) {
   m_extensionRegistry = std::move(service);
 }
-void ServiceRegistry::ServiceRegistry::setFileService(std::unique_ptr<FileService> service) {
+void ServiceRegistry::setFileService(std::unique_ptr<FileService> service) {
   m_fileService = std::move(service);
 }
 void ServiceRegistry::setGlyphService(std::unique_ptr<GlyphService> service) {
