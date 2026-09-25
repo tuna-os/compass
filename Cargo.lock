@@ -1034,6 +1034,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "compass-figura"
+version = "0.1.0"
+
+[[package]]
 name = "compass-input-server"
 version = "0.1.0"
 dependencies = [

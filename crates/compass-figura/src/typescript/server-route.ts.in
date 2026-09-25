@@ -1,0 +1,10 @@
+
+	route(raw: string) {
+		const msg = JSON.parse(raw) as JsonRpcMessage;
+
+		// request
+		if (msg.id !== undefined && msg.method && msg.params) {
+			const id = msg.id;
+
+			switch (msg.method) {
+	

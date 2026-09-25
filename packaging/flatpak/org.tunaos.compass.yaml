@@ -162,7 +162,7 @@ modules:
       #   share/compass/scripts/*               the first-party Rhai scripts, found through
       #                                         $XDG_DATA_DIRS and granted what they declare
       # The bundle is built outside flatpak-builder (scripts/build-extension-runtime.sh needs
-      # figura and npm, neither of which the offline build has) and picked up from the source
+      # npm, which the offline build does not have) and picked up from the source
       # tree. A build without it still works and the engine says the runtime is missing; the
       # Flatpak workflow builds it first and asserts it arrived.
       - PREFIX=/app LIBEXECDIR=/app/libexec ./scripts/packaging/install-rust-engine.sh

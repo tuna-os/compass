@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Convert Qt Linguist .ts catalogues to Fluent .ftl, per ADR-0003.
 
-The Rust engine uses fluent-rs. The existing catalogues in src/server/translations/ hold seven
+The Rust engine uses fluent-rs. The existing catalogues in extra/translations/qt/ hold seven
 locales of donated translations, and losing them would be a visible regression for every
 non-English user. This is the one-off migration.
 
@@ -35,7 +35,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SRC = REPO_ROOT / "src" / "server" / "translations"
+DEFAULT_SRC = REPO_ROOT / "extra" / "translations" / "qt"
 
 # Qt orders numerus forms by its own per-language rules; Fluent names CLDR categories. This table
 # maps position -> category and is the lossy part of the conversion.

@@ -21,9 +21,9 @@
 //! # Permissions
 //!
 //! Reading `/dev/input/event*` and writing `/dev/uinput` need either root
-//! or `CAP_DAC_OVERRIDE`. Compass installs the helper with
-//! `setcap cap_dac_override+ep` (`make postbuild`, the NixOS module's
-//! `security.wrappers`), and so does Compass; see `packaging/README.md`.
+//! or `CAP_DAC_OVERRIDE`. The packages grant it with
+//! `setcap cap_dac_override+ep` (Arch's `compass.install`) or the NixOS
+//! module's `security.wrappers`; see `packaging/README.md`.
 
 #![deny(missing_docs)]
 

@@ -18,7 +18,7 @@ license=('GPL-3.0-only')
 # wgpu and winit load the graphics stack and Wayland at run time rather than
 # linking them, so they are named here rather than discovered by makepkg.
 depends=('gcc-libs' 'glibc' 'openssl' 'nodejs' 'wayland' 'libxkbcommon' 'hicolor-icon-theme')
-makedepends=('git' 'cargo' 'cmake' 'npm')
+makedepends=('git' 'cargo' 'npm')
 optdepends=(
   'vulkan-icd-loader: Vulkan rendering'
   'libglvnd: OpenGL rendering where Vulkan is unavailable'
@@ -50,8 +50,8 @@ build() {
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
   cargo build --frozen --release -p compass -p compass-sandbox -p compass-input-server --bins
-  # The extension runtime bundle: figura (C++23) generates the protocol, npm
-  # bundles it. The Flatpak builds it the same way, outside flatpak-builder.
+  # The extension runtime bundle: npm bundles the committed protocol bindings.
+  # The Flatpak builds it the same way, outside flatpak-builder.
   ./scripts/build-extension-runtime.sh
 }
 

@@ -36,8 +36,9 @@ path = "src/parity.rs"
 name = "head-to-head"
 path = "src/head_to_head.rs"
 
-# Suite 0 rung 1 (PLAN §8.1a): diffs the C++ scorer against the Rust one. Needs
-# the C++ probe built and passed with --probe; see src/lib/fuzzy/probe/main.cpp.
+# Suite 0 rung 1 (PLAN §8.1a): diffs upstream Vicinae's C++ scorer against the
+# Rust one. Needs the probe built and passed with --probe; see
+# scripts/bench/probes/fuzzy-probe.cpp.
 [[bin]]
 name = "scorer-parity"
 path = "src/scorer_parity.rs"
@@ -48,9 +49,9 @@ path = "src/scorer_parity.rs"
 name = "fuzzy-throughput"
 path = "src/fuzzy_throughput.rs"
 
-# Suite 0 (PLAN §8.4a): cross-decrypts the C++ clipboard crypto against the Rust
-# one. Needs the C++ probe built and passed with --probe; see
-# src/lib/crypto/probe/main.cpp.
+# Suite 0 (PLAN §8.4a): cross-decrypts upstream Vicinae's C++ clipboard crypto
+# against the Rust one. Needs the probe built and passed with --probe; see
+# scripts/bench/probes/crypto-probe.cpp.
 [[bin]]
 name = "crypto-parity"
 path = "src/crypto_parity.rs"

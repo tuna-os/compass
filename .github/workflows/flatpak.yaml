@@ -126,13 +126,10 @@ jobs:
             -c 'PATH=/usr/lib/sdk/rust-stable/bin:$PATH rustc --version' || echo "could not query"
 
       # The manifest installs this from the source tree, because the offline
-      # build cannot run figura or npm. Same script, same C++23 need, as the
-      # Rust workflow's extension-runtime job.
+      # build cannot run npm. Same script as the Rust workflow's
+      # extension-runtime job.
       - name: Build the extension runtime bundle
-        env:
-          CXX: g++-14
         run: |
-          sudo apt-get install -y g++-14
           ./scripts/build-extension-runtime.sh
           test -s src/typescript/extension-manager/dist/runtime.js
 

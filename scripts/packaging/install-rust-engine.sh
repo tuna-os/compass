@@ -64,8 +64,8 @@ install -Dm755 "$bin_dir/compass-sandbox-exec" "$helpers/compass-sandbox-exec"
 # built only where it can run (-p compass-input-server). It needs
 # cap_dac_override to read /dev/input and write /dev/uinput, which DESTDIR
 # staging cannot carry: the package grants it at install time (Arch:
-# compass.install; NixOS: security.wrappers), as `make postbuild` does for the
-# C++ helper. See packaging/README.md, "The input server".
+# compass.install; NixOS: nix/nixos-module.nix's security.wrappers). See
+# packaging/README.md, "The input server".
 if [ -x "$bin_dir/compass-input-server" ]; then
   install -Dm755 "$bin_dir/compass-input-server" "$helpers/compass-input-server"
 else
@@ -86,7 +86,7 @@ install -Dm644 "$repo_root/packaging/systemd/compass.service" \
 
 # The Icon.* set extensions draw with, found through $XDG_DATA_DIRS as
 # compass/builtin-icons (compass_core::builtin_icon).
-install -Dm644 -t "$share/compass/builtin-icons" "$repo_root"/src/server/icons/*.svg
+install -Dm644 -t "$share/compass/builtin-icons" "$repo_root"/extra/builtin-icons/*.svg
 
 # The published compass.json schema, so an editor can be pointed at a local
 # copy that matches the installed build.

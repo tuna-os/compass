@@ -1,0 +1,15 @@
+[package]
+name = "compass-figura"
+description = "The figura IDL compiler's TypeScript generator: the extension runtime's protocol bindings from figura/*.fig."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "figura"
+path = "src/main.rs"

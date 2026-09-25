@@ -1,200 +1,36 @@
 # This Makefile is only for use on UNIX systems.
-# For Windows you are expected to use cmake directly and utility scripts in ./scripts
 
-BUILD_DIR						:= build
-BIN_DIR							:= build/bin
-RM							:= rm
-TAG 							:= $(shell git describe --tags --abbrev=0)
-APPIMAGE_BUILD_ENV_DIR			:= ./scripts/runners/appimage/
-APPIMAGE_BUILD_ENV_IMAGE_TAG	:= vicinae/appimage-build-env
-FIGURA_CC						:= $(BIN_DIR)/figura
 SHELL							:= /bin/sh
-APPLE_BUNDLE_ID						:= com.vicinaehq.Vicinae
-PRESET_OS						:= $(if $(filter Darwin,$(shell uname -s)),macos,linux)
 
-release:
-	cmake --preset $(PRESET_OS)-release
-	cmake --build --preset $(PRESET_OS)-release
-.PHONY: release
-
-host-optimized:
-	CXXFLAGS="${CXXFLAGS} -march=native" cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DLTO=ON -B build
-	cmake --build $(BUILD_DIR)
-.PHONY: optimized
-
-relwithdebinfo:
-	cmake -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=ON -B $(BUILD_DIR)
-	cmake --build $(BUILD_DIR)
-.PHONY: relwithdebinfo
-
-dev-configure:
-	cmake --preset linux-dev -B $(BUILD_DIR)
-.PHONY: dev-configure
-
-dev-build: dev-configure
-	cmake --build $(BUILD_DIR)
-.PHONY: dev-build
-
-dev-run: dev-build
-	$(BUILD_DIR)/bin/vicinae server --replace --open
-.PHONY: dev-run
-
-dev: dev-run
+# Build the engine, then start it with its window open.
+dev: build-rust
+	cargo run -p compass -- start
 .PHONY: dev
-
-preview:
-	cmake --preset $(PRESET_OS)-preview
-	cmake --build --preset $(PRESET_OS)-preview
-.PHONY: preview
-
-debug:
-	cmake --preset $(PRESET_OS)-debug
-	cmake --build --preset $(PRESET_OS)-debug
-.PHONY: debug
-
-qmllint:
-	cmake --build $(BUILD_DIR) --target all_qmllint
-.PHONY: qmllint
-
-update-translations:
-	cmake --preset $(PRESET_OS)-debug
-	cmake --build --preset $(PRESET_OS)-debug --target update_translations
-.PHONY: update-translations
-
-check-translations: update-translations
-	git diff --exit-code -- src/server/translations
-.PHONY: check-translations
-
-mac-bundle:
-	./scripts/macdeploy.sh $(BUILD_DIR)
-.PHONY: mac-bundle
-
-dmg: mac-bundle
-	./scripts/mkdmg.sh $(BUILD_DIR)
-.PHONY: dmg
-
-verify-dmg:
-	./scripts/verify-dmg.sh $(BUILD_DIR)/Vicinae.dmg
-.PHONY: verify-dmg
-
-mac-deps:
-	@./scripts/macos-setup.sh
-.PHONY: mac-deps
-
-debug-tidy:
-	# we need to run tidy with clang to avoid false positives
-	CC=clang CXX=clang++ cmake -G Ninja -DLTO=OFF -DENABLE_PREVIEW_FEATURES=ON -DENABLE_SANITIZERS=ON -DENABLE_CLANG_TIDY=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug -B $(BUILD_DIR)
-	cmake --build $(BUILD_DIR)
-.PHONY: debug-tidy
 
 genicon:
 	node scripts/generate-icons.js
 .PHONY: genicon
 
+# Regenerate the glyph table (crates/compass-core/glyph/README.md). Needs node
+# >= 22.18 and network access; commit the result.
 emoji:
-	$(MAKE) -C src/lib/glyph gen-db
+	cd crates/compass-core/glyph/scripts && node fetch.ts && node gen.ts
 .PHONY: emoji
 
-install:
-	cmake --install $(BUILD_DIR)
-.PHONY: install
-
-strip:
-	strip -s ./build/vicinae/vicinae
-.PHONY: strip
-
-test:
-	./$(BIN_DIR)/vicinae-glyph-tests
-	./$(BIN_DIR)/vicinae-fuzzy-tests
-	#./$(BIN_DIR)/vicinae-server-tests
-	./$(BIN_DIR)/xdgpp-tests
-	./$(BIN_DIR)/scriptcommand-tests
-	./$(BIN_DIR)/vicinae-file-indexer-tests
-	./$(BIN_DIR)/vicinae-crypto-tests
-.PHONY: test
-
-static:
-	cmake -G Ninja -DPREFER_STATIC_LIBS=ON -DCMAKE_BUILD_TYPE=Release -B $(BUILD_DIR)
-	cmake --build $(BUILD_DIR)
-.PHONY: static
-
-# things we can't really do in cmake. should be run with elevated privileges
-postbuild:
-	setcap "cap_dac_override+ep" ./build/bin/vicinae-input-server
-.PHONY: postbuild
-
-# optimize for portability (build problematic libs statically)
-# this will increase compile time as more libraries will have to be compiled from source,
-# but the resulting binary will be more portable across different distros, especially the ones
-# shipping older packages.
-portable:
-	cmake -G Ninja -DUSE_SYSTEM_CMARK_GFM=OFF -B $(BUILD_DIR)
-	cmake --build $(BUILD_DIR)
-.PHONY: portable
-
-appimage:
-	cmake -G Ninja -DCMAKE_INSTALL_PREFIX=./build/install -DVICINAE_PROVENANCE=appimage -B $(BUILD_DIR)
-	cmake --build $(BUILD_DIR)
-	cmake --install $(BUILD_DIR)
-	./scripts/mkappimage.sh ./build/install AppDir
-.PHONY: appimage
-
-appimage-build-env-run:
-	docker run -v$(PWD):/work --cap-add SYS_ADMIN --device /dev/fuse -it $(APPIMAGE_BUILD_ENV_IMAGE_TAG) 
-.PHONY: appimage-dev
-
-appimage-build-env:
-	docker build -f $(APPIMAGE_BUILD_ENV_DIR)/AppImageBuilder.Dockerfile $(APPIMAGE_BUILD_ENV_DIR) -t $(APPIMAGE_BUILD_ENV_IMAGE_TAG)
-.PHONY: appimage-build-env
-
-appimage-build-gh-runner: appimage-build-env
-	docker build -f $(APPIMAGE_BUILD_ENV_DIR)/gh-runner.Dockerfile $(APPIMAGE_BUILD_ENV_DIR) -t vicinae/appimage-gh-runner
-.PHONY: appimage-build-gh-runner
-
-appimage-build-env-push:
-	docker push $(APPIMAGE_BUILD_ENV_IMAGE_TAG)
-.PHONY: appimage-build-env-push
-
-# The AppImage build-environment image. CI builds and pushes it itself
-# (.github/workflows/build-appimage-image.yaml); these targets are for doing
-# it by hand. Requires `docker login ghcr.io` with a token carrying
-# write:packages.
-#
-# There is no equivalent for Arch: those jobs run on plain archlinux:latest
-# and install dependencies from scripts/runners/arch/install-deps.sh, so no
-# image needs building or publishing.
-BUILD_ENV_IMAGE := ghcr.io/tuna-os/compass/build-env
-
-# Builds GCC and Qt from source: expect hours, and build each architecture on
-# a machine of that architecture rather than under QEMU.
-push-appimage-image-amd64:
-	docker buildx build --push --tag $(BUILD_ENV_IMAGE):appimage-amd64-latest --platform linux/amd64 -f scripts/runners/appimage/AppImageBuilder.Dockerfile scripts/runners/appimage
-.PHONY: push-appimage-image-amd64
-
-push-appimage-image-arm64:
-	docker buildx build --push --tag $(BUILD_ENV_IMAGE):appimage-arm64-latest --platform linux/arm64 -f scripts/runners/appimage/AppImageBuilder.Dockerfile scripts/runners/appimage
-.PHONY: push-appimage-image-arm64
-
-NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-CLANG_FORMAT := $(shell command -v clang-format 2>/dev/null || echo /opt/homebrew/opt/llvm/bin/clang-format)
-
-qmlformat:
-	find ./src -type f -name '*.qml' -print0 | xargs -0 -n 10 -P $(NPROC) qmlformat -i
-.PHONY: qmlformat
+# Regenerate the committed TypeScript protocol bindings from figura/*.fig.
+# compass-figura's test fails while they are stale.
+figen:
+	cargo run -q -p compass-figura -- regenerate .
+.PHONY: figen
 
 tsfmt:
 	cd src/typescript && biome format --write .
 .PHONY: tsfmt
 
-clang-format:
-	find ./src -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.mm' \) -print0 | xargs -0 -n 10 -P $(NPROC) clang-format -i
-.PHONY: clang-format
-
-format: qmlformat tsfmt clang-format
+format: tsfmt fmt-rust
 .PHONY: format
 
-check-format:
-	find ./src -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.mm' \) -print0 | xargs -0 -n 10 -P $(NPROC) $(CLANG_FORMAT) --dry-run -Werror
+check-format: check-format-rust
 .PHONY: check-format
 
 bump-patch:
@@ -217,52 +53,17 @@ nix-hash-check:
 	$(SHELL) scripts/update-nix-npm-hashes.sh --check
 .PHONY: nix-hash-check
 
-# reset all macOS permission grants
-tcc-reset:
-	tccutil reset All $(APPLE_BUNDLE_ID)
-.PHONY: tcc-reset
-
-# if we need to manually create a release
-gh-release:
-	mkdir -p dist
-	cmake -G Ninja -DCMAKE_INSTALL_PREFIX=dist -DCMAKE_BUILD_TYPE=Release -B $(BUILD_DIR)
-	cmake --build $(BUILD_DIR)
-	cmake --install build
-	tar -czvf vicinae-linux-x86_64-$(TAG).tar.gz -C dist .
-.PHONY: gh-release
-
-run-limited:
-	systemd-run --user --scope -p MemoryMax=1G -p MemorySwapMax=0 ./$(BIN_DIR)/vicinae-server server --frontend=qml
-.PHONY: run-limited
-
 clean:
-	rm -rf $(BUILD_DIR)
+	cargo clean
 	$(RM) -rf ./src/typescript/api/node_modules
 	$(RM) -rf ./src/typescript/api/dist
-	$(RM) -rf ./src/typescript/api/src/proto
 	$(RM) -rf ./src/typescript/extension-manager/dist/
 	$(RM) -rf ./src/typescript/extension-manager/node_modules
-	$(RM) -rf ./src/typescript/extension-manager/src/proto
 	$(RM) -rf ./scripts/.tmp
-	$(RM) -rf ./src/lib/*/build
 .PHONY: clean
-
-figen:
-	$(FIGURA_CC) compile ./figura/tsapi.fig --client typescript --output ./src/typescript/api/src/api/proto/api.ts
-	$(FIGURA_CC) compile ./figura/tsapi.fig --client typescript --output ./src/typescript/extension-manager/src/proto/api.ts
-.PHONY:
-	figen
-
-re: clean release
-.PHONY: re
-
-redev: clean dev
-.PHONY: redev
 
 # ---------------------------------------------------------------------------
 # Rust engine (crates/). See docs/rust-engine/PLAN.md.
-# These are deliberately separate from the C++ targets: building the C++ tree
-# must not require a Rust toolchain until the cutover in Phase 7.
 # ---------------------------------------------------------------------------
 
 build-rust:
@@ -270,8 +71,8 @@ build-rust:
 .PHONY: build-rust
 
 # The extension runtime the Rust host drives in its real_runtime test. Not part
-# of check-rust: it needs a C++23 compiler and npm, and the test skips without
-# it rather than failing.
+# of check-rust: it needs npm, and the test skips without it rather than
+# failing.
 extension-runtime:
 	./scripts/build-extension-runtime.sh
 .PHONY: extension-runtime

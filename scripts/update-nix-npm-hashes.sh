@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Recompute the fetchNpmDeps hashes in nix/compass.nix from the npm lockfiles,
+# Recompute the fetchNpmDeps hashes in packaging/nix/extension-runtime.nix from the npm lockfiles,
 # using prefetch-npm-deps inside a nixos/nix docker container
 #
 # Usage:
-#   scripts/update-nix-npm-hashes.sh           # update nix/compass.nix in place
+#   scripts/update-nix-npm-hashes.sh           # update the hashes in place
 #   scripts/update-nix-npm-hashes.sh --check   # only verify, exit 1 on mismatch (what CI does)
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NIX_FILE="$REPO_ROOT/nix/compass.nix"
+NIX_FILE="$REPO_ROOT/packaging/nix/extension-runtime.nix"
 NIX_STORE_VOLUME="vicinae-prefetch-nix-store"
 
 CHECK_ONLY=0

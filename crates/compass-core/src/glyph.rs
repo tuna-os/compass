@@ -2,8 +2,8 @@
 //!
 //! Ports `src/lib/glyph`. The table itself is not written here and not
 //! regenerated here: `build.rs` parses the committed
-//! `src/lib/glyph/src/glyph.cpp`, which
-//! `src/lib/glyph/scripts/gen.ts` produced from the Unicode Character
+//! `glyph/glyph.cpp` (moved from `src/lib/glyph` with the C++ engine), which
+//! `glyph/scripts/gen.ts` produced from the Unicode Character
 //! Database, emoji-test and the CLDR English annotations.
 //!
 //! # Why read the C++ rather than generate afresh
@@ -155,7 +155,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    const CPP: &str = "src/lib/glyph/src/glyph.cpp";
+    const CPP: &str = "crates/compass-core/glyph/glyph.cpp";
 
     fn read_cpp() -> String {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))

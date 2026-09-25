@@ -1,8 +1,7 @@
-# This manifest can be used to inject the version and commit information
-# while building outside of the git tree.
-# To do so, one should pass the following options to cmake config step:
-# -DVICINAE_GIT_TAG=XXX
-# -DVICINAE_GIT_COMMIT_HASH=XXX (short rev)
+# The last release's tag and the commit it was cut from, written by
+# scripts/bump_version.sh (`make bump-patch|minor|major`), which commits this
+# file and tags that commit. The build does not read it: the engine's version
+# is the workspace's `CARGO_PKG_VERSION`.
 
 release:
   tag: "v0.28.1"

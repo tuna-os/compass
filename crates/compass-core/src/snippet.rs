@@ -200,18 +200,6 @@ impl Matcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
-
-    const CPP: &str = "src/snippet/src/server.cpp";
-
-    fn read_cpp() -> String {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("two levels below the repository root")
-            .join(CPP);
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-    }
 
     /// Types `text` and returns every trigger it fired.
     fn type_text(matcher: &mut Matcher, text: &str) -> Vec<String> {
@@ -317,11 +305,6 @@ mod tests {
 
     #[test]
     fn the_buffer_holds_the_last_thirty_two_bytes_and_no_more() {
-        assert!(
-            read_cpp().contains("MAX_BUFFER_SIZE = 32"),
-            "{CPP} no longer keeps 32 bytes; this port's buffer would disagree"
-        );
-
         let mut matcher = Matcher::new();
         let _ = type_text(&mut matcher, &"a".repeat(100));
         assert_eq!(matcher.buffer(), "a".repeat(MAX_BUFFER));
@@ -337,10 +320,6 @@ mod tests {
 
     #[test]
     fn the_longest_trigger_wins_whatever_the_registration_order() {
-        assert!(
-            read_cpp().contains("a.trigger.size() > b.trigger.size()"),
-            "{CPP} no longer sorts longest first"
-        );
         for order in [["sig", ";sig"], [";sig", "sig"]] {
             let mut matcher = Matcher::new();
             for trigger in order {

@@ -402,7 +402,6 @@ impl PowerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn session(id: &str, uid: u32, seat: &str) -> Session {
         Session {
@@ -432,34 +431,6 @@ mod tests {
         assert!(
             !Capability::Unknown.is_offerable(),
             "a reply this build cannot read is not a promise"
-        );
-    }
-
-    #[test]
-    fn the_cpp_still_has_the_bug_this_port_declines_to_copy() {
-        // If the C++ is ever fixed, this fails and the divergence note in the
-        // module docs and in PARITY.md should go.
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("two levels below the repository root")
-            .join("src/server/src/services/power-manager/systemd/systemd-power-manager.cpp");
-        let cpp = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        let body = cpp
-            .split("bool SystemdPowerManager::can(")
-            .nth(1)
-            .expect("`can` is still there")
-            .split("\n}")
-            .next()
-            .expect("its body");
-        assert!(
-            body.contains("if (args.isEmpty()) return false;") && body.contains("return true;"),
-            "the C++ `can` no longer ignores logind's answer: {body}"
-        );
-        assert!(
-            !body.contains("\"yes\""),
-            "the C++ now reads the reply string; this port's divergence is over"
         );
     }
 

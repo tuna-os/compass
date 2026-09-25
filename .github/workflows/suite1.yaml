@@ -54,7 +54,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # g++-14 for figura (see the Rust workflow's extension-runtime job);
       # gnome-keyring because preferences are stored under a key from the
       # login keyring, and the engine refuses a command whose required
       # preferences it has nowhere safe to keep.
@@ -62,7 +61,7 @@ jobs:
         # libxkbcommon-dev: the wlroots launcher surface (iced_layershell) links it.
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-14 gnome-keyring dbus libxkbcommon-dev
+          sudo apt-get install -y gnome-keyring dbus libxkbcommon-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -75,8 +74,6 @@ jobs:
           restore-keys: suite1-${{ runner.os }}-
 
       - name: Build the extension runtime
-        env:
-          CXX: g++-14
         run: ./scripts/build-extension-runtime.sh
 
       - name: Build the engine and the sandbox launcher

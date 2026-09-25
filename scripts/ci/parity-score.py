@@ -5,9 +5,10 @@ PLAN.md is measured rather than estimated.
 Run: python3 scripts/ci/parity-score.py [docs/rust-engine/PARITY.md]
      python3 scripts/ci/parity-score.py --selftest
 
-The `C++ deleted` column cannot go green before Phase 8 by the ledger's own
-rule, and the `C++ ✓` column describes the C++ tree rather than this port, so
-the Phase 5 figure is taken over `Rust ✓` and `parity test ✓` alone.
+The `C++ ✓` and `C++ deleted ✓` columns describe the C++ tree rather than
+this port (the latter is ✅ on every row since ADR-0021 removed that tree), so
+they are printed but the Phase 5 figure is taken over `Rust ✓` and
+`parity test ✓` alone.
 
 It also reports what the remaining work *is*, by reading the "Still C++-only:"
 sentences the notes already carry. A percentage says how far there is to go and

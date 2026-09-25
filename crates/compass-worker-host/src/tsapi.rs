@@ -281,8 +281,8 @@ mod tests {
     use std::path::Path;
 
     const FIG: &str = "figura/tsapi.fig";
-    const TS: &str = "src/lib/figura/src/codegen/typescript.hpp";
-    const GLAZE: &str = "src/lib/figura/src/codegen/glaze.hpp";
+    const TS: &str = "crates/compass-figura/src/typescript/server-boilerplate.ts.in";
+    const CLIENT: &str = "crates/compass-figura/src/typescript/client-bus.ts.in";
 
     fn read(rel: &str) -> String {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -475,17 +475,13 @@ mod tests {
 
     #[test]
     fn an_error_reply_carries_a_bare_string_as_both_engines_do() {
-        // The C++ side: `void replyError(int id, const std::string& error)`
-        // sending `JsonRpcErrorResponse{.jsonrpc = "2.0", .id = id, .error =
-        // error}`, whose `error` field is a `std::optional<std::string>`.
-        let glaze = read(GLAZE);
+        // The C++ engine sent `error` as a `std::optional<std::string>`, and
+        // the generated client rejects the call's promise with that field
+        // as-is, so what the extension catches is whatever `error` holds.
+        let client = read(CLIENT);
         assert!(
-            glaze.contains("void replyError(int id, const std::string& error)"),
-            "{GLAZE} no longer sends a string error"
-        );
-        assert!(
-            glaze.contains("std::optional<std::string> error;"),
-            "{GLAZE}'s error field is no longer a string"
+            client.contains("if (msg.error) handler.reject(msg.error);"),
+            "{CLIENT} no longer rejects with the bare `error` field"
         );
 
         let value: serde_json::Value =

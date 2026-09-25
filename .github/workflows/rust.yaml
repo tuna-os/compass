@@ -245,15 +245,16 @@ jobs:
 
       # Same trick as scorer-parity, for the same reason: vicinae::crypto is a
       # standalone static library whose only Linux dependency is OpenSSL, so
-      # three translation units give us the REAL C++ implementation to test
-      # against, with no CMake, no Qt and no server. PLAN.md §8.4a.
+      # three translation units give us upstream Vicinae's REAL implementation
+      # to test against, with no CMake, no Qt and no server. PLAN.md §8.4a.
+      # scripts/bench/upstream holds them verbatim from the pinned release.
       - name: Build the C++ crypto probe
         run: |
           set -o pipefail
-          c++ -std=c++23 -O2 -Isrc/lib/crypto/include -Isrc/lib/crypto/src \
-            -o /tmp/vicinae-crypto-probe src/lib/crypto/probe/main.cpp \
-            src/lib/crypto/src/aes-gcm.cpp src/lib/crypto/src/kdf.cpp \
-            src/lib/crypto/src/gcm-openssl.cpp -lcrypto
+          up=scripts/bench/upstream/crypto
+          c++ -std=c++23 -O2 -I$up/include -I$up/src \
+            -o /tmp/vicinae-crypto-probe scripts/bench/probes/crypto-probe.cpp \
+            $up/src/aes-gcm.cpp $up/src/kdf.cpp $up/src/gcm-openssl.cpp -lcrypto
           # Asserted, because a probe that built but could not answer would
           # otherwise surface as "no divergences" -- the harness's own failure
           # looking like success. This is a fixed HKDF-SHA256 vector, so it also
@@ -300,13 +301,14 @@ jobs:
 
       # No CMake, no Qt, no server, no display. vicinae::fuzzy is a header-only
       # INTERFACE library, which is the entire reason this tier-1 job can diff
-      # against the C++ engine's real scorer for the price of one translation
-      # unit. PLAN.md §8.1a.
+      # against upstream Vicinae's real scorer (scripts/bench/upstream, verbatim
+      # from the pinned release) for the price of one translation unit.
+      # PLAN.md §8.1a.
       - name: Build the C++ scorer probe
         run: |
           set -o pipefail
-          c++ -std=c++23 -O2 -Isrc/lib/fuzzy/include \
-            -o /tmp/vicinae-fuzzy-probe src/lib/fuzzy/probe/main.cpp
+          c++ -std=c++23 -O2 -Iscripts/bench/upstream/fuzzy/include \
+            -o /tmp/vicinae-fuzzy-probe scripts/bench/probes/fuzzy-probe.cpp
           # Asserted, because a probe that cannot run would otherwise surface as
           # "no divergences" — the harness's own failure looking like success.
           printf 'a\tSystem Monitor\n' | /tmp/vicinae-fuzzy-probe Sy | grep -q '^a' \
@@ -332,8 +334,8 @@ jobs:
   # Everything else in this file tests the host against itself or against a
   # mock worker that speaks the same wire format — which is a claim about the
   # format, not about the runtime an extension actually runs inside. This job
-  # builds `src/typescript/extension-manager`'s bundle (figura generates the
-  # protos, esbuild bundles them) and drives a real no-view command through it,
+  # builds `src/typescript/extension-manager`'s bundle (esbuild bundles the
+  # committed protocol bindings) and drives a real no-view command through it,
   # so `Storage/set` and `Storage/get` cross a pipe between two independent
   # implementations.
   #
@@ -351,14 +353,6 @@ jobs:
       - name: Install the xkbcommon headers
         run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
-      # figura's parser uses std::ranges::to, a C++23 library feature that
-      # GCC 13 — the image's default — does not have. The error it gives
-      # ("expected primary-expression before ')'") does not say so.
-      - name: Install a C++23 standard library
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y g++-14
-
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -370,8 +364,6 @@ jobs:
           restore-keys: runtime-${{ runner.os }}-
 
       - name: Build the extension runtime
-        env:
-          CXX: g++-14
         run: ./scripts/build-extension-runtime.sh
 
       # The runtime's own unit tests (the macOS shim), on Node's test runner
@@ -542,10 +534,10 @@ jobs:
 
       # WHY A SELF-TEST AND NOT THE PARITY RUN ITSELF
       #
-      # The real differential needs the C++ engine, which builds only on the
-      # Bluefin target (`cpp-on-target.yaml`, ~4 minutes) and is not present
-      # here. Until that job carries both binaries, this runs the Rust engine
-      # on BOTH sides.
+      # The real differential needed the in-tree C++ engine, removed with
+      # ADR-0021; unmodified upstream releases have no ranked-query endpoint to
+      # stand in for it (HEAD-TO-HEAD.md). So this runs the Rust engine on
+      # BOTH sides.
       #
       # It cannot show the two engines agree -- an engine agrees with itself.
       # It shows the HARNESS works end to end: staging the corpus where an XDG
