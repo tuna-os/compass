@@ -47,7 +47,7 @@ in
     installPhase = ''
       runHook preInstall
       install -Dm644 src/typescript/extension-manager/dist/runtime.js \
-        "$out/share/vicinae/extension-runtime.js"
+        "$out/share/compass/extension-runtime.js"
       runHook postInstall
     '';
 
