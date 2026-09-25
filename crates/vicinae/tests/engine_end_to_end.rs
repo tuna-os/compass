@@ -1328,6 +1328,10 @@ fn window_requests_without_a_session_bus_are_refused_by_name() {
         // Before the store is consulted: without a Shell there is nothing to
         // paste into, whether or not the id names an entry.
         Request::ClipboardPaste { id: "1".into() },
+        // The emoji picker's paste: the window copies on this refusal.
+        Request::PasteText {
+            text: "👋".into()
+        },
     ] {
         let Response::Error(err) = daemon.request(request.clone()) else {
             panic!("{request:?} was not refused");

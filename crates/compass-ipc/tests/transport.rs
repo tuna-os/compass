@@ -146,6 +146,7 @@ async fn echo_handler(request: Request) -> Response {
         | Request::EditCalculatorHistory { .. }
         | Request::TrayActivate { .. }
         | Request::TrayTriggerMenu { .. }
+        | Request::PasteText { .. }
         | Request::SetTheme { .. } => Response::Ack,
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },

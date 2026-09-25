@@ -30,6 +30,8 @@ pub const RECENT_HEADING: &str = "Recently used";
 pub mod actions {
     /// Copy the glyph, in its tone. Registers a visit.
     pub const COPY: &str = "emoji.copy";
+    /// Paste the glyph into the focused window.
+    pub const PASTE: &str = "emoji.paste";
     /// Copy its name.
     pub const COPY_NAME: &str = "emoji.copy-name";
     /// Copy its first codepoint, `U+XXXX`.
@@ -71,6 +73,10 @@ pub struct EmojiPage {
     /// The picker's `skinTone` preference, for glyphs with no tone of their
     /// own.
     pub picker_tone: Option<SkinTone>,
+    /// Whether a paste can be asked for (an engine is attached).
+    pub supports_paste: bool,
+    /// The `defaultAction` preference: `paste` or `copy`, what Enter does.
+    pub default_action: String,
     /// Why the last change could not be kept, until the next one.
     pub notice: Option<String>,
 }
@@ -300,36 +306,42 @@ impl EmojiPage {
         self.selected = selected.min(self.shown.len().saturating_sub(1));
     }
 
-    /// The selected glyph's panel: `buildEmojiActionPanel` without paste,
-    /// which the launcher cannot do for text it did not store.
+    /// The selected glyph's panel: `buildEmojiActionPanel`, paste first when
+    /// it is the default action.
     #[must_use]
     pub fn panel_sections(&self) -> Vec<crate::action_panel::PanelSection> {
         use crate::action_panel::{Action, PanelSection};
         let Some(glyph) = self.selected_glyph() else {
             return Vec::new();
         };
-        let main = emoji_grid::main_actions(false, "copy", self.is_pinned(glyph))
-            .into_iter()
-            .filter_map(|id| {
-                let (title, action) = match id {
-                    "copy" => ("Copy", actions::COPY),
-                    "copy-name" => ("Copy name", actions::COPY_NAME),
-                    "copy-codepoint" => ("Copy unicode codepoint", actions::COPY_CODEPOINT),
-                    "copy-category" => ("Copy category", actions::COPY_CATEGORY),
-                    "edit-keyword" => ("Edit keyword", actions::EDIT_KEYWORD),
-                    "reset-ranking" => ("Reset ranking", actions::RESET_RANKING),
-                    "pin" => ("Pin emoji", actions::PIN),
-                    "unpin" => ("Unpin emoji", actions::UNPIN),
-                    _ => return None,
-                };
-                let action = Action::new(title).with_id(action);
-                Some(match id {
-                    "copy" => action.with_shortcut("enter"),
-                    "edit-keyword" => action.with_shortcut("ctrl+e"),
-                    _ => action,
-                })
+        let main = emoji_grid::main_actions(
+            self.supports_paste,
+            &self.default_action,
+            self.is_pinned(glyph),
+        )
+        .into_iter()
+        .enumerate()
+        .filter_map(|(position, id)| {
+            let (title, action) = match id {
+                "paste" => ("Paste to active window", actions::PASTE),
+                "copy" => ("Copy", actions::COPY),
+                "copy-name" => ("Copy name", actions::COPY_NAME),
+                "copy-codepoint" => ("Copy unicode codepoint", actions::COPY_CODEPOINT),
+                "copy-category" => ("Copy category", actions::COPY_CATEGORY),
+                "edit-keyword" => ("Edit keyword", actions::EDIT_KEYWORD),
+                "reset-ranking" => ("Reset ranking", actions::RESET_RANKING),
+                "pin" => ("Pin emoji", actions::PIN),
+                "unpin" => ("Unpin emoji", actions::UNPIN),
+                _ => return None,
+            };
+            let action = Action::new(title).with_id(action);
+            Some(match id {
+                _ if position == 0 => action.with_shortcut("enter"),
+                "edit-keyword" => action.with_shortcut("ctrl+e"),
+                _ => action,
             })
-            .collect();
+        })
+        .collect();
         let mut sections = vec![PanelSection {
             name: String::new(),
             actions: main,

@@ -942,6 +942,15 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn paste_text(&self, text: String) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self.ask(Request::PasteText { text }, "Pasting").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn paste_snippet(&self, id: String, arguments: Vec<(String, String)>) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self

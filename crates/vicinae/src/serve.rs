@@ -1079,6 +1079,34 @@ fn edit_root_item(
     Response::Ack
 }
 
+/// `PasteService::pasteContent` for text the engine did not store (the
+/// emoji picker's glyph): on the clipboard, then pasted into the window that
+/// takes focus. Without the Shell extension there is no paste, and the
+/// window copies instead.
+async fn paste_text(state: &Arc<RwLock<EngineState>>, text: String) -> Response {
+    const WHAT: &str = "Pasting";
+    let (shell, terminals) = {
+        let state = state.read().await;
+        (
+            state.shell.clone(),
+            compass_core::app_service::AppService::new(&state.index).terminal_window_classes(),
+        )
+    };
+    let Some(shell) = shell else {
+        return Response::Error(crate::window_service::no_bus(WHAT));
+    };
+    let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
+    let content = compass_shell::ClipboardContent::text(text);
+    let pasted = match shell.set_clipboard(&content).await {
+        Ok(()) => shell.paste(&terminals).await,
+        Err(err) => Err(err),
+    };
+    match pasted {
+        Ok(()) => Response::Ack,
+        Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
+    }
+}
+
 fn clipboard_unavailable() -> Response {
     Response::Error(ProtocolError::new(
         ErrorKind::Unsupported,
@@ -3046,6 +3074,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
             }
         }
+        Request::PasteText { text } => paste_text(state, text).await,
         Request::ExpandShortcut { id, arguments } => {
             match expand_shortcut(state, &id, &arguments).await {
                 Ok((_, expanded)) => Response::Text { text: expanded },

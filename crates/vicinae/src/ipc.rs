@@ -191,6 +191,7 @@ fn describe(request: &Request) -> &'static str {
         Request::TrayActivate { .. } => "TrayActivate",
         Request::TrayMenu { .. } => "TrayMenu",
         Request::TrayTriggerMenu { .. } => "TrayTriggerMenu",
+        Request::PasteText { .. } => "PasteText",
     }
 }
 

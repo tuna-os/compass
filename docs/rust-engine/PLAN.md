@@ -2474,7 +2474,7 @@ subsystem. "None" under *blocked by* means only the work.
 | ~~`src/services/desktop-notification`~~ | **Done** (`vicinae::notification_icon`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | ~~`src/services/extension-registry`~~ | **Done** (`vicinae::catalog_watch::watch_extensions`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/global-shortcuts` | per-command global shortcuts from the config, conflict detection, `vicinae-hotkey-v1`, X11 | medium (X11 large) | a compositor: GNOME's portal grant is VM-tier only, no released compositor has the hotkey protocols; X11 needs a decision on whether it is supported |
-| `src/builtins/vicinae` (picker half) | the picker's paste action (visits, pins, keywords and per-glyph tones landed in the gaps pass) | small | a paste of text the engine did not store |
+| ~~`src/builtins/vicinae` (picker half)~~ | **Done**: the paste action, over IPC v18 `PasteText` (`PARITY.md`, "The gaps pass, root and actions") | — | — |
 | `src/services/news`, `update`, `telemetry` | fetching and showing notices, the update check, sending the record | medium each | a design decision: what a hard fork fetches and reports, and from where (the models are ported) |
 | `src/services/paste` | synthetic paste on wlroots through the input server's `injectPaste` | medium | a compositor to verify, and the helper, which cannot run inside the Flatpak |
 | ~~`src/services/root-item-manager`, `src/builtins/root`~~ | **Done in the gaps passes** (`PARITY.md`, "The gaps pass, root and actions"): the provider search view, every fallback, the alias completer, per-item shortcuts (IPC v18) | — | — |

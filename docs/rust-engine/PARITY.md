@@ -466,7 +466,7 @@ in its own tone, else the picker's `skinTone` preference
 copy, copy name, codepoint and category, the keyword form (Ctrl+E), reset ranking, pin or unpin,
 and the skin-tone section. Not ported, and deliberately: the one-off migration from the legacy
 `visited_emoji` table of `omni.db`, which only a database from before the JSON file holds; and the
-picker's paste action, which the `src/builtins/vicinae` note carries.
+picker's paste action, which landed after it (see "The gaps pass, root and actions").
 
 ### The gaps pass, root and actions (2026-09-25)
 
@@ -479,6 +479,7 @@ and named tests that fail on a regression.
 |---|---|---|---|
 | `src/builtins/root`, `src/services/root-item-manager` | Rust ✅ (the per-item shortcut in the row below) | `compass_core::root_items::{parse_launch_link, LaunchLink::target}`, `AppIndex::{search_root_with, has_provider, provider_title}`, `compass_ui::app::{Fallback, ProviderScope}`, `compass_ui::app::root::{open_launch_link, open_provider_search, has_completer}`, `vicinae::serve::launch::open_launch_link` | `a_launch_link_names_a_provider_or_an_item_with_its_text`, `a_launch_deeplink_to_a_provider_searches_its_items_alone`, `a_launch_deeplink_to_an_item_launches_it_with_its_text`, `fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query`, `an_alias_and_a_space_open_an_items_arguments` |
 | `ui/action-panel`, and the per-item shortcuts of `src/builtins/root` and `src/services/root-item-manager` | Rust ✅ | `compass_core::key_combo` (`Keyboard::Shortcut`'s spelling and parser, the capture's chord tracking, `shortcut_conflict::validate`), `compass_ui::shortcut_recorder`, `compass_ui::app::root::recorder_event`, `RootEdit::Shortcut` over IPC v18 `RootItemEdit::Shortcut`, `Config::apply_root_edit`, `RootItem::merge_config` | `a_combination_is_stored_in_the_cpps_spelling_and_read_back`, `a_recording_is_a_key_with_modifiers_or_modifiers_released_alone`, `a_combination_needs_a_modifier_and_must_not_be_anothers`, `the_badge_names_the_modifiers_then_the_key`, `shortcut_recorder::tests` (four), `the_root_panel_records_an_items_shortcut_and_backspace_removes_it`, `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
+| `src/builtins/vicinae` | — (the picker half is done; the other views remain) | `compass_ui::app::emoji::{paste_selected_emoji, emoji_pasted}`, `EmojiPage::{supports_paste, default_action}` over `compass_core::emoji_grid::main_actions`, `vicinae::serve::paste_text` over IPC v18 `Request::PasteText` | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot`, `window_requests_without_a_session_bus_are_refused_by_name` |
 
 **The provider search view (`ProviderSearchViewHost`).** `vicinae://launch/<provider>` — the link
 `vicinae deeplink` sends and a desktop shortcut can carry — opens root search over that provider's
@@ -513,6 +514,16 @@ the panel closes; Escape goes back to the actions; Backspace, while the item has
 removes it. Binding the shortcut to the desktop is `src/services/global-shortcuts`' row, which is
 where it stays: the configuration is written as the C++ writes it, so either engine binds it.
 
+**The emoji picker's paste (`PasteToFocusedWindowAction`).** The panel is `buildEmojiActionPanel`'s
+with paste in it: Paste to active window and Copy, in the order the `defaultAction` preference
+(`providers.core.entrypoints.search-emojis.preferences`, `paste` unless set) puts them, the first on
+Enter. Pasting counts a visit, as copying does, and hands the glyph in its tone to the engine
+(`Request::PasteText`), which puts it on the clipboard and pastes it through the Shell extension
+into the window the launcher hides back to, as it pastes a clipboard entry or a snippet. Where the
+engine cannot paste (no Shell extension: the wlroots family, a missing session bus) it refuses by
+name and the window copies the glyph instead, which is where the C++'s `pasteContent` leaves it too:
+copied first, then "the current platform cannot paste".
+
 **A regression found on the way.** The root row's panel (the first gaps pass) had taken over the
 panel an application's row opens, so Quit, Force Quit, Focus Window and Close Window (the
 app-runtime commit) never joined it. The engine is asked again when the root panel opens over an
@@ -526,6 +537,9 @@ What differs, by row:
 | `builtins/root` | The provider view ranks by visits as root search does. | It ranks in the window, without the engine's launch history: matches by score, the empty query in index order. | `a_launch_deeplink_to_a_provider_searches_its_items_alone` |
 | `builtins/root` | The provider view carries the provider's icon as its navigation icon. | The field's placeholder names it; the launcher has no navigation title bar. | — |
 | `builtins/root` | A fallback row's panel is Open plus Manage Fallback Actions. | Enter opens it; the fallback manager's view is `builtins/vicinae`'s gap. | — |
+| `builtins/vicinae` | Where the platform cannot paste, the picker offers no paste action and `defaultAction` defaults to copy. | The window cannot know before asking, so paste is offered whenever an engine is attached, and a refusal copies; the result is the same glyph on the clipboard. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
+| `builtins/vicinae` | Copying shows the "Copied to clipboard" HUD. | No HUD (the `ui/qml` row's gap); the launcher hides. | — |
+| `builtins/vicinae` | The paste action is titled `Paste to <frontmost app>` with its icon. | `Paste to active window`, the C++'s title when no application is frontmost. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and binding it waits on `global-shortcuts`. | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
 | `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Neither: the engine binds only the launcher's toggle, and the inhibit protocol is `shortcut-inhibit`'s gap. | — |
 | `ui/action-panel` | "Already bound" also checks the launcher's own keybinds (`KeybindManager`). | Only other root items' shortcuts: the launcher's keybinds are not configurable here. | `a_combination_needs_a_modifier_and_must_not_be_anothers` |
@@ -867,7 +881,7 @@ rather than by relevance, because a fallback's position decides which of them an
 — any other order would show a ranking that is not the one in force.
 
 The emoji picker and both stores are in the launcher now, the picker with the visits, pins, tones
-and keywords `glyph-service` keeps. Still C++-only: the picker's paste action (it copies), the
+and keywords `glyph-service` keeps, and its paste action. Still C++-only: the
 installed-extensions list, the OAuth
 token store and local-storage browser views, the builtin-icon gallery, the fallback
 manager's view, and the small commands (report a bug, refresh apps, open the config file, the

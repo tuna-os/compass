@@ -227,6 +227,10 @@ pub fn main_actions(supports_paste: bool, default_action: &str, pinned: bool) ->
     out
 }
 
+/// The `defaultAction` preference's default where pasting is supported,
+/// as `SearchEmojiCommand::preferences` sets it.
+pub const DEFAULT_ACTION_PASTE: &str = "paste";
+
 /// Which actions register a visit when they run.
 ///
 /// Only the two that put the glyph somewhere. Copying its *name* or its

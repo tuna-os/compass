@@ -68,7 +68,8 @@ use serde::{Deserialize, Serialize};
 /// tray icons, as the StatusNotifierItem host sees them
 /// ([`Request::TrayItems`], [`Request::TrayActivate`], [`Request::TrayMenu`],
 /// [`Request::TrayTriggerMenu`]), and a root item's keyboard shortcut from the
-/// action panel's recorder ([`RootItemEdit::Shortcut`]).
+/// action panel's recorder ([`RootItemEdit::Shortcut`]),
+/// and pasting text the engine did not store ([`Request::PasteText`]).
 pub const PROTOCOL_VERSION: u16 = 18;
 
 /// A client-to-server frame.
@@ -846,6 +847,14 @@ pub enum Request {
         key: String,
         /// The entry's [`TrayMenuEntry::id`].
         id: i32,
+    },
+    /// Put `text` on the clipboard and paste it into the window that has
+    /// focus once the launcher hides (`PasteToFocusedWindowAction`).
+    /// Answered with [`Response::Ack`]; refused where the engine cannot
+    /// paste, and the window copies instead. (v18.)
+    PasteText {
+        /// What to paste.
+        text: String,
     },
 }
 

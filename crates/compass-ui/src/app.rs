@@ -247,6 +247,9 @@ pub struct AppFlags {
     pub builtin_icons: Option<std::path::PathBuf>,
     /// The emoji picker's `skinTone` preference, as a tone id.
     pub emoji_skin_tone: Option<String>,
+    /// The picker's `defaultAction` preference, `paste` unless set: what
+    /// Enter does over a glyph.
+    pub emoji_default_action: String,
     /// Where the root search's history is kept
     /// (`compass_core::root_view::default_history_path`); `None` keeps it in
     /// memory, as tests do.
@@ -345,6 +348,7 @@ impl Default for AppFlags {
             glyph_path: None,
             builtin_icons: None,
             emoji_skin_tone: None,
+            emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
             search_history_path: None,
             clock: None,
             icons: compass_core::config::DEFAULT_ICONS,
@@ -843,6 +847,8 @@ pub struct LauncherApp {
     glyph_path: Option<std::path::PathBuf>,
     /// See [`AppFlags::emoji_skin_tone`].
     emoji_skin_tone: Option<String>,
+    /// See [`AppFlags::emoji_default_action`].
+    emoji_default_action: String,
     /// The emoji picker while its keyword form is open.
     parked_emoji: Option<crate::emoji_page::EmojiPage>,
     /// See [`AppFlags::search_history_path`].
@@ -1100,6 +1106,7 @@ impl LauncherApp {
         app.glyph_path = flags.glyph_path;
         app.builtin_icons = flags.builtin_icons;
         app.emoji_skin_tone = flags.emoji_skin_tone;
+        app.emoji_default_action = flags.emoji_default_action;
         app.icons = flags.icons;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
@@ -1183,6 +1190,7 @@ impl LauncherApp {
             power_asks: std::collections::BTreeMap::new(),
             browse_apps: compass_core::browse_apps::Options::default(),
             glyph_path: None,
+            emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
             emoji_skin_tone: None,
             search_history_path: None,
             search_history: compass_core::root_view::SearchHistory::default(),
@@ -2636,6 +2644,7 @@ impl LauncherApp {
                 Task::none()
             }
             Message::ClipboardPasted(Ok(())) => self.conceal(),
+            Message::EmojiPasted { text, result } => self.emoji_pasted(text, result),
             Message::ClipboardEntryChanged(Ok(())) => self.clipboard_search_task(),
             Message::ClipboardEntryChanged(Err(reason)) => {
                 if let Page::Clipboard(page) = &mut self.page {
@@ -6300,6 +6309,10 @@ mod tests {
         opened_shortcuts: std::sync::Mutex<Vec<(String, Vec<String>)>>,
         /// The root items launched through the engine, with their text.
         launched: std::sync::Mutex<Vec<(String, Option<String>)>>,
+        /// The text pasted.
+        pasted: std::sync::Mutex<Vec<String>>,
+        /// Whether a paste is refused, as where the engine cannot paste.
+        refuse_paste: bool,
         /// The shortcuts saved, as the form sent them.
         drafts: std::sync::Mutex<Vec<crate::backend::ShortcutDraft>>,
         /// The snippet store.
@@ -6955,6 +6968,16 @@ mod tests {
         ) -> crate::backend::BackendFuture<'_, ()> {
             Box::pin(async move {
                 self.opened_shortcuts.lock().unwrap().push((id, arguments));
+                Ok(())
+            })
+        }
+
+        fn paste_text(&self, text: String) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if self.refuse_paste {
+                    return Err("Pasting needs the GNOME Shell extension".to_owned());
+                }
+                self.pasted.lock().unwrap().push(text);
                 Ok(())
             })
         }
@@ -8987,6 +9010,69 @@ mod tests {
     }
 
     const FAVORITES_HEADING_FOR_TESTS: &str = "Favorites";
+
+    #[test]
+    fn the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot() {
+        use iced::keyboard::key::Named;
+        let command = compass_core::commands::by_id("commands:search-emojis").expect("command");
+        let picker = |backend: Arc<TestBackend>, default_action: &str| {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let mut app = app(dir.path());
+            app.glyph_path = Some(dir.path().join("emojis.json"));
+            app.backend = Some(backend);
+            app.emoji_default_action = default_action.to_owned();
+            let _ = app.open_command(command);
+            let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+            (app, dir)
+        };
+
+        // Paste is the default: first in the panel, on Enter, and nothing is
+        // copied by the window.
+        let backend = Arc::new(TestBackend::default());
+        let (mut app, _dir) = picker(backend.clone(), "paste");
+        let _ = app.update(Message::TogglePanel);
+        let first = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.sections.first()?.actions.first().cloned())
+            .expect("an action");
+        assert_eq!(first.title, "Paste to active window");
+        assert_eq!(first.shortcut.as_deref(), Some("enter"));
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(pressed(Named::Enter));
+        let copied = settle(&mut app, task);
+        assert_eq!(backend.pasted.lock().unwrap().as_slice(), ["👋"]);
+        assert!(copied.is_empty(), "{copied:?}");
+        let Page::Root = app.page else {
+            panic!("the picker hides once pasted: {}", app.state_line());
+        };
+
+        // Refused (no Shell extension): the glyph is copied instead.
+        let backend = Arc::new(TestBackend {
+            refuse_paste: true,
+            ..TestBackend::default()
+        });
+        let (mut app, _dir) = picker(backend.clone(), "paste");
+        let task = app.update(pressed(Named::Enter));
+        assert_eq!(settle(&mut app, task), ["👋"]);
+        assert!(backend.pasted.lock().unwrap().is_empty());
+
+        // `defaultAction: copy` puts copy first and on Enter.
+        let backend = Arc::new(TestBackend::default());
+        let (mut app, _dir) = picker(backend.clone(), "copy");
+        let task = app.update(pressed(Named::Enter));
+        assert_eq!(settle(&mut app, task), ["👋"]);
+        assert!(backend.pasted.lock().unwrap().is_empty());
+        let _ = app.open_command(command);
+        let _ = app.update(Message::EmojiQueryChanged("waving hand".into()));
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app.panel.as_ref().unwrap().sections[0]
+            .actions
+            .iter()
+            .map(|action| action.title.clone())
+            .collect();
+        assert_eq!(titles[..2], ["Copy", "Paste to active window"]);
+    }
 
     fn key_event(
         pressed: bool,

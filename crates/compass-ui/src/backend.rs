@@ -194,6 +194,13 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         })
     }
 
+    /// Puts `text` on the clipboard and pastes it where the person was. An
+    /// error means the engine cannot paste here, and the caller copies.
+    fn paste_text(&self, text: String) -> BackendFuture<'_, ()> {
+        let _ = text;
+        Box::pin(async { Err("Pasting needs the Compass engine".to_owned()) })
+    }
+
     /// Opens a shortcut with its arguments. An error is the sentence to show.
     fn open_shortcut(&self, id: String, arguments: Vec<String>) -> BackendFuture<'_, ()> {
         let _ = (id, arguments);

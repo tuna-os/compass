@@ -359,6 +359,9 @@ fn all_requests() -> Vec<Request> {
             key: ":1.42/StatusNotifierItem".into(),
             id: i32::MIN,
         },
+        Request::PasteText {
+            text: "👍🏽 zoë".into(),
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -964,6 +967,7 @@ fn request_variants_are_exhaustive() {
             | Request::TrayActivate { .. }
             | Request::TrayMenu { .. }
             | Request::TrayTriggerMenu { .. }
+            | Request::PasteText { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
