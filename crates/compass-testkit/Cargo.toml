@@ -42,6 +42,12 @@ path = "src/head_to_head.rs"
 name = "scorer-parity"
 path = "src/scorer_parity.rs"
 
+# Times the fuzzy ranker for docs/rust-engine/BENCHMARKS.md, beside
+# scripts/bench/fuzzy/cpp_rank.cpp for the C++ scorer.
+[[bin]]
+name = "fuzzy-throughput"
+path = "src/fuzzy_throughput.rs"
+
 # Suite 0 (PLAN §8.4a): cross-decrypts the C++ clipboard crypto against the Rust
 # one. Needs the C++ probe built and passed with --probe; see
 # src/lib/crypto/probe/main.cpp.

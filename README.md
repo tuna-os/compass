@@ -1,221 +1,191 @@
 <div align="center">
   <img width="112" src="extra/compass.svg" alt="Compass logo" />
   <h1>Compass</h1>
-  <p><strong>A fast, extensible command palette for Linux—being rebuilt in Rust.</strong></p>
+  <p><strong>A fast, keyboard-first launcher for the Linux desktop, written in Rust.</strong></p>
   <p>
     <a href="https://github.com/tuna-os/compass/actions/workflows/rust.yaml"><img src="https://github.com/tuna-os/compass/actions/workflows/rust.yaml/badge.svg" alt="Rust CI"></a>
     <a href="https://github.com/tuna-os/compass/actions/workflows/flatpak.yaml"><img src="https://github.com/tuna-os/compass/actions/workflows/flatpak.yaml/badge.svg" alt="Flatpak CI"></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/tuna-os/compass" alt="GPL-3.0 license"></a>
   </p>
+  <p><a href="https://tunaos.org/compass">tunaos.org/compass</a></p>
 </div>
 
-![Compass launcher](docs/screenshots/launcher.png)
+![Searching in Compass](packaging/screenshots/search.png)
 
-<p align="center"><em>The feature-complete launcher UI. The Rust UI is replacing it incrementally behind parity gates.</em></p>
+Compass puts applications, commands, clipboard history, snippets, files, a calculator, emoji,
+windows and extensions behind one search field. Press a key, type a few letters and press Enter.
 
-Compass puts applications, commands, clipboard history, snippets, files, calculations, emoji,
-windows and extensions behind one keyboard-first interface. It is a hard fork of
-[Vicinae](https://github.com/vicinaehq/vicinae), with the Linux engine and UI being migrated from
-C++/Qt to a modular Rust workspace.
+It started as a hard fork of [Vicinae](https://github.com/vicinaehq/vicinae). The engine and the
+UI have been rewritten in Rust, with an [Iced](https://iced.rs) interface in place of C++ and Qt.
 
-## Migration status
+| | |
+|---|---|
+| ![Calculator](packaging/screenshots/calculator.png) | ![Emoji picker](packaging/screenshots/emoji.png) |
+| ![Settings](packaging/screenshots/settings.png) | |
 
-The Rust port is active and **not yet the default engine**. `main` currently carries both engines so
-behaviour can be compared before cutover. The public project name is Compass; the `vicinae` binary,
-Flatpak ID, socket, config paths and extension API names remain temporarily compatible with existing
-installations. See [ADR-0012](docs/rust-engine/adr/0012-compass-public-brand.md).
+## Why Compass over Vicinae
 
-- [Transformation plan](docs/rust-engine/PLAN.md)
-- [Parity ledger](docs/rust-engine/PARITY.md)
-- [Roadmap epic](https://github.com/tuna-os/compass/issues/2)
-- [Architecture decisions](docs/rust-engine/adr/README.md)
+**It starts sooner and uses less memory.** Both launchers were measured by the same script on the
+same machine, cold-starting against the same 738-application index on a headless Wayland
+compositor. The table shows medians of five runs each. The method, the raw data and the one-line
+command to reproduce it are in [BENCHMARKS.md](docs/rust-engine/BENCHMARKS.md).
 
-**Where it stands: 70 of 158 parity cells are green (44%), across 3,099 tests.** Both figures are
-measured rather than estimated — `scripts/ci/parity-score.py` counts the ledger and `make
-check-rust` reports the tests — and the [parity ledger](docs/rust-engine/PARITY.md) is the source
-of truth for any single row.
+| | Compass | Vicinae 0.29.0 |
+|---|---:|---:|
+| Engine ready to answer | **96 ms** | 1,746 ms |
+| Launcher populated on screen | **0.9 s** | 2.3 s |
+| Keystroke to updated results | **56 ms** | 153 ms |
+| Idle memory (PSS, all processes) | **218 MiB** | 263 MiB |
+| Shared libraries loaded | **46** | 136 |
+| Program files on disk | **72 MB** | 310 MB (AppImage, extracted) |
 
-Done, in the sense that the row is green or its remaining files are backends: the builtins, the
-extension host (45 of tsapi's 49 methods), the clipboard store, the search and ranking semantics,
-the desktop-entry layer, and ten of the file indexer's fifteen files.
+These are software-rendered numbers from a shared 4-core machine, so compare the ratios rather
+than the absolute times. Not everything favours Compass. Per core, its fuzzy scorer is slower than
+Vicinae's. Compass spreads ranking across cores, which roughly evens it out, and it runs more
+threads. BENCHMARKS.md reports both results and lists what is still to measure.
 
-Not done, and this is the part a percentage hides: the remainder is **12 drawing gaps and 7 that
-need a live D-Bus, MPRIS or a compositor**, plus two process, one storage and one network item.
-The same script prints that breakdown beside the percentage, because a ledger at 44% whose
-remainder is transcription and one whose remainder is compositor integration are not the same
-project.
+**No Qt.** The binary links six system libraries: libc, libm, libgcc_s, OpenSSL and the loader.
+It has no Qt, no QML and no C++ runtime. Rust makes the whole engine memory-safe: `unsafe` is
+forbidden across the workspace, except in three small binding crates (SQLCipher, the Wayland
+protocols, and the bridge that puts blur behind the launcher), each with a written
+justification in an ADR.
 
-What is verified on a real desktop, not just in unit tests: a Bluefin VM tier boots GNOME under
-QEMU, installs the Flatpak, and asserts that the engine starts without painting, finds
-applications, finds a Flatpak installed in the system root, opens a window,
-receives a typed query in *our* field, hides and returns, and opens the action panel on Ctrl+B —
-the frame assertions each against a control frame from the same boot, with the changed region
-required to lie inside the window. Everything else in `compass-ui` is covered by its own tests
-only.
+**Extensions run in a sandbox.** Extensions run in separate workers behind a
+[Landlock](https://docs.kernel.org/userspace-api/landlock.html) filesystem boundary and a seccomp
+filter, with capped memory. The boundary also holds inside the Flatpak. Your home directory is
+off-limits except for a short, named, read-only list. For example, `~/.ssh/config` is readable,
+but `~/.ssh`'s keys are not. Extensions cannot run programs they downloaded. The policy and its
+tests are in [`crates/compass-sandbox`](crates/compass-sandbox) and in the
+[parity ledger](docs/rust-engine/PARITY.md).
 
-The Flatpak check is there because its absence hid a real bug for as long as this tier has
-existed. A Flatpak's exported `.desktop` is a symlink into the application's deploy tree, and the
-sandbox was granted the exports directory but not the tree it points into — so every Flatpak on a
-user's machine was invisible, silently, with no error anywhere ([#105]). The tier could not see
-it: Compass lives in a named extra installation here, and both of the roots the bug lived in were
-empty, so an engine indexing 88 applications and zero Flatpaks looked healthy. It now installs one
-application into the system root and asks the engine for it. The user root is reported as
-uncovered on every run rather than passed over: populating a *user* installation from a container
-build does not work (gpgme has no session there, and flatpak refuses `--user` as root), so it needs
-a bundle staged into the image and installed in the booted session, which is a follow-up.
+**Scripts ask first.** Compass can also be scripted in [Rhai](docs/rust-engine/RHAI-SCRIPTS.md).
+A script declares the capabilities it needs, such as reading the clipboard or opening
+applications. You approve them the first time the script runs, and you can revoke them later.
 
-[#105]: https://github.com/tuna-os/compass/issues/105
+**Raycast and Vicinae extensions.** Extensions written against Vicinae's Raycast-compatible
+TypeScript SDK run on Compass's extension host. It implements all but a few of the SDK's 49 host
+methods, including OAuth sign-in through the browser. You can browse and install from
+both extension stores inside the launcher.
+
+**Made for Wayland.** On compositors that offer wlr-layer-shell, such as Sway, Hyprland and niri,
+Compass draws as a layer surface, not as a window. On GNOME it uses portals and a small Shell extension, and on compositors that offer
+`ext-background-effect` it blurs what is behind the translucent card. It follows the desktop's light
+or dark mode live. X11 is not a target.
+
+**Nothing phones home.** Compass has no telemetry and no news feed. It checks this repository's
+GitHub releases for updates, and you can turn that check off.
+
+**Tested where it runs.** The Rust port covers 152 of 152 feature rows in the
+[parity ledger](docs/rust-engine/PARITY.md) (`python3 scripts/ci/parity-score.py`). A Bluefin VM
+tier boots GNOME, installs the Flatpak and drives the real launcher on every nightly run.
+`vicinae doctor` tells you what works on your machine and why.
 
 ## Install
 
-> **There is no tagged release and Compass is not on Flathub yet.** Every path below builds or
-> installs a development build.
+### Flatpak (recommended)
 
-**Every path below gives you the pure Rust engine, and only that.** This is worth stating plainly
-because [Migration status](#migration-status) says the Rust port is not the default engine, and the
-two can be read as contradicting each other. They do not: `main` carries both engines so they can
-be compared, and the C++ one is what a *Vicinae* user runs today — but the Flatpak manifest here
-builds `cargo build --release -p vicinae` and nothing else. There is no Qt, no CMake and no C++ in
-the artifact. If you are following these instructions, the Rust engine is the only thing you get.
+Compass is published in the TunaOS Flatpak remote:
 
-To confirm it on your own machine rather than taking that on trust, `doctor` reports which engine
-is running. The binary *is* the engine: `--engine cpp` parses and is reported, and makes
-engine-dependent commands refuse rather than quietly doing the Rust thing.
+```sh
+flatpak remote-add --if-not-exists tuna-os https://tunaos.org/flatpak/tuna-os.flatpakrepo
+flatpak install tuna-os com.vicinae.Vicinae
+```
 
-**What you can actually do with it today.** Open the launcher, type, move the selection, press Enter
-to launch, and press <kbd>Ctrl</kbd>+<kbd>B</kbd> for the action panel. Run it resident and summon
-it with `toggle`. It draws light or dark to match the desktop, and follows it when you switch. That is the honest list. A great deal more is *ported* — the clipboard store, the
-extension host, the calculator, the emoji picker, snippets, quicklinks and most of the builtins —
-but ported means the logic and its tests exist, not that the launcher can reach it yet. The
-[parity ledger](docs/rust-engine/PARITY.md) is per-row about which is which.
+The runtime, `org.freedesktop.Platform//26.08`, comes from Flathub. Add Flathub too if you have
+not already:
 
-**Requirements.** A Wayland session; GNOME is the first target and the only one covered by CI.
-There is no X11 fallback — the engine is Wayland-only by design. The Flatpak paths also need
-`flatpak` and access to Flathub for the `org.freedesktop.Platform//26.08` runtime.
+```sh
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+```
 
-### From a CI build
+Then open **Compass** from your application grid.
 
-The quickest way to get a binary. Every successful run of the
+The app ID is still `com.vicinae.Vicinae`, and the command is still `vicinae`. Both are kept on
+purpose so that existing configuration and extensions keep working
+([ADR-0012](docs/rust-engine/adr/0012-compass-public-brand.md)).
+
+### A CI build
+
+Every successful run of the
 [Flatpak workflow](https://github.com/tuna-os/compass/actions/workflows/flatpak.yaml) uploads a
-single-file bundle as the `flatpak-bundle` artifact. Artifacts expire after 14 days and downloading
-them requires being signed in to GitHub.
-
-With the [`gh` CLI](https://cli.github.com):
+single-file bundle as the `flatpak-bundle` artifact. It expires after 14 days, and downloading it
+requires a GitHub sign-in:
 
 ```sh
 run=$(gh run list --repo tuna-os/compass --workflow flatpak.yaml \
         --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
 gh run download "$run" --repo tuna-os/compass --name flatpak-bundle
-
-flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install --user --bundle com.vicinae.Vicinae.flatpak
 ```
 
-Or download `flatpak-bundle` from a run page in a browser, unzip it, and run the last two commands.
-
-The bundle carries the application only, so the runtime still has to come from somewhere — that is
-what the `remote-add` line is for. Once both are installed nothing further needs the network.
-
 ### Build the Flatpak yourself
 
-Install `flatpak-builder` and the Freedesktop SDK, then:
+With `flatpak-builder` and the Freedesktop 26.08 SDK installed:
 
 ```sh
 make flatpak-rust
 ```
 
-This builds and installs into your user installation. See
-[`packaging/flatpak/README.md`](packaging/flatpak/README.md) for what each sandbox permission in the
-manifest is for and why.
+[`packaging/flatpak/README.md`](packaging/flatpak/README.md) explains every sandbox permission.
+
+### Other packages
+
+The AppImage, the Arch `PKGBUILD` (`compass-git`) and the Nix flake (`.#compass`) are built and
+smoke-tested in CI. See [`packaging/README.md`](packaging/README.md). They conflict with an
+installed Vicinae, because both provide `/usr/bin/vicinae`.
 
 ### From source
 
-Cargo builds it without any Flatpak involved. The toolchain is pinned in `rust-toolchain.toml`, so
-[rustup](https://rustup.rs) will fetch the right one on first build:
+The toolchain is pinned in `rust-toolchain.toml`, and [rustup](https://rustup.rs) fetches it:
 
 ```sh
-cargo run -p vicinae -- ui
+cargo build --release -p vicinae
+target/release/vicinae start
 ```
 
-`ui` opens the launcher in the foreground and indexes and ranks in-process — it does not need an
-engine running alongside it.
-
-## Running it
+## Using it
 
 ```sh
-flatpak run com.vicinae.Vicinae -- ui       # open the launcher
-flatpak run com.vicinae.Vicinae -- doctor   # what works on this machine, and what does not
+vicinae start        # start the engine and open the launcher (what the app grid entry runs)
+vicinae toggle       # show or hide it; bind this to a key in your compositor
+vicinae doctor       # what works on this machine and what does not
 ```
 
-Start with `doctor` if something misbehaves: it reports the session type, bus, portals and index
-state, and `doctor --check-only` exits non-zero when a check fails.
+When running from the Flatpak, prefix these with `flatpak run com.vicinae.Vicinae`.
 
-For the resident mode the launcher is moving to, run the engine and let a window attach to it
-([ADR-0015](docs/rust-engine/adr/0015-the-launcher-window-is-resident.md)):
+On GNOME and KDE, `start` asks the GlobalShortcuts portal for <kbd>Super</kbd>+<kbd>Space</kbd>.
+On Sway, Hyprland or niri, bind `vicinae toggle` in your compositor config.
+<kbd>Ctrl</kbd>+<kbd>B</kbd> opens the action panel, and <kbd>Esc</kbd> goes back or hides the
+launcher.
+
+Configuration lives in `vicinae.json` and has a
+[JSON Schema](packaging/schema/vicinae.schema.json) that editors can use for completion. Until a
+`vicinae.json` exists, Compass reads an existing Vicinae `settings.json` at startup.
+`vicinae config migrate --write` converts it permanently.
+
+When something goes wrong, [open an issue](https://github.com/tuna-os/compass/issues/new) and
+include the full `vicinae doctor` output, your distribution and desktop, and how you installed
+Compass.
+
+## Development
 
 ```sh
-flatpak run com.vicinae.Vicinae -- serve    # then, from anywhere:
-flatpak run com.vicinae.Vicinae -- toggle
+make check-rust          # what Rust CI runs: fmt, clippy -D warnings, tests
+just bench-compare       # the Compass-versus-Vicinae benchmarks
 ```
 
-`serve` asks the GlobalShortcuts portal for `LOGO+space`, which on GNOME means a permission prompt.
-Pass `serve --no-hotkey` if your compositor already binds a key to `toggle`, or if there is no
-GlobalShortcuts backend.
+The workspace is split into `compass-*` crates: desktop entries, search, IPC, platform services,
+Wayland and portals, GNOME Shell, the UI, the extension host and the sandbox. The `vicinae` crate
+is the binary. Start with [CONTRIBUTING.md](CONTRIBUTING.md), the
+[architecture decisions](docs/rust-engine/adr/README.md) and the
+[render harnesses](docs/rust-engine/RENDER-HARNESSES.md).
 
-The legacy `vicinae` and `com.vicinae.Vicinae` identifiers in these commands are intentional
-migration compatibility, not the public brand.
+The original C++/Qt engine is still in `src/` as a behavioural reference. It is not built into
+any Compass package.
 
-### Trying it, and what to report
+## Credits
 
-A run that takes a couple of minutes and tells you whether the engine works on your machine:
-
-1. `doctor` first. It prints the session type, bus, portals, engine and index state. If it reports
-   a failure, stop there — that is the bug, and its output is the whole report.
-2. `ui` to open the launcher. An empty field over a card means indexing found nothing; a list of
-   applications means it worked.
-3. Type a few letters of something installed. Matching is fuzzy, so `fox` should reach Firefox.
-4. <kbd>Up</kbd>/<kbd>Down</kbd> to move, <kbd>Enter</kbd> to launch. The window hides as the
-   application starts.
-5. <kbd>Ctrl</kbd>+<kbd>B</kbd> opens the action panel over the list; <kbd>Esc</kbd> closes it, then
-   closes the launcher.
-6. `serve` in one terminal and `toggle` from another, to check resident mode and the portal hotkey.
-
-Anything outside those six steps is not wired up yet rather than broken — see the list above.
-
-When something does go wrong, [open an issue](https://github.com/tuna-os/compass/issues/new) with
-the full `doctor` output, your distribution and desktop version, and whether you installed the
-bundle, built the Flatpak or ran from source. `doctor` is the single most useful thing to paste:
-almost every report so far has been resolved from it.
-
-### Hacking on it
-
-To run the same checks as Rust CI:
-
-```sh
-make check-rust
-```
-
-## Architecture
-
-The workspace separates desktop-entry parsing, search, application state, IPC, platform services,
-Wayland/portal integration, GNOME Shell integration, UI and extension APIs into `compass-*` crates.
-The `vicinae` package is the compatibility CLI and binary while the cutover is underway.
-
-New Rust code must pass formatting, Clippy with warnings denied, workspace tests, doctests, minimum
-supported Rust, scorer/crypto parity, Flatpak source checks and the platform build matrix before it
-is merged.
-
-## Contributing
-
-Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the open
-[roadmap issues](https://github.com/tuna-os/compass/issues). Port work should preserve observable
-behaviour or update the parity ledger with evidence for an intentional difference. A C++ test may
-only be removed in the same change that adds its Rust replacement.
-
-## Project history
-
-Compass is derived from Vicinae and remains grateful to its maintainers, contributors and sponsors.
-The inherited C++ engine and TypeScript extension ecosystem are the behavioural reference during
-the migration. Special thanks also go to the
-[Soulver](https://soulver.app) team for allowing the project to ship SoulverCore as an optional
-calculator backend on macOS.
+Compass is derived from [Vicinae](https://github.com/vicinaehq/vicinae), by its maintainers and
+contributors, and is distributed under the same [GPL-3.0](LICENSE) license. Vicinae's design, its
+extension ecosystem and its C++ engine are the foundation this project builds on. If you want the
+original Qt launcher, or macOS and Windows support, use Vicinae.

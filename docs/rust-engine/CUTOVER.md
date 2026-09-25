@@ -19,10 +19,9 @@
   accepted gap for cutover, documented in **ADR-0016**, and will be stated in
   the release notes rather than discovered by users.
 
-* **Full breadth parity** — `PARITY.md` is 70/158 green (44%). Phases 5–6 closed
-  the builtins, extension host, clipboard and search semantics; the remainder is
-  12 drawing gaps and 7 that need live D-Bus/compositor. Deletion cannot happen
-  before cutover regardless of ledger colour — see `PARITY.md`.
+* **C++ deletion** — `PARITY.md`'s Rust and test columns are fully green
+  (`python3 scripts/ci/parity-score.py`), but no C++ directory is deleted before
+  cutover regardless of ledger colour — see `PARITY.md`.
 
 ## Gate
 
