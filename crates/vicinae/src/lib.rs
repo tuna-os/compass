@@ -40,6 +40,7 @@ pub mod input_server;
 pub mod ipc;
 pub mod logs;
 pub mod notification_icon;
+pub(crate) mod paste;
 pub mod programs;
 pub mod rhai_host;
 pub mod rhai_scripts;

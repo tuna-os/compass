@@ -163,7 +163,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/news` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/paste` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/paste` | `compass-core`, `vicinae::paste`, `compass-wayland::virtual_keyboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -171,7 +171,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/script-command` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/selection` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/shortcut-inhibit` | `compass-core` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/shortcut-inhibit` | `compass-core`, `compass-wayland::keyboard_inhibit` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -328,10 +328,10 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/news`, `src/services/update`, `src/services/telemetry`: Still C++-only: fetching
   and showing the news notices, the update check, and sending the telemetry record, each ported as
   a model and waiting on a decision about what a fork fetches and sends.
-- `src/services/paste`: Still C++-only: synthetic paste on wlroots through the input server's
-  `injectPaste`.
-- `src/services/shortcut-inhibit`: Still C++-only: the keyboard-shortcuts-inhibit Wayland plumbing,
-  which is a stub.
+- `src/services/paste`: synthetic paste on wlroots closed in "The gaps pass, wlroots paste and
+  inhibit" (the input server's `injectPaste`, else `zwp_virtual_keyboard_v1`).
+- `src/services/shortcut-inhibit`: the keyboard-shortcuts-inhibit client and the recorder's use of
+  it closed in "The gaps pass, wlroots paste and inhibit".
 - `src/services/window-material`: the `ext-background-effect-v1` client is ported
   (`compass_wayland::material`, "The gaps pass, HUD and onboarding"). Still C++-only: applying it
   to the launcher's own surface, which the toolkits hand out only as a raw pointer (an `unsafe`
@@ -531,7 +531,8 @@ with paste in it: Paste to active window and Copy, in the order the `defaultActi
 Enter. Pasting counts a visit, as copying does, and hands the glyph in its tone to the engine
 (`Request::PasteText`), which puts it on the clipboard and pastes it through the Shell extension
 into the window the launcher hides back to, as it pastes a clipboard entry or a snippet. Where the
-engine cannot paste (no Shell extension: the wlroots family, a missing session bus) it refuses by
+engine cannot paste (no Shell extension and, on wlroots, neither the input server nor a virtual
+keyboard; or a missing session bus) it refuses by
 name and the window copies the glyph instead, which is where the C++'s `pasteContent` leaves it too:
 copied first, then "the current platform cannot paste".
 
@@ -559,7 +560,7 @@ What differs, by row:
 | `builtins/vicinae` | Where the platform cannot paste, the picker offers no paste action and `defaultAction` defaults to copy. | The window cannot know before asking, so paste is offered whenever an engine is attached, and a refusal copies; the result is the same glyph on the clipboard. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `builtins/vicinae` | The paste action is titled `Paste to <frontmost app>` with its icon. | `Paste to active window`, the C++'s title when no application is frontmost. | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot` |
 | `ui/action-panel` | Set Global Shortcut is offered only where `platform::supports(GlobalShortcuts)`. | Always offered: the shortcut is kept in the configuration either way, and the engine binds it where it has a backend ("The gaps pass, global shortcuts"). | `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
-| `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | The global shortcuts are suspended (IPC v20 `ShortcutCapture`); the compositor's are not, the inhibit protocol being `shortcut-inhibit`'s gap. | `the_recorder_suspends_the_global_shortcuts_while_it_captures` |
+| `ui/action-panel` | The capture suspends the global shortcuts and inhibits the compositor's while it records. | Both: the global shortcuts are suspended (IPC v20 `ShortcutCapture`, "The gaps pass, global shortcuts") and the compositor's inhibited under the layer-shell presentation ("The gaps pass, wlroots paste and inhibit"); under `xdg_toplevel` the compositor's are not inhibited. | `the_recorder_suspends_the_global_shortcuts_while_it_captures`, `the_root_panel_records_an_items_shortcut_and_backspace_removes_it` |
 | `ui/action-panel` | "Already bound" also checks the launcher's own keybinds (`KeybindManager`). | Checked, as far as Compass has them: its keys are fixed (Toggle action panel, Open settings, Quick launch), and the launcher hotkey with them. | `the_recorder_refuses_the_launchers_own_keys`, `the_launchers_own_keys_and_its_hotkey_are_taken` |
 | `root-item-manager` | Clearing a shortcut writes `""`, which comes back as an empty shortcut after a restart. | Cleared as absent, and an empty stored one reads as none (see "`compass-core::root_items`"). | `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
 
@@ -674,8 +675,8 @@ Declared differences:
 
 - The file browser action is always offered; the C++ offers it only when a file browser is
   installed.
-- Paste is offered where the engine has its GNOME Shell client; a wlroots session copies over
-  data-control (no synthetic paste there yet, `src/services/paste`'s gap).
+- Paste is offered where the engine can press it: the GNOME Shell client, or on wlroots the input
+  server or a virtual keyboard ("The gaps pass, wlroots paste and inhibit").
 - Success hides the launcher with the C++'s HUD ("Wallpaper set", "Copied to clipboard");
   failures show under the list rather than as a toast.
 - Dragging a file out of the list: Iced offers no drag out of a window (`src/builtins/clipboard`
@@ -1041,6 +1042,68 @@ rest.
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/services/window-material` | — (the launcher's surface is not reachable safely) | `compass_wayland::material::{BackgroundEffects, rounded_region, supports_blur}` | `the_corners_are_cut_as_the_cpp_cuts_them`, `a_region_off_the_origin_is_cut_where_it_is`, `a_square_region_has_nothing_taken_away`, `blur_is_the_capability_bit`, `background_effect_is_bound_where_advertised_and_refused_by_name_where_not` (headless Sway) |
+
+### The gaps pass, wlroots paste and inhibit (2026-09-25)
+
+The last two compositor rows of PLAN §12.0 that need no product decision, against
+`src/server/src/services/paste` and `services/shortcut-inhibit`. Both are proved on headless Sway,
+where a test window records every keyboard event it is sent; no real device or session is touched.
+No IPC change: the existing requests (`PasteText`, `PasteSnippet`, `ClipboardPaste`, `CopyFile`,
+`FileActions.can_paste`) now succeed on wlroots where they were refused.
+
+**Paste** (`LinuxPasteService`, `PasteService`). `vicinae::paste` is the engine's one paste path, and
+the emoji picker, snippets, clipboard history, a file's Paste and an extension's `Clipboard.paste`
+all go through it. On GNOME it is the Shell extension's, as before. On a wlroots compositor with
+data-control the content goes on the clipboard, and `compass_core::paste::PasteService` (the C++'s
+state machine, ported earlier and now driven) waits for focus and presses the chord into the window
+that has it: Ctrl+Shift+V when that window's `app_id` is a `TerminalEmulator` application in the app
+index, Ctrl+V elsewhere. The chord is pressed by the input server's `injectPaste` (uinput, what the
+C++ uses) when the helper runs with injection, else on a `zwp_virtual_keyboard_v1` keyboard
+(`compass_wayland::virtual_keyboard`, over `wayland-protocols-misc`), which needs no device node or
+capability: its own three-key keymap, Control and Shift with the modifier masks the protocol asks
+the client to send, released in reverse. With neither the content is copied and the request refused
+by name ("the content was copied instead"), which the launcher already answers by copying, as the
+C++ copies first and then says the platform cannot paste. A newer paste cancels one still waiting.
+`vicinae doctor` names `virtual-keyboard` and `shortcuts-inhibit` in `wlroots.capabilities`.
+
+**Shortcut inhibit** (`WaylandShortcutInhibitManager`, `ShortcutInhibitorAttached`).
+`compass_wayland::keyboard_inhibit::ShortcutInhibit` is the protocol client, replacing the stub. The
+launcher's surface belongs to `iced_layershell`, which hands it out only as a raw pointer this
+workspace may not use (`unsafe`), so the launcher now makes its own Wayland connection, gives it to
+`iced_layershell` (`Settings::with_connection`) and binds the inhibitor and a `wl_keyboard` of its
+own on the same connection: the compositor's `enter` names the launcher surface that took the
+keyboard, as a proxy on that connection. While a shortcut recorder records (the action panel's or
+the settings'; `ShortcutInhibitor.enabled: capture.capturing`) the focused launcher surface gets an
+inhibitor; it is destroyed when recording ends or the keyboard leaves. `LauncherApp::update` says
+when, from the recorder state (`shortcuts_inhibited`). The inhibitor never reads the socket: the
+toolkit does, and each update dispatches what was read for the inhibitor's queue (a second reader
+on one connection can take the toolkit's events and leave its event loop waiting, which the first
+version of the Sway test caught as a hang).
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/paste` | Rust ✅ | `vicinae::paste` (`paste`, `can_paste`, `injector`, `paste_blocking`), `compass_core::paste::PasteService`, `compass_wayland::virtual_keyboard::{VirtualKeyboard, paste_steps}`, `compass_wayland::compositor::Capabilities::virtual_keyboard` | `on_sway_a_paste_is_copied_and_pressed_into_the_focused_window`, `on_sway_a_terminal_is_pasted_into_with_ctrl_shift_v`, `on_sway_the_input_server_presses_the_paste_when_it_runs` (engine on Sway), `on_sway_the_paste_chord_reaches_the_focused_window`, `on_sway_a_terminal_is_sent_ctrl_shift_v`, `ctrl_v_holds_control_around_the_v`, `a_terminal_gets_shift_as_well_released_in_reverse`, `the_keymap_names_the_codes_the_steps_press` |
+| `src/services/shortcut-inhibit` | Rust ✅ | `compass_wayland::keyboard_inhibit::{ShortcutInhibit, InhibitHandle, InhibitState}`, `compass_ui::shortcut_inhibit`, `LauncherApp::recording_shortcut` | `on_sway_shortcuts_are_inhibited_on_the_focused_surface_while_wanted` (created, active, destroyed, created again without a protocol error), `on_sway_the_inhibitor_goes_with_the_keyboard`, `the_root_panel_records_an_items_shortcut_and_backspace_removes_it`, `the_hotkey_is_recorded_into_the_launcher_section` |
+
+Declared differences:
+
+- The input server is preferred, as the C++ has only it; the virtual keyboard is the fallback for a
+  session without the helper (not installed with its capability, a Flatpak). Its keymap is the
+  chord's own, so a layout without a V key on that position still pastes; the focused window is
+  sent that small keymap with the chord and the seat's own again with the next real key.
+- Focus handoff is watched on the foreign-toplevel list only where the launcher is itself a toplevel
+  (`VICINAE_LAYER_SHELL=0`, or no layer shell). A layer-shell launcher is not in the list, so the
+  window under it reads as focused before the launcher closes; there the C++'s blind delay (150 ms)
+  is used instead of the poll.
+- The clipboard is not restored after a wlroots paste (`scheduleClipboardRestore`), as on the GNOME
+  path; the pasted content stays on it.
+- The inhibitor is made when a launcher surface takes the keyboard and destroyed when it leaves,
+  rather than kept for the window's life and deactivated by the compositor; the person's keyboard
+  is the same. It needs the layer-shell presentation: under the `xdg_toplevel` one (GNOME, KDE,
+  `VICINAE_LAYER_SHELL=0`) winit makes its connection itself and offers no way to share it, and a
+  raw-pointer bridge is `unsafe`, so the recorder does not inhibit there. The C++ inhibits on any
+  Wayland session.
+- An extension host run without the engine (none today) copies rather than pastes.
 
 ### The view layer, closed (2026-09-25)
 
@@ -3144,7 +3207,7 @@ registers every keyword on ready and diffs them on each save or removal, and car
 | 8 | The focused application comes from the window manager, nulled while Vicinae itself is focused without focus-handoff detection. | The focused window from the Shell extension (GNOME) or the foreign-toplevel list (wlroots), recognised in the app index by `WM_CLASS`/`app_id`. With neither, the app is unknown: keywords limited to apps do not expand, terminals paste with Ctrl+V. | `a_keyword_limited_to_apps_expands_only_in_them` |
 | 9 | Focus changes reset the typed text and the undo. | The same, from the Shell extension's window signal or the toplevel list's changes; without either, nothing resets it. | — |
 | 10 | The Snippets extension's preferences (`enabled`, `undo`, `layout`, `prePasteDelay`, `keyDelay`) apply when changed in settings. | Read from `providers.snippets.preferences` in `vicinae.json` on every trigger (layout and key delay are pushed to the helper when they change); there is no settings page to edit them yet. | `preferences_are_read_and_clamped` |
-| 11 | Clipboard-history and extension paste inject Ctrl+V through the input server (`LinuxPasteService`). | Unchanged: GNOME pastes through the Shell extension, wlroots copies only. `injectPaste` is implemented in the helper and not yet used for them. | — |
+| 11 | Clipboard-history and extension paste inject Ctrl+V through the input server (`LinuxPasteService`). | On wlroots the same, through `injectPaste` when the helper runs with injection, else a `zwp_virtual_keyboard_v1` keyboard; GNOME pastes through the Shell extension. | `on_sway_the_input_server_presses_the_paste_when_it_runs`, `on_sway_a_paste_is_copied_and_pressed_into_the_focused_window` |
 | 12 | Without a clipboard there is no case to handle: the C++ always has Qt's. | With neither the Shell extension nor data-control, a typed keyword is logged and not expanded. | — |
 | 13 | — | Inside a Flatpak the helper is not started (no `/dev/input` or `/dev/uinput` there) and `doctor` says so; the C++ has no Flatpak. | `a_flatpak_is_told_keyword_expansion_cannot_work_there` |
 
@@ -3454,10 +3517,12 @@ socket (`on_sway_with_a_hyprland_socket_windows_learn_their_pid_and_workspace`).
    (image, then `text/uri-list`, UTF-8 text, plain text, HTML). A selection carrying
    `x-kde-passwordManagerHint` or `vicinae/concealed` is **not recorded at all**. The primary
    selection is not recorded. The source application is unknown (data-control does not say).
-5. **Paste.** The C++ injects Ctrl+V through its uinput input server. The Rust engine has **no
-   synthetic paste on wlroots**: `ClipboardPaste` is refused and the launcher copies instead, and
-   an extension's `Clipboard.paste` copies. Copy, read and clear work, over `wl-clipboard-rs`; an
-   HTML copy keeps its plain-text alternative, which the GNOME path cannot.
+5. **Paste.** The C++ injects Ctrl+V through its uinput input server. The Rust engine does too
+   when the helper runs with injection, and otherwise presses the chord on a
+   `zwp_virtual_keyboard_v1` keyboard (`vicinae::paste`, "The gaps pass, wlroots paste and
+   inhibit"); with neither, the content is copied and the launcher told so. Copy, read and clear
+   work, over `wl-clipboard-rs`; an HTML copy keeps its plain-text alternative, which the GNOME
+   path cannot.
 6. **Global hotkey.** The C++ tries `xx-hotkey-v1` and then `vicinae-hotkey-v1`. The Rust engine
    tries `xx-hotkey-v1` (fixed `Super+Space`), then the GlobalShortcuts portal, and otherwise logs
    how to bind `vicinae toggle` in the running compositor's config. `vicinae-hotkey-v1` is not

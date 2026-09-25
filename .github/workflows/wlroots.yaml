@@ -73,7 +73,9 @@ jobs:
         run: cargo build --locked -p vicinae
 
       - name: "Rung 1: compass-wayland against Sway"
-        run: cargo test --locked -p compass-wayland --test wlroots_session -- --nocapture
+        run: |
+          cargo test --locked -p compass-wayland --test wlroots_session -- --nocapture
+          cargo test --locked -p compass-wayland --test wlroots_input -- --nocapture
 
       - name: "Rung 2: the engine against Sway"
         run: cargo test --locked -p vicinae --test wlroots_engine -- --nocapture

@@ -1688,10 +1688,11 @@ impl Clipboard for ShellClipboard {
 
     fn paste(&self, content: Content) {
         if data_control() {
-            // No synthetic keystroke on wlroots yet: the content is copied and
-            // the user pastes it. PARITY.md, "wlroots".
             if let Some(offers) = data_control_offers(content, false) {
-                data_control_set("paste", offers);
+                match &self.handle {
+                    Some(handle) => crate::paste::paste_blocking(handle, offers),
+                    None => data_control_set("paste", offers),
+                }
             }
             return;
         }

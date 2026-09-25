@@ -1177,6 +1177,7 @@ dependencies = [
  "compass-extension-api",
  "compass-platform",
  "compass-search",
+ "compass-wayland",
  "compass-xdg",
  "iced",
  "iced_layershell",
@@ -1197,6 +1198,7 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "url",
+ "wayland-client",
  "winit",
 ]
 
@@ -1211,6 +1213,7 @@ dependencies = [
  "tracing",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-server",
  "wl-clipboard-rs",

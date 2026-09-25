@@ -923,6 +923,10 @@ pub struct LauncherApp {
     remote_requested: std::collections::BTreeSet<String>,
     /// Remote icons to fetch after this update.
     remote_pending: Vec<String>,
+    /// Whether the compositor's shortcuts were last asked to go to the
+    /// launcher, because a shortcut recorder records
+    /// ([`crate::shortcut_inhibit`]).
+    shortcuts_inhibited: bool,
     /// See [`AppFlags::remote_icons`].
     remote_icons: bool,
     /// See [`AppFlags::favicon_service`].
@@ -1325,6 +1329,7 @@ impl LauncherApp {
             remote_files: std::collections::HashMap::new(),
             remote_requested: std::collections::BTreeSet::new(),
             remote_pending: Vec::new(),
+            shortcuts_inhibited: false,
             remote_icons: false,
             favicon_service: compass_core::favicon::Service::default(),
             masked: crate::icons::MaskedCache::default(),
@@ -1989,6 +1994,15 @@ impl LauncherApp {
             self.choosing_files = false;
         }
         let task = self.update_inner(message);
+        let recording = self.recording_shortcut();
+        if recording != self.shortcuts_inhibited {
+            self.shortcuts_inhibited = recording;
+            crate::shortcut_inhibit::set_recording(recording);
+        } else {
+            // Every update, not only while recording: the inhibitor's keyboard
+            // is sent each key the launcher is, and they would pile up unread.
+            crate::shortcut_inhibit::follow_focus();
+        }
         let task = match self.report_shortcut_capture() {
             Some(report) => Task::batch([task, report]),
             None => task,
@@ -1999,6 +2013,13 @@ impl LauncherApp {
         }
         let wanted = std::mem::take(&mut self.remote_pending);
         Task::batch([task, crate::remote_image::fetch_tasks(wanted)])
+    }
+
+    /// Whether the compositor's shortcuts were last asked to go to the
+    /// launcher.
+    #[must_use]
+    pub fn shortcuts_inhibited(&self) -> bool {
+        self.shortcuts_inhibited
     }
 
     fn update_inner(&mut self, message: Message) -> Task<Message> {
@@ -10553,6 +10574,7 @@ mod tests {
         let id = app.root_id(app.selected_row().unwrap()).unwrap();
         let open_recorder = |app: &mut LauncherApp| {
             let _ = app.update(Message::TogglePanel);
+            assert!(!app.shortcuts_inhibited(), "the panel alone takes nothing");
             let row = app
                 .panel
                 .as_ref()
@@ -10562,6 +10584,10 @@ mod tests {
             assert!(
                 app.panel.as_ref().is_some_and(|p| p.recorder.is_some()),
                 "the recorder takes the panel's place"
+            );
+            assert!(
+                app.shortcuts_inhibited(),
+                "the compositor's shortcuts reach the recorder"
             );
         };
         open_recorder(&mut app);
@@ -10582,6 +10608,7 @@ mod tests {
         let _ = app.update(key_event(true, Key::Named(Named::Control), Modifiers::CTRL));
         let _ = app.update(key_event(true, Key::Character("k".into()), Modifiers::CTRL));
         assert!(app.panel.is_none(), "an accepted shortcut closes the panel");
+        assert!(!app.shortcuts_inhibited(), "and gives the shortcuts back");
         let shortcut = |app: &LauncherApp| {
             app.app_index
                 .root(&id)
@@ -10609,6 +10636,7 @@ mod tests {
             Modifiers::empty(),
         ));
         assert!(app.panel.as_ref().is_some_and(|p| p.recorder.is_none()));
+        assert!(!app.shortcuts_inhibited(), "Escape gives them back");
         let _ = app.update(Message::TogglePanel);
         open_recorder(&mut app);
         let _ = app.update(key_event(

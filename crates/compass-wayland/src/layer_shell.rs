@@ -56,6 +56,12 @@ pub fn should_use_layer_shell(surface: SurfaceKind, feature_enabled: bool) -> bo
 /// the decision to the compositor.
 pub const OVERRIDE_ENV: &str = "VICINAE_LAYER_SHELL";
 
+/// Whether [`OVERRIDE_ENV`]'s value turns the layer shell off.
+#[must_use]
+pub fn override_disables(override_value: Option<&str>) -> bool {
+    override_value.is_some_and(|value| matches!(value.trim(), "0" | "false" | "no" | "off"))
+}
+
 /// Decide the surface for a session: layer shell only on the wlroots family,
 /// only where it is advertised, and only if the user has not turned it off.
 ///
@@ -66,7 +72,7 @@ pub fn select_surface(
     session: &crate::compositor::Session,
     override_value: Option<&str>,
 ) -> SurfaceKind {
-    if override_value.is_some_and(|value| matches!(value.trim(), "0" | "false" | "no" | "off")) {
+    if override_disables(override_value) {
         return SurfaceKind::XdgToplevel;
     }
     if session.wlroots_capabilities().layer_shell {

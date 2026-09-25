@@ -89,10 +89,13 @@ pub async fn wlroots<B: BusProbe>(
     };
     let mut detail = format!(
         "layer-shell: {}; foreign-toplevel: {toplevel}; data-control: {}; \
-         hotkey protocol: {}; portal GlobalShortcuts: {}; compositor IPC: {ipc}",
+         hotkey protocol: {}; virtual-keyboard: {}; shortcuts-inhibit: {}; \
+         portal GlobalShortcuts: {}; compositor IPC: {ipc}",
         yes_no(caps.layer_shell),
         yes_no(caps.data_control),
         yes_no(caps.hotkey),
+        yes_no(caps.virtual_keyboard),
+        yes_no(caps.shortcuts_inhibit),
         portal_shortcuts
             .as_deref()
             .map_or_else(|| "no".to_owned(), |v| format!("v{v}")),
@@ -145,6 +148,8 @@ mod tests {
             toplevel_list: true,
             data_control: true,
             hotkey: true,
+            virtual_keyboard: true,
+            shortcuts_inhibit: true,
         }
     }
 
@@ -160,6 +165,8 @@ mod tests {
             "zwlr_foreign_toplevel_manager_v1",
             "data-control: yes",
             "hotkey protocol: yes",
+            "virtual-keyboard: yes",
+            "shortcuts-inhibit: yes",
             "portal GlobalShortcuts: no",
             "Hyprland (answering",
         ] {

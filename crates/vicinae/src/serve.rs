@@ -428,6 +428,12 @@ impl EngineState {
         &self.index
     }
 
+    /// Keyword expansion and its input server, once started.
+    #[must_use]
+    pub fn expander(&self) -> Option<Arc<crate::snippet_expansion::Expander>> {
+        self.expander.clone()
+    }
+
     /// Makes keyword expansion reachable from requests.
     pub fn set_expander(&mut self, expander: Arc<crate::snippet_expansion::Expander>) {
         self.expander = Some(expander);
@@ -1131,30 +1137,15 @@ fn edit_root_item(
 
 /// `PasteService::pasteContent` for text the engine did not store (the
 /// emoji picker's glyph): on the clipboard, then pasted into the window that
-/// takes focus. Without the Shell extension there is no paste, and the
+/// takes focus ([`crate::paste`]). Where nothing can press the paste, the
 /// window copies instead.
 async fn paste_text(state: &Arc<RwLock<EngineState>>, text: String) -> Response {
-    const WHAT: &str = "Pasting";
-    let (shell, terminals) = {
-        let state = state.read().await;
-        (
-            state.shell.clone(),
-            compass_core::app_service::AppService::new(&state.index).terminal_window_classes(),
-        )
-    };
-    let Some(shell) = shell else {
-        return Response::Error(crate::window_service::no_bus(WHAT));
-    };
-    let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
-    let content = compass_shell::ClipboardContent::text(text);
-    let pasted = match shell.set_clipboard(&content).await {
-        Ok(()) => shell.paste(&terminals).await,
-        Err(err) => Err(err),
-    };
-    match pasted {
-        Ok(()) => Response::Ack,
-        Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
-    }
+    crate::paste::paste(
+        state,
+        compass_shell::ClipboardContent::text(text),
+        "Pasting",
+    )
+    .await
 }
 
 fn clipboard_unavailable() -> Response {
@@ -3190,23 +3181,7 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 Ok(text) => text,
                 Err(response) => return response,
             };
-            let Some(shell) = state.read().await.shell.clone() else {
-                return Response::Error(crate::window_service::no_bus(WHAT));
-            };
-            let terminals = {
-                let state = state.read().await;
-                compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
-            };
-            let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
-            let content = compass_shell::ClipboardContent::text(text);
-            let pasted = match shell.set_clipboard(&content).await {
-                Ok(()) => shell.paste(&terminals).await,
-                Err(err) => Err(err),
-            };
-            match pasted {
-                Ok(()) => Response::Ack,
-                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
-            }
+            crate::paste::paste(state, compass_shell::ClipboardContent::text(text), WHAT).await
         }
         Request::PasteText { text } => paste_text(state, text).await,
         Request::ExpandShortcut { id, arguments } => {
@@ -3425,13 +3400,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
 
         Request::ClipboardPaste { id } => {
             const WHAT: &str = "Pasting";
-            let (shell, store) = {
-                let state = state.read().await;
-                (state.shell.clone(), state.clipboard.clone())
-            };
-            let Some(shell) = shell else {
-                return Response::Error(crate::window_service::no_bus(WHAT));
-            };
+            if let Some(refused) = crate::paste::no_clipboard(state, WHAT).await {
+                return refused;
+            }
+            let store = state.read().await.clipboard.clone();
             let Some(store) = store else {
                 return Response::Error(ProtocolError::new(
                     ErrorKind::Unsupported,
@@ -3461,20 +3433,8 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                         ));
                     }
                 };
-            let terminals = {
-                let state = state.read().await;
-                compass_core::app_service::AppService::new(&state.index).terminal_window_classes()
-            };
-            let terminals: Vec<&str> = terminals.iter().map(String::as_str).collect();
             let content = compass_shell::ClipboardContent::binary(data, mime_type);
-            let pasted = match shell.set_clipboard(&content).await {
-                Ok(()) => shell.paste(&terminals).await,
-                Err(err) => Err(err),
-            };
-            match pasted {
-                Ok(()) => Response::Ack,
-                Err(err) => Response::Error(crate::window_service::refusal(&err, WHAT)),
-            }
+            crate::paste::paste(state, content, WHAT).await
         }
 
         // Handled by the serve loop, which owns the shutdown signal; reaching
@@ -3589,6 +3549,7 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
             .unwrap_or(compass_core::config::DEFAULT_INPUT_SERVER_ENABLED);
         tokio::spawn(crate::snippet_expansion::run(Arc::clone(&state), enabled));
     }
+    crate::paste::install(&state);
 
     // KWin's tracker, for window switching on Plasma: detached, like the
     // Shell client, so a slow KWin never holds up the socket.

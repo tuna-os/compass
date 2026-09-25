@@ -46,6 +46,7 @@ pub mod script_page;
 mod scroll;
 pub mod settings;
 pub mod settings_page;
+mod shortcut_inhibit;
 pub mod shortcut_recorder;
 pub mod shortcuts_page;
 pub mod snippets_page;
@@ -170,6 +171,20 @@ pub fn run_resident_layer_shell(flags: AppFlags) -> Result<(), iced_layershell::
     }
 
     surface::set_presentation(surface::Presentation::LayerShell);
+    // The launcher's own connection, shared with `iced_layershell`, so the
+    // shortcut inhibitor is told which of its surfaces holds the keyboard.
+    // Without one `iced_layershell` connects itself and reports why it could
+    // not.
+    let with_connection = match wayland_client::Connection::connect_to_env() {
+        Ok(connection) => {
+            shortcut_inhibit::install(&connection);
+            Some(connection.into())
+        }
+        Err(error) => {
+            tracing::info!(%error, "no Wayland connection to share with the layer shell");
+            None
+        }
+    };
     iced_layershell::build_pattern::daemon(
         move || LauncherApp::boot(flags.clone()),
         surface::layer::NAMESPACE,
@@ -188,6 +203,7 @@ pub fn run_resident_layer_shell(flags: AppFlags) -> Result<(), iced_layershell::
             start_mode: StartMode::Background,
             ..LayerShellSettings::default()
         },
+        with_connection,
         ..Settings::default()
     })
     .run()
