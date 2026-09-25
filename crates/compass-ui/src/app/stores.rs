@@ -62,6 +62,9 @@ impl LauncherApp {
         if let Some(link) = compass_core::root_items::parse_launch_link(url) {
             return self.open_launch_link(link);
         }
+        if let Some(tab) = compass_core::settings_catalog::parse_settings_link(url) {
+            return self.open_settings(tab.as_deref());
+        }
         let Some(Ok(link)) = compass_core::store_listing::parse_extension_link(url) else {
             tracing::warn!(%url, "a deeplink the launcher does not handle");
             return Task::none();

@@ -91,6 +91,8 @@ pub enum CommandKind {
     SetDefaultTerminal,
     /// Other applications' tray icons and their menus.
     SearchTray,
+    /// The settings view: every setting of `vicinae.json`, by page.
+    OpenSettings,
 }
 
 /// Every builtin command, in the order an empty query lists them. The power
@@ -469,6 +471,15 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &["status", "notifier", "indicator"],
         icon: "app-window-list",
     },
+    // `OpenSettingsCommand`: the vicinae extension's `settings`.
+    BuiltinCommand {
+        kind: CommandKind::OpenSettings,
+        entrypoint: "settings",
+        title: "Open Settings",
+        subtitle: "Every setting of the launcher, its extensions and commands",
+        keywords: &["preferences", "settings", "configure", "options"],
+        icon: "cog",
+    },
 ];
 
 /// The colour a builtin command's icon tile is filled with: the C++ command's
@@ -516,7 +527,8 @@ impl CommandKind {
             Self::SearchEmojis
             | Self::ExtensionStore
             | Self::ScriptPermissions
-            | Self::SearchTray => Tile::Accent,
+            | Self::SearchTray
+            | Self::OpenSettings => Tile::Accent,
             Self::NowPlaying
             | Self::Media(_)
             | Self::SetDefaultBrowser

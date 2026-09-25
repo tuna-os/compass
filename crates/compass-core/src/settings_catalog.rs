@@ -350,7 +350,7 @@ pub const KEYBINDINGS: &[(&str, &str, &str)] = &[
     (
         "Toggle action panel",
         "Open the actions for the selected item, and filter them",
-        "Ctrl+K",
+        "Ctrl+B",
     ),
     (
         "Run the default action",

@@ -43,6 +43,7 @@ mod rhai;
 mod root;
 mod runtime;
 mod scripts;
+mod settings_view;
 mod shortcuts;
 mod snippets;
 mod stores;
@@ -682,6 +683,8 @@ enum Page {
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
     Preferences(Box<crate::preferences_page::PreferencesPage>),
+    /// The settings: the C++ settings window's pages.
+    Settings(Box<crate::settings_page::SettingsPage>),
 }
 
 /// A key press as an extension shortcut: its modifiers and the key's name
@@ -922,6 +925,9 @@ pub struct LauncherApp {
     emoji_default_action: String,
     /// The emoji picker while its keyword form is open.
     parked_emoji: Option<crate::emoji_page::EmojiPage>,
+    /// The settings while an extension command's preferences form is open
+    /// over them.
+    parked_settings: Option<Box<crate::settings_page::SettingsPage>>,
     /// See [`AppFlags::search_history_path`].
     search_history_path: Option<std::path::PathBuf>,
     /// The root search's history, newest first.
@@ -1287,6 +1293,7 @@ impl LauncherApp {
             root_config: compass_core::root_items::RootConfig::default(),
             favorites_len: 0,
             parked_emoji: None,
+            parked_settings: None,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             icon_cache: crate::icons::IconCache::new(),
@@ -2547,6 +2554,9 @@ impl LauncherApp {
                     page.purpose == crate::preferences_page::Purpose::CommandPreferences;
                 self.page = Page::Root;
                 if only_saved {
+                    if let Some(settings) = self.parked_settings.take() {
+                        self.page = Page::Settings(settings);
+                    }
                     return focus_search();
                 }
                 match self.app_index.extensions().iter().position(|c| c.id == id) {
@@ -2895,6 +2905,9 @@ impl LauncherApp {
                 if let Some(task) = self.back_from_alias_form() {
                     return task;
                 }
+                if let Some(task) = self.back_to_settings() {
+                    return task;
+                }
                 if let Some(task) = self.back_from_shortcut_form() {
                     return task;
                 }
@@ -3003,6 +3016,11 @@ impl LauncherApp {
                     page.notice = Some(reason.clone());
                 }
                 self.list_windows_task()
+            }
+            Message::Settings(message) => self.settings_message(message),
+            // The settings' shortcut recorder takes every key too.
+            Message::Keyboard(event) if matches!(&self.page, Page::Settings(page) if page.recorder.is_some()) => {
+                self.settings_recorder_event(&event)
             }
             // The shortcut recorder takes every key, releases included.
             Message::Keyboard(event)
@@ -3187,6 +3205,9 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Themes(_)) {
                     return self.themes_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Settings(_)) {
+                    return self.settings_page_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::Created(_)) {
                     return self.created_page_key(key);
                 }
@@ -3301,6 +3322,15 @@ impl LauncherApp {
                 // `#ifdef`, for the same reason.
                 if modifiers.control() && key.as_ref() == Key::Character("b") {
                     return self.update(Message::TogglePanel);
+                }
+
+                // Ctrl+, opens the settings (`Keybind::OpenSettings`).
+                if modifiers.control()
+                    && self.panel.is_none()
+                    && matches!(self.page, Page::Root)
+                    && key.as_ref() == Key::Character(",")
+                {
+                    return self.open_settings(None);
                 }
 
                 // While the panel is open it takes the keys the list would
@@ -3510,6 +3540,17 @@ impl LauncherApp {
             ),
             Page::StoreDetail(page) => ("", &page.title, None),
             Page::Preferences(page) => ("Configure", &page.title, None),
+            Page::Settings(page) => (
+                crate::settings_page::PLACEHOLDER,
+                &page.query,
+                Some(
+                    (|query| {
+                        Message::Settings(crate::settings_page::SettingsMessage::QueryChanged(
+                            query,
+                        ))
+                    }) as OnInput,
+                ),
+            ),
             Page::Extension(page) => (
                 page.list()
                     .and_then(|list| list.search.placeholder.as_deref())
@@ -3631,6 +3672,8 @@ impl LauncherApp {
             self.now_playing_body(page)
         } else if let Page::Themes(page) = &self.page {
             self.themes_body(page)
+        } else if let Page::Settings(page) = &self.page {
+            self.settings_body(page)
         } else if let Page::Created(page) = &self.page {
             self.created_body(page)
         } else if let Page::Fonts(page) = &self.page {
@@ -5661,6 +5704,7 @@ impl LauncherApp {
             CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
             CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
             CommandKind::SearchTray => Task::batch([record, self.open_search_tray()]),
+            CommandKind::OpenSettings => Task::batch([record, self.open_settings(None)]),
             CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
             CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
             CommandKind::SetDefaultBrowser => Task::batch([
@@ -13157,6 +13201,7 @@ mod tests {
                 "Add to favorites",
                 "Set alias",
                 "Set Global Shortcut",
+                "Open Preferences",
                 "Copy ID",
                 "Disable item"
             ]

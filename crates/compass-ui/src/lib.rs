@@ -42,6 +42,7 @@ pub mod root_list;
 pub mod script_page;
 mod scroll;
 pub mod settings;
+pub mod settings_page;
 pub mod shortcut_recorder;
 pub mod shortcuts_page;
 pub mod snippets_page;

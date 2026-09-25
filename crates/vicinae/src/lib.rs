@@ -561,6 +561,10 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
                 ipc::send_ack(&socket, compass_ipc::Request::OAuthRedirect { url }).await?;
                 return Ok(ExitCode::from(EXIT_OK));
             }
+            if compass_core::settings_catalog::parse_settings_link(&url).is_some() {
+                ipc::send_ack(&socket, compass_ipc::Request::OpenDeeplink { url }).await?;
+                return Ok(ExitCode::from(EXIT_OK));
+            }
             match compass_core::store_listing::parse_extension_link(&url) {
                 Some(Ok(_)) => {
                     ipc::send_ack(&socket, compass_ipc::Request::OpenDeeplink { url }).await?;

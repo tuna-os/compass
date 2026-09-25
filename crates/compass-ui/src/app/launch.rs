@@ -157,6 +157,12 @@ impl LauncherApp {
                     Task::none()
                 }
                 Err(reason) => {
+                    // Opened from the settings: back to them, saying why.
+                    if let Some(mut settings) = self.parked_settings.take() {
+                        settings.notice = Some(reason);
+                        self.page = Page::Settings(settings);
+                        return focus_search();
+                    }
                     self.error = Some(reason);
                     Task::none()
                 }

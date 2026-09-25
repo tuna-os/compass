@@ -518,4 +518,6 @@ pub enum Message {
         /// The chosen paths.
         result: Result<Vec<String>, String>,
     },
+    /// Something in the settings view.
+    Settings(crate::settings_page::SettingsMessage),
 }
