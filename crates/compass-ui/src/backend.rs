@@ -20,6 +20,17 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
     /// Record an already successful launch; never execute the application again.
     fn record_launch(&self, key: String) -> BackendFuture<'_, ()>;
 
+    /// Keep what the root row's panel changed about the item `id`, and apply
+    /// it to the engine's root search. An error is the sentence to show.
+    fn edit_root_item(
+        &self,
+        id: String,
+        edit: compass_core::root_items::RootEdit,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (id, edit);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// Run a Power Management command by its id. An error is the sentence to
     /// show.
     fn run_power_command(&self, id: String) -> BackendFuture<'_, ()> {

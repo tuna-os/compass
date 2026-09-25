@@ -62,7 +62,7 @@ pub use protocol::{
     DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert, ExtensionToast, ExtensionToastStyle,
     FileHit, FontEntry, InputServerStatus, MediaPlayerAction, MediaPlayerEntry, PROTOCOL_VERSION,
     PreferenceField, PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope,
-    Response, ResponseEnvelope, RhaiScriptEntry, ScriptArgumentEntry, ScriptEntry,
+    Response, ResponseEnvelope, RhaiScriptEntry, RootItemEdit, ScriptArgumentEntry, ScriptEntry,
     ScriptGrantEntry, ShortcutEntry, SnippetEntry, StoreDetail, StoreEntry, StoreKind,
     WindowCommand, WindowInfo, WindowOutcome,
 };

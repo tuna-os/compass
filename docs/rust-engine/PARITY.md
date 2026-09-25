@@ -381,6 +381,7 @@ with a named module and named tests that fail on a regression.
 | `src/services/glyph-service` | Rust ✅ | `compass_core::glyph_service` (file I/O, `score`), `compass_ui::emoji_page`, `compass_ui::app::emoji` | `tests/glyph_service.rs` (`the_cpp_file_is_read_with_its_camel_case_keys`, `the_file_is_written_and_read_back_and_a_missing_one_is_empty`, `a_visit_raises_a_glyph_among_matches_and_a_keyword_makes_it_match`), `emoji_page::tests` (pins and visits head the empty query, keywords, per-glyph tones, the panel), `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
 | `src/services/clipboard` | Rust ✅ | `compass_clipboard::retention`, `compass_clipboard::store::entry`, `vicinae::clipboard_service::{Settings, Control, run_eviction}`, `ClipboardStore::{evict, remove_all, detail, set_keywords, history_of_kind}` | `retention::tests`, `eviction_removes_what_is_older_than_the_threshold_and_reports_the_next`, `remove_all_spares_tagged_entries_when_asked_and_unlinks_the_rest`, `nothing_is_recorded_while_monitoring_is_off`, `the_preferences_are_read_with_the_cpp_defaults`, `pausing_the_clipboard_is_answered_and_kept_as_the_monitoring_preference` |
 | `src/builtins/clipboard` | — (open actions and drag remain) | `compass_ui::clipboard_page`, `compass_ui::app::clipboard` | `clipboard_page::tests` (filter vocabulary, `format_size`, the pane's content, stale answers), `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
+| `src/builtins/root`, `src/services/root-item-manager` | — (the provider search view; per-item shortcuts and other fallbacks remain) | `compass_core::root_items::{apply_edit, deeplink}`, `Config::{favorite_ids, apply_root_edit}`, `root_view::SearchHistory`, `ClockConfig`, `compass_ui::app::root`, IPC `RootItemEdit` | `favouriting_inserts_first_and_moving_swaps_within_the_list_only`, `an_alias_and_the_switch_are_written_under_the_items_provider_and_merged`, `the_root_panel_writes_favorites_whole_and_an_items_alias_and_switch`, `the_search_history_keeps_one_of_each_newest_first_in_the_cpp_shape`, `the_clock_is_on_every_minute_in_hh_mm_unless_set`, `the_root_panel_favourites_aliases_and_the_up_arrow_recalls_searches` |
 
 **`src/services/clipboard` → retention and monitoring.** The clipboard extension's preferences
 (`providers.clipboard.preferences`) are read with the C++ defaults: `monitoring`,
@@ -396,6 +397,26 @@ decides whether a selection a password manager marked is left out (data-control;
 no such mark in either engine). `store-all-offerings` has no effect in the C++ (below).
 Remove-all spares pinned and keyworded entries when `preserveTagged` is on, as
 `removeAllSelections` does.
+
+**`src/builtins/root` → the root view's behaviour, wired.** The empty query shows the favourites
+first under **Favorites**, in the order arranged, then the rest under **Suggestions**, a favourite
+not suggested twice (`queryFavorites`). Unset, `favorites` is the C++ default file's
+`["clipboard:history"]`; C++ builtin ids (`clipboard:history`, `files:search`,
+`core:search-emojis`) are read as the Compass commands they name. The row's panel is
+`RootSearchActionGenerator`'s: the row's own actions, then Copy Deeplink
+(`vicinae://launch/<provider>/<entrypoint>`), Reset ranking (asks first), Add to / Remove from
+favorites, Move up / down in favorites (only where there is room), Set alias (the one-field form of
+`AliasFormViewHost`), Copy ID and Disable item (asks first). The window applies each change at once
+and the engine keeps it (IPC v17 `RootItemEdit`): favourites and alias and switch in
+`vicinae.json`, the ranking in the launch history. A space typed after exactly the selected
+command's alias opens it when the command opens a view. Up at the top of the list (navigation not
+wrapping) walks back through past searches, kept in the C++'s own file,
+`$XDG_DATA_HOME/vicinae/search-history.json` (`{"entries":[{"q","ts"}]}`, one of each, newest
+first, 1000 at most), which a search is added to when a row runs from it. The clock shows under the
+list in `launcher.clock`'s format (`hh:mm` unless set; `settings.json`'s
+`launcher_window.clock` migrates to it), redrawn on multiples of its interval. Still C++-only: the
+provider search view (`searchGroupedByProvider` is ported, the view over it is not), and the
+completer branch of the space shortcut, as root rows have no argument completer here yet.
 
 **`src/builtins/clipboard` → the rest of the view.** The kind filter is a dropdown above the list;
 it asks the engine for one kind (`ClipboardHistoryOfKind`, the query's `kind` filter), clears the
@@ -1231,7 +1252,7 @@ launch-history keys remain `org.example.Editor.desktop`. Unknown provider and
 entrypoint fields, including preferences, survive configuration round trips.
 Real-daemon tests cover alias lookup and both levels of enabled precedence;
 catalog tests cover clearing settings without retaining stale aliases. This is
-startup configuration, not live reload or a settings editor. Favourite sections,
+startup configuration, not live reload or a settings editor. Favourite sections (wired since the gaps pass),
 shortcut registration and fallback dispatch remain unwired; parsing their
 metadata is not completion of those features. Standalone UI startup now applies
 the same root configuration to its local catalog. UI state-machine tests cover
@@ -1261,8 +1282,9 @@ none. This port writes `None`, and two tests pin it — one on the write, one on
 through a merge.
 
 The providers load now (applications, builtins, extensions, scripts, shortcuts, Rhai scripts).
-Still C++-only: favourites, per-item keyboard shortcuts and the fallbacks other than Search Files,
-whose settings are parsed and merged but not acted on, and the search history the up arrow reaches.
+Favourites and the search history landed in the gaps pass (see there). Still C++-only: per-item
+keyboard shortcuts and the fallbacks other than Search Files, whose settings are parsed and merged
+but not acted on.
 
 **`src/services/tray-host` → `compass-core::tray_host`** — `TrayItem` and `TrayMenuItem` are
 ported: the item key is the bus name *and* the object path, because one application can export

@@ -48,7 +48,22 @@ fn root_settings_use_upstream_ids_and_preserve_provider_preferences() {
 
 #[test]
 fn absent_root_settings_stay_absent_and_malformed_settings_are_rejected() {
-    assert_eq!(parse("{}").root_config(), Default::default());
+    // The default file's favourites, Clipboard History by its C++ id, read
+    // as the Compass command.
+    assert_eq!(
+        parse("{}").root_config(),
+        compass_core::root_items::RootConfig {
+            favorites: vec!["commands:clipboard-history".to_owned()],
+            ..Default::default()
+        }
+    );
+    assert!(
+        parse(r#"{"favorites": []}"#)
+            .root_config()
+            .favorites
+            .is_empty(),
+        "an empty list the user wrote stays empty"
+    );
     assert_eq!(
         parse("{}").fallback_ids(),
         ["files:search"],
@@ -586,4 +601,66 @@ fn set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font() {
     let mut empty = Config::default();
     empty.set_font_family("Noto Serif");
     assert_eq!(empty.font_family(), Some("Noto Serif"));
+}
+
+#[test]
+fn the_root_panel_writes_favorites_whole_and_an_items_alias_and_switch() {
+    use compass_core::root_items::RootEdit;
+    let mut config = parse(r#"{"launcher": {"max_results": 9}}"#);
+
+    // Favouriting writes the list out whole, default included, the new one
+    // first (`setItemAsFavorite` takes the merged list).
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Favorite(true)));
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert_eq!(
+        written["favorites"],
+        serde_json::json!(["applications:firefox", "commands:clipboard-history"])
+    );
+    assert!(!config.apply_root_edit("applications:firefox", &RootEdit::Favorite(true)));
+    assert!(config.apply_root_edit(
+        "applications:firefox",
+        &RootEdit::MoveFavorite { down: true }
+    ));
+    assert_eq!(
+        config.root_config().favorites,
+        ["commands:clipboard-history", "applications:firefox"]
+    );
+    assert!(
+        !config.apply_root_edit(
+            "applications:firefox",
+            &RootEdit::MoveFavorite { down: true }
+        ),
+        "the last cannot move down"
+    );
+    assert!(config.apply_root_edit("commands:clipboard-history", &RootEdit::Favorite(false)));
+    assert_eq!(config.root_config().favorites, ["applications:firefox"]);
+
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Alias("ff".into())));
+    assert!(config.apply_root_edit("applications:firefox", &RootEdit::Disable));
+    let item = &config.root_config().providers["applications"].entrypoints["firefox"];
+    assert_eq!(item.alias.as_deref(), Some("ff"));
+    assert_eq!(item.enabled, Some(false));
+    assert!(!config.apply_root_edit("applications:firefox", &RootEdit::ResetRanking));
+    assert_eq!(config.launcher().max_results(), 9, "the rest is kept");
+}
+
+#[test]
+fn the_clock_is_on_every_minute_in_hh_mm_unless_set() {
+    let clock = parse("{}");
+    let clock = clock.launcher().clock();
+    assert!(clock.enabled());
+    assert_eq!(clock.format(), "hh:mm");
+    assert_eq!(clock.interval(), 60);
+
+    let set = parse(
+        r#"{"launcher": {"clock": {"enabled": false, "format": "hh:mm:ss", "interval": 0}}}"#,
+    );
+    let clock = set.launcher().clock();
+    assert!(!clock.enabled());
+    assert_eq!(clock.format(), "hh:mm:ss");
+    assert_eq!(clock.interval(), 1, "never zero");
+    assert_eq!(
+        serde_json::to_value(&set).unwrap()["launcher"]["clock"]["format"],
+        "hh:mm:ss"
+    );
 }

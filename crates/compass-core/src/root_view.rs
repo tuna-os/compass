@@ -213,3 +213,89 @@ pub fn alias_submit_outcome(saved: bool) -> (&'static str, &'static str, bool) {
         ("Failed to modify alias", "danger", false)
     }
 }
+
+/// How many searches the history keeps (`MAX_HISTORY_SIZE`).
+pub const MAX_HISTORY_SIZE: usize = 1000;
+
+/// One remembered search.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HistoryEntry {
+    /// What was typed.
+    pub q: String,
+    /// When, in seconds since the epoch.
+    #[serde(default)]
+    pub ts: u64,
+}
+
+/// The root search's history (`SearchHistory`), newest first, in the C++'s
+/// own file and shape: `{"entries":[{"q":"…","ts":…}]}` at
+/// `$XDG_DATA_HOME/vicinae/search-history.json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SearchHistory {
+    /// The searches, newest first.
+    #[serde(default)]
+    pub entries: Vec<HistoryEntry>,
+}
+
+impl SearchHistory {
+    /// Reads `path`; a missing or unreadable file is an empty history, as
+    /// `loadFromDisk` leaves it.
+    #[must_use]
+    pub fn load_file(path: &std::path::Path) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    /// Writes the history to `path`, creating its directory.
+    ///
+    /// # Errors
+    ///
+    /// The I/O error when it cannot be written.
+    pub fn save_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = serde_json::to_string(self).map_err(std::io::Error::other)?;
+        let partial = path.with_extension("json.partial");
+        std::fs::write(&partial, text)?;
+        std::fs::rename(&partial, path)
+    }
+
+    /// Remembers `query` as the newest search (`add`): an empty one is not
+    /// kept, an earlier copy of the same text is dropped so it appears once,
+    /// and the oldest go beyond [`MAX_HISTORY_SIZE`]. Returns whether
+    /// anything changed.
+    pub fn add(&mut self, query: &str, now: u64) -> bool {
+        if query.is_empty() {
+            return false;
+        }
+        self.entries.retain(|entry| entry.q != query);
+        self.entries.insert(
+            0,
+            HistoryEntry {
+                q: query.to_owned(),
+                ts: now,
+            },
+        );
+        self.entries.truncate(MAX_HISTORY_SIZE);
+        true
+    }
+
+    /// The searches, newest first, for [`history_entry_at`].
+    #[must_use]
+    pub fn queries(&self) -> Vec<String> {
+        self.entries.iter().map(|entry| entry.q.clone()).collect()
+    }
+}
+
+/// The default location of the search history.
+#[must_use]
+pub fn default_history_path() -> Option<std::path::PathBuf> {
+    Some(
+        crate::xdg_dirs::data_home()?
+            .join("vicinae")
+            .join("search-history.json"),
+    )
+}

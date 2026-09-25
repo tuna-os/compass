@@ -942,6 +942,23 @@ impl AppIndex {
         .collect()
     }
 
+    /// The root row an entrypoint id names, with the metadata the
+    /// configuration last applied gave it (alias, favourite, enabled).
+    #[must_use]
+    pub fn root(&self, entrypoint_id: &str) -> Option<&crate::root_items::RootItem> {
+        self.roots.iter().find(|root| root.id == entrypoint_id)
+    }
+
+    /// The key an entrypoint's launches are recorded under: an
+    /// application's desktop key, anything else's own id.
+    #[must_use]
+    pub fn history_key(&self, entrypoint_id: &str) -> String {
+        self.position_by_entrypoint(entrypoint_id).map_or_else(
+            || entrypoint_id.to_owned(),
+            |position| self.items[position].key().to_owned(),
+        )
+    }
+
     /// Installed extensions' commands, in the registry's precedence order.
     #[must_use]
     pub fn extensions(&self) -> &[crate::extension_commands::ExtensionCommand] {

@@ -98,6 +98,30 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn edit_root_item(
+        &self,
+        id: String,
+        edit: compass_core::root_items::RootEdit,
+    ) -> BackendFuture<'_, ()> {
+        use compass_core::root_items::RootEdit;
+        let edit = match edit {
+            RootEdit::Favorite(favorite) => compass_ipc::RootItemEdit::Favorite(favorite),
+            RootEdit::MoveFavorite { down } => compass_ipc::RootItemEdit::MoveFavorite { down },
+            RootEdit::Alias(alias) => compass_ipc::RootItemEdit::Alias(alias),
+            RootEdit::Disable => compass_ipc::RootItemEdit::Disable,
+            RootEdit::ResetRanking => compass_ipc::RootItemEdit::ResetRanking,
+        };
+        Box::pin(async move {
+            match self
+                .ask(Request::RootItemEdit { id, edit }, "Changing the item")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn run_power_command(&self, id: String) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self

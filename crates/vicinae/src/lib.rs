@@ -197,6 +197,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             power_asks,
             browse_apps,
             emoji_skin_tone,
+            clock,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -224,6 +225,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                         ),
                     ),
                     emoji_skin_tone(&config),
+                    clock(&config),
                 )
             }
             Err(error) => {
@@ -241,6 +243,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     power_asks(&compass_core::Config::default()),
                     compass_core::browse_apps::Options::default(),
                     None,
+                    clock(&compass_core::Config::default()),
                 )
             }
         };
@@ -320,6 +323,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             browse_apps,
             glyph_path: compass_core::glyph_service::default_path(),
             emoji_skin_tone,
+            search_history_path: compass_core::root_view::default_history_path(),
+            clock,
             ..compass_ui::AppFlags::default()
         };
 
@@ -378,6 +383,15 @@ fn emoji_skin_tone(config: &compass_core::Config) -> Option<String> {
         .get("skinTone")?
         .as_str()
         .map(str::to_owned)
+}
+
+/// The root search's clock, from `launcher.clock`; `None` when it is off.
+fn clock(config: &compass_core::Config) -> Option<compass_ui::ClockSettings> {
+    let clock = config.launcher().clock();
+    clock.enabled().then(|| compass_ui::ClockSettings {
+        format: clock.format().to_owned(),
+        interval: clock.interval(),
+    })
 }
 
 fn launcher_surface() -> compass_wayland::SurfaceKind {

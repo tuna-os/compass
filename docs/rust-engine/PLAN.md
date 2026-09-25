@@ -2475,7 +2475,7 @@ subsystem. "None" under *blocked by* means only the work.
 | `src/builtins/vicinae` (picker half) | the picker's paste action (visits, pins, keywords and per-glyph tones landed in the gaps pass) | small | a paste of text the engine did not store |
 | `src/services/news`, `update`, `telemetry` | fetching and showing notices, the update check, sending the record | medium each | a design decision: what a hard fork fetches and reports, and from where (the models are ported) |
 | `src/services/paste` | synthetic paste on wlroots through the input server's `injectPaste` | medium | a compositor to verify, and the helper, which cannot run inside the Flatpak |
-| `src/services/root-item-manager`, `src/builtins/root` | favourites, per-item keyboard shortcuts, fallbacks other than Search Files, the clock, the space-bar alias and up-arrow history (`root_view`), the provider search view, the alias form, the root row's panel beyond opening | medium to large (models ported) | none |
+| `src/services/root-item-manager`, `src/builtins/root` | per-item keyboard shortcuts, fallbacks other than Search Files, the provider search view (favourites, the clock, the space-bar alias, up-arrow history, the alias form and the root row's panel landed in the gaps pass) | medium (models ported) | none |
 | `src/services/shortcut-inhibit`, `window-material` | the two Wayland protocols (the manager is a stub) | medium | a compositor that advertises them (VM tier) |
 | `src/services/tray`, `tray-host` | Vicinae's own tray icon; the StatusNotifierWatcher plumbing and the tray search view | medium each | the tray icon needs a decision (a launcher that lives in a tray or not); the host is testable against a private `dbus-daemon` |
 | `src/services/window-manager`, `src/builtins/wm` | the KDE and X11 providers; Switch Workspaces; toggle-floating, -fullscreen and -overview | medium (X11 large) | KDE needs KWin (VM tier); X11 needs the supported-or-not decision; workspaces exist only on Hyprland and niri |
@@ -2496,8 +2496,9 @@ icon.
 
 Closed in the gaps pass (`PARITY.md`, "The gaps pass"): `glyph-service` wired into the emoji picker;
 clipboard eviction and its timer, the monitoring switch and preferences, the kind filter, keyword
-editing, remove-all and the detail pane
-(118 of 156).
+editing, remove-all and the detail pane (118 of 156); and in the root view, favourites, the row's
+panel, the alias form, the space-bar alias, up-arrow history and the clock (no row flips: the
+provider search view, per-item shortcuts and other fallbacks remain).
 
 **Landed in this round:**
 

@@ -66,6 +66,8 @@ pub enum Purpose {
     GlyphKeywords,
     /// A clipboard history entry's keywords; `command_id` is the entry.
     ClipboardKeywords,
+    /// A root item's alias; `command_id` is the item's entrypoint id.
+    Alias,
 }
 
 impl Purpose {
@@ -74,9 +76,10 @@ impl Purpose {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Preferences | Self::Arguments => "Enter: save and run    Esc: back",
-            Self::CommandPreferences | Self::GlyphKeywords | Self::ClipboardKeywords => {
-                "Enter: save    Esc: back"
-            }
+            Self::CommandPreferences
+            | Self::GlyphKeywords
+            | Self::ClipboardKeywords
+            | Self::Alias => "Enter: save    Esc: back",
             Self::ShortcutArguments => "Enter: open    Esc: back",
             Self::ShortcutForm { .. } => "Enter: save    Esc: back",
             Self::SnippetArguments { paste: false } => "Enter: copy    Esc: back",

@@ -269,6 +269,26 @@ fn all_requests() -> Vec<Request> {
         Request::ClipboardMonitoring {
             enabled: Some(false),
         },
+        Request::RootItemEdit {
+            id: "applications:org.gnome.TextEditor".into(),
+            edit: compass_ipc::RootItemEdit::Favorite(true),
+        },
+        Request::RootItemEdit {
+            id: "commands:clipboard-history".into(),
+            edit: compass_ipc::RootItemEdit::MoveFavorite { down: true },
+        },
+        Request::RootItemEdit {
+            id: "@zoë/notes:list".into(),
+            edit: compass_ipc::RootItemEdit::Alias("nö".into()),
+        },
+        Request::RootItemEdit {
+            id: "scripts:hello".into(),
+            edit: compass_ipc::RootItemEdit::Disable,
+        },
+        Request::RootItemEdit {
+            id: "commands:clipboard-history".into(),
+            edit: compass_ipc::RootItemEdit::ResetRanking,
+        },
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -785,6 +805,7 @@ fn request_variants_are_exhaustive() {
             | Request::ClipboardSetKeywords { .. }
             | Request::ClipboardRemoveAll
             | Request::ClipboardMonitoring { .. }
+            | Request::RootItemEdit { .. }
             | Request::ControlMediaPlayer { .. }
             | Request::WindowOutcome(_) => {}
         }

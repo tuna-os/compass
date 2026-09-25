@@ -54,7 +54,8 @@ use serde::{Deserialize, Serialize};
 /// pane, keywords, remove-all and monitoring switch
 /// ([`Request::ClipboardHistoryOfKind`], [`Request::ClipboardDetail`],
 /// [`Request::ClipboardSetKeywords`], [`Request::ClipboardRemoveAll`],
-/// [`Request::ClipboardMonitoring`]).
+/// [`Request::ClipboardMonitoring`]), and the root row's favourite, alias, disable
+/// and reset-ranking actions ([`Request::RootItemEdit`]).
 pub const PROTOCOL_VERSION: u16 = 17;
 
 /// A client-to-server frame.
@@ -698,6 +699,35 @@ pub enum Request {
         /// The new state, or `None` to ask.
         enabled: Option<bool>,
     },
+    /// What the root row's action panel changes about one root item: its
+    /// favourite, its place among the favourites, its alias, its switch
+    /// (all kept in the configuration) or its ranking (the launch history).
+    /// Answered with [`Response::Ack`] once kept and applied to root search;
+    /// an id no root item has is a bad request.
+    RootItemEdit {
+        /// The item's `provider:entrypoint` id, as [`QueryHit::id`].
+        id: String,
+        /// What to change.
+        edit: RootItemEdit,
+    },
+}
+
+/// One change [`Request::RootItemEdit`] makes (`RootSearchActionGenerator`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RootItemEdit {
+    /// Add it to the favourites (first) or take it out.
+    Favorite(bool),
+    /// Swap it with its neighbour among the favourites, below when `down`.
+    MoveFavorite {
+        /// Towards the end of the list.
+        down: bool,
+    },
+    /// Set its alias.
+    Alias(String),
+    /// Take it out of root search.
+    Disable,
+    /// Forget its launch history.
+    ResetRanking,
 }
 
 /// What the engine answers.

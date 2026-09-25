@@ -1008,6 +1008,64 @@ async fn run_script(state: &Arc<RwLock<EngineState>>, id: &str, arguments: &[Str
 }
 
 /// The snippet list as the wire carries it.
+/// Applies what the root row's panel changed: forgets the launch history,
+/// or writes the configuration and applies it to root search, as the C++
+/// root item manager merges it into the user's file and its metadata.
+fn edit_root_item(
+    state: &Arc<RwLock<EngineState>>,
+    id: &str,
+    edit: compass_ipc::RootItemEdit,
+) -> Response {
+    use compass_core::root_items::RootEdit;
+    let edit = match edit {
+        compass_ipc::RootItemEdit::Favorite(favorite) => RootEdit::Favorite(favorite),
+        compass_ipc::RootItemEdit::MoveFavorite { down } => RootEdit::MoveFavorite { down },
+        compass_ipc::RootItemEdit::Alias(alias) => RootEdit::Alias(alias),
+        compass_ipc::RootItemEdit::Disable => RootEdit::Disable,
+        compass_ipc::RootItemEdit::ResetRanking => RootEdit::ResetRanking,
+    };
+    let mut state = state.blocking_write();
+    if state.index.root(id).is_none() {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no root item has that id",
+        ));
+    }
+    if edit == RootEdit::ResetRanking {
+        let key = state.index.history_key(id);
+        return match state.frecency.forget(&key) {
+            Ok(_) => Response::Ack,
+            Err(err) => Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("could not reset the ranking: {err}"),
+            )),
+        };
+    }
+    // A file that does not parse is left alone rather than replaced by one
+    // holding only this change.
+    let mut config = match Config::load() {
+        Ok(config) => config,
+        Err(err) => {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("could not read the configuration: {err}"),
+            ));
+        }
+    };
+    if config.apply_root_edit(id, &edit) {
+        let saved =
+            compass_core::config::default_config_path().and_then(|path| config.save_to(path));
+        if let Err(err) = saved {
+            return Response::Error(ProtocolError::new(
+                ErrorKind::Internal,
+                format!("could not save the configuration: {err}"),
+            ));
+        }
+    }
+    state.index.apply_root_config(&config.root_config());
+    Response::Ack
+}
+
 fn clipboard_unavailable() -> Response {
     Response::Error(ProtocolError::new(
         ErrorKind::Unsupported,
@@ -2422,6 +2480,18 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
                 supported: control.supported(),
                 enabled: control.monitoring(),
             }
+        }
+
+        Request::RootItemEdit { id, edit } => {
+            let state = Arc::clone(state);
+            tokio::task::spawn_blocking(move || edit_root_item(&state, &id, edit))
+                .await
+                .unwrap_or_else(|err| {
+                    Response::Error(ProtocolError::new(
+                        ErrorKind::Internal,
+                        format!("the root item task failed: {err}"),
+                    ))
+                })
         }
 
         Request::ClipboardContent { id } => {

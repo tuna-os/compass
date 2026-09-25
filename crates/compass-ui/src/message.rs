@@ -117,6 +117,10 @@ pub enum Message {
     ClipboardKeywordsLoaded(Result<crate::backend::ClipboardDetail, String>),
     /// Whether copies are being recorded, as the engine answered.
     ClipboardMonitoringLoaded(Result<crate::backend::ClipboardMonitoring, String>),
+    /// The engine kept (or refused) what the root row's panel changed.
+    RootItemEdited(Result<(), String>),
+    /// A second passed; the root search's clock may need redrawing.
+    ClockTick,
     /// Leave a command's view for the root list.
     Back,
     /// The window switcher's filter changed.

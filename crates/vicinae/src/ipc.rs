@@ -112,6 +112,7 @@ fn describe(request: &Request) -> &'static str {
         Request::ClipboardSetKeywords { .. } => "ClipboardSetKeywords",
         Request::ClipboardRemoveAll => "ClipboardRemoveAll",
         Request::ClipboardMonitoring { .. } => "ClipboardMonitoring",
+        Request::RootItemEdit { .. } => "RootItemEdit",
         Request::ClipboardContent { .. } => "ClipboardContent",
         Request::ListWindows => "ListWindows",
         Request::ActivateWindow { .. } => "ActivateWindow",

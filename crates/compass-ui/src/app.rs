@@ -37,6 +37,7 @@ mod media;
 mod preview;
 mod programs;
 mod rhai;
+mod root;
 mod scripts;
 mod shortcuts;
 mod snippets;
@@ -239,6 +240,12 @@ pub struct AppFlags {
     pub glyph_path: Option<std::path::PathBuf>,
     /// The emoji picker's `skinTone` preference, as a tone id.
     pub emoji_skin_tone: Option<String>,
+    /// Where the root search's history is kept
+    /// (`compass_core::root_view::default_history_path`); `None` keeps it in
+    /// memory, as tests do.
+    pub search_history_path: Option<std::path::PathBuf>,
+    /// The root search's clock (`launcher.clock`); `None` shows none.
+    pub clock: Option<ClockSettings>,
     /// When the process started, for the cold-start figure (#13).
     ///
     /// `None` in a test or anywhere nobody is timing, which simply means no
@@ -330,6 +337,8 @@ impl Default for AppFlags {
             browse_apps: compass_core::browse_apps::Options::default(),
             glyph_path: None,
             emoji_skin_tone: None,
+            search_history_path: None,
+            clock: None,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             appearance_preset: crate::preset::resolve(None, None, None),
@@ -501,6 +510,18 @@ struct Confirm {
 enum ConfirmAction {
     /// Remove every clipboard history entry.
     ClipboardRemoveAll,
+    /// Change a root item in a way that asks first: reset its ranking or
+    /// disable it.
+    RootEdit(String, compass_core::root_items::RootEdit),
+}
+
+/// The root search's clock (`launcher.clock`), when it is shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockSettings {
+    /// The Qt date-time format it is drawn in.
+    pub format: String,
+    /// Seconds between redraws.
+    pub interval: u64,
 }
 
 /// One row of the root list.
@@ -781,6 +802,24 @@ pub struct LauncherApp {
     emoji_skin_tone: Option<String>,
     /// The emoji picker while its keyword form is open.
     parked_emoji: Option<crate::emoji_page::EmojiPage>,
+    /// See [`AppFlags::search_history_path`].
+    search_history_path: Option<std::path::PathBuf>,
+    /// The root search's history, newest first.
+    search_history: compass_core::root_view::SearchHistory,
+    /// Where the up arrow has reached in the history; `None` until it is
+    /// pressed, and again once something is typed.
+    history_offset: Option<usize>,
+    /// See [`AppFlags::clock`].
+    clock: Option<ClockSettings>,
+    /// The time the root search's status bar shows, once the clock ticked.
+    clock_text: Option<String>,
+    /// When, in seconds since the epoch, the clock is next redrawn.
+    clock_next_at: i64,
+    /// The root settings this window applies locally: the startup
+    /// configuration, and what its own panel has changed since.
+    root_config: compass_core::root_items::RootConfig,
+    /// How many of `results`' first rows are the favourites (empty query).
+    favorites_len: usize,
     /// Sizes and spacing, from the resolved appearance preset (#84).
     ///
     /// Held rather than read from [`design::GEOMETRY`] at each draw: a preset
@@ -994,6 +1033,14 @@ impl LauncherApp {
         app.clipboard = flags.clipboard;
         app.windows = flags.windows;
         app.app_index.apply_root_config(&flags.root_config);
+        app.root_config = flags.root_config;
+        app.search_history = flags
+            .search_history_path
+            .as_deref()
+            .map(compass_core::root_view::SearchHistory::load_file)
+            .unwrap_or_default();
+        app.search_history_path = flags.search_history_path;
+        app.clock = flags.clock;
         app.fallbacks = flags
             .fallbacks
             .iter()
@@ -1090,6 +1137,14 @@ impl LauncherApp {
             browse_apps: compass_core::browse_apps::Options::default(),
             glyph_path: None,
             emoji_skin_tone: None,
+            search_history_path: None,
+            search_history: compass_core::root_view::SearchHistory::default(),
+            history_offset: None,
+            clock: None,
+            clock_text: None,
+            clock_next_at: 0,
+            root_config: compass_core::root_items::RootConfig::default(),
+            favorites_len: 0,
             parked_emoji: None,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
@@ -1576,6 +1631,13 @@ impl LauncherApp {
         if let Some(link) = &self.typography_link {
             streams.push(link.subscription().map(Message::TypographyChanged));
         }
+        // Each second while the clock shows; `clock_tick` redraws it only
+        // when its interval comes round.
+        if self.clock.is_some() && matches!(self.page, Page::Root) {
+            streams.push(
+                iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::ClockTick),
+            );
+        }
         iced::Subscription::batch(streams)
     }
 
@@ -1754,10 +1816,20 @@ impl LauncherApp {
                 Task::none()
             }
             Message::QueryChanged(query) => {
+                if let Some(task) = self.alias_space(&query) {
+                    return task;
+                }
                 self.panel = None;
                 self.query = query;
                 self.error = None;
+                // Typing starts history over from the newest search.
+                self.history_offset = None;
                 self.search_task()
+            }
+            Message::RootItemEdited(result) => self.root_item_edited(result),
+            Message::ClockTick => {
+                self.clock_tick();
+                Task::none()
             }
             Message::SearchCompleted { generation, result } => {
                 if generation != self.search_generation {
@@ -1836,6 +1908,7 @@ impl LauncherApp {
                             self.selected = 0;
                             self.apply_calculator();
                             self.apply_fallbacks();
+                            self.apply_favorites();
                             self.warm_icons();
                         } else {
                             self.error = Some(
@@ -1863,6 +1936,9 @@ impl LauncherApp {
                 crate::scroll::reveal_root_selection()
             }
             Message::LaunchSelected => {
+                if matches!(self.page, Page::Root) {
+                    self.record_search();
+                }
                 if let Some(RootRow::Calculator) = self.selected_row()
                     && let Some(answer) = &self.calculator
                 {
@@ -2031,6 +2107,8 @@ impl LauncherApp {
                         return iced::widget::operation::focus(PANEL_INPUT);
                     }
                     return Task::none();
+                } else if let Some(task) = self.open_root_panel() {
+                    return task;
                 } else if let Some(item) = self.selected_item() {
                     // Only over a selected row. A panel of actions for nothing
                     // would be a panel whose every action fails.
@@ -2093,6 +2171,7 @@ impl LauncherApp {
                         .or_else(|| self.apps_panel_action(&id))
                         .or_else(|| self.emoji_panel_action(&id))
                         .or_else(|| self.clipboard_panel_action(&id))
+                        .or_else(|| self.root_panel_action(&id))
                 {
                     return task;
                 }
@@ -2206,6 +2285,9 @@ impl LauncherApp {
                     return task;
                 }
                 if let Some(task) = self.submit_clipboard_keywords() {
+                    return task;
+                }
+                if let Some(task) = self.submit_alias_form() {
                     return task;
                 }
                 if let Some(task) = self.submit_shortcut_form() {
@@ -2570,6 +2652,9 @@ impl LauncherApp {
                     return task;
                 }
                 if let Some(task) = self.back_from_clipboard_keywords() {
+                    return task;
+                }
+                if let Some(task) = self.back_from_alias_form() {
                     return task;
                 }
                 if let Some(task) = self.back_from_shortcut_form() {
@@ -3003,6 +3088,15 @@ impl LauncherApp {
                     return self.update(Message::CloseWindow(window_id));
                 }
 
+                // Up at the top of the list reaches back through past searches.
+                let up = match key.as_ref() {
+                    Key::Named(Named::ArrowUp) => Some(Direction::Up),
+                    _ => chord_direction(self.keybinding, key.as_ref(), modifiers),
+                };
+                if let Some(task) = self.history_up(up) {
+                    return task;
+                }
+
                 match key.as_ref() {
                     Key::Named(Named::ArrowDown) => {
                         return self.update(Message::MoveSelection(Direction::Down));
@@ -3241,6 +3335,9 @@ impl LauncherApp {
         } else {
             let mut list = column![].spacing(f32::from(geometry.row_spacing));
             for (position, root_row) in self.results.iter().enumerate() {
+                if let Some(heading) = self.root_heading_at(position) {
+                    list = list.push(self.section_heading(heading.to_owned()));
+                }
                 let selected = position == self.selected;
                 let row = match root_row {
                     RootRow::App(index) => {
@@ -3374,6 +3471,21 @@ impl LauncherApp {
             .width(Length::Fill)
         } else {
             column![field, body].width(Length::Fill)
+        };
+        // The root search's status bar carries the clock as its title, as
+        // `scheduleNextClockTick` sets the navigation title.
+        let card_content = match (&self.page, &self.clock_text) {
+            (Page::Root, Some(clock)) if self.confirm.is_none() => card_content.push(
+                container(
+                    text(clock.as_str())
+                        .font(self.font())
+                        .size(12)
+                        .color(palette.muted.to_iced()),
+                )
+                .width(Length::Fill)
+                .padding(Padding::new(6.0).left(14)),
+            ),
+            _ => card_content,
         };
 
         // The panel floats over the list rather than replacing it. The old
@@ -4290,6 +4402,7 @@ impl LauncherApp {
                 | crate::preferences_page::Purpose::MediaArguments
                 | crate::preferences_page::Purpose::GlyphKeywords
                 | crate::preferences_page::Purpose::ClipboardKeywords
+                | crate::preferences_page::Purpose::Alias
                 | crate::preferences_page::Purpose::CreateExtension => page.title.clone(),
             })
             .font(self.font())
@@ -4892,6 +5005,7 @@ impl LauncherApp {
         };
         let task = match confirm.action {
             ConfirmAction::ClipboardRemoveAll => self.remove_all_clipboard_entries(),
+            ConfirmAction::RootEdit(id, edit) => self.edit_root_item(id, edit),
         };
         Task::batch([task, focus_search()])
     }
@@ -5012,6 +5126,7 @@ impl LauncherApp {
         if self.query.trim().is_empty() {
             self.results.clear();
             self.selected = 0;
+            self.apply_favorites();
             return;
         }
 
@@ -8015,6 +8130,67 @@ mod tests {
         assert_eq!(pizza.keyword.as_deref(), Some("qqsupper"));
         assert_eq!(stored.find("👋").map(|wave| wave.visit_count), Some(1));
     }
+
+    #[test]
+    fn the_root_panel_favourites_aliases_and_the_up_arrow_recalls_searches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = app(dir.path());
+        let history = dir.path().join("history").join("search-history.json");
+        app.search_history_path = Some(history.clone());
+
+        // Favouriting Firefox from its panel puts it first, under a heading.
+        let _ = app.update(Message::QueryChanged("firefox".into()));
+        let firefox = app.selected_row().expect("a row");
+        let id = app.root_id(firefox).expect("a root item");
+        let _ = app.update(Message::TogglePanel);
+        let favorite = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Add to favorites"))
+            .expect("the panel offers to favourite");
+        let _ = app.update(Message::PanelClicked(favorite));
+        assert_eq!(app.root_config.favorites, std::slice::from_ref(&id));
+        let _ = app.update(Message::QueryChanged(String::new()));
+        assert_eq!(app.results.first(), Some(&firefox));
+        assert_eq!(app.root_heading_at(0), Some(FAVORITES_HEADING_FOR_TESTS));
+        assert_eq!(
+            app.results.iter().filter(|row| **row == firefox).count(),
+            1,
+            "a favourite is not suggested again"
+        );
+
+        // An alias through the form.
+        let _ = app.update(Message::TogglePanel);
+        let alias = app
+            .panel
+            .as_ref()
+            .and_then(|panel| panel.row_titled("Set alias"))
+            .expect("the panel offers an alias");
+        let _ = app.update(Message::PanelClicked(alias));
+        let _ = app.update(Message::PreferenceEdited(
+            0,
+            crate::preferences_page::FieldValue::Text("ff".into()),
+        ));
+        let _ = app.update(Message::PreferencesSubmit);
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        assert_eq!(
+            app.app_index
+                .root(&id)
+                .and_then(|root| root.meta.alias.as_deref()),
+            Some("ff")
+        );
+
+        // Launching records the search; the up arrow at the top brings it back.
+        let _ = app.update(Message::QueryChanged("term".into()));
+        let _ = app.update(Message::LaunchSelected);
+        let _ = app.update(Message::QueryChanged(String::new()));
+        let _ = app.update(pressed(iced::keyboard::key::Named::ArrowUp));
+        assert_eq!(app.query, "term");
+        let stored = compass_core::root_view::SearchHistory::load_file(&history);
+        assert_eq!(stored.queries(), ["term"]);
+    }
+
+    const FAVORITES_HEADING_FOR_TESTS: &str = "Favorites";
 
     #[test]
     fn a_calculation_that_matches_nothing_is_answered_first() {

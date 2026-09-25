@@ -111,7 +111,9 @@ async fn echo_handler(request: Request) -> Response {
             supported: false,
             enabled: false,
         },
-        Request::ClipboardSetKeywords { .. } | Request::ClipboardRemoveAll => Response::Ack,
+        Request::ClipboardSetKeywords { .. }
+        | Request::ClipboardRemoveAll
+        | Request::RootItemEdit { .. } => Response::Ack,
         Request::ListWindows => Response::Windows { windows: vec![] },
         Request::ActivateWindow { .. }
         | Request::CloseWindow { .. }
