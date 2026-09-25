@@ -2778,8 +2778,10 @@ fn recording_app(dir: &Path, name: &str, mime_types: &str) -> (String, PathBuf) 
     std::fs::write(
         &program,
         format!(
-            "#!/bin/sh\nfor arg in \"$@\"; do echo \"$arg\" >> '{}'; done\n",
-            log.display()
+            // All at once, then renamed into place: a reader polling for a
+            // non-empty log must not see the first argument without the rest.
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{log}.part' && mv '{log}.part' '{log}'\n",
+            log = log.display()
         ),
     )
     .expect("fake application");
