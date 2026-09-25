@@ -758,14 +758,15 @@ pub fn apply_edit(config: &mut RootConfig, id: &str, edit: &RootEdit) -> bool {
 }
 
 /// The deeplink that launches an item (`CopyItemDeeplink`):
-/// `vicinae://launch/<provider>/<entrypoint>`.
+/// `compass://launch/<provider>/<entrypoint>`.
 #[must_use]
 pub fn deeplink(id: &str) -> Option<String> {
     let (provider, entrypoint) = split_entrypoint_id(id)?;
-    Some(format!("vicinae://launch/{provider}/{entrypoint}"))
+    Some(format!("compass://launch/{provider}/{entrypoint}"))
 }
 
-/// A `vicinae://launch/...` deeplink, read as `IpcCommandHandler` reads the
+/// A `compass://launch/...` deeplink (or its `vicinae:` and Raycast
+/// spellings), read as `IpcCommandHandler` reads the
 /// `launch` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchLink {
@@ -796,8 +797,10 @@ pub const INVALID_LAUNCH_LINK: &str = "Invalid format for launch deeplink";
 #[must_use]
 pub fn parse_launch_link(link: &str) -> Option<LaunchLink> {
     let url = url::Url::parse(link).ok()?;
-    if !matches!(url.scheme(), "vicinae" | "raycast" | "com.raycast")
-        || url.host_str() != Some("launch")
+    if !matches!(
+        url.scheme(),
+        "compass" | "vicinae" | "raycast" | "com.raycast"
+    ) || url.host_str() != Some("launch")
     {
         return None;
     }

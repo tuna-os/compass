@@ -6,9 +6,10 @@
 //! claimed.
 
 /// Where an issue about the launcher is filed.
-pub const CREATE_ISSUE_URL: &str = "https://github.com/vicinaehq/vicinae/issues/new";
+pub const CREATE_ISSUE_URL: &str = "https://github.com/tuna-os/compass/issues/new";
 
-/// Where an issue about an extension is filed.
+/// Where an issue about an extension is filed: the Vicinae store's
+/// extensions repository, which is where store extensions live.
 ///
 /// A different repository *and* a different path — `/issues/new/choose`
 /// rather than `/issues/new` — because that repository offers templates and

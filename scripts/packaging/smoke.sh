@@ -6,8 +6,8 @@
 #   1. layout  -- with --prefix, every file the Flatpak ships is where the
 #                 engine looks for it (scripts/packaging/install-rust-engine.sh
 #                 is the list);
-#   2. version -- `vicinae --version` runs;
-#   3. schema  -- `vicinae config schema` is the published schema;
+#   2. version -- `compass --version` runs;
+#   3. schema  -- `compass config schema` is the published schema;
 #   4. doctor  -- `doctor --json` produces a report, and `doctor --check-only`
 #                 FAILS here, because a CI container has no display, bus or
 #                 portal: a doctor that passed would be the useless one 8.6
@@ -19,9 +19,9 @@
 #   scripts/packaging/smoke.sh [--prefix DIR] [--libexecdir DIR]
 #                              [--keep-env] [--socket PATH] -- COMMAND...
 #
-#   COMMAND is how to run `vicinae`: /usr/bin/vicinae, result/bin/vicinae,
+#   COMMAND is how to run `compass`: /usr/bin/compass, result/bin/compass,
 #   ./Compass-x86_64.AppImage (set APPIMAGE_EXTRACT_AND_RUN=1 where there is no
-#   FUSE), or `flatpak run com.vicinae.Vicinae`. --libexecdir defaults to
+#   FUSE), or `flatpak run org.tunaos.compass`. --libexecdir defaults to
 #   PREFIX/libexec. REQUIRE_RUNTIME=1 also requires the extension runtime
 #   bundle.
 #
@@ -50,7 +50,7 @@ if [ $# -eq 0 ]; then
   echo "usage: $0 [--prefix DIR] [--libexecdir DIR] -- COMMAND..." >&2
   exit 2
 fi
-vicinae=("$@")
+compass=("$@")
 
 failures=0
 pass() { echo "ok   $*"; }
@@ -65,23 +65,24 @@ if [ -n "$prefix" ]; then
   expect_exec() {
     if [ -x "$1" ]; then pass "$1"; else fail "missing or not executable: $1"; fi
   }
-  expect_exec "$prefix/bin/vicinae"
-  expect_exec "$libexecdir/vicinae/compass-sandbox-exec"
-  expect_exec "$libexecdir/vicinae/vicinae-file-indexer"
-  expect_file "$prefix/share/applications/com.vicinae.Vicinae.desktop"
-  expect_file "$prefix/share/metainfo/com.vicinae.Vicinae.metainfo.xml"
-  expect_file "$prefix/share/icons/hicolor/scalable/apps/com.vicinae.Vicinae.svg"
-  expect_file "$prefix/share/vicinae/builtin-icons/question-mark-circle.svg"
-  expect_file "$prefix/share/vicinae/vicinae.schema.json"
+  expect_exec "$prefix/bin/compass"
+  expect_exec "$libexecdir/compass/compass-sandbox-exec"
+  expect_exec "$libexecdir/compass/compass-file-indexer"
+  expect_file "$prefix/share/applications/org.tunaos.compass.desktop"
+  expect_file "$prefix/share/metainfo/org.tunaos.compass.metainfo.xml"
+  expect_file "$prefix/share/icons/hicolor/scalable/apps/org.tunaos.compass.svg"
+  expect_file "$prefix/share/compass/builtin-icons/question-mark-circle.svg"
+  expect_file "$prefix/lib/systemd/user/compass.service"
+  expect_file "$prefix/share/compass/compass.schema.json"
   for script in web-search unit-converter epoch-converter generators quick-notes; do
     expect_file "$prefix/share/compass/scripts/$script/script.toml"
     expect_file "$prefix/share/compass/scripts/$script/main.rhai"
   done
   if [ "${REQUIRE_RUNTIME:-0}" = 1 ]; then
-    expect_file "$prefix/share/vicinae/extension-runtime.js"
+    expect_file "$prefix/share/compass/extension-runtime.js"
   fi
   if command -v desktop-file-validate >/dev/null 2>&1; then
-    if desktop-file-validate "$prefix/share/applications/com.vicinae.Vicinae.desktop"; then
+    if desktop-file-validate "$prefix/share/applications/org.tunaos.compass.desktop"; then
       pass "desktop-file-validate"
     else
       fail "the desktop file does not validate"
@@ -116,16 +117,16 @@ socket="${socket:-$work/ipc.sock}"
 rm -f "$socket"
 
 # --- 2. version --------------------------------------------------------------
-if version="$("${vicinae[@]}" --version)" && [[ "$version" == vicinae\ * ]]; then
+if version="$("${compass[@]}" --version)" && [[ "$version" == compass\ * ]]; then
   pass "--version: $version"
 else
   fail "--version did not print a version: ${version:-<nothing>}"
 fi
 
 # --- 3. schema ---------------------------------------------------------------
-if "${vicinae[@]}" config schema > "$work/schema.json" \
-  && cmp -s "$work/schema.json" "$repo_root/packaging/schema/vicinae.schema.json"; then
-  pass "config schema matches packaging/schema/vicinae.schema.json"
+if "${compass[@]}" config schema > "$work/schema.json" \
+  && cmp -s "$work/schema.json" "$repo_root/packaging/schema/compass.schema.json"; then
+  pass "config schema matches packaging/schema/compass.schema.json"
 else
   fail "config schema differs from the published schema"
 fi
@@ -140,14 +141,14 @@ print(checks.get(sys.argv[2], "absent"))
 PY
 }
 
-if "${vicinae[@]}" --socket "$socket" doctor --json > "$work/doctor.json" \
+if "${compass[@]}" --socket "$socket" doctor --json > "$work/doctor.json" \
   && [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["checks"]))' "$work/doctor.json")" -gt 0 ]; then
   pass "doctor --json produced $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["checks"]))' "$work/doctor.json") checks"
 else
   fail "doctor --json did not produce a report"
 fi
 
-if "${vicinae[@]}" --socket "$socket" doctor --check-only > "$work/check-only.txt"; then
+if "${compass[@]}" --socket "$socket" doctor --check-only > "$work/check-only.txt"; then
   fail "doctor --check-only passed with no display, bus or portal; it must detect absence"
 else
   pass "doctor --check-only detects the missing session (exit $?)"
@@ -163,7 +164,7 @@ if [ "$keep_env" = 0 ]; then
 fi
 
 # --- 5. engine ---------------------------------------------------------------
-"${vicinae[@]}" --socket "$socket" serve --no-hotkey > "$work/engine.log" 2>&1 &
+"${compass[@]}" --socket "$socket" serve --no-hotkey > "$work/engine.log" 2>&1 &
 engine_pid=$!
 
 # Bounded by time rather than attempts: one attempt through `flatpak run` or
@@ -171,7 +172,7 @@ engine_pid=$!
 answered=0
 deadline=$((SECONDS + 60))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if "${vicinae[@]}" --socket "$socket" ping > "$work/ping.txt" 2>&1; then
+  if "${compass[@]}" --socket "$socket" ping > "$work/ping.txt" 2>&1; then
     answered=1
     break
   fi
@@ -182,13 +183,13 @@ while [ "$SECONDS" -lt "$deadline" ]; do
 done
 if [ "$answered" = 1 ]; then
   pass "ping: $(cat "$work/ping.txt")"
-  "${vicinae[@]}" --socket "$socket" doctor --json > "$work/doctor-live.json" || true
+  "${compass[@]}" --socket "$socket" doctor --json > "$work/doctor-live.json" || true
   if [ "$(doctor_status "$work/doctor-live.json" ipc.socket)" = ok ]; then
     pass "doctor sees the running engine"
   else
     fail "doctor does not see the running engine on $socket"
   fi
-  if "${vicinae[@]}" --socket "$socket" shutdown > /dev/null && wait "$engine_pid"; then
+  if "${compass[@]}" --socket "$socket" shutdown > /dev/null && wait "$engine_pid"; then
     pass "shutdown stopped the engine"
   else
     fail "shutdown did not stop the engine cleanly"

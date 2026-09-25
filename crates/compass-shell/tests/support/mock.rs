@@ -1,7 +1,7 @@
 //! A mock GNOME Shell serving the versioned Compass contract.
 //!
 //! This is Suite 3a from `PLAN.md` §8.4: a fake
-//! `org.gnome.Shell.Extensions.Vicinae.{Windows,Clipboard}` on a private bus,
+//! `org.tunaos.compass.Shell.{Windows,Clipboard}` on a private bus,
 //! with no display server involved. `zbus` serves as well as it consumes, so
 //! the mock implements the very interfaces the client's proxies were generated
 //! from — if the two drift, the tests stop compiling or stop passing.
@@ -158,7 +158,7 @@ pub struct WindowsService {
     pub state: SharedState,
 }
 
-#[interface(name = "org.gnome.Shell.Extensions.Vicinae.Windows")]
+#[interface(name = "org.tunaos.compass.Shell.Windows")]
 impl WindowsService {
     #[zbus(property)]
     fn version(&self) -> u32 {
@@ -226,7 +226,7 @@ pub struct ClipboardService {
     pub state: SharedState,
 }
 
-#[interface(name = "org.gnome.Shell.Extensions.Vicinae.Clipboard")]
+#[interface(name = "org.tunaos.compass.Shell.Clipboard")]
 impl ClipboardService {
     #[zbus(property)]
     fn version(&self) -> u32 {
@@ -389,7 +389,7 @@ impl MockShell {
 /// unversioned reply shape: a single JSON string instead of `aa{sv}`.
 pub struct WrongSignatureWindows;
 
-#[interface(name = "org.gnome.Shell.Extensions.Vicinae.Windows")]
+#[interface(name = "org.tunaos.compass.Shell.Windows")]
 impl WrongSignatureWindows {
     #[zbus(property)]
     fn version(&self) -> u32 {

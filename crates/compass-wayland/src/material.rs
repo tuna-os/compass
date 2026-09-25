@@ -15,7 +15,7 @@
 //! `iced_layershell`), which the toolkits expose only as raw pointers; this
 //! module takes the surface as a safe proxy, and `compass-wayland-foreign`
 //! (the workspace's `unsafe` exception for it, ADR-0019) makes that proxy and
-//! a connection over the toolkit's display for the `vicinae` binary
+//! a connection over the toolkit's display for the `compass` binary
 //! (`PARITY.md`, "The window-material pass").
 //!
 //! The toolkit destroys the launcher's surface each time it hides. Setting a

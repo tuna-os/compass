@@ -321,7 +321,7 @@ fn the_evdev_offset_is_eight() {
 fn the_device_announces_itself_the_way_the_cpp_does() {
     // A person looking for the device in /proc/bus/input/devices, or a
     // compositor rule matching on it, needs these to be unchanged.
-    assert_eq!(device::NAME, "vicinae-snippet-virtual-keyboard");
+    assert_eq!(device::NAME, "compass-snippet-virtual-keyboard");
     assert_eq!(device::BUSTYPE, 0x06);
     assert_eq!(device::VENDOR, 0x1234);
     assert_eq!(device::PRODUCT, 0x5678);

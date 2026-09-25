@@ -13,7 +13,7 @@ use compass_shell::contract::{CLIPBOARD_XML, WINDOWS_XML, window_key, workspace_
 
 fn extension_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../extensions/gnome-shell/compass@tuna-os.github.io")
+        .join("../../extensions/gnome-shell/compass@tunaos.org")
 }
 
 fn read(relative: &str) -> String {
@@ -40,11 +40,11 @@ fn names(xml: &str, tag: &str) -> Vec<String> {
 #[test]
 fn the_extension_ships_the_contract_files_unchanged() {
     assert_eq!(
-        read("dbus/org.gnome.Shell.Extensions.Vicinae.Windows.xml"),
+        read("dbus/org.tunaos.compass.Shell.Windows.xml"),
         WINDOWS_XML
     );
     assert_eq!(
-        read("dbus/org.gnome.Shell.Extensions.Vicinae.Clipboard.xml"),
+        read("dbus/org.tunaos.compass.Shell.Clipboard.xml"),
         CLIPBOARD_XML
     );
 }
@@ -151,7 +151,7 @@ fn the_vm_tier_asks_for_the_workspaces() {
     )
     .expect("checks.sh");
     assert!(
-        checks.contains("org.gnome.Shell.Extensions.Vicinae.Windows.ListWorkspaces"),
+        checks.contains("org.tunaos.compass.Shell.Windows.ListWorkspaces"),
         "checks.sh shell-extension must call ListWorkspaces on the real Shell"
     );
 }
@@ -174,7 +174,7 @@ fn the_flatpak_may_talk_to_the_bus_name_the_contract_lives_on() {
     // for the interface name (which no process owns) lets nothing through.
     let manifest = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../packaging/flatpak/com.vicinae.Vicinae.yaml"),
+            .join("../../packaging/flatpak/org.tunaos.compass.yaml"),
     )
     .expect("the Flatpak manifest");
     let grant = format!("- --talk-name={}", compass_shell::SHELL_SERVICE);

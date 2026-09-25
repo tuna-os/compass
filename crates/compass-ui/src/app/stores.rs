@@ -59,7 +59,7 @@ impl<'a> iced::widget::markdown::Viewer<'a, Message> for StoreMarkdown<'a> {
 }
 
 impl LauncherApp {
-    /// Opens the detail page a deeplink names (`vicinae://extensions/<author>/<name>`,
+    /// Opens the detail page a deeplink names (`compass://extensions/<author>/<name>`,
     /// or the Raycast store's for `raycast://`), as the C++ pushes a detail
     /// host over the root.
     pub(super) fn open_deeplink(&mut self, url: &str) -> Task<Message> {

@@ -58,7 +58,7 @@ pub mod device {
     /// The device version.
     pub const VERSION: u16 = 1;
     /// The name the device appears under in `/proc/bus/input/devices`.
-    pub const NAME: &str = "vicinae-snippet-virtual-keyboard";
+    pub const NAME: &str = "compass-snippet-virtual-keyboard";
 }
 
 /// The modifiers the keyboard knows about.
@@ -69,7 +69,7 @@ pub mod device {
 /// `Alt`, `Logo` and `Altgr` are declared, can be passed, and are silently
 /// ignored — a caller asking for Alt+F gets a bare F. That is reproduced, and
 /// pinned by a test, because a port that quietly made Alt work would send a
-/// keystroke Vicinae does not and there is no way for the caller to tell which
+/// keystroke the C++ engine does not and there is no way for the caller to tell which
 /// build it is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers(u8);

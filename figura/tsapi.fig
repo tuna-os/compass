@@ -355,3 +355,31 @@ service BrowserExtension {
 service EventCore {
   event handlerActivated(id: string, args: any[]);
 };
+
+// HostCommand - a program the engine runs on the host for an extension,
+// outside the extension's sandbox, once the person has allowed it. Only the
+// programs the engine brokers (Homebrew's `brew`, and what
+// extensions/raycast-linux-overrides.json names per extension) are taken; the
+// engine resolves the program itself, so `program` is a bare name, not a path.
+
+struct HostCommandEnv {
+  name: string;
+  value: string;
+};
+
+struct HostCommandRequest {
+  program: string;
+  args: string[];
+  input?: string;
+  env: HostCommandEnv[];
+};
+
+struct HostCommandResult {
+  exitCode: int;
+  stdout: string;
+  stderr: string;
+};
+
+service HostCommand {
+  fn run(request: HostCommandRequest) => HostCommandResult;
+};

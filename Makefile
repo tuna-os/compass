@@ -363,7 +363,7 @@ test-t3: ## Ladder t3: real GNOME in a VM — runs in CI, not locally
 	@echo "seconds and a minute and a half; this is half an hour."
 
 
-FLATPAK_MANIFEST := packaging/flatpak/com.vicinae.Vicinae.yaml
+FLATPAK_MANIFEST := packaging/flatpak/org.tunaos.compass.yaml
 
 # Regenerate the offline dependency manifest Flathub builds require. Needs
 # flatpak-cargo-generator.py from flatpak/flatpak-builder-tools on PATH.
@@ -376,5 +376,5 @@ flatpak-rust:
 .PHONY: flatpak-rust
 
 flatpak-run: flatpak-rust
-	flatpak run com.vicinae.Vicinae -- doctor --check-only
+	flatpak run org.tunaos.compass -- doctor --check-only
 .PHONY: flatpak-run

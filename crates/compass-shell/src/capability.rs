@@ -107,7 +107,7 @@ impl ShellCapabilities {
 
     /// Product features that are unusable in this state.
     ///
-    /// This is the list `vicinae doctor` reports (PLAN.md 3.5.4).
+    /// This is the list `compass doctor` reports (PLAN.md 3.5.4).
     pub fn degraded(self) -> Vec<DegradedFeature> {
         let mut out = Vec::new();
         if !self.windows.is_available() {
@@ -156,7 +156,7 @@ impl DegradedFeature {
     }
 
     /// One-line explanation of what the user actually loses, phrased for
-    /// `vicinae doctor`.
+    /// `compass doctor`.
     pub fn explanation(self) -> &'static str {
         match self {
             Self::WindowSwitching => {

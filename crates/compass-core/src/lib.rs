@@ -6,7 +6,7 @@
 //! * [`apps`] — scan the XDG application directories and turn `.desktop` files into
 //!   [`AppItem`]s that [`compass_search`] can rank.
 //! * [`frecency`] — remember what was launched and when, so ranking can prefer it.
-//! * [`config`] — the `vicinae.json` user configuration.
+//! * [`config`] — the `compass.json` user configuration.
 //!
 //! ```
 //! use compass_core::{AppIndex, Config};
@@ -90,6 +90,7 @@ pub mod qt_date;
 pub mod query_policy;
 pub mod query_ranking;
 pub mod rank;
+pub mod raycast_overrides;
 pub mod raycast_store;
 pub mod raycast_store_view;
 pub mod rhai_scripts;

@@ -438,7 +438,7 @@ fn a_chosen_terminal_is_written_to_an_empty_file() {
     compass_xdg::terminal::set_default_terminal(&path, "test", None).expect("written");
     assert_eq!(
         std::fs::read_to_string(&path).expect("read back"),
-        "# Configured by the Vicinae launcher\ntest\n"
+        "# Configured by the Compass launcher\ntest\n"
     );
 }
 
@@ -446,7 +446,7 @@ fn a_chosen_terminal_is_written_to_an_empty_file() {
 fn a_chosen_terminal_goes_above_every_existing_entry() {
     assert_eq!(
         compass_xdg::terminal::with_default_terminal("org.someone.something\n", "test", None),
-        "# Configured by the Vicinae launcher\ntest\norg.someone.something\n"
+        "# Configured by the Compass launcher\ntest\norg.someone.something\n"
     );
 }
 
@@ -454,13 +454,25 @@ fn a_chosen_terminal_goes_above_every_existing_entry() {
 fn choosing_again_replaces_the_previous_choice_and_keeps_comments() {
     assert_eq!(
         compass_xdg::terminal::with_default_terminal(
-            "# Configured by the Vicinae launcher\n# This is some comment\n\
+            "# Configured by the Compass launcher\n# This is some comment\n\
              org.someone.something\norg.somethingelse.unrelated\n",
             "test",
             None
         ),
-        "# Configured by the Vicinae launcher\n# This is some comment\n\
+        "# Configured by the Compass launcher\n# This is some comment\n\
          test\norg.somethingelse.unrelated\n"
+    );
+}
+
+#[test]
+fn the_pre_rename_header_is_recognised_and_rewritten() {
+    assert_eq!(
+        compass_xdg::terminal::with_default_terminal(
+            "# Configured by the Vicinae launcher\norg.someone.something\nother\n",
+            "test",
+            None
+        ),
+        "# Configured by the Compass launcher\ntest\nother\n"
     );
 }
 

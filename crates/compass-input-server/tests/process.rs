@@ -1,4 +1,4 @@
-//! The built `vicinae-input-server`, driven over its stdin and stdout the way
+//! The built `compass-input-server`, driven over its stdin and stdout the way
 //! the engine drives it. No call here injects anything.
 
 use std::io::{Read, Write};
@@ -11,7 +11,7 @@ use serde_json::json;
 
 #[test]
 fn the_server_answers_calls_and_exits_when_stdin_closes() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_vicinae-input-server"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_compass-input-server"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

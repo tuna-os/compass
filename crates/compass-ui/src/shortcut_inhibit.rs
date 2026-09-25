@@ -1,7 +1,7 @@
 //! The compositor's shortcuts while a shortcut recorder records
 //! (`ShortcutInhibitManager`, `ShortcutInhibitorAttached`).
 //!
-//! Under the layer-shell presentation the `vicinae` binary makes the
+//! Under the layer-shell presentation the `compass` binary makes the
 //! launcher's Wayland connection, hands it to `iced_layershell`, and binds an
 //! inhibitor on it ([`compass_platform::ShortcutInhibitor`]), so the inhibitor
 //! sees the launcher's surfaces take and lose the keyboard on the same

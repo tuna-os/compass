@@ -1281,7 +1281,7 @@ fn an_alias_and_the_switch_are_written_under_the_items_provider_and_merged() {
     assert!(!apply_edit(&mut config, "no-colon", &RootEdit::Disable));
     assert_eq!(
         deeplink("applications:org.gnome.Nautilus").as_deref(),
-        Some("vicinae://launch/applications/org.gnome.Nautilus")
+        Some("compass://launch/applications/org.gnome.Nautilus")
     );
 }
 
@@ -1307,7 +1307,7 @@ fn a_launch_link_names_a_provider_or_an_item_with_its_text() {
 
     // A provider id with a slash in it is still the provider; one more
     // segment is its item, split at the last slash.
-    let link = parse_launch_link("vicinae://launch/@zo%C3%AB/notes").unwrap();
+    let link = parse_launch_link("compass://launch/@zo%C3%AB/notes").unwrap();
     assert_eq!(
         link.target(is_provider),
         Ok(LaunchTarget::Provider("@zoë/notes".into()))
@@ -1327,6 +1327,11 @@ fn a_launch_link_names_a_provider_or_an_item_with_its_text() {
     );
 
     assert_eq!(parse_launch_link("vicinae://extensions/a/b"), None);
+    assert_eq!(
+        parse_launch_link("compass://launch/applications"),
+        parse_launch_link("vicinae://launch/applications"),
+        "the upstream scheme is still accepted"
+    );
     assert_eq!(parse_launch_link("https://launch/applications"), None);
     assert_eq!(parse_launch_link("not a url"), None);
 }

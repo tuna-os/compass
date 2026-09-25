@@ -74,7 +74,7 @@ on:
       - 'crates/compass-search/**'
       - 'crates/compass-core/src/apps.rs'
       - 'crates/compass-core/src/root_items.rs'
-      - 'crates/vicinae/src/serve.rs'
+      - 'crates/compass/src/serve.rs'
       - 'crates/compass-testkit/**'
   workflow_dispatch:
 
@@ -781,7 +781,7 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q libxkbcommon-dev
 
       - name: Build the Rust engine and the harness
-        run: cargo build --locked --release -p vicinae -p compass-testkit --bin vicinae --bin parity
+        run: cargo build --locked --release -p compass -p compass-testkit --bin compass --bin parity
 
       - name: Both engines, one corpus
         run: |
@@ -797,7 +797,7 @@ jobs:
               # A binary that cannot load is not a parity finding. Both sides
               # are checked, because the Rust one crossed a distribution
               # boundary to get here and the C++ one needs its Qt runtime.
-              for engine in /usr/bin/vicinae /src/target/release/vicinae; do
+              for engine in /usr/bin/vicinae /src/target/release/compass; do
                 echo "--- $engine ---"
                 "$engine" --version 2>&1 | head -2 || "$engine" version 2>&1 | head -2 || true
                 if ldd "$engine" 2>&1 | grep "not found"; then
@@ -829,7 +829,7 @@ jobs:
                 --gate-top-result 4 \
                 --cpp-provider applications \
                 --cpp /usr/bin/vicinae \
-                --rust /src/target/release/vicinae \
+                --rust /src/target/release/compass \
                 --corpus /src/crates/compass-testkit/corpus/desktop-entries \
                 --output /src/parity-out 2>&1 | tee /src/parity-run.log
             '

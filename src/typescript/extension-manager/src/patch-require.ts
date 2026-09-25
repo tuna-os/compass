@@ -25,7 +25,10 @@ const injectJsxGlobals = () => {
 	(globalThis as any)._jsxFragment = Fragment;
 };
 
-export const patchRequire = (env: EnvironmentType) => {
+export const patchRequire = (
+	env: EnvironmentType,
+	shim: Record<string, () => unknown> = {},
+) => {
 	// we do not want NODE_ENV to be set in the extension worker as it will get inherited by
 	// child processes which may yield to a lot of unexpected behaviour.
 	// We tried many things: the method below has been the most reliable so far.
@@ -52,6 +55,7 @@ export const patchRequire = (env: EnvironmentType) => {
 	});
 
 	const requireOverrides: Record<string, any> = {
+		...shim,
 		react: () => react,
 		"react/jsx-runtime": () => jsxRuntime,
 		"react-reconciler": () => reconciler,

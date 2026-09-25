@@ -574,7 +574,7 @@ impl LauncherApp {
         }
     }
 
-    /// A `vicinae://launch/...` deeplink the engine handed over: a
+    /// A `compass://launch/...` (or `vicinae://`) deeplink the engine handed over: a
     /// provider's search view, or an item launched with the link's text.
     pub(super) fn open_launch_link(
         &mut self,

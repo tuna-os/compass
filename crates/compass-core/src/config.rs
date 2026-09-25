@@ -1,4 +1,4 @@
-//! The `vicinae.json` user configuration.
+//! The `compass.json` user configuration.
 //!
 //! The schema is the one in `docs/rust-engine/PLAN.md` §5.2:
 //!
@@ -22,7 +22,7 @@
 //! ```
 //!
 //! The JSON Schema for this file is generated from these types ([`json_schema`]) and published at
-//! `packaging/schema/vicinae.schema.json`, which [`SCHEMA_URL`] points at. The C++ engine's
+//! `packaging/schema/compass.schema.json`, which [`SCHEMA_URL`] points at. The C++ engine's
 //! `settings.json` is migrated into this shape by [`crate::config_migration`].
 //!
 //! Two properties drive the design:
@@ -139,14 +139,14 @@ pub const DEFAULT_CLOCK_INTERVAL: u64 = 60;
 pub const DEFAULT_CLOCK_FORMAT: &str = "hh:mm";
 
 /// Path of the config file relative to `$XDG_CONFIG_HOME`.
-pub const CONFIG_RELATIVE_PATH: &str = "vicinae/vicinae.json";
+pub const CONFIG_RELATIVE_PATH: &str = "compass/compass.json";
 
-/// Where the published JSON Schema for `vicinae.json` lives, as a `$schema` value.
+/// Where the published JSON Schema for `compass.json` lives, as a `$schema` value.
 ///
-/// The file behind it is `packaging/schema/vicinae.schema.json`, generated from these types by
+/// The file behind it is `packaging/schema/compass.schema.json`, generated from these types by
 /// [`json_schema`] and held to them by the `config_schema` test.
 pub const SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/tuna-os/compass/main/packaging/schema/vicinae.schema.json";
+    "https://raw.githubusercontent.com/tuna-os/compass/main/packaging/schema/compass.schema.json";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 /// Per-entrypoint root search settings, keyed by entrypoint id under its provider.
@@ -203,7 +203,7 @@ pub enum ConfigError {
     /// The file is not valid JSON, or is JSON of the wrong shape.
     ///
     /// The message names the problem and where it is, e.g.
-    /// `invalid configuration at /home/u/.config/vicinae/vicinae.json: line 3 column 18: expected
+    /// `invalid configuration at /home/u/.config/compass/compass.json: line 3 column 18: expected
     /// value`.
     #[error("invalid configuration at {path}: line {line} column {column}: {message}")]
     Parse {
@@ -682,7 +682,7 @@ impl ExtensionsConfig {
 }
 
 /// The `input_server` section: the keyboard helper behind snippet keyword
-/// expansion (`vicinae-input-server`).
+/// expansion (`compass-input-server`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct InputServerConfig {
     /// Whether the helper runs. Off, snippet keywords do not expand; on, it
@@ -799,11 +799,11 @@ impl GlobalShortcutsConfig {
     }
 }
 
-/// A parsed `vicinae.json`.
+/// A parsed `compass.json`.
 ///
 /// [`Config::default`] is the fully-defaulted configuration and is what an empty file produces.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "vicinae.json", extend("$id" = SCHEMA_URL))]
+#[schemars(title = "compass.json", extend("$id" = SCHEMA_URL))]
 pub struct Config {
     /// The JSON Schema this file follows, for editors. Ignored by the launcher.
     #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
@@ -1142,7 +1142,7 @@ impl Config {
     }
 
     /// Sets `font.normal.family`, keeping the rest of the `font` object (its
-    /// `rendering` and `normal.size`), as "Set as vicinae font" merges it.
+    /// `rendering` and `normal.size`), as "Set as Compass font" merges it.
     pub fn set_font_family(&mut self, family: &str) -> &mut Self {
         if !matches!(self.unknown.get("font"), Some(Value::Object(_))) {
             self.unknown
@@ -1213,7 +1213,7 @@ impl Config {
 
     /// Loads the configuration from [`default_config_path`].
     ///
-    /// When there is no `vicinae.json` yet but the C++ engine's `settings.json` sits beside it,
+    /// When there is no `compass.json` yet but the C++ engine's `settings.json` sits beside it,
     /// that file is migrated in memory, so someone switching engines keeps their settings before
     /// anything has been written. See [`Config::load_or_migrate`].
     ///
@@ -1232,7 +1232,7 @@ impl Config {
     /// Loads `path`, or, when it does not exist, migrates `legacy` (the C++ `settings.json`).
     ///
     /// Nothing is written: the migrated configuration is only materialised when something saves
-    /// it, and `vicinae config migrate --write` does that on purpose. A legacy file that cannot be
+    /// it, and `compass config migrate --write` does that on purpose. A legacy file that cannot be
     /// migrated is logged and the defaults are used, since it is not this engine's file to reject.
     ///
     /// # Errors
@@ -1249,7 +1249,7 @@ impl Config {
                     from = %legacy.display(),
                     mapped = migration.mapped.len(),
                     skipped = migration.skipped.len(),
-                    "no vicinae.json; using the settings migrated from the C++ engine"
+                    "no compass.json; using the settings migrated from the C++ engine"
                 );
                 Ok(migration.config)
             }
@@ -1382,11 +1382,11 @@ fn parse_message(err: &serde_json::Error) -> String {
     }
 }
 
-/// The JSON Schema for `vicinae.json`, generated from [`Config`].
+/// The JSON Schema for `compass.json`, generated from [`Config`].
 ///
-/// This is what `packaging/schema/vicinae.schema.json` holds. Regenerate the committed copy with
+/// This is what `packaging/schema/compass.schema.json` holds. Regenerate the committed copy with
 /// `COMPASS_UPDATE_SCHEMA=1 cargo test -p compass-core --test config_schema`, or print it with
-/// `vicinae config schema`.
+/// `compass config schema`.
 #[must_use]
 pub fn json_schema() -> Value {
     schemars::schema_for!(Config).to_value()
@@ -1400,7 +1400,7 @@ pub fn json_schema_pretty() -> String {
     out
 }
 
-/// The configuration every unset key amounts to, as `vicinae config default`
+/// The configuration every unset key amounts to, as `compass config default`
 /// prints it: each `default` the [`json_schema`] documents, nested as the
 /// file nests it, plus the fallbacks and the `$schema` line.
 ///
@@ -1440,11 +1440,11 @@ pub fn default_document() -> Value {
     Value::Object(document)
 }
 
-/// Overrides where `vicinae.json` is read and written, as the C++ server's
-/// `--config`; `vicinae server --config` sets it for the engine it starts.
+/// Overrides where `compass.json` is read and written, as the C++ server's
+/// `--config`; `compass server --config` sets it for the engine it starts.
 pub const CONFIG_PATH_ENV: &str = "COMPASS_CONFIG";
 
-/// `$XDG_CONFIG_HOME/vicinae/vicinae.json`, falling back to `~/.config`; or
+/// `$XDG_CONFIG_HOME/compass/compass.json`, falling back to `~/.config`; or
 /// [`CONFIG_PATH_ENV`] when that is set.
 ///
 /// # Errors

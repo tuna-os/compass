@@ -54,7 +54,7 @@ pub enum Error {
     },
 
     /// Something is already listening on the socket path.
-    #[error("vicinae is already running (socket {} is live)", .path.display())]
+    #[error("Compass is already running (socket {} is live)", .path.display())]
     AlreadyRunning {
         /// The socket path that answered a connection attempt.
         path: PathBuf,

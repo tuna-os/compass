@@ -27,7 +27,7 @@ pub struct ViewMemory {
     values: BTreeMap<String, String>,
 }
 
-/// `$XDG_STATE_HOME/vicinae/<FILE_NAME>`, falling back to
+/// `$XDG_STATE_HOME/compass/<FILE_NAME>`, falling back to
 /// `~/.local/state`.
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
@@ -35,7 +35,7 @@ pub fn default_path() -> Option<PathBuf> {
         Some(value) if !value.is_empty() => PathBuf::from(value),
         _ => compass_core::xdg_dirs::home_dir()?.join(".local/state"),
     };
-    Some(state.join("vicinae").join(FILE_NAME))
+    Some(state.join("compass").join(FILE_NAME))
 }
 
 impl ViewMemory {
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn a_value_survives_a_new_process() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("state/vicinae").join(FILE_NAME);
+        let path = dir.path().join("state/compass").join(FILE_NAME);
         let mut memory = ViewMemory::load(Some(path.clone()));
         assert_eq!(memory.get(FONT_CATEGORY), None);
         memory.set(FONT_CATEGORY, "Thai");

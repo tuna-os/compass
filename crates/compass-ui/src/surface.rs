@@ -140,8 +140,9 @@ pub(crate) mod layer {
     use crate::message::Message;
 
     /// The layer surface's namespace, which compositors match rules on
-    /// (`layer_effects "vicinae" …` in Hyprland, `layer-rule` in niri).
-    pub const NAMESPACE: &str = "vicinae";
+    /// (`layer_effects "compass" …` in Hyprland, `layer-rule` in niri). The
+    /// C++ engine's is `vicinae`.
+    pub const NAMESPACE: &str = "compass";
 
     /// The launcher as a layer surface: the window's own size, anchored to
     /// nothing so the compositor centres it, and taking the keyboard
@@ -258,7 +259,7 @@ mod tests {
         assert_eq!(settings.layer, Layer::Top);
         assert_eq!(settings.keyboard_interactivity, KeyboardInteractivity::None);
         assert!(settings.events_transparent);
-        assert_eq!(settings.namespace.as_deref(), Some("vicinae-hud"));
+        assert_eq!(settings.namespace.as_deref(), Some("compass-hud"));
     }
 
     #[test]

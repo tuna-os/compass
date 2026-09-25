@@ -189,7 +189,7 @@ pub const CATEGORY_FILTER_KEYS: &[&str] = &[
     "Applications",
 ];
 
-/// The names `vicinae fs query --category` takes and prints, in the C++
+/// The names `compass fs query --category` takes and prints, in the C++
 /// CLI's order (`fileCategoryToString`), each with the filter key above
 /// that selects it.
 pub const CLI_CATEGORY_NAMES: [(&str, &str); 8] = [
@@ -317,7 +317,7 @@ pub const INDEXED_QUERY_LIMIT: i32 = 100;
 pub const QUERY_DEBOUNCE_MS: u64 = 100;
 
 /// The provider id the file extension's preferences live under in
-/// `vicinae.json`: `providers.files.preferences`.
+/// `compass.json`: `providers.files.preferences`.
 pub const PREFERENCES_PROVIDER_ID: &str = "files";
 
 /// The file extension's Linux preferences, read the way

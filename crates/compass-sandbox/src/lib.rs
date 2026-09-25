@@ -2,7 +2,7 @@
 //!
 //! Phase 4 confines each worker with **Landlock** rather than with the spec's
 //! read-only bind mounts: Landlock needs no privilege and no mount namespace,
-//! which is what makes it work inside a Flatpak. `vicinae spike sandbox`
+//! which is what makes it work inside a Flatpak. `compass spike sandbox`
 //! established that it does work, nested, and this is that finding turned into
 //! something a host can use.
 //!

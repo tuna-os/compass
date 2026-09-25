@@ -53,9 +53,9 @@ def prepare():
     env = dict(os.environ, PATH="/root/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin:" + os.environ["PATH"])
     with (RESULTS / "build.log").open("w") as log:
         print("Building release Rust binaries; progress is in build.log", flush=True)
-        checked(["cargo", "build", "--release", "--locked", "-p", "vicinae", "-p", "compass-testkit",
-                 "--bin", "vicinae", "--bin", "head-to-head"], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
-    for binary in ("vicinae", "head-to-head"):
+        checked(["cargo", "build", "--release", "--locked", "-p", "compass", "-p", "compass-testkit",
+                 "--bin", "compass", "--bin", "head-to-head"], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
+    for binary in ("compass", "head-to-head"):
         shutil.copy2(CACHE / "target/release" / binary, RESULTS / binary)
     (RESULTS / "toolchain.txt").write_text(subprocess.check_output(["rustc", "--version", "--verbose"], env=env, text=True))
     (RESULTS / "packages.txt").write_text(subprocess.check_output(["rpm", "-qa"], text=True))
@@ -189,9 +189,9 @@ def measure():
     config = RESULTS / "upstream-config.json"
     config.write_text(json.dumps({"telemetry": {"system_info": False}}))
     cpp = RESULTS / "squashfs-root/AppRun"
-    rust = RESULTS / "vicinae"
+    rust = RESULTS / "compass"
     cpp_socket = pathlib.Path(cpp_env["XDG_RUNTIME_DIR"]) / "vicinae/vicinae.sock"
-    rust_socket = pathlib.Path(rust_env["XDG_RUNTIME_DIR"]) / "vicinae/ipc.sock"
+    rust_socket = pathlib.Path(rust_env["XDG_RUNTIME_DIR"]) / "compass/ipc.sock"
     with processes() as (children, start):
         start("xvfb", ["Xvfb", ":99", "-screen", "0", "1280x800x24", "-nolisten", "tcp"], os.environ)
         wait_ready(lambda: subprocess.run(["xdotool", "getdisplaygeometry"], env=cpp_env,
@@ -203,7 +203,7 @@ def measure():
                    stderr=subprocess.DEVNULL, timeout=2, check=False).returncode == 0, children)
         rust_ui = start("rust-ui", [str(rust), "ui"], rust_env)
         windows = {"cpp": wait_ready(lambda: visible(cpp_pid, cpp_env, "Vicinae Launcher"), children),
-                   "rust": wait_ready(lambda: visible(rust_ui.pid, rust_env, "Vicinae"), children)}
+                   "rust": wait_ready(lambda: visible(rust_ui.pid, rust_env, "Compass"), children)}
         (RESULTS / "windows.json").write_text(json.dumps(windows, indent=2))
         workload = f"Xvfb X11 1280x800 software rendering; both windows mapped; onboarding completed; no TS extensions; network disabled; corpus={len(entries)} sha256={corpus_hash.hexdigest()}; unequal builtin service coverage; not a full memory-efficiency comparison"
         bench_config = {"cpp": {"socket": str(cpp_socket), "revision": f"{baseline['repository']}@{baseline['commit']} {baseline['tag']} unmodified",

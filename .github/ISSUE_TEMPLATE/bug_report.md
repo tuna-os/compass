@@ -8,13 +8,13 @@ assignees: ''
 ---
 
 > [!WARNING]  
-> If you are able to run Vicinae on your system, you should use the "Report bug" command to create a new issue as it will auto fill version and system information for you (since v0.6.1).
+> If you are able to run Compass on your system, you should use the "Report bug" command to create a new issue as it will auto fill version and system information for you.
 > You can automatically run it using:
-> ```vicinae vicinae://launch/core/report-bug```
+> ```compass deeplink compass://launch/core/report-bug```
 
 ## **System information**
 
-The system you are currently running Vicinae on. This is auto-filled when using the Vicinae command.
+The system you are currently running Compass on. This is auto-filled when using the "Report bug" command.
 
 ## **Describe the bug**
 A clear and concise description of what the bug is.

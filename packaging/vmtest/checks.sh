@@ -13,7 +13,7 @@
 # even after one fails, so the report is the whole picture.
 set -euo pipefail
 
-APP=com.vicinae.Vicinae
+APP=org.tunaos.compass
 INSTALLATION=compass
 SESSION_USER=compass
 REPORT=/tmp/compass-doctor.json
@@ -76,11 +76,11 @@ exe_running() {
 # XDG_RUNTIME_DIR wrong means talking to a socket that is not the session's --
 # which presents as "no engine running" rather than as a mistake here.
 #
-# THE ARGUMENTS ARE THE CLI'S OWN SUBCOMMAND, with no `vicinae` in front. The
-# Flatpak's entrypoint IS `vicinae`, so `compass_cli vicinae ping` runs
-# `vicinae vicinae ping` -- rejected by the parser, forever. That cost a
+# THE ARGUMENTS ARE THE CLI'S OWN SUBCOMMAND, with no `compass` in front. The
+# Flatpak's entrypoint IS `compass`, so `compass_cli compass ping` runs
+# `compass compass ping` -- rejected by the parser, forever. That cost a
 # 30-minute VM run, presenting as "the engine never answered a ping" with a
-# perfectly healthy engine sitting there. `crates/vicinae/tests/vmtest_cli.rs`
+# perfectly healthy engine sitting there. `crates/compass/tests/vmtest_cli.rs`
 # now parses these call sites with the real clap definition so the next one
 # fails in seconds instead.
 compass_cli() {
@@ -96,13 +96,13 @@ compass_cli() {
 
 # The launcher's pid, excluding the engine's.
 #
-# BOTH PROCESSES ARE NAMED `vicinae`. Before ADR-0015 there was only ever one,
-# and `pgrep -u "$SESSION_USER" -x vicinae | head -1` was unambiguous. Now
+# BOTH PROCESSES ARE NAMED `compass`. Before ADR-0015 there was only ever one,
+# and `pgrep -u "$SESSION_USER" -x compass | head -1` was unambiguous. Now
 # `serve` runs first, so that pgrep matches the engine -- and matching the
 # engine is not a cosmetic problem:
 #
 #   * `launcher-start`'s waiter would be satisfied the instant it began,
-#     because a `vicinae` process already exists, so it would stop waiting for
+#     because a `compass` process already exists, so it would stop waiting for
 #     the launcher entirely;
 #   * `launcher-diagnose` would report which syscall the *engine* is parked in
 #     while claiming to explain the launcher;
@@ -110,12 +110,12 @@ compass_cli() {
 #
 # So the engine records its pids and everything about the launcher skips them.
 # Matching on the command line instead is the obvious alternative and is worse
-# here: both are `flatpak run … com.vicinae.Vicinae <verb>` and the inner
+# here: both are `flatpak run … org.tunaos.compass <verb>` and the inner
 # process is a grandchild whose argv is not the one written above.
 launcher_pid() {
   local engine="" pid
   [ -f "$ENGINE_PIDS" ] && engine="$(tr '\n' ' ' < "$ENGINE_PIDS")"
-  for pid in $(pgrep -u "$SESSION_USER" -x vicinae 2>/dev/null); do
+  for pid in $(pgrep -u "$SESSION_USER" -x compass 2>/dev/null); do
     case " $engine " in
       *" $pid "*) continue ;;
     esac
@@ -263,7 +263,7 @@ PY
   # doctor-assert's gnome.shell-extension, which runs after this.
   shell-extension)
     u="$(uid)"
-    uuid=compass@tuna-os.github.io
+    uuid=compass@tunaos.org
     as_user() {
       runuser -u "$SESSION_USER" -- env \
         XDG_RUNTIME_DIR="/run/user/$u" \
@@ -273,9 +273,9 @@ PY
     contract_version() {
       as_user gdbus call --session \
         --dest org.gnome.Shell \
-        --object-path /org/gnome/Shell/Extensions/Vicinae/Windows \
+        --object-path /org/tunaos/compass/Shell/Windows \
         --method org.freedesktop.DBus.Properties.Get \
-        org.gnome.Shell.Extensions.Vicinae.Windows Version
+        org.tunaos.compass.Shell.Windows Version
     }
     contract_up() { case "$(contract_version 2>/dev/null)" in *"uint32 4>"*) return 0 ;; esac; return 1; }
 
@@ -293,8 +293,8 @@ PY
 
     if ! windows="$(as_user gdbus call --session \
       --dest org.gnome.Shell \
-      --object-path /org/gnome/Shell/Extensions/Vicinae/Windows \
-      --method org.gnome.Shell.Extensions.Vicinae.Windows.ListWindows 2>&1)"; then
+      --object-path /org/tunaos/compass/Shell/Windows \
+      --method org.tunaos.compass.Shell.Windows.ListWindows 2>&1)"; then
       echo "ListWindows failed: $windows" >&2
       exit 1
     fi
@@ -313,8 +313,8 @@ PY
     # index 0 is a no-op the Shell must still accept, answered with `()`.
     if ! workspaces="$(as_user gdbus call --session \
       --dest org.gnome.Shell \
-      --object-path /org/gnome/Shell/Extensions/Vicinae/Windows \
-      --method org.gnome.Shell.Extensions.Vicinae.Windows.ListWorkspaces 2>&1)"; then
+      --object-path /org/tunaos/compass/Shell/Windows \
+      --method org.tunaos.compass.Shell.Windows.ListWorkspaces 2>&1)"; then
       echo "ListWorkspaces failed: $workspaces" >&2
       exit 1
     fi
@@ -330,8 +330,8 @@ PY
     fi
     if ! switched="$(as_user gdbus call --session \
       --dest org.gnome.Shell \
-      --object-path /org/gnome/Shell/Extensions/Vicinae/Windows \
-      --method org.gnome.Shell.Extensions.Vicinae.Windows.ActivateWorkspace 0 2>&1)"; then
+      --object-path /org/tunaos/compass/Shell/Windows \
+      --method org.tunaos.compass.Shell.Windows.ActivateWorkspace 0 2>&1)"; then
       echo "ActivateWorkspace failed: $switched" >&2
       exit 1
     fi
@@ -826,7 +826,7 @@ $((ready_ms - start_ms)) ms total (llvmpipe, reported not gated — see §8.5)"
   launcher-diagnose)
     pid="$(launcher_pid || true)"
     if [ -z "$pid" ]; then
-      echo "no vicinae process to diagnose"
+      echo "no compass process to diagnose"
       exit 0
     fi
     echo "pid $pid"
@@ -1230,7 +1230,7 @@ PY
   #   * Iced yields that event on `RedrawRequested` -- the compositor asking
   #     for a frame, not a frame reaching the screen. The rendering after it
   #     is unmeasured, and under llvmpipe it is not small.
-  #   * The clock starts inside `vicinae::run`, so dynamic linking is outside
+  #   * The clock starts inside `compass::run`, so dynamic linking is outside
   #     it, and a binary that links wgpu does not link instantly.
   #
   # Both omissions push the figure DOWN, so a reading over 120 ms would be
@@ -1257,7 +1257,7 @@ PY
       printf '  %s\n' "$line" >&2
       exit 1
     fi
-    printf 'cold start: first frame requested %s ms after vicinae::run was entered\n' "$ms"
+    printf 'cold start: first frame requested %s ms after compass::run was entered\n' "$ms"
     printf '  §8.5 names 120 ms to first FRAME. This is a floor on that:\n'
     printf '  it excludes the render after the redraw request, and dynamic\n'
     printf '  linking before the clock starts. Recorded, not gated.\n'
@@ -1415,8 +1415,8 @@ PY
 
   # Start the engine, so the launcher has something to attach to.
   #
-  # ADR-0015 made the launcher window resident and driven: `vicinae ui` connects
-  # to `vicinae serve` and waits to be told to show. So the engine has to be up
+  # ADR-0015 made the launcher window resident and driven: `compass ui` connects
+  # to `compass serve` and waits to be told to show. So the engine has to be up
   # BEFORE launcher-start, or the launcher comes up undriven and every summon
   # below is refused -- correctly, and confusingly.
   #
@@ -1434,7 +1434,7 @@ PY
   # 962x603 before the flag existed.
   #
   # The flag is not a test hook: a user whose compositor binds a key to
-  # `vicinae toggle` should not be asked to grant one they will not use.
+  # `compass toggle` should not be asked to grant one they will not use.
   engine-start)
     u="$(uid)"
     : > "$ENGINE_ERR"
@@ -1475,9 +1475,9 @@ PY
 
     # Recorded before the launcher starts, so `launcher_pid` can tell the two
     # apart. Written even on the failure path below: a half-started engine
-    # still leaves a process named `vicinae` around to be mistaken for the
+    # still leaves a process named `compass` around to be mistaken for the
     # launcher.
-    pgrep -u "$SESSION_USER" -x vicinae > "$ENGINE_PIDS" 2>/dev/null || : > "$ENGINE_PIDS"
+    pgrep -u "$SESSION_USER" -x compass > "$ENGINE_PIDS" 2>/dev/null || : > "$ENGINE_PIDS"
     echo "engine pids: $(tr '\n' ' ' < "$ENGINE_PIDS")"
 
     if [ -f "$ENGINE_DONE" ]; then
@@ -1519,7 +1519,7 @@ PY
   # paint follows it.
   #
   # It is also inflated by a whole process spawn, because the client is
-  # `vicinae toggle` rather than a keypress. On the real path the engine is
+  # `compass toggle` rather than a keypress. On the real path the engine is
   # already running and the portal delivers the activation directly, so this
   # number is an upper bound with a Flatpak launch inside it. Reported, not
   # gated, for the reasons §8.5 gives.

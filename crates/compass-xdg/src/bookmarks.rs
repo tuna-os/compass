@@ -7,7 +7,7 @@
 //!
 //! # Writing
 //!
-//! [`record_access`] is `recordAccess`: read the file, add `vicinae` as an
+//! [`record_access`] is `recordAccess`: read the file, add `compass` as an
 //! application that opened the item (creating the bookmark, or bumping its
 //! count), set its MIME type, and write the whole document back through a
 //! temporary file with owner-only permissions, renamed into place, as GTK
@@ -241,11 +241,12 @@ pub fn recently_used_path() -> Option<PathBuf> {
     crate::xdg_dirs::data_home().map(|home| home.join(RECENTLY_USED_FILE_NAME))
 }
 
-/// The application name Compass records itself under, as the C++ does.
-pub const APP_NAME: &str = "vicinae";
+/// The application name Compass records itself under (the C++ records
+/// `vicinae`).
+pub const APP_NAME: &str = "compass";
 
 /// The `exec` recorded with it.
-pub const APP_EXEC: &str = "'vicinae %u'";
+pub const APP_EXEC: &str = "'compass %u'";
 
 /// A path as a `file://` URI: `toFileUri`'s escaping, which keeps the RFC
 /// 3986 path characters and escapes every other byte as uppercase hex.

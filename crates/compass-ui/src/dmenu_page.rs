@@ -1,4 +1,4 @@
-//! The dmenu view: `vicinae dmenu`'s lines, filtered, and the choice.
+//! The dmenu view: `compass dmenu`'s lines, filtered, and the choice.
 //!
 //! Ports `DMenuSection` (`src/server/src/ui/views/dmenu-model.cpp`): the
 //! entries are stdin's non-empty lines, the filter is the same weighted fuzzy

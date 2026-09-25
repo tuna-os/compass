@@ -7,27 +7,27 @@
 #
 #   1. the launcher appears on screen (a screenshot of the output changes),
 #   2. it is a LAYER SURFACE, not a window: Sway's tree lists every
-#      xdg_toplevel by app_id and must not list com.vicinae.Vicinae,
-#   3. `vicinae toggle` hides it and shows it again, on screen,
+#      xdg_toplevel by app_id and must not list org.tunaos.compass,
+#   3. `compass toggle` hides it and shows it again, on screen,
 #   4. (with wtype) typed text reaches it: a layer surface takes the keyboard.
 #
-# Every gate is proven able to fail by its control: VICINAE_LAYER_SHELL=0
+# Every gate is proven able to fail by its control: COMPASS_LAYER_SHELL=0
 # forces the xdg_toplevel surface, and then gate 2 must fail. A gate that has
 # only ever passed is indistinguishable from one that checks nothing.
 #
-# Usage: scripts/wlroots/launcher-on-sway.sh [path/to/vicinae]
+# Usage: scripts/wlroots/launcher-on-sway.sh [path/to/compass]
 # Needs: sway, grim, swaymsg, python3; wtype for gate 4. Sway renders with
 # pixman (no GPU).
 set -euo pipefail
 
-readonly VICINAE=${1:-target/debug/vicinae}
-readonly APP_ID=com.vicinae.Vicinae
+readonly COMPASS=${1:-target/debug/compass}
+readonly APP_ID=org.tunaos.compass
 readonly WAIT_S=${WAIT_S:-60}
 
 for tool in sway swaymsg grim python3; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 2; }
 done
-[ -x "$VICINAE" ] || { echo "no vicinae binary at $VICINAE (cargo build -p vicinae)" >&2; exit 2; }
+[ -x "$COMPASS" ] || { echo "no compass binary at $COMPASS (cargo build -p compass)" >&2; exit 2; }
 
 # COMPASS_WLROOTS_WORK keeps everything (logs, screenshots) in a known place,
 # for CI to upload; otherwise a temporary directory removed on exit.
@@ -111,11 +111,11 @@ hidden() { [ "$(covered)" = "0.000" ]; }
 
 run_session() { # run_session <label> <expect layer: yes|no>
   local label=$1 expect_layer=$2 socket="$work/$1.sock"
-  RUST_LOG=${RUST_LOG:-info} "$VICINAE" --socket "$socket" serve --no-hotkey \
+  RUST_LOG=${RUST_LOG:-info} "$COMPASS" --socket "$socket" serve --no-hotkey \
     >"$work/$label-engine.log" 2>&1 &
   local engine=$!; pids+=("$engine")
-  wait_for "engine" quiet "$VICINAE" --socket "$socket" ping
-  COMPASS_NO_ONBOARDING=1 RUST_LOG=${RUST_LOG:-info} "$VICINAE" --socket "$socket" ui >"$work/$label-ui.log" 2>&1 &
+  wait_for "engine" quiet "$COMPASS" --socket "$socket" ping
+  COMPASS_NO_ONBOARDING=1 RUST_LOG=${RUST_LOG:-info} "$COMPASS" --socket "$socket" ui >"$work/$label-ui.log" 2>&1 &
   local ui=$!; pids+=("$ui")
 
   hidden || { echo "[$label] the output is not empty before the launcher" >&2; return 1; }
@@ -153,18 +153,18 @@ run_session() { # run_session <label> <expect layer: yes|no>
     echo "[$label] control: forced xdg_toplevel is in Sway's window tree, as it must be"
   fi
 
-  "$VICINAE" --socket "$socket" toggle >/dev/null
+  "$COMPASS" --socket "$socket" toggle >/dev/null
   wait_for "[$label] hidden after toggle" hidden
-  "$VICINAE" --socket "$socket" toggle >/dev/null
+  "$COMPASS" --socket "$socket" toggle >/dev/null
   wait_for "[$label] shown after second toggle" shown
   echo "[$label] gate 3: toggle hid and re-showed it"
 
-  "$VICINAE" --socket "$socket" shutdown >/dev/null 2>&1 || true
+  "$COMPASS" --socket "$socket" shutdown >/dev/null 2>&1 || true
   kill "$ui" "$engine" 2>/dev/null || true
   wait "$ui" "$engine" 2>/dev/null || true
   wait_for "[$label] output empty again" hidden
 }
 
 run_session layer yes
-VICINAE_LAYER_SHELL=0 run_session toplevel no
+COMPASS_LAYER_SHELL=0 run_session toplevel no
 echo "PASS: the launcher is a layer surface on Sway, and the control can tell the difference"

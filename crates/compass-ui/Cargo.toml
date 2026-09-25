@@ -24,7 +24,7 @@ iced = { version = "0.14", features = ["wayland", "image-without-codecs", "svg",
 # JPEG too, for remote images: avatars are mostly JPEG. zune-jpeg, pure Rust.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Drawing an SVG into pixels to clip it to a circle or a rounded rectangle
-# (already in the tree through iced's SVG, and in `vicinae`).
+# (already in the tree through iced's SVG, and in `compass`).
 resvg = { version = "0.45", default-features = false }
 iced_winit = { version = "0.14", features = ["wayland"] }
 winit = { version = "0.30", features = ["wayland"] }
@@ -42,7 +42,7 @@ url.workspace = true
 tempfile.workspace = true
 # A file's MIME type, for its file-type icon (already in the tree through compass-xdg).
 mime_guess.workspace = true
-# The local time for a file preview's modified date (already in the tree through `vicinae`).
+# The local time for a file preview's modified date (already in the tree through `compass`).
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 
 # The layer-shell presentation for wlroots compositors (PLAN.md Phase 5 Track

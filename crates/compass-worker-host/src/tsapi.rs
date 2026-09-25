@@ -168,6 +168,8 @@ pub const IMPLEMENTED: &[&str] = &[
     "Clipboard/paste",
     "Clipboard/clear",
     "Clipboard/readContent",
+    // Answered once a person has allowed it, through a `Broker`.
+    "HostCommand/run",
 ];
 
 /// Something that answers some of the extension API.
@@ -405,6 +407,8 @@ mod tests {
             // the wire whether its reply came back on the same turn.
             .chain(crate::ui_shell_service::DEFERRED_METHODS)
             .chain(crate::oauth_service::DEFERRED_METHODS)
+            .chain(crate::host_command_service::METHODS)
+            .chain(crate::host_command_service::DEFERRED_METHODS)
             .copied()
             .collect();
         let mut ledger: Vec<&str> = IMPLEMENTED.to_vec();

@@ -477,9 +477,9 @@ mod tests {
     fn the_launcher_is_its_pid_or_its_class() {
         let own = OwnWindows {
             pids: vec![42],
-            classes: vec!["com.vicinae.Vicinae".into()],
+            classes: vec!["org.tunaos.compass".into()],
         };
-        let mut launcher = window("1", "COM.VICINAE.VICINAE", "Compass");
+        let mut launcher = window("1", "ORG.TUNAOS.COMPASS", "Compass");
         assert!(own.contains(&launcher));
         launcher.wm_class = "other".into();
         launcher.pid = Some(42);

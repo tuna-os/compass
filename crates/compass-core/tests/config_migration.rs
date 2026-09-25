@@ -1,4 +1,4 @@
-//! Migrating the C++ engine's `settings.json` to `vicinae.json`.
+//! Migrating the C++ engine's `settings.json` to `compass.json`.
 
 use std::path::Path;
 
@@ -114,7 +114,7 @@ fn settings_with_no_equivalent_are_reported_not_smuggled_in() {
     );
     assert!(
         migration.config.unknown_fields().is_empty(),
-        "C++-only keys must not reappear as unknown vicinae.json fields"
+        "C++-only keys must not reappear as unknown compass.json fields"
     );
     assert!(
         migration
@@ -130,7 +130,7 @@ fn the_migrated_file_round_trips_through_the_rust_reader() {
     let path = write(dir.path(), "settings.json", CPP_SETTINGS);
     let migration = migrate_file(&path).unwrap();
 
-    let out = dir.path().join("vicinae.json");
+    let out = dir.path().join("compass.json");
     migration.config.save_to(&out).unwrap();
     let reread = Config::load_from(&out).unwrap();
 
@@ -297,7 +297,7 @@ fn a_broken_settings_file_is_an_error_naming_it() {
 #[test]
 fn loading_falls_back_to_the_cpp_settings_only_when_there_is_no_vicinae_json() {
     let dir = tempfile::tempdir().unwrap();
-    let primary = dir.path().join("vicinae.json");
+    let primary = dir.path().join("compass.json");
     let legacy = write(dir.path(), "settings.json", r#"{ "keybinding": "emacs" }"#);
 
     let config = Config::load_or_migrate(&primary, Some(&legacy)).unwrap();
@@ -306,7 +306,7 @@ fn loading_falls_back_to_the_cpp_settings_only_when_there_is_no_vicinae_json() {
 
     std::fs::write(&primary, r#"{ "launcher": { "keybinding": "vim" } }"#).unwrap();
     let config = Config::load_or_migrate(&primary, Some(&legacy)).unwrap();
-    assert_eq!(config.launcher().keybinding(), "vim", "vicinae.json wins");
+    assert_eq!(config.launcher().keybinding(), "vim", "compass.json wins");
 
     let config = Config::load_or_migrate(&dir.path().join("none.json"), None).unwrap();
     assert_eq!(config, Config::default());
@@ -316,6 +316,6 @@ fn loading_falls_back_to_the_cpp_settings_only_when_there_is_no_vicinae_json() {
 fn a_broken_cpp_settings_file_does_not_stop_the_rust_engine() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = write(dir.path(), "settings.json", "{ not json");
-    let config = Config::load_or_migrate(&dir.path().join("vicinae.json"), Some(&legacy)).unwrap();
+    let config = Config::load_or_migrate(&dir.path().join("compass.json"), Some(&legacy)).unwrap();
     assert_eq!(config, Config::default());
 }

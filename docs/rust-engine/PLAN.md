@@ -32,7 +32,7 @@ the protocol-support evidence behind §3.
 | Extension runtime | Keep `src/typescript/` (Raycast-compat SDK) **unchanged**; only its host is rewritten | Easy |
 | Third extension tier | **Rhai** scripts in-process, behind the same capability layer as the TS host (§2.2) | Easy — drop it if the seam doesn't materialise |
 | **Product posture** | **A new launcher in the spirit of Vicinae — quality asserted absolutely, crates first, user data imported rather than shared ([ADR-0017](./adr/0017-a-new-launcher-not-a-reimplementation.md))** | Medium — reversing it means re-adopting byte compatibility |
-| Crate prefix | `compass-*`, binary stays `vicinae` for CLI/config/socket compatibility | Trivial |
+| Crate prefix | `compass-*`; the binary, config, socket and app ID are `compass` / `org.tunaos.compass` since the Phase 7 rebrand ([ADR-0020](./adr/0020-phase-7-rebrand.md)) | Trivial |
 | Licence | Compass is GPL-3.0, rustcast is MIT; MIT → GPL-3.0 is one-way compatible, so rustcast code may be incorporated with its copyright header plus a provenance note | N/A |
 
 Decisions are recorded as ADRs in [`adr/`](./adr/); §10 summarises them and lists what is still open.
@@ -93,7 +93,7 @@ not a base to bolt features onto. Schedule accordingly.
 
 ```
                         ┌──────────────────────┐
-                        │  bin/vicinae (CLI)   │  ext install/remove/list, doctor, toggle
+                        │  bin/compass (CLI)   │  ext install/remove/list, doctor, toggle
                         └───────────┬──────────┘
      ┌──────────────┬───────────────┼───────────────┬──────────────────┐
      ▼              ▼               ▼               ▼                  ▼
@@ -121,7 +121,7 @@ not a base to bolt features onto. Schedule accordingly.
 | `compass-shell` | **GNOME Shell DBus client** (windows, clipboard, paste) via `zbus` | C++ `services/{window-manager,clipboard}/gnome` |
 | `compass-wayland` | `xdg_toplevel` surface, `xdg-activation-v1`, `keyboard-shortcuts-inhibit`; later `wlr-layer-shell` + `ext-foreign-toplevel-list-v1` | C++ `internal/wayland`, `ui/windows`, `services/window-manager/*` |
 | `compass-portals` | `ashpd`: GlobalShortcuts, OpenURI, FileChooser, Screenshot, Secret | C++ `services/{global-shortcuts,file-chooser,permissions}` |
-| `compass-ipc` | UDS at `$XDG_RUNTIME_DIR/vicinae/ipc.sock`, length-prefixed frames | C++ `lib/vicinae-ipc`, `lib/figura` |
+| `compass-ipc` | UDS at `$XDG_RUNTIME_DIR/compass/ipc.sock`, length-prefixed frames | C++ `lib/vicinae-ipc`, `lib/figura` |
 | `compass-xdg` | desktop entries, MIME, icon theme, locale | C++ `lib/xdgpp` |
 | `compass-extension-api` | **front-end-agnostic seam**: capability registry, view tree, action dispatch. Knows nothing about Node or Rhai | new — see §2.2 |
 | `compass-worker-host` | Node worker lifecycle, Landlock + seccomp, cgroups v2, state dirs | C++ `server/src/extension/node-runtime` |
@@ -286,7 +286,7 @@ Not "eliminate the extension" — that is not on offer. Instead:
    16 September 2026; treat each GNOME release as a scheduled extension-compat task.
 3. **Version the contract explicitly** (`org.gnome.Shell.Extensions.Vicinae` with a `Version`
    property) and make `compass-shell` degrade gracefully on mismatch instead of hard-failing.
-4. **`vicinae doctor` must diagnose this precisely** — extension present / absent / version-mismatch,
+4. **`compass doctor` must diagnose this precisely** — extension present / absent / version-mismatch,
    and what specifically is degraded as a result.
 
 ### 3.6 Bluefin's constraints
@@ -323,7 +323,7 @@ compass/
 │   ├── compass-portals/ compass-ipc/   compass-xdg/     compass-platform/
 │   ├── compass-ui/    compass-worker-host/
 │   ├── compass-testkit/      # fixtures, mock GNOME Shell bus, parity harness
-│   └── vicinae/              # the binary
+│   └── compass/              # the binary
 ├── packaging/flatpak/        # manifest + Bluefin CI, from Phase 0
 ├── src/                      # C++ tree, deleted directory-by-directory as parity lands
 └── docs/rust-engine/         # this plan, REFERENCES.md, ADRs, PARITY.md
@@ -343,8 +343,8 @@ Two mechanisms stop this becoming an 18-month branch that never ships.
 **(a) The engine switch.** From Phase 1 both engines are installed and selectable:
 
 ```
-vicinae --engine=cpp
-vicinae --engine=rust
+compass --engine=cpp
+compass --engine=rust
 COMPASS_ENGINE=rust     # env override for CI and dogfooding
 ```
 
@@ -355,7 +355,7 @@ Two details this section originally got wrong, corrected once the CLI existed:
 *Which default, and whose.* "Default `cpp` until Phase 7" is a property of the **dispatcher** — the
 thing installed at `/usr/bin/vicinae` that decides which engine to exec. It is not a property of the
 Rust binary, which cannot exec the C++ one: defaulting *that* to `cpp` would make every invocation
-fail. So `crates/vicinae` defaults to `rust`, and `--engine=cpp` there parses, is reported by
+fail. So `crates/compass` defaults to `rust`, and `--engine=cpp` there parses, is reported by
 `doctor` as a warning, and makes engine-dependent commands refuse with exit 1 rather than silently
 doing the Rust thing. The `cpp` default lives with the dispatcher when one exists.
 
@@ -363,7 +363,9 @@ doing the Rust thing. The `cpp` default lives with the dispatcher when one exist
 Phase 6 packaging has to resolve that — a dispatcher that execs one of two differently-named
 binaries is the obvious shape, but it is unbuilt and unspecified. Note the socket filename already
 differs (`ipc.sock` versus the C++ `vicinae.sock`), deliberately, so the two cannot meet on one
-socket and produce a confusing decode failure instead of a clear error.
+socket and produce a confusing decode failure instead of a clear error. The Phase 7 rebrand
+([ADR-0020](./adr/0020-phase-7-rebrand.md)) settled the collision by renaming the Rust binary to
+`compass`.
 
 **(b) The parity ledger.** `docs/rust-engine/PARITY.md` — a checked-in table of every service,
 builtin and CLI command with columns `C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓`. Nothing
@@ -394,7 +396,7 @@ launches a blank window on a Bluefin VM.
 
 ### Phase 1 — Thin vertical slice on GNOME (≈3 weeks)
 
-Goal: `vicinae --engine=rust`, installed as a Flatpak on Bluefin, binds Super+Space via the portal,
+Goal: `compass --engine=rust`, installed as a Flatpak on Bluefin, binds Super+Space via the portal,
 opens a window, fuzzy-matches installed apps, launches one, closes. Nothing else.
 
 - `compass-xdg`: desktop-entry parsing (port `lib/xdgpp` semantics), icon theme lookup — including
@@ -413,8 +415,8 @@ installed** (§3.5.1).
 
 ### Phase 2 — IPC, CLI, doctor (≈2 weeks)
 
-- `compass-ipc` socket + framing; `vicinae toggle`, `vicinae ext list --json`.
-- `vicinae doctor`: portal backends, DBus, socket, Flatpak permissions, **and Shell-extension
+- `compass-ipc` socket + framing; `compass toggle`, `compass ext list --json`.
+- `compass doctor`: portal backends, DBus, socket, Flatpak permissions, **and Shell-extension
   presence/version** (§3.5.4), with `--check-only` exit codes.
 - Single-instance handling and `$XDG_RUNTIME_DIR` socket lifecycle inside the sandbox.
 
@@ -432,7 +434,7 @@ degradation with the extension uninstalled.
   command** — its entire CLI is `launch app`, `ls`, `launch cmd`, `ping`, `toggle`, `open`, `close`,
   `dmenu`, `version`, `deeplink`, `logs`. There is nothing to diff against, and this is the second
   gate criterion found to assume a C++ interface that has never existed (the first was Suite 0's
-  `vicinae --engine=cpp --json query`, §8.1a). Both were written against an imagined C++ CLI rather
+  `compass --engine=cpp --json query`, §8.1a). Both were written against an imagined C++ CLI rather
   than the one in `src/cli`.
 
   Worth noting even if someone built that command: **the diff would mostly prove nothing.** Eleven of
@@ -503,7 +505,7 @@ history, emoji, window switching, power, media and volume, Search Files, shortcu
 Shortcut, Manage Shortcuts, shortcuts in root search; IPC v13), and snippets (Create Snippet,
 Manage Snippets: copy, paste, edit; keyword expansion through the ported `vicinae-input-server`,
 `crates/compass-input-server`, figura-wire-compatible with the C++ helper; IPC v15), script commands (scanned into root search, run in all five output modes), Run
-Terminal Program, `vicinae dmenu`, Set Theme, Create Extension, Browse Fonts, and the two store
+Terminal Program, `compass dmenu`, Set Theme, Create Extension, Browse Fonts, and the two store
 front-ends (Extension Store and Raycast Store: browse, search, detail with README and screenshots,
 install with zip-slip and size guards, uninstall, update detection; IPC v14). What each still
 lacks is in `PARITY.md`, one section per builtin.
@@ -529,7 +531,7 @@ third target after that.
 > answering the engine's existing `ListWindows`/`ActivateWindow`/`CloseWindow`; clipboard history
 > watched over `ext`/`wlr` data-control, and the extension `Clipboard` API set/read/cleared through
 > `wl-clipboard-rs`; the `xx-hotkey-v1` client (bindings generated from the C++ tree's XML), which
-> no released compositor carries yet, so the documented fallback — bind `vicinae toggle` in the
+> no released compositor carries yet, so the documented fallback — bind `compass toggle` in the
 > compositor, with a per-compositor hint in the log — is what users get today. Gated by
 > `.github/workflows/wlroots.yaml`: `compass-wayland` against Sway, the engine against Sway, and
 > the launcher on Sway (on screen, absent from Sway's window tree, toggles, takes typed text), each
@@ -543,7 +545,7 @@ third target after that.
 > replies, the C++'s Lua dispatchers with the classic ones as a fallback) and niri over `niri-ipc`
 > (CRATE-AUDIT "Compositor IPC"). They feed `WindowManagement` (windows with workspace, pid and
 > Hyprland's geometry; the workspace list; the active workspace; Hyprland's frontmost window) and
-> give the window switcher's toplevels their pid and workspace. `vicinae doctor` gains
+> give the window switcher's toplevels their pid and workspace. `compass doctor` gains
 > `wlroots.capabilities` (layer-shell, foreign-toplevel, data-control, xx-hotkey, portal
 > GlobalShortcuts, compositor IPC). Tested against fake sockets replaying captured replies and
 > against headless Sway with a fake Hyprland socket; neither compositor runs in CI.
@@ -561,7 +563,7 @@ engine, capability-gated registry, blocking-pool execution with a terminating de
 `script.toml` discovery under `$XDG_DATA_HOME/compass/scripts`, and `notify` hot reload; 26
 negative sandbox tests fail closed, a shared-seam test holds it to the TS tier's `to_view`, and
 five examples ship in `extensions/rhai-examples/` with [RHAI-SCRIPTS.md](./RHAI-SCRIPTS.md). The
-engine (`crates/vicinae/src/rhai_scripts.rs`, `rhai_host.rs`) loads them at start, lists each as a
+engine (`crates/compass/src/rhai_scripts.rs`, `rhai_host.rs`) loads them at start, lists each as a
 root-search command (`rhai:script.<name>`), and opens one as an extension view session, so the
 launcher's extension page draws it unchanged: the search text goes to `search`, actions run
 through the seam's `ActionIndex`/`Pending`, and toasts, HUDs, re-rendering, closing and popping are
@@ -590,16 +592,17 @@ Phase 8 work, and `PARITY.md` marks such rows `⏳`.
 ### Phase 6 — Packaging breadth (≈2 weeks)
 
 Flatpak already exists from Phase 0; this phase adds back AppImage, Arch, Nix and the
-`vicinae.json` declarative config with a published JSON Schema plus migration from today's config.
+`compass.json` declarative config with a published JSON Schema plus migration from today's config.
 
 **Gate:** Suite 5 (§8.6) green across all outputs.
 
-**Status (2026-09-24):** built, gate not yet observed green. `vicinae.json`'s schema is generated
-by `schemars` into `packaging/schema/vicinae.schema.json` (drift test: `config_schema`), and
-`compass_core::config_migration` + `vicinae config migrate` carry the C++ `settings.json` across.
+**Status (2026-09-24):** built, gate not yet observed green. `compass.json`'s schema is generated
+by `schemars` into `packaging/schema/compass.schema.json` (drift test: `config_schema`), and
+`compass_core::config_migration` + `compass config migrate` carry the C++ `settings.json` across.
 AppImage, Arch (`compass-git`) and Nix (`.#compass`) share one install script with the Flatpak and
 one smoke (`scripts/packaging/smoke.sh`), run by `packaging.yaml` and `flatpak.yaml`. See
-`packaging/README.md`. The `/usr/bin/vicinae` collision with the C++ packages stays (§5).
+`packaging/README.md`. The `/usr/bin/vicinae` collision with the C++ packages is gone: the binary is `/usr/bin/compass`
+since ADR-0020.
 
 ### Phase 7 — Cutover (≈2 weeks)
 
@@ -775,7 +778,7 @@ would not have left late, it would not have left at all.
 than at cutover: the platform seam gets built while it is still cheap. Measured today —
 
 - Linux-only dependencies are confined to `compass-portals`, `compass-shell`, `compass-wayland` and
-  the `vicinae` binary, with **zero** `cfg(target_os)` guards anywhere. That part is in good shape.
+  the `compass` binary, with **zero** `cfg(target_os)` guards anywhere. That part is in good shape.
 - **`compass-platform` defines no traits.** It is named like a seam and is not one: two files, and
   it depends on `compass-portals`.
 - **`compass-ui` depends directly on `compass-portals` and `compass-wayland`**, so the crate built
@@ -847,7 +850,7 @@ A golden-corpus differential harness in `crates/compass-testkit`.
   `src/file-indexer/tests/query-quality.cpp`.
 - A recorded clipboard/history fixture and a set of theme files.
 
-**Runner:** for each item, run the operation against both engines (`vicinae --engine=cpp|rust --json`)
+**Runner:** for each item, run the operation against both engines (`compass --engine=cpp|rust --json`)
 and diff structured output.
 
 **Verdicts:** `identical` / `known-divergence` (must cite a ledger row and a rationale) /
@@ -873,7 +876,7 @@ as a JSON array. Measured against the real binaries:
 
 | | state |
 |---|---|
-| the argv it built | **rejected by clap** — `unexpected argument '--json' found; tip: 'query --json' exists`. `json` is a flag on the subcommand, not a global. Fixed, and pinned by a test in `crates/vicinae/src/cli.rs`. |
+| the argv it built | **rejected by clap** — `unexpected argument '--json' found; tip: 'query --json' exists`. `json` is a flag on the subcommand, not a global. Fixed, and pinned by a test in `crates/compass/src/cli.rs`. |
 | `query` against the Rust engine | **needs a running engine.** It asks over the IPC socket, so every call returns *"no Compass engine is listening on /tmp/vicinae-default/ipc.sock"*. The harness starts nothing. |
 | `query` against the C++ engine | **the interface does not exist.** `src/cli` has no `--engine` flag and no `query` subcommand; its only `--json` is on the command-list subcommand. |
 
@@ -1352,10 +1355,10 @@ process opening a surface. Those are different numbers with different costs:
   index — is already warm.
 
 **The warm half now has a proxy, and it is not the SLA.** `scripts/vmtest/launcher.sh` times a
-`vicinae show` against an attached window: CLI to engine, engine to window, and the window's answer
+`compass show` against an attached window: CLI to engine, engine to window, and the window's answer
 back. Two runs report **338 ms and 480 ms** under llvmpipe.
 
-That number is an **upper bound with a whole Flatpak launch inside it** — the client is `vicinae`
+That number is an **upper bound with a whole Flatpak launch inside it** — the client is `compass`
 rather than a keypress, so a process spawn, a Flatpak sandbox setup and a socket connection are all
 counted before the engine is even asked. On the real path the portal delivers an activation
 straight into a running engine and none of that happens. It is also not a frame: ADR-0010 settles
@@ -1776,7 +1779,7 @@ is not a bench.
   no permission panic. This is our first target — it belongs in CI from Phase 1, not Phase 6.
 - Flatpak conformance via `flatpak-builder`; host execution through `flatpak-spawn --host` /
   `OpenURI`.
-- `vicinae doctor --check-only` asserted to detect present **and absent** portals, protocols, DBus,
+- `compass doctor --check-only` asserted to detect present **and absent** portals, protocols, DBus,
   sockets and the Shell extension. Test both directions — a doctor that always says "fine" is worse
   than no doctor.
 - Install-matrix smoke for AppImage, Arch, Nix (from Phase 6): `--version` + `doctor`.
@@ -1789,7 +1792,7 @@ cargo clippy --all-targets --workspace -- -D warnings
 cargo bench --bench slas -- --save-baseline pr
 npm --prefix src/typescript test
 cargo run -p compass-testkit --bin parity -- --cpp <path> --rust <path> --corpus crates/compass-testkit/corpus/desktop-entries
-flatpak run com.vicinae.Vicinae -- doctor --check-only
+flatpak run org.tunaos.compass -- doctor --check-only
 ```
 
 ### 8.8 CI wiring
@@ -1871,7 +1874,7 @@ Bluefin's own primary target is x86_64.
    extension, and GDM autologin. `corral vmtest` accepts a locally built image, so this needs no
    registry round trip.
 3. `corral vmtest --ready-marker 'Reached target Graphical' --require-paint --video`.
-4. Assert over SSH: `vicinae doctor --check-only`, the IPC socket, the app index against the guest's
+4. Assert over SSH: `compass doctor --check-only`, the IPC socket, the app index against the guest's
    real `.desktop` files.
 5. Drive the hotkey path through the console keyboard, screenshotting each step.
 6. Upload the artifact directory unconditionally.
@@ -1955,6 +1958,7 @@ The questions that were open when this plan was written have been decided and re
 | **Does Qt ever actually leave?** | Yes — Linux-first becomes a *sequence*, not a scope limit; macOS and Windows get committed phases 9 and 10, and the platform seam is built before Phase 4 | [0013](./adr/0013-qt-leaves-the-repository.md) |
 | Does browser control belong in the core? | No — it becomes an extension and leaves the port's scope entirely | [0008](./adr/0008-browser-control-is-an-extension.md) |
 | **Port or new launcher?** | New launcher in Vicinae's spirit: absolute quality tests, C++ as tripwire, crates first; storage is Compass's own and Vicinae data is imported — supersedes ADR-0014 | [0017](./adr/0017-a-new-launcher-not-a-reimplementation.md) |
+| **When do the `vicinae` identifiers go?** | At the Phase 7 rebrand: `org.tunaos.compass`, the `compass` command, `~/.config/compass` with a one-time move of the `vicinae` directories; `@vicinae/api`, `vicinae://` and the Vicinae Store stay | [0020](./adr/0020-phase-7-rebrand.md) |
 
 ### Still genuinely open
 
@@ -2004,14 +2008,14 @@ re-measured rather than adjusted.
   fzf's coherence signal reconstructed exactly (ADR-0006).
 - **`compass-ipc`** (74) — length-prefixed postcard framing, with the length checked against
   `MAX_FRAME_LEN` before any allocation.
-- **`compass-core`** (74) — app index with desktop-ID precedence, frecency, `vicinae.json`.
+- **`compass-core`** (74) — app index with desktop-ID precedence, frecency, `compass.json`.
 - **`compass-shell`** (47) — GNOME Shell DBus client; 22 of its tests spawn a real `dbus-daemon`.
 - **`compass-portals`** (55) — XDG portals via `ashpd`, with availability a three-state outcome
   rather than a boolean, version-property probing, and a timeout on every call.
 - **`compass-extension-api`** (74) — the view tree, derived identity, diffing, dispatch and the
   capability registry, behind a mechanical seam gate that fails if host transport or runtime is
   named anywhere in the crate. The gate was itself tested by injecting a violation.
-- **`vicinae`** (180) — CLI, an 11-check `doctor`, and **`vicinae serve`: the engine**. It
+- **`compass`** (180) — CLI, an 11-check `doctor`, and **`compass serve`: the engine**. It
   indexes applications, ranks queries with frecency and answers over the IPC socket. It holds no
   window of its own and never opens one; `show`, `hide` and `toggle` are forwarded to a **resident
   launcher window** that attached over the same socket
@@ -2224,7 +2228,7 @@ Two things it found along the way:
 
 The fix is `-DBUILD_TESTS=OFF` and it is the right answer rather than a
 workaround: Suite 0 diffs engine *behaviour* through
-`vicinae --engine=cpp --json`, not by running the C++ unit tests, and those
+`compass --engine=cpp --json`, not by running the C++ unit tests, and those
 already run on Arch in `build-linux.yaml` where Catch2 is v3. If they ever need
 to run on Bluefin, Catch2 3 can be vendored through `FetchContent` exactly as
 qtkeychain, layer-shell and cmark-gfm already are.
@@ -2281,7 +2285,7 @@ Phase 3's gate cites *"the mock-Shell-bus suite (§8.4a)"*, and
 `src/lib/crypto/probe/main.cpp` opens by citing §8.4a as well. **There is no
 §8.4a.** The suite
 exists and is green, so the gate is satisfiable — but its citation points
-nowhere, exactly as Suite 0's gate cited a `vicinae --engine=cpp --json query`
+nowhere, exactly as Suite 0's gate cited a `compass --engine=cpp --json query`
 that never existed (§8.1a) and Phase 2's cited a C++ `doctor` that never
 existed. Three gates written against an imagined artefact is a pattern worth
 naming: **a gate that cites something should be checked against the thing it
@@ -2307,7 +2311,7 @@ reads as uniformly in-progress.
 |---|---|---|---|
 | **4 — Extension host** | Suite 1: top 25 Raycast store extensions plus every Vicinae one, running | 🟡 **spine built, breadth and the gate not** | the prerequisite carve-out is done (`compass-extension-api`, **5,546 LOC, 73 tests**), and the host now exists: `compass-worker-host` (**8,610 LOC, 170 tests**) frames, spawns, speaks the manager and tsapi protocols and routes a session; `compass-sandbox` (**1,280 LOC, 23 tests**) confines it; `compass-local-storage`, `compass-oauth-store` and `compass-db` back the two host APIs that are storage. **44 of tsapi's 49 methods** are implemented, the gate's extensions have never been run, and the transport is stdio, which §6 now names after this was reconciled — see §11.4a and #101. |
 | **5 — Breadth, second compositor** | parity ledger ≥ 95% green | 🟢 **100%** | `PARITY.md` holds **152 ✅, 0 ❌, 0 🟡** over the 152 cells of the two columns that measure this port — `Rust ✓` and `parity test ✓`, across 87 rows — plus 22 marked n/a (the figures below this sentence are the history of how it got here). Counted by `scripts/ci/parity-score.py`, which also prints the other two columns. **The earlier 37% was wrong, and wrong in our favour.** It was taken over all four checkbox columns, which meant counting `C++ ✓` — 87 rows, every one of them ✅, because that column says the C++ exists, not that anything was ported. Those 87 free greens were three quarters of the "120 ✅" the figure was built on. It also counted `C++ deleted ✓`, which by this ledger's own rule cannot go green before Phase 8. Restating over the two columns that are Phase 5 work puts the real figure at 70 of 158. Nothing regressed to cause the drop from 37% to 35%; the earlier number was measuring the wrong thing. Ported rows have since carried the corrected figure back up past it, which was a coincidence of arithmetic and not a return to the old method: the corrected figure is 70 of 158 over two columns, the old one was 120 of 331 over four. Of the 75 it then held, only 18 rows were green in `Rust ✓` — the rest are rows with a passing parity test over a model that has no view yet. (Earlier revisions said 115 of 331 and 96 of 340 on the same inflated basis.) This remains the single largest number in the project. It was described here as "a breadth problem rather than a hard one: most rows are individual builtins", and that has stopped being true — the builtins are ported. `scripts/ci/parity-score.py` now reports what the remainder *is*, by reading the `Still C++-only:` sentences the notes carry, and at the time of writing it is: **view 12, backend 7, process 2, storage 1, network 1**. Twelve of the nineteen named gaps are drawing, seven are DBus, MPRIS or compositor providers. The view figure has gone *up* as rows landed, which is not a regression: each newly written note names what its row still lacks, and what these rows lack is drawing. One of the changes since is a correction rather than movement: a `Still C++-only:` sentence in the shortcut row had been edited into saying the opposite of what it opened with, and was being counted as a storage gap that no longer existed. None of that is transcription, and most of it cannot be verified in a container — the VM tier is what answers for the drawing, and it runs on this PR rather than only nightly. The number to watch is no longer the percentage on its own but that breakdown beside it: a ledger at 44% whose remainder is typing and one whose remainder is compositor integration are not the same project. The launcher-parity pass (media arguments and Now Playing, dmenu's size, footer and quick look, theme files, the fonts grid, Search Files' filter, preview, recent files, `ShowItems` and fallback, the stores' avatars, dots, README images, dialog and deeplinks, Script Permissions) moved Media, Set Theme and Browse Fonts to `Rust ✓` and, on top of the input server and the last extension host routes, took the ledger from 72 to 75 of 158 (46% to 47%); its breakdown was then **view 7, backend 6, process 2, storage 1, network 1, other 3**. **The ledger truth pass (2026-09-25)** then checked every 🟡 and ❌ cell against the code rather than against its note, because most of what those notes called missing had landed: the file indexer whole, the window manager's GNOME, wlroots, Hyprland and niri providers, the stores' HTTP, the data-control plumbing, the power, media and volume commands, fonts, themes, snippets and the input server. A cell went green only with a named Rust module and named tests that fail on a regression (the evidence table is in `PARITY.md`, "The ledger truth pass"), and five small gaps were closed on the way (the two `xdgpp` writers, `glyph`'s `is_emoji`, `{selection}` in shortcuts, the power commands' `confirm` and `customProgram`, a notification's urgency and file icon). `src/lib/soulver` moved to n/a, being macOS-only like the other macOS rows. That took the ledger from 75 of 158 to **116 of 156 (47% to 74%)**: 42 rows green in `Rust ✓` (from 18) and 74 in `parity test ✓` (from 57). The breakdown is now **view 11, backend 4, process 2, network 2, other 12** over 29 notes. The count of notes went up from 15 because every amber row now has a sentence saying what it lacks, where before about half had none; it is a truer list, not a longer one. `other` is large because the classifier's keywords predate most of these sentences (quit and force quit, eviction, the tray icon, per-command global shortcuts). What the remaining 40 cells are, sized and with what blocks each, is §12.0's first list. The gaps pass that followed (the applications and extension-directory watches, Browse Apps and the default-app pickers, notification icons, the emoji picker's memory, clipboard retention and the detail pane, root favourites and the row's panel, the rest of the CLI, Quit and Force Quit, and the calculator's history; IPC v17) took it to **125 of 156 (80%)**, with 31 cells left. A second gaps pass (drawn builtin, file-type, window and clipboard icons; the tray host over `system-tray` and Search Tray; the provider search view, every fallback kind, the shortcut recorder, the emoji picker's paste and Browse Apps' Focus Window; Switch Workspaces and the window toggles, Open with…, the shortcut detail pane, the file action panel and clipboard Open; IPC v18) took it to **133 of 156 (85%)**, with 23 cells left. The UI pass (root rows' icons, masks and favicons, the snippet pane and escape, match and Markdown highlighting, extension grids) and the settings pass (the settings window's pages as a view of the launcher, every setting Compass reads; IPC v19) took it to **139 of 156 (89%)**, with 17 cells left. The HUD, onboarding and the rest of `builtins/vicinae` (the fallback manager, installed extensions, the storage and OAuth browsers, the stores' intros) closed the view layer, `ui/qml`, `ui/quick` and `ui/windows` included, at **145 of 156 (93%)**, with 11 cells left. The wlroots gaps pass (synthetic paste through the input server or `zwp_virtual_keyboard_v1`, and shortcut inhibition on a connection shared with `iced_layershell`, both verified on headless Sway; `PARITY.md`, "The gaps pass, wlroots paste and inhibit") took it to **147 of 156 (94%)**, with 9 cells left: the news, update and telemetry services and Compass's own tray icon (a product decision each), the calculator's currency rates (a rate source), and global shortcuts, the KDE and X11 window managers and window material (a real compositor, the VM tier). With the global-shortcuts pass (the configuration's shortcuts bound over `xx-hotkey-v1`, `vicinae-hotkey-v1` or the portal, IPC v20) and the KDE provider in the same change, the ledger reached **148 of 156 (95%)**, the Phase 5 gate, with 8 cells left: the news, update and telemetry services and Compass's own tray icon (a product decision each), the calculator's currency rates (a rate source), global shortcuts' X11 backend and the window manager's X11 provider (the X11 decision), and window material (applying blur to the launcher's surface, and a compositor with the protocol, the VM tier). The product decisions of 2026-09-25 (`PARITY.md`, "Product decisions") then settled four of them: the update check is wired (Compass's own GitHub releases, shown in the root search, never installed; IPC v21), news and telemetry are n/a in both columns (a hard fork: no news feed, no telemetry), and Compass is Wayland only, so the X11 backends are n/a — which flips neither the global-shortcuts row (`inhibitApps`, `probeBind`) nor the window-manager row (GNOME's workspace list). That is **147 of 152 (97%)**, with 5 cells left: the calculator's currency rates (a rate source), Compass's own tray icon (a decision), global shortcuts' `inhibitApps` and `probeBind`, GNOME's workspace list (the Shell extension's contract), and window material (the VM tier). The window-material pass (an `unsafe` bridge from winit's raw handles to `wayland-client` proxies, approved as ADR-0019 and kept to one function of one crate, `compass-wayland-foreign`; the blur applied behind a translucent card under the `xdg_toplevel` presentation, verified on headless Sway and an in-process compositor; `PARITY.md`, "The window-material pass: an unsafe bridge") closed the last of them: **152 of 152 (100%)**. What remains is declared rather than counted: real blur on KWin (the VM tier) and the layer-shell presentation, which `iced_layershell` gives no handles for. |
-| **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **all Linux outputs defined, gate not yet observed** | the Flatpak builds, is installed and is smoke-tested on every run. The Rust engine's AppImage, Arch package and Nix package now exist and are built and smoke-tested by `packaging.yaml` (nightly + packaging changes), sharing the Flatpak's install layout and one smoke script; `vicinae.json` has a generated, drift-tested JSON Schema and a migration from `settings.json`. None of the three new jobs had run when this was written. The C++-engine AppImage, tarball, dmg and Windows workflows stay `workflow_dispatch` only. |
+| **6 — Packaging breadth** | Suite 5 green across all outputs | 🟡 **all Linux outputs defined, gate not yet observed** | the Flatpak builds, is installed and is smoke-tested on every run. The Rust engine's AppImage, Arch package and Nix package now exist and are built and smoke-tested by `packaging.yaml` (nightly + packaging changes), sharing the Flatpak's install layout and one smoke script; `compass.json` has a generated, drift-tested JSON Schema and a migration from `settings.json`. None of the three new jobs had run when this was written. The C++-engine AppImage, tarball, dmg and Windows workflows stay `workflow_dispatch` only. |
 | **7 — Cutover** | one full release cycle with no P0 regressions | ⚪ **not startable** | requires 5 and 6. There has also been no release cycle: the repository has **no tagged release**. |
 | **8 — Remove the Linux C++ engine** | — | ⚪ **not startable** | requires 7. Several tests are written to die with `src/` at this point and say so (`cpp_enum_values.rs`, `cpp_constants.rs`, the new pragma pin), which is the intended shape. |
 | **9 — macOS** | — | ⚪ **sequenced, not blocked** | ADR-0013 makes Linux-first a sequence rather than a scope limit. 102 `Q_OS_MAC` sites are inventoried in #78. |
@@ -2335,21 +2339,21 @@ Ordered by what blocks what, not by size.
 | Landlock boundary + seccomp denylist + launcher | done, with §8.2's negative list: a program the extension wrote cannot be run (read no longer implies execute), raw and packet sockets answer `EPERM`, and `RLIMIT_DATA` (512 MiB) refuses a 512 MiB `Buffer` where no cgroup is reachable; each beside a positive control (`compass-sandbox/tests/boundary.rs`, `engine_end_to_end.rs`). The systemd scope's `MemoryMax` still applies only outside a Flatpak |
 | session routing (event → service → reply) | done |
 | `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
-| `Wallpaper/set`, `BrowserExtension` (both) | **done**: the engine serves `Wallpaper/set` (`vicinae::extension_wallpaper`) with the C++'s six Linux backends in its order — hyprpaper, swww/awww, GNOME, KDE, Cinnamon, MATE — and `BrowserExtension` as the C++ answers with no browser connected (ADR-0008: none ever connects). PARITY "The extension host API" #6–#7 |
-| `WindowManagement` (all seven) | the adapter is done and pinned (`compass-worker-host::window_service`), behind a `Windows` trait — 30 of 49 — and **the engine serves it** (`vicinae::extension_windows`): Hyprland's and niri's own IPC first (workspaces, pids, Hyprland's geometry), the Shell extension's windows on GNOME (contract 3 adds each window's frame and full-screen state), the foreign-toplevel list on other wlroots compositors, and `wl_output`/`xdg_output` for screens on any. Moving a window is not served; PARITY "The extension host API" |
-| `Command` (all four) | **done** (`vicinae::extension_commands`): a launch is handed to the launcher window under a token (`WindowCommand::Launch`, IPC v15), which runs the sibling as if picked in root search; preferences open the command's form; the subtitle override shows in root search. PARITY "The extension host API" #8 |
+| `Wallpaper/set`, `BrowserExtension` (both) | **done**: the engine serves `Wallpaper/set` (`compass::extension_wallpaper`) with the C++'s six Linux backends in its order — hyprpaper, swww/awww, GNOME, KDE, Cinnamon, MATE — and `BrowserExtension` as the C++ answers with no browser connected (ADR-0008: none ever connects). PARITY "The extension host API" #6–#7 |
+| `WindowManagement` (all seven) | the adapter is done and pinned (`compass-worker-host::window_service`), behind a `Windows` trait — 30 of 49 — and **the engine serves it** (`compass::extension_windows`): Hyprland's and niri's own IPC first (workspaces, pids, Hyprland's geometry), the Shell extension's windows on GNOME (contract 3 adds each window's frame and full-screen state), the foreign-toplevel list on other wlroots compositors, and `wl_output`/`xdg_output` for screens on any. Moving a window is not served; PARITY "The extension host API" |
+| `Command` (all four) | **done** (`compass::extension_commands`): a launch is handed to the launcher window under a token (`WindowCommand::Launch`, IPC v15), which runs the sibling as if picked in root search; preferences open the command's form; the subtitle override shows in root search. PARITY "The extension host API" #8 |
 | `Application` (all five) | the adapter is done and pinned (`compass-worker-host::application_service`), behind an `Apps` trait — 19 of 49. `compass-core::AppIndex` and `compass-xdg::mimeapps` already answer most of what the trait needs; wiring them together, launching, and the terminal are still ahead |
 | `Clipboard` (all four) | the adapter is done and pinned (`compass-worker-host::clipboard_service`), behind a `Clipboard` trait — 14 of 49. The Wayland backend behind it is Phase 3/5 work and does not exist yet |
-| `FileSearch/search` | **done**: the engine's file indexer answers it (`vicinae::extension_files`). **All 49 of tsapi's methods are now routed by the engine** |
+| `FileSearch/search` | **done**: the engine's file indexer answers it (`compass::extension_files`). **All 49 of tsapi's methods are now routed by the engine** |
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
 | `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op. `getSelectedText` reads the primary selection: over data-control on wlroots, through the Shell extension on GNOME (`GetPrimarySelection`, contract 3) |
 | `UI/confirmAlert` | done: drawn by the launcher, and settled on confirmation, cancellation, replacement (a second alert) and navigation (the launcher popping, or the extension pushing or popping) |
 | `EventCore/handlerActivated` | done: actions, search text and form fields fire it (`Views::activate`) |
-| `OAuth/authorize` | done without the overlay: the browser opens on the default https handler, a toast says so, and the `raycast://oauth` redirect comes back through `vicinae deeplink` (IPC v12) keyed by `state`; the token store is routed in the engine. 46 of 49 |
+| `OAuth/authorize` | done without the overlay: the browser opens on the default https handler, a toast says so, and the `raycast://oauth` redirect comes back through `compass deeplink` (IPC v12) keyed by `state`; the token store is routed in the engine. 46 of 49 |
 | remote images, date/tag/file pickers | done: `ureq` into Compass's own image cache; a typed date field, tag toggles, and the FileChooser portal (PARITY "Extension views") |
 | running the real `vicinae-worker-ts` | **done for one command**: `scripts/build-extension-runtime.sh` builds figura standalone, generates the protos and bundles `src/typescript/extension-manager`; `tests/real_runtime.rs` loads a real no-view command into it and serves its `Storage` calls, and CI runs that with `COMPASS_REQUIRE_RUNTIME=1`. A view command still needs a front end, and the gate's 25 extensions need far more of the API than `Storage` |
-| Suite 1 (the gate) | **the harness runs, and the gate is not met.** `vicinae conformance` runs installed extensions against an engine of its own and judges each command's first frame; `scripts/suite1/` pins the corpus (top 25 Raycast store extensions by installs that can run on Linux at all, plus all 95 Vicinae store extensions), fetches the stores' own bundles, and ratchets against `expected.json`; `.github/workflows/suite1.yaml` runs it on the host (gating on regressions) and inside the Flatpak (report-only until seen green, judged with the ledger's `flatpak` overrides). First measured run, in the dev container: 71 of 120. **Now 79 of 120 on the runner's ledger** — Raycast 12 of 25, Vicinae 67 of 95 — from host fixes and harness inputs, not from relaxing the judgement: `LocalStorage.getItem` of a missing key resolves `undefined` as Raycast's does (Google Search had crashed on `null`); an extension's view may now exceed the IPC's old 1 MiB frame; `getSelectedText` and all of `WindowManagement` are served by the engine instead of refused; a grid's own empty view counts as drawn, as a list's already did (`player-pilot`, `wallhaven`); `ssh`, `supergenpass` and `google-search` are typed into, as a person would, and `wikipedia` is given a title; and the D-Bus extensions (`bluetooth`, `dbus`, `systemd`) render on the runner, which has a system bus. Of the 41 failures, 7 wait on an OAuth sign-in a headless run cannot give; 4 need a selection or a focused window a headless run does not have (`json-format`, `wiktionary`, `case-converter`, `html-symbol-finder` — the APIs now answer, with the C++'s own "Unable to get selected text" and "No active window"); 2 are the sandbox by design (`speedtest` running a binary it downloaded, `reminders` writing outside its directories); 1 is the heap cap, kept by decision (`dashboard-icons`, PARITY sandbox row 3); 1 is an extension that only knows macOS and Windows paths (`visual-studio-code`); and 26 need a program, file, service, server or account the runner does not have (hyprctl, pactl, mise, goldfish, a SearXNG instance, API keys, GSettings schemas — `gnome-dnd` renders inside the Flatpak). Not measurable here and the largest open question for "running unmodified": the sandbox reads nothing of `$HOME`, so extensions that read the user's own files (`ssh`'s config, `pass`, Firefox profiles) find nothing on a real desktop either (PARITY sandbox row 6). None of it has been seen green inside the Flatpak yet |
+| Suite 1 (the gate) | **the harness runs, and the gate is not met.** `compass conformance` runs installed extensions against an engine of its own and judges each command's first frame; `scripts/suite1/` pins the corpus (top 25 Raycast store extensions by installs that can run on Linux at all, plus all 95 Vicinae store extensions), fetches the stores' own bundles, and ratchets against `expected.json`; `.github/workflows/suite1.yaml` runs it on the host (gating on regressions) and inside the Flatpak (report-only until seen green, judged with the ledger's `flatpak` overrides). First measured run, in the dev container: 71 of 120. **Now 79 of 120 on the runner's ledger** — Raycast 12 of 25, Vicinae 67 of 95 — from host fixes and harness inputs, not from relaxing the judgement: `LocalStorage.getItem` of a missing key resolves `undefined` as Raycast's does (Google Search had crashed on `null`); an extension's view may now exceed the IPC's old 1 MiB frame; `getSelectedText` and all of `WindowManagement` are served by the engine instead of refused; a grid's own empty view counts as drawn, as a list's already did (`player-pilot`, `wallhaven`); `ssh`, `supergenpass` and `google-search` are typed into, as a person would, and `wikipedia` is given a title; and the D-Bus extensions (`bluetooth`, `dbus`, `systemd`) render on the runner, which has a system bus. Of the 41 failures, 7 wait on an OAuth sign-in a headless run cannot give; 4 need a selection or a focused window a headless run does not have (`json-format`, `wiktionary`, `case-converter`, `html-symbol-finder` — the APIs now answer, with the C++'s own "Unable to get selected text" and "No active window"); 2 are the sandbox by design (`speedtest` running a binary it downloaded, `reminders` writing outside its directories); 1 is the heap cap, kept by decision (`dashboard-icons`, PARITY sandbox row 3); 1 is an extension that only knows macOS and Windows paths (`visual-studio-code`); and 26 need a program, file, service, server or account the runner does not have (hyprctl, pactl, mise, goldfish, a SearXNG instance, API keys, GSettings schemas — `gnome-dnd` renders inside the Flatpak). Not measurable here and the largest open question for "running unmodified": the sandbox reads nothing of `$HOME`, so extensions that read the user's own files (`ssh`'s config, `pass`, Firefox profiles) find nothing on a real desktop either (PARITY sandbox row 6). None of it has been seen green inside the Flatpak yet |
 | the seam (the gate's third condition) | **done and in CI**: `scripts/ci/extension-api-seam.sh` checks `cargo tree -p compass-extension-api` (normal, build and dev edges) never reaches `compass-worker-host`, then copies the crate into a workspace where the host does not exist and runs `cargo test` there against the same `Cargo.lock` pins. Rust workflow job `extension-api-seam` |
 
 #### 11.4a Phase 4 specified a transport the worker does not speak — resolved
@@ -2433,7 +2437,7 @@ it.
 
 Nothing here is hard. What makes it worth a section is *when* it is found: the
 phase is costed at 6–8 weeks, and the wire format is the first thing a host
-commits to. The transport error joins Suite 0's `vicinae --engine=cpp --json
+commits to. The transport error joins Suite 0's `compass --engine=cpp --json
 query`, Phase 2's C++ `doctor`, and §8.4a — four specs written against an
 artefact nobody checked.
 
@@ -2469,18 +2473,18 @@ subsystem. "None" under *blocked by* means only the work.
 |---|---|---|---|
 | ~~`src/cli`~~ | **Done in the gaps pass** (`PARITY.md`, "The gaps pass"): every C++ subcommand, over IPC v17 | — | — |
 | ~~`src/services/app-runtime`~~ | **Done in the gaps pass**: Quit, Force Quit, running and frontmost (IPC v17) | — | — |
-| ~~`src/services/app-service`~~ | **Done** (`vicinae::catalog_watch`, `EngineApps`' lookups and `set_web_browser`; PARITY.md, "Gaps closed after the truth pass") | — | — |
-| ~~`src/services/calculator-service`~~ | **Done in the currency pass** (`PARITY.md`, "The gaps pass, currency"): currency conversion over the ECB's daily reference rates (`compass_core::exchange_rates`, `vicinae::exchange_rates`, fend's exchange-rate handler) and Refresh Exchange Rates, IPC v21; the history view was done in the gaps pass; the backend dropdown is not wanted (fend by design) | — | — |
+| ~~`src/services/app-service`~~ | **Done** (`compass::catalog_watch`, `EngineApps`' lookups and `set_web_browser`; PARITY.md, "Gaps closed after the truth pass") | — | — |
+| ~~`src/services/calculator-service`~~ | **Done in the currency pass** (`PARITY.md`, "The gaps pass, currency"): currency conversion over the ECB's daily reference rates (`compass_core::exchange_rates`, `compass::exchange_rates`, fend's exchange-rate handler) and Refresh Exchange Rates, IPC v21; the history view was done in the gaps pass; the backend dropdown is not wanted (fend by design) | — | — |
 | ~~`src/builtins/clipboard`~~ | **Done in the views pass**: Open and Open with… (the rest landed in the gaps pass); drag stays a declared difference, Iced having no drag out of a window | — | — |
-| ~~`src/services/desktop-notification`~~ | **Done** (`vicinae::notification_icon`; PARITY.md, "Gaps closed after the truth pass") | — | — |
-| ~~`src/services/extension-registry`~~ | **Done** (`vicinae::catalog_watch::watch_extensions`; PARITY.md, "Gaps closed after the truth pass") | — | — |
+| ~~`src/services/desktop-notification`~~ | **Done** (`compass::notification_icon`; PARITY.md, "Gaps closed after the truth pass") | — | — |
+| ~~`src/services/extension-registry`~~ | **Done** (`compass::catalog_watch::watch_extensions`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | ~~`src/services/global-shortcuts`~~ | **Done**: per-command global shortcuts, conflict detection, `vicinae-hotkey-v1`, the launcher hotkey and close on focus loss (`PARITY.md`, "The gaps pass, global shortcuts", IPC v20); `inhibitApps` and `probeBind` ("The gaps pass, GNOME workspaces and shortcut probes", IPC v21); X11 **n/a** (Wayland only, decided 2026-09-25) | — | GNOME's portal grant is VM-tier only |
 | ~~`src/builtins/vicinae` (picker half)~~ | **Done**: the paste action, over IPC v18 `PasteText` (`PARITY.md`, "The gaps pass, root and actions") | — | — |
-| ~~`src/services/news`, `update`, `telemetry`~~ | **Decided 2026-09-25** (`PARITY.md`, "Product decisions"): the update check is **done** (`vicinae::updates` over `tuna-os/compass`'s releases, the root search's Update row, `launcher.check_for_updates`, IPC v21); news and telemetry are **n/a** (a hard fork: no news feed, no telemetry) | — | — |
+| ~~`src/services/news`, `update`, `telemetry`~~ | **Decided 2026-09-25** (`PARITY.md`, "Product decisions"): the update check is **done** (`compass::updates` over `tuna-os/compass`'s releases, the root search's Update row, `launcher.check_for_updates`, IPC v21); news and telemetry are **n/a** (a hard fork: no news feed, no telemetry) | — | — |
 | ~~`src/services/paste`~~ | **Done in the wlroots gaps pass** (`PARITY.md`, "The gaps pass, wlroots paste and inhibit"): the input server's `injectPaste`, else a `zwp_virtual_keyboard_v1` keyboard (which the Flatpak can use), verified on headless Sway | — | — |
 | ~~`src/services/root-item-manager`, `src/builtins/root`~~ | **Done in the gaps passes** (`PARITY.md`, "The gaps pass, root and actions"): the provider search view, every fallback, the alias completer, per-item shortcuts (IPC v18) | — | — |
 | ~~`src/services/shortcut-inhibit`~~, ~~`window-material`~~ | ~~the keyboard-shortcuts-inhibit protocol~~ (**done in the wlroots gaps pass**, `compass_wayland::keyboard_inhibit` on a connection shared with `iced_layershell`; the `xdg_toplevel` presentation does not inhibit, a declared difference); for `window-material`, the ~~`ext-background-effect-v1` client~~ (**done**, `compass_wayland::material`) and ~~applying it to the launcher's surface~~ (**done in the window-material pass** under `xdg_toplevel`, through the `unsafe` bridge ADR-0019 approved, `compass-wayland-foreign`; the layer-shell presentation is a declared difference) | — | real blur on KWin is VM tier |
-| ~~`src/services/tray`~~ (~~`tray-host`~~) | **Done in the tray and sandbox pass** (`PARITY.md`, "The gaps pass, tray and sandbox"): Compass's own tray icon, `vicinae::tray_icon` over `ksni`, with the C++'s menu and `tray.enabled` applied live (the StatusNotifierWatcher plumbing and the tray search view were done in the gaps pass, `vicinae::tray_host` over `system-tray`, IPC v18) | — | — (decided: a StatusNotifierItem, on by default as in the C++) |
+| ~~`src/services/tray`~~ (~~`tray-host`~~) | **Done in the tray and sandbox pass** (`PARITY.md`, "The gaps pass, tray and sandbox"): Compass's own tray icon, `compass::tray_icon` over `ksni`, with the C++'s menu and `tray.enabled` applied live (the StatusNotifierWatcher plumbing and the tray search view were done in the gaps pass, `compass::tray_host` over `system-tray`, IPC v18) | — | — (decided: a StatusNotifierItem, on by default as in the C++) |
 | ~~`src/services/window-manager`~~ | **Done**: the KDE provider (`compass_platform_linux::compositor::kwin`, "The gaps pass, KDE"; real KWin is VM tier) and GNOME's workspace list (the Shell extension's contract v4 `ListWorkspaces` and `ActivateWorkspace`, "The gaps pass, GNOME workspaces and shortcut probes"); X11 **n/a** (Wayland only, decided 2026-09-25) | — | — |
 | ~~`src/builtins/wm`~~ | **Done in the views pass** (`PARITY.md`, "The gaps pass, views"): Switch Workspaces and the fullscreen, floating and overview toggles (IPC v18) | — | — |
 | ~~`src/builtins/file`~~ | **Done in the views pass**: the rest of the action panel and the loading indicator (IPC v18); drag stays a declared difference (Iced has no drag out of a window) | — | — |
@@ -2520,7 +2524,7 @@ telemetry n/a in both columns; X11 n/a for global shortcuts and the window manag
 flipping on it (147 of 152, 97%).
 
 Closed in the tray and sandbox pass (`PARITY.md`, "The gaps pass, tray and sandbox (2026-09-25)",
-no IPC change): Compass's own tray icon (`vicinae::tray_icon` over `ksni`), its `tray.enabled`
+no IPC change): Compass's own tray icon (`compass::tray_icon` over `ksni`), its `tray.enabled`
 setting offered and applied live, and a read-only `$HOME` allowlist for extensions
 (`compass_sandbox::home::HOME_READ_ALLOWLIST`: `~/.ssh/config`, `~/.password-store`, the Hyprland,
 Sway and niri configurations) — `src/services/tray` `Rust ✓`; with the product decisions and the currency pass, 149 of 152 (98%).
@@ -2528,7 +2532,7 @@ Sway and niri configurations) — `src/services/tray` `Rust ✓`; with the produ
 Closed in the GNOME workspaces and shortcut probes pass (`PARITY.md`, "The gaps pass, GNOME
 workspaces and shortcut probes (2026-09-25)", IPC v21 `ProbeShortcut` and `ShortcutProbe`): Switch
 Workspaces on GNOME over the Shell extension's contract v4 (`ListWorkspaces`, `ActivateWorkspace`;
-an extension at contract 3 still switches windows, and `vicinae doctor` reports v4),
+an extension at contract 3 still switches windows, and `compass doctor` reports v4),
 `global_shortcuts.inhibit_apps` pausing every global shortcut while a listed application is
 focused, and the recorder's `probeBind`. With X11 n/a by the product decisions, the window-manager and global-shortcuts rows flip to
 `Rust ✓` green.
@@ -2579,7 +2583,7 @@ edited and written where the engine reads it, and the rest are declared with the
    [`CRATE-AUDIT.md`](./CRATE-AUDIT.md).
 3. **A Vicinae importer** for clipboard history, extension storage and OAuth tokens (decision 3),
    reading content tables only. Needed before cutover, not before item 2.
-   **Clipboard history: done** (`crates/vicinae/src/vicinae_import.rs`). On the first engine
+   **Clipboard history: done** (`crates/compass/src/vicinae_import.rs`). On the first engine
    start that can read it, Vicinae's `clipboard.db` and `clipboard-data/` are read with Vicinae's
    own keyring key. Entries go into Compass's store re-encrypted, with their times (seconds become
    milliseconds), pins and keywords. Content Compass already has is left alone, and a marker makes
@@ -2601,7 +2605,7 @@ their `no-view` commands. Until now the Phase 4 crates were tested libraries tha
 - `AppIndex::from_environment` scans the manifest registry. Each command is a root item with the
   C++ id `@<author>/<extension>:<command>`, subtitled by its extension. A manifest-disabled command
   is known but hidden.
-- `RunExtensionCommand` (IPC v7) starts the runtime bundle under Node (`crates/vicinae/src/extension_runner.rs`):
+- `RunExtensionCommand` (IPC v7) starts the runtime bundle under Node (`crates/compass/src/extension_runner.rs`):
   - local storage comes from Compass's own `compass-extension-storage.db`, keyed from the keyring;
   - HUDs, failure toasts and notifications become desktop notifications;
   - alerts are answered "no".
@@ -2683,7 +2687,7 @@ in both the Flatpak job and the VM; every workflow defaults to read-only permiss
 
 **That gap has moved rather than closed, and the section previously said otherwise.** It read: *"The
 largest gap is that there is no launcher — `LaunchSelected` returns `Task::none()`, and no code
-starts a window."* Both halves are now false. `crates/vicinae/src/lib.rs` calls `compass_ui::run`
+starts a window."* Both halves are now false. `crates/compass/src/lib.rs` calls `compass_ui::run`
 with a real `LinuxLauncher`, and `LaunchSelected` launches through the `AppLauncher` trait (#64).
 The VM tier watches it draw in a real GNOME session.
 
@@ -2695,19 +2699,19 @@ engine's side, `WindowClient` on the window's), and `serve` holds at most one at
 forwards to it. End-to-end tests attach a window from the test process to a real spawned daemon and
 assert the command arrives as itself and the answer comes back.
 
-**`vicinae ui` now attaches, and the loop is closed in code.** It runs on `iced::daemon` rather than
+**`compass ui` now attaches, and the loop is closed in code.** It runs on `iced::daemon` rather than
 `iced::application`, so the window is something it opens and closes rather than something it *is*:
 dismissing hides, a successful launch hides, and the engine's `show` opens a window again. On
 Wayland that is what hiding means — `xdg_toplevel` has no hide, so a hidden window is a closed one
 — and what residency preserves is the process, the wgpu adapter, the font atlas and the index.
 
-With no engine listening, `vicinae ui` still starts and Escape still exits: a window that hid with
+With no engine listening, `compass ui` still starts and Escape still exits: a window that hid with
 nothing able to summon it back would be an invisible process.
 
-**The shortcut is bound too.** `vicinae serve` opens a GlobalShortcuts session, asks for
+**The shortcut is bound too.** `compass serve` opens a GlobalShortcuts session, asks for
 `LOGO+space`, and turns each activation into a `Toggle` pushed to the attached window. On GNOME
 50/51 that portal is the only path an unprivileged application has to a global hotkey; where it
-does not exist — every wlroots compositor — the engine says so and `vicinae toggle` still works.
+does not exist — every wlroots compositor — the engine says so and `compass toggle` still works.
 Nothing about the hotkey can stop the engine starting: the socket is the contract, the hotkey is a
 convenience. `serve --no-hotkey` declines to ask at all, for a user whose compositor already binds
 a key — and, measurably, for the VM tier, where GNOME's permission dialog is 1.62% of the screen
@@ -2736,7 +2740,7 @@ whole chain — CLI, socket, engine, window link, and a window that answered on 
 
 **What is still missing is the keypress, and it is not the code's fault.** Injected input does not
 reach this VM's compositor at all — `launcher.sh` documents the chain and where it breaks, and
-GNOME's own Super binding is equally inert there. So the client in the tier is `vicinae`, not
+GNOME's own Super binding is equally inert there. So the client in the tier is `compass`, not
 Super+Space, and what stays untested is the portal delivering an activation. Everything after the
 activation is exercised.
 
@@ -2771,7 +2775,7 @@ Ordered by what unblocks the most:
    wgpu emits only once it has a surface.
 
    Still true and unaffected: QMP key injection does not reach the session (below).
-1. ~~**Wire the UI into the binary**~~ — done (#29). `vicinae ui` opens a window, moves a
+1. ~~**Wire the UI into the binary**~~ — done (#29). `compass ui` opens a window, moves a
    selection with the arrow keys, launches through `compass-platform` and dismisses. It draws on
    the target, verified on every VM run against a measurement that reproduced three times
    (ADR-0010). Phase 1's gate is consequently evaluable for the first time — scored in §11.2.

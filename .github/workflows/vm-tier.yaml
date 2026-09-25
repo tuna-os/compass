@@ -209,7 +209,7 @@ jobs:
 
       - name: Build the test image
         run: |
-          ls -lh packaging/vmtest/com.vicinae.Vicinae.flatpak
+          ls -lh packaging/vmtest/org.tunaos.compass.flatpak
           # The Containerfile COPYs the harvester, so it has to be in the
           # build context. Staged here rather than duplicated in the image:
           # scripts/harvest-desktop-corpus.sh is the one definition of a
@@ -217,7 +217,7 @@ jobs:
           cp scripts/harvest-desktop-corpus.sh packaging/vmtest/
           # And the GNOME Shell extension, for the same reason: the image
           # installs the in-tree copy, the one the contract test checks.
-          cp -r extensions/gnome-shell/compass@tuna-os.github.io packaging/vmtest/
+          cp -r extensions/gnome-shell/compass@tunaos.org packaging/vmtest/
           sudo podman build \
             -t localhost/bluefin-compass:ci \
             -f packaging/vmtest/Containerfile.compass \
@@ -325,7 +325,7 @@ jobs:
       - name: Stage the corpus harvester and the Shell extension into the build context
         run: |
           cp scripts/harvest-desktop-corpus.sh packaging/vmtest/
-          cp -r extensions/gnome-shell/compass@tuna-os.github.io packaging/vmtest/
+          cp -r extensions/gnome-shell/compass@tunaos.org packaging/vmtest/
 
       - name: Build the test image
         run: |
@@ -466,7 +466,7 @@ jobs:
       - name: Stage the corpus harvester and the Shell extension into the build context
         run: |
           cp scripts/harvest-desktop-corpus.sh packaging/vmtest/
-          cp -r extensions/gnome-shell/compass@tuna-os.github.io packaging/vmtest/
+          cp -r extensions/gnome-shell/compass@tunaos.org packaging/vmtest/
 
       - name: Build the test image
         run: |

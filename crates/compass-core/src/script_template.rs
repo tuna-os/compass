@@ -1,4 +1,4 @@
-//! `vicinae script template`: a new script command's source, in one of ten
+//! `compass script template`: a new script command's source, in one of ten
 //! languages.
 //!
 //! A port of the C++ CLI's `ScriptCommandGenerator`: the same languages under
@@ -173,7 +173,7 @@ impl Language {
     }
 }
 
-/// The script `vicinae script template` prints, without its trailing
+/// The script `compass script template` prints, without its trailing
 /// newline (the CLI adds one, as `std::endl` does).
 #[must_use]
 pub fn generate(title: &str, language: Language, mode: OutputMode) -> String {

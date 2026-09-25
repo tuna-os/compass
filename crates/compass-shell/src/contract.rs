@@ -5,8 +5,8 @@
 //! crate, so that the extension and the engine can be reviewed against one
 //! another:
 //!
-//! - [`WINDOWS_XML`] — `dbus/org.gnome.Shell.Extensions.Vicinae.Windows.xml`
-//! - [`CLIPBOARD_XML`] — `dbus/org.gnome.Shell.Extensions.Vicinae.Clipboard.xml`
+//! - [`WINDOWS_XML`] — `dbus/org.tunaos.compass.Shell.Windows.xml`
+//! - [`CLIPBOARD_XML`] — `dbus/org.tunaos.compass.Shell.Clipboard.xml`
 //!
 //! Everything below must stay in lockstep with those files, and
 //! `tests/contract_introspection.rs` is what makes that true rather than
@@ -40,24 +40,22 @@ pub const WORKSPACES_SINCE: u32 = 4;
 pub const SHELL_SERVICE: &str = "org.gnome.Shell";
 
 /// Object path of the windows interface.
-pub const WINDOWS_PATH: &str = "/org/gnome/Shell/Extensions/Vicinae/Windows";
+pub const WINDOWS_PATH: &str = "/org/tunaos/compass/Shell/Windows";
 
 /// Name of the windows interface.
-pub const WINDOWS_INTERFACE: &str = "org.gnome.Shell.Extensions.Vicinae.Windows";
+pub const WINDOWS_INTERFACE: &str = "org.tunaos.compass.Shell.Windows";
 
 /// Object path of the clipboard interface.
-pub const CLIPBOARD_PATH: &str = "/org/gnome/Shell/Extensions/Vicinae/Clipboard";
+pub const CLIPBOARD_PATH: &str = "/org/tunaos/compass/Shell/Clipboard";
 
 /// Name of the clipboard interface.
-pub const CLIPBOARD_INTERFACE: &str = "org.gnome.Shell.Extensions.Vicinae.Clipboard";
+pub const CLIPBOARD_INTERFACE: &str = "org.tunaos.compass.Shell.Clipboard";
 
 /// Introspection XML for [`WINDOWS_INTERFACE`].
-pub const WINDOWS_XML: &str =
-    include_str!("../dbus/org.gnome.Shell.Extensions.Vicinae.Windows.xml");
+pub const WINDOWS_XML: &str = include_str!("../dbus/org.tunaos.compass.Shell.Windows.xml");
 
 /// Introspection XML for [`CLIPBOARD_INTERFACE`].
-pub const CLIPBOARD_XML: &str =
-    include_str!("../dbus/org.gnome.Shell.Extensions.Vicinae.Clipboard.xml");
+pub const CLIPBOARD_XML: &str = include_str!("../dbus/org.tunaos.compass.Shell.Clipboard.xml");
 
 /// Dictionary keys used by `ListWindows`.
 pub mod window_key {

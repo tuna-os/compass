@@ -1,0 +1,8 @@
+{
+  "uuid": "compass@tunaos.org",
+  "name": "Compass",
+  "description": "Window switching and clipboard history for the Compass launcher. GNOME gives other applications no way to list windows or watch the clipboard; this small extension does exactly that over a versioned D-Bus contract, and nothing else.",
+  "shell-version": ["50", "51"],
+  "url": "https://github.com/tuna-os/compass",
+  "version-name": "1"
+}

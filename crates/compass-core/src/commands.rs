@@ -77,7 +77,7 @@ pub enum CommandKind {
     Power(&'static str),
     /// Browse and control the running media players.
     NowPlaying,
-    /// Review and revoke what the user's Rhai scripts were allowed.
+    /// Review and revoke what the user's Rhai scripts and extensions were allowed.
     ScriptPermissions,
     /// Browse, pin and remove past calculations.
     CalculatorHistory,
@@ -93,12 +93,12 @@ pub enum CommandKind {
     SetDefaultTerminal,
     /// Other applications' tray icons and their menus.
     SearchTray,
-    /// The settings view: every setting of `vicinae.json`, by page.
+    /// The settings view: every setting of `compass.json`, by page.
     OpenSettings,
-    /// One of the Vicinae extension's own commands (`VicinaeExtension`), by
-    /// its C++ id: the fallback manager, the installed extensions, the icon
+    /// One of Compass's own commands (the C++ `VicinaeExtension`), by its
+    /// C++ id: the fallback manager, the installed extensions, the icon
     /// gallery, the storage browsers, and the links and files it opens.
-    Vicinae(&'static str),
+    Compass(&'static str),
 }
 
 /// Every builtin command, in the order an empty query lists them. The power
@@ -327,7 +327,7 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         kind: CommandKind::ScriptPermissions,
         entrypoint: "script-permissions",
         title: "Script Permissions",
-        subtitle: "Review and revoke what your Rhai scripts may do",
+        subtitle: "Review and revoke what your Rhai scripts and extensions may do",
         keywords: &[
             "rhai",
             "scripts",
@@ -335,6 +335,8 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             "consent",
             "grants",
             "revoke",
+            "extensions",
+            "host",
         ],
         icon: "key",
     },
@@ -476,7 +478,7 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &[],
         icon: "globe-01",
     },
-    // `SearchTrayCommand`: the vicinae extension's, over the tray host.
+    // `SearchTrayCommand`: the C++ core extension's, over the tray host.
     BuiltinCommand {
         kind: CommandKind::SearchTray,
         entrypoint: "search-tray",
@@ -485,7 +487,7 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &["status", "notifier", "indicator"],
         icon: "app-window-list",
     },
-    // `OpenSettingsCommand`: the vicinae extension's `settings`.
+    // `OpenSettingsCommand`: the C++ core extension's `settings`.
     BuiltinCommand {
         kind: CommandKind::OpenSettings,
         entrypoint: "settings",
@@ -494,9 +496,9 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         keywords: &["preferences", "settings", "configure", "options"],
         icon: "cog",
     },
-    // `VicinaeExtension`'s own commands, in its registration order.
+    // The C++ `VicinaeExtension`'s own commands, in its registration order.
     BuiltinCommand {
-        kind: CommandKind::Vicinae("manage-fallback"),
+        kind: CommandKind::Compass("manage-fallback"),
         entrypoint: "manage-fallback",
         title: "Configure Fallback Commands",
         subtitle: "Configure what commands are to be presented as fallback options when nothing matches the search in the root search.",
@@ -504,15 +506,15 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         icon: "undo",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("list-extensions"),
+        kind: CommandKind::Compass("list-extensions"),
         entrypoint: "list-extensions",
         title: "Show Installed Extensions",
-        subtitle: "Show all third-party extensions that have been installed. This includes local extensions as well as extensions downloaded from the stores (vicinae and raycast).",
+        subtitle: "Show all third-party extensions that have been installed. This includes local extensions as well as extensions downloaded from the stores (Vicinae and Raycast).",
         keywords: &[],
         icon: "plug",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("refresh-apps"),
+        kind: CommandKind::Compass("refresh-apps"),
         entrypoint: "refresh-apps",
         title: "Refresh Apps",
         subtitle: "Force a refresh of the application database. The database should normally automatically update itself on changes, but this can help working around some edge cases.",
@@ -520,47 +522,47 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         icon: "redo",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("report-bug"),
+        kind: CommandKind::Compass("report-bug"),
         entrypoint: "report-bug",
-        title: "Report a Vicinae Bug",
-        subtitle: "Navigate to Vicinae issue creation page with all relevant informations pre-filled.",
+        title: "Report a Compass Bug",
+        subtitle: "Open the Compass issue page with the relevant information pre-filled.",
         keywords: &["create issue"],
         icon: "bug",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("sponsor"),
+        kind: CommandKind::Compass("sponsor"),
         entrypoint: "sponsor",
-        title: "Donate to Vicinae",
-        subtitle: "Open link to Vicinae's GitHub sponsor page",
-        keywords: &["sponsor", "donate"],
+        title: "Sponsor Upstream Vicinae",
+        subtitle: "Open the GitHub Sponsors page of Vicinae, the project Compass is built on",
+        keywords: &["sponsor", "donate", "vicinae"],
         icon: "heart",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("join-discord-server"),
-        entrypoint: "join-discord-server",
-        title: "Join the Discord Server",
-        subtitle: "Open link to join the official Vicinae discord server.",
-        keywords: &["help", "support"],
-        icon: "discord",
+        kind: CommandKind::Compass("project-page"),
+        entrypoint: "project-page",
+        title: "Compass on GitHub",
+        subtitle: "Open the Compass project page for help, releases and discussion.",
+        keywords: &["help", "support", "github"],
+        icon: "globe-01",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("open-config-file"),
+        kind: CommandKind::Compass("open-config-file"),
         entrypoint: "open-config-file",
         title: "Open Config File",
-        subtitle: "Open the main vicinae configuration file",
+        subtitle: "Open the main Compass configuration file",
         keywords: &[],
         icon: "pencil",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("open-default-config"),
+        kind: CommandKind::Compass("open-default-config"),
         entrypoint: "open-default-config",
         title: "Open Default Config File",
-        subtitle: "Open the default vicinae configuration file",
+        subtitle: "Open the default Compass configuration file",
         keywords: &[],
         icon: "pencil",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("reload-scripts"),
+        kind: CommandKind::Compass("reload-scripts"),
         entrypoint: "reload-scripts",
         title: "Reload Script Directories",
         subtitle: "Reload script directories",
@@ -568,23 +570,23 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         icon: "code",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("show-logs"),
+        kind: CommandKind::Compass("show-logs"),
         entrypoint: "show-logs",
         title: "Show Log File",
-        subtitle: "Open the Vicinae log file in your file browser",
+        subtitle: "Open the Compass log file in your file browser",
         keywords: &[],
         icon: "paragraph",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("search-builtin-icons"),
+        kind: CommandKind::Compass("search-builtin-icons"),
         entrypoint: "search-builtin-icons",
         title: "Search Builtin Icons",
-        subtitle: "Search Vicinae builtin set of icons",
+        subtitle: "Search Compass's builtin set of icons",
         keywords: &[],
         icon: "box",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("oauth-token-store"),
+        kind: CommandKind::Compass("oauth-token-store"),
         entrypoint: "oauth-token-store",
         title: "Manage OAuth Token Sets",
         subtitle: "Manage OAuth token sets that have been saved by extensions providing OAuth integrations.",
@@ -592,10 +594,10 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         icon: "key",
     },
     BuiltinCommand {
-        kind: CommandKind::Vicinae("inspect-local-storage"),
+        kind: CommandKind::Compass("inspect-local-storage"),
         entrypoint: "inspect-local-storage",
         title: "Inspect Local Storage",
-        subtitle: "Browse data stored in Vicinae's local storage. This includes data stored for builtin extensions as well as third-party extensions making use of the LocalStorage API.",
+        subtitle: "Browse data stored in Compass's local storage. This includes data stored for builtin extensions as well as third-party extensions making use of the LocalStorage API.",
         keywords: &[],
         icon: "coin",
     },
@@ -649,7 +651,7 @@ impl CommandKind {
             | Self::ScriptPermissions
             | Self::SearchTray
             | Self::OpenSettings
-            | Self::Vicinae(_) => Tile::Accent,
+            | Self::Compass(_) => Tile::Accent,
             Self::NowPlaying
             | Self::Media(_)
             | Self::SetDefaultBrowser
@@ -690,7 +692,7 @@ impl BuiltinCommand {
         matches!(
             self.kind,
             CommandKind::BrowseApps
-                | CommandKind::Vicinae(
+                | CommandKind::Compass(
                     "search-builtin-icons" | "oauth-token-store" | "inspect-local-storage"
                 )
         )
@@ -748,43 +750,44 @@ pub const CPP_BUILTIN_IDS: &[(&str, CommandKind)] = &[
     ("core:search-emojis", CommandKind::SearchEmojis),
     (
         "core:manage-fallback",
-        CommandKind::Vicinae("manage-fallback"),
+        CommandKind::Compass("manage-fallback"),
     ),
     (
         "core:list-extensions",
-        CommandKind::Vicinae("list-extensions"),
+        CommandKind::Compass("list-extensions"),
     ),
-    ("core:refresh-apps", CommandKind::Vicinae("refresh-apps")),
-    ("core:report-bug", CommandKind::Vicinae("report-bug")),
-    ("core:sponsor", CommandKind::Vicinae("sponsor")),
+    ("core:refresh-apps", CommandKind::Compass("refresh-apps")),
+    ("core:report-bug", CommandKind::Compass("report-bug")),
+    ("core:sponsor", CommandKind::Compass("sponsor")),
+    // Compass has no Discord server; the C++ id opens its project page.
     (
         "core:join-discord-server",
-        CommandKind::Vicinae("join-discord-server"),
+        CommandKind::Compass("project-page"),
     ),
     (
         "core:open-config-file",
-        CommandKind::Vicinae("open-config-file"),
+        CommandKind::Compass("open-config-file"),
     ),
     (
         "core:open-default-config",
-        CommandKind::Vicinae("open-default-config"),
+        CommandKind::Compass("open-default-config"),
     ),
     (
         "core:reload-scripts",
-        CommandKind::Vicinae("reload-scripts"),
+        CommandKind::Compass("reload-scripts"),
     ),
-    ("core:show-logs", CommandKind::Vicinae("show-logs")),
+    ("core:show-logs", CommandKind::Compass("show-logs")),
     (
         "core:search-builtin-icons",
-        CommandKind::Vicinae("search-builtin-icons"),
+        CommandKind::Compass("search-builtin-icons"),
     ),
     (
         "core:oauth-token-store",
-        CommandKind::Vicinae("oauth-token-store"),
+        CommandKind::Compass("oauth-token-store"),
     ),
     (
         "core:inspect-local-storage",
-        CommandKind::Vicinae("inspect-local-storage"),
+        CommandKind::Compass("inspect-local-storage"),
     ),
 ];
 
@@ -815,14 +818,14 @@ pub fn opens_a_view(kind: CommandKind) -> bool {
         | CommandKind::ToggleFullscreen
         | CommandKind::ToggleFloating
         | CommandKind::ToggleOverview => false,
-        CommandKind::Vicinae(id) => VICINAE_VIEWS.contains(&id),
+        CommandKind::Compass(id) => COMPASS_VIEWS.contains(&id),
         _ => true,
     }
 }
 
-/// The Vicinae extension's commands that open a view (`BuiltinViewCommand`);
+/// Compass's own commands that open a view (`BuiltinViewCommand`);
 /// the rest run and hide, or open something outside the launcher.
-pub const VICINAE_VIEWS: &[&str] = &[
+pub const COMPASS_VIEWS: &[&str] = &[
     "manage-fallback",
     "list-extensions",
     "search-builtin-icons",
@@ -830,11 +833,12 @@ pub const VICINAE_VIEWS: &[&str] = &[
     "inspect-local-storage",
 ];
 
-/// Where Donate to Vicinae goes (`Omnicast::GH_SPONSOR_LINK`).
-pub const SPONSOR_URL: &str = "https://github.com/sponsors/vicinaehq";
+/// Where Sponsor Upstream Vicinae goes (`Omnicast::GH_SPONSOR_LINK`).
+pub const SPONSOR_URL: &str = crate::tray::SPONSOR_URL;
 
-/// Where Join the Discord Server goes (`Omnicast::DISCORD_INVITE_LINK`).
-pub const DISCORD_URL: &str = "https://discord.gg/rP4ecD42p7";
+/// Where Compass on GitHub goes. The C++ command it replaces opened
+/// `Omnicast::DISCORD_INVITE_LINK`, upstream Vicinae's Discord.
+pub const PROJECT_URL: &str = crate::tray::PROJECT_URL;
 
 #[cfg(test)]
 mod tests {
@@ -933,14 +937,14 @@ mod tests {
     }
 
     #[test]
-    fn the_vicinae_extensions_commands_keep_their_cpp_ids() {
+    fn compass_own_commands_keep_their_cpp_ids() {
         for id in [
             "manage-fallback",
             "list-extensions",
             "refresh-apps",
             "report-bug",
             "sponsor",
-            "join-discord-server",
+            "project-page",
             "open-config-file",
             "open-default-config",
             "reload-scripts",
@@ -950,10 +954,16 @@ mod tests {
             "inspect-local-storage",
         ] {
             let command = by_id(&format!("commands:{id}")).expect(id);
-            assert_eq!(command.kind, CommandKind::Vicinae(id));
-            assert_eq!(canonical_id(&format!("core:{id}")), command.id());
+            assert_eq!(command.kind, CommandKind::Compass(id));
+            // The one command Compass replaced keeps the C++ id it stands in for.
+            let cpp = if id == "project-page" {
+                "join-discord-server"
+            } else {
+                id
+            };
+            assert_eq!(canonical_id(&format!("core:{cpp}")), command.id());
             assert_eq!(command.kind.tile(), Tile::Accent);
-            assert_eq!(opens_a_view(command.kind), VICINAE_VIEWS.contains(&id));
+            assert_eq!(opens_a_view(command.kind), COMPASS_VIEWS.contains(&id));
         }
         for id in [
             "commands:search-builtin-icons",

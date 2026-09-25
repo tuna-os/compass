@@ -17,16 +17,16 @@ every method, signal and window field must be implemented.
 
 ```sh
 cd extensions/gnome-shell
-gnome-extensions pack compass@tuna-os.github.io --extra-source=dbus --force
-gnome-extensions install --force compass@tuna-os.github.io.shell-extension.zip
+gnome-extensions pack compass@tunaos.org --extra-source=dbus --force
+gnome-extensions install --force compass@tunaos.org.shell-extension.zip
 ```
 
 Then log out and back in (a Wayland session cannot reload Shell in place) and
 enable it:
 
 ```sh
-gnome-extensions enable compass@tuna-os.github.io
-vicinae doctor   # gnome.shell-extension should now report contract v4
+gnome-extensions enable compass@tunaos.org
+compass doctor   # gnome.shell-extension should now report contract v4
 ```
 
 ADR-0004 decides how users get it without this: extensions.gnome.org, and

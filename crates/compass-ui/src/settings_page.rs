@@ -29,7 +29,7 @@ pub const HINT: &str = "↑↓: pages    Tab: fields    Esc: back";
 pub const NEEDS_ENGINE: &str = "Changing settings needs the Compass engine";
 
 /// Where the project's documentation is (`Omnicast::DOC_URL`).
-pub const DOCS_URL: &str = "https://docs.vicinae.com";
+pub const DOCS_URL: &str = "https://tunaos.org/compass";
 
 /// What a recorded shortcut is for.
 #[derive(Debug, Clone, PartialEq, Eq)]

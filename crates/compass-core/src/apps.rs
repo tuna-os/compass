@@ -1319,7 +1319,7 @@ impl AppIndex {
 
     /// Files the scanner looked at and did not index, with the reason.
     ///
-    /// This is what `vicinae doctor` should print when a user asks why their application is
+    /// This is what `compass doctor` should print when a user asks why their application is
     /// missing.
     #[must_use]
     pub fn skipped(&self) -> &[SkippedEntry] {

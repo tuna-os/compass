@@ -2,11 +2,13 @@
 //!
 //! A port of `TrayService` and `TrayServiceLinux`'s menu model
 //! (`src/server/src/services/tray/`), minus the StatusNotifierItem D-Bus
-//! plumbing, which is `vicinae::tray_icon` over the `ksni` crate.
+//! plumbing, which is `compass::tray_icon` over the `ksni` crate.
 //!
 //! The entries and what they do are the C++'s; the product's name in them is
 //! Compass (ADR-0012: user-facing copy does not call the product Vicinae).
-//! The three community links are upstream Vicinae's, as the C++ has them.
+//! The C++ ends with three community links of its own; Compass keeps the
+//! sponsorship one, as credit to upstream Vicinae, and replaces its Discord
+//! and X links with the Compass project page.
 //!
 //! # The tray menu is the only way out when the launcher will not open
 //!
@@ -15,12 +17,10 @@
 //! the entries that matter are Toggle, Settings and Quit, and the rules about
 //! when Quit appears are the ones worth getting right.
 
-/// Where "Sponsor Vicinae" goes.
+/// Where "Sponsor Upstream Vicinae" goes.
 pub const SPONSOR_URL: &str = "https://github.com/sponsors/vicinaehq";
-/// Where "Join the Discord" goes.
-pub const DISCORD_URL: &str = "https://discord.gg/rP4ecD42p7";
-/// Where "Follow on X" goes.
-pub const FOLLOW_URL: &str = "https://x.com/aurelienb42";
+/// Where "Compass on GitHub" goes.
+pub const PROJECT_URL: &str = "https://github.com/tuna-os/compass";
 
 /// The environment variable systemd sets for a unit it started.
 ///
@@ -39,11 +39,9 @@ pub const SETTINGS_LABEL: &str = "Settings…";
 pub const PREFERENCES_LABEL: &str = "Preferences…";
 /// The label on the sponsor entry: upstream Vicinae, whose sponsorship page
 /// it opens.
-pub const SPONSOR_LABEL: &str = "Sponsor Vicinae";
-/// The label on the Discord entry.
-pub const DISCORD_LABEL: &str = "Join the Discord";
-/// The label on the follow entry.
-pub const FOLLOW_LABEL: &str = "Follow on X";
+pub const SPONSOR_LABEL: &str = "Sponsor Upstream Vicinae";
+/// The label on the project-page entry.
+pub const PROJECT_LABEL: &str = "Compass on GitHub";
 /// The label on the quit entry.
 pub const QUIT_LABEL: &str = "Quit Compass";
 /// The application's name, shown when no version is known.
@@ -58,12 +56,10 @@ pub fn update_available_label(tag: &str) -> String {
 /// An external page the menu can open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Link {
-    /// The sponsorship page.
+    /// Upstream Vicinae's sponsorship page.
     Sponsor,
-    /// The Discord invite.
-    Discord,
-    /// The author's profile.
-    Follow,
+    /// The Compass project page.
+    Project,
 }
 
 impl Link {
@@ -72,8 +68,7 @@ impl Link {
     pub const fn url(self) -> &'static str {
         match self {
             Self::Sponsor => SPONSOR_URL,
-            Self::Discord => DISCORD_URL,
-            Self::Follow => FOLLOW_URL,
+            Self::Project => PROJECT_URL,
         }
     }
 }
@@ -91,12 +86,10 @@ pub enum EntryKind {
     About,
     /// Settings.
     Settings,
-    /// The sponsorship page.
+    /// Upstream Vicinae's sponsorship page.
     Sponsor,
-    /// The Discord invite.
-    Discord,
-    /// The author's profile.
-    Follow,
+    /// The Compass project page.
+    Project,
     /// Quit.
     Quit,
 }
@@ -144,8 +137,7 @@ pub fn menu_entries(under_systemd: bool) -> Vec<MenuEntry> {
         EntryKind::Settings,
         EntryKind::Separator,
         EntryKind::Sponsor,
-        EntryKind::Discord,
-        EntryKind::Follow,
+        EntryKind::Project,
     ];
     if !under_systemd {
         kinds.push(EntryKind::Separator);
@@ -183,8 +175,7 @@ pub fn entry_label(kind: EntryKind, version: &str) -> String {
         EntryKind::About => ABOUT_LABEL.to_owned(),
         EntryKind::Settings => SETTINGS_LABEL.to_owned(),
         EntryKind::Sponsor => SPONSOR_LABEL.to_owned(),
-        EntryKind::Discord => DISCORD_LABEL.to_owned(),
-        EntryKind::Follow => FOLLOW_LABEL.to_owned(),
+        EntryKind::Project => PROJECT_LABEL.to_owned(),
         EntryKind::Quit => QUIT_LABEL.to_owned(),
         EntryKind::Separator => String::new(),
     }
@@ -214,8 +205,7 @@ pub fn activate(entries: &[MenuEntry], id: i32) -> Option<Activation> {
         }),
         EntryKind::Settings => Some(Activation::OpenSettings { tab: None }),
         EntryKind::Sponsor => Some(Activation::OpenLink(Link::Sponsor)),
-        EntryKind::Discord => Some(Activation::OpenLink(Link::Discord)),
-        EntryKind::Follow => Some(Activation::OpenLink(Link::Follow)),
+        EntryKind::Project => Some(Activation::OpenLink(Link::Project)),
         EntryKind::Quit => Some(Activation::Quit),
         EntryKind::Version | EntryKind::Separator => None,
     }

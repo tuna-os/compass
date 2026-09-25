@@ -40,6 +40,9 @@ pub enum Message {
     },
     /// A result was selected (by keyboard navigation).
     ResultSelected(usize),
+    /// A root row was clicked, by position: select it and do what Enter on
+    /// it does.
+    ResultClicked(usize),
     /// Move the selection one row, wrapping at both ends.
     MoveSelection(Direction),
     /// Launch the selected result.
@@ -224,7 +227,7 @@ pub enum Message {
     FontsQueryChanged(String),
     /// Browse Fonts' category filter changed, to the option titled so.
     FontsCategoryChanged(String),
-    /// "Set as vicinae font" was saved, with the family, or could not be.
+    /// "Set as Compass font" was saved, with the family, or could not be.
     FontSet(Result<String, String>),
     /// Search Tray's items arrived.
     TrayItemsLoaded(Result<Vec<crate::backend::TrayItemRow>, String>),
@@ -560,7 +563,7 @@ pub enum Message {
     IconsQueryChanged(String),
     /// A row of Show Installed Extensions or Search Builtin Icons was
     /// clicked: its first action runs.
-    VicinaeRowSelected(usize),
+    CompassRowSelected(usize),
     /// An extension was uninstalled from Show Installed Extensions, or why
     /// not.
     ExtensionUninstalled {

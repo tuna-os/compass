@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// `ONBOARDING_VERSION`: bumping it shows the flow again to everyone.
 pub const VERSION: u32 = 1;
 
-/// The state file's name, in `$XDG_STATE_HOME/vicinae`.
+/// The state file's name, in `$XDG_STATE_HOME/compass`.
 pub const FILE_NAME: &str = "onboarding.json";
 
 /// Set (to anything but `0` or empty) to leave the flow out, as a build
@@ -24,7 +24,7 @@ pub const FILE_NAME: &str = "onboarding.json";
 pub const DISABLE_ENV: &str = "COMPASS_NO_ONBOARDING";
 
 /// The window's title and the first step's heading.
-pub const TITLE: &str = "Welcome to Vicinae";
+pub const TITLE: &str = "Welcome to Compass";
 
 /// What `onboarding.json` holds (`OnboardingState`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ pub struct State {
     pub completed_at: String,
 }
 
-/// `$XDG_STATE_HOME/vicinae/onboarding.json`, falling back to
+/// `$XDG_STATE_HOME/compass/onboarding.json`, falling back to
 /// `~/.local/state`, as `Omnicast::stateDir()`.
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
@@ -87,7 +87,7 @@ pub fn mark_completed(path: &Path, completed_at: &str) -> std::io::Result<()> {
 /// One step of the flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    /// "Welcome to Vicinae".
+    /// "Welcome to Compass".
     Welcome,
     /// macOS's permissions; never offered on Linux.
     Permissions,
@@ -116,12 +116,12 @@ impl Step {
         match self {
             Self::Welcome => "Let's set it up. It only takes a minute.",
             Self::Permissions => {
-                "Vicinae needs additional permissions in order to make the best of your Mac."
+                "Compass needs additional permissions in order to make the best of your Mac."
             }
             Self::Personalize => "You will be able to change these settings later.",
-            Self::Complete if shortcuts => "Vicinae is running. Open the launcher with:",
+            Self::Complete if shortcuts => "Compass is running. Open the launcher with:",
             Self::Complete => {
-                "Vicinae is running. Bind a key to \"vicinae toggle\" to open it from anywhere."
+                "Compass is running. Bind a key to \"compass toggle\" to open it from anywhere."
             }
         }
     }
@@ -219,12 +219,9 @@ impl Flow {
 
 /// The documentation the hotkey row links to where the platform does not
 /// bind global shortcuts.
-pub const HOTKEY_DOCS_URL: &str =
-    "https://docs.vicinae.com/faq#how-to-set-a-keyboard-shortcut-to-open-vicinae";
+pub const HOTKEY_DOCS_URL: &str = "https://tunaos.org/compass";
 /// The last step's GitHub button.
-pub const GITHUB_URL: &str = "https://github.com/vicinaehq/vicinae";
-/// The last step's Sponsor button.
-pub const SPONSOR_URL: &str = "https://github.com/sponsors/vicinaehq";
+pub const GITHUB_URL: &str = crate::tray::PROJECT_URL;
 
 #[cfg(test)]
 mod tests {
@@ -233,7 +230,7 @@ mod tests {
     #[test]
     fn it_is_due_until_the_current_version_is_recorded() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("vicinae").join(FILE_NAME);
+        let path = dir.path().join("compass").join(FILE_NAME);
         assert!(should_show(&path, false), "no file is never finished");
         assert!(!should_show(&path, true), "switched off");
 
@@ -311,10 +308,10 @@ mod tests {
 
     #[test]
     fn the_last_step_says_how_to_open_the_launcher() {
-        assert!(Step::Complete.subtitle(false).contains("vicinae toggle"));
+        assert!(Step::Complete.subtitle(false).contains("compass toggle"));
         assert_eq!(
             Step::Complete.subtitle(true),
-            "Vicinae is running. Open the launcher with:"
+            "Compass is running. Open the launcher with:"
         );
     }
 }

@@ -1,6 +1,6 @@
-//! The published `vicinae.json` schema is the one the types generate.
+//! The published `compass.json` schema is the one the types generate.
 //!
-//! `packaging/schema/vicinae.schema.json` is committed so editors and packagers can point at a
+//! `packaging/schema/compass.schema.json` is committed so editors and packagers can point at a
 //! stable file, and so a change to it shows up in review. It is never edited by hand. After
 //! changing `compass_core::config`, regenerate it with
 //!
@@ -14,7 +14,7 @@ use compass_core::config::{SCHEMA_URL, json_schema, json_schema_pretty};
 use serde_json::Value;
 
 fn committed_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packaging/schema/vicinae.schema.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packaging/schema/compass.schema.json")
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn every_documented_key_is_in_the_schema_with_its_default() {
 fn the_published_example_is_a_config_this_build_fully_understands() {
     // CI validates the same file against the schema with a real JSON Schema validator
     // (scripts/packaging/check-config-schema.py); this half proves the types agree with it.
-    let path = committed_path().with_file_name("example.vicinae.json");
+    let path = committed_path().with_file_name("example.compass.json");
     let text = std::fs::read_to_string(&path).unwrap();
     let config = compass_core::Config::parse(&text, &path).unwrap();
     assert_eq!(config.schema(), Some(SCHEMA_URL));

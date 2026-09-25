@@ -54,7 +54,9 @@ justification in an ADR.
 [Landlock](https://docs.kernel.org/userspace-api/landlock.html) filesystem boundary and a seccomp
 filter, with capped memory. The boundary also holds inside the Flatpak. Your home directory is
 off-limits except for a short, named, read-only list. For example, `~/.ssh/config` is readable,
-but `~/.ssh`'s keys are not. Extensions cannot run programs they downloaded. The policy and its
+but `~/.ssh`'s keys are not. Extensions cannot run programs they downloaded. When an extension needs a program on your
+computer, such as Raycast's Brew extension running `brew`, Compass asks you first: Allow Once,
+Always Allow or Deny. Script Permissions lists every grant and revokes it. The policy and its
 tests are in [`crates/compass-sandbox`](crates/compass-sandbox) and in the
 [parity ledger](docs/rust-engine/PARITY.md).
 
@@ -65,7 +67,10 @@ applications. You approve them the first time the script runs, and you can revok
 **Raycast and Vicinae extensions.** Extensions written against Vicinae's Raycast-compatible
 TypeScript SDK run on Compass's extension host. It implements all but a few of the SDK's 49 host
 methods, including OAuth sign-in through the browser. You can browse and install from
-both extension stores inside the launcher.
+both extension stores inside the launcher. Many Raycast extensions assume macOS; a runtime shim
+maps `open` to `xdg-open`, `pbcopy` and `pbpaste` to the clipboard and Homebrew to Linuxbrew, and
+refuses AppleScript by name instead of failing obscurely
+([RAYCAST-LINUX-SHIM.md](docs/rust-engine/RAYCAST-LINUX-SHIM.md)).
 
 **Made for Wayland.** On compositors that offer wlr-layer-shell, such as Sway, Hyprland and niri,
 Compass draws as a layer surface, not as a window. On GNOME it uses portals and a small Shell extension, and on compositors that offer
@@ -78,7 +83,7 @@ GitHub releases for updates, and you can turn that check off.
 **Tested where it runs.** The Rust port covers 152 of 152 feature rows in the
 [parity ledger](docs/rust-engine/PARITY.md) (`python3 scripts/ci/parity-score.py`). A Bluefin VM
 tier boots GNOME, installs the Flatpak and drives the real launcher on every nightly run.
-`vicinae doctor` tells you what works on your machine and why.
+`compass doctor` tells you what works on your machine and why.
 
 ## Install
 
@@ -88,7 +93,7 @@ Compass is published in the TunaOS Flatpak remote:
 
 ```sh
 flatpak remote-add --if-not-exists tuna-os https://tunaos.org/flatpak/tuna-os.flatpakrepo
-flatpak install tuna-os com.vicinae.Vicinae
+flatpak install tuna-os org.tunaos.compass
 ```
 
 The runtime, `org.freedesktop.Platform//26.08`, comes from Flathub. Add Flathub too if you have
@@ -100,9 +105,10 @@ flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.f
 
 Then open **Compass** from your application grid.
 
-The app ID is still `com.vicinae.Vicinae`, and the command is still `vicinae`. Both are kept on
-purpose so that existing configuration and extensions keep working
-([ADR-0012](docs/rust-engine/adr/0012-compass-public-brand.md)).
+The app ID is `org.tunaos.compass` and the command is `compass`. If you used Vicinae or an earlier
+Compass build, your `~/.config/vicinae` (and its data, cache and state directories) is moved to
+`~/.config/compass` on first start, with a `vicinae` symlink left behind so an older build still
+finds it ([ADR-0020](docs/rust-engine/adr/0020-phase-7-rebrand.md)).
 
 ### A CI build
 
@@ -115,7 +121,7 @@ requires a GitHub sign-in:
 run=$(gh run list --repo tuna-os/compass --workflow flatpak.yaml \
         --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
 gh run download "$run" --repo tuna-os/compass --name flatpak-bundle
-flatpak install --user --bundle com.vicinae.Vicinae.flatpak
+flatpak install --user --bundle org.tunaos.compass.flatpak
 ```
 
 ### Build the Flatpak yourself
@@ -131,40 +137,40 @@ make flatpak-rust
 ### Other packages
 
 The AppImage, the Arch `PKGBUILD` (`compass-git`) and the Nix flake (`.#compass`) are built and
-smoke-tested in CI. See [`packaging/README.md`](packaging/README.md). They conflict with an
-installed Vicinae, because both provide `/usr/bin/vicinae`.
+smoke-tested in CI. See [`packaging/README.md`](packaging/README.md). They install
+`/usr/bin/compass`.
 
 ### From source
 
 The toolchain is pinned in `rust-toolchain.toml`, and [rustup](https://rustup.rs) fetches it:
 
 ```sh
-cargo build --release -p vicinae
-target/release/vicinae start
+cargo build --release -p compass
+target/release/compass start
 ```
 
 ## Using it
 
 ```sh
-vicinae start        # start the engine and open the launcher (what the app grid entry runs)
-vicinae toggle       # show or hide it; bind this to a key in your compositor
-vicinae doctor       # what works on this machine and what does not
+compass start        # start the engine and open the launcher (what the app grid entry runs)
+compass toggle       # show or hide it; bind this to a key in your compositor
+compass doctor       # what works on this machine and what does not
 ```
 
-When running from the Flatpak, prefix these with `flatpak run com.vicinae.Vicinae`.
+When running from the Flatpak, prefix these with `flatpak run org.tunaos.compass`.
 
 On GNOME and KDE, `start` asks the GlobalShortcuts portal for <kbd>Super</kbd>+<kbd>Space</kbd>.
-On Sway, Hyprland or niri, bind `vicinae toggle` in your compositor config.
+On Sway, Hyprland or niri, bind `compass toggle` in your compositor config.
 <kbd>Ctrl</kbd>+<kbd>B</kbd> opens the action panel, and <kbd>Esc</kbd> goes back or hides the
 launcher.
 
-Configuration lives in `vicinae.json` and has a
-[JSON Schema](packaging/schema/vicinae.schema.json) that editors can use for completion. Until a
-`vicinae.json` exists, Compass reads an existing Vicinae `settings.json` at startup.
-`vicinae config migrate --write` converts it permanently.
+Configuration lives in `~/.config/compass/compass.json` and has a
+[JSON Schema](packaging/schema/compass.schema.json) that editors can use for completion. Until a
+`compass.json` exists, Compass reads an existing Vicinae `settings.json` at startup.
+`compass config migrate --write` converts it permanently.
 
 When something goes wrong, [open an issue](https://github.com/tuna-os/compass/issues/new) and
-include the full `vicinae doctor` output, your distribution and desktop, and how you installed
+include the full `compass doctor` output, your distribution and desktop, and how you installed
 Compass.
 
 ## Development
@@ -175,7 +181,7 @@ just bench-compare       # the Compass-versus-Vicinae benchmarks
 ```
 
 The workspace is split into `compass-*` crates: desktop entries, search, IPC, platform services,
-Wayland and portals, GNOME Shell, the UI, the extension host and the sandbox. The `vicinae` crate
+Wayland and portals, GNOME Shell, the UI, the extension host and the sandbox. The `compass` crate
 is the binary. Start with [CONTRIBUTING.md](CONTRIBUTING.md), the
 [architecture decisions](docs/rust-engine/adr/README.md) and the
 [render harnesses](docs/rust-engine/RENDER-HARNESSES.md).

@@ -1,5 +1,6 @@
 //! Script Permissions in the launcher: the Rhai scripts the user has allowed
-//! something, and revoking it.
+//! something, and the extensions they have always allowed to run a program on
+//! the host (`compass::host_commands`), and revoking either.
 //!
 //! A child module of `app` so it can reach the launcher's state without
 //! widening it; the list's state is in [`crate::grants_page`].

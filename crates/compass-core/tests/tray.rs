@@ -4,10 +4,10 @@
 //! (`src/server/src/services/tray/`).
 
 use compass_core::tray::{
-    ABOUT_LABEL, APP_NAME, Activation, CHECK_FOR_UPDATES_LABEL, DISCORD_LABEL, DISCORD_URL,
-    EntryKind, FOLLOW_LABEL, FOLLOW_URL, Link, PREFERENCES_LABEL, QUIT_LABEL, SETTINGS_LABEL,
-    SPONSOR_LABEL, SPONSOR_URL, SYSTEMD_INVOCATION_ENV, TOGGLE_LABEL, activate, entry_enabled,
-    entry_label, menu_entries, update_available_label,
+    ABOUT_LABEL, APP_NAME, Activation, CHECK_FOR_UPDATES_LABEL, EntryKind, Link, PREFERENCES_LABEL,
+    PROJECT_LABEL, PROJECT_URL, QUIT_LABEL, SETTINGS_LABEL, SPONSOR_LABEL, SPONSOR_URL,
+    SYSTEMD_INVOCATION_ENV, TOGGLE_LABEL, activate, entry_enabled, entry_label, menu_entries,
+    update_available_label,
 };
 
 /// The kind of each entry, in order.
@@ -22,15 +22,14 @@ fn kinds(under_systemd: bool) -> Vec<EntryKind> {
 fn the_labels_are_the_cpp_ones_under_the_compass_name() {
     // Invented wording here is wording nobody wrote, in the one menu a person
     // reaches when the launcher itself will not open. The product's name is
-    // Compass (ADR-0012); the sponsor link is still upstream Vicinae's.
+    // Compass (ADR-0012); the sponsor link is upstream Vicinae's, as credit.
     assert_eq!(TOGGLE_LABEL, "Toggle Compass");
     assert_eq!(ABOUT_LABEL, "About Compass");
     assert_eq!(CHECK_FOR_UPDATES_LABEL, "Check for Updates…");
     assert_eq!(SETTINGS_LABEL, "Settings…");
     assert_eq!(PREFERENCES_LABEL, "Preferences…");
-    assert_eq!(SPONSOR_LABEL, "Sponsor Vicinae");
-    assert_eq!(DISCORD_LABEL, "Join the Discord");
-    assert_eq!(FOLLOW_LABEL, "Follow on X");
+    assert_eq!(SPONSOR_LABEL, "Sponsor Upstream Vicinae");
+    assert_eq!(PROJECT_LABEL, "Compass on GitHub");
     assert_eq!(QUIT_LABEL, "Quit Compass");
 }
 
@@ -59,8 +58,7 @@ fn the_menu_has_the_cpp_entries_in_order() {
             EntryKind::Settings,
             EntryKind::Separator,
             EntryKind::Sponsor,
-            EntryKind::Discord,
-            EntryKind::Follow,
+            EntryKind::Project,
             EntryKind::Separator,
             EntryKind::Quit,
         ]
@@ -75,7 +73,7 @@ fn quit_is_absent_under_systemd() {
     assert_eq!(SYSTEMD_INVOCATION_ENV, "INVOCATION_ID");
     let supervised = kinds(true);
     assert!(!supervised.contains(&EntryKind::Quit));
-    assert_eq!(supervised.last(), Some(&EntryKind::Follow));
+    assert_eq!(supervised.last(), Some(&EntryKind::Project));
 }
 
 #[test]
@@ -147,8 +145,7 @@ fn every_clickable_entry_has_a_label() {
         EntryKind::About,
         EntryKind::Settings,
         EntryKind::Sponsor,
-        EntryKind::Discord,
-        EntryKind::Follow,
+        EntryKind::Project,
         EntryKind::Quit,
     ] {
         assert!(!entry_label(kind, "").is_empty(), "{kind:?}");
@@ -192,21 +189,11 @@ fn about_opens_settings_on_the_about_tab_and_settings_opens_no_tab() {
 }
 
 #[test]
-fn the_three_links_go_where_the_cpp_sends_them() {
+fn the_links_go_to_upstream_sponsorship_and_the_compass_project() {
     assert_eq!(Link::Sponsor.url(), SPONSOR_URL);
-    assert_eq!(Link::Discord.url(), DISCORD_URL);
-    assert_eq!(Link::Follow.url(), FOLLOW_URL);
+    assert_eq!(Link::Project.url(), PROJECT_URL);
     assert!(SPONSOR_URL.starts_with("https://github.com/sponsors/"));
-    assert!(DISCORD_URL.starts_with("https://discord.gg/"));
-    assert!(FOLLOW_URL.starts_with("https://x.com/"));
-}
-
-#[test]
-fn the_three_links_are_three_different_pages() {
-    let mut urls = vec![Link::Sponsor.url(), Link::Discord.url(), Link::Follow.url()];
-    urls.sort_unstable();
-    urls.dedup();
-    assert_eq!(urls.len(), 3);
+    assert_eq!(PROJECT_URL, "https://github.com/tuna-os/compass");
 }
 
 #[test]
@@ -214,8 +201,7 @@ fn each_link_entry_asks_for_its_own_link() {
     let entries = menu_entries(false);
     for (kind, link) in [
         (EntryKind::Sponsor, Link::Sponsor),
-        (EntryKind::Discord, Link::Discord),
-        (EntryKind::Follow, Link::Follow),
+        (EntryKind::Project, Link::Project),
     ] {
         let id = entries
             .iter()

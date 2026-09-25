@@ -11,7 +11,7 @@
 # extension runtime step, the runtime cache, the SDK versions — that drifts
 # from the first. Publishing what was tested is also the point.
 #
-# The app ID stays com.vicinae.Vicinae (ADR-0012); the registry path is
+# The app ID is org.tunaos.compass (ADR-0020); the registry path is
 # tuna-os/compass. The index keys on the registry path, so they need not match.
 name: Publish Flatpak
 
@@ -48,7 +48,7 @@ jobs:
       actions: read
       packages: write
     env:
-      APP_ID: com.vicinae.Vicinae
+      APP_ID: org.tunaos.compass
       IMAGE: ghcr.io/tuna-os/compass
     steps:
       - uses: actions/checkout@v4

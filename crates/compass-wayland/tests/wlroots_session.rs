@@ -284,11 +284,11 @@ fn a_compositor_without_xx_hotkey_says_so_and_the_fallback_names_the_command() {
         return;
     };
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    match HotkeyClient::connect_on(sway.connect(), "com.vicinae.Vicinae", tx) {
+    match HotkeyClient::connect_on(sway.connect(), "org.tunaos.compass", tx) {
         Err(HotkeyError::Unsupported) => {}
         other => panic!("Sway 1.x has neither hotkey protocol, got {other:?}"),
     }
-    assert!(hotkey::manual_binding_hint(Some("sway")).contains("vicinae toggle"));
+    assert!(hotkey::manual_binding_hint(Some("sway")).contains("compass toggle"));
 }
 
 #[test]

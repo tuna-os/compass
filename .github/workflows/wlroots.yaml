@@ -14,7 +14,7 @@
 #   2. The engine against Sway: `ListWindows`/`ActivateWindow`/`CloseWindow`
 #      over the real socket, and GNOME-by-name still taking the GNOME path.
 #   3. The launcher on Sway: a layer surface on screen, NOT in Sway's window
-#      tree, hidden and re-shown by `vicinae toggle` — with the forced
+#      tree, hidden and re-shown by `compass toggle` — with the forced
 #      xdg_toplevel run as the control that proves the tree check can fail.
 #
 # `COMPASS_REQUIRE_COMPOSITOR=1` turns the tests' loud skip into a failure, so
@@ -30,7 +30,7 @@ on:
       - crates/compass-wayland/**
       - crates/compass-wayland-protocols/**
       - crates/compass-ui/**
-      - crates/vicinae/**
+      - crates/compass/**
       - Cargo.lock
 
 concurrency:
@@ -70,7 +70,7 @@ jobs:
           sway --version
 
       - name: Build
-        run: cargo build --locked -p vicinae
+        run: cargo build --locked -p compass
 
       - name: "Rung 1: compass-wayland against Sway"
         run: |
@@ -78,12 +78,12 @@ jobs:
           cargo test --locked -p compass-wayland --test wlroots_input -- --nocapture
 
       - name: "Rung 2: the engine against Sway"
-        run: cargo test --locked -p vicinae --test wlroots_engine -- --nocapture
+        run: cargo test --locked -p compass --test wlroots_engine -- --nocapture
 
       - name: "Rung 3: the launcher is a layer surface on Sway"
         env:
           COMPASS_WLROOTS_WORK: /tmp/compass-wlroots
-        run: scripts/wlroots/launcher-on-sway.sh target/debug/vicinae
+        run: scripts/wlroots/launcher-on-sway.sh target/debug/compass
 
       - name: Keep the logs and screenshots
         if: always()

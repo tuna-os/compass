@@ -2,8 +2,8 @@
 //! ones.
 //!
 //! Ports `ThemeDatabase` and `ThemeFile` (`src/server/src/theme/`): which
-//! directories are read (`$XDG_DATA_HOME/vicinae/themes`, then each
-//! `$XDG_DATA_DIRS/vicinae/themes`), which file wins when two share an id
+//! directories are read (`$XDG_DATA_HOME/compass/themes`, then each
+//! `$XDG_DATA_DIRS/compass/themes`), which file wins when two share an id
 //! (the first found), how a file is read (`[meta]` with `name`, `description`
 //! and `variant`, colours under `[colors.*]` as `#hex`, a `colors.<key>`
 //! reference, or a table with `name` and `opacity`/`lighter`/`darker`), and
@@ -198,7 +198,8 @@ pub struct ThemeFile {
     colors: BTreeMap<String, ColorSpec>,
 }
 
-/// The built-in dark base's id.
+/// The built-in dark base's id. Still `vicinae-dark`: theme files
+/// name it in `inherits` and configurations in `theme.dark.name`.
 pub const VICINAE_DARK: &str = "vicinae-dark";
 /// The built-in light base's id.
 pub const VICINAE_LIGHT: &str = "vicinae-light";
@@ -207,11 +208,11 @@ pub const VICINAE_LIGHT: &str = "vicinae-light";
 /// the user's, then each system data directory's (`dataSearchPaths`).
 #[must_use]
 pub fn search_dirs(data_home: Option<&Path>, data_dirs: &[PathBuf]) -> Vec<PathBuf> {
-    let user = data_home.map(|home| home.join("vicinae").join("themes"));
+    let user = data_home.map(|home| home.join("compass").join("themes"));
     let mut out: Vec<PathBuf> = Vec::with_capacity(1 + data_dirs.len());
     out.extend(user.clone());
     for dir in data_dirs {
-        let path = dir.join("vicinae").join("themes");
+        let path = dir.join("compass").join("themes");
         if Some(&path) != user.as_ref() && !out.contains(&path) {
             out.push(path);
         }
@@ -764,8 +765,8 @@ muted = { name = "colors.core.foreground", opacity = 0.5 }
         assert_eq!(
             dirs,
             [
-                PathBuf::from("/home/a/.local/share/vicinae/themes"),
-                PathBuf::from("/usr/share/vicinae/themes"),
+                PathBuf::from("/home/a/.local/share/compass/themes"),
+                PathBuf::from("/usr/share/compass/themes"),
             ]
         );
     }

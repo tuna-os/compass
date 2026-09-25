@@ -11,7 +11,7 @@
 here="$(dirname "$(readlink -f "$0")")"
 
 : "${COMPASS_NODE:=$here/usr/bin/node}"
-: "${COMPASS_BUILTIN_ICONS:=$here/usr/share/vicinae/builtin-icons}"
+: "${COMPASS_BUILTIN_ICONS:=$here/usr/share/compass/builtin-icons}"
 export COMPASS_NODE COMPASS_BUILTIN_ICONS
 
-exec "$here/usr/bin/vicinae" "$@"
+exec "$here/usr/bin/compass" "$@"

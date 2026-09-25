@@ -84,7 +84,7 @@ jobs:
       # The module docs carry a lot of the reasoning in this repo, and an
       # intra-doc link that stops resolving is invisible to every other gate:
       # `cargo build`, clippy and the tests all pass with a dead `[`Foo`]`.
-      # Five had already rotted in `vicinae::doctor` by the time anyone ran
+      # Five had already rotted in `compass::doctor` by the time anyone ran
       # rustdoc over it, four of them from a type the module no longer names.
       - name: Docs
         run: cargo doc --workspace --no-deps
@@ -132,7 +132,7 @@ jobs:
       # `cargo test -- --nocapture` is what the SLA step below already uses,
       # and for the same reason: the number IS the output.
       - name: Idle RSS, per commit
-        run: cargo test -p vicinae --test idle_memory -- --nocapture
+        run: cargo test -p compass --test idle_memory -- --nocapture
 
       - name: SLA budgets, in release
         run: |
@@ -160,7 +160,7 @@ jobs:
   # develop on rather than to a version we had tested.
   #
   # This job is the fast version of that discovery: two minutes here instead of
-  # forty in the Flatpak job. Scope is deliberately `-p vicinae` rather than the
+  # forty in the Flatpak job. Scope is deliberately `-p compass` rather than the
   # whole workspace, because it is the *shipped* code that has to build on the
   # SDK's compiler -- tests may use newer features freely.
   msrv:
@@ -201,7 +201,7 @@ jobs:
       - name: Build the shipped binary on the MSRV
         run: |
           rustup run "${{ steps.msrv.outputs.version }}" \
-            cargo build --release --locked -p vicinae
+            cargo build --release --locked -p compass
 
   # PHASE 4'S SEAM. The gate (PLAN §6) asks that compass-extension-api compile
   # and pass its tests with compass-worker-host removed from the dependency
@@ -374,6 +374,12 @@ jobs:
           CXX: g++-14
         run: ./scripts/build-extension-runtime.sh
 
+      # The runtime's own unit tests (the macOS shim), on Node's test runner
+      # over esbuild bundles: nothing to install beyond what the build did.
+      - name: Test the runtime
+        working-directory: src/typescript/extension-manager
+        run: npm test
+
       - name: Drive it from the host
         env:
           COMPASS_REQUIRE_RUNTIME: "1"
@@ -387,8 +393,8 @@ jobs:
         env:
           COMPASS_REQUIRE_RUNTIME: "1"
         run: |
-          cargo build -p vicinae -p compass-sandbox --bins
-          cargo test -p vicinae --test engine_end_to_end an_installed_extension -- --nocapture
+          cargo build -p compass -p compass-sandbox --bins
+          cargo test -p compass --test engine_end_to_end an_installed_extension -- --nocapture
 
       - name: Building it must not dirty the tree
         run: |
@@ -532,7 +538,7 @@ jobs:
           restore-keys: suite0-${{ runner.os }}-
 
       - name: Build the engine the harness drives
-        run: cargo build --locked --release -p vicinae
+        run: cargo build --locked --release -p compass
 
       # WHY A SELF-TEST AND NOT THE PARITY RUN ITSELF
       #
@@ -556,8 +562,8 @@ jobs:
           set -o pipefail
           cargo run --locked --release -p compass-testkit --bin parity -- \
             --selftest \
-            --cpp target/release/vicinae \
-            --rust target/release/vicinae | tee "$GITHUB_STEP_SUMMARY"
+            --cpp target/release/compass \
+            --rust target/release/compass | tee "$GITHUB_STEP_SUMMARY"
 
   suite4-benches:
     name: "Suite 4: the SLA benches (informational)"

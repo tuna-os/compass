@@ -1,7 +1,7 @@
 //! The root search's Update section (`RootUpdateSection`): a newer Compass
 //! release, above everything else for the empty query, with its release notes
 //! and "Skip This Version". Whether there is one is the engine's
-//! (`vicinae::updates`); Compass checks and never installs, so the row's
+//! (`compass::updates`); Compass checks and never installs, so the row's
 //! primary action opens the release page where the C++'s installs.
 
 use super::{LauncherApp, Message, Page, PanelSection, PanelState, RootRow, Task, focus_search};

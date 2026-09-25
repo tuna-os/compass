@@ -2,7 +2,7 @@
 //!
 //! Ports `FileSystemWalker`. The traversal machinery — reading directories,
 //! matching ignore files, pruning hidden trees — is the `ignore` crate's, the
-//! same engine ripgrep walks with. What is vicinae's own sits in
+//! same engine ripgrep walks with. What is the launcher's own sits in
 //! [`IndexWalk`]'s policy: the curated exclusion lists, the `.noindex`
 //! convention, machine trash directories, `CACHEDIR.TAG` abandonment, and
 //! refusing symlinks outright.
@@ -300,7 +300,7 @@ impl IndexWalk {
 
     /// The policy as the crate sees it. Ignore files and hidden trees never
     /// reach here — the builder prunes those before `filter_entry` runs — so
-    /// this is the vicinae rules, plus the cache-directory abandonment the C++
+    /// this is the launcher's rules, plus the cache-directory abandonment the C++
     /// does in its listing loop.
     ///
     /// A cache directory is still reported: only its contents are abandoned.

@@ -451,6 +451,7 @@ fn all_requests() -> Vec<Request> {
         Request::ProbeShortcut {
             trigger: "ctrl+alt+é".into(),
         },
+        Request::ExtensionAlertRemember { session: u64::MAX },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -813,6 +814,7 @@ fn all_responses() -> Vec<Response> {
                 message: String::new(),
                 confirm_text: "Delete".into(),
                 cancel_text: "Cancel".into(),
+                remember_text: Some("Always".into()),
             }),
             toast: Some(compass_ipc::ExtensionToast {
                 title: "Copied".into(),
@@ -952,7 +954,7 @@ fn all_responses() -> Vec<Response> {
             running: false,
             injection: false,
             keywords: 3,
-            helper: Some("/usr/libexec/vicinae/vicinae-input-server".into()),
+            helper: Some("/usr/libexec/compass/compass-input-server".into()),
             problem: Some("inside a Flatpak: /dev/input is unreachable".into()),
         }),
         Response::InputServerStatus(compass_ipc::InputServerStatus::default()),
@@ -1170,6 +1172,7 @@ fn request_variants_are_exhaustive() {
             | Request::ExchangeRates
             | Request::RefreshExchangeRates
             | Request::ProbeShortcut { .. }
+            | Request::ExtensionAlertRemember { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

@@ -4,7 +4,7 @@
 set -euo pipefail
 : >/tmp/tier2-session.log
 
-readonly APP_ID=com.vicinae.Vicinae
+readonly APP_ID=org.tunaos.compass
 readonly socket="${XDG_RUNTIME_DIR:?}/tier2-session.sock"
 readonly timeout_s="${READY_TIMEOUT_S:-60}"
 instance_file=$(mktemp /tmp/tier2-session-instance.XXXXXX)
@@ -36,7 +36,7 @@ fi
 
 location=$(flatpak --user info --show-location "$APP_ID")
 desktop="$location/export/share/applications/$APP_ID.desktop"
-grep -q '^Exec=.*--command=vicinae .*com.vicinae.Vicinae start$' "$desktop" ||
+grep -q '^Exec=.*--command=compass .*org.tunaos.compass start$' "$desktop" ||
   fail 'exported entry does not start a session'
 if grep -q '^NoDisplay=true' "$desktop"; then
   fail 'exported application is hidden'

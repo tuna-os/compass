@@ -10,10 +10,10 @@
 #
 # Environment:
 #   PREFIX       install prefix (default /usr/local)
-#   LIBEXECDIR   internal programs go in $LIBEXECDIR/vicinae (default
+#   LIBEXECDIR   internal programs go in $LIBEXECDIR/compass (default
 #                $PREFIX/libexec). Must be $PREFIX/libexec or $PREFIX/lib:
 #                the engine looks for its helpers relative to its own binary
-#                (crates/vicinae/src/indexer_client.rs helper_candidates).
+#                (crates/compass/src/indexer_client.rs helper_candidates).
 #   DESTDIR      staging root, prepended to every path (default empty)
 #   BIN_DIR      where cargo put the release binaries (default target/release)
 #   RUNTIME_JS   the extension runtime bundle (default
@@ -40,23 +40,23 @@ case "$libexecdir" in
 esac
 
 root="$destdir$prefix"
-helpers="$destdir$libexecdir/vicinae"
+helpers="$destdir$libexecdir/compass"
 share="$root/share"
-app_id=com.vicinae.Vicinae
+app_id=org.tunaos.compass
 
-for bin in vicinae vicinae-file-indexer compass-sandbox-exec; do
+for bin in compass compass-file-indexer compass-sandbox-exec; do
   if [ ! -x "$bin_dir/$bin" ]; then
     echo "missing $bin_dir/$bin; build with:" >&2
-    echo "  cargo build --release --locked -p vicinae -p compass-sandbox -p compass-input-server --bins" >&2
+    echo "  cargo build --release --locked -p compass -p compass-sandbox -p compass-input-server --bins" >&2
     exit 1
   fi
 done
 
-install -Dm755 "$bin_dir/vicinae" "$root/bin/vicinae"
-# Both helpers sit where the engine searches: ../libexec/vicinae or
-# ../lib/vicinae from bin/. compass-sandbox-exec confines the extension runtime
+install -Dm755 "$bin_dir/compass" "$root/bin/compass"
+# Both helpers sit where the engine searches: ../libexec/compass or
+# ../lib/compass from bin/. compass-sandbox-exec confines the extension runtime
 # (Landlock + seccomp) and the engine refuses to run extensions without it.
-install -Dm755 "$bin_dir/vicinae-file-indexer" "$helpers/vicinae-file-indexer"
+install -Dm755 "$bin_dir/compass-file-indexer" "$helpers/compass-file-indexer"
 install -Dm755 "$bin_dir/compass-sandbox-exec" "$helpers/compass-sandbox-exec"
 
 # The snippet keyword expander's keyboard helper (crates/compass-input-server).
@@ -66,10 +66,10 @@ install -Dm755 "$bin_dir/compass-sandbox-exec" "$helpers/compass-sandbox-exec"
 # staging cannot carry: the package grants it at install time (Arch:
 # compass.install; NixOS: security.wrappers), as `make postbuild` does for the
 # C++ helper. See packaging/README.md, "The input server".
-if [ -x "$bin_dir/vicinae-input-server" ]; then
-  install -Dm755 "$bin_dir/vicinae-input-server" "$helpers/vicinae-input-server"
+if [ -x "$bin_dir/compass-input-server" ]; then
+  install -Dm755 "$bin_dir/compass-input-server" "$helpers/compass-input-server"
 else
-  echo "warning: no $bin_dir/vicinae-input-server; snippet keywords will not expand" >&2
+  echo "warning: no $bin_dir/compass-input-server; snippet keywords will not expand" >&2
 fi
 
 install -Dm644 "$repo_root/packaging/flatpak/$app_id.desktop" \
@@ -79,17 +79,22 @@ install -Dm644 "$repo_root/packaging/flatpak/$app_id.metainfo.xml" \
 install -Dm644 "$repo_root/extra/compass.svg" \
   "$share/icons/hicolor/scalable/apps/$app_id.svg"
 
-# The Icon.* set extensions draw with, found through $XDG_DATA_DIRS as
-# vicinae/builtin-icons (compass_core::builtin_icon).
-install -Dm644 -t "$share/vicinae/builtin-icons" "$repo_root"/src/server/icons/*.svg
+# An opt-in user unit (`systemctl --user enable --now compass`). Flatpak does
+# not export units, so the copy in /app is inert.
+install -Dm644 "$repo_root/packaging/systemd/compass.service" \
+  "$root/lib/systemd/user/compass.service"
 
-# The published vicinae.json schema, so an editor can be pointed at a local
+# The Icon.* set extensions draw with, found through $XDG_DATA_DIRS as
+# compass/builtin-icons (compass_core::builtin_icon).
+install -Dm644 -t "$share/compass/builtin-icons" "$repo_root"/src/server/icons/*.svg
+
+# The published compass.json schema, so an editor can be pointed at a local
 # copy that matches the installed build.
-install -Dm644 "$repo_root/packaging/schema/vicinae.schema.json" \
-  "$share/vicinae/vicinae.schema.json"
+install -Dm644 "$repo_root/packaging/schema/compass.schema.json" \
+  "$share/compass/compass.schema.json"
 
 # The first-party Rhai scripts, found through $XDG_DATA_DIRS as compass/scripts
-# and at ../share/compass/scripts from bin/ (crates/vicinae/src/rhai_scripts.rs).
+# and at ../share/compass/scripts from bin/ (crates/compass/src/rhai_scripts.rs).
 # Packaged scripts are granted what their manifests declare; the user's own are
 # asked about first (docs/rust-engine/RHAI-SCRIPTS.md, "Permissions").
 for script in "$repo_root"/extensions/rhai-examples/*/; do
@@ -97,9 +102,9 @@ for script in "$repo_root"/extensions/rhai-examples/*/; do
   install -Dm644 -t "$share/compass/scripts/$name" "$script"script.toml "$script"*.rhai
 done
 
-# The extension runtime bundle, found at ../share/vicinae/ from bin/.
+# The extension runtime bundle, found at ../share/compass/ from bin/.
 if [ -f "$runtime_js" ]; then
-  install -Dm644 "$runtime_js" "$share/vicinae/extension-runtime.js"
+  install -Dm644 "$runtime_js" "$share/compass/extension-runtime.js"
 elif [ "${REQUIRE_RUNTIME:-0}" = 1 ]; then
   echo "no extension runtime bundle at $runtime_js; run scripts/build-extension-runtime.sh" >&2
   exit 1

@@ -18,11 +18,11 @@ use std::collections::HashMap;
 
 use zbus::zvariant::OwnedValue;
 
-/// Proxy for `org.gnome.Shell.Extensions.Vicinae.Windows`.
+/// Proxy for `org.tunaos.compass.Shell.Windows`.
 #[zbus::proxy(
-    interface = "org.gnome.Shell.Extensions.Vicinae.Windows",
+    interface = "org.tunaos.compass.Shell.Windows",
     default_service = "org.gnome.Shell",
-    default_path = "/org/gnome/Shell/Extensions/Vicinae/Windows"
+    default_path = "/org/tunaos/compass/Shell/Windows"
 )]
 pub trait Windows {
     /// Contract version implemented by the extension.
@@ -49,11 +49,11 @@ pub trait Windows {
     fn activate_workspace(&self, index: i32) -> zbus::Result<()>;
 }
 
-/// Proxy for `org.gnome.Shell.Extensions.Vicinae.Clipboard`.
+/// Proxy for `org.tunaos.compass.Shell.Clipboard`.
 #[zbus::proxy(
-    interface = "org.gnome.Shell.Extensions.Vicinae.Clipboard",
+    interface = "org.tunaos.compass.Shell.Clipboard",
     default_service = "org.gnome.Shell",
-    default_path = "/org/gnome/Shell/Extensions/Vicinae/Clipboard"
+    default_path = "/org/tunaos/compass/Shell/Clipboard"
 )]
 pub trait Clipboard {
     /// Contract version implemented by the extension.

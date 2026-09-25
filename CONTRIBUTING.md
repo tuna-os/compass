@@ -4,7 +4,7 @@ This document contains a set of guidelines you need to follow before contributin
 
 All issues are tracked in the [Compass issue tracker](https://github.com/tuna-os/compass/issues). Before opening an issue, do a quick search to make sure you are not creating a duplicate.
 
-For a bug, include the full output of `vicinae doctor` (or `flatpak run com.vicinae.Vicinae doctor`), your distribution and desktop, and whether you installed the Flatpak, a CI bundle or a source build. Most reports so far have been resolved from the `doctor` output alone.
+For a bug, include the full output of `compass doctor` (or `flatpak run org.tunaos.compass doctor`), your distribution and desktop, and whether you installed the Flatpak, a CI bundle or a source build. Most reports so far have been resolved from the `doctor` output alone.
 
 Compass is a fork of [Vicinae](https://github.com/vicinaehq/vicinae). Do not report Compass bugs to Vicinae. A bug in an extension from the Vicinae or Raycast store belongs in that extension's repository, unless it only happens on Compass.
 

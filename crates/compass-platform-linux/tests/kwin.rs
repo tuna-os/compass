@@ -412,7 +412,7 @@ async fn focus_close_and_fullscreen_are_one_shot_scripts_unloaded_after() {
         let one_shots: Vec<&str> = state.ran[1..].iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(one_shots.len(), 3);
         for plugin in one_shots {
-            assert!(plugin.starts_with("vicinae-"), "{plugin}");
+            assert!(plugin.starts_with("compass-"), "{plugin}");
             assert!(
                 state.unloaded.iter().any(|u| u == plugin),
                 "{plugin} was left loaded"

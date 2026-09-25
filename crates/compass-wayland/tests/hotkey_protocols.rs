@@ -329,7 +329,7 @@ async fn next(events: &mut mpsc::UnboundedReceiver<HotkeyEvent>) -> HotkeyEvent 
 async fn vicinae_hotkey_binds_presses_refuses_and_releases() {
     let (fake, connection) = Fake::start(false);
     let (tx, mut events) = mpsc::unbounded_channel();
-    let client = HotkeyClient::connect_on(connection, "com.vicinae.Vicinae", tx).expect("a client");
+    let client = HotkeyClient::connect_on(connection, "org.tunaos.compass", tx).expect("a client");
     assert_eq!(client.protocol(), Protocol::Vicinae);
 
     let launcher = client
@@ -343,8 +343,8 @@ async fn vicinae_hotkey_binds_presses_refuses_and_releases() {
     assert_eq!(
         fake.log(),
         [
-            "bind 0x20 9 com.vicinae.Vicinae run toggle",
-            "bind 0x62 9 com.vicinae.Vicinae run clipboard:history",
+            "bind 0x20 9 org.tunaos.compass run toggle",
+            "bind 0x62 9 org.tunaos.compass run clipboard:history",
         ]
     );
 
@@ -375,14 +375,14 @@ async fn vicinae_hotkey_binds_presses_refuses_and_releases() {
 async fn xx_hotkey_is_preferred_and_speaks_its_own_requests() {
     let (fake, connection) = Fake::start(true);
     let (tx, mut events) = mpsc::unbounded_channel();
-    let client = HotkeyClient::connect_on(connection, "com.vicinae.Vicinae", tx).expect("a client");
+    let client = HotkeyClient::connect_on(connection, "org.tunaos.compass", tx).expect("a client");
     assert_eq!(client.protocol(), Protocol::Xx, "the C++ factory's order");
 
     let hotkey = client
         .bind(&request("toggle", 0x20))
         .await
         .expect("space is free");
-    assert_eq!(fake.log(), ["app_id com.vicinae.Vicinae", "trigger 0x20 9"]);
+    assert_eq!(fake.log(), ["app_id org.tunaos.compass", "trigger 0x20 9"]);
     match client.bind(&request("taken", TAKEN)).await {
         Err(HotkeyError::Denied(message)) => {
             assert_eq!(message, compass_wayland::hotkey::DENIED_WITHOUT_MESSAGE);
@@ -421,7 +421,7 @@ fn a_compositor_with_neither_protocol_is_unsupported() {
     };
     let connection = wayland_client::Connection::from_socket(client).expect("a connection");
     let (tx, _rx) = mpsc::unbounded_channel();
-    let result = HotkeyClient::connect_on(connection, "com.vicinae.Vicinae", tx);
+    let result = HotkeyClient::connect_on(connection, "org.tunaos.compass", tx);
     stop.store(true, Ordering::Release);
     let _ = thread.join();
     assert!(
