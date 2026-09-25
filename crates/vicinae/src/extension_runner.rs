@@ -1096,8 +1096,48 @@ impl Selection {
     }
 }
 
+/// The notification `FreedesktopNotificationClient::send` posts: from
+/// `Vicinae`, with the extension's urgency as the `urgency` hint when it gave
+/// one, and its icon when that is a file on disk. The C++ also renders any
+/// other image (a builtin icon, a remote one) to a temporary PNG first; that
+/// is not done here, so such an icon is left out.
+fn desktop_notification(
+    title: &str,
+    body: &str,
+    urgency: Option<compass_worker_host::ui_shell_service::Urgency>,
+    icon: Option<&serde_json::Value>,
+) -> notify_rust::Notification {
+    use compass_worker_host::ui_shell_service::Urgency;
+    let mut notification = notify_rust::Notification::new();
+    notification.appname("Vicinae").summary(title).body(body);
+    if let Some(urgency) = urgency {
+        notification.urgency(match urgency {
+            Urgency::Low => notify_rust::Urgency::Low,
+            Urgency::Normal => notify_rust::Urgency::Normal,
+            Urgency::High => notify_rust::Urgency::Critical,
+        });
+    }
+    let source = icon.and_then(|icon| match icon {
+        serde_json::Value::String(path) => Some(path.as_str()),
+        serde_json::Value::Object(image) => image.get("source").and_then(serde_json::Value::as_str),
+        _ => None,
+    });
+    if let Some(path) = source.map(|source| source.strip_prefix("file://").unwrap_or(source))
+        && std::path::Path::new(path).is_absolute()
+        && std::path::Path::new(path).is_file()
+    {
+        notification.icon(path);
+    }
+    notification
+}
+
 impl HeadlessShell {
     fn notify(&self, title: &str, body: &str) {
+        self.post(desktop_notification(title, body, None, None));
+    }
+
+    fn post(&self, notification: notify_rust::Notification) {
+        let (title, body) = (notification.summary.clone(), notification.body.clone());
         let Some(handle) = &self.handle else {
             tracing::info!(
                 command = self.title,
@@ -1107,14 +1147,7 @@ impl HeadlessShell {
             );
             return;
         };
-        let sent = handle.block_on(
-            notify_rust::Notification::new()
-                .appname("Vicinae")
-                .summary(title)
-                .body(body)
-                .show_async(),
-        );
-        if let Err(err) = sent {
+        if let Err(err) = handle.block_on(notification.show_async()) {
             tracing::info!(command = self.title, title, body, error = %err, "not notified");
         }
     }
@@ -1178,7 +1211,12 @@ impl Shell for HeadlessShell {
     }
 
     fn send_notification(&self, notification: &Notification) {
-        self.notify(&notification.title, &notification.body);
+        self.post(desktop_notification(
+            &notification.title,
+            &notification.body,
+            Some(notification.urgency),
+            notification.icon.as_ref(),
+        ));
     }
 
     fn show_alert(&self, alert: &Alert, _deferral: &Deferral) {
@@ -1695,6 +1733,47 @@ mod tests {
             path: dir.join(STORAGE_DATABASE),
             key: [3; compass_crypto::KEY_SIZE],
         }
+    }
+
+    #[test]
+    fn a_notification_carries_the_urgency_and_an_icon_file() {
+        use compass_worker_host::ui_shell_service::Urgency;
+        use notify_rust::Hint;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let png = dir.path().join("bell.png");
+        std::fs::write(&png, b"\x89PNG").expect("icon");
+        let png = png.to_string_lossy().into_owned();
+
+        for (urgency, hint) in [
+            (Urgency::Low, notify_rust::Urgency::Low),
+            (Urgency::Normal, notify_rust::Urgency::Normal),
+            (Urgency::High, notify_rust::Urgency::Critical),
+        ] {
+            let posted = desktop_notification("T", "B", Some(urgency), None);
+            assert!(posted.hints.contains(&Hint::Urgency(hint)), "{urgency:?}");
+            assert_eq!((posted.summary.as_str(), posted.body.as_str()), ("T", "B"));
+            assert_eq!(posted.appname, "Vicinae");
+        }
+        let plain = desktop_notification("T", "B", None, None);
+        assert!(plain.hints.is_empty(), "a HUD sends no urgency, as before");
+
+        let icon =
+            |value: serde_json::Value| desktop_notification("T", "B", None, Some(&value)).icon;
+        assert_eq!(icon(serde_json::json!(png)), png);
+        assert_eq!(
+            icon(serde_json::json!({ "source": format!("file://{png}") })),
+            png
+        );
+        assert_eq!(
+            icon(serde_json::json!("bell.png")),
+            "",
+            "not a path on disk"
+        );
+        assert_eq!(icon(serde_json::json!("/nonexistent/bell.png")), "");
+        assert_eq!(
+            icon(serde_json::json!({ "source": "https://x.test/a.png" })),
+            ""
+        );
     }
 
     #[test]
