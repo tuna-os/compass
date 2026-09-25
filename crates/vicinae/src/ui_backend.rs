@@ -332,6 +332,78 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn tray_items(&self) -> BackendFuture<'_, Vec<compass_ui::backend::TrayItemRow>> {
+        Box::pin(async move {
+            match self.ask(Request::TrayItems, "Listing tray items").await? {
+                compass_ipc::Response::TrayItems { items } => Ok(items
+                    .into_iter()
+                    .map(|item| compass_ui::backend::TrayItemRow {
+                        key: item.key,
+                        title: item.title,
+                        subtitle: item.subtitle,
+                        attention: item.attention,
+                        has_menu: item.has_menu,
+                        item_is_menu: item.item_is_menu,
+                        icon_path: item.icon_path,
+                        icon_name: item.icon_name,
+                        icon_png: item.icon_png,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn tray_activate(&self, key: String, secondary: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::TrayActivate { key, secondary },
+                    "Activating the tray item",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn tray_menu(&self, key: String) -> BackendFuture<'_, Vec<compass_ui::backend::TrayMenuRow>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::TrayMenu { key }, "Reading the tray menu")
+                .await?
+            {
+                compass_ipc::Response::TrayMenu { entries } => Ok(entries
+                    .into_iter()
+                    .map(|entry| compass_ui::backend::TrayMenuRow {
+                        id: entry.id,
+                        label: entry.label,
+                        toggled: entry.toggled,
+                        icon_name: entry.icon_name,
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn tray_trigger(&self, key: String, id: i32) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::TrayTriggerMenu { key, id },
+                    "Running the menu entry",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn list_media_players(&self) -> BackendFuture<'_, Vec<compass_ui::backend::MediaPlayerRow>> {
         Box::pin(async move {
             match self

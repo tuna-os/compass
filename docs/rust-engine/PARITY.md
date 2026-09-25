@@ -176,7 +176,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/telemetry` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/tray-host` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/tray-host` | `compass-core`, `vicinae::tray_host` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/update` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -380,6 +380,7 @@ flips only with a named Rust module and named tests that would fail on a regress
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `ui/image` | none (see its note) | `compass_ui::icons::{Glyph, command_glyph, file_glyph, clipboard_glyph, default_mark, FileGlyphCache, tile_tone, on_tile}`; `compass_core::commands::{Tile, CommandKind::tile, CommandKind::badge}`; `LauncherApp::glyph` draws a builtin in the row's colour, or on the command's tile (`applyBackdrop`'s rounded square, the glyph inset 19% in `getTonalContrastColor(tile, 5, 0.1)`) with `applyBadge`'s black disc | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial`, `search_files_rows_draw_their_file_type_icons`, `a_window_row_draws_its_applications_icon_or_the_app_window_builtin`, `the_default_pickers_mark_is_the_green_check_icon`, `clipboard_rows_draw_the_builtin_for_their_kind`, `icons::tests::{a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin, a_command_is_drawn_on_its_tile_with_a_light_glyph, a_grey_tile_stays_grey_and_accent_follows_the_palette, clipboard_rows_and_the_default_mark_use_the_cpps_builtins, file_glyphs_are_resolved_once_per_path}`, `each_command_keeps_the_cpps_tile_and_badge` |
+| `src/services/tray-host` | Rust ✅ | `vicinae::tray_host::TrayHost` over the `system-tray` crate (its `StatusNotifierWatcher` when none owns the name, host registration, item and menu tracking), started with the engine; an item's own object path read back from the watcher for `Activate`/`SecondaryActivate`; `IconThemePath` searched (`find_in_theme_path`, with `compass_core::tray_host::best_icon`); the largest pixmap made a PNG (`pixmap_png`). Served over IPC v18 `TrayItems`, `TrayActivate`, `TrayMenu`, `TrayTriggerMenu`; drawn by Search Tray (`commands:search-tray`, `compass_ui::{tray_page, app::tray}`) with the C++ panel (Activate, Browse Menu, Secondary Activate; a menu-only item only browses), the Attention accessory, and the flattened menu (`compass_core::tray_host::flatten_menu`) whose toggles keep it open | `the_tray_host_lists_activates_and_browses_another_applications_item` (a private `dbus-daemon`, a fake item at a non-default path with a `dbusmenu`), `with_no_session_bus_the_tray_is_refused_by_name`, `tray_host::tests::{an_items_path_is_read_back_from_the_watchers_list, the_largest_pixmap_becomes_a_png_with_its_channels_reordered, an_icon_shipped_in_the_items_theme_path_is_found_there_svg_first}`, `search_tray_lists_activates_and_browses_an_items_menu`, `tray_page::tests::*`, `a_tray_menu_is_flattened_with_its_submenus_labels`, `a_tray_rows_title_falls_back_to_its_id_and_its_subtitle_to_the_tooltip_body` |
 | `src/services/desktop-notification` | already ✅; its declared difference closed | `vicinae::notification_icon`: a `data:` URL decoded with `data-url` (already in the tree through usvg), a file icon through `compass_ui::icons::file_glyph`, and a PNG or JPEG fitted into the 128×128 PNG with `image` | `a_data_url_is_decoded_and_drawn_into_the_square`, `a_file_icon_is_the_themes_mime_icon_or_the_builtin_document`, `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` |
 
 What differs, by row:
@@ -389,6 +390,8 @@ What differs, by row:
 | `ui/image` | `renderFileIcon` asks `QMimeDatabase` (`MatchDefault`: the name's globs, then the content's magic) and the type's `iconName` and `genericIconName`, which the shared-mime-info database may override per type. | The type by extension (`mime_guess`, already in the tree), `inode/directory` for a directory; the icon names by shared-mime-info's defaults (`image/png` → `image-png`, generic `image-x-generic`; a directory's generic `folder`). An extensionless file is `application/octet-stream` rather than sniffed, and a type's own `<generic-icon>` is not read. | `a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin`, `mime_icon_names_follow_the_shared_mime_info_defaults` |
 | `ui/image` | A tile is a vertical gradient with a hairline and a drop shadow under the glyph, the tile colour from the theme's semantic colours. | A flat tile with the hairline, in the Vicinae dark theme's accents (the launcher's own palette carries only an accent), clamped into `clampTileTone`'s band; no gradient or shadow. | `a_command_is_drawn_on_its_tile_with_a_light_glyph` |
 | `ui/image` | A clipboard link row shows the site's favicon. | The builtin link icon: favicons are fetched from the network, which the launcher does not do for clipboard rows yet. | `clipboard_rows_and_the_default_mark_use_the_cpps_builtins` |
+| `tray-host` | `SniWatcher` claims the watcher name only after a three-second grace, releases it when another connection queues for it, and accepts an item registered as `busname/path`. | The `system-tray` crate's watcher claims the name at once when it is free and keeps it; it accepts a bus name or an object path (what libappindicator and KDE send) and refuses the combined `busname/path` form. A desktop's own watcher (a bar, KDE, GNOME's AppIndicator extension) is used when it is already there. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
+| `tray-host` | An item is keyed by bus name and path, and its menu fetched with `GetLayout` when the view opens. | Keyed by the bus name it registered from, as the crate keeps it (one item per connection); the menu is the layout the crate follows through `LayoutUpdated`, after an `AboutToShow`. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
 | `ui/image` | Builtin icons are compiled into the binary as Qt resources. | Read from the installed `vicinae/builtin-icons` directory (`compass_core::builtin_icon::directory`); where it is missing a row keeps its initial, as before. | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial` |
 
 ### The gaps pass: glyphs, clipboard, root (2026-09-25)
@@ -803,7 +806,7 @@ rather than by relevance, because a fallback's position decides which of them an
 The emoji picker and both stores are in the launcher now, the picker with the visits, pins, tones
 and keywords `glyph-service` keeps. Still C++-only: the picker's paste action (it copies), the
 installed-extensions list, the OAuth
-token store and local-storage browser views, the tray search, the builtin-icon gallery, the fallback
+token store and local-storage browser views, the builtin-icon gallery, the fallback
 manager's view, and the small commands (report a bug, refresh apps, open the config file, the
 store's intro page).
 
@@ -1406,8 +1409,9 @@ payload is no icon rather than an empty one — which would draw as a blank spac
 application meant nothing at all. The menu itself is the root node's *children*: returning the root
 would put an unnamed entry above every menu.
 
-Still C++-only: the DBus plumbing (the StatusNotifierWatcher registration, the `GetLayout` call and
-the property-change signals), which belongs to whoever owns the bus connection.
+The DBus plumbing (the StatusNotifierWatcher registration, the menu layout and the property-change
+signals) landed in "The gaps pass, icons and tray", as `vicinae::tray_host` over the `system-tray`
+crate.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
 itself (ADR-0014). SQLCipher is `rusqlite`'s `bundled-sqlcipher` build (`libsqlite3-sys` 0.38,

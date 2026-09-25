@@ -108,6 +108,29 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// Other applications' tray icons, for Search Tray.
+    fn tray_items(&self) -> BackendFuture<'_, Vec<TrayItemRow>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Activates a tray item, or its secondary activation.
+    fn tray_activate(&self, key: String, secondary: bool) -> BackendFuture<'_, ()> {
+        let _ = (key, secondary);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// A tray item's menu, flattened.
+    fn tray_menu(&self, key: String) -> BackendFuture<'_, Vec<TrayMenuRow>> {
+        let _ = key;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Clicks one entry of a tray item's menu.
+    fn tray_trigger(&self, key: String, id: i32) -> BackendFuture<'_, ()> {
+        let _ = (key, id);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The running media players, for Now Playing.
     fn list_media_players(&self) -> BackendFuture<'_, Vec<MediaPlayerRow>> {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
@@ -493,6 +516,42 @@ pub struct ScriptGrant {
     pub capabilities: Vec<String>,
     /// The same, in the consent prompt's words.
     pub descriptions: Vec<String>,
+}
+
+/// One application's tray icon, as Search Tray lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrayItemRow {
+    /// What the other tray calls name it by.
+    pub key: String,
+    /// Its title, else its id.
+    pub title: String,
+    /// Its tooltip.
+    pub subtitle: String,
+    /// It is asking for attention.
+    pub attention: bool,
+    /// It has a menu to browse.
+    pub has_menu: bool,
+    /// The whole item is a menu.
+    pub item_is_menu: bool,
+    /// Its icon as a file.
+    pub icon_path: Option<String>,
+    /// Its icon as a theme name.
+    pub icon_name: Option<String>,
+    /// Its icon as PNG bytes.
+    pub icon_png: Option<Vec<u8>>,
+}
+
+/// One clickable entry of a tray item's menu.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TrayMenuRow {
+    /// Its id, for [`ApplicationBackend::tray_trigger`].
+    pub id: i32,
+    /// Its label, after its submenus'.
+    pub label: String,
+    /// For a toggle, whether it is on.
+    pub toggled: Option<bool>,
+    /// Its icon's theme name.
+    pub icon_name: Option<String>,
 }
 
 /// One running media player, as Now Playing lists it.

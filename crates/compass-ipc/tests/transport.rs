@@ -144,7 +144,11 @@ async fn echo_handler(request: Request) -> Response {
         | Request::QuitWindowApp { .. }
         | Request::AddCalculatorRecord { .. }
         | Request::EditCalculatorHistory { .. }
+        | Request::TrayActivate { .. }
+        | Request::TrayTriggerMenu { .. }
         | Request::SetTheme { .. } => Response::Ack,
+        Request::TrayItems => Response::TrayItems { items: vec![] },
+        Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },
         Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
         Request::AppRuntime { .. } => Response::AppRuntime {
             running: false,

@@ -216,6 +216,21 @@ pub enum Message {
     FontsCategoryChanged(String),
     /// "Set as vicinae font" was saved, with the family, or could not be.
     FontSet(Result<String, String>),
+    /// Search Tray's items arrived.
+    TrayItemsLoaded(Result<Vec<crate::backend::TrayItemRow>, String>),
+    /// A tray item's menu arrived.
+    TrayMenuLoaded {
+        /// The item's key.
+        key: String,
+        /// Its entries, or why not.
+        result: Result<Vec<crate::backend::TrayMenuRow>, String>,
+    },
+    /// Search Tray's filter changed.
+    TrayQueryChanged(String),
+    /// A Search Tray row was clicked, by position in the shown list.
+    TraySelected(usize),
+    /// A tray action ran: `true` when the launcher should close.
+    TrayActed(Result<bool, String>),
     /// Script Permissions' list arrived.
     GrantsLoaded(Result<Vec<crate::backend::ScriptGrant>, String>),
     /// Browse Apps' or a default picker's filter changed.

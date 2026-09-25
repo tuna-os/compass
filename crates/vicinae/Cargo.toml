@@ -77,6 +77,8 @@ resvg = { version = "0.45", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # A `data:` URL notification icon (already in the tree through usvg).
 data-url = "0.3"
+# The StatusNotifierItem host and its watcher, over the zbus 5 already in the tree.
+system-tray = "0.8"
 
 [dev-dependencies]
 base64.workspace = true

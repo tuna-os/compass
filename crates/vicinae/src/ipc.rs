@@ -187,6 +187,10 @@ fn describe(request: &Request) -> &'static str {
         Request::CalculatorHistory { .. } => "CalculatorHistory",
         Request::AddCalculatorRecord { .. } => "AddCalculatorRecord",
         Request::EditCalculatorHistory { .. } => "EditCalculatorHistory",
+        Request::TrayItems => "TrayItems",
+        Request::TrayActivate { .. } => "TrayActivate",
+        Request::TrayMenu { .. } => "TrayMenu",
+        Request::TrayTriggerMenu { .. } => "TrayTriggerMenu",
     }
 }
 

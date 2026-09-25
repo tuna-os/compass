@@ -5815,3 +5815,306 @@ fn calculator_history_is_a_builtin_and_without_a_keyring_is_refused_by_name() {
     assert_eq!(err.kind, ErrorKind::Unsupported);
     assert!(err.message.contains("keyring"), "{}", err.message);
 }
+
+/// A fake application's tray icon on a private bus: a `StatusNotifierItem`
+/// at a non-default path and its `dbusmenu`, recording what is called.
+mod fake_tray {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use zbus::zvariant::{OwnedValue, Value};
+
+    pub type Calls = Arc<Mutex<Vec<String>>>;
+
+    /// The specification's `(sa(iiay)ss)`: icon name, pixmaps, title, body.
+    type ToolTip = (String, Vec<(i32, i32, Vec<u8>)>, String, String);
+
+    pub struct Item {
+        pub calls: Calls,
+    }
+
+    #[zbus::interface(name = "org.kde.StatusNotifierItem")]
+    impl Item {
+        fn activate(&self, _x: i32, _y: i32) {
+            self.calls.lock().unwrap().push("Activate".into());
+        }
+        fn secondary_activate(&self, _x: i32, _y: i32) {
+            self.calls.lock().unwrap().push("SecondaryActivate".into());
+        }
+        #[zbus(property)]
+        fn category(&self) -> String {
+            "Communications".into()
+        }
+        #[zbus(property)]
+        fn id(&self) -> String {
+            "fake-chat".into()
+        }
+        #[zbus(property)]
+        fn title(&self) -> String {
+            "Fake Chat".into()
+        }
+        #[zbus(property)]
+        fn status(&self) -> String {
+            "NeedsAttention".into()
+        }
+        #[zbus(property)]
+        fn icon_name(&self) -> String {
+            "fake-chat-icon".into()
+        }
+        #[zbus(property)]
+        fn item_is_menu(&self) -> bool {
+            false
+        }
+        #[zbus(property)]
+        fn menu(&self) -> zbus::zvariant::OwnedObjectPath {
+            zbus::zvariant::OwnedObjectPath::try_from("/FakeMenu").unwrap()
+        }
+        #[zbus(property)]
+        fn tool_tip(&self) -> ToolTip {
+            (
+                String::new(),
+                Vec::new(),
+                "Fake Chat".into(),
+                "3 unread messages".into(),
+            )
+        }
+    }
+
+    pub struct Menu {
+        pub calls: Calls,
+    }
+
+    type Layout = (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>);
+
+    fn node(id: i32, props: &[(&str, Value<'_>)], children: Vec<OwnedValue>) -> Layout {
+        (
+            id,
+            props
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), v.try_to_owned().unwrap()))
+                .collect(),
+            children,
+        )
+    }
+
+    fn boxed(layout: Layout) -> OwnedValue {
+        Value::from(zbus::zvariant::Structure::from(layout))
+            .try_to_owned()
+            .unwrap()
+    }
+
+    #[zbus::interface(name = "com.canonical.dbusmenu")]
+    impl Menu {
+        fn get_layout(&self, _parent: i32, _depth: i32, _props: Vec<String>) -> (u32, Layout) {
+            let open = node(1, &[("label", Value::from("_Open Chat"))], Vec::new());
+            let away = node(
+                3,
+                &[
+                    ("label", Value::from("Away")),
+                    ("toggle-type", Value::from("checkmark")),
+                    ("toggle-state", Value::from(1i32)),
+                ],
+                Vec::new(),
+            );
+            let status = node(
+                2,
+                &[
+                    ("label", Value::from("Status")),
+                    ("children-display", Value::from("submenu")),
+                ],
+                vec![boxed(away)],
+            );
+            let separator = node(4, &[("type", Value::from("separator"))], Vec::new());
+            let root = node(0, &[], vec![boxed(open), boxed(separator), boxed(status)]);
+            (1, root)
+        }
+        fn get_group_properties(
+            &self,
+            _ids: Vec<i32>,
+            _props: Vec<String>,
+        ) -> Vec<(i32, HashMap<String, OwnedValue>)> {
+            Vec::new()
+        }
+        fn event(&self, id: i32, event_id: String, _data: Value<'_>, _timestamp: u32) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("Event {id} {event_id}"));
+        }
+        fn about_to_show(&self, _id: i32) -> bool {
+            self.calls.lock().unwrap().push("AboutToShow".into());
+            false
+        }
+        #[zbus(property)]
+        fn version(&self) -> u32 {
+            3
+        }
+        #[zbus(property)]
+        fn status(&self) -> String {
+            "normal".into()
+        }
+    }
+}
+
+#[test]
+fn the_tray_host_lists_activates_and_browses_another_applications_item() {
+    use compass_ipc::{Request, Response, TrayMenuEntry};
+    use std::io::{BufRead, BufReader};
+    let mut bus = match Command::new("dbus-daemon")
+        .args(["--session", "--print-address", "--nofork"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(bus) => bus,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("SKIPPED: no dbus-daemon on this machine");
+            return;
+        }
+        Err(err) => panic!("failed to spawn dbus-daemon: {err}"),
+    };
+    let mut address = String::new();
+    BufReader::new(bus.stdout.take().expect("piped stdout"))
+        .read_line(&mut address)
+        .expect("dbus-daemon prints its address");
+    let address = address.trim().to_owned();
+
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |_| {
+        vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())]
+    });
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let calls = fake_tray::Calls::default();
+    let item_path = "/org/fake/StatusNotifierItem";
+    let _connection = runtime.block_on(async {
+        let connection = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .serve_at(
+                item_path,
+                fake_tray::Item {
+                    calls: calls.clone(),
+                },
+            )
+            .unwrap()
+            .serve_at(
+                "/FakeMenu",
+                fake_tray::Menu {
+                    calls: calls.clone(),
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .expect("the fake item connects to the private bus");
+        // The engine's host serves the watcher; wait for it to own the name.
+        let mut registered = false;
+        for _ in 0..100 {
+            let reply = connection
+                .call_method(
+                    Some("org.kde.StatusNotifierWatcher"),
+                    "/StatusNotifierWatcher",
+                    Some("org.kde.StatusNotifierWatcher"),
+                    "RegisterStatusNotifierItem",
+                    // As libappindicator does: the path alone, from the
+                    // item's own connection.
+                    &(item_path),
+                )
+                .await;
+            if reply.is_ok() {
+                registered = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(registered, "the engine never served the watcher");
+        connection
+    });
+
+    let mut items = Vec::new();
+    for _ in 0..100 {
+        match daemon.request(Request::TrayItems) {
+            Response::TrayItems { items: found } if !found.is_empty() => {
+                items = found;
+                break;
+            }
+            Response::TrayItems { .. } => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            other => panic!("TrayItems: {other:?}"),
+        }
+    }
+    let [item] = items.as_slice() else {
+        panic!("the fake item was not listed: {items:?}");
+    };
+    assert_eq!(item.title, "Fake Chat");
+    assert_eq!(item.subtitle, "3 unread messages");
+    assert!(item.attention);
+    assert!(item.has_menu && !item.item_is_menu);
+    assert_eq!(item.icon_name.as_deref(), Some("fake-chat-icon"));
+    let key = item.key.clone();
+
+    assert!(matches!(
+        daemon.request(Request::TrayActivate {
+            key: key.clone(),
+            secondary: false
+        }),
+        Response::Ack
+    ));
+    assert!(matches!(
+        daemon.request(Request::TrayActivate {
+            key: key.clone(),
+            secondary: true
+        }),
+        Response::Ack
+    ));
+
+    let Response::TrayMenu { entries } = daemon.request(Request::TrayMenu { key: key.clone() })
+    else {
+        panic!("no menu");
+    };
+    assert_eq!(
+        entries,
+        [
+            TrayMenuEntry {
+                id: 1,
+                label: "Open Chat".into(),
+                toggled: None,
+                icon_name: None,
+            },
+            TrayMenuEntry {
+                id: 3,
+                label: "Status › Away".into(),
+                toggled: Some(true),
+                icon_name: None,
+            },
+        ]
+    );
+    assert!(matches!(
+        daemon.request(Request::TrayTriggerMenu { key, id: 3 }),
+        Response::Ack
+    ));
+
+    let calls = calls.lock().unwrap().clone();
+    let _ = bus.kill();
+    let _ = bus.wait();
+    assert!(
+        calls.starts_with(&["Activate".to_owned(), "SecondaryActivate".to_owned()]),
+        "the item was activated at its own path: {calls:?}"
+    );
+    assert!(calls.contains(&"AboutToShow".to_owned()), "{calls:?}");
+    assert!(calls.contains(&"Event 3 clicked".to_owned()), "{calls:?}");
+}
+
+#[test]
+fn with_no_session_bus_the_tray_is_refused_by_name() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[("a.desktop", &entry("Alpha", ""))]);
+    let Response::Error(err) = daemon.request(Request::TrayItems) else {
+        panic!("the tray answered with no session bus");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+}

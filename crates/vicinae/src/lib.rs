@@ -51,6 +51,7 @@ pub mod snippet_expansion;
 pub mod snippets;
 pub mod spike;
 pub mod stores;
+pub mod tray_host;
 pub mod typography;
 pub mod ui_backend;
 mod ui_instance;

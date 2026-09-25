@@ -5827,6 +5827,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-tray"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab761caca0fb6cb7c57e09df241eb26ea8cdc63df88f1badca4818494f74d55f"
+dependencies = [
+ "cfg-if",
+ "futures-lite",
+ "serde",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "zbus",
+]
+
+[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6506,6 +6521,7 @@ dependencies = [
  "seccompiler",
  "serde",
  "serde_json",
+ "system-tray",
  "tempfile",
  "thiserror 2.0.20",
  "tiny_http",

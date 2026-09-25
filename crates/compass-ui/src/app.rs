@@ -45,6 +45,7 @@ mod shortcuts;
 mod snippets;
 mod stores;
 mod themes;
+mod tray;
 
 /// The search field's widget id.
 ///
@@ -592,6 +593,8 @@ enum Page {
     NowPlaying(crate::media_page::NowPlayingPage),
     /// Script Permissions.
     Grants(crate::grants_page::GrantsPage),
+    /// Search Tray.
+    Tray(crate::tray_page::TrayPage),
     /// Browse Apps, Set Default Browser or Set Default Terminal.
     Apps(crate::apps_page::AppsPage),
     /// Calculator History.
@@ -2131,6 +2134,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_grants_panel() {
                     return task;
+                } else if let Some(task) = self.open_tray_panel() {
+                    return task;
                 } else if let Some(task) = self.open_apps_panel() {
                     return task;
                 } else if let Some(task) = self.open_emoji_panel() {
@@ -2216,6 +2221,7 @@ impl LauncherApp {
                         .or_else(|| self.media_panel_action(&id))
                         .or_else(|| self.theme_panel_action(&id))
                         .or_else(|| self.grants_panel_action(&id))
+                        .or_else(|| self.tray_panel_action(&id))
                         .or_else(|| self.apps_panel_action(&id))
                         .or_else(|| self.emoji_panel_action(&id))
                         .or_else(|| self.clipboard_panel_action(&id))
@@ -2666,6 +2672,11 @@ impl LauncherApp {
             | Message::GrantsQueryChanged(_)
             | Message::GrantSelected(_)
             | Message::GrantRevoked(_) => self.grants_message(message),
+            Message::TrayItemsLoaded(_)
+            | Message::TrayMenuLoaded { .. }
+            | Message::TrayQueryChanged(_)
+            | Message::TraySelected(_)
+            | Message::TrayActed(_) => self.tray_message(message),
             Message::NowPlayingLoaded(_)
             | Message::NowPlayingQueryChanged(_)
             | Message::NowPlayingSelected(_)
@@ -2960,6 +2971,9 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Grants(_)) {
                     return self.grants_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Tray(_)) {
+                    return self.tray_page_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::Apps(_)) {
                     return self.apps_page_key(key, modifiers);
                 }
@@ -3245,6 +3259,15 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::GrantsQueryChanged as OnInput),
             ),
+            Page::Tray(page) => (
+                if page.menu_key().is_some() {
+                    crate::tray_page::MENU_PLACEHOLDER
+                } else {
+                    crate::tray_page::PLACEHOLDER
+                },
+                &page.query,
+                Some(Message::TrayQueryChanged as OnInput),
+            ),
             Page::Apps(page) => (
                 page.placeholder(),
                 &page.query,
@@ -3381,6 +3404,8 @@ impl LauncherApp {
             self.dmenu_body(page)
         } else if let Page::Grants(page) = &self.page {
             self.grants_body(page)
+        } else if let Page::Tray(page) = &self.page {
+            self.tray_body(page)
         } else if let Page::Apps(page) = &self.page {
             self.apps_body(page)
         } else if let Page::Calculator(page) = &self.page {
@@ -5123,6 +5148,7 @@ impl LauncherApp {
             CommandKind::Media(id) => Task::batch([record, self.run_media(command, id, None)]),
             CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
             CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
+            CommandKind::SearchTray => Task::batch([record, self.open_search_tray()]),
             CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
             CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
             CommandKind::SetDefaultBrowser => Task::batch([
@@ -6009,6 +6035,10 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct TestBackend {
+        /// Other applications' tray icons.
+        tray: Vec<crate::backend::TrayItemRow>,
+        /// What the tray was asked to do.
+        tray_calls: std::sync::Mutex<Vec<String>>,
         /// What the default pickers offer.
         default_apps: Vec<crate::backend::DefaultAppRow>,
         /// The defaults set: `(kind, id)`.
@@ -6266,6 +6296,58 @@ mod tests {
             &self,
         ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
             Box::pin(async move { Ok(self.grants.lock().unwrap().clone()) })
+        }
+
+        fn tray_items(
+            &self,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TrayItemRow>> {
+            Box::pin(async move { Ok(self.tray.clone()) })
+        }
+
+        fn tray_activate(
+            &self,
+            key: String,
+            secondary: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.tray_calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("activate {key} {secondary}"));
+                Ok(())
+            })
+        }
+
+        fn tray_menu(
+            &self,
+            key: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::TrayMenuRow>> {
+            Box::pin(async move {
+                self.tray_calls.lock().unwrap().push(format!("menu {key}"));
+                Ok(vec![
+                    crate::backend::TrayMenuRow {
+                        id: 1,
+                        label: "Open Chat".into(),
+                        ..crate::backend::TrayMenuRow::default()
+                    },
+                    crate::backend::TrayMenuRow {
+                        id: 3,
+                        label: "Status › Away".into(),
+                        toggled: Some(true),
+                        ..crate::backend::TrayMenuRow::default()
+                    },
+                ])
+            })
+        }
+
+        fn tray_trigger(&self, key: String, id: i32) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.tray_calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("trigger {key} {id}"));
+                Ok(())
+            })
         }
 
         fn calculator_history(
@@ -9873,6 +9955,98 @@ mod tests {
             ["script.clip"]
         );
         assert_eq!(page.notice.as_deref(), Some(crate::grants_page::REVOKED));
+    }
+
+    #[test]
+    fn search_tray_lists_activates_and_browses_an_items_menu() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            tray: vec![
+                crate::backend::TrayItemRow {
+                    key: ":1.7".into(),
+                    title: "Fake Chat".into(),
+                    subtitle: "3 unread messages".into(),
+                    attention: true,
+                    has_menu: true,
+                    ..crate::backend::TrayItemRow::default()
+                },
+                crate::backend::TrayItemRow {
+                    key: ":1.8".into(),
+                    title: "Network".into(),
+                    ..crate::backend::TrayItemRow::default()
+                },
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "search tray", "commands:search-tray");
+        let Page::Tray(page) = &app.page else {
+            panic!("not Search Tray: {}", app.state_line());
+        };
+        assert_eq!(page.shown.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Fake Chat").is_ok());
+            assert!(ui.find("3 unread messages").is_ok());
+            assert!(ui.find(crate::tray_page::ATTENTION).is_ok());
+        }
+        let _ = app.update(Message::TogglePanel);
+        let titles: Vec<String> = app
+            .panel
+            .as_ref()
+            .unwrap()
+            .sections
+            .iter()
+            .flat_map(|section| section.actions.iter().map(|a| a.title.clone()))
+            .collect();
+        assert_eq!(titles, ["Activate", "Browse Menu", "Secondary Activate"]);
+        let _ = app.update(Message::TogglePanel);
+
+        let _ = app.update(Message::TrayQueryChanged("network".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            backend.tray_calls.lock().unwrap().as_slice(),
+            ["activate :1.8 false"],
+            "Enter activates"
+        );
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "search tray", "commands:search-tray");
+        let task = app.update(Message::TogglePanel);
+        settle(&mut app, task);
+        let _ = app.update(Message::PanelFilterChanged("Browse Menu".into()));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        let Page::Tray(page) = &app.page else {
+            panic!("left Search Tray");
+        };
+        assert_eq!(page.menu_key(), Some(":1.7"));
+        assert_eq!(page.entries.len(), 2);
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Status › Away").is_ok());
+        }
+        let _ = app.update(Message::TrayQueryChanged("away".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert!(
+            backend
+                .tray_calls
+                .lock()
+                .unwrap()
+                .contains(&"trigger :1.7 3".to_owned())
+        );
+        assert!(
+            matches!(app.page, Page::Tray(_)),
+            "a toggle keeps the menu open"
+        );
+        let _ = app.update(pressed(iced::keyboard::key::Named::Escape));
+        let Page::Tray(page) = &app.page else {
+            panic!("Escape in a menu left Search Tray");
+        };
+        assert_eq!(page.menu_key(), None, "Escape goes back to the items");
     }
 
     #[test]

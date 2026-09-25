@@ -339,6 +339,18 @@ fn all_requests() -> Vec<Request> {
         Request::EditCalculatorHistory {
             edit: compass_ipc::CalculatorEdit::RemoveAll,
         },
+        Request::TrayItems,
+        Request::TrayActivate {
+            key: ":1.42/StatusNotifierItem".into(),
+            secondary: true,
+        },
+        Request::TrayMenu {
+            key: "org.kde.StatusNotifierItem-7-1/StatusNotifierItem".into(),
+        },
+        Request::TrayTriggerMenu {
+            key: ":1.42/StatusNotifierItem".into(),
+            id: i32::MIN,
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -490,6 +502,27 @@ fn all_responses() -> Vec<Response> {
                 workspace: Some(1),
                 focused: false,
                 can_close: true,
+            }],
+        },
+        Response::TrayItems {
+            items: vec![compass_ipc::TrayItemInfo {
+                key: ":1.42/StatusNotifierItem".into(),
+                title: "Réseau".into(),
+                subtitle: "Connecté".into(),
+                attention: true,
+                has_menu: true,
+                item_is_menu: false,
+                icon_path: Some("/tmp/ä.png".into()),
+                icon_name: Some("nm-signal-100".into()),
+                icon_png: Some(vec![0x89, b'P', b'N', b'G']),
+            }],
+        },
+        Response::TrayMenu {
+            entries: vec![compass_ipc::TrayMenuEntry {
+                id: -1,
+                label: "Vitesse › Rapide".into(),
+                toggled: Some(false),
+                icon_name: None,
             }],
         },
         Response::CommandLaunch {
@@ -919,6 +952,10 @@ fn request_variants_are_exhaustive() {
             | Request::CalculatorHistory { .. }
             | Request::AddCalculatorRecord { .. }
             | Request::EditCalculatorHistory { .. }
+            | Request::TrayItems
+            | Request::TrayActivate { .. }
+            | Request::TrayMenu { .. }
+            | Request::TrayTriggerMenu { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -973,6 +1010,8 @@ fn response_variants_are_exhaustive() {
             | Response::CommandLaunch { .. }
             | Response::AppRuntime { .. }
             | Response::CalculatorHistory { .. }
+            | Response::TrayItems { .. }
+            | Response::TrayMenu { .. }
             | Response::Window(_) => {}
         }
     }

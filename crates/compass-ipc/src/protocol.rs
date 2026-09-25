@@ -64,8 +64,11 @@ use serde::{Deserialize, Serialize};
 /// for a running application ([`Request::AppRuntime`], [`Request::QuitApp`],
 /// [`Request::QuitWindowApp`]); and the calculator's history
 /// ([`Request::CalculatorHistory`], [`Request::AddCalculatorRecord`],
-/// [`Request::EditCalculatorHistory`]).
-pub const PROTOCOL_VERSION: u16 = 17;
+/// [`Request::EditCalculatorHistory`]); version 18, other applications'
+/// tray icons, as the StatusNotifierItem host sees them
+/// ([`Request::TrayItems`], [`Request::TrayActivate`], [`Request::TrayMenu`],
+/// [`Request::TrayTriggerMenu`]).
+pub const PROTOCOL_VERSION: u16 = 18;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -816,6 +819,71 @@ pub enum Request {
         /// What to do.
         edit: CalculatorEdit,
     },
+    /// Other applications' tray icons, as the engine's StatusNotifierItem
+    /// host has them. Answered with [`Response::TrayItems`]; refused as
+    /// [`ErrorKind::Unsupported`] when the host could not start (no session
+    /// bus). (v18.)
+    TrayItems,
+    /// Activate a tray item, as clicking its icon would, or its secondary
+    /// activation (a middle click). Answered with [`Response::Ack`]. (v18.)
+    TrayActivate {
+        /// The item's [`TrayItemInfo::key`].
+        key: String,
+        /// `SecondaryActivate` rather than `Activate`.
+        secondary: bool,
+    },
+    /// A tray item's menu, flattened as the C++ tray view lists it.
+    /// Answered with [`Response::TrayMenu`]. (v18.)
+    TrayMenu {
+        /// The item's [`TrayItemInfo::key`].
+        key: String,
+    },
+    /// Click one entry of a tray item's menu. Answered with
+    /// [`Response::Ack`]. (v18.)
+    TrayTriggerMenu {
+        /// The item's [`TrayItemInfo::key`].
+        key: String,
+        /// The entry's [`TrayMenuEntry::id`].
+        id: i32,
+    },
+}
+
+/// One application's tray icon (`TrayItem`), as the tray view lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TrayItemInfo {
+    /// The bus name it registered from: what the other tray requests name
+    /// it by.
+    pub key: String,
+    /// Its title, else its id.
+    pub title: String,
+    /// Its tooltip, as the row's second line.
+    pub subtitle: String,
+    /// It is asking for attention.
+    pub attention: bool,
+    /// It has a menu to browse.
+    pub has_menu: bool,
+    /// The whole item is a menu: it cannot be activated.
+    pub item_is_menu: bool,
+    /// Its icon: a file (resolved against its own theme path), when it named
+    /// one there.
+    pub icon_path: Option<String>,
+    /// Its icon: a theme name, when it gave one.
+    pub icon_name: Option<String>,
+    /// Its icon: its largest pixmap encoded as a PNG, when it sent pixels.
+    pub icon_png: Option<Vec<u8>>,
+}
+
+/// One clickable entry of a tray item's menu.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TrayMenuEntry {
+    /// Its id on the bus, for [`Request::TrayTriggerMenu`].
+    pub id: i32,
+    /// Its label, after its submenus' (`Speed › Fast`).
+    pub label: String,
+    /// For a checkbox or radio entry, whether it is on.
+    pub toggled: Option<bool>,
+    /// Its icon's theme name.
+    pub icon_name: Option<String>,
 }
 
 /// One change [`Request::RootItemEdit`] makes (`RootSearchActionGenerator`).
@@ -1125,6 +1193,16 @@ pub enum Response {
         arguments_json: Option<String>,
         /// What its search starts with.
         fallback_text: Option<String>,
+    },
+    /// Answer to [`Request::TrayItems`]. (v18.)
+    TrayItems {
+        /// In the order the host learned of them.
+        items: Vec<TrayItemInfo>,
+    },
+    /// Answer to [`Request::TrayMenu`]. (v18.)
+    TrayMenu {
+        /// The clickable entries, flattened.
+        entries: Vec<TrayMenuEntry>,
     },
 }
 

@@ -65,7 +65,7 @@ pub use protocol::{
     PreferenceField, PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope,
     Response, ResponseEnvelope, RhaiScriptEntry, RootItemEdit, ScriptArgumentEntry, ScriptEntry,
     ScriptGrantEntry, ShortcutEntry, SnippetEntry, StoreDetail, StoreEntry, StoreKind,
-    WindowCommand, WindowInfo, WindowOutcome,
+    TrayItemInfo, TrayMenuEntry, WindowCommand, WindowInfo, WindowOutcome,
 };
 pub use transport::{
     Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,
