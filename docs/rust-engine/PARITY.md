@@ -328,8 +328,12 @@ PLAN §12.0 sizes them and says what blocks each.
   a model and waiting on a decision about what a fork fetches and sends.
 - `src/services/paste`: Still C++-only: synthetic paste on wlroots through the input server's
   `injectPaste`.
-- `src/services/shortcut-inhibit` and `src/services/window-material`: Still C++-only: the
-  keyboard-shortcuts-inhibit and background-effect Wayland plumbing, which is a stub.
+- `src/services/shortcut-inhibit`: Still C++-only: the keyboard-shortcuts-inhibit Wayland plumbing,
+  which is a stub.
+- `src/services/window-material`: the `ext-background-effect-v1` client is ported
+  (`compass_wayland::material`, "The gaps pass, HUD and onboarding"). Still C++-only: applying it
+  to the launcher's own surface, which the toolkits hand out only as a raw pointer (an `unsafe`
+  foreign-display bridge the workspace forbids).
 - `src/services/tray`: Still C++-only: Vicinae's own tray icon.
 - `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
   escape).
@@ -954,6 +958,23 @@ Declared differences:
 - Show Installed Extensions shows each extension's initial rather than its `assets` icon
   (`ui/image`'s gap).
 - Show value says the value under the list rather than in a toast.
+
+**`src/services/window-material`** (`ExtBackgroundEffectV1Manager`, `createRoundedRegion`).
+`compass_wayland::material::BackgroundEffects` binds `ext_background_effect_manager_v1` (from
+`wayland-protocols`' staging set, already in the tree) with `wl_compositor`, reads the one-shot
+`capabilities` with a roundtrip before reporting blur, and gives each surface one
+`ext_background_effect_surface_v1` whose blur region is sent again only when its parameters change
+(`Applied::{Created, Updated, Unchanged, Unsupported}`, as `compass_core::window_effects` models
+it); `rounded_region` is `createRoundedRegion`'s corner cut, row by row. The row stays amber: the
+launcher's `wl_surface` belongs to winit's or `iced_layershell`'s connection and is exposed only as a
+raw pointer, and bridging it (`Backend::from_foreign_display`, `ObjectId::from_ptr`) is `unsafe`,
+which the workspace forbids. It needs a compositor with the protocol to verify (KWin 6.3, niri;
+Sway has none), which the headless-Sway test covers for the refusal and the VM tier would for the
+rest.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/window-material` | — (the launcher's surface is not reachable safely) | `compass_wayland::material::{BackgroundEffects, rounded_region, supports_blur}` | `the_corners_are_cut_as_the_cpp_cuts_them`, `a_region_off_the_origin_is_cut_where_it_is`, `a_square_region_has_nothing_taken_away`, `blur_is_the_capability_bit`, `background_effect_is_bound_where_advertised_and_refused_by_name_where_not` (headless Sway) |
 
 ### Earlier row notes
 

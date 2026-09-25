@@ -296,3 +296,72 @@ fn a_compositor_without_xx_hotkey_says_so_and_the_fallback_names_the_command() {
     }
     assert!(hotkey::manual_binding_hint(Some("sway")).contains("vicinae toggle"));
 }
+
+#[test]
+fn background_effect_is_bound_where_advertised_and_refused_by_name_where_not() {
+    use compass_wayland::material::{Applied, BackgroundEffects, MaterialError, Params, Rect};
+    use wayland_client::protocol::wl_compositor::WlCompositor;
+    let Some(sway) = Sway::start("background_effect") else {
+        return;
+    };
+    let connection = sway.connect();
+    let advertised = compositor::probe_connection(&connection)
+        .expect("the registry")
+        .names()
+        .any(|name| name == "ext_background_effect_manager_v1");
+    match BackgroundEffects::bind(&connection) {
+        Err(MaterialError::Unsupported) => {
+            assert!(!advertised, "the manager is there but was refused");
+        }
+        Err(other) => panic!("{other}"),
+        Ok(mut effects) => {
+            assert!(advertised);
+            // A surface of this connection, as the launcher's would be.
+            let (globals, queue) =
+                wayland_client::globals::registry_queue_init::<Surfaces>(&connection).unwrap();
+            let compositor = globals
+                .bind::<WlCompositor, _, _>(&queue.handle(), 1..=6, ())
+                .unwrap();
+            let surface = compositor.create_surface(&queue.handle(), ());
+            let params = Params {
+                radius: 10,
+                region: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 640,
+                    height: 480,
+                },
+            };
+            let first = effects.apply(&surface, params);
+            if effects.supports_blur() {
+                assert_eq!(first, Applied::Created);
+                assert_eq!(effects.apply(&surface, params), Applied::Unchanged);
+                assert!(effects.clear(&surface));
+            } else {
+                assert_eq!(first, Applied::Unsupported);
+            }
+        }
+    }
+}
+
+struct Surfaces;
+
+wayland_client::delegate_noop!(Surfaces: wayland_client::protocol::wl_compositor::WlCompositor);
+wayland_client::delegate_noop!(Surfaces: ignore wayland_client::protocol::wl_surface::WlSurface);
+
+impl
+    wayland_client::Dispatch<
+        wayland_client::protocol::wl_registry::WlRegistry,
+        wayland_client::globals::GlobalListContents,
+    > for Surfaces
+{
+    fn event(
+        _: &mut Self,
+        _: &wayland_client::protocol::wl_registry::WlRegistry,
+        _: wayland_client::protocol::wl_registry::Event,
+        _: &wayland_client::globals::GlobalListContents,
+        _: &wayland_client::Connection,
+        _: &wayland_client::QueueHandle<Self>,
+    ) {
+    }
+}

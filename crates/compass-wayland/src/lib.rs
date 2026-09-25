@@ -29,6 +29,7 @@ pub mod data_control;
 pub mod hotkey;
 pub mod keyboard_inhibit;
 pub mod layer_shell;
+pub mod material;
 pub mod output;
 pub mod toplevel;
 
