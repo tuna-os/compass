@@ -317,6 +317,64 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn fetch_launch(&self, token: u64) -> BackendFuture<'_, compass_ui::backend::ExtensionLaunch> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExtensionLaunchFetch { token },
+                    "Taking the extension's launch",
+                )
+                .await?
+            {
+                compass_ipc::Response::ExtensionLaunch {
+                    id,
+                    arguments_json,
+                    preferences,
+                } => Ok(compass_ui::backend::ExtensionLaunch {
+                    id,
+                    arguments: arguments_json
+                        .map(|json| serde_json::from_str(&json))
+                        .transpose()
+                        .map_err(|err| format!("The launch's arguments are unreadable: {err}"))?,
+                    preferences,
+                }),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_subtitles(&self) -> BackendFuture<'_, Vec<(String, String)>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ExtensionSubtitles, "Reading command subtitles")
+                .await?
+            {
+                compass_ipc::Response::ExtensionSubtitles { subtitles } => Ok(subtitles),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn extension_preferences(&self, id: String) -> BackendFuture<'_, ExtensionStart> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::ExtensionPreferences { id },
+                    "Reading the preferences",
+                )
+                .await?
+            {
+                compass_ipc::Response::ExtensionNeedsPreferences { title, fields } => {
+                    Ok(ExtensionStart::NeedsPreferences {
+                        title,
+                        fields: fields.into_iter().map(preference_input).collect(),
+                    })
+                }
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
         Box::pin(async move {
             match self

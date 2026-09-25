@@ -63,6 +63,9 @@ impl Engine {
             .env("XDG_RUNTIME_DIR", sway.runtime_dir())
             .env("WAYLAND_DISPLAY", sway.display())
             .env("XDG_CURRENT_DESKTOP", desktop)
+            // Never the invoking session's compositor socket.
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("NIRI_SOCKET")
             .envs(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -308,4 +311,106 @@ fn on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors() {
     assert_eq!(screens[0]["name"], "HEADLESS-1", "{screens}");
     assert_eq!(screens[0]["physicalResolution"]["width"], 1280);
     assert_eq!(screens[0]["active"], true);
+}
+
+#[test]
+fn on_sway_with_a_hyprland_socket_windows_learn_their_pid_and_workspace() {
+    use compass_testkit::fake_compositor::{FakeSocket, Framing};
+    let Some(sway) = Sway::start("on_sway_with_a_hyprland_socket") else {
+        return;
+    };
+    let _alpha = TestWindow::open(&sway, "Alpha document", "test.Alpha");
+    let _beta = TestWindow::open(&sway, "Beta document", "test.Beta");
+    // The toplevel list is Sway's; the socket answers as Hyprland would
+    // for the same two windows, and a third the toplevels do not have.
+    let fake = FakeSocket::replaying(
+        &FakeSocket::hyprland_path(sway.runtime_dir(), "compass-test"),
+        Framing::Hyprland,
+        vec![
+            (
+                "-j/clients".into(),
+                r#"[{"address":"0xa","title":"Alpha document","class":"test.Alpha","pid":4242,
+                     "workspace":{"id":7,"name":"7"},"at":[0,0],"size":[10,10],"focusHistoryID":1},
+                    {"address":"0xb","title":"Beta document","class":"test.Beta","pid":4343,
+                     "workspace":{"id":2,"name":"web"},"at":[0,0],"size":[10,10],"focusHistoryID":0},
+                    {"address":"0xc","title":"Elsewhere","class":"test.Gamma","pid":1,
+                     "workspace":{"id":9,"name":"9"},"focusHistoryID":2}]"#
+                    .into(),
+            ),
+            (
+                "-j/workspaces".into(),
+                r#"[{"id":7,"name":"7","monitor":"HEADLESS-1"},{"id":2,"name":"web","monitor":"HEADLESS-1"}]"#
+                    .into(),
+            ),
+            ("-j/activewindow".into(), "{}".into()),
+        ],
+    );
+    let engine = Engine::start_with(&sway, "Hyprland", |_| {
+        vec![("HYPRLAND_INSTANCE_SIGNATURE", "compass-test".into())]
+    });
+
+    let mut windows = Vec::new();
+    assert!(
+        eventually(WAIT, || {
+            windows = engine.windows();
+            windows.len() == 2
+        }),
+        "{windows:?}"
+    );
+    let found = |class: &str| windows.iter().find(|w| w.wm_class == class).unwrap();
+    assert_eq!(
+        (found("test.Alpha").pid, found("test.Alpha").workspace),
+        (Some(4242), Some(7))
+    );
+    assert_eq!(
+        (found("test.Beta").pid, found("test.Beta").workspace),
+        (Some(4343), Some(2))
+    );
+    assert!(fake.seen().iter().any(|request| request == "-j/clients"));
+}
+
+#[test]
+fn on_sway_doctor_reports_the_wlroots_protocols_it_found() {
+    let Some(sway) = Sway::start("on_sway_doctor_reports") else {
+        return;
+    };
+    let dirs = tempfile::tempdir().unwrap();
+    let output = Command::new(binary())
+        .arg("--socket")
+        .arg(dirs.path().join("ipc.sock"))
+        .args(["doctor", "--json"])
+        .env("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
+        .env("HOME", dirs.path())
+        .env("XDG_RUNTIME_DIR", sway.runtime_dir())
+        .env("WAYLAND_DISPLAY", sway.display())
+        .env("XDG_CURRENT_DESKTOP", "sway")
+        .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+        .env_remove("NIRI_SOCKET")
+        .output()
+        .expect("run doctor");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+        panic!(
+            "doctor did not print JSON ({err}): {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    });
+    let check = report["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .find(|check| check["name"] == "wlroots.capabilities")
+        .unwrap_or_else(|| panic!("no wlroots check: {report}"))
+        .clone();
+    let detail = check["detail"].as_str().unwrap_or_default();
+    for part in [
+        "layer-shell: yes",
+        "zwlr_foreign_toplevel_manager_v1",
+        "data-control: yes",
+        "xx-hotkey: no",
+        "portal GlobalShortcuts: no",
+        "compositor IPC: none",
+        "no global hotkey",
+    ] {
+        assert!(detail.contains(part), "{part:?} not in {detail}");
+    }
 }

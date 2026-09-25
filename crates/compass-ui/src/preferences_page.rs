@@ -26,6 +26,9 @@ pub enum Purpose {
     Preferences,
     /// This one run's arguments.
     Arguments,
+    /// A command's preferences, opened by the extension
+    /// (`openCommandPreferences`): kept, and the command not run.
+    CommandPreferences,
     /// A shortcut's arguments, to open it with; the form's `command_id` is
     /// the shortcut's id.
     ShortcutArguments,
@@ -64,6 +67,7 @@ impl Purpose {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Preferences | Self::Arguments => "Enter: save and run    Esc: back",
+            Self::CommandPreferences => "Enter: save    Esc: back",
             Self::ShortcutArguments => "Enter: open    Esc: back",
             Self::ShortcutForm { .. } => "Enter: save    Esc: back",
             Self::SnippetArguments { paste: false } => "Enter: copy    Esc: back",

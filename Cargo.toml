@@ -48,6 +48,9 @@ schemars = "1.2"
 # config migration reads it with dprint's parser. See config_migration.rs.
 jsonc-parser = { version = "0.33", features = ["serde"] }
 thiserror = "2"
+# niri's own IPC types (Request, Reply, Window, Workspace); the Hyprland socket is
+# hand-rolled. See CRATE-AUDIT "Compositor IPC".
+niri-ipc = { version = "26.4", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "process"] }

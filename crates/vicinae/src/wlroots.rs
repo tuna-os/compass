@@ -13,6 +13,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use compass_platform_linux::compositor::Provider;
 use compass_wayland::compositor::{Capabilities, Family, Session};
 use compass_wayland::toplevel::Toplevels;
 
@@ -29,6 +30,28 @@ pub struct Wlroots {
 }
 
 static DETECTED: OnceLock<Option<Wlroots>> = OnceLock::new();
+
+static COMPOSITOR: OnceLock<Option<Provider>> = OnceLock::new();
+
+/// The compositor's own IPC (Hyprland's socket, niri's), when the
+/// environment names one: the C++ window-manager providers, chosen as the
+/// C++ chooses them, before the toplevel protocols. Decided from the
+/// environment alone, so it needs no Wayland display and no round trip.
+pub fn compositor() -> Option<&'static Provider> {
+    COMPOSITOR
+        .get_or_init(|| {
+            let provider = Provider::detect();
+            if let Some(provider) = &provider {
+                tracing::info!(
+                    compositor = provider.display_name(),
+                    socket = %provider.socket().display(),
+                    "compositor IPC"
+                );
+            }
+            provider
+        })
+        .as_ref()
+}
 
 /// The wlroots session, or `None` on GNOME, on another compositor, or with
 /// no Wayland display at all.

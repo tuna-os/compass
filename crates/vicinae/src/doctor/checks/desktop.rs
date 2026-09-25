@@ -65,10 +65,11 @@ pub async fn desktop_environment<B: BusProbe>(env: &Env, bus: &B) -> DoctorCheck
             NAME,
             DoctorStatus::Warn,
             format!(
-                "XDG_CURRENT_DESKTOP={current} — not a GNOME session. The Rust engine currently \
-                 targets GNOME 50/51; wlroots (Hyprland/Sway/niri) and KDE support is Phase 5 \
-                 work, so window switching, clipboard history and the global hotkey may all be \
-                 unavailable here"
+                "XDG_CURRENT_DESKTOP={current} — not a GNOME session. The Rust engine targets \
+                 GNOME 50/51 and the wlroots compositors (Sway, Hyprland, niri: see \
+                 wlroots.capabilities for what this one offers); KDE support is Phase 5 work, so \
+                 elsewhere window switching, clipboard history and the global hotkey may all be \
+                 unavailable"
             ),
         );
     }

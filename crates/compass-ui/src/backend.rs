@@ -178,6 +178,25 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err("Opening links needs the Compass engine".to_owned()) })
     }
 
+    /// The launch an extension asked for, which the engine holds under
+    /// `token` (`launchCommand`, `openCommandPreferences`).
+    fn fetch_launch(&self, token: u64) -> BackendFuture<'_, ExtensionLaunch> {
+        let _ = token;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// The subtitles extensions set for their commands, by command id.
+    fn extension_subtitles(&self) -> BackendFuture<'_, Vec<(String, String)>> {
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// The preferences form of the extension command `id`, without running
+    /// it: [`ExtensionStart::NeedsPreferences`].
+    fn extension_preferences(&self, id: String) -> BackendFuture<'_, ExtensionStart> {
+        let _ = id;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The `vicinae dmenu` list the engine holds under `token`.
     fn fetch_dmenu(&self, token: u64) -> BackendFuture<'_, DmenuList> {
         let _ = token;
@@ -526,6 +545,17 @@ pub struct FileResults {
     pub heading: String,
     /// The files, in presentation order.
     pub files: Vec<FileRow>,
+}
+
+/// A launch an extension asked the launcher to take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionLaunch {
+    /// The command's root id.
+    pub id: String,
+    /// Its arguments, when the extension passed any.
+    pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Open its preferences form rather than run it.
+    pub preferences: bool,
 }
 
 /// How an extension command began.

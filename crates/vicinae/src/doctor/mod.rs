@@ -64,6 +64,9 @@ pub struct Inputs<'a, B: BusProbe, F: FsProbe> {
     pub engine: Engine,
     /// The snippet keyword expander's helper, as far as it could be read.
     pub input_server: &'a checks::InputServerFacts,
+    /// What probing the Wayland compositor found; `None` with no display or
+    /// when the probe failed.
+    pub wayland: Option<checks::WaylandFindings>,
 }
 
 /// Runs every check, in report order.
@@ -77,6 +80,7 @@ pub async fn run<B: BusProbe, F: FsProbe>(inputs: &Inputs<'_, B, F>) -> Report {
         daemon_listening,
         engine,
         input_server,
+        ref wayland,
     } = *inputs;
 
     let checks = vec![
@@ -89,6 +93,7 @@ pub async fn run<B: BusProbe, F: FsProbe>(inputs: &Inputs<'_, B, F>) -> Report {
         checks::desktop_portal(bus).await,
         checks::global_shortcuts(bus).await,
         checks::shell_extension(env, bus).await,
+        checks::wlroots(env, wayland.as_ref(), bus).await,
         checks::flatpak(fs),
         checks::input_server(fs, input_server),
         checks::application_dirs(env, fs),
@@ -133,6 +138,10 @@ pub async fn run_on_this_machine(socket: &SocketPath, engine: Engine) -> Report 
         daemon_listening,
         engine,
         input_server: &input_server,
+        wayland: tokio::task::spawn_blocking(probe_wayland)
+            .await
+            .ok()
+            .flatten(),
     };
 
     run(&inputs).await
@@ -180,6 +189,19 @@ fn has_dac_override(path: &std::path::Path) -> Option<bool> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).contains("cap_dac_override"))
+}
+
+/// Probes the compositor in `WAYLAND_DISPLAY`: its family, the wlroots
+/// protocols it advertises, and whether its own IPC (Hyprland, niri) answers.
+/// Blocking.
+fn probe_wayland() -> Option<checks::WaylandFindings> {
+    let session = compass_wayland::compositor::Session::detect().ok()?;
+    Some(checks::WaylandFindings {
+        family: session.family,
+        capabilities: compass_wayland::compositor::Capabilities::of(&session.globals),
+        compositor_ipc: compass_platform_linux::compositor::Provider::detect()
+            .map(|provider| (provider.display_name().to_owned(), provider.ping())),
+    })
 }
 
 #[cfg(test)]
@@ -261,6 +283,12 @@ mod tests {
             daemon_listening: listening,
             engine: Engine::Rust,
             input_server: &HEALTHY_INPUT_SERVER,
+            // The healthy machine is GNOME; the barren one has no display.
+            wayland: env.get("WAYLAND_DISPLAY").map(|_| checks::WaylandFindings {
+                family: compass_wayland::compositor::Family::Gnome,
+                capabilities: compass_wayland::compositor::Capabilities::default(),
+                compositor_ipc: None,
+            }),
         }
     }
 
@@ -297,7 +325,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), count, "duplicate check names");
-        assert_eq!(count, 13);
+        assert_eq!(count, 14);
         assert!(
             report
                 .checks

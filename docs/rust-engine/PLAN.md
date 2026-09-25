@@ -435,10 +435,10 @@ degradation with the extension uninstalled.
   `vicinae --engine=cpp --json query`, §8.1a). Both were written against an imagined C++ CLI rather
   than the one in `src/cli`.
 
-  Worth noting even if someone built that command: **the diff would mostly prove nothing.** Ten of
-  `doctor`'s thirteen checks — `dbus.session`, `session.type`, `xdg.runtime-dir`, `xdg.application-dirs`,
+  Worth noting even if someone built that command: **the diff would mostly prove nothing.** Eleven of
+  `doctor`'s fourteen checks — `dbus.session`, `session.type`, `xdg.runtime-dir`, `xdg.application-dirs`,
   `desktop.environment`, `flatpak.sandbox`, `portal.desktop`, `portal.global-shortcuts`,
-  `gnome.shell-extension`, `a11y.screen-reader` — are probes (`input-server`, added later, is half each) of the *environment*. Two processes on one machine observe the
+  `gnome.shell-extension`, `wlroots.capabilities`, `a11y.screen-reader` — are probes (`input-server`, added later, is half each) of the *environment*. Two processes on one machine observe the
   same environment by construction, so they would agree trivially, in the same way "same top result"
   would be trivially 100% over single-hit queries. Only `engine.selected` and `ipc.socket` describe
   the engine itself, and those map to the C++ `version` and `ping`.
@@ -536,6 +536,16 @@ third target after that.
 > gate with a control that fails. Not done: synthetic paste (copy only), `ext-workspace`,
 > focus-back via `xdg-activation` serials, the C++ `launcherWindow.layerShell.*` config keys, and
 > Hyprland/niri themselves (only Sway runs in CI). PARITY.md "wlroots" has the differences.
+>
+> **Track B, 2026-09-25: the Hyprland and niri providers.** Ported
+> (`compass_platform_linux::compositor`): Hyprland over its request socket (hand-rolled, lenient
+> replies, the C++'s Lua dispatchers with the classic ones as a fallback) and niri over `niri-ipc`
+> (CRATE-AUDIT "Compositor IPC"). They feed `WindowManagement` (windows with workspace, pid and
+> Hyprland's geometry; the workspace list; the active workspace; Hyprland's frontmost window) and
+> give the window switcher's toplevels their pid and workspace. `vicinae doctor` gains
+> `wlroots.capabilities` (layer-shell, foreign-toplevel, data-control, xx-hotkey, portal
+> GlobalShortcuts, compositor IPC). Tested against fake sockets replaying captured replies and
+> against headless Sway with a fake Hyprland socket; neither compositor runs in CI.
 
 *Track C — Rhai extension tier (§2.2).* Independent of both, once `compass-extension-api` exists:
 `compass-script` with a hardened engine (`Engine::new_raw()`, explicit package, no
@@ -2324,12 +2334,12 @@ Ordered by what blocks what, not by size.
 | Landlock boundary + seccomp denylist + launcher | done, with §8.2's negative list: a program the extension wrote cannot be run (read no longer implies execute), raw and packet sockets answer `EPERM`, and `RLIMIT_DATA` (512 MiB) refuses a 512 MiB `Buffer` where no cgroup is reachable; each beside a positive control (`compass-sandbox/tests/boundary.rs`, `engine_end_to_end.rs`). The systemd scope's `MemoryMax` still applies only outside a Flatpak |
 | session routing (event → service → reply) | done |
 | `Storage`, the three storage `OAuth` methods, `UI/render` | done — 9 of tsapi's 49 |
-| `Wallpaper/set`, `BrowserExtension` (both) | the adapters are done and pinned (`wallpaper_service`, `browser_service`) — 33 of 49. The wallpaper backends and the browser bridge are Phase 5/6 work |
-| `WindowManagement` (all seven) | the adapter is done and pinned (`compass-worker-host::window_service`), behind a `Windows` trait — 30 of 49 — and **the engine serves it** (`vicinae::extension_windows`): the Shell extension's windows on GNOME (contract 3 adds each window's frame and full-screen state), the foreign-toplevel list on wlroots, and `wl_output`/`xdg_output` for screens on either. Workspaces and moving a window are not served; PARITY "The extension host API" |
-| `Command` (all four) | the adapter is done and pinned (`compass-worker-host::command_service`), behind a `Commands` trait — 23 of 49. The registry walk, the navigation controller and the settings window behind it are Phase 4/5 work |
+| `Wallpaper/set`, `BrowserExtension` (both) | **done**: the engine serves `Wallpaper/set` (`vicinae::extension_wallpaper`) with the C++'s six Linux backends in its order — hyprpaper, swww/awww, GNOME, KDE, Cinnamon, MATE — and `BrowserExtension` as the C++ answers with no browser connected (ADR-0008: none ever connects). PARITY "The extension host API" #6–#7 |
+| `WindowManagement` (all seven) | the adapter is done and pinned (`compass-worker-host::window_service`), behind a `Windows` trait — 30 of 49 — and **the engine serves it** (`vicinae::extension_windows`): Hyprland's and niri's own IPC first (workspaces, pids, Hyprland's geometry), the Shell extension's windows on GNOME (contract 3 adds each window's frame and full-screen state), the foreign-toplevel list on other wlroots compositors, and `wl_output`/`xdg_output` for screens on any. Moving a window is not served; PARITY "The extension host API" |
+| `Command` (all four) | **done** (`vicinae::extension_commands`): a launch is handed to the launcher window under a token (`WindowCommand::Launch`, IPC v15), which runs the sibling as if picked in root search; preferences open the command's form; the subtitle override shows in root search. PARITY "The extension host API" #8 |
 | `Application` (all five) | the adapter is done and pinned (`compass-worker-host::application_service`), behind an `Apps` trait — 19 of 49. `compass-core::AppIndex` and `compass-xdg::mimeapps` already answer most of what the trait needs; wiring them together, launching, and the terminal are still ahead |
 | `Clipboard` (all four) | the adapter is done and pinned (`compass-worker-host::clipboard_service`), behind a `Clipboard` trait — 14 of 49. The Wayland backend behind it is Phase 3/5 work and does not exist yet |
-| `FileSearch/search` | the adapter is done and pinned (`compass-worker-host::file_search_service`), behind a `FileIndexer` trait — 10 of 49. The index it would query is Phase 6 and does not exist yet, so no real backend implements the trait |
+| `FileSearch/search` | **done**: the engine's file indexer answers it (`vicinae::extension_files`). **All 49 of tsapi's methods are now routed by the engine** |
 | reading an extension's `package.json` | done (`compass-core::manifest`): commands, modes, arguments, preferences, intervals |
 | finding installed extensions | done (`compass-core::manifest::registry`): the XDG search order, shadowing by directory name, staging directories skipped |
 | `UI`'s shell half (toasts, HUD, navigation, search text, selected text, desktop notifications) | the adapter is done and pinned (`compass-worker-host::ui_shell_service`), behind a `Shell` trait — 45 of 49. Nothing draws yet, but nothing pretends to either: the calls delegate, they do not no-op. `getSelectedText` reads the primary selection: over data-control on wlroots, through the Shell extension on GNOME (`GetPrimarySelection`, contract 3) |

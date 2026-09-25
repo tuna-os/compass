@@ -24,6 +24,7 @@
 //! * [`sandbox`] — Flatpak detection and the application directories.
 //! * [`input`] — the input server behind snippet keyword expansion.
 //! * [`a11y`] — whether a screen reader is on, given the launcher has no tree.
+//! * [`wlroots`](mod@wlroots) — the wlroots protocols and compositor IPC this session has.
 //!
 //! Every check is re-exported here, so a caller says `checks::session_type`
 //! without knowing or caring which file it is in. `doctor::mod` assembles the
@@ -35,6 +36,7 @@ pub mod input;
 pub mod portal;
 pub mod sandbox;
 pub mod session;
+pub mod wlroots;
 
 pub use a11y::{A11Y_BUS_NAME, A11Y_OBJECT_PATH, A11Y_STATUS_INTERFACE, screen_reader};
 pub use desktop::{
@@ -49,6 +51,7 @@ pub use portal::{
 };
 pub use sandbox::{FLATPAK_INFO_PATH, application_dir_paths, application_dirs, flatpak};
 pub use session::{ipc_socket, runtime_dir, session_type};
+pub use wlroots::{WaylandFindings, wlroots};
 
 use compass_ipc::{DoctorCheck, DoctorStatus};
 

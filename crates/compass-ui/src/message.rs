@@ -222,6 +222,17 @@ pub enum Message {
     ScriptsLoaded(Result<Vec<compass_core::script_scan::ScriptItem>, String>),
     /// The Rhai scripts arrived, or why they could not be listed.
     RhaiScriptsLoaded(Result<Vec<compass_core::rhai_scripts::RhaiScriptItem>, String>),
+    /// The launch an extension asked for arrived, or why it could not.
+    LaunchFetched(Result<crate::backend::ExtensionLaunch, String>),
+    /// The subtitles extensions set for their commands arrived.
+    ExtensionSubtitlesLoaded(Result<Vec<(String, String)>, String>),
+    /// A command's preferences form arrived, to edit without running it.
+    PreferencesOpened {
+        /// The command's root id.
+        id: String,
+        /// The form, or why it could not be had.
+        result: Result<crate::backend::ExtensionStart, String>,
+    },
     /// A script started: the run to follow, if any.
     ScriptStarted {
         /// Which script.

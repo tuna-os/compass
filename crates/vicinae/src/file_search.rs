@@ -118,6 +118,41 @@ impl FileSearch {
         }
     }
 
+    /// Whether the index answers queries: the indexer is running.
+    #[must_use]
+    pub fn index_available(&self) -> bool {
+        self.indexer
+            .as_ref()
+            .is_some_and(|indexer| indexer.is_running())
+    }
+
+    /// The index's own rows for `query`, as `FileSearch/search` hands them
+    /// to an extension: no recent files, no direct path, no heading. Empty
+    /// while the indexer is not running, as the C++ `queryAsync` settles.
+    #[must_use]
+    pub fn index_query(
+        &self,
+        query: &str,
+        limit: i32,
+        category: Option<FileCategory>,
+    ) -> Vec<(PathBuf, f64, FileCategory, Option<String>)> {
+        let Some(indexer) = self.indexer.as_ref().filter(|indexer| indexer.is_running()) else {
+            return Vec::new();
+        };
+        indexer
+            .query(query, limit, category.map(wire_category))
+            .into_iter()
+            .map(|result| {
+                (
+                    result.path,
+                    result.rank,
+                    from_indexed(result.category),
+                    result.mime_type,
+                )
+            })
+            .collect()
+    }
+
     /// Asks the index, under the heading its query earns.
     fn indexed(
         &self,

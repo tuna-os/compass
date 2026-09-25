@@ -37,10 +37,14 @@ use serde::{Deserialize, Serialize};
 /// toast; version 10, the power and media commands; version 11, file search;
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
 /// shortcuts, snippets, script commands, Run Terminal Program, dmenu, themes,
-/// create-extension and fonts; version 14, Rhai scripts and the extension stores.
-///
-/// version 15, the snippet keyword expander's input server
-/// ([`Request::InputServerStatus`], [`Request::SetInputServerEnabled`]).
+/// create-extension and fonts; version 14, Rhai scripts and the extension stores;
+/// version 15, the input server and the last extension host routes: the
+/// snippet keyword expander's input server ([`Request::InputServerStatus`],
+/// [`Request::SetInputServerEnabled`]), an extension launching another command
+/// or opening its preferences in the launcher ([`WindowCommand::Launch`],
+/// [`Request::ExtensionLaunchFetch`]), its subtitle override in root search
+/// ([`Request::ExtensionSubtitles`]), and a command's preferences form without
+/// running it ([`Request::ExtensionPreferences`]).
 pub const PROTOCOL_VERSION: u16 = 15;
 
 /// A client-to-server frame.
@@ -564,6 +568,25 @@ pub enum Request {
         /// Whether it should run.
         enabled: bool,
     },
+    /// The launch an extension asked for, which the engine pushed to the
+    /// window as [`WindowCommand::Launch`]. Answered once with
+    /// [`Response::ExtensionLaunch`]; a token already taken, or never
+    /// given, is a bad request.
+    ExtensionLaunchFetch {
+        /// From [`WindowCommand::Launch`].
+        token: u64,
+    },
+    /// The subtitles extensions set for their commands
+    /// (`updateCommandMetadata`), which root search shows in place of the
+    /// extension's title. Answered with [`Response::ExtensionSubtitles`].
+    ExtensionSubtitles,
+    /// A command's preferences form, without running it. Answered with
+    /// [`Response::ExtensionNeedsPreferences`]; save it with
+    /// [`Request::SetExtensionPreferences`].
+    ExtensionPreferences {
+        /// The command's [`QueryHit::id`].
+        id: String,
+    },
 }
 
 /// What the engine answers.
@@ -767,6 +790,21 @@ pub enum Response {
     /// Answer to [`Request::InputServerStatus`] and
     /// [`Request::SetInputServerEnabled`].
     InputServerStatus(InputServerStatus),
+    /// Answer to [`Request::ExtensionLaunchFetch`]: run the command as if it
+    /// had been picked in root search, or open its preferences.
+    ExtensionLaunch {
+        /// The command's [`QueryHit::id`].
+        id: String,
+        /// Its arguments, as a JSON object, when the extension passed any.
+        arguments_json: Option<String>,
+        /// Open its preferences form instead of running it.
+        preferences: bool,
+    },
+    /// Answer to [`Request::ExtensionSubtitles`]: `(command id, subtitle)`.
+    ExtensionSubtitles {
+        /// Every override, by command id.
+        subtitles: Vec<(String, String)>,
+    },
 }
 
 /// The keyboard helper behind snippet keyword expansion, as the engine sees
@@ -982,6 +1020,9 @@ pub enum WindowCommand {
     /// with [`Request::DmenuChoose`]. Answered, like `Show`, with
     /// [`WindowOutcome::Shown`] once visible.
     Dmenu(u64),
+    /// Show, and take the launch an extension asked for under this token:
+    /// fetched with [`Request::ExtensionLaunchFetch`]. Answered like `Show`.
+    Launch(u64),
 }
 
 /// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and
