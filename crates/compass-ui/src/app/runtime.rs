@@ -116,7 +116,10 @@ impl LauncherApp {
                     .as_ref()
                     .map(|panel| panel.filter.clone())
                     .unwrap_or_default();
-                let mut panel = PanelState::new(running_sections(super::actions_for_app(item)));
+                let sections = self
+                    .root_panel_sections(true)
+                    .unwrap_or_else(|| running_sections(super::actions_for_app(item)));
+                let mut panel = PanelState::new(sections);
                 panel.set_filter(filter);
                 self.panel = Some(panel);
                 self.app_runtime = Some((key, info));

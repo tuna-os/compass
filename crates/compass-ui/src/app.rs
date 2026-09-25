@@ -11122,10 +11122,28 @@ mod tests {
                 "Copy name",
                 "Copy path",
                 "Quit Application",
-                "Force Quit Application"
+                "Force Quit Application",
+                "Copy Deeplink",
+                "Reset ranking",
+                "Add to favorites",
+                "Set alias",
+                "Copy ID",
+                "Disable item"
             ]
         );
-        let quit_row = app.panel.as_ref().unwrap().sections.last().unwrap();
+        let quit_row = app
+            .panel
+            .as_ref()
+            .unwrap()
+            .sections
+            .iter()
+            .find(|section| {
+                section
+                    .actions
+                    .iter()
+                    .any(|a| a.id.as_deref() == Some(super::runtime::APP_QUIT))
+            })
+            .unwrap();
         assert_eq!(quit_row.actions[0].shortcut.as_deref(), Some("ctrl+q"));
 
         let task = choose(&mut app, "Force Quit Application");

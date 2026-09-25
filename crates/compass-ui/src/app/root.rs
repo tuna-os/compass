@@ -148,12 +148,34 @@ impl LauncherApp {
     /// application's, or opening), then the item actions every root item has
     /// (`RootSearchActionGenerator::generateActions`).
     pub(super) fn open_root_panel(&mut self) -> Option<Task<Message>> {
+        let sections = self.root_panel_sections(false)?;
+        self.panel = Some(PanelState::new(sections));
+        let focus = iced::widget::operation::focus(super::PANEL_INPUT);
+        let app = match (self.selected_row(), self.selected_item()) {
+            (Some(RootRow::App(_)), Some(item)) => {
+                Some((item.key().to_owned(), item.desktop_id().to_owned()))
+            }
+            _ => None,
+        };
+        let Some((key, desktop_id)) = app else {
+            return Some(focus);
+        };
+        self.app_runtime = None;
+        Some(Task::batch([focus, self.app_runtime_task(key, desktop_id)]))
+    }
+
+    /// The sections of [`Self::open_root_panel`]'s panel; `running` adds a
+    /// running application's actions (`super::runtime::running_sections`).
+    pub(super) fn root_panel_sections(&self, running: bool) -> Option<Vec<PanelSection>> {
         if !matches!(self.page, Page::Root) {
             return None;
         }
         let row = self.selected_row()?;
         let id = self.root_id(row)?;
         let mut sections = match (row, self.selected_item()) {
+            (RootRow::App(_), Some(item)) if running => {
+                super::runtime::running_sections(super::actions_for_app(item))
+            }
             (RootRow::App(_), Some(item)) => super::actions_for_app(item),
             _ => vec![PanelSection {
                 name: String::new(),
@@ -205,8 +227,7 @@ impl LauncherApp {
             name: String::new(),
             actions: item,
         });
-        self.panel = Some(PanelState::new(sections));
-        Some(iced::widget::operation::focus(super::PANEL_INPUT))
+        Some(sections)
     }
 
     /// Runs a root item action, if `action` is one.
