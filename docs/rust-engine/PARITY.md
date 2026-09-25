@@ -214,12 +214,12 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 
 | C++ source | lines | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|--:|---|---|:-:|:-:|:-:|:-:|
-| `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -975,6 +975,19 @@ rest.
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/services/window-material` | — (the launcher's surface is not reachable safely) | `compass_wayland::material::{BackgroundEffects, rounded_region, supports_blur}` | `the_corners_are_cut_as_the_cpp_cuts_them`, `a_region_off_the_origin_is_cut_where_it_is`, `a_square_region_has_nothing_taken_away`, `blur_is_the_capability_bit`, `background_effect_is_bound_where_advertised_and_refused_by_name_where_not` (headless Sway) |
+
+### The view layer, closed (2026-09-25)
+
+The HUD and onboarding tables above each left `ui/qml`, `ui/quick` and `ui/windows` amber for the
+settings window alone; "The gaps pass, settings" landed it in the same change, so the three rows
+flip to ✅ in both columns on the tests those three sections name: the settings view's
+(`the_settings_view_writes_each_setting_and_switch_into_the_configuration`,
+`every_cpp_general_settings_property_is_ported_or_declared` and the launcher-state tests in
+`compass-ui/src/app/settings_view/tests.rs`), the HUD's and onboarding's (their tables above), on
+top of the resident window and paint tier tests. What stays different is declared where it
+lands: the settings and onboarding drawn in the launcher card rather than windows of their own,
+drag out of the window, which Iced cannot do, and blur behind the launcher
+(`src/services/window-material`, still amber).
 
 ### Earlier row notes
 
