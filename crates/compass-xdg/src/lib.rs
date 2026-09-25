@@ -28,6 +28,7 @@ pub mod icon;
 pub mod locale;
 pub mod mime_subclasses;
 pub mod mimeapps;
+pub mod mimeapps_writer;
 pub mod reader;
 pub mod scan;
 pub mod terminal;

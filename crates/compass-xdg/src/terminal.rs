@@ -274,3 +274,83 @@ pub fn terminals_list_paths(
     }
     paths
 }
+
+/// The comment `set_default_terminal` puts above the terminal it chose, and
+/// looks for to replace that choice next time.
+pub const TERMINALS_LIST_HEADER: &str = "# Configured by the Vicinae launcher";
+
+/// `existing` with `app_id` (and its `:action`) made the chosen terminal.
+///
+/// Ports `xdgpp::setDefaultTerminal`. The first entry is what
+/// `xdg-terminal-exec` runs, so the choice goes above every other entry,
+/// under [`TERMINALS_LIST_HEADER`]. When the header is already there, the
+/// entry after it — the previous choice — is replaced rather than kept below,
+/// so choosing twice does not leave the old terminal as the next fallback.
+/// Every other line is kept as written, comments included.
+#[must_use]
+pub fn with_default_terminal(existing: &str, app_id: &str, action: Option<&str>) -> String {
+    let entry = match action {
+        Some(action) => format!("{app_id}:{action}\n"),
+        None => format!("{app_id}\n"),
+    };
+    let header = |buf: &mut String| {
+        if !buf.is_empty() {
+            buf.push('\n');
+        }
+        buf.push_str(TERMINALS_LIST_HEADER);
+        buf.push('\n');
+    };
+    let mut buf = String::new();
+    let mut inserted = false;
+    let mut replace_next = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if replace_next && !trimmed.is_empty() && !trimmed.starts_with('#') {
+            replace_next = false;
+            inserted = true;
+            buf.push_str(&entry);
+            continue;
+        }
+        if !inserted
+            && !trimmed.is_empty()
+            && (!trimmed.starts_with('#') || trimmed == TERMINALS_LIST_HEADER)
+        {
+            if trimmed == TERMINALS_LIST_HEADER {
+                replace_next = true;
+            } else {
+                header(&mut buf);
+                buf.push_str(&entry);
+                inserted = true;
+            }
+        }
+        buf.push_str(line);
+        buf.push('\n');
+    }
+    if !inserted {
+        header(&mut buf);
+        buf.push_str(&entry);
+    }
+    buf
+}
+
+/// Makes `app_id` the chosen terminal in the `xdg-terminals.list` at `path`,
+/// creating the file (and its directory) when missing.
+///
+/// # Errors
+///
+/// Whatever reading or writing the file reports.
+pub fn set_default_terminal(
+    path: &std::path::Path,
+    app_id: &str,
+    action: Option<&str>,
+) -> std::io::Result<()> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, with_default_terminal(&existing, app_id, action))
+}
