@@ -2456,7 +2456,7 @@ where it is.
 
 #### Remaining parity work (after the ledger truth pass)
 
-The ledger is at **133 of 156 (85%)** after the truth pass and the two gaps passes of 2026-09-25 (§11.4, and `PARITY.md`,
+The ledger is at **136 of 156 (87%)** after the truth pass, the gaps passes of 2026-09-25 and the UI pass (§11.4, and `PARITY.md`,
 "The ledger truth pass"). The gaps pass that followed (`PARITY.md`, "The gaps pass") closes rows
 from this table one at a time and strikes them through here; `scripts/ci/parity-score.py` has the
 current figure. These are the 40 cells still amber, by row, and nothing else: each is what
@@ -2484,11 +2484,11 @@ subsystem. "None" under *blocked by* means only the work.
 | ~~`src/builtins/wm`~~ | **Done in the views pass** (`PARITY.md`, "The gaps pass, views"): Switch Workspaces and the fullscreen, floating and overview toggles (IPC v18) | — | — |
 | ~~`src/builtins/file`~~ | **Done in the views pass**: the rest of the action panel and the loading indicator (IPC v18); drag stays a declared difference (Iced has no drag out of a window) | — | — |
 | ~~`src/builtins/shortcut`~~ | **Done in the views pass**: Open with… (the app-selector view, IPC v18), the detail pane, shortcuts as fallback rows | — | — |
-| `src/builtins/snippet` | the detail pane; the `\{` escape | small (escape) and medium (pane) | the escape changes the shared placeholder parser's grammar, which needs its own look |
+| ~~`src/builtins/snippet`~~ | **Done in the UI pass** (`PARITY.md`, "The gaps pass, UI"): the detail pane (IPC v19 `PreviewSnippet`) and the `\{` escape, in a parser of its own (`compass_core::placeholder`) so quicklinks keep theirs | — | — |
 | ~~`src/builtins/system`~~ | **Done** (Browse Apps, Set Default Browser, Set Default Terminal; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/builtins/vicinae` | installed extensions, the OAuth token and local-storage browsers, ~~tray search~~ (done with `tray-host`), builtin-icon gallery, fallback manager view, report bug, refresh apps, open config, the store intro | large (many small views) | none |
-| `ui/image` | ~~the builtin icon set, file-type icons, command tiles and badges~~ (**done in the gaps pass**, `PARITY.md`, "The gaps pass, icons and tray"); masks, extension, script and shortcut row icons in root search, favicons, `ImageURL(source)` for a bare string | small each | none (`is_emoji` now exists for the last) |
-| `ui/bridges` | images inside an extension's Markdown detail | small (the store page's fetch-and-draw can be reused) | none |
+| ~~`ui/image`~~ | **Done**: the builtin icon set, file-type icons, command tiles and badges (`PARITY.md`, "The gaps pass, icons and tray"); masks, extension, script and shortcut row icons in root search, favicons, `ImageURL(source)` for a bare string, and the tile's gradient and shadow (`PARITY.md`, "The gaps pass, UI", IPC v19 `ScriptIcons`) | — | — |
+| ~~`ui/bridges`~~ | **Done in the UI pass**: a Markdown detail's images, fetched and drawn with the store page's viewer (`PARITY.md`, "The gaps pass, UI") | — | — |
 | ~~`ui/action-panel`~~ | **Done** (`compass_ui::shortcut_recorder` over `compass_core::key_combo`; `PARITY.md`, "The gaps pass, root and actions") | — | — |
 | `ui/qml`, `ui/quick`, `ui/views`, `ui/settings`, `ui/windows` | the settings window and its pages, onboarding, the HUD, match and Markdown highlighting, the edit-keywords and app-selector views, drag and drop | large | a design decision on the settings window (the config file is the interface today); drag as above; the VM tier for anything drawn |
 

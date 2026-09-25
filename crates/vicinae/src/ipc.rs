@@ -202,6 +202,8 @@ fn describe(request: &Request) -> &'static str {
         Request::CopyFile { .. } => "CopyFile",
         Request::RunExecutable { .. } => "RunExecutable",
         Request::SetWallpaper { .. } => "SetWallpaper",
+        Request::PreviewSnippet { .. } => "PreviewSnippet",
+        Request::ScriptIcons => "ScriptIcons",
     }
 }
 

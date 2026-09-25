@@ -74,8 +74,10 @@ use serde::{Deserialize, Serialize};
 /// [`Request::FocusWorkspace`], [`Request::ToggleWindowState`]), "Open
 /// with…" ([`Request::ListOpeners`], [`Request::OpenWith`]) and a file's
 /// action panel ([`Request::FileActions`], [`Request::CopyFile`],
-/// [`Request::RunExecutable`], [`Request::SetWallpaper`]).
-pub const PROTOCOL_VERSION: u16 = 18;
+/// [`Request::RunExecutable`], [`Request::SetWallpaper`]); version 19,
+/// Manage Snippets' detail pane and script commands' icons in root search
+/// ([`Request::PreviewSnippet`], [`Request::ScriptIcons`]).
+pub const PROTOCOL_VERSION: u16 = 19;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -929,6 +931,19 @@ pub enum Request {
         /// The image's absolute path.
         path: String,
     },
+    /// Expand a text snippet for Manage Snippets' detail pane, as
+    /// `updateExpandedText` does: its `{shell}` placeholders are shown, not
+    /// run. Answered with [`Response::Text`]; a file snippet answers with its
+    /// path. (v19.)
+    PreviewSnippet {
+        /// Which one.
+        id: String,
+        /// `(name, value)` for its arguments.
+        arguments: Vec<(String, String)>,
+    },
+    /// The icon of each script command, as `ScriptCommandFile::icon` resolves
+    /// its `@raycast.icon`. Answered with [`Response::ScriptIcons`]. (v19.)
+    ScriptIcons,
 }
 
 /// Answer to [`Request::FileActions`]. (v18.)
@@ -1381,6 +1396,12 @@ pub enum Response {
     },
     /// Answer to [`Request::FileActions`]. (v18.)
     FileActions(FileActionInfo),
+    /// Answer to [`Request::ScriptIcons`]: `(script id, icon URL)`, the URL
+    /// in `ImageURL`'s `icon://` form. (v19.)
+    ScriptIcons {
+        /// One per script command.
+        icons: Vec<(String, String)>,
+    },
 }
 
 /// Which system default a picker sets.

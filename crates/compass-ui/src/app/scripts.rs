@@ -242,15 +242,39 @@ impl LauncherApp {
         }
     }
 
+    /// Asks the engine for each script command's icon, when icons are drawn.
+    fn script_icons_task(&self) -> Task<Message> {
+        let Some(backend) = self.backend.clone().filter(|_| self.icons) else {
+            return Task::none();
+        };
+        Task::perform(
+            async move { backend.script_icons().await },
+            Message::ScriptIconsLoaded,
+        )
+    }
+
     /// Handles the script messages.
     pub(super) fn script_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::ScriptsLoaded(Ok(scripts)) => {
                 let changed = self.app_index.scripts() != scripts.as_slice();
                 self.app_index.set_scripts(scripts);
+                let icons = self.script_icons_task();
                 if changed && matches!(self.page, Page::Root) && !self.query.trim().is_empty() {
-                    return self.search_task();
+                    return Task::batch([self.search_task(), icons]);
                 }
+                icons
+            }
+            Message::ScriptIconsLoaded(Ok(icons)) => {
+                self.script_icons = icons
+                    .into_iter()
+                    .map(|(id, url)| (id, compass_core::image_url::ImageUrl::parse(&url)))
+                    .collect();
+                self.warm_icons();
+                Task::none()
+            }
+            Message::ScriptIconsLoaded(Err(reason)) => {
+                tracing::debug!(%reason, "could not list script icons");
                 Task::none()
             }
             Message::ScriptsLoaded(Err(reason)) => {

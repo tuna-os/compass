@@ -19,8 +19,8 @@ const NEEDS_ENGINE: &str = "The extension stores need the Compass engine";
 
 /// The detail page's Markdown drawn with its images: those fetched are drawn,
 /// the rest keep the renderer's placeholder.
-struct StoreMarkdown<'b> {
-    images: &'b std::collections::HashMap<String, crate::extension_page::RowIcon>,
+pub(super) struct StoreMarkdown<'b> {
+    pub(super) images: &'b std::collections::HashMap<String, crate::extension_page::RowIcon>,
 }
 
 impl<'a> iced::widget::markdown::Viewer<'a, Message> for StoreMarkdown<'a> {

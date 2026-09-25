@@ -3703,6 +3703,15 @@ fn snippets_are_imported_created_expanded_edited_and_removed() {
     assert!(year >= 2024, "{text}");
     assert_eq!(text, format!("Hello Zoë, {year} shell-ran"));
 
+    // Manage Snippets' pane shows the shell placeholder rather than running it.
+    let Response::Text { text } = daemon.request(Request::PreviewSnippet {
+        id: greeting.id.clone(),
+        arguments: vec![("name".into(), "Zoë".into())],
+    }) else {
+        panic!("not previewed");
+    };
+    assert_eq!(text, format!("Hello Zoë, {year} $(echo shell-ran)"));
+
     // Pasting needs the Shell extension, and this engine has no session bus.
     let (kind, _) = refused(daemon.request(Request::PasteSnippet {
         id: greeting.id.clone(),
@@ -3808,7 +3817,13 @@ fn script_commands_are_scanned_searched_and_run_in_their_modes() {
             "# @raycast.argument1 {\"type\":\"text\",\"placeholder\":\"who\"}\n\
              printf '\\033[32mgreen\\033[0m %s https://x.test\\n' \"$1\"; echo err >&2",
         );
-        write(&dir, "inline.sh", "inline", "Queue Size", "echo '42 items'");
+        write(
+            &dir,
+            "inline.sh",
+            "inline",
+            "Queue Size",
+            "# @raycast.icon 🎉\necho '42 items'",
+        );
         write(
             &dir,
             "compact.sh",
@@ -3848,6 +3863,18 @@ fn script_commands_are_scanned_searched_and_run_in_their_modes() {
     );
     let full = scripts.iter().find(|s| s.id == "full.sh").unwrap();
     assert_eq!(full.arguments.len(), 1);
+    let Response::ScriptIcons { icons } = daemon.request(Request::ScriptIcons) else {
+        panic!("no script icons");
+    };
+    assert_eq!(icons.len(), 4, "one per script: {icons:?}");
+    for (id, icon) in &icons {
+        let want = if id == "inline.sh" {
+            "icon://emoji/🎉"
+        } else {
+            "icon://omnicast/code?bg_tint=accent"
+        };
+        assert_eq!(icon, want, "{id}: an emoji header, else the default");
+    }
     assert_eq!(full.arguments[0].placeholder.as_deref(), Some("who"));
 
     let Response::QueryResults { hits } = daemon.request(Request::Query {

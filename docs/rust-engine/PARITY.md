@@ -199,7 +199,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/builtins/raycast` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/root` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/shortcut` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/system` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/theme` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/vicinae` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -218,10 +218,10 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 | `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
-| `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/server/src/ui/bridges` | 539 | `compass-ui` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/alert` | 279 | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 `compass-ui` opens a window, searches applications, moves the selection, launches on Enter and
@@ -331,19 +331,19 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/shortcut-inhibit` and `src/services/window-material`: Still C++-only: the
   keyboard-shortcuts-inhibit and background-effect Wayland plumbing, which is a stub.
 - `src/services/tray`: Still C++-only: Vicinae's own tray icon.
-- `src/builtins/snippet`: Still C++-only: Manage Snippets' detail pane and the backslash escape
-  for a literal brace.
+- `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
+  escape).
 - `ui/qml`, `ui/quick`, `ui/views`: Still C++-only: the rest of the view layer — the settings window,
   onboarding, the HUD, text highlighting in lists and Markdown, the edit-keywords view (the
   app-selector landed in the views pass), and drag and drop.
 - `ui/settings`, `ui/windows`: Still C++-only: the settings window and its pages (general,
   appearance, keybinds, extensions) beyond the sidebar model and the preferences form.
 - `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
-  "The gaps pass, icons and tray". Still C++-only: circle and rounded-rectangle masks, the icons of
-  extension, script and shortcut rows in root search (they show an initial), favicons, and reading
-  a bare icon string (an emoji, a glyph, a builtin name) the way `ImageURL(source)` does.
+  "The gaps pass, icons and tray"; masks, root rows' icons, favicons, `ImageURL(source)` and the
+  tile's gradient and shadow since "The gaps pass, UI" below.
 - `ui/action-panel`: closed in "The gaps pass, root and actions" below.
-- `ui/bridges`: Still C++-only: images inside an extension's Markdown detail, which are not fetched.
+- `ui/bridges`: closed in "The gaps pass, UI" below (a Markdown detail's images are fetched and
+  drawn).
 
 ### Gaps closed after the truth pass (2026-09-25)
 
@@ -388,8 +388,8 @@ What differs, by row:
 | Row | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | `ui/image` | `renderFileIcon` asks `QMimeDatabase` (`MatchDefault`: the name's globs, then the content's magic) and the type's `iconName` and `genericIconName`, which the shared-mime-info database may override per type. | The type by extension (`mime_guess`, already in the tree), `inode/directory` for a directory; the icon names by shared-mime-info's defaults (`image/png` → `image-png`, generic `image-x-generic`; a directory's generic `folder`). An extensionless file is `application/octet-stream` rather than sniffed, and a type's own `<generic-icon>` is not read. | `a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin`, `mime_icon_names_follow_the_shared_mime_info_defaults` |
-| `ui/image` | A tile is a vertical gradient with a hairline and a drop shadow under the glyph, the tile colour from the theme's semantic colours. | A flat tile with the hairline, in the Vicinae dark theme's accents (the launcher's own palette carries only an accent), clamped into `clampTileTone`'s band; no gradient or shadow. | `a_command_is_drawn_on_its_tile_with_a_light_glyph` |
-| `ui/image` | A clipboard link row shows the site's favicon. | The builtin link icon: favicons are fetched from the network, which the launcher does not do for clipboard rows yet. | `clipboard_rows_and_the_default_mark_use_the_cpps_builtins` |
+| `ui/image` | A tile is a vertical gradient with a hairline and a drop shadow under the glyph, the tile colour from the theme's semantic colours. | The gradient and the shadow since "The gaps pass, UI"; the tile colour is still the Vicinae dark theme's accents (the launcher's own palette carries only an accent), clamped into `clampTileTone`'s band. | `a_command_is_drawn_on_its_tile_with_a_light_glyph`, `a_tile_is_a_gradient_lighter_at_the_top_and_deeper_at_the_bottom` |
+| `ui/image` | A clipboard link row shows the site's favicon. | The same since "The gaps pass, UI": the favicon, the builtin link icon until it has been fetched. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn` |
 | `tray-host` | `SniWatcher` claims the watcher name only after a three-second grace, releases it when another connection queues for it, and accepts an item registered as `busname/path`. | The `system-tray` crate's watcher claims the name at once when it is free and keeps it; it accepts a bus name or an object path (what libappindicator and KDE send) and refuses the combined `busname/path` form. A desktop's own watcher (a bar, KDE, GNOME's AppIndicator extension) is used when it is already there. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
 | `tray-host` | An item is keyed by bus name and path, and its menu fetched with `GetLayout` when the view opens. | Keyed by the bus name it registered from, as the crate keeps it (one item per connection); the menu is the layout the crate follows through `LayoutUpdated`, after an `AboutToShow`. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
 | `ui/image` | Builtin icons are compiled into the binary as Qt resources. | Read from the installed `vicinae/builtin-icons` directory (`compass_core::builtin_icon::directory`); where it is missing a row keeps its initial, as before. | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial` |
@@ -698,12 +698,66 @@ hides. Declared differences:
 - An unnamed niri workspace is called by its number; the C++ shows an empty title.
 - The monitor is shown whenever the compositor names one; the C++ shows it only when it matches a
   Qt screen's name.
-- The applications on a workspace are its accessory as names, not icons (`ui/image`'s gap).
+- The applications on a workspace are its accessory as names, not icons.
 - On GNOME the C++ lists workspaces through its Shell extension's `ListWorkspaces`; Compass's Shell
   extension has no such call, so GNOME offers Switch Windows only. That is a gap in the GNOME
   provider (`src/services/window-manager`), not in this view.
 - Hyprland's classic dispatcher fallback for fullscreen is `fullscreen 0`, which acts on the active
   window: the classic form has no window argument.
+
+### The gaps pass, UI (2026-09-25)
+
+The rest of `ui/image`, the snippet view and the Markdown detail's images, against the C++ in
+`src/server/src/ui/image`, `src/server/src/favicon`, `builtins/snippet` and `utils/placeholder.cpp`
+(IPC v19). A cell flips only with a named module and named tests that fail on a regression.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `ui/image` | Rust ✅ | `compass_core::image_url::{ImageUrl::from_source, SourceLookup}` (`ImageURL(const ImageLikeModel &)` for a bare string: an `icon://`, `file:`, `data:` or `http(s):` URL, an emoji, a glyph of the table, a builtin, a file, an asset, a theme icon); `compass_core::favicon::Service` (`favicon_service`: `twenty`, `google`, `none`); `compass_core::extension_commands::ExtensionCommand::icon_url` (`ExtensionCommand::iconUrl`); `compass_ui::icons::{url_glyph, UrlLookup, remote_source, semantic_color, Glyph::Text, tile_gradient, apply_mask, rasterize, MaskedCache}`; `LauncherApp::{url_icon, warm_urls, root_icon_arrived}` with `shortcut_url` (`RootShortcutItem::iconUrl`'s purple tile) and `clipboard_url` (the favicon with the link builtin as fallback); script icons over IPC v19 `ScriptIcons` (`vicinae::scripts::Scripts::icons`); `Image.mask` read by `compass_worker_host::view_model` and kept per row (`ExtensionPage::mask`) | `a_bare_source_is_read_as_image_url_reads_one`, `a_remote_images_own_query_survives_the_round_trip`, `each_service_asks_for_the_cpps_url_and_none_asks_nothing`, `the_configuration_names_the_service_and_twenty_is_the_default`, `the_icon_is_the_commands_then_the_extensions_then_the_hammer`, `an_image_url_is_drawn_as_its_type_says`, `a_tile_is_a_gradient_lighter_at_the_top_and_deeper_at_the_bottom`, `a_circle_mask_clears_the_corners_and_keeps_the_middle`, `a_rounded_mask_rounds_a_quarter_of_the_side`, `a_masked_image_is_drawn_once_from_a_png_or_an_svg`, `extension_script_and_shortcut_rows_draw_their_icons_in_root_search`, `a_favicon_is_fetched_once_into_the_cache_and_then_drawn`, `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept`, `an_images_mask_is_kept_in_either_spelling`, `script_commands_are_scanned_searched_and_run_in_their_modes` (a real engine) |
+| `src/builtins/snippet` | Rust ✅ | `compass_core::placeholder::{parse_snippet_text, parse}` (`PlaceholderString::parse`, with its backslash escape), used by `vicinae::snippets`, the save path's cursor count and `snippets_page::arguments_form`; the detail pane: `compass_ui::snippets_page::{Detail, detail_fields}`, `compass_ui::app::snippets::{snippet_detail_task, snippet_detail_pane}`, `vicinae::snippets::preview` over IPC v19 `PreviewSnippet` | `an_escaped_brace_is_text_and_not_a_placeholder`, `a_doubled_backslash_is_one_and_the_brace_after_it_opens_a_placeholder`, `another_escaped_character_loses_its_backslash_and_a_trailing_one_stays`, `without_a_backslash_it_reads_as_a_quicklink_does`, `an_escaped_brace_expands_as_a_brace`, `an_escaped_brace_asks_for_no_argument`, `a_preview_shows_a_shell_placeholder_instead_of_running_it`, `the_pane_lists_what_load_detail_lists_in_its_order`, `manage_snippets_shows_the_selected_snippets_detail_pane`, `snippets_are_imported_created_expanded_edited_and_removed` (a real engine) |
+| `ui/bridges` | Rust ✅ | `ExtensionPage::{wanted_images, image_arrived, markdown_art}` fetch a detail's Markdown images through `compass_ui::remote_image`'s cache, drawn by the store page's viewer (`app::stores::StoreMarkdown`) | `a_details_markdown_images_are_fetched_and_drawn` |
+
+**`ui/image` → every `ImageURL` a root row carries.** An extension command's row draws the command's
+icon from the extension's assets, else the extension's, else the hammer on a cyan tile; a script's,
+what the engine resolved from its `@raycast.icon` (an emoji, a file beside the script, an `https`
+image, else `code` on the accent tile); a shortcut's, the `ImageURL` it stored, a builtin on a
+purple tile; a clipboard link, its site's favicon with the link builtin as the fallback. Each is
+resolved once per URL from `update` (`warm_urls`), never in a draw. A remote image (an `https` icon,
+a favicon through `favicon_service`'s service) is fetched once into `compass_ui::remote_image`'s
+cache and the row redrawn when it lands; until then the URL's fallback, else the initial. An
+extension's image string that is not a builtin is read as `ImageURL(source)` reads it, so an emoji
+is drawn as text and a theme icon's name as that icon. `Image.mask` is honoured: the image is drawn
+into pixels (`image` for PNG and JPEG, `resvg` for SVG, both already in the tree) and clipped as
+`applyCircleMask` (the inscribed ellipse) and `applyRoundedRectMask` (a quarter of the shorter side)
+clip it, antialiased; the result is kept per file, mask and tint. A command tile is
+`applyBackdrop`'s: the vertical gradient (`shifted(tile, 0.025, -0.03, 0.10)` to
+`shifted(tile, -0.015, 0.06, -0.05)`), the hairline, and the glyph's silhouette at 70/255 black,
+3.5% of the side lower, under the glyph.
+
+**`src/builtins/snippet` → the pane and the escape.** `\{` is a literal brace and `\\` one
+backslash, as `PlaceholderString::parse` reads them, everywhere a snippet's text is parsed: copying
+and pasting, the arguments form, the save path's `{cursor}` count and keyword expansion. Manage
+Snippets shows `loadDetail`'s pane beside the list, following the selection (a late answer for
+another row is dropped): the text expanded by the engine with `executeShell` off, so a shell
+placeholder reads `$(code)` and nothing runs, then Type, Created at, Updated at (when edited),
+Keyword and Apps.
+
+**`ui/bridges` → a Markdown detail's images.** An extension's detail view asks for the remote images
+its Markdown shows once, with its rows' images, and draws each where it stands once fetched, the
+placeholder until then, as the store's README does.
+
+What differs, by row:
+
+| Row | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| `ui/image` | `FaviconService` keeps favicons in its own database and `favicon-data/`, and asks its service for 128 px (its fallback to smaller sizes is not connected). | The service's 128 px image through `compass_ui::remote_image`'s cache, as every remote image here is kept (ADR-0017); `none` fetches nothing and the fallback stays. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn`, `each_service_asks_for_the_cpps_url_and_none_asks_nothing` |
+| `ui/image` | A masked image is clipped at the size it is drawn. | Drawn into at most 128 px, clipped, and scaled to the slot. | `a_masked_image_is_drawn_once_from_a_png_or_an_svg` |
+| `ui/image` | An `ImageURL`'s `badge` is drawn on any icon. | On builtin commands' tiles, as before; a badge in a stored `ImageURL` is not drawn. | — |
+| `ui/image` | `ImageURL(source)` tests a relative path against the working directory (`QFile(source).exists()`). | Only an absolute path is a file; a relative one is an asset or a theme name. | `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept` |
+| `ui/image` | Remote icons are fetched by every build. | By the launcher `vicinae` starts (`AppFlags::remote_icons`); off in tests, which never reach the network. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn` |
+| `ui/image` | `QUrl::toString()` escapes a name's `?`, `#` and `%` in an `icon://` URL. | The same (`ImageUrl::to_url`); before this pass an `https` image with a query string did not survive the round trip. | `a_remote_images_own_query_survives_the_round_trip` |
+| `builtins/snippet` | The pane re-expands as argument values are typed into the search bar's completer. | Manage Snippets has no completer: arguments expand empty. | `manage_snippets_shows_the_selected_snippets_detail_pane` |
+| `builtins/snippet` | The pane lists the keyword's applications as icons with their names as tooltips. | Their names, comma-separated. | `the_pane_lists_what_load_detail_lists_in_its_order` |
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
@@ -2685,8 +2739,8 @@ arguments by name. What differs:
 | 3 | Copy to clipboard copies text as transient (not recorded in history), and a file snippet as the file. | The launcher writes the expanded text to the clipboard itself; a file snippet copies its path as text. No form creates file snippets (the C++ form does not either). | — |
 | 4 | — | Paste, which the C++ list does not offer: the expansion is put on the clipboard and pasted through the Shell extension, as clipboard history pastes. | `snippets_are_imported_created_expanded_edited_and_removed` |
 | 5 | The form edits the keyword's application list, and offers placeholder completions in the content field. | The list is kept as it was (a duplicate keeps it too); the content field's help text names the placeholders. | `editing_a_snippet_keeps_its_apps_and_returns_to_the_list` |
-| 6 | A detail pane shows the type, the dates, the keyword and its apps, and the expansion as arguments are typed (shell placeholders shown as `$(code)`). | Rows carry the keyword (or the text's first words) as their subtitle; no detail pane yet. | `the_subtitle_is_the_keyword_or_the_first_words` |
-| 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | Parsed with the quicklink parser, which has no escape: `\{` is a backslash and a placeholder. | — |
+| 6 | A detail pane shows the type, the dates, the keyword and its apps, and the expansion as arguments are typed (shell placeholders shown as `$(code)`). | The pane since "The gaps pass, UI" (IPC v19 `PreviewSnippet`): the type, the dates, the keyword, its applications by name, and the text expanded with its shell placeholders shown as `$(code)`. Manage Snippets has no completer, so arguments expand empty (to their defaults); the applications are names rather than icons. | `manage_snippets_shows_the_selected_snippets_detail_pane`, `the_pane_lists_what_load_detail_lists_in_its_order`, `a_preview_shows_a_shell_placeholder_instead_of_running_it`, `snippets_are_imported_created_expanded_edited_and_removed` |
+| 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | The same since "The gaps pass, UI" (`compass_core::placeholder::parse_snippet_text`), for copying, pasting, the form's arguments and keyword expansion; a quicklink's link keeps the quicklink parser, which has none, as `Shortcut::parseLink` does. | `an_escaped_brace_is_text_and_not_a_placeholder`, `a_doubled_backslash_is_one_and_the_brace_after_it_opens_a_placeholder`, `an_escaped_brace_expands_as_a_brace`, `an_escaped_brace_asks_for_no_argument` |
 | 8 | `{argument}` with no `name=` is collected as an argument with an empty name. | Left out of the form; it expands to nothing either way. | `arguments_are_named_once_and_reserved_ids_are_not_arguments` |
 
 ### Input server and keyword expansion — what differs

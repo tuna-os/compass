@@ -180,6 +180,8 @@ pub enum Message {
     SnippetsQueryChanged(String),
     /// A Manage Snippets row was clicked, by position.
     SnippetSelected(usize),
+    /// Manage Snippets' detail pane for a snippet arrived.
+    SnippetDetailLoaded(crate::snippets_page::Detail),
     /// Create Extension finished, for the extension called `title`: where
     /// it was written, or why not.
     ExtensionCreated {
@@ -307,6 +309,8 @@ pub enum Message {
     ProgramRan(Result<(), String>),
     /// The script commands arrived, or why they could not be listed.
     ScriptsLoaded(Result<Vec<compass_core::script_scan::ScriptItem>, String>),
+    /// The script commands' icons arrived, `(id, icon URL)`, or why not.
+    ScriptIconsLoaded(Result<Vec<(String, String)>, String>),
     /// The Rhai scripts arrived, or why they could not be listed.
     RhaiScriptsLoaded(Result<Vec<compass_core::rhai_scripts::RhaiScriptItem>, String>),
     /// The launch an extension asked for arrived, or why it could not.

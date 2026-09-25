@@ -280,6 +280,17 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
     }
 
+    /// A snippet expanded for the detail pane, its shell placeholders shown
+    /// rather than run.
+    fn preview_snippet(
+        &self,
+        id: String,
+        arguments: Vec<(String, String)>,
+    ) -> BackendFuture<'_, String> {
+        let _ = (id, arguments);
+        Box::pin(async { Err(SNIPPETS_NEED_ENGINE.to_owned()) })
+    }
+
     /// Expands a snippet and pastes it into the focused window.
     fn paste_snippet(&self, id: String, arguments: Vec<(String, String)>) -> BackendFuture<'_, ()> {
         let _ = (id, arguments);
@@ -398,6 +409,11 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
 
     /// Every script command, scanned afresh.
     fn list_scripts(&self) -> BackendFuture<'_, Vec<compass_core::script_scan::ScriptItem>> {
+        Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
+    }
+
+    /// Each script command's icon, `(id, icon:// URL)`.
+    fn script_icons(&self) -> BackendFuture<'_, Vec<(String, String)>> {
         Box::pin(async { Err(SCRIPTS_NEED_ENGINE.to_owned()) })
     }
 

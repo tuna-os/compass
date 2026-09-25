@@ -1174,6 +1174,7 @@ dependencies = [
  "insta",
  "jiff",
  "mime_guess",
+ "resvg",
  "serde",
  "serde_json",
  "sha2 0.11.0",

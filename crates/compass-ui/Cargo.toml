@@ -23,6 +23,9 @@ tracing.workspace = true
 iced = { version = "0.14", features = ["wayland", "image-without-codecs", "svg", "tokio", "markdown"] }
 # JPEG too, for remote images: avatars are mostly JPEG. zune-jpeg, pure Rust.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Drawing an SVG into pixels to clip it to a circle or a rounded rectangle
+# (already in the tree through iced's SVG, and in `vicinae`).
+resvg = { version = "0.45", default-features = false }
 iced_winit = { version = "0.14", features = ["wayland"] }
 winit = { version = "0.30", features = ["wayland"] }
 compass-core.workspace = true

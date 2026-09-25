@@ -211,6 +211,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             emoji_skin_tone,
             emoji_default_action,
             clock,
+            favicon_service,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -240,6 +241,9 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     emoji_skin_tone(&config),
                     emoji_default_action(&config),
                     clock(&config),
+                    compass_core::favicon::Service::from_config(
+                        config.unknown_fields().get("favicon_service"),
+                    ),
                 )
             }
             Err(error) => {
@@ -259,6 +263,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     None,
                     emoji_default_action(&compass_core::Config::default()),
                     clock(&compass_core::Config::default()),
+                    compass_core::favicon::Service::default(),
                 )
             }
         };
@@ -343,6 +348,8 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             emoji_default_action,
             search_history_path: compass_core::root_view::default_history_path(),
             clock,
+            favicon_service,
+            remote_icons: true,
             ..compass_ui::AppFlags::default()
         };
 

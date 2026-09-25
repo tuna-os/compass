@@ -475,6 +475,13 @@ fn image(value: &Value) -> Option<Image> {
     image.source = source;
     image.fallback = value.get("fallback").and_then(image_source);
     image.tint = value.get("tintColor").and_then(color_like);
+    image.mask = match value.get("mask").and_then(Value::as_str) {
+        Some("Circle" | "circle") => Some(compass_extension_api::view::ImageMask::Circle),
+        Some("RoundedRectangle" | "roundedRectangle") => {
+            Some(compass_extension_api::view::ImageMask::RoundedRectangle)
+        }
+        _ => None,
+    };
     Some(image)
 }
 
@@ -957,6 +964,23 @@ fn shortcut(value: &Value) -> Option<Shortcut> {
         }
     }
     Some(Shortcut::new(modifiers, key))
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    #[test]
+    fn an_images_mask_is_kept_in_either_spelling() {
+        let read = |mask: &str| {
+            image_from_json(&serde_json::json!({"source": {"raw": "a.png"}, "mask": mask}))
+                .and_then(|image| image.mask)
+        };
+        use compass_extension_api::view::ImageMask;
+        assert_eq!(read("Circle"), Some(ImageMask::Circle));
+        assert_eq!(read("roundedRectangle"), Some(ImageMask::RoundedRectangle));
+        assert_eq!(read("hexagon"), None);
+    }
 }
 
 #[cfg(test)]

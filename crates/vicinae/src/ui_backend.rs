@@ -1035,6 +1035,37 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn preview_snippet(
+        &self,
+        id: String,
+        arguments: Vec<(String, String)>,
+    ) -> BackendFuture<'_, String> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::PreviewSnippet { id, arguments },
+                    "Previewing the snippet",
+                )
+                .await?
+            {
+                compass_ipc::Response::Text { text } => Ok(text),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn script_icons(&self) -> BackendFuture<'_, Vec<(String, String)>> {
+        Box::pin(async move {
+            match self
+                .ask(Request::ScriptIcons, "Listing script icons")
+                .await?
+            {
+                compass_ipc::Response::ScriptIcons { icons } => Ok(icons),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn paste_text(&self, text: String) -> BackendFuture<'_, ()> {
         Box::pin(async move {
             match self.ask(Request::PasteText { text }, "Pasting").await? {

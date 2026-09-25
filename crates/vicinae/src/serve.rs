@@ -1176,7 +1176,7 @@ async fn save_snippet(
 ) -> Response {
     use compass_core::snippet_form::{Submission, submit};
     use compass_core::snippet_store::{Error, SnippetData, SnippetPayload, StoredExpansion};
-    let cursors = compass_core::shortcut::parse_link(&text)
+    let cursors = compass_core::placeholder::parse_snippet_text(&text)
         .placeholders
         .iter()
         .filter(|placeholder| placeholder.id == compass_core::snippet_expander::CURSOR_ID)
@@ -1301,6 +1301,7 @@ async fn expand_snippet(
     state: &Arc<RwLock<EngineState>>,
     id: &str,
     arguments: &[(String, String)],
+    run_shell: bool,
 ) -> Result<String, Response> {
     let (snippet, shell) = {
         let state = state.read().await;
@@ -1328,6 +1329,9 @@ async fn expand_snippet(
             },
             None => tracing::info!("no GNOME Shell extension; {{clipboard}} expands to nothing"),
         }
+    }
+    if !run_shell {
+        return Ok(crate::snippets::preview(text, arguments, clipboard).to_text());
     }
     Ok(crate::snippets::expand(text, arguments, clipboard)
         .await
@@ -2761,6 +2765,10 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             state.index.set_scripts(items);
             Response::Scripts { scripts }
         }
+        Request::ScriptIcons => {
+            let icons = state.read().await.scripts.icons();
+            Response::ScriptIcons { icons }
+        }
         Request::RunScript { id, arguments } => run_script(state, &id, &arguments).await,
         Request::ScriptOutput { session } => {
             let runs = Arc::clone(&state.read().await.script_runs);
@@ -3065,15 +3073,21 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         }
         Request::InputServerStatus => input_server(state, None).await,
         Request::SetInputServerEnabled { enabled } => input_server(state, Some(enabled)).await,
+        Request::PreviewSnippet { id, arguments } => {
+            match expand_snippet(state, &id, &arguments, false).await {
+                Ok(text) => Response::Text { text },
+                Err(response) => response,
+            }
+        }
         Request::ExpandSnippet { id, arguments } => {
-            match expand_snippet(state, &id, &arguments).await {
+            match expand_snippet(state, &id, &arguments, true).await {
                 Ok(text) => Response::Text { text },
                 Err(response) => response,
             }
         }
         Request::PasteSnippet { id, arguments } => {
             const WHAT: &str = "Pasting";
-            let text = match expand_snippet(state, &id, &arguments).await {
+            let text = match expand_snippet(state, &id, &arguments, true).await {
                 Ok(text) => text,
                 Err(response) => return response,
             };

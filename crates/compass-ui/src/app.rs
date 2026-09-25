@@ -200,6 +200,31 @@ impl Default for IconLookup {
     }
 }
 
+/// A shortcut's stored icon as its root row draws it (`RootShortcutItem::iconUrl`):
+/// the `ImageURL` it names, a builtin on a purple tile.
+fn shortcut_url(icon: &str) -> compass_core::image_url::ImageUrl {
+    let url = compass_core::image_url::ImageUrl::parse(icon);
+    if url.is_builtin() {
+        url.with_background_tint(compass_core::image_url::ColorLike::Semantic(
+            "Purple".into(),
+        ))
+    } else {
+        url
+    }
+}
+
+/// A clipboard link row's favicon, with the link builtin as its fallback
+/// (`ClipboardHistoryModel`'s icon for a link).
+fn clipboard_url(
+    entry: &crate::backend::ClipboardRow,
+) -> Option<compass_core::image_url::ImageUrl> {
+    use compass_core::image_url::{ImageUrl, ImageUrlType};
+    let host = entry.url_host.as_deref().filter(|host| !host.is_empty())?;
+    (entry.kind == crate::backend::ClipboardRowKind::Link).then(|| {
+        ImageUrl::new(ImageUrlType::Favicon, host).with_fallback(&ImageUrl::builtin("link"))
+    })
+}
+
 /// Flags for configuring the launcher app.
 #[derive(Debug, Clone)]
 pub struct AppFlags {
@@ -262,6 +287,14 @@ pub struct AppFlags {
     pub search_history_path: Option<std::path::PathBuf>,
     /// The root search's clock (`launcher.clock`); `None` shows none.
     pub clock: Option<ClockSettings>,
+    /// Where favicons come from (`favicon_service`).
+    pub favicon_service: compass_core::favicon::Service,
+    /// Whether root rows fetch their remote icons (an `https` script icon,
+    /// a shortcut's or a clipboard link's favicon) into
+    /// [`crate::remote_image`]'s cache. Off by default, so a test never
+    /// reaches the network or the cache under the real home; `vicinae` turns
+    /// it on.
+    pub remote_icons: bool,
     /// When the process started, for the cold-start figure (#13).
     ///
     /// `None` in a test or anywhere nobody is timing, which simply means no
@@ -358,6 +391,8 @@ impl Default for AppFlags {
             emoji_default_action: compass_core::emoji_grid::DEFAULT_ACTION_PASTE.to_owned(),
             search_history_path: None,
             clock: None,
+            favicon_service: compass_core::favicon::Service::default(),
+            remote_icons: false,
             icons: compass_core::config::DEFAULT_ICONS,
             icon_lookup: IconLookup::default(),
             appearance_preset: crate::preset::resolve(None, None, None),
@@ -835,6 +870,25 @@ pub struct LauncherApp {
     provider_scope: Option<ProviderScope>,
     /// Each Rhai script's manifest icon, resolved, by script id.
     rhai_icons: std::collections::HashMap<String, crate::extension_page::RowIcon>,
+    /// Each script command's icon, as the engine resolved it, by script id.
+    script_icons: std::collections::HashMap<String, compass_core::image_url::ImageUrl>,
+    /// Root rows' `ImageURL`s resolved to what is drawn, by URL, warmed
+    /// from `update`; `None` is a miss (or a remote image not yet here).
+    url_glyphs: std::collections::HashMap<String, Option<crate::icons::Glyph>>,
+    /// Remote icons fetched into the cache, by URL.
+    remote_files: std::collections::HashMap<String, std::path::PathBuf>,
+    /// Remote icons asked for, so each is fetched once.
+    remote_requested: std::collections::BTreeSet<String>,
+    /// Remote icons to fetch after this update.
+    remote_pending: Vec<String>,
+    /// See [`AppFlags::remote_icons`].
+    remote_icons: bool,
+    /// See [`AppFlags::favicon_service`].
+    favicon_service: compass_core::favicon::Service,
+    /// Masked images, drawn once.
+    masked: crate::icons::MaskedCache,
+    /// Extension icon files seen to exist, so a draw does not stat them.
+    known_files: std::collections::HashSet<std::path::PathBuf>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -1126,6 +1180,8 @@ impl LauncherApp {
         app.emoji_skin_tone = flags.emoji_skin_tone;
         app.emoji_default_action = flags.emoji_default_action;
         app.icons = flags.icons;
+        app.remote_icons = flags.remote_icons;
+        app.favicon_service = flags.favicon_service;
         app.geometry = flags.appearance_preset.geometry;
         app.field_rule = flags.appearance_preset.field_rule;
         app.tint = flags.appearance_preset.tint;
@@ -1199,6 +1255,15 @@ impl LauncherApp {
             fallbacks: Vec::new(),
             provider_scope: None,
             rhai_icons: std::collections::HashMap::new(),
+            script_icons: std::collections::HashMap::new(),
+            url_glyphs: std::collections::HashMap::new(),
+            remote_files: std::collections::HashMap::new(),
+            remote_requested: std::collections::BTreeSet::new(),
+            remote_pending: Vec::new(),
+            remote_icons: false,
+            favicon_service: compass_core::favicon::Service::default(),
+            masked: crate::icons::MaskedCache::default(),
+            known_files: std::collections::HashSet::new(),
             theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
@@ -1828,7 +1893,11 @@ impl LauncherApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.update_inner(message);
         tracing::debug!(target: "compass_ui::state", "{}", self.state_line());
-        task
+        if self.remote_pending.is_empty() {
+            return task;
+        }
+        let wanted = std::mem::take(&mut self.remote_pending);
+        Task::batch([task, crate::remote_image::fetch_tasks(wanted)])
     }
 
     fn update_inner(&mut self, message: Message) -> Task<Message> {
@@ -2379,6 +2448,7 @@ impl LauncherApp {
                 if let Page::Clipboard(page) = &mut self.page {
                     page.apply(generation, result);
                 }
+                self.warm_clipboard_icons();
                 Task::batch([
                     crate::scroll::reveal_root_selection(),
                     self.clipboard_detail_task(),
@@ -2617,6 +2687,9 @@ impl LauncherApp {
                 }
             }
             Message::ExtensionImageFetched { url, result } => {
+                if self.remote_requested.contains(&url) {
+                    self.root_icon_arrived(&url, &result);
+                }
                 if self.store_image_arrived(&url, &result) {
                     return Task::none();
                 }
@@ -2723,8 +2796,10 @@ impl LauncherApp {
             | Message::SnippetExpanded(_)
             | Message::SnippetPasted(_)
             | Message::SnippetsQueryChanged(_)
-            | Message::SnippetSelected(_) => self.snippet_message(message),
+            | Message::SnippetSelected(_)
+            | Message::SnippetDetailLoaded(_) => self.snippet_message(message),
             Message::ScriptsLoaded(_)
+            | Message::ScriptIconsLoaded(_)
             | Message::ScriptStarted { .. }
             | Message::ScriptPolled { .. } => self.script_message(message),
             Message::RhaiScriptsLoaded(_) => self.rhai_message(message),
@@ -3594,7 +3669,11 @@ impl LauncherApp {
                             continue;
                         };
                         self.list_row(
-                            self.initial_badge(&command.title, selected),
+                            self.url_icon(
+                                self.extension_url(command).as_ref(),
+                                &command.title,
+                                selected,
+                            ),
                             command.title.clone(),
                             self.subtitles.then(|| {
                                 self.extension_subtitles
@@ -3610,7 +3689,11 @@ impl LauncherApp {
                             continue;
                         };
                         self.list_row(
-                            self.initial_badge(&script.title, selected),
+                            self.url_icon(
+                                self.script_icons.get(&script.id),
+                                &script.title,
+                                selected,
+                            ),
                             script.title.clone(),
                             self.subtitles.then(|| script.subtitle.clone()),
                             selected,
@@ -3669,7 +3752,7 @@ impl LauncherApp {
                         };
                         let title = crate::shortcuts_page::display_name(shortcut);
                         self.list_row(
-                            self.initial_badge(title, selected),
+                            self.url_icon(Some(&shortcut_url(&shortcut.icon)), title, selected),
                             title.to_owned(),
                             self.subtitles.then(|| "Shortcut".to_owned()),
                             selected,
@@ -4036,10 +4119,14 @@ impl LauncherApp {
             let subtitle = self
                 .subtitles
                 .then(|| crate::clipboard_page::subtitle(entry));
+            let favicon =
+                clipboard_url(entry).and_then(|url| self.url_glyphs.get(&url.to_url())?.clone());
             let row = self.list_row(
                 self.glyph_or_initial(
                     self.icons
-                        .then(|| crate::icons::clipboard_glyph(entry.kind))
+                        .then(|| {
+                            favicon.unwrap_or_else(|| crate::icons::clipboard_glyph(entry.kind))
+                        })
                         .as_ref(),
                     crate::clipboard_page::subtitle(entry).as_str(),
                     selected,
@@ -4142,6 +4229,18 @@ impl LauncherApp {
         icon: &crate::extension_page::RowIcon,
         selected: bool,
     ) -> Element<'_, Message> {
+        self.masked_icon(icon, compass_core::image_url::ImageMask::None, selected)
+    }
+
+    /// [`Self::extension_icon`], clipped to `mask` (`Image.mask`): the
+    /// image drawn into pixels and clipped as `applyCircleMask` and
+    /// `applyRoundedRectMask` clip it.
+    fn masked_icon(
+        &self,
+        icon: &crate::extension_page::RowIcon,
+        mask: compass_core::image_url::ImageMask,
+        selected: bool,
+    ) -> Element<'_, Message> {
         use crate::extension_page::RowIcon;
         let geometry = self.geometry;
         let size = Length::Fixed(f32::from(geometry.icon_size));
@@ -4152,7 +4251,35 @@ impl LauncherApp {
             palette.text
         }
         .to_iced();
+        let masked = match icon {
+            RowIcon::Art {
+                art,
+                monochrome,
+                tint,
+            } if mask != compass_core::image_url::ImageMask::None => {
+                let color = tint.or(monochrome.then_some(text_color)).map(|c| {
+                    let [r, g, b, _] = c.into_rgba8();
+                    [r, g, b]
+                });
+                self.masked.get(art, mask, color)
+            }
+            _ => None,
+        };
+        if let Some(handle) = masked {
+            return container(image(handle).width(Length::Fill).height(Length::Fill))
+                .width(size)
+                .height(size)
+                .into();
+        }
         let art: Element<Message> = match icon {
+            RowIcon::Text(glyph) => {
+                container(text(glyph.clone()).size(f32::from(geometry.icon_size) * 0.75))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into()
+            }
             RowIcon::Swatch(color) => {
                 let color = *color;
                 container(text(""))
@@ -4280,6 +4407,14 @@ impl LauncherApp {
         use crate::icons::Glyph;
         let square = Length::Fixed(size);
         match glyph {
+            Glyph::Text(glyph) => Some(
+                container(text(glyph.clone()).size(size * 0.75))
+                    .width(square)
+                    .height(square)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into(),
+            ),
             Glyph::Art(art) => {
                 let drawn: Element<'static, Message> = match art {
                     crate::icons::IconArt::Raster(path) => image(path.clone())
@@ -4317,22 +4452,45 @@ impl LauncherApp {
                     .align_y(Alignment::Center)
                     .into(),
                     Some(tile) => {
-                        let tile = tile.to_iced();
+                        let (top, bottom) = crate::icons::tile_gradient(*tile);
+                        let gradient = iced::gradient::Linear::new(std::f32::consts::PI)
+                            .add_stop(0.0, top.to_iced())
+                            .add_stop(1.0, bottom.to_iced());
                         let inner = size * (1.0 - 2.0 * 0.19);
-                        container(
-                            self.builtin_svg(
-                                name,
-                                fill.unwrap_or(crate::design::Rgb::new(255, 255, 255))
-                                    .to_iced(),
-                                inner,
-                            )?,
-                        )
+                        let centred = |element: Element<'static, Message>, drop: f32| {
+                            container(element)
+                                .width(square)
+                                .height(square)
+                                .align_x(Alignment::Center)
+                                .align_y(Alignment::Center)
+                                .padding(Padding::ZERO.top(drop * 2.0))
+                        };
+                        // `applyBackdrop`'s shadow: the glyph's silhouette in
+                        // translucent black, a little lower, under it.
+                        let shadow = self.builtin_svg(
+                            name,
+                            Color::from_rgba8(
+                                0,
+                                0,
+                                0,
+                                f32::from(crate::icons::TILE_SHADOW_ALPHA) / 255.0,
+                            ),
+                            inner,
+                        )?;
+                        let glyph = self.builtin_svg(
+                            name,
+                            fill.unwrap_or(crate::design::Rgb::new(255, 255, 255))
+                                .to_iced(),
+                            inner,
+                        )?;
+                        container(iced::widget::stack![
+                            centred(shadow, size * crate::icons::TILE_SHADOW_OFFSET),
+                            centred(glyph, 0.0),
+                        ])
                         .width(square)
                         .height(square)
-                        .align_x(Alignment::Center)
-                        .align_y(Alignment::Center)
                         .style(move |_: &Theme| container::Style {
-                            background: Some(tile.into()),
+                            background: Some(iced::Background::Gradient(gradient.into())),
                             border: Border {
                                 color: Color::from_rgba8(255, 255, 255, 30.0 / 255.0),
                                 width: (size / 32.0).max(1.0),
@@ -5251,11 +5409,15 @@ impl LauncherApp {
             (Status::Stopped(why), _) => return self.notice(why),
             (Status::Ready, Some(View::Detail(_))) => {
                 let theme = self.theme();
-                let markdown = iced::widget::markdown::view(
+                // Its images drawn once fetched, as the store page draws a
+                // README's.
+                let markdown = iced::widget::markdown::view_with(
                     &page.markdown,
                     iced::widget::markdown::Settings::with_text_size(14, &theme),
-                )
-                .map(Message::ExtensionLinkClicked);
+                    &stores::StoreMarkdown {
+                        images: &page.markdown_art,
+                    },
+                );
                 let body = scrollable(container(markdown).padding(Padding::new(14.0)))
                     .id(crate::scroll::ROOT_RESULTS)
                     .height(Length::Shrink);
@@ -5296,7 +5458,7 @@ impl LauncherApp {
                 (None, true) => None,
             };
             let icon = match page.icon(s, i) {
-                Some(icon) => self.extension_icon(icon, selected),
+                Some(icon) => self.masked_icon(icon, page.mask(s, i), selected),
                 None => self.initial_badge(&item.title, selected),
             };
             let row = self.list_row(
@@ -5838,6 +6000,89 @@ impl LauncherApp {
         item.icon().and_then(|name| self.icon_cache.cached(name))
     }
 
+    /// A root row's `ImageURL` drawn in its icon slot, once warmed, else
+    /// `title`'s initial.
+    fn url_icon(
+        &self,
+        url: Option<&compass_core::image_url::ImageUrl>,
+        title: &str,
+        selected: bool,
+    ) -> Element<'_, Message> {
+        let glyph = url
+            .filter(|_| self.icons)
+            .and_then(|url| self.url_glyphs.get(&url.to_url())?.as_ref());
+        self.glyph_or_initial(glyph, title, selected)
+    }
+
+    /// An extension command's icon URL, once warmed.
+    fn extension_url(
+        &self,
+        command: &compass_core::extension_commands::ExtensionCommand,
+    ) -> Option<compass_core::image_url::ImageUrl> {
+        self.icons
+            .then(|| command.icon_url(|path| self.known_files.contains(path)))
+    }
+
+    /// Resolves `urls` into [`Self::url_glyphs`], asking for each remote
+    /// image not yet fetched (when [`AppFlags::remote_icons`] allows).
+    fn warm_urls(&mut self, urls: Vec<compass_core::image_url::ImageUrl>) {
+        let find = self.icon_lookup.clone();
+        let find = |name: &str| find.find(name);
+        for url in urls {
+            let key = url.to_url();
+            if self.url_glyphs.contains_key(&key) {
+                continue;
+            }
+            let remote_files = &self.remote_files;
+            let remote = |remote: &str| remote_files.get(remote).cloned();
+            let lookup = crate::icons::UrlLookup {
+                find: &find,
+                remote: &remote,
+                favicon: self.favicon_service,
+                accent: self.palette().accent,
+            };
+            let glyph = crate::icons::url_glyph(&url, &lookup);
+            let waiting = crate::icons::remote_source(&url, self.favicon_service)
+                .filter(|remote| !self.remote_files.contains_key(remote));
+            if let Some(remote) = waiting {
+                if self.remote_icons && self.remote_requested.insert(remote.clone()) {
+                    self.remote_pending.push(remote);
+                }
+                if glyph.is_none() {
+                    // Resolved again when it arrives.
+                    continue;
+                }
+            }
+            self.url_glyphs.insert(key, glyph);
+        }
+    }
+
+    /// A remote root icon arrived in the cache, or could not be fetched.
+    fn root_icon_arrived(&mut self, url: &str, result: &Result<std::path::PathBuf, String>) {
+        match result {
+            Ok(path) => {
+                self.remote_files.insert(url.to_owned(), path.clone());
+                // Whatever waited on it (and its fallbacks) is resolved again.
+                self.url_glyphs.clear();
+                self.warm_icons();
+                self.warm_clipboard_icons();
+            }
+            Err(reason) => tracing::debug!(%url, %reason, "a root icon was not fetched"),
+        }
+    }
+
+    /// Resolve the favicons of clipboard history's link rows.
+    fn warm_clipboard_icons(&mut self) {
+        if !self.icons {
+            return;
+        }
+        let Page::Clipboard(page) = &self.page else {
+            return;
+        };
+        let urls: Vec<_> = page.rows.iter().filter_map(clipboard_url).collect();
+        self.warm_urls(urls);
+    }
+
     /// Resolve the icons of the rows now on screen.
     ///
     /// Here rather than in `view` because resolution walks the theme
@@ -5848,7 +6093,7 @@ impl LauncherApp {
     ///
     /// A no-op when icons are off, so the default configuration does no lookup
     /// at all.
-    fn warm_icons(&mut self) {
+    pub(super) fn warm_icons(&mut self) {
         if !self.icons {
             return;
         }
@@ -5870,6 +6115,48 @@ impl LauncherApp {
             .collect();
         let find = self.icon_lookup.clone();
         self.icon_cache.warm(names, &|name| find.find(name));
+
+        // Extension, script and shortcut rows: their `ImageURL`s.
+        let mut urls = Vec::new();
+        for row in &self.results {
+            match row {
+                RootRow::Extension(index) => {
+                    if let Some(command) = self.app_index.extensions().get(*index) {
+                        for icon in [
+                            command.icon.as_deref(),
+                            Some(command.extension_icon.as_str()),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .filter(|icon| !icon.is_empty())
+                        {
+                            let path = command.extension_dir.join("assets").join(icon);
+                            if path.is_file() {
+                                self.known_files.insert(path);
+                            }
+                        }
+                        urls.push(command.icon_url(|path| self.known_files.contains(path)));
+                    }
+                }
+                RootRow::Script(index) => {
+                    if let Some(url) = self
+                        .app_index
+                        .scripts()
+                        .get(*index)
+                        .and_then(|script| self.script_icons.get(&script.id))
+                    {
+                        urls.push(url.clone());
+                    }
+                }
+                RootRow::Shortcut(index) => {
+                    if let Some(shortcut) = self.app_index.shortcuts().get(*index) {
+                        urls.push(shortcut_url(&shortcut.icon));
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.warm_urls(urls);
     }
 
     /// Resolve the file-type icons of Search Files' rows.
@@ -6428,6 +6715,8 @@ mod tests {
         snippet_uses: std::sync::Mutex<Vec<SnippetUse>>,
         /// The script commands the fake lists.
         scripts: Vec<compass_core::script_scan::ScriptItem>,
+        /// Each script's icon URL, by id.
+        script_icons: Vec<(String, String)>,
         /// The scripts run, with their arguments.
         script_runs: std::sync::Mutex<Vec<(String, Vec<String>)>>,
         /// The programs Run Terminal Program ran: `(argv, terminal, hold)`.
@@ -7025,6 +7314,21 @@ mod tests {
                 snippets.retain(|s| s.id != id);
                 Ok(snippets.clone())
             })
+        }
+
+        fn preview_snippet(
+            &self,
+            id: String,
+            arguments: Vec<(String, String)>,
+        ) -> crate::backend::BackendFuture<'_, String> {
+            Box::pin(async move {
+                let values: Vec<String> = arguments.into_iter().map(|(_, v)| v).collect();
+                Ok(format!("preview {id}:{}", values.join(",")))
+            })
+        }
+
+        fn script_icons(&self) -> crate::backend::BackendFuture<'_, Vec<(String, String)>> {
+            Box::pin(async move { Ok(self.script_icons.clone()) })
         }
 
         fn expand_snippet(
@@ -11621,6 +11925,44 @@ mod tests {
     }
 
     #[test]
+    fn manage_snippets_shows_the_selected_snippets_detail_pane() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut app, _backend) = snippets_app(dir.path());
+        let task = app.update(Message::SnippetsQueryChanged(String::new()));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("not on Manage Snippets: {}", app.state_line());
+        };
+        assert_eq!(
+            page.detail,
+            Some(crate::snippets_page::Detail {
+                id: "snp-sig".into(),
+                expanded: Ok("preview snp-sig:".into()),
+            }),
+            "the first row's text, previewed by the engine"
+        );
+        let task = app.update(pressed(iced::keyboard::key::Named::ArrowDown));
+        settle(&mut app, task);
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets: {}", app.state_line());
+        };
+        assert_eq!(
+            page.detail.as_ref().map(|d| d.id.as_str()),
+            Some("snp-hi"),
+            "the pane follows the selection"
+        );
+        // A late answer for a row no longer selected is dropped.
+        let _ = app.update(Message::SnippetDetailLoaded(crate::snippets_page::Detail {
+            id: "snp-sig".into(),
+            expanded: Ok("late".into()),
+        }));
+        let Page::Snippets(page) = &app.page else {
+            panic!("left Manage Snippets");
+        };
+        assert_eq!(page.detail.as_ref().map(|d| d.id.as_str()), Some("snp-hi"));
+    }
+
+    #[test]
     fn manage_snippets_copies_asking_for_arguments_first() {
         let dir = tempfile::tempdir().unwrap();
         let (mut app, backend) = snippets_app(dir.path());
@@ -13284,6 +13626,154 @@ mod tests {
         let mut ui = iced_test::simulator(app.view());
         assert!(ui.find("hello").is_ok());
         assert!(ui.find("T").is_err(), "the text builtin, not an initial");
+    }
+
+    #[test]
+    fn extension_script_and_shortcut_rows_draw_their_icons_in_root_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let ext = dir.path().join("extensions/hello");
+        fs::create_dir_all(ext.join("assets")).unwrap();
+        fs::write(ext.join("assets/hello.png"), b"png").unwrap();
+        fs::write(
+            ext.join("package.json"),
+            r#"{"name": "hello", "title": "Hello", "author": "someone", "icon": "hello.png",
+                "commands": [{"name": "write", "title": "Write Greeting", "mode": "no-view"}]}"#,
+        )
+        .unwrap();
+        index(dir.path());
+        let mut app = LauncherApp::with_index(
+            AppIndex::builder()
+                .dir(dir.path())
+                .extension_dirs([dir.path().join("extensions")])
+                .build(),
+        );
+        app.backend = Some(backend);
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        app.query = "greeting".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Extension(0)));
+        let extension_icon = ext.join("assets/hello.png");
+        let key =
+            compass_core::image_url::ImageUrl::local(extension_icon.to_string_lossy()).to_url();
+        assert_eq!(
+            app.url_glyphs.get(&key),
+            Some(&Some(crate::icons::Glyph::Art(IconArt::Raster(
+                extension_icon
+            )))),
+            "the extension's own icon, from its assets"
+        );
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("Write Greeting").is_ok());
+            assert!(ui.find("W").is_err(), "the icon replaces the initial");
+        }
+
+        // A script whose header names an emoji.
+        app.app_index.set_scripts(vec![script_item(
+            "party.sh",
+            "Party Time",
+            compass_core::script_command::OutputMode::Silent,
+            0,
+        )]);
+        let _ = app.update(Message::ScriptIconsLoaded(Ok(vec![(
+            "party.sh".into(),
+            "icon://emoji/🎉".into(),
+        )])));
+        app.query = "party time".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Script(_))));
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("🎉").is_ok(), "the emoji is drawn as text");
+            assert!(ui.find("P").is_err());
+        }
+
+        // A shortcut with a builtin icon: on a purple tile.
+        app.app_index
+            .set_shortcuts(vec![compass_core::shortcut_service::CachedShortcut {
+                id: "s1".into(),
+                name: "Docs Search".into(),
+                icon: "icon://omnicast/link".into(),
+                link: compass_core::shortcut::parse_link("https://docs.rs/{query}"),
+                app: "default".into(),
+                open_count: 0,
+                created_at: 0,
+                updated_at: 0,
+                last_opened_at: None,
+            }]);
+        app.query = "docs search".into();
+        app.search();
+        assert!(matches!(app.selected_row(), Some(RootRow::Shortcut(_))));
+        let key = "icon://omnicast/link?bg_tint=purple";
+        let Some(Some(crate::icons::Glyph::Builtin { name, tile, .. })) = app.url_glyphs.get(key)
+        else {
+            panic!("no glyph for {key}: {:?}", app.url_glyphs.keys());
+        };
+        assert_eq!(name, "link");
+        assert!(tile.is_some(), "a shortcut's builtin sits on a purple tile");
+    }
+
+    #[test]
+    fn a_favicon_is_fetched_once_into_the_cache_and_then_drawn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.icons = true;
+        app.builtin_icons = Some(repo_builtin_icons());
+        app.favicon_service = compass_core::favicon::Service::Twenty;
+        let row = crate::backend::ClipboardRow {
+            id: "1".into(),
+            preview: "https://example.com/page".into(),
+            kind: crate::backend::ClipboardRowKind::Link,
+            pinned: false,
+            url_host: Some("example.com".into()),
+        };
+        let page = crate::clipboard_page::ClipboardPage::default();
+        let generation = page.generation;
+        app.page = Page::Clipboard(page);
+        let load = |app: &mut LauncherApp| {
+            let _ = app.update(Message::ClipboardLoaded {
+                generation,
+                result: Ok(vec![row.clone()]),
+            });
+        };
+        let favicon = clipboard_url(&row).expect("a link has a favicon").to_url();
+        let favicon = favicon.as_str();
+        assert!(favicon.starts_with("icon://favicon/example.com?fallback="));
+
+        // Without remote icons (every test's default) nothing is fetched and
+        // the link builtin stands in.
+        load(&mut app);
+        assert!(app.remote_requested.is_empty());
+        assert_eq!(
+            app.url_glyphs.get(favicon),
+            Some(&Some(crate::icons::Glyph::builtin("link")))
+        );
+
+        app.remote_icons = true;
+        app.url_glyphs.clear();
+        load(&mut app);
+        let wanted = "https://twenty-icons.com/example.com/128";
+        assert_eq!(
+            app.remote_requested.iter().collect::<Vec<_>>(),
+            [wanted],
+            "the favicon is asked of the configured service"
+        );
+        load(&mut app);
+        assert_eq!(app.remote_requested.len(), 1, "and asked for once");
+
+        let cached = dir.path().join("favicon.png");
+        fs::write(&cached, b"png").unwrap();
+        let _ = app.update(Message::ExtensionImageFetched {
+            url: wanted.into(),
+            result: Ok(cached.clone()),
+        });
+        assert_eq!(
+            app.url_glyphs.get(favicon),
+            Some(&Some(crate::icons::Glyph::Art(IconArt::Raster(cached)))),
+            "once in the cache, the favicon is drawn"
+        );
     }
 }
 

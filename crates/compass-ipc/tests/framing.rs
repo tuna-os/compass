@@ -395,6 +395,11 @@ fn all_requests() -> Vec<Request> {
         Request::SetWallpaper {
             path: "/home/ä/a b.png".into(),
         },
+        Request::PreviewSnippet {
+            id: "snp-0123456789ab".into(),
+            arguments: vec![("name".into(), "Zoë".into())],
+        },
+        Request::ScriptIcons,
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -566,6 +571,9 @@ fn all_responses() -> Vec<Response> {
             can_set_wallpaper: false,
             can_paste: true,
         }),
+        Response::ScriptIcons {
+            icons: vec![("hello.sh".into(), "icon://emoji/🎉".into())],
+        },
         Response::AppRuntime {
             running: true,
             frontmost: false,
@@ -1044,6 +1052,8 @@ fn request_variants_are_exhaustive() {
             | Request::CopyFile { .. }
             | Request::RunExecutable { .. }
             | Request::SetWallpaper { .. }
+            | Request::PreviewSnippet { .. }
+            | Request::ScriptIcons
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -1104,6 +1114,7 @@ fn response_variants_are_exhaustive() {
             | Response::Workspaces { .. }
             | Response::Openers { .. }
             | Response::FileActions(_)
+            | Response::ScriptIcons { .. }
             | Response::Window(_) => {}
         }
     }

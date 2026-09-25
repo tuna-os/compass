@@ -160,6 +160,10 @@ async fn echo_handler(request: Request) -> Response {
             Response::FileActions(compass_ipc::FileActionInfo::default())
         }
         Request::ListOpeners { .. } => Response::Openers { apps: vec![] },
+        Request::PreviewSnippet { .. } => Response::Text {
+            text: String::new(),
+        },
+        Request::ScriptIcons => Response::ScriptIcons { icons: vec![] },
         Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
         Request::WindowManagerCapabilities => {
             Response::WindowManagerCapabilities(compass_ipc::WindowManagerCapabilities::default())

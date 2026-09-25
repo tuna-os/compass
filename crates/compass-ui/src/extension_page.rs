@@ -31,6 +31,33 @@ pub enum RowIcon {
     },
     /// A flat colour: a grid cell whose content is one.
     Swatch(iced::Color),
+    /// An emoji or another glyph, drawn as text.
+    Text(String),
+}
+
+/// What [`compass_core::image_url::ImageUrl::from_source`] asks of an
+/// extension's view: its builtin icons, its assets and the icon theme.
+struct PageLookup<'a> {
+    assets: Option<&'a std::path::Path>,
+    icon_lookup: Option<&'a crate::app::IconLookup>,
+}
+
+impl compass_core::image_url::SourceLookup for PageLookup<'_> {
+    fn builtin(&self, name: &str) -> bool {
+        compass_core::builtin_icon::path(name).is_some()
+    }
+    fn file(&self, path: &str) -> bool {
+        let path = std::path::Path::new(path);
+        path.is_absolute() && path.is_file()
+    }
+    fn asset(&self, relative: &str) -> Option<String> {
+        let path = self.assets?.join(relative);
+        path.is_file().then(|| path.to_string_lossy().into_owned())
+    }
+    fn themed(&self, name: &str) -> bool {
+        self.icon_lookup
+            .is_some_and(|lookup| lookup.find(name).is_some())
+    }
 }
 
 /// Where the command is.
@@ -95,6 +122,10 @@ pub struct ExtensionPage {
     pub icons: Vec<Vec<Option<RowIcon>>>,
     /// Rows whose icon is a remote image, and its URL.
     pub remote_rows: std::collections::BTreeMap<(usize, usize), String>,
+    /// Rows whose image is clipped (`Image.mask`), and to what.
+    pub masks: std::collections::BTreeMap<(usize, usize), compass_core::image_url::ImageMask>,
+    /// The images a detail's Markdown shows that have been fetched, by URL.
+    pub markdown_art: std::collections::HashMap<String, RowIcon>,
     /// Remote images fetched so far, by URL.
     pub remote_art: std::collections::HashMap<String, RowIcon>,
     /// Remote images already asked for, fetched or not, so a re-render does
@@ -133,6 +164,8 @@ impl ExtensionPage {
             assets: None,
             prefers_dark: false,
             icon_lookup: None,
+            masks: std::collections::BTreeMap::new(),
+            markdown_art: std::collections::HashMap::new(),
             icons: Vec::new(),
             remote_rows: std::collections::BTreeMap::new(),
             remote_art: std::collections::HashMap::new(),
@@ -164,6 +197,12 @@ impl ExtensionPage {
             // the same search, selection and actions, one cell per row.
             let view = match *view {
                 View::Grid(grid) => {
+                    self.masks = masks_of(grid.sections.iter().map(|s| {
+                        s.items.iter().map(|c| match &c.content {
+                            compass_extension_api::view::GridContent::Image(image) => image.mask,
+                            compass_extension_api::view::GridContent::Color(_) => None,
+                        })
+                    }));
                     self.icons = grid
                         .sections
                         .iter()
@@ -180,6 +219,14 @@ impl ExtensionPage {
                     Box::new(View::List(grid_as_list(grid)))
                 }
                 other => {
+                    self.masks = match &other {
+                        View::List(list) => masks_of(list.sections.iter().map(|s| {
+                            s.items
+                                .iter()
+                                .map(|item| item.icon.as_ref().and_then(|i| i.mask))
+                        })),
+                        _ => std::collections::BTreeMap::new(),
+                    };
                     self.remote_rows = match &other {
                         View::List(list) => rows_with(list.sections.iter().map(|s| {
                             s.items
@@ -246,12 +293,27 @@ impl ExtensionPage {
             .or_else(|| self.remote_art.get(self.remote_rows.get(&(section, item))?))
     }
 
-    /// The remote images this view shows that nobody has asked for yet;
-    /// each is returned once.
+    /// How the row at `(section, item)` clips its image.
+    #[must_use]
+    pub fn mask(&self, section: usize, item: usize) -> compass_core::image_url::ImageMask {
+        self.masks
+            .get(&(section, item))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// The remote images this view shows that nobody has asked for yet,
+    /// its rows' and its Markdown's; each is returned once.
     pub fn wanted_images(&mut self) -> Vec<String> {
+        let markdown = crate::store_page::markdown_images(&self.markdown);
         let wanted: Vec<String> = self
             .remote_rows
             .values()
+            .chain(
+                markdown
+                    .iter()
+                    .filter(|url| crate::remote_image::is_remote(url)),
+            )
             .filter(|url| !self.requested.contains(*url))
             .cloned()
             .collect::<std::collections::BTreeSet<_>>()
@@ -265,6 +327,16 @@ impl ExtensionPage {
     pub fn image_arrived(&mut self, url: String, fetched: Result<std::path::PathBuf, String>) {
         match fetched.map(|path| crate::icons::classify(&path)) {
             Ok(Some(art)) => {
+                if crate::store_page::markdown_images(&self.markdown).contains(&url) {
+                    self.markdown_art.insert(
+                        url.clone(),
+                        RowIcon::Art {
+                            art: art.clone(),
+                            monochrome: false,
+                            tint: None,
+                        },
+                    );
+                }
                 self.remote_art.insert(
                     url,
                     RowIcon::Art {
@@ -314,7 +386,16 @@ impl ExtensionPage {
             source = if self.prefers_dark { dark } else { light };
         }
         let (path, monochrome) = match source {
-            ImageSource::Builtin(name) => (compass_core::builtin_icon::path(name)?, true),
+            ImageSource::Builtin(name) => match compass_core::builtin_icon::path(name) {
+                Some(path) => (path, true),
+                // Not a builtin: what `ImageURL(source)` makes of the string.
+                None => return self.source_icon(name, tint),
+            },
+            ImageSource::Url(url)
+                if !url.starts_with("file://") && !crate::remote_image::is_remote(url) =>
+            {
+                return self.source_icon(url, tint);
+            }
             ImageSource::Asset(relative) => {
                 let path = self.assets.as_ref()?.join(relative);
                 (path.is_file().then_some(path)?, false)
@@ -336,9 +417,33 @@ impl ExtensionPage {
                     crate::icons::Glyph::Builtin { name, .. } => {
                         (compass_core::builtin_icon::path(&name)?, true)
                     }
+                    crate::icons::Glyph::Text(glyph) => return Some(RowIcon::Text(glyph)),
                 }
             }
             ImageSource::Themed { .. } => return None,
+        };
+        Some(RowIcon::Art {
+            art: crate::icons::classify(&path)?,
+            monochrome,
+            tint,
+        })
+    }
+
+    /// A bare icon string read as `ImageURL(source)` reads it: an emoji or
+    /// symbol as text, a builtin, a file or asset, a theme icon.
+    fn source_icon(&self, source: &str, tint: Option<iced::Color>) -> Option<RowIcon> {
+        use compass_core::image_url::{ImageUrl, ImageUrlType};
+        let lookup = PageLookup {
+            assets: self.assets.as_deref(),
+            icon_lookup: self.icon_lookup.as_ref(),
+        };
+        let url = ImageUrl::from_source(source, &lookup);
+        let (path, monochrome) = match url.kind {
+            ImageUrlType::Emoji | ImageUrlType::Symbol => return Some(RowIcon::Text(url.name)),
+            ImageUrlType::Builtin => (compass_core::builtin_icon::path(&url.name)?, true),
+            ImageUrlType::Local => (std::path::PathBuf::from(&url.name), false),
+            ImageUrlType::System => (self.icon_lookup.as_ref()?.find(&url.name)?, false),
+            _ => return None,
         };
         Some(RowIcon::Art {
             art: crate::icons::classify(&path)?,
@@ -706,6 +811,30 @@ fn grid_as_list(
     }
 }
 
+/// The `(section, item)` of every row whose image `masks` gives a mask.
+fn masks_of<S, I>(
+    masks: S,
+) -> std::collections::BTreeMap<(usize, usize), compass_core::image_url::ImageMask>
+where
+    S: Iterator<Item = I>,
+    I: Iterator<Item = Option<compass_extension_api::view::ImageMask>>,
+{
+    use compass_core::image_url::ImageMask;
+    use compass_extension_api::view::ImageMask as Declared;
+    masks
+        .enumerate()
+        .flat_map(|(s, items)| {
+            items.enumerate().filter_map(move |(i, mask)| {
+                let mask = match mask? {
+                    Declared::Circle => ImageMask::Circle,
+                    Declared::RoundedRectangle => ImageMask::RoundedRectangle,
+                };
+                Some(((s, i), mask))
+            })
+        })
+        .collect()
+}
+
 /// The `(section, item)` of every row `urls` gives a URL for.
 fn rows_with<S, I>(urls: S) -> std::collections::BTreeMap<(usize, usize), String>
 where
@@ -981,6 +1110,90 @@ mod tests {
             page.icon(0, 0),
             Some(&RowIcon::Swatch(iced::Color::from_rgb8(0xff, 0, 0)))
         );
+    }
+
+    #[test]
+    fn a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept() {
+        use compass_extension_api::view::{Image, ImageMask, ImageSource};
+        let assets = tempfile::tempdir().unwrap();
+        std::fs::write(assets.path().join("avatar"), b"png").unwrap();
+        let theme = tempfile::tempdir().unwrap();
+        let firefox = theme.path().join("firefox.png");
+        std::fs::write(&firefox, b"png").unwrap();
+        let image = |source: ImageSource, mask: Option<ImageMask>| {
+            let mut image = Image::builtin(String::new());
+            image.source = source;
+            image.mask = mask;
+            image
+        };
+        let mut emoji = ListItem::new("emoji");
+        emoji.icon = Some(image(ImageSource::Builtin("🔥".into()), None));
+        let mut themed = ListItem::new("themed");
+        themed.icon = Some(image(
+            ImageSource::Builtin("firefox".into()),
+            Some(ImageMask::Circle),
+        ));
+        let mut remote = ListItem::new("remote");
+        remote.icon = Some(image(
+            ImageSource::Url("https://example.com/me.png".into()),
+            Some(ImageMask::RoundedRectangle),
+        ));
+        let mut icon_url = ListItem::new("icon url");
+        icon_url.icon = Some(image(ImageSource::Url("icon://emoji/🎉".into()), None));
+
+        let mut page = ExtensionPage::new(1, "Icons");
+        page.assets = Some(assets.path().to_owned());
+        let found = firefox.clone();
+        page.icon_lookup = Some(crate::app::IconLookup::new(move |name: &str| {
+            (name == "firefox").then(|| found.clone())
+        }));
+        page.apply(state(1, list(vec![emoji, themed, remote, icon_url], true)));
+        assert_eq!(page.icon(0, 0), Some(&RowIcon::Text("🔥".into())));
+        assert!(
+            matches!(page.icon(0, 1), Some(RowIcon::Art { art, .. }) if art.path() == firefox),
+            "a name that is no builtin is the theme's icon"
+        );
+        assert_eq!(page.icon(0, 3), Some(&RowIcon::Text("🎉".into())));
+        use compass_core::image_url::ImageMask as Mask;
+        assert_eq!(page.mask(0, 0), Mask::None);
+        assert_eq!(page.mask(0, 1), Mask::Circle);
+        assert_eq!(
+            page.mask(0, 2),
+            Mask::RoundedRectangle,
+            "a remote image keeps its row's mask"
+        );
+    }
+
+    #[test]
+    fn a_details_markdown_images_are_fetched_and_drawn() {
+        let assets = tempfile::tempdir().unwrap();
+        let png = assets.path().join("shot.png");
+        std::fs::write(&png, b"png").unwrap();
+        let mut page = ExtensionPage::new(1, "Readme");
+        page.apply(state(
+            1,
+            View::Detail(compass_extension_api::view::Detail {
+                markdown: Some(
+                    "# Shots\n\n![one](https://example.com/one.png)\n\n![local](file:///nowhere.png)"
+                        .into(),
+                ),
+                ..compass_extension_api::view::Detail::default()
+            }),
+        ));
+        assert_eq!(
+            page.wanted_images(),
+            ["https://example.com/one.png"],
+            "only remote images are fetched"
+        );
+        assert!(page.markdown_art.is_empty());
+        page.image_arrived("https://example.com/one.png".into(), Ok(png));
+        assert!(matches!(
+            page.markdown_art.get("https://example.com/one.png"),
+            Some(RowIcon::Art {
+                art: crate::icons::IconArt::Raster(_),
+                ..
+            })
+        ));
     }
 
     #[test]
