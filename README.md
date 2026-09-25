@@ -54,7 +54,9 @@ justification in an ADR.
 [Landlock](https://docs.kernel.org/userspace-api/landlock.html) filesystem boundary and a seccomp
 filter, with capped memory. The boundary also holds inside the Flatpak. Your home directory is
 off-limits except for a short, named, read-only list. For example, `~/.ssh/config` is readable,
-but `~/.ssh`'s keys are not. Extensions cannot run programs they downloaded. The policy and its
+but `~/.ssh`'s keys are not. Extensions cannot run programs they downloaded. When an extension needs a program on your
+computer, such as Raycast's Brew extension running `brew`, Compass asks you first: Allow Once,
+Always Allow or Deny. Script Permissions lists every grant and revokes it. The policy and its
 tests are in [`crates/compass-sandbox`](crates/compass-sandbox) and in the
 [parity ledger](docs/rust-engine/PARITY.md).
 
@@ -65,7 +67,10 @@ applications. You approve them the first time the script runs, and you can revok
 **Raycast and Vicinae extensions.** Extensions written against Vicinae's Raycast-compatible
 TypeScript SDK run on Compass's extension host. It implements all but a few of the SDK's 49 host
 methods, including OAuth sign-in through the browser. You can browse and install from
-both extension stores inside the launcher.
+both extension stores inside the launcher. Many Raycast extensions assume macOS; a runtime shim
+maps `open` to `xdg-open`, `pbcopy` and `pbpaste` to the clipboard and Homebrew to Linuxbrew, and
+refuses AppleScript by name instead of failing obscurely
+([RAYCAST-LINUX-SHIM.md](docs/rust-engine/RAYCAST-LINUX-SHIM.md)).
 
 **Made for Wayland.** On compositors that offer wlr-layer-shell, such as Sway, Hyprland and niri,
 Compass draws as a layer surface, not as a window. On GNOME it uses portals and a small Shell extension, and on compositors that offer
