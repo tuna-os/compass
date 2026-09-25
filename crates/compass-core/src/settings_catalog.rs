@@ -330,12 +330,6 @@ pub const NOT_IN_COMPASS: &[NotPorted] = &[
         reason: "Compass fetches no favicons yet",
     },
     NotPorted {
-        cpp: "trayEnabled",
-        page: CorePage::Advanced,
-        label: "Tray icon",
-        reason: "Compass has no tray icon of its own",
-    },
-    NotPorted {
         cpp: "encryptSensitiveData",
         page: CorePage::Advanced,
         label: "Encrypt sensitive data",
@@ -501,6 +495,13 @@ pub fn catalog() -> Vec<Setting> {
                 json!(crate::config::DEFAULT_INPUT_SERVER_ENABLED),
             )
             .cpp("inputServerEnabled"),
+        Setting::new("tray.enabled", core(Advanced), "System")
+            .label(
+                "Tray icon",
+                "Show Compass in the tray, with a menu to toggle the launcher, open settings and quit.",
+            )
+            .kind(Kind::Toggle, json!(crate::config::DEFAULT_TRAY_ENABLED))
+            .cpp("trayEnabled"),
     ];
 
     let clipboard = || Scope::Command("commands:clipboard-history".to_owned());
@@ -935,6 +936,7 @@ mod tests {
         apply(&mut config, "launcher.wrap_navigation", json!(true)).unwrap();
         apply(&mut config, "launcher.keybinding", json!("emacs")).unwrap();
         apply(&mut config, "input_server.enabled", json!(false)).unwrap();
+        apply(&mut config, "tray.enabled", json!(false)).unwrap();
         apply(&mut config, "launcher.appearance.tint", json!(true)).unwrap();
         apply(&mut config, "font.normal.family", json!("Inter")).unwrap();
         apply(
@@ -949,6 +951,7 @@ mod tests {
             crate::keybinding::Scheme::Emacs
         );
         assert!(!config.input_server().enabled());
+        assert!(!config.tray().enabled());
         assert!(config.launcher().appearance().tint());
         assert_eq!(config.font_family(), Some("Inter"));
         assert_eq!(config.launcher().hotkey(), "alt+space");

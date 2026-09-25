@@ -54,6 +54,7 @@ pub mod snippets;
 pub mod spike;
 pub mod stores;
 pub mod tray_host;
+pub mod tray_icon;
 pub mod typography;
 pub mod ui_backend;
 mod ui_instance;

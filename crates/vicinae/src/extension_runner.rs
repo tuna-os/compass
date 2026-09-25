@@ -187,10 +187,25 @@ fn resolver_targets(etc: &Path) -> Vec<PathBuf> {
     .collect()
 }
 
+/// What the runtime may touch while it runs `command`, with the user's
+/// `$HOME` as the process has it; see [`policy_in`].
+#[must_use]
+pub fn policy(
+    runtime: &Runtime,
+    command: &ExtensionCommand,
+    data_dir: &Path,
+) -> compass_sandbox::Policy {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    policy_in(runtime, command, data_dir, home.as_deref())
+}
+
 /// What the runtime may touch while it runs `command`.
 ///
 /// Read: the system (Node's libraries, certificates, ICU data, `/proc`), Node,
-/// the bundle and the extension's own directory. Write: only the support and
+/// the bundle and the extension's own directory, and of `home` only
+/// [`compass_sandbox::home::HOME_READ_ALLOWLIST`] (`~/.ssh/config`, the
+/// password store, the Hyprland, Sway and niri configurations), read-only and
+/// where it exists. Write: only the support and
 /// asset directories the runtime creates for this extension. Not `/tmp`:
 /// every other process's temporary files are there, so the extension gets its
 /// own, [`tmp_dir`], as `TMPDIR`.
@@ -198,12 +213,22 @@ fn resolver_targets(etc: &Path) -> Vec<PathBuf> {
 /// still can, inside the same boundary. Paths that do not exist are left out,
 /// since Landlock cannot name them.
 #[must_use]
-pub fn policy(
+pub fn policy_in(
     runtime: &Runtime,
     command: &ExtensionCommand,
     data_dir: &Path,
+    home: Option<&Path>,
 ) -> compass_sandbox::Policy {
     let parent = |path: &Path| path.parent().map(Path::to_path_buf);
+    let home_reads = home
+        .map(compass_sandbox::home::home_reads)
+        .unwrap_or_default();
+    for (path, why) in &home_reads.refused {
+        tracing::info!(
+            path = %path.display(), ?why,
+            "not granting an extension this allowlisted path"
+        );
+    }
     let read = [
         "/usr", "/etc", "/proc", "/sys", "/dev", "/lib", "/lib64", "/bin", "/app",
     ]
@@ -213,6 +238,7 @@ pub fn policy(
     .chain(parent(&runtime.bundle))
     .chain([command.extension_dir.clone()])
     .chain(resolver_targets(Path::new("/etc")))
+    .chain(home_reads.granted)
     // A certificate bundle the user pointed TLS at (a corporate CA, say):
     // Node reads it at start, and without it every fetch fails.
     .chain(
@@ -1776,6 +1802,84 @@ mod tests {
             png
         );
         assert_eq!(plain.icon, "", "no icon, none passed");
+    }
+
+    fn command_in(extension_dir: &Path) -> ExtensionCommand {
+        ExtensionCommand {
+            id: "@me/ssh:hosts".to_owned(),
+            provider_id: "@me/ssh".to_owned(),
+            extension_id: "ssh".to_owned(),
+            extension_dir: extension_dir.to_path_buf(),
+            name: "hosts".to_owned(),
+            title: "Hosts".to_owned(),
+            extension_title: "SSH".to_owned(),
+            keywords: Vec::new(),
+            mode: compass_core::manifest::CommandMode::View,
+            entrypoint: extension_dir.join("hosts.js"),
+            default_disabled: false,
+            extension_name: "ssh".to_owned(),
+            author: "me".to_owned(),
+            is_raycast: false,
+            preferences: Vec::new(),
+            arguments: Vec::new(),
+            icon: None,
+            extension_icon: String::new(),
+        }
+    }
+
+    #[test]
+    fn the_policy_reads_only_the_allowlisted_home_paths_and_never_writes_them() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let home = root.path().join("home");
+        let ssh = home.join(".ssh");
+        std::fs::create_dir_all(&ssh).expect("ssh");
+        std::fs::write(ssh.join("config"), "Host box\n").expect("config");
+        std::fs::write(ssh.join("id_ed25519"), "PRIVATE\n").expect("key");
+        std::fs::create_dir_all(home.join(".password-store")).expect("pass");
+        std::fs::create_dir_all(home.join(".config/niri")).expect("niri");
+        std::fs::create_dir_all(home.join(".gnupg")).expect("gnupg");
+        std::fs::create_dir_all(home.join("Documents")).expect("documents");
+        let extension = root.path().join("extensions/ssh");
+        std::fs::create_dir_all(&extension).expect("extension");
+        let data = root.path().join("data");
+        let runtime = Runtime {
+            node: PathBuf::from("/usr/bin/node"),
+            bundle: root.path().join("runtime/runtime.js"),
+            sandbox: None,
+        };
+        let command = command_in(&extension);
+        std::fs::create_dir_all(support_dir(&data, &command)).expect("support");
+
+        let policy = policy_in(&runtime, &command, &data, Some(&home));
+        let home = std::fs::canonicalize(&home).expect("canonical home");
+        for granted in [".ssh/config", ".password-store", ".config/niri"] {
+            assert!(
+                policy.read.contains(&home.join(granted)),
+                "{granted} is readable: {:?}",
+                policy.read
+            );
+        }
+        let under_home = |paths: &[PathBuf]| -> Vec<PathBuf> {
+            paths
+                .iter()
+                .filter(|path| path.starts_with(&home))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            under_home(&policy.read),
+            [
+                home.join(".ssh/config"),
+                home.join(".password-store"),
+                home.join(".config/niri"),
+            ],
+            "nothing else of $HOME: not the keys, ~/.ssh, ~/.gnupg or the home itself"
+        );
+        assert!(under_home(&policy.write).is_empty(), "read-only");
+        assert!(under_home(&policy.execute).is_empty(), "not executable");
+
+        let without = policy_in(&runtime, &command, &data, None);
+        assert!(under_home(&without.read).is_empty());
     }
 
     #[test]

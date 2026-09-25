@@ -275,6 +275,21 @@
         }
       },
       "type": "object"
+    },
+    "TrayConfig": {
+      "additionalProperties": true,
+      "description": "The `tray` section: Compass's own icon in the desktop's tray\n(`config::Tray`).",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether Compass shows its icon, with its menu (toggle the launcher,\nsettings, quit), in the tray. Applied at once when changed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     }
   },
   "$id": "https://raw.githubusercontent.com/tuna-os/compass/main/packaging/schema/vicinae.schema.json",
@@ -330,6 +345,10 @@
         "object",
         "null"
       ]
+    },
+    "tray": {
+      "$ref": "#/$defs/TrayConfig",
+      "description": "Compass's own tray icon."
     }
   },
   "title": "vicinae.json",

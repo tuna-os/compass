@@ -232,7 +232,7 @@ impl Kind {
 /// `providers` is copied whole: the C++ and Rust shapes agree on `enabled` and on `entrypoints`
 /// with `enabled`, `alias` and `shortcut`, and the per-provider `preferences` the Rust root
 /// manager does not read yet survive as unknown fields rather than being lost.
-const DIRECT: [(&str, &str, Kind); 11] = [
+const DIRECT: [(&str, &str, Kind); 12] = [
     (
         "launcher_window.clock.enabled",
         "launcher.clock.enabled",
@@ -260,6 +260,7 @@ const DIRECT: [(&str, &str, Kind); 11] = [
     ("fallbacks", "fallbacks", Kind::Strings),
     ("providers", "providers", Kind::Object),
     ("input_server.enabled", "input_server.enabled", Kind::Bool),
+    ("tray.enabled", "tray.enabled", Kind::Bool),
 ];
 
 /// C++ theme ids and the Rust theme family each belongs to.

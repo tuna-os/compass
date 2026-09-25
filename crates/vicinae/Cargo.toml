@@ -82,6 +82,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 data-url = "0.3"
 # The StatusNotifierItem host and its watcher, over the zbus 5 already in the tree.
 system-tray = "0.8"
+# Compass's own tray icon: the StatusNotifierItem *item* side and its dbusmenu,
+# over the same zbus 5 (system-tray only hosts).
+ksni = "0.3"
 
 [dev-dependencies]
 base64.workspace = true

@@ -19,18 +19,19 @@ fn kinds(under_systemd: bool) -> Vec<EntryKind> {
 }
 
 #[test]
-fn the_labels_are_the_cpp_ones() {
+fn the_labels_are_the_cpp_ones_under_the_compass_name() {
     // Invented wording here is wording nobody wrote, in the one menu a person
-    // reaches when the launcher itself will not open.
-    assert_eq!(TOGGLE_LABEL, "Toggle Vicinae");
-    assert_eq!(ABOUT_LABEL, "About Vicinae");
+    // reaches when the launcher itself will not open. The product's name is
+    // Compass (ADR-0012); the sponsor link is still upstream Vicinae's.
+    assert_eq!(TOGGLE_LABEL, "Toggle Compass");
+    assert_eq!(ABOUT_LABEL, "About Compass");
     assert_eq!(CHECK_FOR_UPDATES_LABEL, "Check for Updates…");
     assert_eq!(SETTINGS_LABEL, "Settings…");
     assert_eq!(PREFERENCES_LABEL, "Preferences…");
     assert_eq!(SPONSOR_LABEL, "Sponsor Vicinae");
     assert_eq!(DISCORD_LABEL, "Join the Discord");
     assert_eq!(FOLLOW_LABEL, "Follow on X");
-    assert_eq!(QUIT_LABEL, "Quit Vicinae");
+    assert_eq!(QUIT_LABEL, "Quit Compass");
 }
 
 #[test]
@@ -131,7 +132,7 @@ fn the_version_entry_reads_as_the_app_name_until_a_version_arrives() {
     // setVersion is called after construction, and an empty line in the menu
     // in between would look like a bug.
     assert_eq!(entry_label(EntryKind::Version, ""), APP_NAME);
-    assert_eq!(entry_label(EntryKind::Version, "1.2.3"), "Vicinae 1.2.3");
+    assert_eq!(entry_label(EntryKind::Version, "1.2.3"), "Compass 1.2.3");
 }
 
 #[test]

@@ -175,7 +175,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/telemetry` | `—` | n/a (decision) | ✅ | n/a | n/a | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/tray` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/tray` | `compass-core`, `vicinae::tray_icon` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/tray-host` | `compass-core`, `vicinae::tray_host` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/update` | `compass-core::update`, `vicinae::updates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
@@ -339,7 +339,7 @@ PLAN §12.0 sizes them and says what blocks each.
   (`compass_wayland::material`, "The gaps pass, HUD and onboarding"). Still C++-only: applying it
   to the launcher's own surface, which the toolkits hand out only as a raw pointer (an `unsafe`
   foreign-display bridge the workspace forbids).
-- `src/services/tray`: Still C++-only: Vicinae's own tray icon.
+- `src/services/tray`: Compass's own tray icon closed in "The gaps pass, tray and sandbox".
 - `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
   escape).
 - `ui/qml`, `ui/quick`: The HUD and onboarding closed in "The gaps pass, HUD and onboarding".
@@ -866,7 +866,7 @@ Declared differences:
   Escape, Pop to root on close, Language, usage statistics, Font size, Icon Theme, Window material
   and opacity, Compact mode, Floating status bar, layer shell, client-side decorations and their
   rounding, border and shadow, native font rendering, Pop on backspace, Activate on single click,
-  IME handling, Root file search, Favicon fetching, the tray icon, Encrypt sensitive data, and
+  IME handling, Root file search, Favicon fetching, Encrypt sensitive data, and
   rebinding the launcher's keys (the Keybindings page lists the fixed ones).
 - **Settings only Compass has are offered beside them**: quick launch, the result count, the clock,
   the colour scheme, the layout preset, application icons and translucency.
@@ -1300,6 +1300,73 @@ Declared differences:
 Tests never reach the ECB: the parser and fend read a checked-in copy of the file, the refresh
 rules use closures, and the engine tests serve the file from a local `tiny_http` server; every other
 engine a test starts has the automatic refresh turned off.
+
+### The gaps pass, tray and sandbox (2026-09-25)
+
+Two decisions the maintainer took. No IPC change: the tray's
+entries reach the window over the `WindowCommand`s it already has, and its switch is a setting.
+
+**Compass's own tray icon** (`src/services/tray`). `vicinae::tray_icon` serves a
+StatusNotifierItem over the `ksni` crate with the C++'s menu (`compass_core::tray`): Toggle
+(also what `Activate` and `SecondaryActivate` do), the version, About (the settings view's About
+page), Settings… (the settings view, as `vicinae://settings/open` opens it), the three community
+links, and Quit, which stops the engine as `vicinae shutdown` does and is left out under systemd
+(`INVOCATION_ID`). It owns `org.kde.StatusNotifierItem-<pid>-<n>` and registers with the
+desktop's `StatusNotifierWatcher`, again whenever one appears. `tray.enabled` (the C++'s
+`config::Tray`, on by default) moved from `settings_catalog::NOT_IN_COMPASS` to an offered setting
+on the Advanced page; the engine reads it at start and applies it at once when the view changes it
+(`configChanged`'s `show`/`hide`), and `config migrate` now carries it over.
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/services/tray` | `Rust ✓` 🟡 → ✅ | `vicinae::tray_icon` (`Control`, `run`, `perform`, `pixmaps`, `settings_link`) over `ksni`, `compass_core::tray` (the menu model), `compass_core::config::TrayConfig`, `settings_catalog`'s `tray.enabled`, `serve::settings::apply_live`, `config_migration`'s `tray.enabled` | `compass_shows_its_own_tray_icon_with_the_cpp_menu_as_the_setting_says` (a private `dbus-daemon` and a fake `StatusNotifierWatcher`: off in the file registers nothing; turned on it registers under the specification's name with `Id`, `Title` and the menu's labels; `Activate` and the entries reach the window as `Toggle` and the settings deeplinks; off it leaves the bus, on it registers again; Quit stops the engine), `the_tray_host_lists_activates_and_browses_another_applications_item` (Compass's own icon is not among Search Tray's), `tray_icon::tests::{the_menu_is_the_models_with_its_labels_and_actions, a_supervised_engine_offers_no_quit, the_pixmaps_are_the_cpp_sizes_in_argb_network_order, the_settings_entries_open_the_settings_view_by_its_deeplink, turning_the_setting_on_and_off_is_seen_once_each}`, `the_labels_are_the_cpp_ones_under_the_compass_name`, `applying_writes_the_key_the_engine_reads_and_keeps_the_rest`, `every_cpp_general_settings_property_is_ported_or_declared`, `every_documented_key_is_in_the_schema_with_its_default`, `migrate_writes_vicinae_json_and_leaves_the_cpp_file_alone` |
+
+Declared differences:
+
+- The product's name in the menu is Compass (ADR-0012): Toggle Compass, About Compass,
+  Quit Compass, and the version as `Compass <version>` (the C++ passes its git tag and commit).
+  The three community links are upstream Vicinae's, as the C++ has them.
+- The item's `Id` and `IconName` are the application id `com.vicinae.Vicinae`, the icon the
+  package installs; the C++ uses `vicinae`. Its pixmaps are drawn from `extra/compass.svg`, where
+  the C++ draws `vicinae.svg` over a white disc.
+- Turned off, the item leaves the bus; the C++ keeps it and reports `Passive`, which some hosts
+  still draw.
+- Search Tray leaves Compass's own icon out (`tray_host::is_own`, by the connection's process id);
+  the C++ host would list it, and toggling the launcher from its own list only closes it.
+- Inside a Flatpak the item registers under its unique name only (ksni's `disable_dbus_name`),
+  since the sandbox may not own `org.kde.StatusNotifierItem-*`, and the manifest now talks to
+  `org.kde.StatusNotifierWatcher`, without which neither the icon nor the tray host reaches it.
+- "Check for Updates…" and "Update Available" are not in the menu, as they are not in the C++'s
+  Linux menu (`setCheckForUpdatesVisible` and `setAvailableUpdate` do nothing there).
+
+VM tier (declared, not verifiable in a container): a real host drawing the item and its menu
+(KDE's panel, GNOME's AppIndicator extension, Waybar), and the Flatpak's bus proxy passing the
+host's calls to the item.
+
+**A read-only `$HOME` allowlist for extensions** (decision of 2026-09-25; the extension sandbox,
+row 6 of "The extension sandbox" below). `compass_sandbox::home::HOME_READ_ALLOWLIST` is the one
+list: `~/.ssh/config` (the file alone, not the keys or anything else in `~/.ssh`),
+`~/.password-store`, and `~/.config/hypr`, `~/.config/sway` and `~/.config/niri`, each only when it
+exists. `extension_runner::policy_in` adds `home_reads`' paths to the worker's read set, never to
+write or execute; the rest of `$HOME` stays denied. The same policy is applied inside the Flatpak,
+whose `home:ro` makes these paths visible to it in the first place. A symbolic link is followed
+only to a place the list itself names: Landlock grants the inode a path resolves to, so a
+`~/.ssh/config` linked to a key, or a `~/.config/sway` linked into a dotfiles repository or to
+`$HOME`, grants nothing (logged), and inside a granted directory Landlock refuses a link out of it.
+A home that is itself a link (`/home` to `/var/home`) is resolved first. No row flips (the
+extension host rows were green); the tests are `compass_sandbox::home::tests::*`
+(`what_exists_is_granted_and_what_does_not_is_skipped`,
+`a_link_to_a_key_or_out_of_the_list_grants_nothing`, `a_link_to_another_listed_place_is_followed`,
+`a_home_that_is_itself_a_link_is_followed`, `the_wrong_kind_is_refused`,
+`the_list_is_the_decided_five_and_only_ssh_config_is_a_file`),
+`extension_runner::tests::the_policy_reads_only_the_allowlisted_home_paths_and_never_writes_them`
+and, through the real `compass-sandbox-exec`,
+`an_extension_reads_the_home_allowlist_and_nothing_else_of_home` (the allowed files read; the key
+beside `~/.ssh/config`, another file of `$HOME` and the target of a linked-out `~/.config/sway`
+refused, each readable unconfined; a write into the password store refused).
+
+Suite 1's ledger does not change: its `HOME` is empty, so `ssh`, `pass`, `niri` and the `hypr*`
+keybinding lists find nothing to read under either policy, as row 6 always said.
 
 ### Earlier row notes
 
@@ -3209,7 +3276,7 @@ The negative tests are §8.2's list; each has a positive control beside it.
 | 3 | No memory limit; the worker asks V8 for 1000 MB of heap. | The heap is capped at 160 MiB (`--max-old-space-size`), and `RLIMIT_DATA` at 512 MiB, which bounds `Buffer`s and native allocations where no cgroup is reachable (a Flatpak): a 512 MiB `Buffer` is a `RangeError` the extension can catch. Measured over Suite 1 the worker's `VmData` peaks at 340 MiB. The heap cap costs one real extension, **kept deliberately**: `dashboard-icons` groups a 1.2 MB catalogue into 4,473 grid items, each with its own action panel. Measured (2026-09-24, caps lifted one at a time): it runs out of heap at 160 MiB and renders at 192 MiB, and at 192 MiB the worker peaks at about 450 MiB resident and 490 MiB `VmData`. That is past the 256 MiB process budget (§6) by more than the heap alone, so raising the heap flag would only move its failure to the cgroup or `RLIMIT_DATA`; admitting it means a different budget, not a different flag. It also needed row 1 of "The extension host API" (a view past a mebibyte). | `an_allocation_past_the_data_limit_fails_and_the_process_carries_on`, `an_extension_that_allocates_past_the_heap_cap_is_stopped` |
 | 4 | Writes anywhere the user may. | Writes only its support and asset directories: `reminders` (Vicinae store) fails making `~/.local/share/vicinae-reminders`. | `an_installed_extension_command_is_found_and_a_no_view_one_runs` |
 | 5 | TLS trusts whatever `NODE_EXTRA_CA_CERTS` names. | The same, because the file it names (and `SSL_CERT_FILE`, `SSL_CERT_DIR`) is granted read; otherwise Node could not load a corporate CA from `$HOME`. | — |
-| 6 | Reads anywhere the user may. | Reads the system trees, Node, the runtime bundle, the extension's own directory and its support and asset directories, and nothing else of `$HOME`. So an extension that reads the user's own files — `ssh` reading `~/.ssh/config`, `pass` the password store, `firefox` the profiles, `zoxide-recent-directories` its database, the `niri` and `hypr*` keybinding lists their compositor's config, Raycast's `obsidian` a vault — sees nothing there on a real desktop, where the C++ let it read them. **Suite 1 cannot see this**: its `HOME` is empty, so these fail (or pass, as `ssh` does with a typed host) for the same reason under either policy. It is the largest open question between the sandbox and "running unmodified", and a policy decision rather than a bug: widening reads to `$HOME` would admit every one of these and also every secret in it. | — (by the policy's read set, `extension_runner::policy`) |
+| 6 | Reads anywhere the user may. | Reads the system trees, Node, the runtime bundle, the extension's own directory and its support and asset directories, and of `$HOME` only a short read-only allowlist, **decided 2026-09-25** ("The gaps pass, tray and sandbox"): `~/.ssh/config` (not the keys or anything else in `~/.ssh`), `~/.password-store`, and `~/.config/hypr`, `~/.config/sway` and `~/.config/niri`, each where it exists, one constant (`compass_sandbox::home::HOME_READ_ALLOWLIST`). A link among them is followed only to a place the list names. So `ssh`, `pass` and the `niri` and `hypr*` keybinding lists read what they need; `firefox` the profiles, `zoxide-recent-directories` its database and Raycast's `obsidian` a vault still see nothing, where the C++ let them read them, and `pass` lists its entries but cannot decrypt them (`~/.gnupg` stays denied). **Suite 1 cannot see this**: its `HOME` is empty, so these fail (or pass, as `ssh` does with a typed host) for the same reason under either policy. Widening reads to `$HOME` would admit every one of these and also every secret in it; the allowlist grows one named entry at a time. | `compass_sandbox::home::tests::*`, `the_policy_reads_only_the_allowlisted_home_paths_and_never_writes_them`, `an_extension_reads_the_home_allowlist_and_nothing_else_of_home` |
 
 ### The extension host API — where the engine answers differently, and what it serves
 

@@ -144,6 +144,8 @@ pub struct EngineState {
     calculator: Arc<tokio::sync::Mutex<Option<crate::extension_runner::Storage>>>,
     /// Other applications' tray icons (`SniTrayHost`).
     tray: Arc<crate::tray_host::TrayHost>,
+    /// Compass's own tray icon (`TrayServiceLinux`): `tray.enabled`.
+    tray_icon: Arc<crate::tray_icon::Control>,
     /// The global shortcuts' service: rebinding them, and the recorder's
     /// capture.
     global_shortcuts: Arc<crate::global_shortcuts::Control>,
@@ -272,6 +274,7 @@ impl EngineState {
             catalog_generation: 0,
             calculator: Arc::default(),
             tray: Arc::default(),
+            tray_icon: Arc::default(),
             global_shortcuts: Arc::default(),
             exchange_rates: Arc::new(
                 crate::exchange_rates::ExchangeRateService::from_environment(),
@@ -345,6 +348,7 @@ impl EngineState {
             catalog_generation: 0,
             calculator: Arc::default(),
             tray: Arc::default(),
+            tray_icon: Arc::default(),
             global_shortcuts: Arc::default(),
             exchange_rates: Arc::default(),
         }
@@ -457,6 +461,12 @@ impl EngineState {
     #[must_use]
     pub fn window_slot(&self) -> WindowSlot {
         Arc::clone(&self.window)
+    }
+
+    /// Compass's own tray icon's control.
+    #[must_use]
+    pub fn tray_icon(&self) -> Arc<crate::tray_icon::Control> {
+        Arc::clone(&self.tray_icon)
     }
 
     /// The global shortcuts' service control.
@@ -3578,6 +3588,10 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
         let tray = Arc::clone(&state.read().await.tray);
         tokio::spawn(async move { tray.start().await });
     }
+
+    // Compass's own tray icon, while `tray.enabled`; its Quit stops the
+    // engine as `Shutdown` does.
+    tokio::spawn(crate::tray_icon::run(Arc::clone(&state), stop_tx.clone()));
 
     // Applications installed or removed while the engine runs.
     tokio::spawn(crate::catalog_watch::watch_applications(Arc::clone(&state)));

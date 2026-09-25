@@ -238,6 +238,8 @@ impl Daemon {
             // Nor GitHub: the update check asks a closed local port unless a
             // test brings its own feed.
             .env("VICINAE_UPDATE_FEED_URL", NO_UPDATE_FEED)
+            // Nor its supervisor: under systemd the tray has no Quit.
+            .env_remove("INVOCATION_ID")
             .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -6284,6 +6286,34 @@ fn the_tray_host_lists_activates_and_browses_another_applications_item() {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         assert!(registered, "the engine never served the watcher");
+        // Compass's own icon registers with the same watcher; wait for it,
+        // so the list below is asked with both there.
+        let watcher = zbus::fdo::PropertiesProxy::builder(&connection)
+            .destination("org.kde.StatusNotifierWatcher")
+            .unwrap()
+            .path("/StatusNotifierWatcher")
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let mut both = false;
+        for _ in 0..200 {
+            let items = watcher
+                .get(
+                    zbus::names::InterfaceName::try_from("org.kde.StatusNotifierWatcher").unwrap(),
+                    "RegisteredStatusNotifierItems",
+                )
+                .await
+                .ok()
+                .and_then(|value| Vec::<String>::try_from(value).ok())
+                .unwrap_or_default();
+            if items.len() >= 2 {
+                both = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(both, "Compass's own icon never registered");
         connection
     });
 
@@ -6360,6 +6390,308 @@ fn the_tray_host_lists_activates_and_browses_another_applications_item() {
     );
     assert!(calls.contains(&"AboutToShow".to_owned()), "{calls:?}");
     assert!(calls.contains(&"Event 3 clicked".to_owned()), "{calls:?}");
+}
+
+/// A desktop's `StatusNotifierWatcher` on a private bus, recording each item
+/// that registers.
+mod fake_watcher {
+    use std::sync::{Arc, Mutex};
+
+    /// `(the name it registered, the connection it came from)`.
+    pub type Registered = Arc<Mutex<Vec<(String, String)>>>;
+
+    pub struct Watcher {
+        pub registered: Registered,
+    }
+
+    #[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
+    impl Watcher {
+        fn register_status_notifier_item(
+            &self,
+            service: String,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+        ) {
+            let sender = header.sender().map(ToString::to_string).unwrap_or_default();
+            self.registered.lock().unwrap().push((service, sender));
+        }
+        fn register_status_notifier_host(&self, _service: String) {}
+        #[zbus(property)]
+        fn registered_status_notifier_items(&self) -> Vec<String> {
+            self.registered
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(service, _)| service.clone())
+                .collect()
+        }
+        #[zbus(property)]
+        fn is_status_notifier_host_registered(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn protocol_version(&self) -> i32 {
+            0
+        }
+    }
+}
+
+#[test]
+fn compass_shows_its_own_tray_icon_with_the_cpp_menu_as_the_setting_says() {
+    use compass_ipc::{Request, Response, WindowCommand};
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader};
+    use zbus::zvariant::{OwnedValue, Value};
+
+    let mut bus = match Command::new("dbus-daemon")
+        .args(["--session", "--print-address", "--nofork"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(bus) => bus,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("SKIPPED: no dbus-daemon on this machine");
+            return;
+        }
+        Err(err) => panic!("failed to spawn dbus-daemon: {err}"),
+    };
+    let mut address = String::new();
+    BufReader::new(bus.stdout.take().expect("piped stdout"))
+        .read_line(&mut address)
+        .expect("dbus-daemon prints its address");
+    let address = address.trim().to_owned();
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let registered = fake_watcher::Registered::default();
+    // The desktop's watcher is there before the engine, as it is in a
+    // session: the engine's own host then leaves the name alone.
+    let connection = runtime.block_on(async {
+        zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name("org.kde.StatusNotifierWatcher")
+            .unwrap()
+            .serve_at(
+                "/StatusNotifierWatcher",
+                fake_watcher::Watcher {
+                    registered: registered.clone(),
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .expect("the fake watcher owns its name on the private bus")
+    });
+
+    let mut daemon = Daemon::start_prepared(
+        &[("a.desktop", &entry("Alpha", ""))],
+        r#"{"tray": {"enabled": false}}"#,
+        |_| vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())],
+    );
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+    let wait_for = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let set_tray = |on: bool| {
+        assert_eq!(
+            daemon.request(Request::SetSetting {
+                key: "tray.enabled".to_owned(),
+                value_json: on.to_string(),
+            }),
+            Response::Ack
+        );
+    };
+
+    // Off in the file: nothing registers.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(registered.lock().unwrap().is_empty(), "the icon is off");
+
+    // Turned on from the settings view: shown at once.
+    set_tray(true);
+    wait_for("the icon to register", &|| {
+        !registered.lock().unwrap().is_empty()
+    });
+    let (service, sender) = registered.lock().unwrap()[0].clone();
+    assert!(
+        service.starts_with("org.kde.StatusNotifierItem-"),
+        "the specification's name: {service}"
+    );
+
+    let (id, title, menu_path, labels) = runtime.block_on(async {
+        let item = zbus::fdo::PropertiesProxy::builder(&connection)
+            .destination(service.as_str())
+            .unwrap()
+            .path("/StatusNotifierItem")
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let iface = zbus::names::InterfaceName::try_from("org.kde.StatusNotifierItem").unwrap();
+        let id = String::try_from(item.get(iface.clone(), "Id").await.unwrap()).unwrap();
+        let title = String::try_from(item.get(iface.clone(), "Title").await.unwrap()).unwrap();
+        let menu = zbus::zvariant::OwnedObjectPath::try_from(
+            item.get(iface.clone(), "Menu").await.unwrap(),
+        )
+        .unwrap();
+        connection
+            .call_method(
+                Some(service.as_str()),
+                "/StatusNotifierItem",
+                Some("org.kde.StatusNotifierItem"),
+                "Activate",
+                &(0i32, 0i32),
+            )
+            .await
+            .expect("Activate");
+        let reply = connection
+            .call_method(
+                Some(service.as_str()),
+                menu.as_str(),
+                Some("com.canonical.dbusmenu"),
+                "GetGroupProperties",
+                &(Vec::<i32>::new(), vec!["label".to_owned()]),
+            )
+            .await
+            .expect("GetGroupProperties");
+        let mut entries: Vec<(i32, HashMap<String, OwnedValue>)> =
+            reply.body().deserialize().unwrap();
+        entries.sort_by_key(|(id, _)| *id);
+        let labels: Vec<(i32, String)> = entries
+            .into_iter()
+            .filter_map(|(id, properties)| {
+                let label = properties.get("label")?;
+                Some((id, String::try_from(label.try_clone().ok()?).ok()?))
+            })
+            .collect();
+        (id, title, menu, labels)
+    });
+    assert_eq!(id, "com.vicinae.Vicinae");
+    assert_eq!(title, "Compass");
+    let texts: Vec<&str> = labels.iter().map(|(_, label)| label.as_str()).collect();
+    let version = format!("Compass {}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        texts,
+        [
+            "Toggle Compass",
+            version.as_str(),
+            "About Compass",
+            "Settings…",
+            "Sponsor Vicinae",
+            "Join the Discord",
+            "Follow on X",
+            "Quit Compass",
+        ]
+    );
+    let entry = |label: &str| {
+        labels
+            .iter()
+            .find(|(_, text)| text == label)
+            .map(|(id, _)| *id)
+            .unwrap()
+    };
+    let click = |id: i32| {
+        runtime.block_on(async {
+            connection
+                .call_method(
+                    Some(service.as_str()),
+                    menu_path.as_str(),
+                    Some("com.canonical.dbusmenu"),
+                    "Event",
+                    &(id, "clicked", Value::from(0i32), 0u32),
+                )
+                .await
+                .expect("Event");
+        });
+    };
+    click(entry("Settings…"));
+    click(entry("About Compass"));
+    click(entry("Toggle Compass"));
+    wait_for("the window to be told", &|| window.seen().len() >= 4);
+    assert_eq!(
+        window.seen(),
+        [
+            WindowCommand::Toggle,
+            WindowCommand::Deeplink("vicinae://settings/open".to_owned()),
+            WindowCommand::Deeplink("vicinae://settings/open?tab=about".to_owned()),
+            WindowCommand::Toggle,
+        ]
+    );
+
+    // Turned off: the item leaves the bus. On again: it comes back.
+    let has_owner = |name: &str| {
+        runtime.block_on(async {
+            zbus::fdo::DBusProxy::new(&connection)
+                .await
+                .unwrap()
+                .name_has_owner(zbus::names::BusName::try_from(name).unwrap())
+                .await
+                .unwrap()
+        })
+    };
+    assert!(has_owner(&sender));
+    set_tray(false);
+    wait_for("the icon to leave", &|| !has_owner(&sender));
+    set_tray(true);
+    wait_for("the icon to come back", &|| {
+        registered.lock().unwrap().len() == 2
+    });
+    let (service, _) = registered.lock().unwrap()[1].clone();
+
+    // Quit stops the engine, as `vicinae shutdown` does.
+    let quit = runtime.block_on(async {
+        let reply = connection
+            .call_method(
+                Some(service.as_str()),
+                menu_path.as_str(),
+                Some("com.canonical.dbusmenu"),
+                "GetGroupProperties",
+                &(Vec::<i32>::new(), vec!["label".to_owned()]),
+            )
+            .await
+            .unwrap();
+        let entries: Vec<(i32, HashMap<String, OwnedValue>)> = reply.body().deserialize().unwrap();
+        entries
+            .into_iter()
+            .find(|(_, properties)| {
+                properties
+                    .get("label")
+                    .and_then(|label| String::try_from(label.try_clone().ok()?).ok())
+                    .is_some_and(|label| label == "Quit Compass")
+            })
+            .map(|(id, _)| id)
+            .unwrap()
+    });
+    runtime.block_on(async {
+        connection
+            .call_method(
+                Some(service.as_str()),
+                menu_path.as_str(),
+                Some("com.canonical.dbusmenu"),
+                "Event",
+                &(quit, "clicked", Value::from(0i32), 0u32),
+            )
+            .await
+            .expect("Event");
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = daemon.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "Quit did not stop the engine");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "a clean stop: {status:?}");
+    drop(window);
+    let _ = bus.kill();
+    let _ = bus.wait();
 }
 
 #[test]

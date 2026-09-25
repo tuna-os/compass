@@ -720,6 +720,45 @@ impl InputServerConfig {
     }
 }
 
+/// The `tray` section: Compass's own icon in the desktop's tray
+/// (`config::Tray`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TrayConfig {
+    /// Whether Compass shows its icon, with its menu (toggle the launcher,
+    /// settings, quit), in the tray. Applied at once when changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_TRAY_ENABLED))]
+    enabled: Option<bool>,
+
+    /// Keys this build does not know about, preserved verbatim.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+/// Default for `tray.enabled`, as the C++ `config::Tray`.
+pub const DEFAULT_TRAY_ENABLED: bool = true;
+
+impl TrayConfig {
+    /// Whether the icon is shown. Defaults to [`DEFAULT_TRAY_ENABLED`].
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(DEFAULT_TRAY_ENABLED)
+    }
+
+    /// Sets `tray.enabled`. `None` removes the key.
+    pub fn set_enabled(&mut self, value: Option<bool>) -> &mut Self {
+        self.enabled = value;
+        self
+    }
+
+    /// Whether the section carries nothing at all, known or unknown.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let Self { enabled, unknown } = self;
+        enabled.is_none() && unknown.is_empty()
+    }
+}
+
 /// A parsed `vicinae.json`.
 ///
 /// [`Config::default`] is the fully-defaulted configuration and is what an empty file produces.
@@ -747,6 +786,9 @@ pub struct Config {
     /// The snippet keyword expander's keyboard helper.
     #[serde(default, skip_serializing_if = "InputServerConfig::is_empty")]
     input_server: InputServerConfig,
+    /// Compass's own tray icon.
+    #[serde(default, skip_serializing_if = "TrayConfig::is_empty")]
+    tray: TrayConfig,
 
     /// Top level keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -973,6 +1015,17 @@ impl Config {
     /// The `input_server` section, mutably.
     pub fn input_server_mut(&mut self) -> &mut InputServerConfig {
         &mut self.input_server
+    }
+
+    /// The `tray` section.
+    #[must_use]
+    pub fn tray(&self) -> &TrayConfig {
+        &self.tray
+    }
+
+    /// The `tray` section, mutably.
+    pub fn tray_mut(&mut self) -> &mut TrayConfig {
+        &mut self.tray
     }
 
     /// The `extensions` section.

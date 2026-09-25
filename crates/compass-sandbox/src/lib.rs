@@ -28,6 +28,7 @@
 //! ruleset. The default is [`Mode::Strict`]: a worker running unconfined
 //! because of an old kernel is a decision, not a default.
 
+pub mod home;
 pub mod syscalls;
 
 use std::path::{Path, PathBuf};

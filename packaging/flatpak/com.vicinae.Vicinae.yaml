@@ -80,6 +80,12 @@ finish-args:
   # sender allowlist, not by bus policy.
   - --talk-name=org.gnome.Shell
 
+  # --- The tray -----------------------------------------------------------
+  # Compass's own tray icon registers with the desktop's watcher, and Search Tray asks it for
+  # the other applications' icons (vicinae::tray_icon, vicinae::tray_host). The icon registers
+  # under its unique name, so no own-name is needed for it.
+  - --talk-name=org.kde.StatusNotifierWatcher
+
   # --- Power Management ---------------------------------------------------
   # Power off, reboot, suspend, hibernate, lock and log out (compass-power). logind is on the
   # system bus; logout asks the desktop's own session manager on the session bus, as the C++

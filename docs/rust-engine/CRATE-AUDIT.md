@@ -159,3 +159,10 @@ code in the extension, so the host never speaks OAuth itself.
 | Reading the ECB's `eurofxref-daily.xml` | `roxmltree` 0.20 (already a workspace dependency, through `compass-xdg` and `compass-shell`); `quick-xml` also locked | **Used** (`compass_core::exchange_rates::parse_ecb`): a read-only DOM over a two-kilobyte file is what `roxmltree` is for; `quick-xml`'s streaming reader would be more code for no gain. No package added to `Cargo.lock`, only the edge to `compass-core`, so the Flatpak sources are unchanged. |
 | Fetching the file | `ureq` 3 (the engine's HTTP client, `vicinae::stores::get`) | **Used**: the same agent, timeout and TLS roots as the stores. |
 | The cache file | `serde_json` (already) | **Used**: the rates, the ECB's date and the fetch time as JSON under `$XDG_CACHE_HOME/compass`, written through a partial file and a rename. |
+
+## The gaps pass, tray and sandbox (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Compass's own StatusNotifierItem and its `dbusmenu` (`TrayServiceLinux`, ~450 lines of C++) | `ksni` 0.3 (the maintained *item* side, on the zbus 5 already in the tree; one new package besides, `pastey`); `system-tray` (already used) considered and not fit, being the host side only; `tray-icon` (tauri's) considered and not taken, as it draws through GTK and libappindicator | **Used** (`vicinae::tray_icon`). It exports the item and the menu, owns `org.kde.StatusNotifierItem-<pid>-<n>` (or only its unique name inside a Flatpak, `disable_dbus_name`), registers with the watcher and again whenever one appears (`assume_sni_available`). Around it: the menu model is `compass_core::tray`'s, the pixmaps are drawn from `extra/compass.svg` with the `resvg` already in the tree, and the switch is a `watch` channel. |
+| Which `$HOME` paths an extension may read, and whether a link among them stays inside the list | none needed | **Hand-written** (`compass_sandbox::home`, ~60 lines): `std::fs::canonicalize` and a comparison against the list's own resolved places. Landlock itself (the `landlock` crate, already used) enforces the grant. |

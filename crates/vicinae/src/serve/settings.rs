@@ -115,6 +115,13 @@ async fn apply_live(state: &Arc<RwLock<EngineState>>, config: &Config, key: &str
         }
         state.expander.clone()
     };
+    if key == "tray.enabled" {
+        state
+            .read()
+            .await
+            .tray_icon()
+            .set_enabled(config.tray().enabled());
+    }
     if key == "input_server.enabled"
         && let Some(expander) = expander
     {
