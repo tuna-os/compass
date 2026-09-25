@@ -97,3 +97,12 @@ code in the extension, so the host never speaks OAuth itself.
 | Colouring a Markdown code block by its language (KSyntaxHighlighting) | Iced 0.14's `highlighter` feature: `iced_highlighter` over `syntect` 5 with `two-face`'s grammars (`fancy-regex`, pure Rust); six new packages | **Used**: `markdown::parse` highlights fenced blocks itself. The theme is Base16 Ocean, which Iced fixes (PARITY "The gaps pass, UI"). |
 | Finding search words in a text to mark them (`MatchHighlighter`) | `aho-corasick` considered | **Hand-written** (`compass_search::term_ranges`, about 30 lines over the matcher's own case and diacritic fold): the fold has to keep one character for one character so a match's position is the text's, which a byte-level automaton over the raw text cannot do, and folding first means mapping positions back anyway. |
 | A snippet's text with its backslash escape (`PlaceholderString::parse`) | the quicklink parser already ported | **Hand-written, as the quicklink parser is** (`compass_core::placeholder`): the C++ grammar is a bespoke state machine (ids ending at the first non-alphanumeric, first-wins keys, quoted values, a cut-off placeholder dropped) that no templating crate reproduces. |
+
+## The gaps pass: settings (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| Reading a setting of `vicinae.json` by its dotted key (`launcher.clock.format`) | `serde_json`'s JSON Pointer (`Value::pointer`) | **Used** (`Config::get_path`): the dotted key becomes a pointer, `~` and `/` escaped. |
+| Writing one, creating the objects on the way and dropping the ones a reset leaves empty | `serde_json` (`pointer_mut` finds, but does not create); `json-patch` 4 considered | **Hand-rolled** (`Config::set_path`, ~40 lines over `serde_json::Map`), then read back through `Config`'s own `Deserialize`, so a wrongly typed known key is refused. `json-patch`'s `add` needs every parent to exist and its `remove` leaves empty parents behind, which would need the same walk around it. |
+| A `vicinae://settings/open?tab=` deeplink | `url` 2 (already used by `parse_launch_link`) | **Used**: `Url::parse` and `query_pairs`, which percent-decode the tab. |
+| The settings view's controls (switch, list, text field, buttons) | `iced` 0.14's `toggler`, `pick_list`, `text_input`, `button` | **Used**; the shortcut recorder is `compass_ui::shortcut_recorder`, the sidebar `compass_ui::settings::SidebarModel`. |

@@ -848,17 +848,18 @@ pub fn apply(config: &mut Config, key: &str, value: Value) -> Result<(), String>
 /// `IpcCommandHandler` reads the `settings` command: `Some(None)` opens the
 /// window where it was, `None` is not a settings link.
 #[must_use]
-pub fn parse_settings_link(url: &str) -> Option<Option<String>> {
-    let rest = url.strip_prefix("vicinae://settings")?;
-    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
-    if !matches!(path, "" | "/" | "/open") {
+pub fn parse_settings_link(link: &str) -> Option<Option<String>> {
+    let url = url::Url::parse(link).ok()?;
+    if url.scheme() != "vicinae"
+        || url.host_str() != Some("settings")
+        || !matches!(url.path(), "" | "/" | "/open")
+    {
         return None;
     }
-    let tab = query
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .find(|(name, _)| *name == "tab")
-        .map(|(_, tab)| tab.to_owned())
+    let tab = url
+        .query_pairs()
+        .find(|(name, _)| name == "tab")
+        .map(|(_, tab)| tab.into_owned())
         .filter(|tab| !tab.is_empty());
     Some(tab)
 }

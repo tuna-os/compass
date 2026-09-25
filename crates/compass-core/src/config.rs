@@ -1139,9 +1139,11 @@ impl Config {
     #[must_use]
     pub fn get_path(&self, path: &str) -> Option<Value> {
         let document = serde_json::to_value(self).ok()?;
-        path.split('.')
-            .try_fold(&document, |node, segment| node.get(segment))
-            .cloned()
+        let pointer: String = path
+            .split('.')
+            .map(|segment| format!("/{}", segment.replace('~', "~0").replace('/', "~1")))
+            .collect();
+        document.pointer(&pointer).cloned()
     }
 
     /// Sets the dotted `path` to `value`, creating the objects on the way,

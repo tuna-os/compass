@@ -217,7 +217,7 @@ A row per subdirectory, with its C++ size, so that the distance is visible rathe
 | `src/server/src/ui/qml` | 14,660 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/server/src/ui/quick` | 3,806 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/server/src/ui/views` | 2,760 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | 🟡 | 🟡 | ❌ |
+| `src/server/src/ui/settings` | 2,292 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/image` | 2,154 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/server/src/ui/windows` | 1,881 | `compass-ui` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/server/src/ui/action-panel` | 1,366 | `compass-ui` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -231,8 +231,8 @@ clicks, and restores search focus when closed. Copy actions emit native clipboar
 headless tests inspect those writes and exercise the widgets, but delivery to another application
 still needs a desktop check. Since then the launcher has grown a page per builtin, extension
 views (list, grid, detail, form) and dialogs, which is why no row here is ❌ any more (the ledger
-truth pass below). The settings window, onboarding, the HUD and most of the drawn icon set are
-still ahead, so no row but `alert` is fully green.
+truth pass below). Onboarding, the HUD and the rest of the view layer are still ahead; `alert`,
+`action-panel` and, since the settings pass, `settings` are the rows fully green.
 
 Three things about this section are worth stating plainly, because a table of ❌s invited the wrong
 reading:
@@ -333,13 +333,14 @@ PLAN §12.0 sizes them and says what blocks each.
 - `src/services/tray`: Still C++-only: Vicinae's own tray icon.
 - `src/builtins/snippet`: closed in "The gaps pass, UI" below (the detail pane and the `\{`
   escape).
-- `ui/qml`, `ui/quick`: Still C++-only: the rest of the view layer — the settings window,
-  onboarding and the HUD. `ui/views` closed in "The gaps pass, UI" below (match and Markdown
-  highlighting, extension grids; the edit-keywords view had landed with clipboard history and the
-  emoji picker, the app-selector in the views pass); dragging out of the window is a declared
-  difference, Iced having no drag out of a window.
-- `ui/settings`, `ui/windows`: Still C++-only: the settings window and its pages (general,
-  appearance, keybinds, extensions) beyond the sidebar model and the preferences form.
+- `ui/qml`, `ui/quick`: Still C++-only: the rest of the view layer — onboarding and the HUD.
+  `ui/views` closed in "The gaps pass, UI" below (match and Markdown highlighting, extension
+  grids; the edit-keywords view had landed with clipboard history and the emoji picker, the
+  app-selector in the views pass), the settings pages in "The gaps pass, settings"; dragging
+  out of the window is a declared difference, Iced having no drag out of a window.
+- `ui/settings`: closed in "The gaps pass, settings" below.
+- `ui/windows`: the settings window is a view of the launcher since "The gaps pass, settings"
+  (declared there). Still C++-only: the onboarding window and the HUD.
 - `ui/image`: the builtin icon set, command tiles and badges and file-type icons are drawn since
   "The gaps pass, icons and tray"; masks, root rows' icons, favicons, `ImageURL(source)` and the
   tile's gradient and shadow since "The gaps pass, UI" below.
@@ -773,6 +774,68 @@ What differs, by row:
 | `ui/views` | A grid section's title stays pinned as it scrolls, and PageUp/PageDown jump by section. | The title scrolls with its cells; no section jumps. | — |
 | `builtins/snippet` | The pane re-expands as argument values are typed into the search bar's completer. | Manage Snippets has no completer: arguments expand empty. | `manage_snippets_shows_the_selected_snippets_detail_pane` |
 | `builtins/snippet` | The pane lists the keyword's applications as icons with their names as tooltips. | Their names, comma-separated. | `the_pane_lists_what_load_detail_lists_in_its_order` |
+
+### The gaps pass, settings (2026-09-25)
+
+The C++ settings window (`src/server/src/ui/settings`, `ui/windows/settings-window.*` and
+`ui/qml/settings/*.qml`), against its models: `GeneralSettingsModel`, `ExtensionSettingsModel`,
+`PreferenceFormModel`, `ProviderCommandModel`, `KeybindSettingsModel`, `SettingsSidebarModel` and
+`SettingsController` (IPC v19).
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/server/src/ui/settings` | Rust ✅, parity ✅ | `compass_core::settings_catalog` (every setting's key, kind, default and C++ property; the C++ settings with no reader, declared; `parse_settings_link`), `Config::{get_path, set_path, set_provider_enabled}`, `RootEdit::Enabled`; `vicinae::serve::settings` (IPC v19 `SetSetting`, `SetProviderEnabled`, `RootItemEdit::Enabled`); `compass_ui::settings_page` over `compass_ui::settings::SidebarModel`, `compass_ui::app::settings_view` | `the_settings_view_writes_each_setting_and_switch_into_the_configuration` (a real engine over temp XDG dirs: settings written where the engine reads them, refusals write nothing, the switches change root search), `every_cpp_general_settings_property_is_ported_or_declared`, `a_default_the_schema_documents_is_the_same_here`, `applying_writes_the_key_the_engine_reads_and_keeps_the_rest`, `a_value_the_setting_does_not_take_is_refused_and_nothing_changes`, `each_control_writes_the_file_and_the_launcher_follows_at_once`, `the_extension_page_switches_aliases_and_records_shortcuts`, `the_hotkey_is_recorded_into_the_launcher_section`, `with_an_engine_the_engine_writes_and_a_theme_is_kept_or_put_back`, `a_commands_preferences_open_over_the_settings_and_go_back_to_them`, `a_root_rows_open_preferences_opens_the_settings_at_its_provider`, `open_settings_is_a_root_command_and_ctrl_comma_and_escape_leaves`, `a_deeplink_opens_the_tab_it_names`, `settings_page::tests`, `the_settings_switches_turn_an_item_and_a_provider_back_on` |
+
+**What it is.** Open Settings (the vicinae extension's `settings` command, a root command here),
+Ctrl+, from the root (`Keybind::OpenSettings`), a root row's Open Preferences
+(`OpenItemPreferencesAction`, at the item's provider) and `vicinae://settings/open?tab=` (the
+`settings` IPC command, `openTab`'s aliases `keybinds`, `shortcuts` and `extensions` included) open
+the settings: the C++ sidebar (its five pages, a divider, the providers, filtered fuzzily by the
+search field) and the selected page. The pages draw `settings_catalog`'s settings by kind — a
+switch, a list, a number or text field kept on Enter, a folder list, the shortcut recorder for the
+launcher hotkey, the theme list — and every control writes its dotted key through `SetSetting`,
+which the engine checks against the catalogue, writes into `vicinae.json` (a file that does not
+parse is left alone) and applies where it holds the value (the clipboard's preferences, Run
+Terminal Program's default action, the input server, the result count). The window applies what it
+holds itself: the navigation scheme and wrapping, quick launch, the layout preset, icons and tint,
+the clock, the font, the theme (previewed, and put back when the engine refuses it), the power
+confirmations and the emoji picker's preferences. A provider's page is `ExtensionSettingsModel`'s:
+its switch (`SetProviderEnabled`), and for each item its switch (`RootItemEdit::Enabled`), alias,
+recorded shortcut, the preferences form of an extension command (the existing form, returning to
+the settings) and the builtin preferences that belong to it (`clipboard`, `files`, `snippets`,
+Browse Apps, Run Terminal Program, Search Emojis, the power commands; the script directories on the
+Script Commands page). About shows the version and opens the documentation and the bug tracker.
+
+Declared differences:
+
+- **A view of the launcher, not a second window.** `SettingsController::openWindow` opens an
+  independent floating window; Compass shows the same sidebar and pages in the launcher card.
+  A second Iced window would need the resident daemon's per-window views and a second surface on
+  both compositor paths (layer shell and `xdg_toplevel`) for pages that are a sidebar and a form.
+  Escape leaves the settings for the root search.
+- **The C++ settings Compass has no reader for are not offered**, each listed with its reason at
+  the foot of its page (`settings_catalog::NOT_IN_COMPASS`), rather than written to a file that
+  would then look as though it honoured them (the rule `config_migration` follows): Close on
+  Escape, Pop to root on close, Language, usage statistics, Font size, Icon Theme, Window material
+  and opacity, Compact mode, Floating status bar, layer shell, client-side decorations and their
+  rounding, border and shadow, native font rendering, Pop on backspace, Activate on single click,
+  IME handling, Root file search, Favicon fetching, the tray icon, Encrypt sensitive data, and
+  rebinding the launcher's keys (the Keybindings page lists the fixed ones).
+- **Settings only Compass has are offered beside them**: quick launch, the result count, the clock,
+  the colour scheme, the layout preset, application icons and translucency.
+- The launcher hotkey and Close on focus loss are written to `launcher.hotkey` and
+  `launcher.close_on_focus_loss`, the schema's keys; the engine still binds Super+Space and the
+  window does not yet hide on focus loss (`src/services/global-shortcuts`' gap).
+- The font is a text field (empty for the desktop's interface font), where the C++ has a list of
+  the installed families; Browse Fonts' "Set as vicinae font" remains the way to pick from them.
+- A folder list is one field with `:` between folders, where the C++ has a file picker per entry.
+- The clipboard, file index and snippet preferences sit under Clipboard History, Search Files and
+  Manage Snippets on the Commands page, since Compass's builtins are one provider; the C++ shows
+  them on the Clipboard, File Search and Snippets extension pages.
+- A provider's provenance is Built-in, Raycast or Extension; the C++ also tells the Vicinae store
+  from a local build.
+- The file index, snippet and script preferences are read where they are used or when the engine
+  next starts, as `vicinae.json` edited by hand is.
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer
