@@ -12,11 +12,13 @@
 //! - a remote image, fetched through the launcher's image cache
 //!   ([`compass_ui::remote_image`]) and then treated as a file;
 //! - a file (an absolute path, `file://`, or one of the extension's assets):
-//!   an SVG is rasterised, a PNG or JPEG is passed as it is, which the
-//!   server scales itself.
-//!
-//! A file icon (the system icon for a path) and a `data:` URL are not
-//! drawn; the notification goes without an icon, as it did before.
+//!   an SVG is rasterised, a PNG or JPEG decoded and fitted into the square
+//!   (passed as it is when it does not decode, for the server to try);
+//! - a file icon: the file-type icon of the path
+//!   ([`compass_ui::icons::file_glyph`]), from the icon theme or the builtin
+//!   `folder` / `blank-document`, drawn as a file or a builtin;
+//! - a `data:` URL, decoded by the `data-url` crate and drawn as an SVG or a
+//!   PNG or JPEG would be.
 
 use std::path::{Path, PathBuf};
 
@@ -35,6 +37,8 @@ pub struct Sources<'a> {
     pub fetch: &'a dyn Fn(&str) -> Result<PathBuf, String>,
     /// Where rendered PNGs are written.
     pub out_dir: PathBuf,
+    /// Finds an icon theme's file for a name, for a file icon.
+    pub find_icon: &'a dyn Fn(&str) -> Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Sources<'_> {
@@ -57,8 +61,14 @@ impl Sources<'_> {
             builtin_dir: compass_core::builtin_icon::directory(),
             fetch: &compass_ui::remote_image::fetch,
             out_dir: std::env::temp_dir(),
+            find_icon: &find_theme_icon,
         }
     }
+}
+
+/// The icon theme's file for `name`, at the size the notification is drawn.
+fn find_theme_icon(name: &str) -> Option<PathBuf> {
+    compass_xdg::find_icon(name, Some(&compass_xdg::default_theme()), Some(SIZE), 1.0)
 }
 
 /// The file to pass for `icon`, the JSON the extension sent: the source,
@@ -86,12 +96,13 @@ fn untheme(mut source: &ImageSource) -> &ImageSource {
 
 fn render(source: &ImageSource, tint: Option<[u8; 4]>, sources: &Sources<'_>) -> Option<PathBuf> {
     match untheme(source) {
-        ImageSource::Builtin(name) => {
-            let file = sources
-                .builtin_dir
-                .as_ref()?
-                .join(compass_core::builtin_icon::file_name(name)?);
-            rasterize(&std::fs::read(file).ok()?, tint, &sources.out_dir)
+        ImageSource::Builtin(name) => builtin(name, tint, sources),
+        ImageSource::Url(url) if url.starts_with("data:") => data_url(url, &sources.out_dir),
+        ImageSource::FileIcon(path) => {
+            match compass_ui::icons::file_glyph(Path::new(path), sources.find_icon) {
+                compass_ui::icons::Glyph::Art(art) => file(art.path(), &sources.out_dir),
+                compass_ui::icons::Glyph::Builtin { name, .. } => builtin(&name, tint, sources),
+            }
         }
         ImageSource::Asset(relative) => file(&sources.assets?.join(relative), &sources.out_dir),
         ImageSource::Url(url) if compass_ui::remote_image::is_remote(url) => {
@@ -104,7 +115,34 @@ fn render(source: &ImageSource, tint: Option<[u8; 4]>, sources: &Sources<'_>) ->
             let path = Path::new(url.strip_prefix("file://")?);
             file(path, &sources.out_dir)
         }
-        ImageSource::FileIcon(_) | ImageSource::Themed { .. } => None,
+        ImageSource::Themed { .. } => None,
+    }
+}
+
+/// A builtin icon drawn from its SVG.
+fn builtin(name: &str, tint: Option<[u8; 4]>, sources: &Sources<'_>) -> Option<PathBuf> {
+    let file = sources
+        .builtin_dir
+        .as_ref()?
+        .join(compass_core::builtin_icon::file_name(name)?);
+    rasterize(&std::fs::read(file).ok()?, tint, &sources.out_dir)
+}
+
+/// A `data:` URL's image: an SVG rasterised, anything else decoded as a PNG
+/// or JPEG.
+fn data_url(url: &str, out_dir: &Path) -> Option<PathBuf> {
+    let parsed = data_url::DataUrl::process(url)
+        .map_err(|error| tracing::info!(?error, "notification icon is not a data URL"))
+        .ok()?;
+    let svg = parsed.mime_type().subtype == "svg+xml";
+    let (bytes, _) = parsed
+        .decode_to_vec()
+        .map_err(|error| tracing::info!(?error, "notification icon's data URL does not decode"))
+        .ok()?;
+    if svg {
+        rasterize(&bytes, None, out_dir)
+    } else {
+        raster(&bytes, out_dir)
     }
 }
 
@@ -120,7 +158,33 @@ fn file(path: &Path, out_dir: &Path) -> Option<PathBuf> {
     {
         return rasterize(&std::fs::read(path).ok()?, None, out_dir);
     }
-    Some(path.to_path_buf())
+    raster(&std::fs::read(path).ok()?, out_dir).or_else(|| Some(path.to_path_buf()))
+}
+
+/// Decodes a PNG or JPEG and fits it, aspect kept and centred, into a
+/// [`SIZE`] square PNG in `out_dir`, as `decodeImageData` scales an image
+/// down to the size asked for (a smaller one is centred, not enlarged).
+fn raster(bytes: &[u8], out_dir: &Path) -> Option<PathBuf> {
+    let decoded = image::load_from_memory(bytes)
+        .map_err(|error| tracing::info!(%error, "notification icon is not a PNG or JPEG"))
+        .ok()?;
+    let fitted = if decoded.width() > SIZE || decoded.height() > SIZE {
+        decoded.resize(SIZE, SIZE, image::imageops::FilterType::Triangle)
+    } else {
+        decoded
+    };
+    let mut canvas = image::RgbaImage::new(SIZE, SIZE);
+    image::imageops::overlay(
+        &mut canvas,
+        &fitted.to_rgba8(),
+        i64::from((SIZE - fitted.width()) / 2),
+        i64::from((SIZE - fitted.height()) / 2),
+    );
+    let mut png = Vec::new();
+    canvas
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
+    write_png(&png, out_dir)
 }
 
 /// Draws `svg` into a [`SIZE`] square, aspect kept and centred, tinting
@@ -156,12 +220,17 @@ fn rasterize(svg: &[u8], tint: Option<[u8; 4]>, out_dir: &Path) -> Option<PathBu
         }
     }
     let png = pixmap.encode_png().ok()?;
+    write_png(&png, out_dir)
+}
+
+/// Writes `png` as a new `vicinae-notif-*.png` in `out_dir`, kept.
+fn write_png(png: &[u8], out_dir: &Path) -> Option<PathBuf> {
     let mut out = tempfile::Builder::new()
         .prefix("vicinae-notif-")
         .suffix(".png")
         .tempfile_in(out_dir)
         .ok()?;
-    std::io::Write::write_all(&mut out, &png).ok()?;
+    std::io::Write::write_all(&mut out, png).ok()?;
     let (_, path) = out.keep().ok()?;
     Some(path)
 }
@@ -194,6 +263,7 @@ mod tests {
             builtin_dir: Some(icons.path().to_path_buf()),
             fetch: &no_fetch,
             out_dir: out.path().to_path_buf(),
+            find_icon: &|_| None,
         };
 
         let plain = icon_path(&serde_json::json!("bell"), &sources).expect("drawn");
@@ -258,6 +328,7 @@ mod tests {
             builtin_dir: None,
             fetch: &fetch,
             out_dir: out.path().to_path_buf(),
+            find_icon: &|_| None,
         };
         let icon = |value: serde_json::Value| icon_path(&value, &sources);
 
@@ -286,7 +357,6 @@ mod tests {
             Some(assets.join("icon.png")),
             "the light side"
         );
-        assert_eq!(icon(serde_json::json!({"fileIcon": "/etc/hosts"})), None);
         let absolute = assets.join("icon.png").to_string_lossy().into_owned();
         assert_eq!(
             icon(serde_json::json!(format!("file://{absolute}"))),
@@ -295,5 +365,113 @@ mod tests {
         );
         assert_eq!(icon(serde_json::json!("/nonexistent/bell.png")), None);
         assert_eq!(icon(serde_json::json!("data:image/png;base64,AAAA")), None);
+    }
+
+    /// A 2×1 PNG: red then transparent.
+    fn tiny_png() -> Vec<u8> {
+        let mut canvas = image::RgbaImage::new(2, 1);
+        canvas.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        let mut png = Vec::new();
+        canvas
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png
+    }
+
+    #[test]
+    fn a_data_url_is_decoded_and_drawn_into_the_square() {
+        use base64::Engine as _;
+        let out = tempfile::tempdir().unwrap();
+        let no_fetch = |_: &str| -> Result<PathBuf, String> { panic!("nothing remote here") };
+        let sources = Sources {
+            assets: None,
+            builtin_dir: None,
+            fetch: &no_fetch,
+            out_dir: out.path().to_path_buf(),
+            find_icon: &|_| None,
+        };
+        let encoded = base64::engine::general_purpose::STANDARD.encode(tiny_png());
+        let drawn = icon_path(
+            &serde_json::json!(format!("data:image/png;base64,{encoded}")),
+            &sources,
+        )
+        .expect("a PNG data URL is drawn");
+        assert!(drawn.starts_with(out.path()));
+        let (width, height, data) = decoded(&drawn);
+        assert_eq!((width, height), (SIZE, SIZE));
+        assert_eq!(
+            pixel(&data, 63, 63),
+            [255, 0, 0, 255],
+            "centred, not enlarged"
+        );
+        assert_eq!(pixel(&data, 0, 0)[3], 0);
+
+        let svg = icon_path(
+            &serde_json::json!(format!(
+                "data:image/svg+xml;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(SQUARE)
+            )),
+            &sources,
+        )
+        .expect("an SVG data URL is drawn");
+        assert_eq!(pixel(&decoded(&svg).2, 64, 64), [0, 0, 0, 255]);
+        let percent = icon_path(
+            &serde_json::json!(format!(
+                "data:image/svg+xml,{}",
+                SQUARE.replace('#', "%23").replace(' ', "%20")
+            )),
+            &sources,
+        );
+        assert!(percent.is_some(), "a data URL need not be base64");
+    }
+
+    #[test]
+    fn a_file_icon_is_the_themes_mime_icon_or_the_builtin_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let icons = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        std::fs::write(icons.path().join("blank-document.svg"), SQUARE).unwrap();
+        std::fs::write(icons.path().join("folder.svg"), SQUARE).unwrap();
+        let theme_png = dir.path().join("image-png.png");
+        std::fs::write(&theme_png, tiny_png()).unwrap();
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, b"x").unwrap();
+        let notes = dir.path().join("notes.qqqq");
+        std::fs::write(&notes, b"x").unwrap();
+        let asked = std::sync::Mutex::new(Vec::new());
+        let find = |name: &str| -> Option<PathBuf> {
+            asked.lock().unwrap().push(name.to_owned());
+            (name == "image-png").then(|| theme_png.clone())
+        };
+        let no_fetch = |_: &str| -> Result<PathBuf, String> { panic!("nothing remote here") };
+        let sources = Sources {
+            assets: None,
+            builtin_dir: Some(icons.path().to_path_buf()),
+            fetch: &no_fetch,
+            out_dir: out.path().to_path_buf(),
+            find_icon: &find,
+        };
+        let icon = |path: &Path| {
+            icon_path(
+                &serde_json::json!({"fileIcon": path.to_string_lossy()}),
+                &sources,
+            )
+        };
+
+        let themed = icon(&photo).expect("the theme has image-png");
+        assert!(themed.starts_with(out.path()));
+        assert_eq!(pixel(&decoded(&themed).2, 63, 63), [255, 0, 0, 255]);
+        assert_eq!(
+            asked.lock().unwrap().first().map(String::as_str),
+            Some("image-png")
+        );
+
+        let document = icon(&notes).expect("the builtin document");
+        assert_eq!(pixel(&decoded(&document).2, 64, 64), [0, 0, 0, 255]);
+        assert!(icon(dir.path()).is_some(), "a directory draws the folder");
+        assert!(
+            asked.lock().unwrap().contains(&"folder".to_owned()),
+            "a directory asks the theme for its generic icon"
+        );
     }
 }

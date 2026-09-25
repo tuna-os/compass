@@ -6463,6 +6463,7 @@ name = "vicinae"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
  "compass-clipboard",
  "compass-core",
@@ -6486,11 +6487,13 @@ dependencies = [
  "compass-wayland",
  "compass-worker-host",
  "compass-xdg",
+ "data-url",
  "fontdb",
  "futures-util",
  "getrandom 0.3.4",
  "iced",
  "iced_winit",
+ "image",
  "jiff",
  "landlock",
  "libc",
