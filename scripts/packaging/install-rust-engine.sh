@@ -47,7 +47,7 @@ app_id=com.vicinae.Vicinae
 for bin in vicinae vicinae-file-indexer compass-sandbox-exec; do
   if [ ! -x "$bin_dir/$bin" ]; then
     echo "missing $bin_dir/$bin; build with:" >&2
-    echo "  cargo build --release --locked -p vicinae -p compass-sandbox --bins" >&2
+    echo "  cargo build --release --locked -p vicinae -p compass-sandbox -p compass-input-server --bins" >&2
     exit 1
   fi
 done
@@ -58,6 +58,19 @@ install -Dm755 "$bin_dir/vicinae" "$root/bin/vicinae"
 # (Landlock + seccomp) and the engine refuses to run extensions without it.
 install -Dm755 "$bin_dir/vicinae-file-indexer" "$helpers/vicinae-file-indexer"
 install -Dm755 "$bin_dir/compass-sandbox-exec" "$helpers/compass-sandbox-exec"
+
+# The snippet keyword expander's keyboard helper (crates/compass-input-server).
+# Optional: the Flatpak cannot use it (no /dev/input in the sandbox), so it is
+# built only where it can run (-p compass-input-server). It needs
+# cap_dac_override to read /dev/input and write /dev/uinput, which DESTDIR
+# staging cannot carry: the package grants it at install time (Arch:
+# compass.install; NixOS: security.wrappers), as `make postbuild` does for the
+# C++ helper. See packaging/README.md, "The input server".
+if [ -x "$bin_dir/vicinae-input-server" ]; then
+  install -Dm755 "$bin_dir/vicinae-input-server" "$helpers/vicinae-input-server"
+else
+  echo "warning: no $bin_dir/vicinae-input-server; snippet keywords will not expand" >&2
+fi
 
 install -Dm644 "$repo_root/packaging/flatpak/$app_id.desktop" \
   "$share/applications/$app_id.desktop"

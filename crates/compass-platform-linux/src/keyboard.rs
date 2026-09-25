@@ -277,6 +277,13 @@ impl<S: EventSink> VirtualKeyboard<S> {
         &self.sink
     }
 
+    /// The sink, mutably: the input server waits through it between the
+    /// backspaces and the paste (`prePasteDelayUs`), so a test's recorder
+    /// sees that pause where the C++ `usleep`s.
+    pub fn sink_mut(&mut self) -> &mut S {
+        &mut self.sink
+    }
+
     /// Press and release `code`, syncing after each, with no modifiers held.
     pub fn send_key(&mut self, code: u16) {
         self.sink.emit(KeyEvent::Press(code));

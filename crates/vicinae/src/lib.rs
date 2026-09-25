@@ -29,6 +29,7 @@ pub mod hotkey;
 pub mod indexer_client;
 pub mod indexer_service;
 pub mod indexer_watch;
+pub mod input_server;
 pub mod ipc;
 pub mod programs;
 pub mod rhai_host;
@@ -37,6 +38,7 @@ pub mod scripts;
 pub mod serve;
 pub mod session;
 pub mod shortcuts;
+pub mod snippet_expansion;
 pub mod snippets;
 pub mod spike;
 pub mod stores;
@@ -483,6 +485,11 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
 
         Command::Theme(theme_cmd) => handle_theme(theme_cmd).await,
 
+        Command::InputServer(command) => {
+            require_servable_engine(cli.engine)?;
+            handle_input_server(&socket, command).await
+        }
+
         Command::Config(config_cmd) => config_cmd::run(config_cmd),
 
         // Handled in `run`, before the runtime exists.
@@ -510,6 +517,71 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
         Command::Show => window_command(&socket, cli.engine, Request::Show).await,
         Command::Hide => window_command(&socket, cli.engine, Request::Hide).await,
     }
+}
+
+async fn handle_input_server(
+    socket: &compass_ipc::SocketPath,
+    command: crate::cli::InputServerCommand,
+) -> Result<ExitCode> {
+    use crate::cli::InputServerCommand;
+    let (request, enable) = match command {
+        InputServerCommand::Status { json } => {
+            let status = match ipc::send(socket, Request::InputServerStatus).await? {
+                Response::InputServerStatus(status) => status,
+                other => bail!("unexpected answer from the engine: {other:?}"),
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                print!("{}", render_input_server(&status));
+            }
+            return Ok(ExitCode::from(if status.enabled && !status.running {
+                EXIT_FAILURE
+            } else {
+                EXIT_OK
+            }));
+        }
+        InputServerCommand::Enable => (Request::SetInputServerEnabled { enabled: true }, true),
+        InputServerCommand::Disable => (Request::SetInputServerEnabled { enabled: false }, false),
+    };
+    match ipc::send(socket, request).await {
+        Ok(Response::InputServerStatus(status)) => {
+            print!("{}", render_input_server(&status));
+            Ok(ExitCode::from(EXIT_OK))
+        }
+        Ok(other) => bail!("unexpected answer from the engine: {other:?}"),
+        Err(error) => {
+            // No engine: the setting still belongs in vicinae.json, and the
+            // next engine reads it.
+            tracing::debug!(%error, "no engine to apply input_server.enabled to");
+            let mut config = compass_core::Config::load().unwrap_or_default();
+            config.input_server_mut().set_enabled(Some(enable));
+            config.save_to(compass_core::config::default_config_path()?)?;
+            println!(
+                "input server {}; the engine is not running, so it applies when it starts",
+                if enable { "enabled" } else { "disabled" }
+            );
+            Ok(ExitCode::from(EXIT_OK))
+        }
+    }
+}
+
+/// `vicinae input-server status` for a person.
+#[must_use]
+pub fn render_input_server(status: &compass_ipc::InputServerStatus) -> String {
+    let yes = |value: bool| if value { "yes" } else { "no" };
+    let mut out = format!(
+        "enabled:   {}\nrunning:   {}\ninjection: {}\nkeywords:  {}\nhelper:    {}\n",
+        yes(status.enabled),
+        yes(status.running),
+        yes(status.injection),
+        status.keywords,
+        status.helper.as_deref().unwrap_or("not found"),
+    );
+    if let Some(problem) = &status.problem {
+        out.push_str(&format!("problem:   {problem}\n"));
+    }
+    out
 }
 
 async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {

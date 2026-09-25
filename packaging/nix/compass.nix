@@ -38,7 +38,9 @@
     inherit src;
 
     strictDeps = true;
-    cargoExtraArgs = "--locked -p vicinae -p compass-sandbox --bins";
+    # compass-input-server: the keyboard helper; the Nix store cannot carry
+    # its capability, so NixOS wraps it (security.wrappers, packaging/README.md).
+    cargoExtraArgs = "--locked -p vicinae -p compass-sandbox -p compass-input-server --bins";
     doCheck = false;
 
     nativeBuildInputs = [

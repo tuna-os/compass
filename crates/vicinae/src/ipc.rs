@@ -139,6 +139,8 @@ fn describe(request: &Request) -> &'static str {
         Request::StoreInstall { .. } => "StoreInstall",
         Request::StoreUninstall { .. } => "StoreUninstall",
         Request::OpenUrl { .. } => "OpenUrl",
+        Request::InputServerStatus => "InputServerStatus",
+        Request::SetInputServerEnabled { .. } => "SetInputServerEnabled",
         Request::Dmenu { .. } => "Dmenu",
         Request::DmenuFetch { .. } => "DmenuFetch",
         Request::DmenuChoose { .. } => "DmenuChoose",

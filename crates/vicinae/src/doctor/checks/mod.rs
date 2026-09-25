@@ -22,6 +22,7 @@
 //! * [`portal`] — session bus reachability and the XDG desktop portal.
 //! * [`desktop`] — which desktop this is, and our GNOME Shell extension.
 //! * [`sandbox`] — Flatpak detection and the application directories.
+//! * [`input`] — the input server behind snippet keyword expansion.
 //! * [`a11y`] — whether a screen reader is on, given the launcher has no tree.
 //!
 //! Every check is re-exported here, so a caller says `checks::session_type`
@@ -30,6 +31,7 @@
 
 pub mod a11y;
 pub mod desktop;
+pub mod input;
 pub mod portal;
 pub mod sandbox;
 pub mod session;
@@ -40,6 +42,7 @@ pub use desktop::{
     GNOME_SHELL_BUS_NAME, GNOME_SHELL_OBJECT_PATH, LEGACY_WINDOWS_INTERFACE, desktop_environment,
     is_gnome, shell_extension,
 };
+pub use input::{InputServerFacts, input_server};
 pub use portal::{
     GLOBAL_SHORTCUTS_INTERFACE, PORTAL_BUS_NAME, PORTAL_OBJECT_PATH, desktop_portal,
     global_shortcuts, session_bus,

@@ -591,6 +591,45 @@ impl ExtensionsConfig {
     }
 }
 
+/// The `input_server` section: the keyboard helper behind snippet keyword
+/// expansion (`vicinae-input-server`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct InputServerConfig {
+    /// Whether the helper runs. Off, snippet keywords do not expand; on, it
+    /// is started and restarted after a crash (five times, backing off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = DEFAULT_INPUT_SERVER_ENABLED))]
+    enabled: Option<bool>,
+
+    /// Keys this build does not know about, preserved verbatim.
+    #[serde(flatten)]
+    unknown: BTreeMap<String, Value>,
+}
+
+/// Default for `input_server.enabled`, as the C++ `config::InputServer`.
+pub const DEFAULT_INPUT_SERVER_ENABLED: bool = true;
+
+impl InputServerConfig {
+    /// Whether the helper runs. Defaults to [`DEFAULT_INPUT_SERVER_ENABLED`].
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(DEFAULT_INPUT_SERVER_ENABLED)
+    }
+
+    /// Sets `input_server.enabled`. `None` removes the key.
+    pub fn set_enabled(&mut self, value: Option<bool>) -> &mut Self {
+        self.enabled = value;
+        self
+    }
+
+    /// Whether the section carries nothing at all, known or unknown.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let Self { enabled, unknown } = self;
+        enabled.is_none() && unknown.is_empty()
+    }
+}
+
 /// A parsed `vicinae.json`.
 ///
 /// [`Config::default`] is the fully-defaulted configuration and is what an empty file produces.
@@ -615,6 +654,9 @@ pub struct Config {
     /// Root items offered when a search has no match, as `provider:entrypoint` ids.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fallbacks: Option<Vec<String>>,
+    /// The snippet keyword expander's keyboard helper.
+    #[serde(default, skip_serializing_if = "InputServerConfig::is_empty")]
+    input_server: InputServerConfig,
 
     /// Top level keys this build does not know about, preserved verbatim.
     #[serde(flatten)]
@@ -705,6 +747,17 @@ impl Config {
     /// The `launcher` section, mutably.
     pub fn launcher_mut(&mut self) -> &mut LauncherConfig {
         &mut self.launcher
+    }
+
+    /// The `input_server` section.
+    #[must_use]
+    pub fn input_server(&self) -> &InputServerConfig {
+        &self.input_server
+    }
+
+    /// The `input_server` section, mutably.
+    pub fn input_server_mut(&mut self) -> &mut InputServerConfig {
+        &mut self.input_server
     }
 
     /// The `extensions` section.

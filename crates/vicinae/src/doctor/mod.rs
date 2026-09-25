@@ -62,6 +62,8 @@ pub struct Inputs<'a, B: BusProbe, F: FsProbe> {
     pub daemon_listening: bool,
     /// Engine selected for this invocation.
     pub engine: Engine,
+    /// The snippet keyword expander's helper, as far as it could be read.
+    pub input_server: &'a checks::InputServerFacts,
 }
 
 /// Runs every check, in report order.
@@ -74,6 +76,7 @@ pub async fn run<B: BusProbe, F: FsProbe>(inputs: &Inputs<'_, B, F>) -> Report {
         socket_exists,
         daemon_listening,
         engine,
+        input_server,
     } = *inputs;
 
     let checks = vec![
@@ -87,6 +90,7 @@ pub async fn run<B: BusProbe, F: FsProbe>(inputs: &Inputs<'_, B, F>) -> Report {
         checks::global_shortcuts(bus).await,
         checks::shell_extension(env, bus).await,
         checks::flatpak(fs),
+        checks::input_server(fs, input_server),
         checks::application_dirs(env, fs),
         checks::screen_reader(bus).await,
     ];
@@ -107,17 +111,75 @@ pub async fn run_on_this_machine(socket: &SocketPath, engine: Engine) -> Report 
     let fs = RealFs;
     let bus = ZbusProbe::new();
 
+    let daemon_listening = compass_ipc::is_listening(socket.as_path()).await;
+    let status = if daemon_listening {
+        match crate::ipc::send(socket, compass_ipc::Request::InputServerStatus).await {
+            Ok(compass_ipc::Response::InputServerStatus(status)) => Some(status),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let input_server = tokio::task::spawn_blocking(move || gather_input_server(status))
+        .await
+        .unwrap_or_default();
+
     let inputs = Inputs {
         env: &env,
         fs: &fs,
         bus: &bus,
         socket,
         socket_exists: socket.as_path().exists(),
-        daemon_listening: compass_ipc::is_listening(socket.as_path()).await,
+        daemon_listening,
         engine,
+        input_server: &input_server,
     };
 
     run(&inputs).await
+}
+
+/// Reads the facts on this machine. The engine's status is the caller's.
+#[must_use]
+pub fn gather_input_server(
+    engine: Option<compass_ipc::InputServerStatus>,
+) -> checks::InputServerFacts {
+    let enabled = compass_core::Config::load()
+        .map(|config| config.input_server().enabled())
+        .unwrap_or(compass_core::config::DEFAULT_INPUT_SERVER_ENABLED);
+    let helper = crate::input_server::find_helper();
+    let capability = helper.as_deref().and_then(has_dac_override);
+    let uinput_writable = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/uinput")
+        .is_ok();
+    let input_readable = std::fs::read_dir("/dev/input").is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            entry.file_name().to_string_lossy().starts_with("event")
+                && std::fs::File::open(entry.path()).is_ok()
+        })
+    });
+    checks::InputServerFacts {
+        enabled,
+        helper,
+        capability,
+        uinput_writable,
+        input_readable,
+        engine,
+    }
+}
+
+/// Whether `getcap` lists `cap_dac_override` on `path`; `None` without
+/// `getcap`.
+fn has_dac_override(path: &std::path::Path) -> Option<bool> {
+    let output = std::process::Command::new("getcap")
+        .arg(path)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).contains("cap_dac_override"))
 }
 
 #[cfg(test)]
@@ -175,6 +237,14 @@ mod tests {
         (env, fs, bus, SocketPath::in_dir("/run/user/1000"))
     }
 
+    static HEALTHY_INPUT_SERVER: std::sync::LazyLock<checks::InputServerFacts> =
+        std::sync::LazyLock::new(|| checks::InputServerFacts {
+            enabled: true,
+            helper: Some("/usr/libexec/vicinae/vicinae-input-server".into()),
+            capability: Some(true),
+            ..checks::InputServerFacts::default()
+        });
+
     fn inputs<'a>(
         env: &'a Env,
         fs: &'a FakeFs,
@@ -190,6 +260,7 @@ mod tests {
             socket_exists: listening,
             daemon_listening: listening,
             engine: Engine::Rust,
+            input_server: &HEALTHY_INPUT_SERVER,
         }
     }
 
@@ -226,7 +297,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), count, "duplicate check names");
-        assert_eq!(count, 12);
+        assert_eq!(count, 13);
         assert!(
             report
                 .checks

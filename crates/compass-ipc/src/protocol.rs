@@ -38,7 +38,10 @@ use serde::{Deserialize, Serialize};
 /// version 12, an OAuth provider's redirect back to the launcher; version 13,
 /// shortcuts, snippets, script commands, Run Terminal Program, dmenu, themes,
 /// create-extension and fonts; version 14, Rhai scripts and the extension stores.
-pub const PROTOCOL_VERSION: u16 = 14;
+///
+/// version 15, the snippet keyword expander's input server
+/// ([`Request::InputServerStatus`], [`Request::SetInputServerEnabled`]).
+pub const PROTOCOL_VERSION: u16 = 15;
 
 /// A client-to-server frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -550,6 +553,17 @@ pub enum Request {
         /// The URL.
         url: String,
     },
+    /// The snippet keyword expander's keyboard helper: whether it is wanted,
+    /// running, and able to type. Answered with
+    /// [`Response::InputServerStatus`].
+    InputServerStatus,
+    /// Turn the keyboard helper on or off, as `input_server.enabled` in
+    /// `vicinae.json` (which is written), and answer
+    /// [`Response::InputServerStatus`] once applied.
+    SetInputServerEnabled {
+        /// Whether it should run.
+        enabled: bool,
+    },
 }
 
 /// What the engine answers.
@@ -750,6 +764,29 @@ pub enum Response {
         /// Its title, for the confirmation.
         title: String,
     },
+    /// Answer to [`Request::InputServerStatus`] and
+    /// [`Request::SetInputServerEnabled`].
+    InputServerStatus(InputServerStatus),
+}
+
+/// The keyboard helper behind snippet keyword expansion, as the engine sees
+/// it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputServerStatus {
+    /// `input_server.enabled`.
+    pub enabled: bool,
+    /// Whether the helper process is up and answered.
+    pub running: bool,
+    /// Whether it can type (its virtual keyboard was created). Keywords are
+    /// still detected without it, but nothing is erased or pasted.
+    pub injection: bool,
+    /// How many keywords it watches for.
+    pub keywords: u32,
+    /// The helper binary found, if one was.
+    pub helper: Option<String>,
+    /// Why it is not working, when it is not: not installed, inside a
+    /// Flatpak, no permission, gave up after crashing.
+    pub problem: Option<String>,
 }
 
 /// One Rhai script, as root search and the launcher need it.

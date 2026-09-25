@@ -164,6 +164,10 @@ pub enum Command {
     #[command(subcommand)]
     Theme(ThemeCommand),
 
+    /// The keyboard helper behind snippet keyword expansion.
+    #[command(subcommand)]
+    InputServer(InputServerCommand),
+
     /// Extension management.
     #[command(subcommand)]
     Ext(ExtCommand),
@@ -295,6 +299,21 @@ pub enum ThemeCommand {
     },
     /// Reset to System (OS native) theme.
     Reset,
+}
+
+/// `vicinae input-server` subcommands.
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+pub enum InputServerCommand {
+    /// Whether it is on, running and able to type, and why not.
+    Status {
+        /// Emit the status as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Turn it on (`input_server.enabled`), starting it now if the engine runs.
+    Enable,
+    /// Turn it off; snippet keywords stop expanding.
+    Disable,
 }
 
 /// Configuration subcommands.

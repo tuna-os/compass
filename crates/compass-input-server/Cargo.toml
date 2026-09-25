@@ -1,0 +1,23 @@
+[package]
+name = "compass-input-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "vicinae-input-server"
+path = "src/main.rs"
+
+[dependencies]
+compass-core.workspace = true
+compass-platform-linux.workspace = true
+evdev = "0.13"
+xkbcommon = { version = "0.8", default-features = false }
+notify.workspace = true
+serde.workspace = true
+serde_json.workspace = true

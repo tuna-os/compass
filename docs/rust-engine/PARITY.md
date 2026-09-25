@@ -129,7 +129,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/snippet` | `compass-input-server` (`vicinae-input-server`), `compass-core::snippet` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 
 ## Services
@@ -155,7 +155,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/input-server` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/input-server` | `vicinae::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/media-control` | `compass-media` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -2138,7 +2138,7 @@ arguments by name. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | Typing a keyword anywhere expands the snippet: `vicinae-snippet-server` reads `/dev/input` (libudev, xkbcommon), injects through uinput or the clipboard, with undo on backspace, per-app limits and the extension's delay/layout preferences. | **Not ported.** The trigger matcher (`compass-core::snippet`), the injection protocol (`compass-platform-linux::keyboard`) and the server's framing (`compass-core::input_server`) are, but no process reads the keyboard; keywords are stored and shown, and do nothing yet. | `compass-core::snippet` tests |
+| 1 | Typing a keyword anywhere expands the snippet: `vicinae-input-server` reads `/dev/input` (libudev, xkbcommon), injects through uinput and the clipboard, with undo on backspace, per-app limits and the extension's delay/layout preferences. | **Ported** (`compass-input-server`, `vicinae::snippet_expansion`); the differences are in "Input server and keyword expansion" below. | `compass-input-server` tests, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
 | 2 | Arguments are completion fields beside the search text. | A form with one field per argument (named once, in order of first use); an empty optional one takes its default. | `manage_snippets_copies_asking_for_arguments_first` |
 | 3 | Copy to clipboard copies text as transient (not recorded in history), and a file snippet as the file. | The launcher writes the expanded text to the clipboard itself; a file snippet copies its path as text. No form creates file snippets (the C++ form does not either). | — |
 | 4 | — | Paste, which the C++ list does not offer: the expansion is put on the clipboard and pasted through the Shell extension, as clipboard history pastes. | `snippets_are_imported_created_expanded_edited_and_removed` |
@@ -2146,6 +2146,33 @@ arguments by name. What differs:
 | 6 | A detail pane shows the type, the dates, the keyword and its apps, and the expansion as arguments are typed (shell placeholders shown as `$(code)`). | Rows carry the keyword (or the text's first words) as their subtitle; no detail pane yet. | `the_subtitle_is_the_keyword_or_the_first_words` |
 | 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | Parsed with the quicklink parser, which has no escape: `\{` is a backslash and a placeholder. | — |
 | 8 | `{argument}` with no `name=` is collected as an argument with an empty name. | Left out of the form; it expands to nothing either way. | `arguments_are_named_once_and_reserved_ids_are_not_arguments` |
+
+### Input server and keyword expansion — what differs
+
+`vicinae-input-server` is `crates/compass-input-server`: the same process split, permissions
+(`cap_dac_override`, packaging/README.md "The input server") and wire as the C++ — figura's
+JSON-RPC, byte for byte, in little-endian frames — so either engine can drive either helper. The
+engine starts it when `input_server.enabled` (default on), restarts it with the C++ backoff,
+registers every keyword on ready and diffs them on each save or removal, and carries out
+`handleKeywordTrigger`/`handleUndo` (`vicinae::snippet_expansion`). IPC v15 adds
+`InputServerStatus` and `SetInputServerEnabled` (`vicinae input-server status|enable|disable`), and
+`vicinae doctor` has an `input-server` check. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Keyboards and pointers are the nodes libudev tags `ID_INPUT_KEYBOARD`/`ID_INPUT_MOUSE`; hot-plug is a udev monitor. | The same tests `input_id` applies (keys 1–31; relative or non-pen, non-touchpad absolute X/Y with a left button) on the capability bits `evdev` reads; hot-plug is an inotify watch on `/dev/input`, retried briefly while udev sets the node up. A device udev tags by hwdb override rather than by bits is not recognised. | `device::is_keyboard` via the uinput test |
+| 2 | Triggers of equal length are ordered by an unstable sort. | Stable: the earlier registration wins a tie. The earlier Rust matcher said *first registered wins* regardless of length, which was wrong — the C++ sorts longest first; fixed. | `the_longest_trigger_wins_whatever_the_registration_order` |
+| 3 | `setKeymap` with a layout xkbcommon cannot compile installs a null keymap. | Refused with an error reply; the old keymap stays. | `an_unknown_layout_is_refused_and_the_old_one_kept` |
+| 4 | `setKeyDelay` with a negative value hands it to `usleep` as unsigned. | Clamped to 0. | `a_negative_key_delay_is_zero` |
+| 5 | After the paste, the clipboard's last selection (every offer) is restored after 800 ms. | Its text is restored after 800 ms; an image or file list on the clipboard before the expansion is not put back. | — |
+| 6 | Cursor walk-back and undo count UTF-16 units. | Characters (the expander's unit). The two agree outside astral characters (emoji), where the C++ walks too far. | `a_cursor_placeholder_walks_back_and_forgoes_undo` |
+| 7 | The expansion is copied as a concealed selection, so history skips it. | Concealed on wlroots (data-control's marker type); the GNOME Shell extension's `SetClipboard` carries no marker, so there it depends on the extension. | — |
+| 8 | The focused application comes from the window manager, nulled while Vicinae itself is focused without focus-handoff detection. | The focused window from the Shell extension (GNOME) or the foreign-toplevel list (wlroots), recognised in the app index by `WM_CLASS`/`app_id`. With neither, the app is unknown: keywords limited to apps do not expand, terminals paste with Ctrl+V. | `a_keyword_limited_to_apps_expands_only_in_them` |
+| 9 | Focus changes reset the typed text and the undo. | The same, from the Shell extension's window signal or the toplevel list's changes; without either, nothing resets it. | — |
+| 10 | The Snippets extension's preferences (`enabled`, `undo`, `layout`, `prePasteDelay`, `keyDelay`) apply when changed in settings. | Read from `providers.snippets.preferences` in `vicinae.json` on every trigger (layout and key delay are pushed to the helper when they change); there is no settings page to edit them yet. | `preferences_are_read_and_clamped` |
+| 11 | Clipboard-history and extension paste inject Ctrl+V through the input server (`LinuxPasteService`). | Unchanged: GNOME pastes through the Shell extension, wlroots copies only. `injectPaste` is implemented in the helper and not yet used for them. | — |
+| 12 | Without a clipboard there is no case to handle: the C++ always has Qt's. | With neither the Shell extension nor data-control, a typed keyword is logged and not expanded. | — |
+| 13 | — | Inside a Flatpak the helper is not started (no `/dev/input` or `/dev/uinput` there) and `doctor` says so; the C++ has no Flatpak. | `a_flatpak_is_told_keyword_expansion_cannot_work_there` |
 
 ### Script commands — what the port does not have yet
 

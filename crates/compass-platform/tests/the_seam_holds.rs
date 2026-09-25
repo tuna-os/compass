@@ -48,6 +48,10 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // cgroups are the Linux mechanism the way MPRIS is the Linux protocol —
     // the C++ has a separate supervisor per platform.
     "compass-worker-host",
+    // vicinae-input-server: evdev and uinput are the Linux mechanism for
+    // reading and injecting keys; the C++ has a separate snippet server for
+    // macOS and Windows, and so will the ports of those.
+    "compass-input-server",
 ];
 
 /// Crates whose presence in a manifest makes that crate Linux-bound.

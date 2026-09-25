@@ -200,6 +200,10 @@ impl Daemon {
             .env_remove("https_proxy")
             .env_remove("all_proxy")
             .env("NO_PROXY", "127.0.0.1,localhost")
+            // Nor the machine's keyboards: a helper that exits at once
+            // stands in for vicinae-input-server unless a test brings its
+            // own fake.
+            .env("VICINAE_INPUT_SERVER_BIN", "/bin/true")
             .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -4080,4 +4084,103 @@ fn real_stores_smoke() {
         panic!("no Raycast detail");
     };
     assert!(detail.markdown.starts_with("# "));
+}
+
+/// The input server is started, told every snippet keyword, told again as
+/// snippets change, and stopped and started by `SetInputServerEnabled` —
+/// against a scripted helper that logs what it is asked and touches no
+/// device.
+#[test]
+fn the_input_server_is_told_the_keywords_and_follows_the_setting() {
+    use compass_ipc::{Request, Response};
+
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_input_server.py");
+    let log = std::sync::Arc::new(std::sync::Mutex::new(PathBuf::new()));
+    let log_path = std::sync::Arc::clone(&log);
+    let daemon = Daemon::start_prepared(&[], "{}", move |root| {
+        let file = root.join("input-server.log");
+        *log_path.lock().unwrap() = file.clone();
+        vec![
+            ("VICINAE_INPUT_SERVER_BIN", script.into_os_string()),
+            ("FAKE_INPUT_LOG", file.into_os_string()),
+        ]
+    });
+    let log = log.lock().unwrap().clone();
+    let calls = || std::fs::read_to_string(&log).unwrap_or_default();
+    let wait_for = |what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            if calls().contains(what) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!(
+            "the input server was never sent {what}; it got:\n{}",
+            calls()
+        );
+    };
+    let status = |daemon: &Daemon| match daemon.request(Request::InputServerStatus) {
+        Response::InputServerStatus(status) => status,
+        other => panic!("unexpected {other:?}"),
+    };
+
+    wait_for("Snippet/getCapabilities");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !status(&daemon).running {
+        assert!(
+            Instant::now() < deadline,
+            "never running: {:?}",
+            status(&daemon)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let now = status(&daemon);
+    assert!(now.enabled && now.injection, "{now:?}");
+
+    let Response::Snippets { snippets } = daemon.request(Request::SaveSnippet {
+        id: None,
+        name: "Sig".into(),
+        text: "Best".into(),
+        keyword: Some(";sig".into()),
+        word: true,
+        apps: vec![],
+    }) else {
+        panic!("not saved");
+    };
+    wait_for(r#""trigger": ";sig""#);
+    assert!(
+        calls().contains(r#""mode": "Word""#),
+        "registered as a word snippet: {}",
+        calls()
+    );
+    assert_eq!(status(&daemon).keywords, 1);
+
+    daemon.request(Request::RemoveSnippet {
+        id: snippets[0].id.clone(),
+    });
+    wait_for("Snippet/removeSnippet");
+
+    let Response::InputServerStatus(off) =
+        daemon.request(Request::SetInputServerEnabled { enabled: false })
+    else {
+        panic!("no status");
+    };
+    assert!(!off.enabled && !off.running, "{off:?}");
+    let saved =
+        std::fs::read_to_string(log.parent().unwrap().join("config/vicinae/vicinae.json")).unwrap();
+    assert!(saved.contains("\"input_server\""), "{saved}");
+
+    let before = calls().matches("Snippet/getCapabilities").count();
+    let Response::InputServerStatus(on) =
+        daemon.request(Request::SetInputServerEnabled { enabled: true })
+    else {
+        panic!("no status");
+    };
+    assert!(on.enabled, "{on:?}");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while calls().matches("Snippet/getCapabilities").count() == before {
+        assert!(Instant::now() < deadline, "not restarted");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }

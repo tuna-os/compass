@@ -436,9 +436,9 @@ degradation with the extension uninstalled.
   than the one in `src/cli`.
 
   Worth noting even if someone built that command: **the diff would mostly prove nothing.** Ten of
-  `doctor`'s twelve checks — `dbus.session`, `session.type`, `xdg.runtime-dir`, `xdg.application-dirs`,
+  `doctor`'s thirteen checks — `dbus.session`, `session.type`, `xdg.runtime-dir`, `xdg.application-dirs`,
   `desktop.environment`, `flatpak.sandbox`, `portal.desktop`, `portal.global-shortcuts`,
-  `gnome.shell-extension`, `a11y.screen-reader` — are probes of the *environment*. Two processes on one machine observe the
+  `gnome.shell-extension`, `a11y.screen-reader` — are probes (`input-server`, added later, is half each) of the *environment*. Two processes on one machine observe the
   same environment by construction, so they would agree trivially, in the same way "same top result"
   would be trivially 100% over single-hit queries. Only `engine.selected` and `ipc.socket` describe
   the engine itself, and those map to the C++ `version` and `ping`.
@@ -501,8 +501,8 @@ dmenu · store front-ends · window/workspace · developer tools.
 *Track A status:* running end to end (engine, IPC, launcher page, tests) — calculator, clipboard
 history, emoji, window switching, power, media and volume, Search Files, shortcuts (Create
 Shortcut, Manage Shortcuts, shortcuts in root search; IPC v13), and snippets (Create Snippet,
-Manage Snippets: copy, paste, edit; keyword expansion waits on the input server, which is not
-ported), script commands (scanned into root search, run in all five output modes), Run
+Manage Snippets: copy, paste, edit; keyword expansion through the ported `vicinae-input-server`,
+`crates/compass-input-server`, figura-wire-compatible with the C++ helper; IPC v15), script commands (scanned into root search, run in all five output modes), Run
 Terminal Program, `vicinae dmenu`, Set Theme, Create Extension, Browse Fonts, and the two store
 front-ends (Extension Store and Raycast Store: browse, search, detail with README and screenshots,
 install with zip-slip and size guards, uninstall, update detection; IPC v14). What each still

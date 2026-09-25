@@ -92,6 +92,21 @@
       },
       "type": "object"
     },
+    "InputServerConfig": {
+      "additionalProperties": true,
+      "description": "The `input_server` section: the keyboard helper behind snippet keyword\nexpansion (`vicinae-input-server`).",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether the helper runs. Off, snippet keywords do not expand; on, it\nis started and restarted after a crash (five times, backing off).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "LauncherConfig": {
       "additionalProperties": true,
       "description": "The `launcher` section.",
@@ -250,6 +265,10 @@
         "array",
         "null"
       ]
+    },
+    "input_server": {
+      "$ref": "#/$defs/InputServerConfig",
+      "description": "The snippet keyword expander's keyboard helper."
     },
     "launcher": {
       "$ref": "#/$defs/LauncherConfig",
