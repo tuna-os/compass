@@ -1240,6 +1240,7 @@ dependencies = [
  "roxmltree",
  "tempfile",
  "thiserror 2.0.20",
+ "xmlwriter",
 ]
 
 [[package]]

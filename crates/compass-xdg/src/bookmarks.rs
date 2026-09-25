@@ -1,17 +1,19 @@
 //! `recently-used.xbel`: the desktop's shared list of recent files.
 //!
-//! Ports the reading half of `xdgpp::BookmarkFile`
-//! (`src/lib/xdgpp/xdgpp/bookmark/`) and `xdgpp::fromFileUri`
-//! (`src/lib/xdgpp/xdgpp/uri/file-uri.cpp`), plus `listRecent`
+//! Ports `xdgpp::BookmarkFile` (`src/lib/xdgpp/xdgpp/bookmark/`),
+//! `xdgpp::toFileUri`/`fromFileUri` (`src/lib/xdgpp/xdgpp/uri/file-uri.cpp`),
+//! and `listRecent` and `recordAccess`
 //! (`src/server/src/services/files-service/linux/xbel-recent-files-provider.cpp`).
 //!
-//! # Reading only
+//! # Writing
 //!
-//! The C++ also *writes* this file — `addApplication`, `save`, an atomic
-//! replace with owner-only permissions, the way GTK does. None of that is
-//! here. A launcher that shows recent files does not have to register them,
-//! and writing a file every desktop application also writes is a change with
-//! its own failure modes; it can come with its own commit and its own tests.
+//! [`record_access`] is `recordAccess`: read the file, add `vicinae` as an
+//! application that opened the item (creating the bookmark, or bumping its
+//! count), set its MIME type, and write the whole document back through a
+//! temporary file with owner-only permissions, renamed into place, as GTK
+//! and the C++ do. As in the C++, what is written is what the model holds:
+//! a bookmark element's fields, its metadata and its applications; an
+//! element another writer added that the model does not know is not kept.
 //!
 //! # `modified` is the timestamp that matters
 //!
@@ -239,6 +241,205 @@ pub fn recently_used_path() -> Option<PathBuf> {
     crate::xdg_dirs::data_home().map(|home| home.join(RECENTLY_USED_FILE_NAME))
 }
 
+/// The application name Compass records itself under, as the C++ does.
+pub const APP_NAME: &str = "vicinae";
+
+/// The `exec` recorded with it.
+pub const APP_EXEC: &str = "'vicinae %u'";
+
+/// A path as a `file://` URI: `toFileUri`'s escaping, which keeps the RFC
+/// 3986 path characters and escapes every other byte as uppercase hex.
+#[must_use]
+pub fn to_file_uri(path: &Path) -> String {
+    const KEEP: &[u8] = b"-._~/!$&'()*+,;=:@";
+    let mut uri = String::from("file://");
+    for &byte in path.as_os_str().as_encoded_bytes() {
+        if byte.is_ascii_alphanumeric() || KEEP.contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
+}
+
+/// `BookmarkFile::find`: the bookmark with `href`, or one whose URI names the
+/// same path spelled differently.
+fn find<'a>(bookmarks: &'a mut [Bookmark], href: &str) -> Option<&'a mut Bookmark> {
+    if let Some(position) = bookmarks.iter().position(|b| b.href == href) {
+        return bookmarks.get_mut(position);
+    }
+    let path = from_file_uri(href)?;
+    bookmarks
+        .iter_mut()
+        .find(|b| from_file_uri(&b.href).as_ref() == Some(&path))
+}
+
+/// `BookmarkFile::addApplication`: `name` opened `href` at `timestamp`.
+pub fn add_application(
+    bookmarks: &mut Vec<Bookmark>,
+    href: &str,
+    name: &str,
+    exec: &str,
+    timestamp: &str,
+) {
+    if find(bookmarks, href).is_none() {
+        bookmarks.push(Bookmark {
+            href: href.to_owned(),
+            added: timestamp.to_owned(),
+            ..Bookmark::default()
+        });
+    }
+    let Some(bookmark) = find(bookmarks, href) else {
+        return;
+    };
+    bookmark.modified = timestamp.to_owned();
+    bookmark.visited = timestamp.to_owned();
+    match bookmark
+        .applications
+        .iter_mut()
+        .find(|app| app.name == name)
+    {
+        Some(app) => {
+            exec.clone_into(&mut app.exec);
+            timestamp.clone_into(&mut app.modified);
+            app.count += 1;
+        }
+        None => bookmark.applications.push(BookmarkApplication {
+            name: name.to_owned(),
+            exec: exec.to_owned(),
+            modified: timestamp.to_owned(),
+            count: 1,
+        }),
+    }
+}
+
+/// `BookmarkFile::setMimeType`.
+pub fn set_mime_type(bookmarks: &mut [Bookmark], href: &str, mime: &str) {
+    if let Some(bookmark) = find(bookmarks, href) {
+        bookmark.mime_type = Some(mime.to_owned());
+    }
+}
+
+/// `BookmarkFile::toString`: the document, two-space indented.
+#[must_use]
+pub fn serialize(bookmarks: &[Bookmark]) -> String {
+    use xmlwriter::{Options, XmlWriter};
+    let mut xml = XmlWriter::new(Options::default());
+    xml.write_declaration();
+    xml.start_element("xbel");
+    xml.write_attribute("version", "1.0");
+    xml.write_attribute("xmlns:bookmark", BOOKMARK_NS);
+    xml.write_attribute("xmlns:mime", MIME_NS);
+    for bookmark in bookmarks {
+        xml.start_element("bookmark");
+        xml.write_attribute("href", &bookmark.href);
+        xml.write_attribute("added", &bookmark.added);
+        xml.write_attribute("modified", &bookmark.modified);
+        xml.write_attribute("visited", &bookmark.visited);
+        for (name, value) in [("title", &bookmark.title), ("desc", &bookmark.description)] {
+            if !value.is_empty() {
+                xml.start_element(name);
+                xml.write_text(value);
+                xml.end_element();
+            }
+        }
+        xml.start_element("info");
+        xml.start_element("metadata");
+        xml.write_attribute("owner", "http://freedesktop.org");
+        if let Some(mime) = &bookmark.mime_type {
+            xml.start_element("mime:mime-type");
+            xml.write_attribute("type", mime);
+            xml.end_element();
+        }
+        if !bookmark.groups.is_empty() {
+            xml.start_element("bookmark:groups");
+            for group in &bookmark.groups {
+                xml.start_element("bookmark:group");
+                xml.write_text(group);
+                xml.end_element();
+            }
+            xml.end_element();
+        }
+        if !bookmark.applications.is_empty() {
+            xml.start_element("bookmark:applications");
+            for app in &bookmark.applications {
+                xml.start_element("bookmark:application");
+                xml.write_attribute("name", &app.name);
+                xml.write_attribute("exec", &app.exec);
+                xml.write_attribute("modified", &app.modified);
+                xml.write_attribute("count", &app.count);
+                xml.end_element();
+            }
+            xml.end_element();
+        }
+        if bookmark.is_private {
+            xml.start_element("bookmark:private");
+            xml.end_element();
+        }
+        xml.end_element();
+        xml.end_element();
+        xml.end_element();
+    }
+    xml.end_document()
+}
+
+/// Why an access could not be recorded.
+#[derive(Debug, thiserror::Error)]
+pub enum RecordError {
+    /// The existing file did not parse; it is left alone.
+    #[error(transparent)]
+    Parse(#[from] Error),
+    /// Reading or writing failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+/// `recordAccess`: records that Compass opened `file` (of type `mime`) at
+/// `timestamp` (ISO 8601 UTC) in the XBEL file at `xbel`.
+///
+/// # Errors
+///
+/// [`RecordError::Parse`] when the existing file is not XBEL (it is then not
+/// touched), [`RecordError::Io`] when it cannot be read or written.
+pub fn record_access(
+    xbel: &Path,
+    file: &Path,
+    mime: &str,
+    timestamp: &str,
+) -> Result<(), RecordError> {
+    let mut bookmarks = match std::fs::read_to_string(xbel) {
+        Ok(text) => parse(&text)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let href = to_file_uri(file);
+    add_application(&mut bookmarks, &href, APP_NAME, APP_EXEC, timestamp);
+    set_mime_type(&mut bookmarks, &href, mime);
+    save(xbel, &serialize(&bookmarks))?;
+    Ok(())
+}
+
+/// `BookmarkFile::save`: a temporary file beside it, owner-only, renamed into
+/// place.
+fn save(path: &Path, text: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    let temporary = PathBuf::from(temporary);
+    std::fs::write(&temporary, text)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))?;
+    }
+    std::fs::rename(&temporary, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temporary);
+    })
+}
+
 /// The most recently used paths, newest first.
 ///
 /// Reproduces `listRecent`: sort by [`Bookmark::last_used`] descending
@@ -287,6 +488,67 @@ pub fn recent_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_an_access_adds_then_bumps_and_keeps_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let xbel = dir.path().join("share/recently-used.xbel");
+        let file = std::path::Path::new("/home/a/My Notes/résumé.pdf");
+        record_access(
+            &xbel,
+            file,
+            "application/pdf",
+            "2026-09-24T10:00:00.000001Z",
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&xbel).unwrap();
+        let bookmarks = parse(&text).unwrap();
+        assert_eq!(bookmarks.len(), 1);
+        assert_eq!(
+            bookmarks[0].href,
+            "file:///home/a/My%20Notes/r%C3%A9sum%C3%A9.pdf"
+        );
+        assert_eq!(bookmarks[0].path().as_deref(), Some(file));
+        assert_eq!(bookmarks[0].mime_type.as_deref(), Some("application/pdf"));
+        assert_eq!(bookmarks[0].applications[0].name, APP_NAME);
+        assert_eq!(bookmarks[0].applications[0].count, 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&xbel).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        std::fs::write(&xbel, SAMPLE).unwrap();
+        record_access(
+            &xbel,
+            std::path::Path::new("/tmp/test.mp4"),
+            "video/mp4",
+            "2027-01-01T00:00:00.000000Z",
+        )
+        .unwrap();
+        let bookmarks = parse(&std::fs::read_to_string(&xbel).unwrap()).unwrap();
+        let sample = parse(SAMPLE).unwrap();
+        assert_eq!(
+            bookmarks.len(),
+            sample.len(),
+            "an existing bookmark is reused"
+        );
+        let video = bookmarks
+            .iter()
+            .find(|b| b.href == "file:///tmp/test.mp4")
+            .unwrap();
+        assert_eq!(video.modified, "2027-01-01T00:00:00.000000Z");
+        assert_eq!(video.added, sample[0].added, "added is kept");
+        assert!(video.applications.iter().any(|a| a.name == APP_NAME));
+
+        std::fs::write(&xbel, "not xml <").unwrap();
+        assert!(matches!(
+            record_access(&xbel, file, "x/y", "t"),
+            Err(RecordError::Parse(_))
+        ));
+        assert_eq!(std::fs::read_to_string(&xbel).unwrap(), "not xml <");
+    }
 
     /// The sample from `src/lib/xdgpp/tests/bookmark.cpp`, verbatim.
     const SAMPLE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>

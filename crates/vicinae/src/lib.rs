@@ -27,6 +27,7 @@ pub mod extension_files;
 pub mod extension_runner;
 pub mod extension_wallpaper;
 pub mod extension_windows;
+pub mod file_manager;
 pub mod file_search;
 pub mod fonts;
 pub mod hotkey;
@@ -190,6 +191,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             theme_choice,
             root_config,
             configured_font,
+            fallbacks,
         ) = match compass_core::Config::load() {
             Ok(config) => {
                 let appearance = config.launcher().appearance();
@@ -208,6 +210,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_ui::theme::Theme::from_name(appearance.theme()).unwrap_or_default(),
                     config.root_config(),
                     config.font_family().map(str::to_owned),
+                    config.fallback_ids(),
                 )
             }
             Err(error) => {
@@ -221,6 +224,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
                     compass_ui::theme::Theme::System,
                     compass_core::root_items::RootConfig::default(),
                     None,
+                    compass_core::Config::default().fallback_ids(),
                 )
             }
         };
@@ -295,6 +299,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
             typography_link,
             theme_dirs: compass_core::theme_file::default_search_dirs(),
             view_state_path: compass_ui::view_memory::default_path(),
+            fallbacks,
             ..compass_ui::AppFlags::default()
         };
 

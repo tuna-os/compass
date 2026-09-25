@@ -704,6 +704,16 @@ impl Config {
         }
     }
 
+    /// The fallback commands a query with no better answer offers: the
+    /// file's `fallbacks`, or the default file's `["files:search"]` when it
+    /// sets none. An empty list the user wrote stays empty.
+    #[must_use]
+    pub fn fallback_ids(&self) -> Vec<String> {
+        self.fallbacks
+            .clone()
+            .unwrap_or_else(|| vec![crate::commands::SEARCH_FILES_FALLBACK_ID.to_owned()])
+    }
+
     /// A provider's `preferences` object, as `providers.<id>.preferences`
     /// holds it; `None` when the file sets none, or sets something that is not
     /// an object.

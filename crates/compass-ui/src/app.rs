@@ -199,6 +199,8 @@ pub struct AppFlags {
     /// The file views' remembered filters are kept in; `None` keeps them in
     /// memory, as tests do.
     pub view_state_path: Option<std::path::PathBuf>,
+    /// The `fallbacks` entries a non-empty query offers, as ids.
+    pub fallbacks: Vec<String>,
     /// Window configuration.
     pub window_config: window::Settings,
     /// How to launch the selected application.
@@ -292,6 +294,7 @@ impl Default for AppFlags {
             theme: crate::theme::Theme::System,
             theme_dirs: Vec::new(),
             view_state_path: None,
+            fallbacks: Vec::new(),
             window_config: window::Settings {
                 size: iced::Size::new(
                     f32::from(GEOMETRY.card_width + 2 * design::SHADOW_PADDING),
@@ -471,6 +474,8 @@ pub enum RootRow {
     Script(usize),
     /// A Rhai script, as its index in `AppIndex::rhai_scripts`.
     RhaiScript(usize),
+    /// A fallback command offered for the query, under "Use "…" with...".
+    Fallback(&'static compass_core::commands::BuiltinCommand),
 }
 
 /// Which view the card shows.
@@ -685,6 +690,8 @@ pub struct LauncherApp {
     theme_dirs: Vec<std::path::PathBuf>,
     /// What views remember between openings.
     view_memory: crate::view_memory::ViewMemory,
+    /// The fallback commands a non-empty query offers.
+    fallbacks: Vec<&'static compass_core::commands::BuiltinCommand>,
     /// Previously persisted theme for live-preview cancellation (#153).
     theme_preview: Option<crate::theme::Theme>,
     /// Which palette to draw with. See [`LauncherApp::theme`].
@@ -917,6 +924,11 @@ impl LauncherApp {
         app.clipboard = flags.clipboard;
         app.windows = flags.windows;
         app.app_index.apply_root_config(&flags.root_config);
+        app.fallbacks = flags
+            .fallbacks
+            .iter()
+            .filter_map(|id| compass_core::commands::fallback(id))
+            .collect();
         app.window_config = flags.window_config;
         app.keybinding = flags.keybinding;
         app.wrap_navigation = flags.wrap_navigation;
@@ -987,6 +999,7 @@ impl LauncherApp {
             theme_choice: crate::theme::Theme::System,
             theme_dirs: Vec::new(),
             view_memory: crate::view_memory::ViewMemory::default(),
+            fallbacks: Vec::new(),
             theme_preview: None,
             appearance: Appearance::Light,
             appearance_link: None,
@@ -1155,6 +1168,7 @@ impl LauncherApp {
             | RootRow::Shortcut(_)
             | RootRow::Script(_)
             | RootRow::RhaiScript(_)
+            | RootRow::Fallback(_)
             | RootRow::Calculator => None,
         }
     }
@@ -1255,6 +1269,9 @@ impl LauncherApp {
                     .get(index)
                     .map_or("", |script| script.title.as_str());
                 line.push_str(&format!(" selected_title={title:?}"));
+            }
+            Some(RootRow::Fallback(command)) => {
+                line.push_str(&format!(" selected_title={:?} fallback", command.title));
             }
             None => line.push_str(" selected_title=none"),
         }
@@ -1731,6 +1748,7 @@ impl LauncherApp {
                             self.results = positions;
                             self.selected = 0;
                             self.apply_calculator();
+                            self.apply_fallbacks();
                             self.warm_icons();
                         } else {
                             self.error = Some(
@@ -1780,6 +1798,9 @@ impl LauncherApp {
                 }
                 if let Some(RootRow::RhaiScript(index)) = self.selected_row() {
                     return self.open_rhai_script_at(index);
+                }
+                if let Some(RootRow::Fallback(command)) = self.selected_row() {
+                    return self.open_fallback(command);
                 }
                 let Some(item) = self.selected_item() else {
                     return Task::none();
@@ -2440,6 +2461,15 @@ impl LauncherApp {
                 self.files_query_task()
             }
             Message::FilesDebounced(generation) => self.files_search_task(generation),
+            Message::FilesCategoryChanged(key) => {
+                let Page::Files(page) = &mut self.page else {
+                    return Task::none();
+                };
+                let generation = page.set_category(&key);
+                self.view_memory
+                    .set(crate::view_memory::FILE_CATEGORY, &key);
+                Task::batch([self.files_search_task(generation), focus_search()])
+            }
             Message::FilesLoaded { generation, result } => {
                 if let Page::Files(page) = &mut self.page {
                     page.apply(generation, result);
@@ -2451,6 +2481,7 @@ impl LauncherApp {
                     && position < page.rows.len()
                 {
                     page.selected = position;
+                    page.refresh_preview();
                 }
                 self.open_selected_file(false)
             }
@@ -2694,6 +2725,7 @@ impl LauncherApp {
                             direction,
                             self.wrap_navigation,
                         );
+                        page.refresh_preview();
                         return crate::scroll::reveal_root_selection();
                     }
                     return Task::none();
@@ -3099,6 +3131,27 @@ impl LauncherApp {
                             selected,
                         )
                     }
+                    RootRow::Fallback(command) => {
+                        if position == 0
+                            || !matches!(self.results.get(position - 1), Some(RootRow::Fallback(_)))
+                        {
+                            list = list.push(
+                                container(
+                                    text(compass_core::root_items::fallback_heading(&self.query))
+                                        .font(self.font())
+                                        .size(12)
+                                        .color(palette.muted.to_iced()),
+                                )
+                                .padding(Padding::new(4.0).left(10)),
+                            );
+                        }
+                        self.list_row(
+                            self.initial_badge(command.title, selected),
+                            command.title.to_owned(),
+                            self.subtitles.then(|| command.subtitle.to_owned()),
+                            selected,
+                        )
+                    }
                     RootRow::Shortcut(index) => {
                         let Some(shortcut) = self.app_index.shortcuts().get(*index) else {
                             continue;
@@ -3330,11 +3383,32 @@ impl LauncherApp {
     fn files_body<'a>(&'a self, page: &'a crate::files_page::FilesPage) -> Element<'a, Message> {
         use crate::files_page::Status;
         let geometry = self.geometry;
-        match &page.status {
-            Status::Loading => return self.notice("Searching files…"),
-            Status::Failed(reason) => return self.notice(reason),
-            Status::Ready if page.rows.is_empty() => return self.notice("No files found"),
-            Status::Ready => {}
+        let key = page
+            .category
+            .clone()
+            .unwrap_or_else(|| compass_core::file_search::CATEGORY_FILTER_KEYS[0].to_owned());
+        let filter = container(
+            iced::widget::pick_list(
+                compass_core::file_search::CATEGORY_FILTER_KEYS
+                    .iter()
+                    .map(|key| (*key).to_owned())
+                    .collect::<Vec<_>>(),
+                Some(key),
+                Message::FilesCategoryChanged,
+            )
+            .text_size(12),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::End)
+        .padding(Padding::new(4.0).right(10));
+        let empty = match &page.status {
+            Status::Loading => Some("Searching files…"),
+            Status::Failed(reason) => Some(reason.as_str()),
+            Status::Ready if page.rows.is_empty() => Some("No files found"),
+            Status::Ready => None,
+        };
+        if let Some(empty) = empty {
+            return column![filter, self.notice(empty)].into();
         }
         let home =
             compass_core::xdg_dirs::home_dir().map(|home| home.to_string_lossy().into_owned());
@@ -3368,9 +3442,17 @@ impl LauncherApp {
         let rows = scrollable(container(list).padding(Padding::new(6.0).top(8)))
             .id(crate::scroll::ROOT_RESULTS)
             .height(Length::Shrink);
-        match &page.notice {
-            Some(notice) => column![rows, self.notice(notice)].into(),
+        let rows: Element<Message> = match &page.preview {
+            Some(preview) => row![
+                container(rows).width(Length::FillPortion(preview::LIST_PORTION)),
+                self.file_preview_pane(preview, true),
+            ]
+            .into(),
             None => rows.into(),
+        };
+        match &page.notice {
+            Some(notice) => column![filter, rows, self.notice(notice)].into(),
+            None => column![filter, rows].into(),
         }
     }
 
@@ -4402,8 +4484,7 @@ impl LauncherApp {
                 Task::batch([record, focus_search()])
             }
             CommandKind::SearchFiles => {
-                self.page = Page::Files(crate::files_page::FilesPage::default());
-                Task::batch([record, self.files_query_task(), focus_search()])
+                Task::batch([record, self.open_search_files(String::new())])
             }
             CommandKind::CreateShortcut => Task::batch([
                 record,
@@ -4435,6 +4516,18 @@ impl LauncherApp {
                 Task::batch([record, self.list_windows_task(), focus_search()])
             }
         }
+    }
+
+    /// Opens Search Files with `query` typed, and the remembered category
+    /// (`restoreCategoryFilter`: anything but "All").
+    fn open_search_files(&mut self, query: String) -> Task<Message> {
+        let mut page = crate::files_page::FilesPage::default();
+        if let Some(key) = self.view_memory.get(crate::view_memory::FILE_CATEGORY) {
+            page.set_category(key);
+        }
+        page.set_query(query);
+        self.page = Page::Files(page);
+        Task::batch([self.files_query_task(), focus_search()])
     }
 
     /// Asks Search Files' query: at once, or once its debounce runs out.
@@ -4475,8 +4568,9 @@ impl LauncherApp {
             return Task::none();
         };
         let query = page.query.clone();
+        let category = page.category.clone();
         Task::perform(
-            async move { backend.search_files(query).await },
+            async move { backend.search_files(query, category).await },
             move |result| Message::FilesLoaded { generation, result },
         )
     }
@@ -4685,7 +4779,37 @@ impl LauncherApp {
         // unrelated application.
         self.selected = 0;
         self.apply_calculator();
+        self.apply_fallbacks();
         self.warm_icons();
+    }
+
+    /// Offers the fallback commands under the results for a non-empty query,
+    /// as `RootFallbackSection` does.
+    fn apply_fallbacks(&mut self) {
+        self.results
+            .retain(|row| !matches!(row, RootRow::Fallback(_)));
+        if self.query.trim().is_empty() {
+            return;
+        }
+        self.results
+            .extend(self.fallbacks.iter().copied().map(RootRow::Fallback));
+    }
+
+    /// Runs a fallback command with the query: Search Files opens searching
+    /// for it.
+    fn open_fallback(
+        &mut self,
+        command: &'static compass_core::commands::BuiltinCommand,
+    ) -> Task<Message> {
+        use compass_core::commands::CommandKind;
+        self.panel = None;
+        match command.kind {
+            CommandKind::SearchFiles => {
+                let query = self.query.clone();
+                self.open_search_files(query)
+            }
+            _ => self.open_command(command),
+        }
     }
 
     /// Puts the calculator's answer to the query first, when there is one.
@@ -4735,6 +4859,7 @@ impl LauncherApp {
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
                 | RootRow::Calculator => None,
             })
             .filter_map(AppItem::icon)
@@ -5168,9 +5293,13 @@ mod tests {
         fn search_files(
             &self,
             query: String,
+            category: Option<String>,
         ) -> crate::backend::BackendFuture<'_, crate::backend::FileResults> {
             Box::pin(async move {
-                self.file_queries.lock().unwrap().push(query.clone());
+                self.file_queries.lock().unwrap().push(match &category {
+                    Some(category) => format!("{query} [{category}]"),
+                    None => query.clone(),
+                });
                 Ok(crate::backend::FileResults {
                     heading: if query.is_empty() {
                         "Recently Accessed".to_owned()
@@ -5181,6 +5310,7 @@ mod tests {
                         .files
                         .iter()
                         .filter(|file| file.name.contains(&query))
+                        .filter(|file| category.as_ref().is_none_or(|c| &file.category == c))
                         .cloned()
                         .collect(),
                 })
@@ -7708,6 +7838,7 @@ mod tests {
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
                 | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
@@ -7858,6 +7989,98 @@ mod tests {
             backend.opened.lock().unwrap().as_slice(),
             [("/home/me/Documents/quarterly-report.pdf".to_owned(), true)]
         );
+    }
+
+    #[test]
+    fn search_files_filters_by_a_remembered_category_and_previews_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.txt");
+        std::fs::write(&notes, "remember the milk").unwrap();
+        let picture = dir.path().join("cat.png");
+        std::fs::write(&picture, b"png").unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![
+                file_row(&notes.to_string_lossy(), "Documents"),
+                file_row(&picture.to_string_lossy(), "Images"),
+            ],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+        app.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut app, "search files", "commands:search-files");
+        let page = files_page(&app);
+        let preview = page.preview.as_ref().expect("the selection is previewed");
+        assert_eq!(preview.name, "notes.txt");
+        assert_eq!(
+            preview.content,
+            crate::file_preview::Content::Text("remember the milk".into())
+        );
+        assert!(preview.modified.is_some());
+        let _ = app.view();
+
+        let task = app.update(Message::FilesCategoryChanged("Images".into()));
+        settle(&mut app, task);
+        let page = files_page(&app);
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            page.preview.as_ref().map(|p| p.content.clone()),
+            Some(crate::file_preview::Content::Image(picture.clone()))
+        );
+        assert_eq!(
+            backend
+                .file_queries
+                .lock()
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some(" [Images]")
+        );
+
+        // A new opening, even in a new process, starts filtered.
+        let mut again = LauncherApp::with_index(index(dir.path()));
+        again.backend = Some(backend.clone());
+        again.view_memory =
+            crate::view_memory::ViewMemory::load(Some(dir.path().join("view-state.json")));
+        open_builtin(&mut again, "search files", "commands:search-files");
+        assert_eq!(files_page(&again).category.as_deref(), Some("Images"));
+    }
+
+    #[test]
+    fn a_query_offers_search_files_as_a_fallback_that_searches_for_it() {
+        // The typed query waits out the indexer's debounce on a timer.
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _entered = runtime.enter();
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            files: vec![file_row("/home/me/zebra-notes.md", "Documents")],
+            ..TestBackend::default()
+        });
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.apply(AppFlags {
+            backend: Some(backend.clone()),
+            fallbacks: vec!["files:search".into()],
+            ..AppFlags::default()
+        });
+        app.query = "zebra".into();
+        app.search();
+        assert!(
+            matches!(app.results.last(), Some(RootRow::Fallback(c))
+                if c.kind == compass_core::commands::CommandKind::SearchFiles),
+            "{}",
+            app.state_line()
+        );
+        let _ = app.view();
+        app.selected = app.results.len() - 1;
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let page = files_page(&app);
+        assert_eq!(page.query, "zebra");
+        assert_eq!(page.rows.len(), 1);
+        app.query.clear();
+        app.search();
+        assert!(app.results.is_empty(), "an empty query offers no fallback");
     }
 
     #[test]
@@ -9610,6 +9833,7 @@ mod quick_launch_tests {
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
                 | RootRow::Calculator => None,
             })
             .map(|item| item.name().to_owned())
@@ -9758,6 +9982,7 @@ mod icon_tests {
                 | RootRow::Shortcut(_)
                 | RootRow::Script(_)
                 | RootRow::RhaiScript(_)
+                | RootRow::Fallback(_)
                 | RootRow::Calculator => None,
             })
             .find(|item| item.name() == name)

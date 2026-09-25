@@ -257,7 +257,8 @@ ported (47 C++ cases, verbatim inputs). Still C++-only:
 - the sibling modules below (the `DesktopFile` layer itself is now ported as
   `compass_xdg::desktop_file`: `relativeId`, `fromId`'s two-candidate lookup, and the standalone
   filename id, with 24 tests and 16 controls);
-- the sibling modules `bookmark`, `env`, `file-uri`, `file`, `mime`, `special`.
+- the sibling modules `env`, `file`, `mime`, `special` (`bookmark` and `file-uri`, reading and
+  writing, are `compass_xdg::bookmarks`).
 
 
 #### An unresolved disagreement: two desktop file id schemes
@@ -689,7 +690,7 @@ comparison. Rebuilding the index is written and deliberately unregistered in the
 saying the indexer's timed sweeps and deleting its cache directory have the same effect; the port
 keeps it unregistered for the same reason, and a test pins that.
 
-Still C++-only: the indexer behind the search, the file preview in the detail pane, the drag payload
+Still C++-only: the indexer behind the search, the drag payload
 and the per-platform preference sets.
 
 **`src/builtins/media` → `compass-core::media_commands`** — which commands exist on which platform,
@@ -2052,12 +2053,12 @@ differs:
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | An index query while the indexer is not running answers an empty list. | Refused with `Unsupported` and a sentence saying the indexer is off or missing, which the launcher shows; an empty list would read as "no such file". | `search_files_without_indexing_says_the_index_is_unavailable`, `an_index_query_without_an_indexer_says_so` |
-| 2 | The category filter is a dropdown beside the search field, stored per command. | The wire carries it (`SearchFiles.category`, the filter's untranslated key) and the engine and indexer apply it; the launcher has no dropdown yet and always sends none. | `search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query` |
-| 3 | A detail pane previews the selected file (name, path, MIME type, modified time, image or text). | Not yet. Rows carry the folder (home as `~`) as their subtitle instead, where the C++ row has none. | `the_subtitle_is_the_folder_with_home_folded` |
+| 2 | The category filter is a dropdown beside the search field, stored per command (`fileCategory`) and restored when it is not "All". | A dropdown over the list with the same keys, sent as `SearchFiles.category` and applied by the engine and the indexer; remembered with the same rule in the launcher's state file (`view_memory`), as Browse Fonts' is, rather than the keyring-backed command storage. | `search_files_filters_by_a_remembered_category_and_previews_the_selection`, `search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query` |
+| 3 | A detail pane previews the selected file (name, path, MIME type, modified time, image or text). | The same pane (`compass_ui::file_preview`, shared with dmenu's quick look): the path with home folded, the modified time as `QDateTime::toString()` writes it, an image drawn or the first 10 KiB of a text file. Rows also carry the folder as their subtitle, where the C++ row has none. The MIME type comes from the extension. | `search_files_filters_by_a_remembered_category_and_previews_the_selection`, `a_text_file_shows_its_start_and_an_image_itself` |
 | 4 | The action panel: Open with…, Run executable (AppImage), Set as wallpaper, Create shortcut, Paste, Copy file / path / name / MIME type. | Only the primary action (open with the default application for the file's MIME type) and Show in file browser. | `enter_opens_the_file_and_ctrl_enter_shows_it_in_the_file_browser` |
-| 5 | Opening a file records it in `recently-used.xbel`, so it tops the empty query next time. | Not recorded: `compass-xdg::bookmarks` reads the file and does not write it (see its module doc). | — |
-| 6 | Show in file browser selects the file through `org.freedesktop.FileManager1`. | Opens the folder it is in with the `inode/directory` handler, as `EngineApps::show_in_file_browser` does for extensions. | — |
-| 7 | Search Files is a fallback command: a root query nothing matches offers it. | The launcher has no fallback rows yet; the command is opened from root search like any other. | — |
+| 5 | Opening a file records it in `recently-used.xbel` (`recordAccess`: `vicinae` added as an application, the MIME type set, the whole file written back owner-only through a temporary file), so it tops the empty query next time. | The same, through `compass_xdg::bookmarks::record_access` (written with `xmlwriter`); as in the C++, elements the bookmark model does not hold are not written back. | `recording_an_access_adds_then_bumps_and_keeps_the_rest`, `search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly` |
+| 6 | Show in file browser selects the file through `org.freedesktop.FileManager1`. | The same `ShowItems` call (a `zbus` proxy, 3 s timeout), for extensions' `showInFileBrowser` too; when nothing on the bus implements it, the folder is opened with the `inode/directory` handler. | `show_in_file_browser_asks_file_manager1_to_select_the_file` |
+| 7 | Search Files is a fallback command: a non-empty query lists the `fallbacks` (default `["files:search"]`) under `Use "<query>" with...`, and choosing one opens it searching for the query. | The same section and heading after the results, from `fallbacks` (Search Files by its C++ id or its Compass one); the C++ hides the section while a file search it runs in root search is still answering, which Compass's root search does not do. | `a_query_offers_search_files_as_a_fallback_that_searches_for_it`, `search_files_is_the_one_fallback_by_either_id` |
 | 8 | Scan progress (`scanStatusChanged`) feeds a status indicator. | The client tracks scans, and nothing shows them. | — |
 | 9 | Recent files come from `$XDG_DATA_HOME/recently-used.xbel`. | The same — which inside the Flatpak is the sandbox's own data home, not the host's, so there the empty query falls through to "Recently Modified" from the index. | — |
 

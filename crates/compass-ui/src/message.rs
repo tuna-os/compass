@@ -117,6 +117,8 @@ pub enum Message {
     EmojiSelected(usize),
     /// Search Files' text changed.
     FilesQueryChanged(String),
+    /// Search Files' category filter changed, by its key.
+    FilesCategoryChanged(String),
     /// The debounce for Search Files query `generation` ran out; ask, unless
     /// the text moved on meanwhile.
     FilesDebounced(u64),

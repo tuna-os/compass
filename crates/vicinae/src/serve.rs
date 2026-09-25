@@ -556,6 +556,21 @@ async fn open_file(state: &Arc<RwLock<EngineState>>, path: String, reveal: bool)
         return Response::Ack;
     }
     if apps.open_file(&target) {
+        // `OpenFileAction` records the open, so the file tops the empty
+        // query next time.
+        if let Some(xbel) = compass_xdg::bookmarks::recently_used_path() {
+            let recorded = tokio::task::spawn_blocking(move || {
+                let mime = compass_xdg::mimeapps::file_mime(&target);
+                let now = jiff::Timestamp::now()
+                    .strftime("%Y-%m-%dT%H:%M:%S%.6fZ")
+                    .to_string();
+                compass_xdg::bookmarks::record_access(&xbel, &target, &mime, &now)
+            })
+            .await;
+            if let Ok(Err(error)) = recorded {
+                tracing::warn!(%error, "not recording a recent file access");
+            }
+        }
         Response::Ack
     } else {
         Response::Error(ProtocolError::new(

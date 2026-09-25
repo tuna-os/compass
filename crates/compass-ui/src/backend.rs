@@ -53,10 +53,15 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
-    /// Search Files: what `query` answers, with the list's heading. An error
-    /// is the sentence to show.
-    fn search_files(&self, query: String) -> BackendFuture<'_, FileResults> {
-        let _ = query;
+    /// Search Files: what `query` answers within `category` (a filter key,
+    /// `None` for all), with the list's heading. An error is the sentence to
+    /// show.
+    fn search_files(
+        &self,
+        query: String,
+        category: Option<String>,
+    ) -> BackendFuture<'_, FileResults> {
+        let _ = (query, category);
         Box::pin(async { Err(FILES_NEED_ENGINE.to_owned()) })
     }
 

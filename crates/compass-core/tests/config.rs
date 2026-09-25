@@ -50,6 +50,12 @@ fn root_settings_use_upstream_ids_and_preserve_provider_preferences() {
 fn absent_root_settings_stay_absent_and_malformed_settings_are_rejected() {
     assert_eq!(parse("{}").root_config(), Default::default());
     assert_eq!(
+        parse("{}").fallback_ids(),
+        ["files:search"],
+        "the default file's"
+    );
+    assert!(parse(r#"{"fallbacks": []}"#).fallback_ids().is_empty());
+    assert_eq!(
         serde_json::to_value(parse("{}")).unwrap(),
         serde_json::json!({})
     );

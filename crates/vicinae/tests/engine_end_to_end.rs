@@ -2546,6 +2546,85 @@ exit 0
     );
 }
 
+/// A file manager that records what it was asked to show.
+struct FakeFileManager {
+    shown: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[zbus::interface(name = "org.freedesktop.FileManager1")]
+impl FakeFileManager {
+    fn show_items(&self, uris: Vec<String>, _startup_id: String) {
+        self.shown.lock().expect("log").extend(uris);
+    }
+}
+
+#[test]
+fn show_in_file_browser_asks_file_manager1_to_select_the_file() {
+    use compass_ipc::{Request, Response};
+    use std::io::{BufRead, BufReader};
+    let mut bus = match Command::new("dbus-daemon")
+        .args(["--session", "--print-address", "--nofork"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(bus) => bus,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("SKIPPED: no dbus-daemon on this machine");
+            return;
+        }
+        Err(err) => panic!("failed to spawn dbus-daemon: {err}"),
+    };
+    let mut address = String::new();
+    BufReader::new(bus.stdout.take().expect("piped stdout"))
+        .read_line(&mut address)
+        .expect("dbus-daemon prints its address");
+    let address = address.trim().to_owned();
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime for the file manager");
+    let shown = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let _manager: zbus::Connection = runtime.block_on(async {
+        zbus::connection::Builder::address(address.as_str())
+            .expect("the private bus")
+            .name("org.freedesktop.FileManager1")
+            .expect("the name")
+            .serve_at(
+                "/org/freedesktop/FileManager1",
+                FakeFileManager {
+                    shown: std::sync::Arc::clone(&shown),
+                },
+            )
+            .expect("the interface")
+            .build()
+            .await
+            .expect("the file manager connects")
+    });
+    let file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+        let path = root.join("My Notes.txt");
+        std::fs::write(&path, "x").unwrap();
+        file.set(path).unwrap();
+        vec![("DBUS_SESSION_BUS_ADDRESS", address.clone().into())]
+    });
+    assert_eq!(
+        daemon.request(Request::OpenFile {
+            path: file.get().unwrap().to_string_lossy().into_owned(),
+            reveal: true,
+        }),
+        Response::Ack
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while shown.lock().unwrap().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(daemon);
+    let _ = bus.kill();
+    let _ = bus.wait();
+    let shown = shown.lock().unwrap();
+    assert_eq!(shown.len(), 1, "ShowItems was called once");
+    assert!(shown[0].starts_with("file:///"), "{shown:?}");
+    assert!(shown[0].ends_with("/My%20Notes.txt"), "{shown:?}");
+}
+
 /// A mock MPRIS player for the engine's media tests.
 struct FakePlayer {
     status: &'static str,
@@ -2808,7 +2887,16 @@ fn search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_quer
 #[test]
 fn search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly() {
     use compass_ipc::{ErrorKind, Request, Response};
-    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |root| {
+    let root_dir = std::sync::OnceLock::new();
+    let opener = entry("Plain Opener", "MimeType=text/plain;\n");
+    let entries = [
+        ("a.desktop", entry("Alpha", "")),
+        ("plain-opener.desktop", opener),
+    ];
+    let entries: Vec<(&str, &str)> = entries.iter().map(|(n, e)| (*n, e.as_str())).collect();
+    let daemon = Daemon::start_prepared(&entries, "{}", |root| {
+        root_dir.set(root.to_path_buf()).unwrap();
+        std::fs::write(root.join("plain.txt"), "hello").unwrap();
         let notes = root.join("notes.md");
         std::fs::write(&notes, "# notes").unwrap();
         let data_home = root.join("data-home");
@@ -2869,6 +2957,27 @@ fn search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly
         panic!("opening a file nothing opens was not refused");
     };
     assert_eq!(err.kind, ErrorKind::Unsupported);
+
+    // Opening one something does open (`/bin/true` here) records it in
+    // `recently-used.xbel`, keeping what was there.
+    let root = root_dir.get().unwrap();
+    let plain = root.join("plain.txt");
+    assert_eq!(
+        daemon.request(Request::OpenFile {
+            path: plain.to_string_lossy().into_owned(),
+            reveal: false,
+        }),
+        Response::Ack
+    );
+    let xbel = std::fs::read_to_string(root.join("data-home/recently-used.xbel")).unwrap();
+    let bookmarks = compass_xdg::bookmarks::parse(&xbel).unwrap();
+    assert_eq!(bookmarks.len(), 3, "{xbel}");
+    let recorded = bookmarks
+        .iter()
+        .find(|b| b.path().as_deref() == Some(plain.as_path()))
+        .expect("the opened file is recorded");
+    assert_eq!(recorded.mime_type.as_deref(), Some("text/plain"));
+    assert_eq!(recorded.applications[0].name, "vicinae");
 }
 
 #[test]

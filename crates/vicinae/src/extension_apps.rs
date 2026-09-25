@@ -11,6 +11,29 @@ use compass_worker_host::application_service::{Application, Apps, TerminalOption
 use compass_xdg::DesktopEntry;
 use compass_xdg::mimeapps::{Lists, target_mime};
 
+/// Launches `entry` with `target` (none when empty).
+async fn launch_entry(id: String, entry: Arc<DesktopEntry>, target: String) {
+    let uris: Vec<&str> = if target.is_empty() {
+        Vec::new()
+    } else {
+        vec![target.as_str()]
+    };
+    if let Err(error) = compass_platform_linux::LinuxLauncher
+        .launch(&entry, &uris)
+        .await
+    {
+        tracing::warn!(%error, app = %id, "an extension's open did not launch");
+    }
+}
+
+/// A local path as a `file://` URI, percent-encoded as `QUrl::fromLocalFile`.
+fn file_uri(path: &std::path::Path) -> String {
+    url::Url::from_file_path(path).map_or_else(
+        |()| format!("file://{}", path.to_string_lossy()),
+        |url| url.to_string(),
+    )
+}
+
 /// A snapshot of the installed applications and the MIME associations, taken
 /// when the command starts.
 #[derive(Debug)]
@@ -239,22 +262,11 @@ impl Apps for EngineApps {
         let Some((_, entry)) = self.find(&app.id) else {
             return;
         };
-        let entry = Arc::clone(entry);
-        let target = target.to_owned();
-        let id = app.id.clone();
-        self.runtime.spawn(async move {
-            let uris: Vec<&str> = if target.is_empty() {
-                Vec::new()
-            } else {
-                vec![target.as_str()]
-            };
-            if let Err(error) = compass_platform_linux::LinuxLauncher
-                .launch(&entry, &uris)
-                .await
-            {
-                tracing::warn!(%error, app = %id, "an extension's open did not launch");
-            }
-        });
+        self.runtime.spawn(launch_entry(
+            app.id.clone(),
+            Arc::clone(entry),
+            target.to_owned(),
+        ));
     }
 
     fn show_in_file_browser(&self, target: &str, select: bool) {
@@ -266,15 +278,36 @@ impl Apps for EngineApps {
         } else {
             path
         };
-        let folder = folder.to_string_lossy();
-        if let Some(opener) = self
+        let folder = folder.to_string_lossy().into_owned();
+        let opener = self
             .lists
             .default_for("inode/directory", &self.usable())
             .or_else(|| self.opener_ids("inode/directory").into_iter().next())
-            .and_then(|id| self.find(&id).map(|(app, _)| app.clone()))
-        {
-            self.launch(&opener, &folder);
+            .and_then(|id| {
+                self.find(&id)
+                    .map(|(app, entry)| (app.id.clone(), Arc::clone(entry)))
+            });
+        if !select {
+            if let Some((id, entry)) = opener {
+                self.runtime.spawn(launch_entry(id, entry, folder));
+            }
+            return;
         }
+        // `FileManager1.ShowItems` opens the folder with the file selected,
+        // which is what the C++'s `showInFileBrowser` asks; a desktop whose
+        // file manager does not implement it gets the folder.
+        let uri = file_uri(path);
+        self.runtime.spawn(async move {
+            match crate::file_manager::show_items(&uri).await {
+                Ok(()) => {}
+                Err(error) => {
+                    tracing::info!(%error, "FileManager1 did not show the file; opening its folder");
+                    if let Some((id, entry)) = opener {
+                        launch_entry(id, entry, folder).await;
+                    }
+                }
+            }
+        });
     }
 
     fn run_in_terminal(&self, cmdline: &[String], options: &TerminalOptions) -> bool {

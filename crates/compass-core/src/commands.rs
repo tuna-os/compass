@@ -392,6 +392,23 @@ pub fn by_id(id: &str) -> Option<&'static BuiltinCommand> {
     BUILTIN_COMMANDS.iter().find(|command| command.id() == id)
 }
 
+/// The C++ id of Search Files, which the default `fallbacks` list names.
+pub const SEARCH_FILES_FALLBACK_ID: &str = "files:search";
+
+/// The builtin command a `fallbacks` entry names, when it is one that can be
+/// a fallback (`isFallback`): Search Files, by its C++ id or its Compass one.
+#[must_use]
+pub fn fallback(id: &str) -> Option<&'static BuiltinCommand> {
+    let command = if id == SEARCH_FILES_FALLBACK_ID {
+        BUILTIN_COMMANDS
+            .iter()
+            .find(|command| command.kind == CommandKind::SearchFiles)
+    } else {
+        by_id(id)
+    }?;
+    (command.kind == CommandKind::SearchFiles).then_some(command)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +435,20 @@ mod tests {
                 assert!(registered.iter().any(|r| r == id), "{id}");
             }
         }
+    }
+
+    #[test]
+    fn search_files_is_the_one_fallback_by_either_id() {
+        assert_eq!(
+            fallback("files:search").map(|c| c.kind),
+            Some(CommandKind::SearchFiles)
+        );
+        assert_eq!(
+            fallback("commands:search-files").map(|c| c.kind),
+            Some(CommandKind::SearchFiles)
+        );
+        assert_eq!(fallback("commands:clipboard-history"), None);
+        assert_eq!(fallback("nothing:here"), None);
     }
 
     #[test]

@@ -171,16 +171,14 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
-    fn search_files(&self, query: String) -> BackendFuture<'_, FileResults> {
+    fn search_files(
+        &self,
+        query: String,
+        category: Option<String>,
+    ) -> BackendFuture<'_, FileResults> {
         Box::pin(async move {
             match self
-                .ask(
-                    Request::SearchFiles {
-                        query,
-                        category: None,
-                    },
-                    "File search",
-                )
+                .ask(Request::SearchFiles { query, category }, "File search")
                 .await?
             {
                 compass_ipc::Response::Files { heading, files } => Ok(FileResults {
