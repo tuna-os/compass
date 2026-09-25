@@ -286,7 +286,7 @@ impl RhaiScripts {
             }
         }
         for id in &rebuilt {
-            self.renew_sessions(id);
+            self.renew_sessions(id, None);
         }
         items
     }
@@ -393,13 +393,15 @@ impl RhaiScripts {
             .collect()
     }
 
-    /// Hands the views open on `id` its new instance, and renders them again.
-    fn renew_sessions(&self, id: &ExtensionId) {
+    /// Hands the views open on `id` its new instance, and renders them again,
+    /// all but `except`, which renders itself: a second render racing it would
+    /// retire the action tokens of the first.
+    fn renew_sessions(&self, id: &ExtensionId, except: Option<&Arc<Session>>) {
         let Some(instance) = self.instance(id) else {
             return;
         };
         for session in self.sessions_of(id) {
-            if session.awaiting_consent() {
+            if session.awaiting_consent() || except.is_some_and(|e| Arc::ptr_eq(e, &session)) {
                 continue;
             }
             session.set_instance(instance.clone());
@@ -541,7 +543,7 @@ impl RhaiScripts {
         let instance = self.instance(&session.script);
         session.consented(instance);
         // Other views of the same script were built without the grant.
-        self.renew_sessions(&session.script);
+        self.renew_sessions(&session.script, Some(&session));
         session.render().await;
         Ok(())
     }
