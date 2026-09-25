@@ -78,7 +78,7 @@ rm -f "$FIXTURE"
 # deleted. Killing the app between runs is what makes the two runs independent,
 # and independence is the entire basis for attributing the difference to the
 # fixture.
-flatpak kill com.vicinae.Vicinae 2>/dev/null || true
+flatpak kill org.tunaos.compass 2>/dev/null || true
 if "$SMOKE"; then
   cat >&2 <<'WHY'
 PROOF FAILED: the smoke PASSED with its fixture deleted.

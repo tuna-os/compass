@@ -5,7 +5,7 @@
 # is in scripts/suite1/select.py): the top 25 Raycast store extensions by
 # installs that can run on Linux at all, and every Vicinae store extension.
 # fetch.py downloads the prebuilt bundles the stores serve — what a user's
-# install gets — and `vicinae conformance` runs them against an engine of its
+# install gets — and `compass conformance` runs them against an engine of its
 # own, behind the same sandbox a user's run has.
 #
 # THE GATE IS A RATCHET, NOT YET THE PHASE 4 GATE
@@ -80,7 +80,7 @@ jobs:
         run: ./scripts/build-extension-runtime.sh
 
       - name: Build the engine and the sandbox launcher
-        run: cargo build -p vicinae -p compass-sandbox --bins
+        run: cargo build -p compass -p compass-sandbox --bins
 
       - name: Fetch the corpus from the stores
         run: |
@@ -93,7 +93,7 @@ jobs:
         run: |
           # The harness exits non-zero while any command fails; the ratchet
           # below is the judgement, so that status is not the step's.
-          scripts/suite1/run.sh target/debug/vicinae /tmp/suite1/extensions \
+          scripts/suite1/run.sh target/debug/compass /tmp/suite1/extensions \
             /tmp/suite1/plan.json /tmp/suite1/report.json 30 || true
           test -s /tmp/suite1/report.json
 
@@ -144,21 +144,21 @@ jobs:
           path: /tmp/bundle
 
       - name: Install the bundle
-        run: flatpak install --user --noninteractive --bundle /tmp/bundle/com.vicinae.Vicinae.flatpak
+        run: flatpak install --user --noninteractive --bundle /tmp/bundle/org.tunaos.compass.flatpak
 
       # Straight into the app's own data directory, which is where the
       # engine inside the sandbox looks.
       - name: Fetch the corpus from the stores
         run: |
           python3 scripts/suite1/fetch.py \
-            "$HOME/.var/app/com.vicinae.Vicinae/data/vicinae/extensions" /tmp/suite1/plan.json
+            "$HOME/.var/app/org.tunaos.compass/data/compass/extensions" /tmp/suite1/plan.json
 
       - name: Run every command inside the Flatpak
         run: |
           export XDG_CURRENT_DESKTOP=GNOME
           dbus-run-session -- sh -c '
             printf compass | gnome-keyring-daemon --unlock --components=secrets >/dev/null
-            flatpak run --user --filesystem=/tmp/suite1 --command=vicinae com.vicinae.Vicinae \
+            flatpak run --user --filesystem=/tmp/suite1 --command=compass org.tunaos.compass \
               conformance --plan /tmp/suite1/plan.json --timeout 30 --json > /tmp/suite1/report.json
           ' || true
           test -s /tmp/suite1/report.json

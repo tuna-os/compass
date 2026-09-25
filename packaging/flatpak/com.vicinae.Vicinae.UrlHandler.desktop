@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Compass Deeplink Handler
-Comment=Hands raycast:// and vicinae:// links, such as an extension's sign-in, to Compass
-Exec=vicinae deeplink %u
-Icon=com.vicinae.Vicinae
-Terminal=false
-NoDisplay=true
-MimeType=x-scheme-handler/vicinae;x-scheme-handler/raycast;x-scheme-handler/com.raycast;

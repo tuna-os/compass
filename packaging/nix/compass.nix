@@ -1,6 +1,6 @@
 # The Rust engine, installed the way the Flatpak installs it.
 #
-# `nix build .#rust-vicinae` (alias `.#compass`). The layout comes from
+# `nix build .#compass` (alias `.#rust-vicinae`). The layout comes from
 # scripts/packaging/install-rust-engine.sh, shared with the AppImage and the
 # Arch package, and scripts/packaging/smoke.sh checks it in CI (Suite 5).
 #
@@ -49,7 +49,7 @@
     strictDeps = true;
     # compass-input-server: the keyboard helper; the Nix store cannot carry
     # its capability, so NixOS wraps it (security.wrappers, packaging/README.md).
-    cargoExtraArgs = "--locked -p vicinae -p compass-sandbox -p compass-input-server --bins";
+    cargoExtraArgs = "--locked -p compass -p compass-sandbox -p compass-input-server --bins";
     doCheck = false;
 
     nativeBuildInputs = [
@@ -68,7 +68,7 @@
   };
 
   # Built on its own so the install and fixup below apply to the package
-  # only: the dependencies-only build has no bin/vicinae to patch.
+  # only: the dependencies-only build has no bin/compass to patch.
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 in
   craneLib.buildPackage (commonArgs
@@ -77,7 +77,7 @@ in
 
       installPhaseCommand = ''
         PREFIX="$out" LIBEXECDIR="$out/libexec" BIN_DIR="$PWD/target/release" \
-          RUNTIME_JS=${extensionRuntime}/share/vicinae/extension-runtime.js REQUIRE_RUNTIME=1 \
+          RUNTIME_JS=${extensionRuntime}/share/compass/extension-runtime.js REQUIRE_RUNTIME=1 \
           bash scripts/packaging/install-rust-engine.sh
       '';
 
@@ -87,17 +87,17 @@ in
       # XDG_DATA_DIRS. The helpers, the runtime bundle and the schema are found
       # relative to the binary, which the wrapper keeps in $out/bin.
       postFixup = ''
-        patchelf --add-rpath ${dlopened} "$out/bin/vicinae"
-        wrapProgram "$out/bin/vicinae" \
+        patchelf --add-rpath ${dlopened} "$out/bin/compass"
+        wrapProgram "$out/bin/compass" \
           --set-default COMPASS_NODE ${lib.getExe nodejs} \
-          --set-default COMPASS_BUILTIN_ICONS "$out/share/vicinae/builtin-icons"
+          --set-default COMPASS_BUILTIN_ICONS "$out/share/compass/builtin-icons"
       '';
 
       meta = {
-        description = "Compass, the Rust engine of Vicinae";
+        description = "Compass, a fast, extensible command palette for Linux";
         homepage = "https://github.com/tuna-os/compass";
         license = lib.licenses.gpl3Only;
         platforms = lib.platforms.linux;
-        mainProgram = "vicinae";
+        mainProgram = "compass";
       };
     })

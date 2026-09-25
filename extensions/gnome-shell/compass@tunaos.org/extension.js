@@ -18,8 +18,8 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const CONTRACT_VERSION = 4;
-const WINDOWS_PATH = '/org/gnome/Shell/Extensions/Vicinae/Windows';
-const CLIPBOARD_PATH = '/org/gnome/Shell/Extensions/Vicinae/Clipboard';
+const WINDOWS_PATH = '/org/tunaos/compass/Shell/Windows';
+const CLIPBOARD_PATH = '/org/tunaos/compass/Shell/Clipboard';
 
 // Bursts of window events (a window opening fires several) become one signal.
 const COALESCE_MS = 100;
@@ -316,9 +316,9 @@ class ClipboardService {
 export default class CompassExtension extends Extension {
     enable() {
         this._windows = new WindowsService(
-            readInterfaceXml(this, 'org.gnome.Shell.Extensions.Vicinae.Windows'));
+            readInterfaceXml(this, 'org.tunaos.compass.Shell.Windows'));
         this._clipboard = new ClipboardService(
-            readInterfaceXml(this, 'org.gnome.Shell.Extensions.Vicinae.Clipboard'));
+            readInterfaceXml(this, 'org.tunaos.compass.Shell.Clipboard'));
         this._windows.enable();
         this._clipboard.enable();
     }

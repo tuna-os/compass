@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the Compass (Rust engine) AppImage from release binaries.
 #
-#   cargo build --release --locked -p vicinae -p compass-sandbox -p compass-input-server --bins
+#   cargo build --release --locked -p compass -p compass-sandbox -p compass-input-server --bins
 #   scripts/build-extension-runtime.sh          # optional; see REQUIRE_RUNTIME
 #   packaging/appimage/build-appimage.sh
 #
@@ -72,12 +72,12 @@ appdir="$work/AppDir"
 DESTDIR="$appdir" PREFIX=/usr LIBEXECDIR=/usr/libexec BIN_DIR="$bin_dir" \
   "$repo_root/scripts/packaging/install-rust-engine.sh"
 
-app_id=com.vicinae.Vicinae
+app_id=org.tunaos.compass
 "$tools/linuxdeploy-x86_64.AppImage" \
   --appdir "$appdir" \
-  --executable "$appdir/usr/bin/vicinae" \
-  --deploy-deps-only "$appdir/usr/libexec/vicinae/vicinae-file-indexer" \
-  --deploy-deps-only "$appdir/usr/libexec/vicinae/compass-sandbox-exec" \
+  --executable "$appdir/usr/bin/compass" \
+  --deploy-deps-only "$appdir/usr/libexec/compass/compass-file-indexer" \
+  --deploy-deps-only "$appdir/usr/libexec/compass/compass-sandbox-exec" \
   --desktop-file "$appdir/usr/share/applications/$app_id.desktop" \
   --icon-file "$appdir/usr/share/icons/hicolor/scalable/apps/$app_id.svg" \
   --custom-apprun "$repo_root/packaging/appimage/AppRun"
@@ -86,7 +86,7 @@ tar -xJf "$tools/node-$NODE_VERSION-linux-x64.tar.xz" -C "$work" \
   "node-$NODE_VERSION-linux-x64/bin/node"
 install -Dm755 "$work/node-$NODE_VERSION-linux-x64/bin/node" "$appdir/usr/bin/node"
 
-version="$("$appdir/usr/bin/vicinae" --version | awk '{print $2}')"
+version="$("$appdir/usr/bin/compass" --version | awk '{print $2}')"
 out="${OUT:-$repo_root/Compass-$version-x86_64.AppImage}"
 
 # --no-appstream: the metainfo is validated where it is reviewed, by the

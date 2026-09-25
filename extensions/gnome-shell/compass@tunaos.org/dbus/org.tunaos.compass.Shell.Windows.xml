@@ -4,7 +4,7 @@
   Compass <-> GNOME Shell helper extension contract: windows.
 
   Well-known name : org.gnome.Shell
-  Object path     : /org/gnome/Shell/Extensions/Vicinae/Windows
+  Object path     : /org/tunaos/compass/Shell/Windows
 
   This is a VERSIONED contract (PLAN.md 3.5.2-3). The whole point of it is to be
   small enough that a GNOME release breaks a ~200-line extension rather than the
@@ -30,7 +30,7 @@
         speaks 3, without workspaces.
 -->
 <node>
-  <interface name="org.gnome.Shell.Extensions.Vicinae.Windows">
+  <interface name="org.tunaos.compass.Shell.Windows">
 
     <!-- Contract version implemented by the extension. Compass refuses to use
          an interface whose Version it does not speak, and degrades instead. -->

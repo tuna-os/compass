@@ -3,7 +3,7 @@
 # Built by the same scripts/build-extension-runtime.sh the Flatpak workflow and
 # the Arch package run: figura (C++23) generates the protocol, npm bundles it.
 # The npm dependencies are the C++ package's own fetchNpmDeps outputs, passed
-# in by flake.nix, so their hashes live in one place (nix/vicinae.nix) and
+# in by flake.nix, so their hashes live in one place (nix/compass.nix) and
 # `nix run .#nix-update-script` keeps checking them.
 {
   lib,
@@ -46,7 +46,7 @@ gcc15Stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     install -Dm644 src/typescript/extension-manager/dist/runtime.js \
-      "$out/share/vicinae/extension-runtime.js"
+      "$out/share/compass/extension-runtime.js"
     runHook postInstall
   '';
 

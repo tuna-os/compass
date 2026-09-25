@@ -9,10 +9,10 @@
 # its justification: this manifest goes through Flathub review, and "we needed it" is not a reason
 # a reviewer can check.
 #
-#   flatpak-builder --user --install --force-clean build packaging/flatpak/com.vicinae.Vicinae.yaml
-#   flatpak run com.vicinae.Vicinae -- doctor --check-only
+#   flatpak-builder --user --install --force-clean build packaging/flatpak/org.tunaos.compass.yaml
+#   flatpak run org.tunaos.compass -- doctor --check-only
 
-app-id: com.vicinae.Vicinae
+app-id: org.tunaos.compass
 
 # org.freedesktop.Platform, not org.kde.Platform as the original spec had: the Rust engine draws
 # with Iced/wgpu and needs neither Qt nor GTK at runtime. The smaller runtime is also a smaller
@@ -26,12 +26,12 @@ sdk-extensions:
   # extension exists at build time only.
   - org.freedesktop.Sdk.Extension.node22
 
-command: vicinae
+command: compass
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
-    CARGO_HOME: /run/build/vicinae/cargo
+    CARGO_HOME: /run/build/compass/cargo
 
 finish-args:
   # --- Network -------------------------------------------------------------
@@ -52,8 +52,11 @@ finish-args:
   # rendering, if it starts at all.
   - --device=dri
 
-  # --- Our own bus name ----------------------------------------------------
-  - --own-name=com.vicinae.Vicinae
+  # --- Our own bus names ---------------------------------------------------
+  # org.tunaos.compass and the names under it (org.tunaos.compass.WindowTracker, ...): single
+  # instance, CLI activation and the services the engine exports. Flatpak already lets an app
+  # own its ID and its subnames; the grant is written out so review sees it.
+  - --own-name=org.tunaos.compass.*
 
   # --- Portals -------------------------------------------------------------
   # GlobalShortcuts is the hotkey mechanism on GNOME and the one part of the original spec that
@@ -72,8 +75,8 @@ finish-args:
   # see ADR-0004 -- we only speak to it if the user has installed it.
   #
   # The name is org.gnome.Shell because a talk-name filters BUS NAMES, and an extension's
-  # objects live on the Shell's own connection. This used to read
-  # org.gnome.Shell.Extensions.Vicinae, an interface name no process owns, so the sandbox's
+  # objects live on the Shell's own connection. This used to name the extension's interface
+  # (now org.tunaos.compass.Shell.*), which no process owns as a bus name, so the sandbox's
   # D-Bus proxy blocked every window and clipboard call. compass-shell's extension_contract
   # test now ties this line to contract::SHELL_SERVICE. The grant is what every
   # extension-talking Flatpak needs; Shell guards its sensitive methods (Eval, Screenshot) by
@@ -82,7 +85,7 @@ finish-args:
 
   # --- The tray -----------------------------------------------------------
   # Compass's own tray icon registers with the desktop's watcher, and Search Tray asks it for
-  # the other applications' icons (vicinae::tray_icon, vicinae::tray_host). The icon registers
+  # the other applications' icons (compass::tray_icon, compass::tray_host). The icon registers
   # under its unique name, so no own-name is needed for it.
   - --talk-name=org.kde.StatusNotifierWatcher
 
@@ -131,31 +134,31 @@ finish-args:
   - --filesystem=/home/linuxbrew/.linuxbrew/share/applications:ro
 
   # --- Search Files -------------------------------------------------------
-  # The file indexer (vicinae-file-indexer, spawned by the engine) scans and watches the
+  # The file indexer (compass-file-indexer, spawned by the engine) scans and watches the
   # directories in the file extension's "Search paths" preference, the home directory by
   # default. Read-only: it never writes there; its index lives in the sandbox's own cache.
   - --filesystem=home:ro
 
 modules:
-  - name: vicinae
+  - name: compass
     buildsystem: simple
     build-options:
       env:
         CARGO_NET_OFFLINE: 'true'
     build-commands:
-      - cargo --offline build --release --locked -p vicinae -p compass-sandbox --bins
+      - cargo --offline build --release --locked -p compass -p compass-sandbox --bins
       # The same install the AppImage, Arch and Nix packages run, so every output ships the
       # same files in the same places (Suite 5, scripts/packaging/smoke.sh, checks them):
-      #   bin/vicinae
-      #   libexec/vicinae/compass-sandbox-exec  confines the extension runtime (Landlock +
+      #   bin/compass
+      #   libexec/compass/compass-sandbox-exec  confines the extension runtime (Landlock +
       #                                         seccomp); the engine refuses to run
       #                                         extensions without it
-      #   libexec/vicinae/vicinae-file-indexer  the file-search helper
+      #   libexec/compass/compass-file-indexer  the file-search helper
       #   share/applications, share/metainfo, share/icons: the desktop entry and its icon
-      #   share/vicinae/builtin-icons           the `Icon.*` set extensions draw with, found
+      #   share/compass/builtin-icons           the `Icon.*` set extensions draw with, found
       #                                         through $XDG_DATA_DIRS
-      #   share/vicinae/vicinae.schema.json     the published config schema
-      #   share/vicinae/extension-runtime.js    the extension runtime bundle, when present
+      #   share/compass/compass.schema.json     the published config schema
+      #   share/compass/extension-runtime.js    the extension runtime bundle, when present
       #   share/compass/scripts/*               the first-party Rhai scripts, found through
       #                                         $XDG_DATA_DIRS and granted what they declare
       # The bundle is built outside flatpak-builder (scripts/build-extension-runtime.sh needs
@@ -163,11 +166,11 @@ modules:
       # tree. A build without it still works and the engine says the runtime is missing; the
       # Flatpak workflow builds it first and asserts it arrived.
       - PREFIX=/app LIBEXECDIR=/app/libexec ./scripts/packaging/install-rust-engine.sh
-      # The raycast://, com.raycast: and vicinae:// handler: an OAuth provider redirects the
+      # The compass://, raycast://, com.raycast: and vicinae:// handler: an OAuth provider redirects the
       # browser to raycast://oauth?code=…, and this is what carries it back to the extension that
-      # asked (`vicinae deeplink`). Exported like any app desktop file; no permission needed.
-      - install -Dm644 packaging/flatpak/com.vicinae.Vicinae.UrlHandler.desktop
-        /app/share/applications/com.vicinae.Vicinae.UrlHandler.desktop
+      # asked (`compass deeplink`). Exported like any app desktop file; no permission needed.
+      - install -Dm644 packaging/flatpak/org.tunaos.compass.UrlHandler.desktop
+        /app/share/applications/org.tunaos.compass.UrlHandler.desktop
       # Node for the extension runtime: an SDK extension exists at build time only.
       - install -Dm755 /usr/lib/sdk/node22/bin/node /app/bin/node
     sources:

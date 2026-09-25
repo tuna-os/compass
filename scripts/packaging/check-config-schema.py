@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the published vicinae.json schema with a real JSON Schema implementation.
+"""Validate the published compass.json schema with a real JSON Schema implementation.
 
 The schema is generated from compass_core::config by schemars, and the
 `config_schema` test holds the committed copy to the types. What that test
@@ -7,7 +7,7 @@ cannot say is whether a third-party validator -- the kind an editor runs --
 accepts the schema and agrees about which files are valid. This does:
 
   * the schema is itself valid Draft 2020-12;
-  * packaging/schema/example.vicinae.json validates;
+  * packaging/schema/example.compass.json validates;
   * a config with a wrongly typed key does not (a schema that accepts
     everything would pass the first two);
   * a config with a key this build does not know still validates, because
@@ -23,8 +23,8 @@ import sys
 import jsonschema
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SCHEMA = ROOT / "packaging/schema/vicinae.schema.json"
-EXAMPLE = ROOT / "packaging/schema/example.vicinae.json"
+SCHEMA = ROOT / "packaging/schema/compass.schema.json"
+EXAMPLE = ROOT / "packaging/schema/example.compass.json"
 
 
 def main() -> int:
@@ -44,7 +44,7 @@ def main() -> int:
         else:
             print(f"ok   {name}")
 
-    expect("example.vicinae.json", json.loads(EXAMPLE.read_text()), True)
+    expect("example.compass.json", json.loads(EXAMPLE.read_text()), True)
     expect("empty object", {}, True)
     expect("unknown keys survive", {"launcher": {"from_the_future": 1}, "later": {}}, True)
     expect("max_results must be an integer", {"launcher": {"max_results": "fifty"}}, False)

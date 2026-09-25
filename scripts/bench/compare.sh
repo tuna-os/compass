@@ -34,8 +34,8 @@ rm -rf "$out/upstream"
 mkdir -p "$out/upstream"
 (cd "$out/upstream" && "$appimage" --appimage-extract >/dev/null)
 
-cargo build --release --locked -p vicinae -p compass-testkit -p compass-sandbox \
-  --bin vicinae --bin vicinae-file-indexer --bin fuzzy-throughput --bin compass-sandbox-exec
+cargo build --release --locked -p compass -p compass-testkit -p compass-sandbox \
+  --bin compass --bin compass-file-indexer --bin fuzzy-throughput --bin compass-sandbox-exec
 target=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
 
 c++ -std=c++23 -O2 -I"$root/src/lib/fuzzy/include" -o "$out/cpp-rank" "$root/scripts/bench/fuzzy/cpp_rank.cpp"
@@ -48,7 +48,7 @@ c++ -std=c++23 -O2 -I"$root/src/lib/fuzzy/include" -o "$out/cpp-rank" "$root/scr
 } >"$out/versions.txt"
 
 python3 "$root/scripts/bench/compare.py" \
-  --compass "$target/release/vicinae" \
+  --compass "$target/release/compass" \
   --upstream "$out/upstream/squashfs-root/AppRun" \
   --upstream-appimage "$appimage" \
   --cpp-rank "$out/cpp-rank" \

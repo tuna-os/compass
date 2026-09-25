@@ -4,7 +4,7 @@
   Compass <-> GNOME Shell helper extension contract: clipboard.
 
   Well-known name : org.gnome.Shell
-  Object path     : /org/gnome/Shell/Extensions/Vicinae/Clipboard
+  Object path     : /org/tunaos/compass/Shell/Clipboard
 
   Mutter implements neither wlr-data-control nor ext-data-control (PLAN.md 3.1),
   so this is the only clipboard-monitoring mechanism on GNOME 50/51.
@@ -26,7 +26,7 @@
     4 - unchanged. Windows gained ListWorkspaces and ActivateWorkspace.
 -->
 <node>
-  <interface name="org.gnome.Shell.Extensions.Vicinae.Clipboard">
+  <interface name="org.tunaos.compass.Shell.Clipboard">
 
     <!-- Contract version implemented by the extension. -->
     <property name="Version" type="u" access="read"/>

@@ -3,7 +3,7 @@
 
 Run through scripts/bench/compare.sh, which builds the inputs. Direct use:
 
-  compare.py --compass target/release/vicinae --upstream squashfs-root/AppRun \
+  compare.py --compass target/release/compass --upstream squashfs-root/AppRun \
              --cpp-rank cpp-rank --fuzzy-throughput target/release/fuzzy-throughput \
              --out DIR [--runs 5]
 
@@ -113,7 +113,7 @@ def stripped_size(binary, scratch):
 
 def sizes(args, out):
     compass_bin = pathlib.Path(args.compass)
-    helpers = [compass_bin.parent / name for name in ("compass-sandbox-exec", "vicinae-file-indexer")]
+    helpers = [compass_bin.parent / name for name in ("compass-sandbox-exec", "compass-file-indexer")]
     upstream_root = pathlib.Path(args.upstream).parent
     result = {
         "compass": {

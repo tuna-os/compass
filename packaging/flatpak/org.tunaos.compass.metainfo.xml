@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.vicinae.Vicinae</id>
+  <id>org.tunaos.compass</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
   <name>Compass</name>
@@ -46,13 +46,17 @@
     <color type="primary" scheme_preference="dark">#1c71d8</color>
   </branding>
 
-  <launchable type="desktop-id">com.vicinae.Vicinae.desktop</launchable>
+  <launchable type="desktop-id">org.tunaos.compass.desktop</launchable>
   <url type="homepage">https://github.com/tuna-os/compass</url>
   <url type="bugtracker">https://github.com/tuna-os/compass/issues</url>
 
   <provides>
-    <binary>vicinae</binary>
+    <binary>compass</binary>
   </provides>
+
+  <replaces>
+    <id>com.vicinae.Vicinae</id>
+  </replaces>
 
   <url type="vcs-browser">https://github.com/tuna-os/compass</url>
 

@@ -1,3 +1,3 @@
 {pkgs ? import <nixpkgs> {}}: {
-  vicinae = pkgs.callPackage ./nix/vicinae.nix {};
+  vicinae = pkgs.callPackage ./nix/compass.nix {};
 }

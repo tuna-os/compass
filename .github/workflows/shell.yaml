@@ -141,7 +141,7 @@ jobs:
       - name: Parse the GNOME Shell extension
         run: |
           set -euo pipefail
-          ext=extensions/gnome-shell/compass@tuna-os.github.io
+          ext=extensions/gnome-shell/compass@tunaos.org
           test -f "$ext/extension.js" || { echo "::error::the extension has moved"; exit 1; }
           cp "$ext/extension.js" "$RUNNER_TEMP/extension.mjs"
           node --check "$RUNNER_TEMP/extension.mjs"

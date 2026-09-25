@@ -41,14 +41,14 @@ RUN mkdir -p /usr/lib/compass-flatpak /etc/flatpak/installations.d && \
 # The bundle carries the app and nothing else, so the runtime still has to come
 # from somewhere. It comes from Flathub *here*, during the image build, where
 # there is network — never in the guest, which is offline by the time it matters.
-COPY com.vicinae.Vicinae.flatpak /tmp/com.vicinae.Vicinae.flatpak
+COPY org.tunaos.compass.flatpak /tmp/org.tunaos.compass.flatpak
 RUN flatpak remote-add --installation=compass --if-not-exists \
       flathub https://flathub.org/repo/flathub.flatpakrepo && \
     flatpak install --installation=compass --noninteractive --assumeyes \
       flathub org.freedesktop.Platform//26.08 && \
     flatpak install --installation=compass --noninteractive --assumeyes \
-      --bundle /tmp/com.vicinae.Vicinae.flatpak && \
-    rm -f /tmp/com.vicinae.Vicinae.flatpak && \
+      --bundle /tmp/org.tunaos.compass.flatpak && \
+    rm -f /tmp/org.tunaos.compass.flatpak && \
     flatpak --installation=compass list --columns=ref,origin
 
 # ── two probe Flatpaks, one per installation root ────────────────────────────
@@ -289,7 +289,7 @@ RUN set -eux; \
     cat /etc/dconf/profile/user; \
     dconf update; \
     test -f /etc/dconf/db/compass; \
-    grep -q com.vicinae.Vicinae /etc/dconf/db/compass; \
+    grep -q org.tunaos.compass /etc/dconf/db/compass; \
     grep -q welcome-dialog-last-shown-version /etc/dconf/db/compass
 
 # ── the corpus harvester ─────────────────────────────────────────────────────
@@ -318,7 +318,7 @@ RUN chmod 0755 /usr/libexec/compass-vmtest/harvest-desktop-corpus.sh
 # gnome-extensions, as a user would. The workflow stages the in-tree copy into
 # the build context, so the extension booted here is the one the contract test
 # (crates/compass-shell/tests/extension_contract.rs) checked.
-COPY compass@tuna-os.github.io /usr/share/gnome-shell/extensions/compass@tuna-os.github.io/
+COPY compass@tunaos.org /usr/share/gnome-shell/extensions/compass@tunaos.org/
 
 # ── the assertions ───────────────────────────────────────────────────────────
 #

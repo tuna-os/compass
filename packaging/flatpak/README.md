@@ -27,7 +27,7 @@ An app-grid session exits if its engine disconnects, so a subsequent app-grid
 activation can start a fresh session instead of finding an undriven window.
 The explicit `ui` command retains its previous keep-running behavior.
 
-`vicinae start --hidden` prepares a resident session without opening a window.
+`compass start --hidden` prepares a resident session without opening a window.
 This is the entrypoint for a future user-approved start-at-login flow; running
 it does not itself configure login startup. A duplicate hidden start leaves
 the existing launcher's visibility unchanged. Ordinary `start` still opens it.
@@ -43,8 +43,8 @@ to the readable Adwaita light palette.
 # One-off: the offline dependency manifest Flathub builds require.
 python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json
 
-flatpak-builder --user --install --force-clean build com.vicinae.Vicinae.yaml
-flatpak run com.vicinae.Vicinae -- doctor --check-only
+flatpak-builder --user --install --force-clean build org.tunaos.compass.yaml
+flatpak run org.tunaos.compass -- doctor --check-only
 ```
 
 `flatpak-cargo-generator.py` comes from
@@ -61,11 +61,16 @@ Flathub review asks for this, and "we needed it" is not a reason a reviewer can 
 |---|---|---|
 | `--socket=wayland` | The engine draws a Wayland surface. | No. |
 | `--device=dri` | Iced renders through wgpu. Without GPU access it falls back to software rendering, if it starts at all. | No. |
-| `--own-name=com.vicinae.Vicinae` | Our own bus name, for single-instance and CLI activation. | No. |
+| `--own-name=org.tunaos.compass.*` | Our own bus names: `org.tunaos.compass` for single-instance and CLI activation, and the services under it such as `org.tunaos.compass.WindowTracker`. Flatpak already allows an app its own ID and subnames; the grant is explicit so review sees it. | No. |
 | `--talk-name=org.freedesktop.portal.Desktop` | GlobalShortcuts (the hotkey mechanism on GNOME), OpenURI, FileChooser, Screenshot. | No. |
-| `--talk-name=org.gnome.Shell.Extensions.Vicinae` | On GNOME 50/51 the Shell extension is the **only** mechanism for window switching, clipboard history and paste — Mutter implements none of the relevant protocols and `org.gnome.Shell.Introspect` is allowlisted to the portal backends. See [REFERENCES.md §3](../../docs/rust-engine/REFERENCES.md). | Only if GNOME ships a portal for window listing. |
+| `--share=network` | Extensions fetch their data, views load remote images, OAuth exchanges its code, and the stores download bundles. | No. |
+| `--talk-name=org.gnome.Shell` | On GNOME 50/51 the Shell extension (`compass@tunaos.org`) is the **only** mechanism for window switching, clipboard history and paste — Mutter implements none of the relevant protocols and `org.gnome.Shell.Introspect` is allowlisted to the portal backends. See [REFERENCES.md §3](../../docs/rust-engine/REFERENCES.md). A talk-name filters bus names, and the extension's `org.tunaos.compass.Shell.*` interfaces live on the Shell's own connection, so the grant has to name `org.gnome.Shell`. | Only if GNOME ships a portal for window listing. |
+| `--talk-name=org.kde.StatusNotifierWatcher` | Compass's tray icon registers with the desktop's watcher, and Search Tray asks it for other applications' icons. | Only by dropping the tray. |
+| `--system-talk-name=org.freedesktop.login1`, `--talk-name=org.gnome.SessionManager`, `--talk-name=org.kde.Shutdown` | Power off, reboot, suspend, lock and log out. Every action is still subject to logind's polkit policy. | Only by dropping the power commands. |
 | `--talk-name=org.freedesktop.Flatpak` | `flatpak-spawn --host`, to launch host applications. | No — but see below. |
 | `--filesystem=host-os:ro` and the `applications`/`icons` paths | Indexing the application catalogue: what exists, what it is called, what its icon is. Read-only; we never write to any of them. | No, though the list could be trimmed if we dropped Homebrew or system Flatpak discovery. |
+| `--filesystem=xdg-data/flatpak/app:ro`, `--filesystem=/var/lib/flatpak/app:ro` | The Flatpak exports directories hold symlinks into these deploy trees; without them every Flatpak application disappears from search (#105). Read-only. | No. |
+| `--filesystem=home:ro` | Search Files indexes and watches the directories in its search paths, the home directory by default. Read-only; the index lives in the sandbox's cache. | Only by narrowing the default search paths. |
 
 ### The one that deserves scrutiny
 

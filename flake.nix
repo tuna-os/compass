@@ -55,7 +55,7 @@
   in {
     packages = forEachPkgs (
       pkgs: let
-        vicinae = pkgs.callPackage ./nix/vicinae.nix {
+        vicinae = pkgs.callPackage ./nix/compass.nix {
           gcc15Stdenv = pkgs.gcc15Stdenv;
           numen = numenFor pkgs;
         };
@@ -92,9 +92,9 @@
             NEW_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.prefetch-npm-deps} package-lock.json)
             cd ..
 
-            [[ "$OLD_API_DEPS_HASH" == "$NEW_API_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for API npm deps, please replace the value in vicinae.nix with '$NEW_API_DEPS_HASH'.\e[0m" >&2; exit 1; }
+            [[ "$OLD_API_DEPS_HASH" == "$NEW_API_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for API npm deps, please replace the value in nix/compass.nix with '$NEW_API_DEPS_HASH'.\e[0m" >&2; exit 1; }
 
-            [[ "$OLD_EXT_MAN_DEPS_HASH" == "$NEW_EXT_MAN_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for extension-manager npm deps, please replace the value in vicinae.nix with '$NEW_EXT_MAN_DEPS_HASH'.\e[0m" >&2; exit 1; }
+            [[ "$OLD_EXT_MAN_DEPS_HASH" == "$NEW_EXT_MAN_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for extension-manager npm deps, please replace the value in nix/compass.nix with '$NEW_EXT_MAN_DEPS_HASH'.\e[0m" >&2; exit 1; }
           '';
         }
     );
@@ -146,7 +146,7 @@
     );
 
     overlays.default = final: prev: {
-      vicinae = final.callPackage ./nix/vicinae.nix {numen = numenFor final;};
+      vicinae = final.callPackage ./nix/compass.nix {numen = numenFor final;};
       mkVicinaeExtension = prev.callPackage ./nix/mkVicinaeExtension.nix {};
       mkRayCastExtension = prev.callPackage ./nix/mkRayCastExtension.nix {};
     };

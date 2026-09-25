@@ -1,8 +1,8 @@
 # Maintainer: Compass contributors <https://github.com/tuna-os/compass>
 #
-# The Rust engine of Vicinae, built from git. Installs what the Flatpak ships,
+# Compass, built from git. Installs what the Flatpak ships,
 # through the same scripts/packaging/install-rust-engine.sh every non-Flatpak
-# output uses, with internal programs in /usr/lib/vicinae as Arch expects.
+# output uses, with internal programs in /usr/lib/compass as Arch expects.
 #
 # COMPASS_GIT_URL / COMPASS_GIT_REF let CI build the checkout under test
 # instead of the published branch:
@@ -11,7 +11,7 @@
 pkgname=compass-git
 pkgver=0.1.0.r0.g0000000
 pkgrel=1
-pkgdesc='A fast, extensible command palette for Linux (the Rust engine of Vicinae)'
+pkgdesc='A fast, extensible command palette for Linux'
 arch=('x86_64' 'aarch64')
 url='https://github.com/tuna-os/compass'
 license=('GPL-3.0-only')
@@ -24,12 +24,12 @@ optdepends=(
   'libglvnd: OpenGL rendering where Vulkan is unavailable'
   'xdg-desktop-portal: the global hotkey through the GlobalShortcuts portal'
 )
-# Both engines install /usr/bin/vicinae until the Phase 7 dispatcher exists
-# (docs/rust-engine/PLAN.md section 5).
-provides=('vicinae')
-conflicts=('vicinae' 'vicinae-bin' 'vicinae-git')
+# Installs /usr/bin/compass and org.tunaos.compass files only, so it sits beside
+# the upstream vicinae packages rather than conflicting with them.
+provides=('compass')
+conflicts=('compass')
 options=('!lto' '!debug')
-# Grants vicinae-input-server cap_dac_override (snippet keyword expansion).
+# Grants compass-input-server cap_dac_override (snippet keyword expansion).
 install=compass.install
 source=("compass::git+${COMPASS_GIT_URL:-https://github.com/tuna-os/compass.git}${COMPASS_GIT_REF:+#$COMPASS_GIT_REF}")
 sha256sums=('SKIP')
@@ -49,7 +49,7 @@ build() {
   cd compass
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  cargo build --frozen --release -p vicinae -p compass-sandbox -p compass-input-server --bins
+  cargo build --frozen --release -p compass -p compass-sandbox -p compass-input-server --bins
   # The extension runtime bundle: figura (C++23) generates the protocol, npm
   # bundles it. The Flatpak builds it the same way, outside flatpak-builder.
   ./scripts/build-extension-runtime.sh

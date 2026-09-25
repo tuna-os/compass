@@ -87,7 +87,7 @@ jobs:
       # Keyed on the manifest, since that is what names the runtime versions.
       # Caches the runtime, and unavoidably the installed applications with it:
       # ~/.local/share/flatpak holds both. Keyed on the manifest, which barely
-      # changes — so a com.vicinae.Vicinae installed by an earlier run comes
+      # changes — so a org.tunaos.compass installed by an earlier run comes
       # back, and `flatpak install` finds it already present and does nothing.
       # That is not hypothetical: this job spent a run testing a binary built
       # before `spike` existed and reporting `unrecognized subcommand 'spike'`.
@@ -97,7 +97,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/share/flatpak
-          key: flatpak-runtime-${{ runner.os }}-${{ hashFiles('packaging/flatpak/com.vicinae.Vicinae.yaml') }}
+          key: flatpak-runtime-${{ runner.os }}-${{ hashFiles('packaging/flatpak/org.tunaos.compass.yaml') }}
           restore-keys: flatpak-runtime-${{ runner.os }}-
 
       - name: Install the runtime and SDK
@@ -140,7 +140,7 @@ jobs:
         run: |
           flatpak-builder --user --disable-rofiles-fuse --force-clean \
             --repo=/tmp/repo --state-dir=/tmp/fb-state \
-            /tmp/build packaging/flatpak/com.vicinae.Vicinae.yaml
+            /tmp/build packaging/flatpak/org.tunaos.compass.yaml
 
       - name: Install it and run the binary
         # Building proves it compiles and installs. Running `doctor` proves the
@@ -151,13 +151,13 @@ jobs:
         run: |
           # --reinstall, not a plain install: see the cache step. Without it a
           # cached copy wins and every assertion below is about the wrong build.
-          flatpak install --user --noninteractive --reinstall /tmp/repo com.vicinae.Vicinae
+          flatpak install --user --noninteractive --reinstall /tmp/repo org.tunaos.compass
 
           # And then prove it, rather than trusting the flag. These two commits
           # must be equal; if they are not, the job is testing something other
           # than what it just built, which is exactly the failure this guards.
-          built="$(ostree --repo=/tmp/repo rev-parse app/com.vicinae.Vicinae/$(flatpak --default-arch)/master)"
-          installed="$(flatpak info --user --show-commit com.vicinae.Vicinae)"
+          built="$(ostree --repo=/tmp/repo rev-parse app/org.tunaos.compass/$(flatpak --default-arch)/master)"
+          installed="$(flatpak info --user --show-commit org.tunaos.compass)"
           echo "built     $built"
           echo "installed $installed"
           if [ "$built" != "$installed" ]; then
@@ -166,14 +166,14 @@ jobs:
           fi
 
           # Extensions need both halves inside the sandbox, not on the runner.
-          flatpak run --user --command=sh com.vicinae.Vicinae -c \
-            'node --version && test -s /app/share/vicinae/extension-runtime.js && test -x /app/libexec/vicinae/compass-sandbox-exec' \
+          flatpak run --user --command=sh org.tunaos.compass -c \
+            'node --version && test -s /app/share/compass/extension-runtime.js && test -x /app/libexec/compass/compass-sandbox-exec' \
             || { echo "::error::the Flatpak cannot run extensions: Node, the runtime bundle or compass-sandbox-exec is missing"; exit 1; }
-          flatpak run --user --command=sh com.vicinae.Vicinae -c \
-            'test -s /app/share/vicinae/builtin-icons/question-mark-circle.svg' \
+          flatpak run --user --command=sh org.tunaos.compass -c \
+            'test -s /app/share/compass/builtin-icons/question-mark-circle.svg' \
             || { echo "::error::the Flatpak does not ship the builtin icons extensions draw with"; exit 1; }
 
-          flatpak run --user com.vicinae.Vicinae --socket /tmp/ci.sock doctor --json | tee /tmp/doctor.json
+          flatpak run --user org.tunaos.compass --socket /tmp/ci.sock doctor --json | tee /tmp/doctor.json
           python3 -c "
           import json, sys
           report = json.load(open('/tmp/doctor.json'))
@@ -192,12 +192,12 @@ jobs:
       # instance of an app shares -- each `flatpak run` has its own /tmp.
       - name: "Suite 5: layout, version, doctor, ping"
         run: |
-          app="$(flatpak info --user --show-location com.vicinae.Vicinae)/files"
-          runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/app/com.vicinae.Vicinae"
+          app="$(flatpak info --user --show-location org.tunaos.compass)/files"
+          runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/app/org.tunaos.compass"
           mkdir -p "$runtime_dir"
           REQUIRE_RUNTIME=1 ./scripts/packaging/smoke.sh \
             --prefix "$app" --keep-env --socket "$runtime_dir/ci.sock" \
-            -- flatpak run --user com.vicinae.Vicinae
+            -- flatpak run --user org.tunaos.compass
 
       # Spike B (#3), and the reason it lives here rather than only in the VM
       # tier: the question is whether Landlock and seccomp nest inside
@@ -211,8 +211,8 @@ jobs:
       # a broken build.
       - name: "Spike B: does a sandbox nest inside the Flatpak?"
         run: |
-          flatpak run --user com.vicinae.Vicinae spike sandbox | tee /tmp/spike-b.txt
-          flatpak run --user com.vicinae.Vicinae spike sandbox --json > /tmp/spike-b.json
+          flatpak run --user org.tunaos.compass spike sandbox | tee /tmp/spike-b.txt
+          flatpak run --user org.tunaos.compass spike sandbox --json > /tmp/spike-b.json
           python3 - <<'PY'
           import json
           r = json.load(open('/tmp/spike-b.json'))
@@ -244,15 +244,15 @@ jobs:
       # would be handed to try a build.
       - name: Export a single-file bundle
         run: |
-          flatpak build-bundle /tmp/repo /tmp/com.vicinae.Vicinae.flatpak com.vicinae.Vicinae
-          ls -lh /tmp/com.vicinae.Vicinae.flatpak
+          flatpak build-bundle /tmp/repo /tmp/org.tunaos.compass.flatpak org.tunaos.compass
+          ls -lh /tmp/org.tunaos.compass.flatpak
 
       - name: Upload the bundle
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: flatpak-bundle
-          path: /tmp/com.vicinae.Vicinae.flatpak
+          path: /tmp/org.tunaos.compass.flatpak
           retention-days: 14
           if-no-files-found: error
 

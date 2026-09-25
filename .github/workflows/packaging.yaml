@@ -24,7 +24,7 @@ on:
       - scripts/build-extension-runtime.sh
       - flake.nix
       - flake.lock
-      - nix/vicinae.nix
+      - nix/compass.nix
       - crates/**
       - Cargo.toml
       - Cargo.lock
@@ -64,7 +64,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The published vicinae.json schema, checked by a third-party validator. The
+  # The published compass.json schema, checked by a third-party validator. The
   # config_schema test (in the Rust workflow) holds it to the types; this holds
   # it to what an editor would do with it.
   schema:
@@ -131,7 +131,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxkbcommon-dev
       - name: Build the release binaries
-        run: cargo build --release --locked -p vicinae -p compass-sandbox -p compass-input-server --bins
+        run: cargo build --release --locked -p compass -p compass-sandbox -p compass-input-server --bins
 
       - name: Cache the AppImage tools
         uses: actions/cache@v4
@@ -219,7 +219,7 @@ jobs:
       - name: "Suite 5: installed layout, version, doctor, ping"
         run: |
           REQUIRE_RUNTIME=1 scripts/packaging/smoke.sh \
-            --prefix /usr --libexecdir /usr/lib -- /usr/bin/vicinae
+            --prefix /usr --libexecdir /usr/lib -- /usr/bin/compass
 
       - uses: actions/upload-artifact@v4
         with:
@@ -243,4 +243,4 @@ jobs:
         run: nix build -L .#compass
 
       - name: "Suite 5: installed layout, version, doctor, ping"
-        run: REQUIRE_RUNTIME=1 scripts/packaging/smoke.sh --prefix result -- result/bin/vicinae
+        run: REQUIRE_RUNTIME=1 scripts/packaging/smoke.sh --prefix result -- result/bin/compass
