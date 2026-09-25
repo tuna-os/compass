@@ -41,6 +41,7 @@ use crate::doctor;
 use crate::engine::Engine;
 
 mod app_runtime;
+mod calculator;
 mod launch;
 
 /// The at-most-one launcher window this engine drives.
@@ -132,6 +133,8 @@ pub struct EngineState {
     /// How many times a directory watch has rescanned the catalog; see
     /// [`Request::CatalogGeneration`].
     catalog_generation: u64,
+    /// The calculator history's database, once the keyring opened it.
+    calculator: Arc<tokio::sync::Mutex<Option<crate::extension_runner::Storage>>>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -252,6 +255,7 @@ impl EngineState {
             expander: None,
             launches: Arc::default(),
             catalog_generation: 0,
+            calculator: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -318,6 +322,7 @@ impl EngineState {
             expander: None,
             launches: Arc::default(),
             catalog_generation: 0,
+            calculator: Arc::default(),
         }
     }
 
@@ -2612,6 +2617,9 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         Request::QuitWindowApp { window, force } => {
             app_runtime::quit_window_app(state, window, force).await
         }
+        request @ (Request::CalculatorHistory { .. }
+        | Request::AddCalculatorRecord { .. }
+        | Request::EditCalculatorHistory { .. }) => calculator::handle(state, request).await,
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id, None).await,

@@ -149,6 +149,84 @@ impl ApplicationBackend for DaemonBackend {
         })
     }
 
+    fn calculator_history(
+        &self,
+        query: String,
+    ) -> BackendFuture<'_, Vec<compass_ui::backend::CalculatorGroupRow>> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::CalculatorHistory { query },
+                    "Reading the calculator history",
+                )
+                .await?
+            {
+                compass_ipc::Response::CalculatorHistory { groups } => Ok(groups
+                    .into_iter()
+                    .map(|group| compass_ui::backend::CalculatorGroupRow {
+                        name: group.name,
+                        records: group
+                            .records
+                            .into_iter()
+                            .map(|record| compass_ui::backend::CalculatorRow {
+                                id: record.id,
+                                question: record.question,
+                                answer: record.answer,
+                                conversion: record.conversion,
+                                pinned: record.pinned,
+                            })
+                            .collect(),
+                    })
+                    .collect()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn add_calculator_record(
+        &self,
+        question: String,
+        answer: String,
+        conversion: bool,
+    ) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let request = Request::AddCalculatorRecord {
+                question,
+                answer,
+                conversion,
+            };
+            match self.ask(request, "Remembering the calculation").await? {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn edit_calculator_history(
+        &self,
+        change: compass_ui::backend::CalculatorChange,
+    ) -> BackendFuture<'_, ()> {
+        use compass_ui::backend::CalculatorChange;
+        Box::pin(async move {
+            let edit = match change {
+                CalculatorChange::Pin(id) => compass_ipc::CalculatorEdit::Pin(id),
+                CalculatorChange::Unpin(id) => compass_ipc::CalculatorEdit::Unpin(id),
+                CalculatorChange::Remove(id) => compass_ipc::CalculatorEdit::Remove(id),
+                CalculatorChange::RemoveAll => compass_ipc::CalculatorEdit::RemoveAll,
+            };
+            match self
+                .ask(
+                    Request::EditCalculatorHistory { edit },
+                    "Changing the calculator history",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
     fn list_script_grants(&self) -> BackendFuture<'_, Vec<compass_ui::backend::ScriptGrant>> {
         Box::pin(async move {
             match self

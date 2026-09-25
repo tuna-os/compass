@@ -85,6 +85,29 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// The calculator's history matching `query`, in its non-empty groups.
+    fn calculator_history(&self, query: String) -> BackendFuture<'_, Vec<CalculatorGroupRow>> {
+        let _ = query;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Remembers a calculation whose answer was copied.
+    fn add_calculator_record(
+        &self,
+        question: String,
+        answer: String,
+        conversion: bool,
+    ) -> BackendFuture<'_, ()> {
+        let _ = (question, answer, conversion);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Pins, unpins or removes a remembered calculation, or all of them.
+    fn edit_calculator_history(&self, change: CalculatorChange) -> BackendFuture<'_, ()> {
+        let _ = change;
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// The running media players, for Now Playing.
     fn list_media_players(&self) -> BackendFuture<'_, Vec<MediaPlayerRow>> {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
@@ -420,6 +443,43 @@ pub struct DefaultAppRow {
     pub description: String,
     /// Whether it is the current default.
     pub is_default: bool,
+}
+
+/// One group of the calculator's history.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CalculatorGroupRow {
+    /// The section's name, e.g. `Today`.
+    pub name: String,
+    /// Its rows.
+    pub records: Vec<CalculatorRow>,
+}
+
+/// One remembered calculation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CalculatorRow {
+    /// Its id.
+    pub id: String,
+    /// What was asked.
+    pub question: String,
+    /// What came back.
+    pub answer: String,
+    /// A unit conversion rather than arithmetic.
+    pub conversion: bool,
+    /// Whether it is pinned.
+    pub pinned: bool,
+}
+
+/// A change to the calculator's history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CalculatorChange {
+    /// Pin a row, by id.
+    Pin(String),
+    /// Unpin a row, by id.
+    Unpin(String),
+    /// Remove a row, by id.
+    Remove(String),
+    /// Remove every row.
+    RemoveAll,
 }
 
 /// What the user has allowed one Rhai script.

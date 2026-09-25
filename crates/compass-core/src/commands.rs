@@ -70,6 +70,8 @@ pub enum CommandKind {
     NowPlaying,
     /// Review and revoke what the user's Rhai scripts were allowed.
     ScriptPermissions,
+    /// Browse, pin and remove past calculations.
+    CalculatorHistory,
     /// A media command, by its id in [`crate::media_commands`].
     Media(&'static str),
     /// Browse every installed application, hidden ones included on request.
@@ -284,6 +286,14 @@ pub const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             "revoke",
         ],
         icon: "key",
+    },
+    BuiltinCommand {
+        kind: CommandKind::CalculatorHistory,
+        entrypoint: "calculator-history",
+        title: "Calculator History",
+        subtitle: "Browse past calculations",
+        keywords: &["calculator", "history", "calc", "math", "calculations"],
+        icon: "calculator",
     },
     BuiltinCommand {
         kind: CommandKind::NowPlaying,

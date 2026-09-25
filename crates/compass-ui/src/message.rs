@@ -337,6 +337,19 @@ pub enum Message {
     },
     /// Quit, Force Quit, or a root row's Focus or Close Window finished.
     AppQuit(Result<(), String>),
+    /// Calculator History's filter changed.
+    CalculatorQueryChanged(String),
+    /// Calculator History's rows arrived for request `generation`.
+    CalculatorLoaded {
+        /// The request they answer; a stale one is dropped.
+        generation: u64,
+        /// The groups, or why there are none.
+        result: Result<Vec<crate::backend::CalculatorGroupRow>, String>,
+    },
+    /// A Calculator History row was clicked, by position.
+    CalculatorSelected(usize),
+    /// A pin, unpin or removal finished, with what to say.
+    CalculatorEdited(Result<&'static str, String>),
     /// A launch finished, successfully or not.
     ///
     /// Carried as a string rather than the error type because a `Message` must

@@ -17,6 +17,7 @@ pub mod app;
 pub mod appearance;
 pub mod apps_page;
 pub mod backend;
+pub mod calculator_page;
 pub mod clipboard_page;
 pub mod design;
 pub mod developer_page;

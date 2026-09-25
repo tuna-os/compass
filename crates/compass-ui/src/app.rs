@@ -26,6 +26,7 @@ use crate::message::{Direction, Message};
 use crate::resident::{EngineLink, UiCommand, UiOutcome};
 
 mod apps;
+mod calculator;
 mod clipboard;
 mod developer;
 mod dmenu;
@@ -588,6 +589,8 @@ enum Page {
     Grants(crate::grants_page::GrantsPage),
     /// Browse Apps, Set Default Browser or Set Default Terminal.
     Apps(crate::apps_page::AppsPage),
+    /// Calculator History.
+    Calculator(crate::calculator_page::CalculatorPage),
     /// An extension command's view.
     Extension(Box<crate::extension_page::ExtensionPage>),
     /// The form an extension command's preferences are set in.
@@ -1959,9 +1962,14 @@ impl LauncherApp {
                 if let Some(RootRow::Calculator) = self.selected_row()
                     && let Some(answer) = &self.calculator
                 {
-                    // The C++ primary action: copy the answer, then get out of
-                    // the way so it can be pasted.
-                    let copy = iced::clipboard::write(answer.answer.clone());
+                    // The C++ primary action: copy the answer, remembering it
+                    // in the history, then get out of the way so it can be
+                    // pasted.
+                    let copy = self.copy_calculation(
+                        answer.question.clone(),
+                        answer.answer.clone(),
+                        answer.answer.clone(),
+                    );
                     return Task::batch([copy, self.conceal()]);
                 }
                 if let Some(RootRow::Command(command)) = self.selected_row() {
@@ -2119,6 +2127,8 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_windows_panel() {
                     return task;
+                } else if let Some(task) = self.open_calculator_panel() {
+                    return task;
                 } else if let Page::Extension(page) = &self.page {
                     let sections = extension_panel_sections(page);
                     if sections.iter().any(|section| !section.actions.is_empty()) {
@@ -2199,6 +2209,7 @@ impl LauncherApp {
                         .or_else(|| self.clipboard_panel_action(&id))
                         .or_else(|| self.root_panel_action(&id))
                         .or_else(|| self.windows_panel_action(&id))
+                        .or_else(|| self.calculator_panel_action(&id))
                         .or_else(|| self.app_runtime_action(&id))
                 {
                     return task;
@@ -2634,6 +2645,10 @@ impl LauncherApp {
                 Task::none()
             }
             Message::AppRuntimeLoaded { .. } | Message::AppQuit(_) => self.runtime_message(message),
+            Message::CalculatorQueryChanged(_)
+            | Message::CalculatorLoaded { .. }
+            | Message::CalculatorSelected(_)
+            | Message::CalculatorEdited(_) => self.calculator_message(message),
             Message::GrantsLoaded(_)
             | Message::GrantsQueryChanged(_)
             | Message::GrantSelected(_)
@@ -2933,6 +2948,9 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Apps(_)) {
                     return self.apps_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Calculator(_)) {
+                    return self.calculator_page_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::NowPlaying(_)) {
                     return self.now_playing_key(key, modifiers);
                 }
@@ -3202,6 +3220,11 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::DmenuQueryChanged as OnInput),
             ),
+            Page::Calculator(page) => (
+                crate::calculator_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::CalculatorQueryChanged as OnInput),
+            ),
             Page::Grants(page) => (
                 crate::grants_page::PLACEHOLDER,
                 &page.query,
@@ -3345,6 +3368,8 @@ impl LauncherApp {
             self.grants_body(page)
         } else if let Page::Apps(page) = &self.page {
             self.apps_body(page)
+        } else if let Page::Calculator(page) = &self.page {
+            self.calculator_body(page)
         } else if let Page::NowPlaying(page) = &self.page {
             self.now_playing_body(page)
         } else if let Page::Themes(page) = &self.page {
@@ -4888,6 +4913,7 @@ impl LauncherApp {
             CommandKind::Media(id) => Task::batch([record, self.run_media(command, id, None)]),
             CommandKind::NowPlaying => Task::batch([record, self.open_now_playing()]),
             CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
+            CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
             CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
             CommandKind::SetDefaultBrowser => Task::batch([
                 record,
@@ -5429,6 +5455,77 @@ mod tests {
     }
 
     #[test]
+    fn a_copied_answer_is_remembered_and_calculator_history_lists_pins_and_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend.clone());
+
+        // Copying the root list's answer keeps the calculation.
+        app.query = "5 ft to m".into();
+        app.search();
+        assert_eq!(app.selected_row(), Some(RootRow::Calculator));
+        let task = app.update(Message::LaunchSelected);
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, ["1.524 m"]);
+        let kept = backend.calculations.lock().unwrap().clone();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            (kept[0].question.as_str(), kept[0].conversion),
+            ("5 ft to m", true)
+        );
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        app.query = "calculator history".into();
+        app.search();
+        let task = app.update(Message::LaunchSelected);
+        settle(&mut app, task);
+        let Page::Calculator(page) = &app.page else {
+            panic!("not on Calculator History: {}", app.state_line());
+        };
+        assert_eq!(page.groups.len(), 1);
+        assert_eq!(page.groups[0].records[0].answer, "1.524 m");
+
+        // The live result for what is typed leads, and copying it keeps it.
+        let task = app.update(Message::CalculatorQueryChanged("=6*7".into()));
+        settle(&mut app, task);
+        let Page::Calculator(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.live.as_ref().map(|a| a.answer.as_str()), Some("42"));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        let writes = settle(&mut app, task);
+        assert_eq!(writes, ["42"]);
+        assert_eq!(backend.calculations.lock().unwrap().len(), 2);
+
+        // The panel pins and removes a remembered row.
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let task = app.open_calculator_history();
+        settle(&mut app, task);
+        let _ = app.update(Message::TogglePanel);
+        let task = app.update(Message::PanelFilterChanged("Pin entry".into()));
+        settle(&mut app, task);
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        let _ = app.update(Message::TogglePanel);
+        let _ = app.update(Message::PanelFilterChanged("Delete entry".into()));
+        let task = app.update(Message::PanelActivate);
+        settle(&mut app, task);
+        assert_eq!(
+            backend.calculator_edits.lock().unwrap().as_slice(),
+            [
+                crate::backend::CalculatorChange::Pin("r1".into()),
+                crate::backend::CalculatorChange::Remove("r1".into()),
+            ]
+        );
+        let Page::Calculator(page) = &app.page else {
+            unreachable!()
+        };
+        assert_eq!(page.notice.as_deref(), Some("Entry removed"));
+        assert_eq!(page.len(), 1, "the list reloaded without it");
+    }
+
+    #[test]
     fn describe_answers_whether_the_window_is_open_and_changes_nothing() {
         let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
         let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
@@ -5699,6 +5796,9 @@ mod tests {
         fonts_set: std::sync::Mutex<Vec<String>>,
         /// What the user allowed their Rhai scripts.
         grants: std::sync::Mutex<Vec<crate::backend::ScriptGrant>>,
+        /// The calculator's history, one group, and what changed it.
+        calculations: std::sync::Mutex<Vec<crate::backend::CalculatorRow>>,
+        calculator_edits: std::sync::Mutex<Vec<crate::backend::CalculatorChange>>,
         /// What Now Playing asked the players to do.
         controlled: std::sync::Mutex<Vec<(String, crate::backend::MediaAction)>>,
         answers: std::sync::Mutex<Vec<bool>>,
@@ -5923,6 +6023,66 @@ mod tests {
             &self,
         ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::ScriptGrant>> {
             Box::pin(async move { Ok(self.grants.lock().unwrap().clone()) })
+        }
+
+        fn calculator_history(
+            &self,
+            query: String,
+        ) -> crate::backend::BackendFuture<'_, Vec<crate::backend::CalculatorGroupRow>> {
+            Box::pin(async move {
+                let records: Vec<_> = self
+                    .calculations
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|r| r.question.contains(&query) || r.answer.contains(&query))
+                    .cloned()
+                    .collect();
+                Ok(if records.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![crate::backend::CalculatorGroupRow {
+                        name: "Today".into(),
+                        records,
+                    }]
+                })
+            })
+        }
+
+        fn add_calculator_record(
+            &self,
+            question: String,
+            answer: String,
+            conversion: bool,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                let mut rows = self.calculations.lock().unwrap();
+                let id = format!("r{}", rows.len());
+                rows.insert(
+                    0,
+                    crate::backend::CalculatorRow {
+                        id,
+                        question,
+                        answer,
+                        conversion,
+                        pinned: false,
+                    },
+                );
+                Ok(())
+            })
+        }
+
+        fn edit_calculator_history(
+            &self,
+            change: crate::backend::CalculatorChange,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                if let crate::backend::CalculatorChange::Remove(id) = &change {
+                    self.calculations.lock().unwrap().retain(|r| r.id != *id);
+                }
+                self.calculator_edits.lock().unwrap().push(change);
+                Ok(())
+            })
         }
 
         fn revoke_script_grant(

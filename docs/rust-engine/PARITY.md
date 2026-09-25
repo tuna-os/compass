@@ -188,7 +188,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
 | `src/builtins/browser` | — | **out of scope** | ✅ | n/a | n/a | never |
-| `src/builtins/calculator` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/builtins/calculator` | `compass-core`, `compass_ui::calculator_page` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/clipboard` | `compass-clipboard` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/builtins/developer` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/builtins/file` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -315,7 +315,9 @@ PLAN §12.0 sizes them and says what blocks each.
 
 - `src/cli`: closed in the gaps pass below.
 - `src/services/app-runtime`: closed in the gaps pass below.
-- `src/services/calculator-service`: see `src/builtins/calculator` above.
+- `src/services/calculator-service`: the history is served since the gaps pass. Still C++-only:
+  currency conversion and Refresh Exchange Rates, **blocked on a rate source** (fend has none, and
+  what a fork fetches exchange rates from is undecided).
 - `src/services/desktop-notification`: the urgency and an icon that is a file are passed since this
   pass (`a_notification_carries_the_urgency_and_an_icon_file`); rendering any other icon (a builtin
   one, a remote one) to a temporary PNG landed after it (see "Gaps closed after the truth pass").
@@ -449,6 +451,7 @@ and the tests that fail on a regression (IPC v17).
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
+| `src/builtins/calculator` | Rust ✅ | `compass_ui::{calculator_page, app::calculator}`, `vicinae::serve::calculator` over `compass-local-storage::calculator` | `copied_answers_are_remembered_grouped_filtered_pinned_and_removed`, `the_boundaries_are_the_cpps_monday_weeks_and_calendar_months`, `a_copied_answer_is_remembered_and_calculator_history_lists_pins_and_removes_it`, `the_live_result_leads_and_a_stale_answer_is_dropped`, `calculator_history_is_a_builtin_and_without_a_keyring_is_refused_by_name`, `conversions_are_told_from_arithmetic_by_their_keyword` |
 | `src/services/app-runtime` | Rust ✅ | `vicinae::serve::app_runtime` (`isRunning`, `frontmostApp`, `quit`, `forceQuit`), `compass_ui::app::runtime` (the root row's and the window switcher's actions) | `quit_closes_an_applications_windows_and_force_quit_kills_their_processes` (a private `dbus-daemon`, the mock Shell extension, and `sleep`s the test started), `force_quit_kills_each_process_once_and_closes_the_windows_that_name_none`, `killing_a_process_this_test_started_ends_it_with_sigkill`, `a_running_applications_panel_offers_quit_and_force_quit_and_they_reach_the_engine`, `the_window_switchers_panel_quits_a_known_windows_application`, `a_quit_that_does_nothing_says_so` |
 | `src/cli` | Rust ✅ | `vicinae::{cli, cli_commands, logs}`, `serve::launch`; `compass_core::{script_template, extension_commands::launch_arguments, config::default_document, file_search::CLI_CATEGORY_NAMES}` | `cmd_ls_lists_every_root_item_by_id_and_cmd_launch_hands_the_window_a_launch`, `app_launch_and_cmd_launch_start_the_application_with_its_arguments`, `state_open_asks_the_window_and_exits_by_the_answer`, `the_engine_keeps_a_log_file_and_logs_prints_its_last_lines`, `fs_query_asks_the_index_alone_and_names_categories_as_the_cpp_does`, `server_refuses_a_running_engine_and_replace_kills_it_and_serves_in_its_place`, `config_cli::{script_template_*, theme_template_check_and_paths, config_default_*, version_*}`, `positional_launch_arguments_are_checked_as_the_cpp_checks_them`, `a_command_line_launch_opens_the_builtin_and_types_its_fallback_text`, `describe_answers_whether_the_window_is_open_and_changes_nothing` |
 
@@ -482,6 +485,19 @@ and launches it with its arguments otherwise. Declared differences:
 - `theme check` and `theme paths` are registered in the C++ but commented out; here they work.
 - `version`'s commit and provenance come from `COMPASS_GIT_COMMIT` and `COMPASS_PROVENANCE` at build
   time, `unknown` and `local` without them.
+
+**`src/builtins/calculator`.** Calculator History is a builtin (`commands:calculator-history`),
+served by IPC v17 `CalculatorHistory`, `AddCalculatorRecord` and `EditCalculatorHistory`. The rows
+live in the `calculator_history` table of Compass's own encrypted database (the one extension
+storage uses, keyed from the login keyring); without a keyring the history is refused by name.
+Copying the calculator's answer, from the root list or the view's live result, remembers it, as
+`CopyCalculatorAnswerAction`; the engine groups by the C++'s boundaries read from the local calendar
+(Monday weeks, calendar months and years) and drops the empty groups; the view shows the live result
+first under the C++'s `live_calc` gate and offers the C++ panel (pin or unpin, copy answer, question,
+or both, delete, delete all). Declared differences: a row's conversion flag comes from the question's
+`to`/`in`/`as`/`->` keyword, since fend reports no answer type; "Delete all entries" deletes, where
+the C++ action's `execute` is empty; success says so in the view rather than a toast or HUD.
+Currency conversion and Refresh Exchange Rates stay unported, blocked on a rate source.
 
 **`src/services/app-runtime`.** `LinuxAppRuntime` over the engine's window providers (IPC v17
 `AppRuntime`, `QuitApp`, `QuitWindowApp`): an application is running when `findAppWindows` finds it
@@ -1081,9 +1097,9 @@ The calendar arithmetic is **not** ported: `group_records_by_time` takes the eig
 as an argument rather than reading a clock. Computing them belongs to whoever owns the clock, and
 keeping them out is what lets the scan be tested without freezing a timezone. The `dividers` vector
 the C++ declares at the top of that function is dead — nothing reads it — and is not carried over.
-Still C++-only: the history view over this model, the backends (unported by design: fend answers
-instead, see the crate docs), the preference dropdown that selects one, currency conversion, and
-the refresh-rates command.
+The history view landed in the gaps pass (below). Not ported by design: the backends and the
+preference dropdown that selects one (fend answers instead, see the crate docs). Still C++-only:
+currency conversion and the refresh-rates command, blocked on a rate source.
 
 **`src/services/script-command` → `compass-core::script_scan`** — the header parser was already
 ported (`src/lib/script-command`); this is the layer around it. The scan's rules are ported with

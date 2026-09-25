@@ -142,7 +142,10 @@ async fn echo_handler(request: Request) -> Response {
         | Request::LaunchCommand { .. }
         | Request::QuitApp { .. }
         | Request::QuitWindowApp { .. }
+        | Request::AddCalculatorRecord { .. }
+        | Request::EditCalculatorHistory { .. }
         | Request::SetTheme { .. } => Response::Ack,
+        Request::CalculatorHistory { .. } => Response::CalculatorHistory { groups: vec![] },
         Request::AppRuntime { .. } => Response::AppRuntime {
             running: false,
             frontmost: false,

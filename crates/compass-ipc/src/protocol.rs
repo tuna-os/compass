@@ -62,7 +62,9 @@ use serde::{Deserialize, Serialize};
 /// open ([`Request::DescribeWindow`], [`WindowCommand::Describe`]) and the
 /// file index's own query ([`Request::FsQuery`]); and Quit and Force Quit
 /// for a running application ([`Request::AppRuntime`], [`Request::QuitApp`],
-/// [`Request::QuitWindowApp`]).
+/// [`Request::QuitWindowApp`]); and the calculator's history
+/// ([`Request::CalculatorHistory`], [`Request::AddCalculatorRecord`],
+/// [`Request::EditCalculatorHistory`]).
 pub const PROTOCOL_VERSION: u16 = 17;
 
 /// A client-to-server frame.
@@ -790,6 +792,30 @@ pub enum Request {
         /// Force Quit rather than Quit.
         force: bool,
     },
+    /// The calculator's history matching `query`, grouped by when each
+    /// answer was copied. Answered with [`Response::CalculatorHistory`];
+    /// refused as [`ErrorKind::Unsupported`] with no keyring to open it
+    /// with. (v17.)
+    CalculatorHistory {
+        /// Filters the rows by question and answer; empty keeps them all.
+        query: String,
+    },
+    /// Remember a calculation whose answer was copied, as the C++
+    /// `addRecord`. Answered with [`Response::Ack`]. (v17.)
+    AddCalculatorRecord {
+        /// What was asked.
+        question: String,
+        /// What came back.
+        answer: String,
+        /// A unit conversion rather than arithmetic.
+        conversion: bool,
+    },
+    /// Pin, unpin or remove one remembered calculation, or remove them all.
+    /// Answered with [`Response::Ack`]. (v17.)
+    EditCalculatorHistory {
+        /// What to do.
+        edit: CalculatorEdit,
+    },
 }
 
 /// One change [`Request::RootItemEdit`] makes (`RootSearchActionGenerator`).
@@ -1074,6 +1100,13 @@ pub enum Response {
         /// Whether the launcher window is on screen.
         open: bool,
     },
+    /// Answer to [`Request::CalculatorHistory`]: the non-empty groups, in
+    /// order. (v17.)
+    CalculatorHistory {
+        /// `Pinned`, `Today`, `This week`, `This month`, `This year`,
+        /// `A few years ago`, each only when it has a row.
+        groups: Vec<CalculatorGroup>,
+    },
     /// Answer to [`Request::AppRuntime`]. (v17.)
     AppRuntime {
         /// It has at least one window.
@@ -1139,6 +1172,43 @@ pub struct ClipboardDetail {
     pub keywords: String,
     /// Whether it is pinned.
     pub pinned: bool,
+}
+
+/// One group of [`Response::CalculatorHistory`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalculatorGroup {
+    /// The section's name.
+    pub name: String,
+    /// Its rows, pinned first and newest first.
+    pub records: Vec<CalculatorRecord>,
+}
+
+/// One remembered calculation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalculatorRecord {
+    /// Its id, for [`Request::EditCalculatorHistory`].
+    pub id: String,
+    /// What was asked.
+    pub question: String,
+    /// What came back.
+    pub answer: String,
+    /// A unit conversion rather than arithmetic.
+    pub conversion: bool,
+    /// Whether it is pinned.
+    pub pinned: bool,
+}
+
+/// A change to the calculator's history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CalculatorEdit {
+    /// Pin a row, by id.
+    Pin(String),
+    /// Unpin a row, by id.
+    Unpin(String),
+    /// Remove a row, by id.
+    Remove(String),
+    /// Remove every row.
+    RemoveAll,
 }
 
 /// One root item, as `vicinae cmd ls` lists it.

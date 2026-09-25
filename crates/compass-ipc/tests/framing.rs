@@ -319,6 +319,26 @@ fn all_requests() -> Vec<Request> {
             window: u32::MAX,
             force: false,
         },
+        Request::CalculatorHistory {
+            query: "√2 ≈".into(),
+        },
+        Request::AddCalculatorRecord {
+            question: "5 ft to m".into(),
+            answer: "1.524 m".into(),
+            conversion: true,
+        },
+        Request::EditCalculatorHistory {
+            edit: compass_ipc::CalculatorEdit::Pin("ä-1".into()),
+        },
+        Request::EditCalculatorHistory {
+            edit: compass_ipc::CalculatorEdit::Unpin("ä-1".into()),
+        },
+        Request::EditCalculatorHistory {
+            edit: compass_ipc::CalculatorEdit::Remove("ä-1".into()),
+        },
+        Request::EditCalculatorHistory {
+            edit: compass_ipc::CalculatorEdit::RemoveAll,
+        },
         Request::FsQuery {
             query: "résumé".into(),
             limit: 10_000,
@@ -445,6 +465,18 @@ fn all_responses() -> Vec<Response> {
             focused_window_title: None,
         },
         Response::WindowState { open: true },
+        Response::CalculatorHistory {
+            groups: vec![compass_ipc::CalculatorGroup {
+                name: "Pinned".into(),
+                records: vec![compass_ipc::CalculatorRecord {
+                    id: "ä-1".into(),
+                    question: "2π".into(),
+                    answer: "approx. 6.2831853072".into(),
+                    conversion: false,
+                    pinned: true,
+                }],
+            }],
+        },
         Response::AppRuntime {
             running: true,
             frontmost: false,
@@ -884,6 +916,9 @@ fn request_variants_are_exhaustive() {
             | Request::AppRuntime { .. }
             | Request::QuitApp { .. }
             | Request::QuitWindowApp { .. }
+            | Request::CalculatorHistory { .. }
+            | Request::AddCalculatorRecord { .. }
+            | Request::EditCalculatorHistory { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -937,6 +972,7 @@ fn response_variants_are_exhaustive() {
             | Response::WindowState { .. }
             | Response::CommandLaunch { .. }
             | Response::AppRuntime { .. }
+            | Response::CalculatorHistory { .. }
             | Response::Window(_) => {}
         }
     }

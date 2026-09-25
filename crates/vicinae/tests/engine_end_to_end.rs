@@ -5793,3 +5793,25 @@ fn quit_closes_an_applications_windows_and_force_quit_kills_their_processes() {
     drop(daemon);
     runtime.block_on(shell.shutdown());
 }
+
+#[test]
+fn calculator_history_is_a_builtin_and_without_a_keyring_is_refused_by_name() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let daemon = Daemon::start(&[]);
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "calculator history".into(),
+    }) else {
+        panic!("expected results");
+    };
+    assert_eq!(
+        hits.first().map(|hit| hit.id.as_str()),
+        Some("commands:calculator-history")
+    );
+    let Response::Error(err) = daemon.request(Request::CalculatorHistory {
+        query: String::new(),
+    }) else {
+        panic!("the history opened without a keyring");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+    assert!(err.message.contains("keyring"), "{}", err.message);
+}

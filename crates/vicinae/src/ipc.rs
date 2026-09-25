@@ -184,6 +184,9 @@ fn describe(request: &Request) -> &'static str {
         Request::AppRuntime { .. } => "AppRuntime",
         Request::QuitApp { .. } => "QuitApp",
         Request::QuitWindowApp { .. } => "QuitWindowApp",
+        Request::CalculatorHistory { .. } => "CalculatorHistory",
+        Request::AddCalculatorRecord { .. } => "AddCalculatorRecord",
+        Request::EditCalculatorHistory { .. } => "EditCalculatorHistory",
     }
 }
 
