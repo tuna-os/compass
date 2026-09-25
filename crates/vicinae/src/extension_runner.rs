@@ -31,12 +31,15 @@ use compass_core::extension_commands::ExtensionCommand;
 use compass_core::manifest::CommandMode;
 use compass_worker_host::Worker;
 use compass_worker_host::application_service::ApplicationService;
+use compass_worker_host::browser_service::BrowserService;
 use compass_worker_host::clipboard_service::{
     Clipboard, ClipboardService, Content, CopyOptions, ReadContent,
 };
+use compass_worker_host::command_service::CommandService;
 use compass_worker_host::extension_manager::{
     Capabilities, CommandEnv, LaunchType, LoadOptions, ManagerClient,
 };
+use compass_worker_host::file_search_service::{FileIndexer, FileSearchService};
 use compass_worker_host::oauth_service::{
     AuthorizeRequest, AuthorizeService, Authorizer, OAuthService, Redirect,
 };
@@ -48,6 +51,7 @@ use compass_worker_host::ui_service::UiService;
 use compass_worker_host::ui_shell_service::{
     CloseWindow, CommandInfo, Notification, Shell, ToastStyle, UiShellService,
 };
+use compass_worker_host::wallpaper_service::WallpaperService;
 
 /// Overrides where the runtime bundle is looked for.
 pub const RUNTIME_ENV: &str = "COMPASS_EXTENSION_RUNTIME";
@@ -396,6 +400,9 @@ pub fn start(
         preferences,
         arguments,
         apps,
+        files,
+        commands,
+        context,
     } = host;
 
     // The runtime creates these itself, but a sandbox can only grant a path
@@ -446,10 +453,12 @@ pub fn start(
         owner_or_author_name: command.author.clone(),
         arguments,
         preferences,
-        launch_context: serde_json::Value::Null,
+        launch_context: context.as_ref().map_or(serde_json::Value::Null, |context| {
+            context.launch_context.clone()
+        }),
         launch_type: LaunchType::User,
-        capabilities: Capabilities::default(),
-        fallback_text: None,
+        capabilities: capabilities(shell.is_some(), files.as_ref()),
+        fallback_text: context.and_then(|context| context.fallback_text),
         cwd: None,
     };
     let load_id = ManagerClient::new(&mut worker)
@@ -503,6 +512,8 @@ pub fn start(
                     name,
                     namespace,
                     apps,
+                    files,
+                    commands,
                 },
                 storage,
                 ShellClipboard {
@@ -552,6 +563,34 @@ pub struct Host {
     pub arguments: serde_json::Value,
     /// What `open()` and `getApplications()` reach, or `None` to refuse them.
     pub apps: Option<crate::extension_apps::EngineApps>,
+    /// The file index `FileSearch/search` asks, or `None` for no index.
+    pub files: Option<Arc<crate::file_search::FileSearch>>,
+    /// What `Command/*` reaches, or `None` to refuse it.
+    pub commands: Option<crate::extension_commands::EngineCommands>,
+    /// The launch context and fallback text another command launched this
+    /// one with.
+    pub context: Option<crate::extension_commands::Context>,
+}
+
+/// `opts.capabilities`, as `ExtensionCommandRuntime` fills it: no browser
+/// is ever connected (ADR-0008); windows where a backend lists them; the
+/// wallpaper where a backend sets it; files where the indexer runs.
+/// Blocking: it may probe the compositor and the wallpaper daemons once.
+fn capabilities(shell: bool, files: Option<&Arc<crate::file_search::FileSearch>>) -> Capabilities {
+    let windows = crate::wlroots::compositor().is_some()
+        || crate::wlroots::session().is_some_and(|wlroots| wlroots.toplevels.is_some())
+        || shell;
+    Capabilities {
+        browser_extension: false,
+        window_management: windows,
+        wallpaper: crate::extension_wallpaper::EngineWallpaper::new(
+            tokio::runtime::Handle::try_current().ok(),
+        )
+        .can_set(),
+        file_search: files.is_some_and(|files| {
+            crate::extension_files::EngineFiles::new(Arc::clone(files)).is_available()
+        }),
+    }
 }
 
 /// How a run began.
@@ -570,6 +609,8 @@ struct Served {
     name: String,
     namespace: String,
     apps: Option<crate::extension_apps::EngineApps>,
+    files: Option<Arc<crate::file_search::FileSearch>>,
+    commands: Option<crate::extension_commands::EngineCommands>,
 }
 
 fn serve(
@@ -588,8 +629,11 @@ fn serve(
         name,
         namespace,
         apps,
+        files,
+        commands,
     } = served;
     let title = title.as_str();
+    let clipboard_handle = clipboard.handle.clone();
     let windows = compass_worker_host::window_service::WindowService::new(
         crate::extension_windows::EngineWindows::detect(
             clipboard.shell.clone(),
@@ -647,6 +691,21 @@ fn serve(
     }
     let authorize = AuthorizeService::new(EngineAuthorizer::default());
     router = router.with(&authorize);
+    let file_search =
+        files.map(|files| FileSearchService::new(crate::extension_files::EngineFiles::new(files)));
+    if let Some(service) = &file_search {
+        router = router.with(service);
+    }
+    let wallpaper = WallpaperService::new(crate::extension_wallpaper::EngineWallpaper::new(
+        clipboard_handle.clone(),
+    ));
+    router = router.with(&wallpaper);
+    let browser = BrowserService::new(crate::extension_browser::NoBrowsers);
+    router = router.with(&browser);
+    let command_service = commands.map(CommandService::new);
+    if let Some(service) = &command_service {
+        router = router.with(service);
+    }
     let mut session = Session::new(worker, session_id.as_str(), router);
     if let Some(view) = &view {
         view.attach(session.events());

@@ -191,6 +191,12 @@ impl Daemon {
             // Nor its compositor: on a wlroots session the engine would answer
             // window requests over Wayland (`tests/wlroots_engine.rs`).
             .env_remove("WAYLAND_DISPLAY")
+            // Nor its compositor's own socket (Hyprland, niri), nor its
+            // desktop: the wallpaper backends are chosen by name.
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("NIRI_SOCKET")
+            .env_remove("XDG_CURRENT_DESKTOP")
+            .env_remove("GDMSESSION")
             // Nor the network: a test's HTTP goes to its own local fake,
             // never through a proxy the invoking shell set.
             .env_remove("HTTP_PROXY")
@@ -200,6 +206,10 @@ impl Daemon {
             .env_remove("https_proxy")
             .env_remove("all_proxy")
             .env("NO_PROXY", "127.0.0.1,localhost")
+            // Nor the machine's keyboards: a helper that exits at once
+            // stands in for vicinae-input-server unless a test brings its
+            // own fake.
+            .env("VICINAE_INPUT_SERVER_BIN", "/bin/true")
             .envs(extra_env)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -2768,8 +2778,10 @@ fn recording_app(dir: &Path, name: &str, mime_types: &str) -> (String, PathBuf) 
     std::fs::write(
         &program,
         format!(
-            "#!/bin/sh\nfor arg in \"$@\"; do echo \"$arg\" >> '{}'; done\n",
-            log.display()
+            // All at once, then renamed into place: a reader polling for a
+            // non-empty log must not see the first argument without the rest.
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{log}.part' && mv '{log}.part' '{log}'\n",
+            log = log.display()
         ),
     )
     .expect("fake application");
@@ -4080,4 +4092,510 @@ fn real_stores_smoke() {
         panic!("no Raycast detail");
     };
     assert!(detail.markdown.starts_with("# "));
+}
+
+/// The input server is started, told every snippet keyword, told again as
+/// snippets change, and stopped and started by `SetInputServerEnabled` —
+/// against a scripted helper that logs what it is asked and touches no
+/// device.
+#[test]
+fn the_input_server_is_told_the_keywords_and_follows_the_setting() {
+    use compass_ipc::{Request, Response};
+
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_input_server.py");
+    let log = std::sync::Arc::new(std::sync::Mutex::new(PathBuf::new()));
+    let log_path = std::sync::Arc::clone(&log);
+    let daemon = Daemon::start_prepared(&[], "{}", move |root| {
+        let file = root.join("input-server.log");
+        *log_path.lock().unwrap() = file.clone();
+        vec![
+            ("VICINAE_INPUT_SERVER_BIN", script.into_os_string()),
+            ("FAKE_INPUT_LOG", file.into_os_string()),
+        ]
+    });
+    let log = log.lock().unwrap().clone();
+    let calls = || std::fs::read_to_string(&log).unwrap_or_default();
+    let wait_for = |what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            if calls().contains(what) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!(
+            "the input server was never sent {what}; it got:\n{}",
+            calls()
+        );
+    };
+    let status = |daemon: &Daemon| match daemon.request(Request::InputServerStatus) {
+        Response::InputServerStatus(status) => status,
+        other => panic!("unexpected {other:?}"),
+    };
+
+    wait_for("Snippet/getCapabilities");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !status(&daemon).running {
+        assert!(
+            Instant::now() < deadline,
+            "never running: {:?}",
+            status(&daemon)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let now = status(&daemon);
+    assert!(now.enabled && now.injection, "{now:?}");
+
+    let Response::Snippets { snippets } = daemon.request(Request::SaveSnippet {
+        id: None,
+        name: "Sig".into(),
+        text: "Best".into(),
+        keyword: Some(";sig".into()),
+        word: true,
+        apps: vec![],
+    }) else {
+        panic!("not saved");
+    };
+    wait_for(r#""trigger": ";sig""#);
+    assert!(
+        calls().contains(r#""mode": "Word""#),
+        "registered as a word snippet: {}",
+        calls()
+    );
+    assert_eq!(status(&daemon).keywords, 1);
+
+    daemon.request(Request::RemoveSnippet {
+        id: snippets[0].id.clone(),
+    });
+    wait_for("Snippet/removeSnippet");
+
+    let Response::InputServerStatus(off) =
+        daemon.request(Request::SetInputServerEnabled { enabled: false })
+    else {
+        panic!("no status");
+    };
+    assert!(!off.enabled && !off.running, "{off:?}");
+    let saved =
+        std::fs::read_to_string(log.parent().unwrap().join("config/vicinae/vicinae.json")).unwrap();
+    assert!(saved.contains("\"input_server\""), "{saved}");
+
+    let before = calls().matches("Snippet/getCapabilities").count();
+    let Response::InputServerStatus(on) =
+        daemon.request(Request::SetInputServerEnabled { enabled: true })
+    else {
+        panic!("no status");
+    };
+    assert!(on.enabled, "{on:?}");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while calls().matches("Snippet/getCapabilities").count() == before {
+        assert!(Instant::now() < deadline, "not restarted");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// A second extension, `hosts`, whose commands reach the host APIs the
+/// engine routes since IPC v15: `FileSearch`, `Wallpaper`, `BrowserExtension`,
+/// workspaces through `WindowManagement`, and `Command`. Each writes what it
+/// was answered into its support directory (the one place the sandbox lets
+/// it write) or shows it in a `Detail`.
+fn install_host_extension(root: &Path) -> PathBuf {
+    let ext = root.join("data-home/vicinae/extensions/hosts");
+    std::fs::create_dir_all(&ext).unwrap();
+    std::fs::write(
+        ext.join("package.json"),
+        r#"{"name": "hosts", "title": "Hosts", "author": "someone",
+            "commands": [
+              {"name": "probe", "title": "Probe Hosts", "mode": "view"},
+              {"name": "launcher", "title": "Launch Sibling", "mode": "no-view"},
+              {"name": "target", "title": "Launch Target", "mode": "no-view",
+               "arguments": [{"name": "who", "type": "text", "placeholder": "Who",
+                              "required": false}]},
+              {"name": "badlaunch", "title": "Launch Nothing", "mode": "no-view"},
+              {"name": "prefs", "title": "Open Preferences", "mode": "no-view"}
+            ]}"#,
+    )
+    .unwrap();
+    let support = root.join("data-home/vicinae/support/hosts");
+    let wall = root.join("wall.png");
+    std::fs::write(&wall, b"\x89PNG\r\n\x1a\n").unwrap();
+    std::fs::write(
+        ext.join("probe.js"),
+        format!(
+            "const React = require('react');
+             const {{ Detail, FileSearch, Wallpaper, BrowserExtension, WindowManagement,
+                      environment }} = require('@vicinae/api');
+             const said = (p) => p.then((v) => v === undefined ? 'ok' : JSON.stringify(v),
+                                        (e) => 'error: ' + (e && e.message ? e.message : String(e)));
+             module.exports.default = () => {{
+               const [text, setText] = React.useState('');
+               React.useEffect(() => {{
+                 Promise.all([
+                   Promise.resolve(JSON.stringify([FileSearch, Wallpaper, BrowserExtension,
+                     WindowManagement].map((api) => environment.canAccess(api)))),
+                   said(FileSearch.search('quarterly', {{ limit: 5 }})),
+                   said(Wallpaper.set({wall:?}, {{ fit: 'Contain' }})),
+                   said(Wallpaper.set('/nonexistent/wall.png')),
+                   said(BrowserExtension.getTabs()),
+                   said(WindowManagement.getWorkspaces()),
+                   said(WindowManagement.getActiveWorkspace()),
+                   said(WindowManagement.getActiveWindow().then((w) => w.id)),
+                 ]).then((answers) => setText(answers.join(' | ')));
+               }}, []);
+               return React.createElement(Detail, {{ markdown: text || 'asking' }});
+             }};",
+            wall = wall.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let launched = support.join("launched.txt");
+    std::fs::write(
+        ext.join("launcher.js"),
+        format!(
+            "const {{ launchCommand, updateCommandMetadata, LaunchType }} = require('@vicinae/api');
+             module.exports.default = async () => {{
+               await updateCommandMetadata({{ subtitle: '3 unread' }});
+               let out = 'launched';
+               try {{
+                 await launchCommand({{ name: 'target', type: LaunchType.UserInitiated,
+                   arguments: {{ who: 'ada' }}, context: {{ from: 'launcher' }} }});
+               }} catch (e) {{ out = 'error: ' + ((e && e.message) || String(e)); }}
+               require('node:fs').writeFileSync({launched:?}, out);
+             }};",
+            launched = launched.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("target.js"),
+        format!(
+            "module.exports.default = async (props) => {{
+               require('node:fs').writeFileSync({target:?},
+                 JSON.stringify({{ who: props.arguments.who, context: props.launchContext }}));
+             }};",
+            target = support.join("target.txt").to_string_lossy()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("badlaunch.js"),
+        format!(
+            "const {{ launchCommand, LaunchType }} = require('@vicinae/api');
+             module.exports.default = async () => {{
+               let out = 'launched';
+               try {{
+                 await launchCommand({{ name: 'nothing', type: LaunchType.UserInitiated }});
+               }} catch (e) {{ out = 'error: ' + ((e && e.message) || String(e)); }}
+               require('node:fs').writeFileSync({bad:?}, out);
+             }};",
+            bad = support.join("bad.txt").to_string_lossy()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        ext.join("prefs.js"),
+        format!(
+            "const {{ openCommandPreferences }} = require('@vicinae/api');
+             module.exports.default = async () => {{
+               await openCommandPreferences();
+               require('node:fs').writeFileSync({opened:?}, 'opened');
+             }};",
+            opened = support.join("prefs.txt").to_string_lossy()
+        ),
+    )
+    .unwrap();
+    support
+}
+
+/// A directory of stand-in programs for the wallpaper backends: `gsettings`
+/// records its arguments, and `hyprctl`, `swww` and `awww` fail, so a real
+/// one on the invoking machine's path is never reached.
+fn fake_wallpaper_programs(root: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = root.join("gsettings.log");
+    let scripts = [
+        (
+            "gsettings",
+            format!("#!/bin/sh\necho \"$*\" >> '{}'\n", log.display()),
+        ),
+        ("hyprctl", "#!/bin/sh\nexit 1\n".to_owned()),
+        ("swww", "#!/bin/sh\nexit 1\n".to_owned()),
+        ("awww", "#!/bin/sh\nexit 1\n".to_owned()),
+    ];
+    for (name, body) in scripts {
+        let path = bin.join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    bin
+}
+
+fn hyprland_fixture(name: &str) -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../compass-platform-linux/tests/fixtures/hyprland")
+            .join(name),
+    )
+    .unwrap()
+}
+
+#[test]
+fn an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces() {
+    use compass_extension_api::View;
+    use compass_ipc::{Request, Response};
+    use compass_testkit::fake_compositor::{FakeSocket, Framing};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut root = PathBuf::new();
+    let mut hyprland = None;
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        root = dir.to_path_buf();
+        install_host_extension(dir);
+        let documents = dir.join("Documents");
+        std::fs::create_dir_all(&documents).unwrap();
+        std::fs::write(documents.join("quarterly-report.pdf"), "%PDF").unwrap();
+        let runtime_dir = dir.join("run");
+        hyprland = Some(FakeSocket::replaying(
+            &FakeSocket::hyprland_path(&runtime_dir, "v0.50_test"),
+            Framing::Hyprland,
+            vec![
+                ("-j/clients".into(), hyprland_fixture("clients.json")),
+                ("-j/workspaces".into(), hyprland_fixture("workspaces.json")),
+                (
+                    "-j/activeworkspace".into(),
+                    hyprland_fixture("activeworkspace.json"),
+                ),
+                (
+                    "-j/activewindow".into(),
+                    hyprland_fixture("activewindow.json"),
+                ),
+            ],
+        ));
+        let bin = fake_wallpaper_programs(dir);
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        vec![
+            ("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string()),
+            ("XDG_CURRENT_DESKTOP", "GNOME".into()),
+            ("XDG_RUNTIME_DIR", runtime_dir.into_os_string()),
+            ("HYPRLAND_INSTANCE_SIGNATURE", "v0.50_test".into()),
+            ("PATH", std::env::join_paths(paths).unwrap()),
+        ]
+    });
+    // The index scans in the background; the extension asks once it has.
+    search_files_until(&daemon, "quarterly", None, |_, files| {
+        files.iter().any(|file| file.name == "quarterly-report.pdf")
+    });
+
+    let started = daemon.request(Request::RunExtensionCommand {
+        id: "@someone/hosts:probe".into(),
+        arguments_json: None,
+    });
+    let Response::ExtensionStarted { session } = started else {
+        panic!("no session: {started:?}");
+    };
+    let (view, _) = wait_for_view(
+        &daemon,
+        session,
+        |view, _| matches!(view, View::Detail(detail) if detail.markdown.as_deref() != Some("asking")),
+    );
+    let View::Detail(detail) = view else {
+        unreachable!()
+    };
+    let text = detail.markdown.unwrap_or_default();
+    let answers: Vec<&str> = text.split(" | ").collect();
+    assert_eq!(answers.len(), 8, "{text}");
+    assert_eq!(
+        answers[0], "[true,true,false,true]",
+        "canAccess: files, wallpaper, no browser, windows"
+    );
+    let files: serde_json::Value = serde_json::from_str(answers[1]).expect(answers[1]);
+    assert_eq!(files[0]["category"], "Document", "{files}");
+    assert!(
+        files[0]["path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/Documents/quarterly-report.pdf")),
+        "{files}"
+    );
+    assert_eq!(answers[2], "ok", "the wallpaper was set");
+    assert_eq!(answers[3], "error: No such file: /nonexistent/wall.png");
+    assert_eq!(answers[4], "[]", "no browser is ever connected");
+    let workspaces: serde_json::Value = serde_json::from_str(answers[5]).expect(answers[5]);
+    assert_eq!(
+        workspaces
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| (w["id"].as_str().unwrap(), w["active"].as_bool().unwrap()))
+            .collect::<Vec<_>>(),
+        [("1", true), ("3", false)]
+    );
+    let active: serde_json::Value = serde_json::from_str(answers[6]).expect(answers[6]);
+    assert_eq!(active["id"], "1");
+    assert_eq!(active["monitorId"], "DP-1");
+    assert_eq!(
+        answers[7], "\"0x5581c8a4f310\"",
+        "Hyprland's frontmost window"
+    );
+
+    let wall = root.join("wall.png");
+    let log = std::fs::read_to_string(root.join("gsettings.log")).unwrap();
+    let uri = format!("file://{}", wall.display());
+    assert_eq!(
+        log.lines().collect::<Vec<_>>(),
+        [
+            format!("set org.gnome.desktop.background picture-uri {uri}"),
+            format!("set org.gnome.desktop.background picture-uri-dark {uri}"),
+            "set org.gnome.desktop.background picture-options scaled".to_owned(),
+        ],
+        "GNOME's three keys, Contain as `scaled`; the missing file set nothing"
+    );
+    assert!(
+        hyprland
+            .as_ref()
+            .unwrap()
+            .seen()
+            .iter()
+            .all(|request| request.starts_with("-j/")),
+        "WindowManagement only asked"
+    );
+    assert_eq!(
+        daemon.request(Request::CloseExtension { session }),
+        Response::Ack
+    );
+}
+
+#[test]
+fn an_extension_launches_a_sibling_relabels_itself_and_opens_its_preferences() {
+    use compass_ipc::{ErrorKind, Request, Response, WindowCommand};
+    let Some(runtime) = extension_runtime() else {
+        assert!(
+            std::env::var_os("COMPASS_REQUIRE_RUNTIME").is_none_or(|v| v != "1"),
+            "COMPASS_REQUIRE_RUNTIME=1 but no runtime bundle; `make extension-runtime`"
+        );
+        eprintln!("skipping: no extension runtime bundle");
+        return;
+    };
+    let mut support = PathBuf::new();
+    let daemon = Daemon::start_prepared(&[("a.desktop", &entry("Alpha", ""))], "{}", |dir| {
+        support = install_host_extension(dir);
+        vec![("COMPASS_EXTENSION_RUNTIME", runtime.into_os_string())]
+    });
+    let run = |id: &str| {
+        daemon.request(Request::RunExtensionCommand {
+            id: id.into(),
+            arguments_json: None,
+        })
+    };
+
+    // No window: a no-view sibling runs in the engine, with its arguments
+    // and the launch context.
+    assert_eq!(run("@someone/hosts:launcher"), Response::Ack);
+    wait_for_content(&support.join("launched.txt"));
+    assert_eq!(
+        std::fs::read_to_string(support.join("launched.txt")).unwrap(),
+        "launched"
+    );
+    wait_for_content(&support.join("target.txt"));
+    let target: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(support.join("target.txt")).unwrap())
+            .unwrap();
+    assert_eq!(
+        target,
+        serde_json::json!({"who": "ada", "context": {"from": "launcher"}})
+    );
+
+    // The subtitle it set shows in root search and is served to the window.
+    let Response::QueryResults { hits } = daemon.request(Request::Query {
+        text: "launch sibling".into(),
+    }) else {
+        panic!("no results");
+    };
+    let hit = hits
+        .iter()
+        .find(|hit| hit.id == "@someone/hosts:launcher")
+        .expect("the launcher command");
+    assert_eq!(hit.subtitle.as_deref(), Some("3 unread"));
+    assert_eq!(
+        daemon.request(Request::ExtensionSubtitles),
+        Response::ExtensionSubtitles {
+            subtitles: vec![("@someone/hosts:launcher".into(), "3 unread".into())]
+        }
+    );
+
+    // A command that is not installed is the C++'s own refusal.
+    assert_eq!(run("@someone/hosts:badlaunch"), Response::Ack);
+    wait_for_content(&support.join("bad.txt"));
+    assert_eq!(
+        std::fs::read_to_string(support.join("bad.txt")).unwrap(),
+        "error: No such command"
+    );
+
+    // With a window: it is handed the launch, which it takes once.
+    std::fs::remove_file(support.join("launched.txt")).unwrap();
+    let window = FakeWindow::attach(&daemon.socket, compass_ipc::WindowOutcome::Shown);
+    assert_eq!(run("@someone/hosts:launcher"), Response::Ack);
+    wait_for_content(&support.join("launched.txt"));
+    let token = wait_for_launch(&window, 0);
+    assert_eq!(
+        daemon.request(Request::ExtensionLaunchFetch { token }),
+        Response::ExtensionLaunch {
+            id: "@someone/hosts:target".into(),
+            arguments_json: Some(r#"{"who":"ada"}"#.into()),
+            preferences: false,
+        }
+    );
+    let Response::Error(err) = daemon.request(Request::ExtensionLaunchFetch { token }) else {
+        panic!("a launch was taken twice");
+    };
+    assert_eq!(err.kind, ErrorKind::BadRequest);
+
+    assert_eq!(run("@someone/hosts:prefs"), Response::Ack);
+    wait_for_content(&support.join("prefs.txt"));
+    let token = wait_for_launch(&window, 1);
+    assert_eq!(
+        daemon.request(Request::ExtensionLaunchFetch { token }),
+        Response::ExtensionLaunch {
+            id: "@someone/hosts:prefs".into(),
+            arguments_json: None,
+            preferences: true,
+        }
+    );
+    assert!(window.seen().contains(&WindowCommand::Launch(token)));
+    // Without a keyring there is nowhere to keep preferences, which is said.
+    let Response::Error(err) = daemon.request(Request::ExtensionPreferences {
+        id: "@someone/hosts:prefs".into(),
+    }) else {
+        panic!("preferences without a keyring were not refused");
+    };
+    assert_eq!(err.kind, ErrorKind::Unsupported);
+}
+
+/// Waits for the window to have been handed more than `after` launches, and
+/// returns the token of the next one.
+fn wait_for_launch(window: &FakeWindow, after: usize) -> u64 {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        let launches: Vec<u64> = window
+            .seen()
+            .iter()
+            .filter_map(|command| match command {
+                compass_ipc::WindowCommand::Launch(token) => Some(*token),
+                _ => None,
+            })
+            .collect();
+        if let Some(token) = launches.get(after) {
+            return *token;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("the window was never handed a launch: {:?}", window.seen());
 }

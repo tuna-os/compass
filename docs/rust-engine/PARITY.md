@@ -67,7 +67,7 @@ that. The plan has been corrected.
 | Crate | Tests | State |
 |---|---|---|
 | `compass-core` | 1,743 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction, the index reconciliation, the watch policy and script output styling |
-| `vicinae` | 184 | CLI, a 12-check `doctor`, and **the engine daemon** |
+| `vicinae` | 184 | CLI, a 14-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
 | `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
@@ -129,7 +129,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/file-indexer` | `compass-platform` | Phase 5 | ✅ | ❌ | ❌ | ❌ |
 | `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/snippet` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/snippet` | `compass-input-server` (`vicinae-input-server`), `compass-core::snippet` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 
 ## Services
@@ -155,7 +155,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/global-shortcuts` | `compass-portals` | Phase 1 | ✅ | 🟡 | 🟡 | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/input-server` | `compass-core` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/input-server` | `vicinae::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/media-control` | `compass-media` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
@@ -2082,8 +2082,11 @@ them and three places where the answer an extension gets differs.
 | 1 | The UI receives an extension's view in-process, whatever its size. | The launcher and `vicinae conformance` receive it over IPC as `ExtensionView`, whose frames were capped at 1 MiB — about a thousand list items with their actions. The cap is now 32 MiB (`compass_ipc::MAX_FRAME_LEN`), still checked from the prefix before anything is reserved. No wire change and no protocol bump: an older peer refuses a large frame as it always did. | `an_extension_view_of_several_mebibytes_is_carried` |
 | 2 | `Storage/get` of a missing key answers `null`. Raycast resolves `undefined`, and Google Search tests `=== undefined` before `JSON.parse`, so on the C++ host it crashes on `null.filter` with an empty history. **A C++ bug not reproduced.** | The reply carries no `result` member, which the generated client resolves as `undefined`. A stored value cannot be `null`, so nothing else changes. | `a_missing_key_reads_as_undefined_not_null` |
 | 3 | `getSelectedText` reads the primary selection the data-control clipboard server last reported, else Qt's (which needs the launcher focused), else fails "Unable to get selected text". | The primary selection over data-control on a wlroots compositor (`compass_wayland::clipboard::read_primary_text`), and through the Shell extension on GNOME (`GetPrimarySelection`, contract version 3: Mutter has no data-control and a Wayland client may read the primary selection only while it has keyboard focus, which the engine never has). The failure is the C++'s, verbatim. | `the_primary_selection_reads_back_and_is_not_the_clipboard`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `the_primary_selection_is_its_text_or_nothing` |
-| 4 | `WindowManagement` is the window manager provider's: windows, workspaces, screens, bounds. | Served by the engine now (`extension_windows`), over the same backends as the window switcher: the Shell extension on GNOME (whose `ListWindows` gained a frame and `fullscreen` in contract 3) and the foreign-toplevel list on wlroots (no bounds, no workspace). Screens come from `wl_output`, with `zxdg_output_manager_v1` for the logical layout, on any compositor; the active one is the one under the active window, or the only one. The *active window* is the focused one, or — with the launcher focused, as it is when an extension asks — the one before it in most-recently-used order, which is the window the C++'s focus memory returns. **Not served**: workspaces (neither backend lists them: `getActiveWorkspace` fails "No active workspace", `getWorkspaces` is `[]`) and `setWindowBounds` (neither can move a window: "Failed to set window bounds"). | `the_focused_window_is_active_unless_it_is_the_launcher`, `with_the_launcher_focused_the_window_before_it_is_active`, `the_screen_under_the_focused_window_is_the_active_one`, `the_headless_output_is_listed_with_its_name_and_mode`, `without_a_desktop_the_selection_and_window_apis_answer_as_the_cpp_does` |
-| 5 | `FileSearch/search`, `Command/*`, `Wallpaper/set` and `BrowserExtension/*` reach their services. | Their adapters are pinned, but the engine does not route them yet: they answer "… is not implemented by this host (compass-worker-host)". No Suite 1 command reaches one before its first frame. | — (the adapters' own tests in `compass-worker-host`) |
+| 4 | `WindowManagement` is the window manager provider's: windows, workspaces, screens, bounds. | Served by the engine (`extension_windows`), over the window switcher's backends in the C++ order: **Hyprland's or niri's own IPC** first (the C++ providers, ported: windows with their workspace and pid, Hyprland's with geometry; the workspace list; the active workspace; focus through the compositor), then the foreign-toplevel list on other wlroots compositors (no bounds, no workspace), then the Shell extension on GNOME (whose `ListWindows` gained a frame and `fullscreen` in contract 3). Screens come from `wl_output`, with `zxdg_output_manager_v1` for the logical layout, on any compositor; the active one is the one under the active window, or the only one. The *active window* is the focused one, or — with the launcher focused, as it is when an extension asks — the one before it in most-recently-used order, which is the window the C++'s focus memory returns; on Hyprland it is the C++'s `getFrontmostWindowSync` (lowest focus history on the active workspace). **Not served** off Hyprland and niri: workspaces (`getActiveWorkspace` fails "No active workspace", `getWorkspaces` is `[]`). `setWindowBounds` is refused everywhere ("Failed to set window bounds"), as the C++ Hyprland and niri providers refuse it. | `the_focused_window_is_active_unless_it_is_the_launcher`, `with_the_launcher_focused_the_window_before_it_is_active`, `the_screen_under_the_focused_window_is_the_active_one`, `the_headless_output_is_listed_with_its_name_and_mode`, `without_a_desktop_the_selection_and_window_apis_answer_as_the_cpp_does`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces` |
+| 5 | `FileSearch/search` asks the file indexer's `queryAsync`. | The same helper Search Files asks (`vicinae-file-indexer`, supervised by the engine), its rows only — no recent files, no direct path — with the adapter's C++ quirks (an omitted `limit` asks for none). With indexing off or the helper not running the answer is `[]`, and `environment.canAccess(FileSearch)` is `false`. | `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces` |
+| 6 | `Wallpaper/set` goes to `WallpaperManager`: the first activatable of hyprpaper, swww/awww, GNOME, KDE, Cinnamon, MATE. | The same order and the same tests of activatability (`hyprctl hyprpaper listactive`, `swww query`, the desktop name with `gsettings` on the path, `org.kde.plasmashell` on the bus), resolved once per engine; the commands and the Plasma script are `compass_core::wallpaper`'s, run on the host (`flatpak-spawn --host` in the Flatpak). The C++'s messages, verbatim: "Setting the wallpaper is not supported in the current environment", "No such file: …", a failing program's stderr else "… exited with code N". Inside the Flatpak the host's path cannot be searched, so a program counts as present and running it decides. | `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces`, `a_failing_command_says_its_stderr_else_its_code`, `compass-core/tests/wallpaper.rs` |
+| 7 | `BrowserExtension/*` reads the tabs the browser extension's native host reported. | No browser ever connects (ADR-0008 took browser control out of the port), so the engine answers as the C++ does with none connected: `getTabs` is `[]`, `focusTab` succeeds and reaches nothing, and `canAccess(BrowserExtension)` is `false` (the C++'s own test: `!browsers().empty()`). | `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces` |
+| 8 | `Command/launchCommand` pushes the sibling on the navigation stack, over the view that asked; `openCommandPreferences`/`openExtensionPreferences` open the settings window at the command; `updateCommandMetadata` overrides the root row's subtitle in memory. | The launcher is another process, so a launch is kept under a token and the window is told to take it (`WindowCommand::Launch`, IPC v15), then runs the command as if it had been picked in root search — its arguments form, preferences form and view included. **The view that asked is closed**, not kept beneath: the launcher shows one extension view at a time. The launch context and fallback text ride along to the command's next run (within five minutes). With no window attached a no-view sibling runs in the engine; a view sibling has nowhere to go and is dropped with a warning. Preferences open the command's preferences form in the launcher (saved, not run) rather than a settings window. The subtitle override is in memory as in the C++, shown by root search and served to the window (`ExtensionSubtitles`). "No such command", verbatim, for a command that is not installed. | `an_extension_launches_a_sibling_relabels_itself_and_opens_its_preferences`, `a_sibling_is_launched_through_the_window_with_its_arguments_and_context`, `an_extension_s_launch_runs_its_command_and_its_subtitle_override_shows`, `preferences_an_extension_opens_are_saved_without_running_it` |
 
 ### Extension views — remote images, date, tag and file pickers, and dialogs
 
@@ -2138,7 +2141,7 @@ arguments by name. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | Typing a keyword anywhere expands the snippet: `vicinae-snippet-server` reads `/dev/input` (libudev, xkbcommon), injects through uinput or the clipboard, with undo on backspace, per-app limits and the extension's delay/layout preferences. | **Not ported.** The trigger matcher (`compass-core::snippet`), the injection protocol (`compass-platform-linux::keyboard`) and the server's framing (`compass-core::input_server`) are, but no process reads the keyboard; keywords are stored and shown, and do nothing yet. | `compass-core::snippet` tests |
+| 1 | Typing a keyword anywhere expands the snippet: `vicinae-input-server` reads `/dev/input` (libudev, xkbcommon), injects through uinput and the clipboard, with undo on backspace, per-app limits and the extension's delay/layout preferences. | **Ported** (`compass-input-server`, `vicinae::snippet_expansion`); the differences are in "Input server and keyword expansion" below. | `compass-input-server` tests, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
 | 2 | Arguments are completion fields beside the search text. | A form with one field per argument (named once, in order of first use); an empty optional one takes its default. | `manage_snippets_copies_asking_for_arguments_first` |
 | 3 | Copy to clipboard copies text as transient (not recorded in history), and a file snippet as the file. | The launcher writes the expanded text to the clipboard itself; a file snippet copies its path as text. No form creates file snippets (the C++ form does not either). | — |
 | 4 | — | Paste, which the C++ list does not offer: the expansion is put on the clipboard and pasted through the Shell extension, as clipboard history pastes. | `snippets_are_imported_created_expanded_edited_and_removed` |
@@ -2146,6 +2149,33 @@ arguments by name. What differs:
 | 6 | A detail pane shows the type, the dates, the keyword and its apps, and the expansion as arguments are typed (shell placeholders shown as `$(code)`). | Rows carry the keyword (or the text's first words) as their subtitle; no detail pane yet. | `the_subtitle_is_the_keyword_or_the_first_words` |
 | 7 | `parseSnippetText` takes `\` as an escape for a literal `{`. | Parsed with the quicklink parser, which has no escape: `\{` is a backslash and a placeholder. | — |
 | 8 | `{argument}` with no `name=` is collected as an argument with an empty name. | Left out of the form; it expands to nothing either way. | `arguments_are_named_once_and_reserved_ids_are_not_arguments` |
+
+### Input server and keyword expansion — what differs
+
+`vicinae-input-server` is `crates/compass-input-server`: the same process split, permissions
+(`cap_dac_override`, packaging/README.md "The input server") and wire as the C++ — figura's
+JSON-RPC, byte for byte, in little-endian frames — so either engine can drive either helper. The
+engine starts it when `input_server.enabled` (default on), restarts it with the C++ backoff,
+registers every keyword on ready and diffs them on each save or removal, and carries out
+`handleKeywordTrigger`/`handleUndo` (`vicinae::snippet_expansion`). IPC v15 adds
+`InputServerStatus` and `SetInputServerEnabled` (`vicinae input-server status|enable|disable`), and
+`vicinae doctor` has an `input-server` check. What differs:
+
+| # | C++ behaviour | What we do | Pinned by |
+|---|---|---|---|
+| 1 | Keyboards and pointers are the nodes libudev tags `ID_INPUT_KEYBOARD`/`ID_INPUT_MOUSE`; hot-plug is a udev monitor. | The same tests `input_id` applies (keys 1–31; relative or non-pen, non-touchpad absolute X/Y with a left button) on the capability bits `evdev` reads; hot-plug is an inotify watch on `/dev/input`, retried briefly while udev sets the node up. A device udev tags by hwdb override rather than by bits is not recognised. | `device::is_keyboard` via the uinput test |
+| 2 | Triggers of equal length are ordered by an unstable sort. | Stable: the earlier registration wins a tie. The earlier Rust matcher said *first registered wins* regardless of length, which was wrong — the C++ sorts longest first; fixed. | `the_longest_trigger_wins_whatever_the_registration_order` |
+| 3 | `setKeymap` with a layout xkbcommon cannot compile installs a null keymap. | Refused with an error reply; the old keymap stays. | `an_unknown_layout_is_refused_and_the_old_one_kept` |
+| 4 | `setKeyDelay` with a negative value hands it to `usleep` as unsigned. | Clamped to 0. | `a_negative_key_delay_is_zero` |
+| 5 | After the paste, the clipboard's last selection (every offer) is restored after 800 ms. | Its text is restored after 800 ms; an image or file list on the clipboard before the expansion is not put back. | — |
+| 6 | Cursor walk-back and undo count UTF-16 units. | Characters (the expander's unit). The two agree outside astral characters (emoji), where the C++ walks too far. | `a_cursor_placeholder_walks_back_and_forgoes_undo` |
+| 7 | The expansion is copied as a concealed selection, so history skips it. | Concealed on wlroots (data-control's marker type); the GNOME Shell extension's `SetClipboard` carries no marker, so there it depends on the extension. | — |
+| 8 | The focused application comes from the window manager, nulled while Vicinae itself is focused without focus-handoff detection. | The focused window from the Shell extension (GNOME) or the foreign-toplevel list (wlroots), recognised in the app index by `WM_CLASS`/`app_id`. With neither, the app is unknown: keywords limited to apps do not expand, terminals paste with Ctrl+V. | `a_keyword_limited_to_apps_expands_only_in_them` |
+| 9 | Focus changes reset the typed text and the undo. | The same, from the Shell extension's window signal or the toplevel list's changes; without either, nothing resets it. | — |
+| 10 | The Snippets extension's preferences (`enabled`, `undo`, `layout`, `prePasteDelay`, `keyDelay`) apply when changed in settings. | Read from `providers.snippets.preferences` in `vicinae.json` on every trigger (layout and key delay are pushed to the helper when they change); there is no settings page to edit them yet. | `preferences_are_read_and_clamped` |
+| 11 | Clipboard-history and extension paste inject Ctrl+V through the input server (`LinuxPasteService`). | Unchanged: GNOME pastes through the Shell extension, wlroots copies only. `injectPaste` is implemented in the helper and not yet used for them. | — |
+| 12 | Without a clipboard there is no case to handle: the C++ always has Qt's. | With neither the Shell extension nor data-control, a typed keyword is logged and not expanded. | — |
+| 13 | — | Inside a Flatpak the helper is not started (no `/dev/input` or `/dev/uinput` there) and `doctor` says so; the C++ has no Flatpak. | `a_flatpak_is_told_keyword_expansion_cannot_work_there` |
 
 ### Script commands — what the port does not have yet
 
@@ -2408,7 +2438,9 @@ whether it is the *right* design is a separate product question.
 
 Verified on headless Sway 1.9 (`.github/workflows/wlroots.yaml`); Hyprland and niri are expected
 to behave the same because every choice below is made from the advertised globals, but neither runs
-in CI.
+in CI. Their IPC providers are tested against fake sockets replaying captured replies
+(`compass-platform-linux/tests/compositor_ipc.rs`), and against headless Sway with a fake Hyprland
+socket (`on_sway_with_a_hyprland_socket_windows_learn_their_pid_and_workspace`).
 
 1. **Launcher surface.** A layer surface through `iced_layershell`, centred, `top` layer,
    `exclusive` keyboard, namespace `vicinae` — the C++ `LayerShellConfig` defaults. The C++ keys
@@ -2421,12 +2453,24 @@ in CI.
    `$XDG_CURRENT_DESKTOP` first** and only then looks at globals, so a future Mutter with a layer
    shell stays on the tested GNOME path. Same outcome on every compositor today.
 3. **Window switching.** The C++ has per-compositor providers (Hyprland and niri over their IPC,
-   with workspaces) ahead of a generic Wayland one. The Rust engine has only the generic path:
-   `zwlr_foreign_toplevel_manager_v1` (list, focus state, activate, close) or, failing that,
-   `ext_foreign_toplevel_list_v1` (list only; activate/close are refused by name). So on wlroots:
-   no workspaces, no pid (the launcher's own window is recognised by `app_id`), no geometry, and
-   the Hyprland/niri IPC providers are not ported. Order is most-recently-activated first, with the
-   focused window last, as on GNOME.
+   with workspaces) ahead of a generic Wayland one. The Rust engine switches windows on the
+   generic path: `zwlr_foreign_toplevel_manager_v1` (list, focus state, activate, close) or,
+   failing that, `ext_foreign_toplevel_list_v1` (list only; activate/close are refused by name).
+   The **Hyprland and niri providers are ported** (`compass_platform_linux::compositor`, chosen
+   from `HYPRLAND_INSTANCE_SIGNATURE` and `$NIRI_SOCKET` as the C++ chooses them), and on those two
+   each toplevel is given the pid and workspace number the compositor reports for the window of
+   the same class and title — the toplevel protocols carry neither, and the two numberings share
+   no id. Two windows of one application with one title are paired by order. Elsewhere on wlroots:
+   no workspaces and no pid (the launcher's own window is recognised by `app_id`). `WindowManagement`
+   uses the providers directly ("The extension host API" #4). Differences in the providers
+   themselves: they ask when asked rather than mirroring niri's event stream (same answers, no
+   thread); Hyprland dispatches the C++'s Lua form (`hl.dsp.focus({ window = … })`) and, when a
+   Hyprland older than the Lua dispatchers refuses it, the classic `focuswindow address:…`; niri's
+   replies are read with `niri-ipc` 26.4's types, so a niri older than 25.08 (no `layout` or
+   `focus_timestamp`) is unreadable and counts as no windows. Order is most-recently-activated
+   first, with the focused window last, as on GNOME. `vicinae doctor` reports which of the
+   protocols this track uses are advertised (`wlroots.capabilities`: layer-shell,
+   foreign-toplevel, data-control, xx-hotkey, the portal's GlobalShortcuts, compositor IPC).
 4. **Clipboard history.** Watched over `ext-data-control-v1`, else `zwlr_data_control_manager_v1`,
    with the C++ offer filter (`compass_wayland::data_control`). The C++ stores every kept type of
    a selection; the Rust store takes one per selection, so the **preferred** one is recorded

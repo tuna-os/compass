@@ -29,6 +29,8 @@ optdepends=(
 provides=('vicinae')
 conflicts=('vicinae' 'vicinae-bin' 'vicinae-git')
 options=('!lto' '!debug')
+# Grants vicinae-input-server cap_dac_override (snippet keyword expansion).
+install=compass.install
 source=("compass::git+${COMPASS_GIT_URL:-https://github.com/tuna-os/compass.git}${COMPASS_GIT_REF:+#$COMPASS_GIT_REF}")
 sha256sums=('SKIP')
 
@@ -47,7 +49,7 @@ build() {
   cd compass
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  cargo build --frozen --release -p vicinae -p compass-sandbox --bins
+  cargo build --frozen --release -p vicinae -p compass-sandbox -p compass-input-server --bins
   # The extension runtime bundle: figura (C++23) generates the protocol, npm
   # bundles it. The Flatpak builds it the same way, outside flatpak-builder.
   ./scripts/build-extension-runtime.sh

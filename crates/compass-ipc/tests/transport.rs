@@ -129,6 +129,19 @@ async fn echo_handler(request: Request) -> Response {
             title: String::new(),
         },
         Request::StoreUninstall { .. } | Request::OpenUrl { .. } => Response::Ack,
+        Request::InputServerStatus | Request::SetInputServerEnabled { .. } => {
+            Response::InputServerStatus(compass_ipc::InputServerStatus::default())
+        }
+        Request::ExtensionLaunchFetch { .. } => Response::ExtensionLaunch {
+            id: String::new(),
+            arguments_json: None,
+            preferences: false,
+        },
+        Request::ExtensionSubtitles => Response::ExtensionSubtitles { subtitles: vec![] },
+        Request::ExtensionPreferences { .. } => Response::ExtensionNeedsPreferences {
+            title: String::new(),
+            fields: vec![],
+        },
         Request::ListFonts => Response::Fonts {
             fonts: vec![],
             categories: vec![],

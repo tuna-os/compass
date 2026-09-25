@@ -1,0 +1,11 @@
+{
+    "id": 1,
+    "name": "1",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 2,
+    "hasfullscreen": false,
+    "lastwindow": "0x5581c8a4f310",
+    "lastwindowtitle": "~/src/compass",
+    "ispersistent": false
+}

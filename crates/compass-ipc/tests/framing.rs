@@ -223,6 +223,13 @@ fn all_requests() -> Vec<Request> {
         Request::OpenUrl {
             url: "https://example.com/?q=é".into(),
         },
+        Request::InputServerStatus,
+        Request::SetInputServerEnabled { enabled: false },
+        Request::ExtensionLaunchFetch { token: u64::MAX },
+        Request::ExtensionSubtitles,
+        Request::ExtensionPreferences {
+            id: "@zoë/notes:list".into(),
+        },
         Request::ListFonts,
         Request::FontSpecimen {
             name: "Noto Sans ไทย".into(),
@@ -321,6 +328,7 @@ fn all_responses() -> Vec<Response> {
         Response::Window(WindowCommand::Hide),
         Response::Window(WindowCommand::Toggle),
         Response::Window(WindowCommand::Dmenu(u64::MAX)),
+        Response::Window(WindowCommand::Launch(u64::MAX)),
         Response::ClipboardHistory { entries: vec![] },
         Response::ClipboardHistory {
             entries: vec![
@@ -549,6 +557,28 @@ fn all_responses() -> Vec<Response> {
             id: "store.vicinae.clock".into(),
             title: "Clock".into(),
         },
+        Response::InputServerStatus(compass_ipc::InputServerStatus {
+            enabled: true,
+            running: false,
+            injection: false,
+            keywords: 3,
+            helper: Some("/usr/libexec/vicinae/vicinae-input-server".into()),
+            problem: Some("inside a Flatpak: /dev/input is unreachable".into()),
+        }),
+        Response::InputServerStatus(compass_ipc::InputServerStatus::default()),
+        Response::ExtensionLaunch {
+            id: "@zoë/notes:create".into(),
+            arguments_json: Some(r#"{"title":"é"}"#.into()),
+            preferences: false,
+        },
+        Response::ExtensionLaunch {
+            id: "@zoë/notes:list".into(),
+            arguments_json: None,
+            preferences: true,
+        },
+        Response::ExtensionSubtitles {
+            subtitles: vec![("@zoë/notes:list".into(), "3 unread 🚀".into())],
+        },
         Response::Fonts {
             fonts: vec![compass_ipc::FontEntry {
                 name: "Noto Sans Thai".into(),
@@ -644,6 +674,11 @@ fn request_variants_are_exhaustive() {
             | Request::StoreInstall { .. }
             | Request::StoreUninstall { .. }
             | Request::OpenUrl { .. }
+            | Request::InputServerStatus
+            | Request::SetInputServerEnabled { .. }
+            | Request::ExtensionLaunchFetch { .. }
+            | Request::ExtensionSubtitles
+            | Request::ExtensionPreferences { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -683,6 +718,9 @@ fn response_variants_are_exhaustive() {
             | Response::DmenuOutput { .. }
             | Response::DmenuList { .. }
             | Response::RhaiScripts { .. }
+            | Response::InputServerStatus(_)
+            | Response::ExtensionLaunch { .. }
+            | Response::ExtensionSubtitles { .. }
             | Response::Window(_) => {}
         }
     }

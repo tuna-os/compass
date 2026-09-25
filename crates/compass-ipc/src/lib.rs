@@ -59,9 +59,9 @@ pub use error::{Error, Result};
 pub use path::{SocketPath, ensure_private_dir};
 pub use protocol::{
     ClipboardEntry, ClipboardKind, DmenuSpec, DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert,
-    ExtensionToast, ExtensionToastStyle, FileHit, FontEntry, PROTOCOL_VERSION, PreferenceField,
-    PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope, Response,
-    ResponseEnvelope, RhaiScriptEntry, ScriptArgumentEntry, ScriptEntry, ShortcutEntry,
+    ExtensionToast, ExtensionToastStyle, FileHit, FontEntry, InputServerStatus, PROTOCOL_VERSION,
+    PreferenceField, PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope,
+    Response, ResponseEnvelope, RhaiScriptEntry, ScriptArgumentEntry, ScriptEntry, ShortcutEntry,
     SnippetEntry, StoreDetail, StoreEntry, StoreKind, WindowCommand, WindowInfo, WindowOutcome,
 };
 pub use transport::{

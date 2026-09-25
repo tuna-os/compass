@@ -9,8 +9,8 @@
 //! the first start without one copies Vicinae's `snippets/snippets.json`,
 //! which has the same shape.
 //!
-//! Keyword expansion as you type is not here: it needs the input server's
-//! keyboard hook, which is not ported (PARITY, Snippets).
+//! Keyword expansion as you type is [`crate::snippet_expansion`], over the
+//! input server's keyboard hook ([`crate::input_server`]).
 
 use std::path::Path;
 use std::time::Duration;

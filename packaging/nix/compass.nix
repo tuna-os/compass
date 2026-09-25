@@ -32,13 +32,24 @@
     libGL
   ];
 
+  # Each vendored crate is its own derivation whose $out is the crate root, so
+  # stdenv's fixup (move-docs.sh) moves a top-level doc/ to share/doc and
+  # breaks crates that include_str! from it (bitvec, under evdev). Vendored
+  # crates are sources; nothing in them needs fixing up.
+  cargoVendorDir = craneLib.vendorCargoDeps {
+    inherit src;
+    overrideVendorCargoPackage = _: drv: drv.overrideAttrs (_: {dontFixup = true;});
+  };
+
   commonArgs = {
     pname = "compass";
     version = "0.1.0";
-    inherit src;
+    inherit src cargoVendorDir;
 
     strictDeps = true;
-    cargoExtraArgs = "--locked -p vicinae -p compass-sandbox --bins";
+    # compass-input-server: the keyboard helper; the Nix store cannot carry
+    # its capability, so NixOS wraps it (security.wrappers, packaging/README.md).
+    cargoExtraArgs = "--locked -p vicinae -p compass-sandbox -p compass-input-server --bins";
     doCheck = false;
 
     nativeBuildInputs = [

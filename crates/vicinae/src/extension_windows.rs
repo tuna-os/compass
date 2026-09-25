@@ -1,10 +1,12 @@
 //! The window manager an extension reaches through `WindowManagement/*`.
 //!
-//! The same two backends the window switcher uses: the GNOME Shell
-//! extension's window list on GNOME, the foreign-toplevel protocols on a
-//! wlroots compositor. Monitors come from `wl_output`, which every compositor
-//! carries. Where neither backend is there (a headless run, a TTY, a
-//! compositor with no toplevel protocol) there are no windows, and
+//! The backends the window switcher uses, chosen in the C++ order: a
+//! compositor with its own IPC first (Hyprland's socket, niri's — the C++
+//! Hyprland and niri providers, `compass_platform_linux::compositor`), then
+//! the foreign-toplevel protocols on any other wlroots compositor, then the
+//! GNOME Shell extension's window list. Monitors come from `wl_output`, which
+//! every compositor carries. Where no backend is there (a headless run, a
+//! TTY, a compositor with no toplevel protocol) there are no windows, and
 //! `getActiveWindow` fails with the C++'s own "No active window".
 //!
 //! # Which window is "active"
@@ -14,19 +16,23 @@
 //! *before* it (`WindowManager::getFocusedWindow` remembers the last foreign
 //! one); this takes the first window in the backend's most-recently-used
 //! order that is not the launcher, which is the same window without a
-//! focus-tracking loop to keep it.
+//! focus-tracking loop to keep it. On Hyprland it is the C++'s
+//! `getFrontmostWindowSync`: the lowest focus history on the active
+//! workspace.
 //!
-//! # What neither backend reports
+//! # What only the compositor IPC reports
 //!
-//! Workspaces as objects (the Shell contract gives a window's workspace
-//! index, not a workspace list; the toplevel protocols give nothing), and a
-//! way to move or resize a window: `getActiveWorkspace` fails with "No active
-//! workspace", `getWorkspaces` is empty and `setWindowBounds` is refused.
-//! PARITY, "The extension host API".
+//! Workspaces (and a window's workspace, pid and — on Hyprland — geometry).
+//! The Shell contract gives a window's workspace index but no workspace
+//! list, and the toplevel protocols give nothing: there `getActiveWorkspace`
+//! fails with "No active workspace" and `getWorkspaces` is empty. No backend
+//! moves or resizes a window, so `setWindowBounds` is refused, as the C++
+//! Hyprland and niri providers refuse it. PARITY, "The extension host API".
 
 use std::sync::Arc;
 
 use compass_core::app_windows::AppIdentity;
+use compass_platform_linux::compositor::{OwnWindows, Provider, WmWindow, WmWorkspace};
 use compass_worker_host::application_service::Application;
 use compass_worker_host::window_service::{Rect, Screen, Size, Window, Windows, Workspace};
 
@@ -39,6 +45,8 @@ enum Backend {
     },
     /// A wlroots compositor's toplevel list.
     Toplevels(Arc<compass_wayland::Toplevels>),
+    /// A compositor with its own IPC (Hyprland, niri).
+    Compositor(Provider),
     /// Nothing to ask.
     None,
 }
@@ -58,6 +66,7 @@ impl std::fmt::Debug for EngineWindows {
         let backend = match &self.backend {
             Backend::Shell { .. } => "shell",
             Backend::Toplevels(_) => "toplevels",
+            Backend::Compositor(provider) => provider.id(),
             Backend::None => "none",
         };
         f.debug_struct("EngineWindows")
@@ -79,7 +88,9 @@ impl EngineWindows {
         handle: Option<tokio::runtime::Handle>,
         classes: Vec<(AppIdentity, Application)>,
     ) -> Self {
-        let backend = if let Some(wlroots) = crate::wlroots::session() {
+        let backend = if let Some(provider) = crate::wlroots::compositor() {
+            Backend::Compositor(provider.clone())
+        } else if let Some(wlroots) = crate::wlroots::session() {
             wlroots
                 .toplevels
                 .clone()
@@ -135,8 +146,56 @@ impl EngineWindows {
                     )
                 })
                 .collect(),
+            Backend::Compositor(provider) => match provider.windows() {
+                Ok(windows) => windows
+                    .into_iter()
+                    .map(|window| {
+                        let focused = window.focused;
+                        (from_compositor(window), focused)
+                    })
+                    .collect(),
+                Err(err) => {
+                    tracing::info!(error = %err, "no window list from the compositor");
+                    Vec::new()
+                }
+            },
             Backend::None => Vec::new(),
         }
+    }
+
+    /// A compositor, for a caller that already has one.
+    #[must_use]
+    pub const fn compositor(provider: Provider, classes: Vec<(AppIdentity, Application)>) -> Self {
+        Self {
+            backend: Backend::Compositor(provider),
+            classes,
+            outputs: false,
+        }
+    }
+}
+
+fn from_compositor(window: WmWindow) -> Window {
+    Window {
+        id: window.id,
+        title: window.title,
+        workspace_id: window.workspace,
+        fullscreen: window.fullscreen,
+        bounds: window.bounds.map(|bounds| Rect {
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+        }),
+        wm_class: window.wm_class,
+    }
+}
+
+fn workspace(workspace: WmWorkspace) -> Workspace {
+    Workspace {
+        id: workspace.id,
+        name: workspace.name,
+        fullscreen: workspace.has_fullscreen,
+        monitor: workspace.monitor,
     }
 }
 
@@ -221,6 +280,12 @@ impl Windows for EngineWindows {
     }
 
     fn focus(&self, window: &Window) {
+        if let Backend::Compositor(provider) = &self.backend {
+            if let Err(err) = provider.focus_window(&window.id) {
+                tracing::info!(error = %err, "could not focus the extension's window");
+            }
+            return;
+        }
         let Ok(id) = window.id.parse::<u32>() else {
             return;
         };
@@ -239,11 +304,24 @@ impl Windows for EngineWindows {
                     tracing::info!(error = %err, "could not focus the extension's window");
                 }
             }
-            Backend::None => {}
+            Backend::Compositor(_) | Backend::None => {}
         }
     }
 
     fn focused_window(&self) -> Option<Window> {
+        if let Backend::Compositor(provider) = &self.backend {
+            let own = OwnWindows {
+                pids: Vec::new(),
+                classes: vec![compass_ui::APP_ID.to_owned()],
+            };
+            return match provider.frontmost_window(&own) {
+                Ok(window) => window.map(from_compositor),
+                Err(err) => {
+                    tracing::info!(error = %err, "no active window from the compositor");
+                    None
+                }
+            };
+        }
         active(self.windows())
     }
 
@@ -256,11 +334,29 @@ impl Windows for EngineWindows {
     }
 
     fn active_workspace(&self) -> Option<Workspace> {
-        None
+        let Backend::Compositor(provider) = &self.backend else {
+            return None;
+        };
+        match provider.active_workspace() {
+            Ok(active) => active.map(workspace),
+            Err(err) => {
+                tracing::info!(error = %err, "no active workspace from the compositor");
+                None
+            }
+        }
     }
 
     fn list_workspaces(&self) -> Vec<Workspace> {
-        Vec::new()
+        let Backend::Compositor(provider) = &self.backend else {
+            return Vec::new();
+        };
+        match provider.workspaces() {
+            Ok(workspaces) => workspaces.into_iter().map(workspace).collect(),
+            Err(err) => {
+                tracing::info!(error = %err, "no workspaces from the compositor");
+                Vec::new()
+            }
+        }
     }
 
     fn list_screens(&self) -> Vec<Screen> {
@@ -399,5 +495,55 @@ mod tests {
         assert_eq!(windows.app_for_class(""), None);
         assert_eq!(windows.list_windows(), Vec::new());
         assert_eq!(windows.focused_window(), None);
+    }
+
+    #[test]
+    fn on_hyprland_windows_workspaces_and_focus_come_from_its_socket() {
+        use compass_testkit::fake_compositor::{FakeSocket, Framing};
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../compass-platform-linux/tests/fixtures/hyprland");
+        let read = |name: &str| std::fs::read_to_string(fixtures.join(name)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = FakeSocket::hyprland_path(dir.path(), "sig");
+        let fake = FakeSocket::replaying(
+            &path,
+            Framing::Hyprland,
+            vec![
+                ("-j/clients".into(), read("clients.json")),
+                ("-j/workspaces".into(), read("workspaces.json")),
+                ("-j/activeworkspace".into(), read("activeworkspace.json")),
+                ("-j/activewindow".into(), read("activewindow.json")),
+                ("dispatch".into(), "ok".into()),
+            ],
+        );
+        let windows = EngineWindows::compositor(
+            Provider::Hyprland(compass_platform_linux::compositor::hyprland::Hyprland::new(
+                path,
+            )),
+            Vec::new(),
+        );
+        let listed = windows.list_windows();
+        assert_eq!(listed.len(), 3);
+        assert_eq!(listed[1].workspace_id.as_deref(), Some("1"));
+        assert_eq!(listed[1].bounds.map(|b| b.width), Some(1260));
+        assert_eq!(
+            windows.focused_window().map(|w| w.wm_class),
+            Some("foot".to_owned())
+        );
+        assert_eq!(
+            windows.active_workspace().map(|w| (w.id, w.monitor)),
+            Some(("1".to_owned(), Some("DP-1".to_owned())))
+        );
+        let workspaces = windows.list_workspaces();
+        assert_eq!(workspaces.len(), 2);
+        assert!(workspaces[1].fullscreen);
+        windows.focus(&listed[0]);
+        assert!(
+            fake.seen()
+                .last()
+                .is_some_and(|last| last.contains("address:0x5581c8a1b2c0")),
+            "{:?}",
+            fake.seen()
+        );
     }
 }

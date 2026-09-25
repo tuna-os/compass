@@ -1,0 +1,35 @@
+# `;sig` then a space: a word `;sig` fires on the space press.
+Input driver version is 1.0.1
+Input device ID: bus 0x3 vendor 0x46d product 0xc31c version 0x110
+Input device name: "Logitech USB Keyboard"
+Testing ... (interrupt to exit)
+Event: time 1727180000.045000, type 4 (EV_MSC), code 4 (MSC_SCAN), value 70027
+Event: time 1727180000.045000, type 1 (EV_KEY), code 39 (KEY_SEMICOLON), value 1
+Event: time 1727180000.045000, -------------- SYN_REPORT ------------
+Event: time 1727180000.090000, type 4 (EV_MSC), code 4 (MSC_SCAN), value 70027
+Event: time 1727180000.090000, type 1 (EV_KEY), code 39 (KEY_SEMICOLON), value 0
+Event: time 1727180000.090000, -------------- SYN_REPORT ------------
+Event: time 1727180000.135000, type 4 (EV_MSC), code 4 (MSC_SCAN), value 7001f
+Event: time 1727180000.135000, type 1 (EV_KEY), code 31 (KEY_S), value 1
+Event: time 1727180000.135000, -------------- SYN_REPORT ------------
+Event: time 1727180000.180000, type 4 (EV_MSC), code 4 (MSC_SCAN), value 7001f
+Event: time 1727180000.180000, type 1 (EV_KEY), code 31 (KEY_S), value 0
+Event: time 1727180000.180000, -------------- SYN_REPORT ------------
+Event: time 1727180000.225000, type 4 (EV_MSC), code 4 (MSC_SCAN), value 70017
+Event: time 1727180000.225000, type 1 (EV_KEY), code 23 (KEY_I), value 1
+Event: time 1727180000.225000, -------------- SYN_REPORT ------------
+Event: time 1727180000.270000, type 4 (EV_MSC), code 4 (MSC_SCAN), value 70017
+Event: time 1727180000.270000, type 1 (EV_KEY), code 23 (KEY_I), value 0
+Event: time 1727180000.270000, -------------- SYN_REPORT ------------
+Event: time 1727180000.315001, type 4 (EV_MSC), code 4 (MSC_SCAN), value 70022
+Event: time 1727180000.315001, type 1 (EV_KEY), code 34 (KEY_G), value 1
+Event: time 1727180000.315001, -------------- SYN_REPORT ------------
+Event: time 1727180000.360001, type 4 (EV_MSC), code 4 (MSC_SCAN), value 70022
+Event: time 1727180000.360001, type 1 (EV_KEY), code 34 (KEY_G), value 0
+Event: time 1727180000.360001, -------------- SYN_REPORT ------------
+Event: time 1727180000.405001, type 4 (EV_MSC), code 4 (MSC_SCAN), value 70039
+Event: time 1727180000.405001, type 1 (EV_KEY), code 57 (KEY_SPACE), value 1
+Event: time 1727180000.405001, -------------- SYN_REPORT ------------
+Event: time 1727180000.450001, type 4 (EV_MSC), code 4 (MSC_SCAN), value 70039
+Event: time 1727180000.450001, type 1 (EV_KEY), code 57 (KEY_SPACE), value 0
+Event: time 1727180000.450001, -------------- SYN_REPORT ------------

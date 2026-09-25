@@ -49,6 +49,8 @@ pub enum UiCommand {
     Toggle,
     /// Show a `vicinae dmenu` list, fetched from the engine by this token.
     Dmenu(u64),
+    /// Show, and take the launch an extension asked for under this token.
+    Launch(u64),
 }
 
 /// What the window reports back, as the state it ended in.

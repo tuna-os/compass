@@ -119,6 +119,10 @@ pub struct EngineState {
     shell_slot: crate::rhai_host::ShellSlot,
     /// The extension stores.
     stores: Arc<crate::stores::Stores>,
+    /// Snippet keyword expansion and its input server, once started.
+    expander: Option<Arc<crate::snippet_expansion::Expander>>,
+    /// Launches extensions asked for, and their commands' subtitle overrides.
+    launches: Arc<crate::extension_commands::Launches>,
 }
 
 // Hand-written because `dyn FrecencyStore` is not `Debug`, and widening that
@@ -231,6 +235,8 @@ impl EngineState {
             rhai,
             shell_slot,
             stores: Arc::default(),
+            expander: None,
+            launches: Arc::default(),
             run_program_default: crate::programs::default_action(config.entrypoint_preferences(
                 compass_core::commands::COMMANDS_PROVIDER_ID,
                 crate::programs::ENTRYPOINT,
@@ -291,6 +297,8 @@ impl EngineState {
             rhai: Arc::default(),
             shell_slot: crate::rhai_host::ShellSlot::default(),
             stores: Arc::default(),
+            expander: None,
+            launches: Arc::default(),
         }
     }
 
@@ -326,6 +334,29 @@ impl EngineState {
     /// Makes clipboard history available to requests.
     pub fn set_clipboard(&mut self, store: Arc<crate::clipboard_service::ClipboardStore>) {
         self.clipboard = Some(store);
+    }
+
+    /// The snippet store, when there is a data directory for one.
+    #[must_use]
+    pub fn snippet_store(&self) -> Option<&compass_core::snippet_store::SnippetStore> {
+        self.snippets.as_ref()
+    }
+
+    /// The GNOME Shell extension's client, once connected.
+    #[must_use]
+    pub fn shell_client(&self) -> Option<Arc<compass_shell::ShellClient>> {
+        self.shell.clone()
+    }
+
+    /// The application index.
+    #[must_use]
+    pub fn app_index(&self) -> &AppIndex {
+        &self.index
+    }
+
+    /// Makes keyword expansion reachable from requests.
+    pub fn set_expander(&mut self, expander: Arc<crate::snippet_expansion::Expander>) {
+        self.expander = Some(expander);
     }
 
     /// The slot holding the attached launcher window.
@@ -384,7 +415,11 @@ impl EngineState {
                 } => QueryHit {
                     id: command.id.clone(),
                     title: command.title.clone(),
-                    subtitle: Some(command.extension_title.clone()),
+                    subtitle: Some(
+                        self.launches
+                            .subtitle(&command.id)
+                            .unwrap_or_else(|| command.extension_title.clone()),
+                    ),
                     score: match_score,
                 },
                 compass_core::RootHit::Script {
@@ -825,6 +860,72 @@ async fn save_snippet(
         }
         Err(error) => Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string())),
     }
+}
+
+/// Tells the input server about keywords added, changed or removed, as
+/// `SnippetService::createSnippet`/`updateSnippet`/`removeSnippet` do.
+async fn sync_keywords(state: &Arc<RwLock<EngineState>>) {
+    let (expander, wanted) = {
+        let state = state.read().await;
+        let Some(expander) = state.expander.clone() else {
+            return;
+        };
+        let wanted = state
+            .snippets
+            .as_ref()
+            .map(|store| crate::snippet_expansion::keywords(store.snippets()))
+            .unwrap_or_default();
+        (expander, wanted)
+    };
+    tokio::spawn(async move { expander.sync(wanted).await });
+}
+
+/// `InputServerStatus`, and `SetInputServerEnabled` after saving and applying
+/// the setting.
+async fn input_server(state: &Arc<RwLock<EngineState>>, enable: Option<bool>) -> Response {
+    if let Some(enabled) = enable {
+        let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let mut config = Config::load().unwrap_or_default();
+            config.input_server_mut().set_enabled(Some(enabled));
+            config.save_to(compass_core::config::default_config_path()?)?;
+            Ok(())
+        })
+        .await;
+        match saved {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("could not save input_server.enabled: {error}"),
+                ));
+            }
+            Err(error) => {
+                return Response::Error(ProtocolError::new(
+                    ErrorKind::Internal,
+                    format!("saving input_server.enabled failed: {error}"),
+                ));
+            }
+        }
+    }
+    let Some(expander) = state.read().await.expander.clone() else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "this engine was started without the input server",
+        ));
+    };
+    if let Some(enabled) = enable {
+        expander.server().set_enabled(enabled);
+        // Give the helper a moment to come up (or go), so the answer says
+        // how it went rather than how it was.
+        for _ in 0..20 {
+            let status = expander.status();
+            if status.running == enabled || status.problem.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+    Response::InputServerStatus(expander.status())
 }
 
 /// A snippet's text expanded with `arguments` (a file snippet's path),
@@ -1314,6 +1415,21 @@ async fn run_extension_command(
             };
         }
     };
+    let (files, launches, known) = {
+        let state = state.read().await;
+        (
+            Arc::clone(&state.files),
+            Arc::clone(&state.launches),
+            crate::extension_commands::Known::all(&state.index),
+        )
+    };
+    let deliver: crate::extension_commands::Deliver = {
+        let (state, handle) = (Arc::clone(state), tokio::runtime::Handle::current());
+        Arc::new(move |token| {
+            let state = Arc::clone(&state);
+            handle.spawn(async move { deliver_launch(&state, token).await });
+        })
+    };
     let host = crate::extension_runner::Host {
         storage,
         shell: state.read().await.shell.clone(),
@@ -1324,6 +1440,14 @@ async fn run_extension_command(
             &state.read().await.index,
             compass_xdg::mimeapps::Lists::from_environment(),
             tokio::runtime::Handle::current(),
+        )),
+        files: Some(files),
+        context: launches.take_context(&id),
+        commands: Some(crate::extension_commands::EngineCommands::new(
+            id.clone(),
+            known,
+            launches,
+            deliver,
         )),
     };
     let started = tokio::task::spawn_blocking(move || {
@@ -1352,6 +1476,96 @@ async fn run_extension_command(
             ErrorKind::Internal,
             format!("the extension task failed: {err}"),
         )),
+    }
+}
+
+/// Hands the launch under `token` to the launcher window. Without a window,
+/// a no-view command runs here as it would from the window; a view command
+/// has nowhere to be shown, and the launch is dropped with a warning.
+async fn deliver_launch(state: &Arc<RwLock<EngineState>>, token: u64) {
+    let slot = state.read().await.window_slot();
+    let Response::Error(refused) = forward(
+        &slot,
+        WindowCommand::Launch(token),
+        "take an extension's launch",
+    )
+    .await
+    else {
+        return;
+    };
+    let Some(launch) = state.read().await.launches.take(token) else {
+        return;
+    };
+    let no_view = state
+        .read()
+        .await
+        .index
+        .extension(&launch.id)
+        .is_some_and(|command| command.mode == compass_core::manifest::CommandMode::NoView);
+    if launch.preferences || !no_view {
+        tracing::warn!(
+            id = %launch.id, reason = %refused.message,
+            "an extension's launch had no launcher window to show it"
+        );
+        return;
+    }
+    // Asked over the engine's own socket, as the window would ask: this runs
+    // inside a command's launch, and calling `run_extension_command` from
+    // here would make that function's future contain itself.
+    let socket = state.read().await.socket.clone();
+    let asked = async {
+        compass_ipc::Client::connect(socket.as_path())
+            .await?
+            .request(Request::RunExtensionCommand {
+                id: launch.id.clone(),
+                arguments_json: launch.arguments_json,
+            })
+            .await
+    };
+    match asked.await {
+        Ok(Response::Error(err)) => {
+            tracing::warn!(id = %launch.id, error = %err.message, "an extension's launch failed");
+        }
+        Err(err) => {
+            tracing::warn!(id = %launch.id, error = %err, "an extension's launch failed");
+        }
+        Ok(_) => {}
+    }
+}
+
+/// The preferences form for the extension command `id`, without running it.
+async fn extension_preferences(state: &Arc<RwLock<EngineState>>, id: &str) -> Response {
+    let Some(command) = state.read().await.index.extension(id).cloned() else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::BadRequest,
+            "no installed extension command has that id",
+        ));
+    };
+    let Some(data_dir) = compass_core::xdg_dirs::data_home().map(|home| home.join("vicinae"))
+    else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            "Extension preferences need a data directory, and $XDG_DATA_HOME and $HOME are unset",
+        ));
+    };
+    let Some(storage) = extension_storage(&data_dir).await else {
+        return Response::Error(ProtocolError::new(
+            ErrorKind::Unsupported,
+            format!(
+                "{}'s preferences need a keyring: without one Compass has nowhere safe to keep them",
+                command.title
+            ),
+        ));
+    };
+    let extension = command.extension_id.clone();
+    let stored = tokio::task::spawn_blocking(move || {
+        crate::extension_runner::load_preferences(&storage, &extension)
+    })
+    .await
+    .unwrap_or_default();
+    Response::ExtensionNeedsPreferences {
+        title: command.title.clone(),
+        fields: preference_fields(&command, &stored),
     }
 }
 
@@ -2131,22 +2345,35 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             keyword,
             word,
             apps,
-        } => save_snippet(state, id, name, text, keyword, word, apps).await,
-        Request::RemoveSnippet { id } => {
-            let mut state = state.write().await;
-            let Some(snippets) = state.snippets.as_mut() else {
-                return snippets_unavailable();
-            };
-            match snippets.remove(&id) {
-                Ok(_) => snippets_response(snippets),
-                Err(error @ compass_core::snippet_store::Error::NoSuchSnippet) => {
-                    Response::Error(ProtocolError::new(ErrorKind::BadRequest, error.to_string()))
-                }
-                Err(error) => {
-                    Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string()))
-                }
-            }
+        } => {
+            let response = save_snippet(state, id, name, text, keyword, word, apps).await;
+            sync_keywords(state).await;
+            response
         }
+        Request::RemoveSnippet { id } => {
+            let response = {
+                let mut state = state.write().await;
+                let Some(snippets) = state.snippets.as_mut() else {
+                    return snippets_unavailable();
+                };
+                match snippets.remove(&id) {
+                    Ok(_) => snippets_response(snippets),
+                    Err(error @ compass_core::snippet_store::Error::NoSuchSnippet) => {
+                        Response::Error(ProtocolError::new(
+                            ErrorKind::BadRequest,
+                            error.to_string(),
+                        ))
+                    }
+                    Err(error) => {
+                        Response::Error(ProtocolError::new(ErrorKind::Internal, error.to_string()))
+                    }
+                }
+            };
+            sync_keywords(state).await;
+            response
+        }
+        Request::InputServerStatus => input_server(state, None).await,
+        Request::SetInputServerEnabled { enabled } => input_server(state, Some(enabled)).await,
         Request::ExpandSnippet { id, arguments } => {
             match expand_snippet(state, &id, &arguments).await {
                 Ok(text) => Response::Text { text },
@@ -2253,6 +2480,21 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         Request::SetExtensionPreferences { id, values_json } => {
             set_extension_preferences(state, id, values_json).await
         }
+        Request::ExtensionLaunchFetch { token } => match state.read().await.launches.take(token) {
+            Some(launch) => Response::ExtensionLaunch {
+                id: launch.id,
+                arguments_json: launch.arguments_json,
+                preferences: launch.preferences,
+            },
+            None => Response::Error(ProtocolError::new(
+                ErrorKind::BadRequest,
+                "no launch is waiting under that token",
+            )),
+        },
+        Request::ExtensionSubtitles => Response::ExtensionSubtitles {
+            subtitles: state.read().await.launches.subtitles(),
+        },
+        Request::ExtensionPreferences { id } => extension_preferences(state, &id).await,
         Request::ExtensionPop { session } => {
             // A script shows one view; there is nothing above it to pop.
             if state.read().await.rhai.has(session) {
@@ -2484,6 +2726,14 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
 
     // Rhai scripts' hot reload.
     tokio::spawn(crate::rhai_scripts::watch(Arc::clone(&state)));
+
+    // Snippet keyword expansion: the input server, when `input_server.enabled`.
+    {
+        let enabled = Config::load()
+            .map(|config| config.input_server().enabled())
+            .unwrap_or(compass_core::config::DEFAULT_INPUT_SERVER_ENABLED);
+        tokio::spawn(crate::snippet_expansion::run(Arc::clone(&state), enabled));
+    }
 
     // The Shell extension, for window switching. Connecting only fails with
     // no session bus at all; an absent extension is reported per request.

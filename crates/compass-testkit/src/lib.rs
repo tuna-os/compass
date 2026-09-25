@@ -6,3 +6,5 @@
 //! See `docs/rust-engine/PLAN.md` §8.1 for what the corpora are for.
 
 pub mod corpus;
+#[cfg(unix)]
+pub mod fake_compositor;

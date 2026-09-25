@@ -28,6 +28,7 @@ use crate::resident::{EngineLink, UiCommand, UiOutcome};
 mod developer;
 mod dmenu;
 mod fonts;
+mod launch;
 mod programs;
 mod rhai;
 mod scripts;
@@ -765,6 +766,9 @@ pub struct LauncherApp {
     parked_store: Option<crate::store_page::StorePage>,
     /// A compact or inline script run the root list is waiting on.
     following_script: Option<scripts::FollowedScript>,
+    /// Subtitles extensions set for their commands (`updateCommandMetadata`),
+    /// by command id, shown in place of the extension's title.
+    extension_subtitles: std::collections::HashMap<String, String>,
 }
 
 /// What a dismissal does. See [`LauncherApp::on_dismiss`].
@@ -987,6 +991,7 @@ impl LauncherApp {
             parked_fonts: None,
             parked_store: None,
             following_script: None,
+            extension_subtitles: std::collections::HashMap::new(),
         }
     }
 
@@ -1464,6 +1469,7 @@ impl LauncherApp {
 
         let dmenu = match command {
             UiCommand::Dmenu(token) => self.start_dmenu(token),
+            UiCommand::Launch(token) => self.start_launch(token),
             _ => Task::none(),
         };
         let shown = self.obey_visibility(command);
@@ -1474,7 +1480,7 @@ impl LauncherApp {
     /// shows the window, `Toggle` depending on where it is.
     fn obey_visibility(&mut self, command: UiCommand) -> Task<Message> {
         let show = match command {
-            UiCommand::Show | UiCommand::Dmenu(_) => true,
+            UiCommand::Show | UiCommand::Dmenu(_) | UiCommand::Launch(_) => true,
             UiCommand::Hide => false,
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
@@ -1834,6 +1840,7 @@ impl LauncherApp {
                     self.refresh_shortcuts_task(),
                     self.refresh_scripts_task(),
                     self.refresh_rhai_scripts_task(),
+                    self.refresh_subtitles_task(),
                 ])
             }
             Message::Closed(id) => {
@@ -2084,7 +2091,12 @@ impl LauncherApp {
                     return Task::none();
                 }
                 let id = page.command_id.clone();
+                let only_saved =
+                    page.purpose == crate::preferences_page::Purpose::CommandPreferences;
                 self.page = Page::Root;
+                if only_saved {
+                    return focus_search();
+                }
                 match self.app_index.extensions().iter().position(|c| c.id == id) {
                     Some(index) => self.run_extension_command(index),
                     None => Task::none(),
@@ -2331,6 +2343,9 @@ impl LauncherApp {
             | Message::ScriptStarted { .. }
             | Message::ScriptPolled { .. } => self.script_message(message),
             Message::RhaiScriptsLoaded(_) => self.rhai_message(message),
+            Message::LaunchFetched(_)
+            | Message::ExtensionSubtitlesLoaded(_)
+            | Message::PreferencesOpened { .. } => self.launch_message(message),
             Message::ProgramsLoaded(_)
             | Message::ProgramsQueryChanged(_)
             | Message::ProgramSelected(_)
@@ -3005,7 +3020,12 @@ impl LauncherApp {
                         self.list_row(
                             self.initial_badge(&command.title, selected),
                             command.title.clone(),
-                            self.subtitles.then(|| command.extension_title.clone()),
+                            self.subtitles.then(|| {
+                                self.extension_subtitles
+                                    .get(&command.id)
+                                    .unwrap_or(&command.extension_title)
+                                    .clone()
+                            }),
                             selected,
                         )
                     }
@@ -3896,6 +3916,9 @@ impl LauncherApp {
             iced::widget::text(match page.purpose {
                 crate::preferences_page::Purpose::Preferences => {
                     format!("{} needs a few settings", page.title)
+                }
+                crate::preferences_page::Purpose::CommandPreferences => {
+                    format!("{} settings", page.title)
                 }
                 crate::preferences_page::Purpose::Arguments
                 | crate::preferences_page::Purpose::ShortcutArguments
@@ -5639,6 +5662,77 @@ mod tests {
             ["@someone/hello:write"]
         );
         assert!(app.error.is_none());
+    }
+
+    #[test]
+    fn an_extension_s_launch_runs_its_command_and_its_subtitle_override_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend {
+            keys: vec!["@someone/hello:write".to_owned()],
+            ..TestBackend::default()
+        });
+        let mut app = extension_app(dir.path(), backend.clone());
+        let _ = app.update(Message::ExtensionSubtitlesLoaded(Ok(vec![(
+            "@someone/hello:write".into(),
+            "3 unread".into(),
+        )])));
+        for message in task_messages(app.update(Message::QueryChanged("greeting".into()))) {
+            let _ = app.update(message);
+        }
+        {
+            let mut ui = iced_test::simulator(app.view());
+            assert!(ui.find("3 unread").is_ok(), "the override is the subtitle");
+            assert!(
+                ui.find("Hello").is_err(),
+                "in place of the extension's title"
+            );
+        }
+
+        let mut arguments = serde_json::Map::new();
+        arguments.insert("who".into(), "ada".into());
+        let launch = crate::backend::ExtensionLaunch {
+            id: "@someone/hello:write".into(),
+            arguments: Some(arguments.clone()),
+            preferences: false,
+        };
+        for message in task_messages(app.update(Message::LaunchFetched(Ok(launch)))) {
+            let _ = app.update(message);
+        }
+        assert_eq!(
+            backend.ran.lock().unwrap().as_slice(),
+            ["@someone/hello:write"]
+        );
+        assert_eq!(backend.given.lock().unwrap().last(), Some(&Some(arguments)));
+    }
+
+    #[test]
+    fn preferences_an_extension_opens_are_saved_without_running_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        let _ = app.update(Message::PreferencesOpened {
+            id: "@someone/hello:write".into(),
+            result: Ok(crate::backend::ExtensionStart::NeedsPreferences {
+                title: "Write Greeting".into(),
+                fields: Vec::new(),
+            }),
+        });
+        let Page::Preferences(page) = &app.page else {
+            panic!("no preferences form: {}", app.state_line());
+        };
+        assert_eq!(
+            page.purpose,
+            crate::preferences_page::Purpose::CommandPreferences
+        );
+        for message in task_messages(app.update(Message::PreferencesSubmit)) {
+            let _ = app.update(message);
+        }
+        assert!(matches!(app.page, Page::Root), "{}", app.state_line());
+        assert_eq!(backend.saved.lock().unwrap().len(), 1);
+        assert!(
+            backend.ran.lock().unwrap().is_empty(),
+            "saving does not run it"
+        );
     }
 
     #[test]

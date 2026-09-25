@@ -103,7 +103,7 @@ impl From<compass_wayland::Toplevel> for ShellWindow {
 /// like any other.
 pub async fn wlroots_list(index: &AppIndex) -> Option<compass_ipc::Response> {
     let toplevels = wlroots_toplevels().await?;
-    let windows = match toplevels {
+    let mut windows: Vec<ShellWindow> = match toplevels {
         Ok(toplevels) => toplevels
             .list()
             .into_iter()
@@ -112,9 +112,54 @@ pub async fn wlroots_list(index: &AppIndex) -> Option<compass_ipc::Response> {
             .collect(),
         Err(refusal) => return Some(compass_ipc::Response::Error(refusal)),
     };
+    if let Some(provider) = crate::wlroots::compositor() {
+        let provider = provider.clone();
+        let known = tokio::task::spawn_blocking(move || {
+            Some((
+                provider.windows().ok()?,
+                provider.workspaces().unwrap_or_default(),
+            ))
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some((known, workspaces)) = known {
+            enrich(&mut windows, &known, &workspaces);
+        }
+    }
     Some(compass_ipc::Response::Windows {
         windows: rows(windows, index),
     })
+}
+
+/// Gives each toplevel the pid and workspace number the compositor's own IPC
+/// reports for it (Hyprland, niri), matched by class and title: the
+/// toplevel protocols carry neither.
+pub fn enrich(
+    windows: &mut [ShellWindow],
+    known: &[compass_platform_linux::compositor::WmWindow],
+    workspaces: &[compass_platform_linux::compositor::WmWorkspace],
+) {
+    let pairs = compass_platform_linux::compositor::match_toplevels(
+        windows
+            .iter()
+            .map(|window| (window.wm_class.as_str(), window.title.as_str())),
+        known,
+    );
+    for (window, pair) in windows.iter_mut().zip(pairs) {
+        let Some(found) = pair.map(|index| &known[index]) else {
+            continue;
+        };
+        window.pid = window.pid.or(found.pid);
+        window.workspace = window.workspace.or_else(|| {
+            let id = found.workspace.as_deref()?;
+            workspaces
+                .iter()
+                .find(|workspace| workspace.id == id)
+                .and_then(|workspace| workspace.number)
+                .or_else(|| id.parse().ok())
+        });
+    }
 }
 
 /// `ActivateWindow` / `CloseWindow` on a wlroots compositor, or `None` when
@@ -242,6 +287,52 @@ mod tests {
         .map(|row| row.id)
         .collect();
         assert_eq!(ids, [2, 3, 1]);
+    }
+
+    #[test]
+    fn toplevels_learn_their_pid_and_workspace_number_from_the_compositor() {
+        use compass_platform_linux::compositor::{WmWindow, WmWorkspace};
+        let mut windows = vec![
+            window(1, "~", "foot", false),
+            window(2, "Spotify Premium", "spotify", false),
+            window(3, "film", "mpv", false),
+        ];
+        let known = [
+            WmWindow {
+                id: "4".into(),
+                title: "Spotify Premium".into(),
+                wm_class: "spotify".into(),
+                pid: Some(3120),
+                workspace: Some("2".into()),
+                ..WmWindow::default()
+            },
+            WmWindow {
+                id: "7".into(),
+                title: "~".into(),
+                wm_class: "foot".into(),
+                pid: Some(2398),
+                workspace: Some("9".into()),
+                ..WmWindow::default()
+            },
+        ];
+        // niri: the workspace id is not its number; its index is.
+        let workspaces = [WmWorkspace {
+            id: "2".into(),
+            number: Some(1),
+            ..WmWorkspace::default()
+        }];
+        enrich(&mut windows, &known, &workspaces);
+        assert_eq!(
+            windows
+                .iter()
+                .map(|w| (w.id, w.pid, w.workspace))
+                .collect::<Vec<_>>(),
+            [
+                (1, Some(2398), Some(9)),
+                (2, Some(3120), Some(1)),
+                (3, None, None)
+            ]
+        );
     }
 
     #[test]
