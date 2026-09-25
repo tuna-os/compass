@@ -692,6 +692,31 @@ fn the_clock_is_on_every_minute_in_hh_mm_unless_set() {
 }
 
 #[test]
+fn a_fallback_is_enabled_first_and_disabled_as_the_cpp_writes_them() {
+    use compass_core::root_items::RootEdit;
+    let mut config = parse(r#"{"launcher": {"max_results": 9}}"#);
+    assert_eq!(config.fallback_ids(), ["files:search"], "the default");
+    assert!(config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(true)));
+    assert_eq!(config.fallback_ids(), ["@a/notes:new", "files:search"]);
+    assert!(
+        !config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(true)),
+        "already one"
+    );
+    assert!(config.apply_root_edit("files:search", &RootEdit::Fallback(false)));
+    assert!(
+        !config.apply_root_edit("files:search", &RootEdit::Fallback(false)),
+        "not one any more"
+    );
+    let written: serde_json::Value = serde_json::to_value(&config).unwrap();
+    assert_eq!(written["fallbacks"], serde_json::json!(["@a/notes:new"]));
+    assert!(config.apply_root_edit("@a/notes:new", &RootEdit::Fallback(false)));
+    assert!(
+        config.fallback_ids().is_empty(),
+        "an emptied list stays empty"
+    );
+}
+
+#[test]
 fn a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared() {
     use compass_core::root_items::{RootEdit, RootItem, RootItemMeta};
     let mut config = parse(r#"{"launcher": {"max_results": 9}}"#);

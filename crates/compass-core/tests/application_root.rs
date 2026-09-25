@@ -225,7 +225,12 @@ fn installed_extension_commands_are_found_under_their_extension() {
 
     for query in ["Search Repositories", "repo", "search repos"] {
         let hits = index.search_root_all(query, None);
-        let Some(compass_core::RootHit::Extension { command, .. }) = hits.first() else {
+        // "repo" also prefixes the builtin "Report a Vicinae Bug", as it does
+        // in the C++; the extension is the first of the extensions.
+        let Some(compass_core::RootHit::Extension { command, .. }) = hits
+            .iter()
+            .find(|hit| matches!(hit, compass_core::RootHit::Extension { .. }))
+        else {
             panic!("{query:?}: {hits:?}");
         };
         assert_eq!(

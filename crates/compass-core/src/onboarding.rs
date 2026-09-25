@@ -40,11 +40,7 @@ pub struct State {
 /// `~/.local/state`, as `Omnicast::stateDir()`.
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
-    let state = match std::env::var_os("XDG_STATE_HOME") {
-        Some(value) if !value.is_empty() => PathBuf::from(value),
-        _ => crate::xdg_dirs::home_dir()?.join(".local/state"),
-    };
-    Some(state.join("vicinae").join(FILE_NAME))
+    Some(crate::xdg_dirs::state_dir()?.join(FILE_NAME))
 }
 
 /// The version recorded at `path`; 0 when there is no file or it cannot be

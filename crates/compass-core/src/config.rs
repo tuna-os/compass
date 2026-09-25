@@ -846,6 +846,14 @@ impl Config {
                 true
             }
             RootEdit::ResetRanking => false,
+            RootEdit::Fallback(enabled) => {
+                let mut fallbacks = self.fallback_ids();
+                let changed = crate::root_items::set_fallback(&mut fallbacks, id, *enabled);
+                if changed {
+                    self.fallbacks = Some(fallbacks);
+                }
+                changed
+            }
             // Cleared as `None` rather than the C++'s `""` (see
             // `root_items::set_shortcut`).
             RootEdit::Shortcut(shortcut) => {

@@ -647,6 +647,28 @@ pub enum RootEdit {
     /// Put it in root search or take it out (`setItemEnabled`), as the
     /// settings window's switch does both ways.
     Enabled(bool),
+    /// Make it a fallback (first, as `enableFallback` inserts it) or stop it
+    /// being one (`disableFallback`). Lives in the configuration's
+    /// `fallbacks`, not the root config.
+    Fallback(bool),
+}
+
+/// `enableFallback` and `disableFallback` over the `fallbacks` list: an
+/// enabled one goes first, and enabling one already there or disabling one
+/// that is not changes nothing. Returns whether the list changed.
+pub fn set_fallback(fallbacks: &mut Vec<String>, id: &str, enabled: bool) -> bool {
+    let at = fallbacks.iter().position(|known| known == id);
+    match (enabled, at) {
+        (true, None) => {
+            fallbacks.insert(0, id.to_owned());
+            true
+        }
+        (false, Some(at)) => {
+            fallbacks.remove(at);
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Applies `edit` to `config` for the item `id`, as the C++ root item
@@ -710,7 +732,7 @@ pub fn apply_edit(config: &mut RootConfig, id: &str, edit: &RootEdit) -> bool {
             set_item_enabled(config, provider, entrypoint, false);
             true
         }
-        RootEdit::ResetRanking => false,
+        RootEdit::ResetRanking | RootEdit::Fallback(_) => false,
         RootEdit::Shortcut(shortcut) => {
             let Some((provider, entrypoint)) = split_entrypoint_id(id) else {
                 return false;

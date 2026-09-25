@@ -106,3 +106,12 @@ code in the extension, so the host never speaks OAuth itself.
 | Writing one, creating the objects on the way and dropping the ones a reset leaves empty | `serde_json` (`pointer_mut` finds, but does not create); `json-patch` 4 considered | **Hand-rolled** (`Config::set_path`, ~40 lines over `serde_json::Map`), then read back through `Config`'s own `Deserialize`, so a wrongly typed known key is refused. `json-patch`'s `add` needs every parent to exist and its `remove` leaves empty parents behind, which would need the same walk around it. |
 | A `vicinae://settings/open?tab=` deeplink | `url` 2 (already used by `parse_launch_link`) | **Used**: `Url::parse` and `query_pairs`, which percent-decode the tab. |
 | The settings view's controls (switch, list, text field, buttons) | `iced` 0.14's `toggler`, `pick_list`, `text_input`, `button` | **Used**; the shortcut recorder is `compass_ui::shortcut_recorder`, the sidebar `compass_ui::settings::SidebarModel`. |
+
+## The gaps pass, HUD and onboarding (2026-09-25)
+
+| Need | Crate | Decision |
+|---|---|---|
+| The HUD's surface | `iced_layershell` 0.19 (already the launcher's layer-shell runtime) | **Used**: a second `NewLayerShell` surface with no keyboard interactivity and `events_transparent`, as `HudWindowLayerShell.qml`. No new crate. |
+| The onboarding record's time stamp | `jiff` 0.2 (already in `compass-ui`) | **Used**: `Timestamp::now().round(Unit::Second)`, which prints Qt's `ISODate` form. |
+| `/etc/os-release`'s `PRETTY_NAME` and `VERSION`, for the bug report | `os-release` 0.1, `etc-os-release` 0.1 | **Hand-read** (`compass_core::bug_report::parse_os_release`, ~20 lines): two `KEY=value` lines unquoted, where either crate adds a file reader and error types this does not need and a new package to the Flatpak's sources. |
+| The bug-report link's query | `url` 2 (already in `compass-core`) | **Used**: `Url::parse_with_params`. |

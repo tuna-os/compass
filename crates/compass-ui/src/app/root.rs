@@ -354,7 +354,10 @@ impl LauncherApp {
     /// The engine's answer to a root edit: search again, or say why not.
     pub(super) fn root_item_edited(&mut self, result: Result<(), String>) -> Task<Message> {
         if let Err(reason) = result {
-            self.error = Some(reason);
+            match &mut self.page {
+                Page::Fallbacks(page) => page.notice = Some(reason),
+                _ => self.error = Some(reason),
+            }
             return Task::none();
         }
         if matches!(self.page, Page::Root) {

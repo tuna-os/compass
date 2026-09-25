@@ -80,7 +80,8 @@ use serde::{Deserialize, Serialize};
 /// view's writes: one setting of `vicinae.json` ([`Request::SetSetting`]),
 /// a provider's switch ([`Request::SetProviderEnabled`]) and turning a root
 /// item back on ([`RootItemEdit::Enabled`]), and the HUD the engine asks the
-/// window to show ([`WindowCommand::Hud`]).
+/// window to show ([`WindowCommand::Hud`]), and the fallback manager's switch
+/// ([`RootItemEdit::Fallback`]).
 pub const PROTOCOL_VERSION: u16 = 19;
 
 /// A client-to-server frame.
@@ -1105,6 +1106,9 @@ pub enum RootItemEdit {
     /// Put it in root search or take it out, as the settings view's switch
     /// does. Version 19.
     Enabled(bool),
+    /// Make it a fallback, first in the list (`enableFallback`), or stop it
+    /// being one (`disableFallback`). Version 19.
+    Fallback(bool),
 }
 
 /// What the engine answers.

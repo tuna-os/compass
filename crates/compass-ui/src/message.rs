@@ -538,4 +538,23 @@ pub enum Message {
     OnboardingOpen(&'static str),
     /// The link opened, or why not.
     OnboardingLinkOpened(Result<(), String>),
+    /// Configure Fallback Commands' filter changed.
+    FallbacksQueryChanged(String),
+    /// A row of Configure Fallback Commands was clicked: its action runs.
+    FallbackSelected(usize),
+    /// Show Installed Extensions' filter changed.
+    ExtensionsQueryChanged(String),
+    /// Search Builtin Icons' filter changed.
+    IconsQueryChanged(String),
+    /// A row of Show Installed Extensions or Search Builtin Icons was
+    /// clicked: its first action runs.
+    VicinaeRowSelected(usize),
+    /// An extension was uninstalled from Show Installed Extensions, or why
+    /// not.
+    ExtensionUninstalled {
+        /// The extension's id.
+        id: String,
+        /// Whether it went.
+        result: Result<(), String>,
+    },
 }

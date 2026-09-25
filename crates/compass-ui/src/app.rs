@@ -51,6 +51,7 @@ mod snippets;
 mod stores;
 mod themes;
 mod tray;
+mod vicinae;
 mod workspaces;
 
 /// The search field's widget id.
@@ -579,6 +580,8 @@ enum ConfirmAction {
     /// Change a root item in a way that asks first: reset its ranking or
     /// disable it.
     RootEdit(String, compass_core::root_items::RootEdit),
+    /// Uninstall an extension, from Show Installed Extensions.
+    UninstallExtension(String),
 }
 
 /// The root search's clock (`launcher.clock`), when it is shown.
@@ -695,6 +698,12 @@ enum Page {
     Settings(Box<crate::settings_page::SettingsPage>),
     /// The first-run flow.
     Onboarding(Box<crate::onboarding_page::OnboardingPage>),
+    /// Configure Fallback Commands.
+    Fallbacks(crate::fallbacks_page::FallbacksPage),
+    /// Show Installed Extensions.
+    Extensions(crate::vicinae_pages::ExtensionsPage),
+    /// Search Builtin Icons.
+    Icons(crate::vicinae_pages::IconsPage),
 }
 
 /// A key press as an extension shortcut: its modifiers and the key's name
@@ -2249,6 +2258,13 @@ impl LauncherApp {
             Message::Opened(id) if self.hud.owns(id) => Task::none(),
             Message::Closed(id) if self.hud.closed(id) => Task::none(),
             Message::HudTick(now) => self.hud_tick(now),
+            Message::FallbacksQueryChanged(_) | Message::FallbackSelected(_) => {
+                self.fallbacks_message(message)
+            }
+            Message::ExtensionsQueryChanged(_)
+            | Message::IconsQueryChanged(_)
+            | Message::VicinaeRowSelected(_)
+            | Message::ExtensionUninstalled { .. } => self.vicinae_view_message(message),
             Message::OnboardingContinue
             | Message::OnboardingBack
             | Message::OnboardingJump(_)
@@ -2344,6 +2360,12 @@ impl LauncherApp {
                     return task;
                 } else if let Some(task) = self.open_calculator_panel() {
                     return task;
+                } else if let Some(task) = self.open_fallbacks_panel() {
+                    return task;
+                } else if let Some(task) = self.open_vicinae_view_panel() {
+                    return task;
+                } else if let Some(task) = self.open_fallback_row_panel() {
+                    return task;
                 } else if let Some(task) = self.open_workspaces_panel() {
                     return task;
                 } else if let Some(task) = self.open_files_panel() {
@@ -2433,6 +2455,7 @@ impl LauncherApp {
                         .or_else(|| self.workspaces_panel_action(&id))
                         .or_else(|| self.file_panel_action(&id))
                         .or_else(|| self.app_runtime_action(&id))
+                        .or_else(|| self.vicinae_panel_action(&id))
                 {
                     return task;
                 }
@@ -3250,6 +3273,12 @@ impl LauncherApp {
                 if !panel_key && matches!(self.page, Page::Calculator(_)) {
                     return self.calculator_page_key(key, modifiers);
                 }
+                if !panel_key && matches!(self.page, Page::Fallbacks(_)) {
+                    return self.fallbacks_page_key(key, modifiers);
+                }
+                if !panel_key && matches!(self.page, Page::Extensions(_) | Page::Icons(_)) {
+                    return self.vicinae_view_key(key, modifiers);
+                }
                 if !panel_key && matches!(self.page, Page::Workspaces(_)) {
                     return self.workspaces_page_key(key, modifiers);
                 }
@@ -3540,6 +3569,21 @@ impl LauncherApp {
             ),
             Page::ScriptOutput(page) => ("", &page.title, None),
             Page::Onboarding(_) => ("", "", None),
+            Page::Fallbacks(page) => (
+                crate::fallbacks_page::PLACEHOLDER,
+                &page.query,
+                Some(Message::FallbacksQueryChanged as OnInput),
+            ),
+            Page::Extensions(page) => (
+                crate::vicinae_pages::EXTENSIONS_PLACEHOLDER,
+                &page.query,
+                Some(Message::ExtensionsQueryChanged as OnInput),
+            ),
+            Page::Icons(page) => (
+                crate::vicinae_pages::ICONS_PLACEHOLDER,
+                &page.query,
+                Some(Message::IconsQueryChanged as OnInput),
+            ),
             Page::Programs(page) => (
                 "Search for a program to execute...",
                 &page.query,
@@ -3726,6 +3770,10 @@ impl LauncherApp {
             self.apps_body(page)
         } else if let Page::Calculator(page) = &self.page {
             self.calculator_body(page)
+        } else if let Page::Fallbacks(page) = &self.page {
+            self.fallbacks_body(page)
+        } else if let Some(body) = self.vicinae_view_body() {
+            body
         } else if let Page::NowPlaying(page) = &self.page {
             self.now_playing_body(page)
         } else if let Page::Themes(page) = &self.page {
@@ -5765,6 +5813,7 @@ impl LauncherApp {
             CommandKind::ScriptPermissions => Task::batch([record, self.open_script_grants()]),
             CommandKind::SearchTray => Task::batch([record, self.open_search_tray()]),
             CommandKind::OpenSettings => Task::batch([record, self.open_settings(None)]),
+            CommandKind::Vicinae(id) => Task::batch([record, self.open_vicinae_command(id)]),
             CommandKind::CalculatorHistory => Task::batch([record, self.open_calculator_history()]),
             CommandKind::BrowseApps => Task::batch([record, self.open_browse_apps()]),
             CommandKind::SetDefaultBrowser => Task::batch([
@@ -5932,6 +5981,7 @@ impl LauncherApp {
         let task = match confirm.action {
             ConfirmAction::ClipboardRemoveAll => self.remove_all_clipboard_entries(),
             ConfirmAction::RootEdit(id, edit) => self.edit_root_item(id, edit),
+            ConfirmAction::UninstallExtension(id) => self.uninstall_extension(id),
         };
         Task::batch([task, focus_search()])
     }
@@ -6957,6 +7007,8 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct TestBackend {
+        /// The root edits the engine was asked for.
+        root_edits: std::sync::Mutex<Vec<(String, compass_core::root_items::RootEdit)>>,
         /// Other applications' tray icons.
         tray: Vec<crate::backend::TrayItemRow>,
         /// What the tray was asked to do.
@@ -7062,6 +7114,17 @@ mod tests {
     impl crate::backend::ApplicationBackend for TestBackend {
         fn search(&self, _query: String) -> crate::backend::BackendFuture<'_, Vec<String>> {
             Box::pin(async { Ok(self.keys.clone()) })
+        }
+
+        fn edit_root_item(
+            &self,
+            id: String,
+            edit: compass_core::root_items::RootEdit,
+        ) -> crate::backend::BackendFuture<'_, ()> {
+            Box::pin(async move {
+                self.root_edits.lock().unwrap().push((id, edit));
+                Ok(())
+            })
         }
 
         fn list_default_apps(
@@ -7906,6 +7969,172 @@ mod tests {
         let mut app = LauncherApp::with_index(index);
         app.backend = Some(backend);
         app
+    }
+
+    #[test]
+    fn configure_fallback_commands_moves_items_between_its_sections() {
+        use compass_core::root_items::RootEdit;
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = extension_app(dir.path(), backend.clone());
+        app.fallbacks = vec!["files:search".into()];
+        open_builtin(&mut app, "configure fallback", "commands:manage-fallback");
+        let Page::Fallbacks(page) = &app.page else {
+            panic!("not the fallback manager: {}", app.state_line());
+        };
+        let titles: Vec<(&str, Option<&str>)> = page
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(at, row)| {
+                (
+                    page.candidates[row.candidate].title.as_str(),
+                    page.heading_at(at),
+                )
+            })
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                ("Search Files", Some("Enabled")),
+                ("Write Greeting", Some("Available"))
+            ]
+        );
+
+        // Enter on the available command enables it, first.
+        let _ = app.update(Message::FallbacksQueryChanged("greet".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        assert_eq!(
+            app.fallbacks,
+            ["@someone/hello:write".to_owned(), "files:search".to_owned()]
+        );
+        assert_eq!(
+            backend.root_edits.lock().unwrap().last(),
+            Some(&("@someone/hello:write".to_owned(), RootEdit::Fallback(true)))
+        );
+
+        // The panel's action disables Search Files by the id it is stored as.
+        let _ = app.update(Message::FallbacksQueryChanged("search files".into()));
+        let _ = app.update(Message::TogglePanel);
+        let task = choose(&mut app, "Disable fallback");
+        settle(&mut app, task);
+        assert_eq!(app.fallbacks, ["@someone/hello:write".to_owned()]);
+        assert_eq!(
+            backend.root_edits.lock().unwrap().last(),
+            Some(&("files:search".to_owned(), RootEdit::Fallback(false)))
+        );
+
+        // A root fallback row's panel opens the manager.
+        let _ = app.update(Message::Back);
+        app.query = "zzzz".into();
+        app.search();
+        app.selected = app
+            .results
+            .iter()
+            .position(|row| matches!(row, RootRow::Fallback(_)))
+            .expect("the extension is a fallback now");
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            ["Open command", "Manage Fallback Actions"]
+        );
+        let task = choose(&mut app, "Manage Fallback Actions");
+        settle(&mut app, task);
+        assert!(matches!(app.page, Page::Fallbacks(_)));
+    }
+
+    #[test]
+    fn installed_extensions_are_listed_copied_and_uninstalled_after_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(extension_app(dir.path(), backend.clone()));
+        open_builtin(&mut app, "installed extensions", "commands:list-extensions");
+        let Page::Extensions(page) = &app.page else {
+            panic!("not the installed extensions: {}", app.state_line());
+        };
+        assert_eq!(page.all.len(), 1);
+        assert_eq!(page.all[0].title, "Hello");
+        let _ = app.update(Message::TogglePanel);
+        assert_eq!(
+            panel_titles(&app),
+            [
+                "Uninstall",
+                "Copy Name",
+                "Copy ID",
+                "Copy Path",
+                "Copy Author"
+            ]
+        );
+        let task = choose(&mut app, "Copy Author");
+        assert_eq!(settle(&mut app, task), ["someone"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "installed extensions", "commands:list-extensions");
+        let _ = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert!(app.confirm.is_some(), "asks first");
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        settle(&mut app, task);
+        let Page::Extensions(page) = &app.page else {
+            panic!("left the view: {}", app.state_line());
+        };
+        assert!(page.all.is_empty(), "gone from the list");
+        assert_eq!(page.notice.as_deref(), Some("Extension uninstalled"));
+    }
+
+    #[test]
+    fn search_builtin_icons_copies_the_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        let config = compass_core::Config::parse(
+            r#"{"providers":{"commands":{"entrypoints":{"search-builtin-icons":{"enabled":true}}}}}"#,
+            std::path::Path::new("config.json"),
+        )
+        .unwrap();
+        app.root_config = config.root_config();
+        app.app_index.apply_root_config(&app.root_config);
+        open_builtin(&mut app, "builtin icons", "commands:search-builtin-icons");
+        let _ = app.update(Message::IconsQueryChanged("copy-clipboard".into()));
+        let task = app.update(pressed(iced::keyboard::key::Named::Enter));
+        assert_eq!(settle(&mut app, task), ["copy-clipboard"]);
+        assert_eq!(app.hud_content(), Some(&crate::hud::Hud::copied()));
+    }
+
+    #[test]
+    fn the_link_and_refresh_commands_do_what_their_cpp_ones_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = with_resident_hud(LauncherApp::with_index(index(dir.path())));
+        app.backend = Some(backend.clone());
+        open_builtin(&mut app, "donate", "commands:sponsor");
+        assert_eq!(
+            backend.opened_urls.lock().unwrap().as_slice(),
+            [compass_core::commands::SPONSOR_URL]
+        );
+        assert_eq!(
+            app.hud_content().map(|hud| hud.text.as_str()),
+            Some("Opened in browser")
+        );
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "report a vicinae bug", "commands:report-bug");
+        let reported = backend.opened_urls.lock().unwrap().last().cloned().unwrap();
+        assert!(
+            reported.starts_with(compass_core::bug_report::CREATE_ISSUE_URL),
+            "{reported}"
+        );
+        assert!(reported.contains("type=bug"));
+
+        fs::write(
+            dir.path().join("zephyr.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Zephyr\nExec=/bin/true\n",
+        )
+        .unwrap();
+        let _ = app.update(Message::Command(UiCommand::Show));
+        open_builtin(&mut app, "refresh apps", "commands:refresh-apps");
+        assert!(app.app_index.get("zephyr.desktop").is_some(), "rescanned");
+        assert_eq!(app.error.as_deref(), Some("Apps successfully refreshed"));
     }
 
     #[test]

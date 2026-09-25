@@ -313,6 +313,14 @@ fn all_requests() -> Vec<Request> {
             provider: "@zoë/notes".into(),
             enabled: false,
         },
+        Request::RootItemEdit {
+            id: "files:search".into(),
+            edit: compass_ipc::RootItemEdit::Fallback(true),
+        },
+        Request::RootItemEdit {
+            id: "@zoë/notes:new".into(),
+            edit: compass_ipc::RootItemEdit::Fallback(false),
+        },
         Request::ListCommands,
         Request::LaunchCommand {
             id: "@zoë/notes:new".into(),

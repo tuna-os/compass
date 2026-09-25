@@ -112,6 +112,7 @@ impl ApplicationBackend for DaemonBackend {
             RootEdit::ResetRanking => compass_ipc::RootItemEdit::ResetRanking,
             RootEdit::Shortcut(shortcut) => compass_ipc::RootItemEdit::Shortcut(shortcut),
             RootEdit::Enabled(enabled) => compass_ipc::RootItemEdit::Enabled(enabled),
+            RootEdit::Fallback(enabled) => compass_ipc::RootItemEdit::Fallback(enabled),
         };
         Box::pin(async move {
             match self

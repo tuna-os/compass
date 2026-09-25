@@ -484,6 +484,44 @@ fn the_default_browser_and_terminal_are_listed_and_set_in_the_users_files() {
 }
 
 #[test]
+fn the_fallback_manager_writes_the_users_fallbacks() {
+    use compass_ipc::{Request, Response, RootItemEdit};
+    let daemon = Daemon::start_with_config(&[("a.desktop", &entry("Alpha", ""))], "{}");
+    let edit = |id: &str, edit| {
+        daemon.request(Request::RootItemEdit {
+            id: id.to_owned(),
+            edit,
+        })
+    };
+    let written = || -> serde_json::Value {
+        let path = daemon._dirs.path().join("config/vicinae/vicinae.json");
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    assert_eq!(
+        edit("applications:a", RootItemEdit::Fallback(true)),
+        Response::Ack
+    );
+    assert_eq!(
+        written()["fallbacks"],
+        serde_json::json!(["applications:a", "files:search"]),
+        "first, before the default"
+    );
+    assert_eq!(
+        edit("files:search", RootItemEdit::Fallback(false)),
+        Response::Ack,
+        "Search Files by the C++'s id, which names no root item here"
+    );
+    assert_eq!(
+        written()["fallbacks"],
+        serde_json::json!(["applications:a"])
+    );
+    assert!(matches!(
+        edit("nothing:here", RootItemEdit::Fallback(true)),
+        Response::Error(_)
+    ));
+}
+
+#[test]
 fn daemon_search_reads_application_aliases_and_enabled_precedence_from_config() {
     use compass_ipc::{Request, Response};
     let entries = [

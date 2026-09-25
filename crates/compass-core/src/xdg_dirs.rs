@@ -41,6 +41,18 @@ pub fn data_home() -> Option<PathBuf> {
     }
 }
 
+/// `$XDG_STATE_HOME/vicinae`, falling back to `~/.local/state/vicinae`: the
+/// C++'s `Omnicast::stateDir()`, where the log, the view memory and the
+/// onboarding record live.
+#[must_use]
+pub fn state_dir() -> Option<PathBuf> {
+    let state = match std::env::var_os("XDG_STATE_HOME") {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => home_dir()?.join(".local/state"),
+    };
+    Some(state.join("vicinae"))
+}
+
 /// The home directory, or nothing when even the fallback cannot say.
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {

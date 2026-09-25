@@ -1055,9 +1055,15 @@ fn edit_root_item(
         compass_ipc::RootItemEdit::ResetRanking => RootEdit::ResetRanking,
         compass_ipc::RootItemEdit::Shortcut(shortcut) => RootEdit::Shortcut(shortcut),
         compass_ipc::RootItemEdit::Enabled(enabled) => RootEdit::Enabled(enabled),
+        compass_ipc::RootItemEdit::Fallback(enabled) => RootEdit::Fallback(enabled),
     };
     let mut state = state.blocking_write();
-    if state.index.root(id).is_none() {
+    // Search Files is a fallback by the C++'s id (`files:search`), which
+    // names no root item here.
+    let known = state.index.root(id).is_some()
+        || (matches!(edit, RootEdit::Fallback(_))
+            && compass_core::commands::fallback(id).is_some());
+    if !known {
         return Response::Error(ProtocolError::new(
             ErrorKind::BadRequest,
             "no root item has that id",
