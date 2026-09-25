@@ -14,6 +14,7 @@
 pub mod appearance;
 pub mod catalog_watch;
 pub mod cli;
+pub mod cli_commands;
 pub mod clipboard_service;
 pub mod config_cmd;
 pub mod conformance;
@@ -37,6 +38,7 @@ pub mod indexer_service;
 pub mod indexer_watch;
 pub mod input_server;
 pub mod ipc;
+pub mod logs;
 pub mod notification_icon;
 pub mod programs;
 pub mod rhai_host;
@@ -77,7 +79,16 @@ pub const EXIT_FAILURE: u8 = 1;
 #[must_use]
 pub fn main() -> ExitCode {
     let cli = Cli::parse_from(cli::with_deeplink(std::env::args_os().collect()));
-    init_tracing(cli.verbose);
+    // The engine also writes its log to a file, for `vicinae logs`.
+    let log_file = matches!(cli.command, Command::Serve { .. })
+        .then(logs::log_path)
+        .flatten()
+        .map(|path| {
+            let log = logs::LogFile::pending(&path);
+            log.register();
+            log
+        });
+    init_tracing(cli.verbose, log_file);
 
     match run(cli) {
         Ok(code) => code,
@@ -572,6 +583,38 @@ async fn dispatch(cli: Cli) -> Result<ExitCode> {
 
         Command::Theme(theme_cmd) => handle_theme(theme_cmd).await,
 
+        Command::Version => {
+            print!("{}", cli_commands::version());
+            Ok(ExitCode::from(EXIT_OK))
+        }
+        Command::Server {
+            open,
+            replace,
+            config,
+            no_extension_runtime,
+        } => {
+            require_servable_engine(cli.engine)?;
+            cli_commands::server(&socket, open, replace, config, no_extension_runtime).await
+        }
+        Command::Cmd(command) => {
+            require_servable_engine(cli.engine)?;
+            cli_commands::cmd(&socket, command).await
+        }
+        Command::App(command) => {
+            require_servable_engine(cli.engine)?;
+            cli_commands::app(&socket, command).await
+        }
+        Command::Fs(command) => {
+            require_servable_engine(cli.engine)?;
+            cli_commands::fs(&socket, command).await
+        }
+        Command::Script(command) => cli_commands::script(command),
+        Command::State(cli::StateCommand::Open) => {
+            require_servable_engine(cli.engine)?;
+            cli_commands::state_open(&socket).await
+        }
+        Command::Logs { lines, follow } => cli_commands::logs(lines, follow),
+
         Command::InputServer(command) => {
             require_servable_engine(cli.engine)?;
             handle_input_server(&socket, command).await
@@ -720,6 +763,17 @@ async fn handle_theme(cmd: crate::cli::ThemeCommand) -> Result<ExitCode> {
             println!("theme reset to system");
             Ok(ExitCode::from(EXIT_OK))
         }
+        ThemeCommand::Template => {
+            println!("{}", cli_commands::THEME_TEMPLATE);
+            Ok(ExitCode::from(EXIT_OK))
+        }
+        ThemeCommand::Check { file } => cli_commands::theme_check(&file),
+        ThemeCommand::Paths => {
+            for dir in compass_core::theme_file::default_search_dirs() {
+                println!("{}", dir.display());
+            }
+            Ok(ExitCode::from(EXIT_OK))
+        }
     }
 }
 
@@ -796,8 +850,11 @@ fn require_servable_engine(engine: Engine) -> Result<()> {
     )
 }
 
-fn init_tracing(verbose: u8) {
+fn init_tracing(verbose: u8, log_file: Option<logs::LogFile>) {
     use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::Layer as _;
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
 
     let default = match verbose {
         0 => "warn",
@@ -818,10 +875,24 @@ fn init_tracing(verbose: u8) {
     // it silently broke a VM gate that grepped the engine's own output for a
     // count: the pattern matched nothing, so the gate reported the engine had
     // said nothing while printing the line where it had.
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
+    let stderr = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()));
+    // The file gets at least `info`, as the C++ log file has everything but
+    // debug output, whatever the terminal was asked for.
+    let file = log_file.map(|file| {
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            let level = if verbose > 1 { default } else { "info" };
+            EnvFilter::new(format!("vicinae={level},compass_ipc={level}"))
+        });
+        tracing_subscriber::fmt::layer()
+            .with_writer(file)
+            .with_ansi(false)
+            .with_filter(filter)
+    });
+    let _ = tracing_subscriber::registry()
+        .with(stderr.with_filter(filter))
+        .with(file)
         .try_init();
 }
 

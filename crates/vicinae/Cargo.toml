@@ -61,6 +61,7 @@ thiserror.workspace = true
 landlock.workspace = true
 seccompiler.workspace = true
 libc.workspace = true
+nix.workspace = true
 tempfile.workspace = true
 url = "2"
 # Finding image links in a store README (already in the tree through iced's Markdown).

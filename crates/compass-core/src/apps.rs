@@ -959,6 +959,13 @@ impl AppIndex {
         )
     }
 
+    /// Every root item: applications, builtin commands, extension commands,
+    /// shortcuts and scripts, disabled ones included, in index order.
+    #[must_use]
+    pub fn roots(&self) -> &[crate::root_items::RootItem] {
+        &self.roots
+    }
+
     /// Installed extensions' commands, in the registry's precedence order.
     #[must_use]
     pub fn extensions(&self) -> &[crate::extension_commands::ExtensionCommand] {

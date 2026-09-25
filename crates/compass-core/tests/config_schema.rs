@@ -126,3 +126,56 @@ fn the_schema_admits_keys_it_does_not_know() {
     let launcher = property(&root, &root, &["launcher"]);
     assert_ne!(launcher["additionalProperties"], Value::Bool(false));
 }
+
+#[test]
+fn the_default_document_is_every_documented_default_and_reads_back_as_them() {
+    use compass_core::config::{self, Config, default_document};
+    fn count_defaults(node: &Value, defs: &Value) -> usize {
+        if node.get("default").is_some() {
+            return 1;
+        }
+        if let Some(name) = node.get("$ref").and_then(Value::as_str) {
+            return count_defaults(&defs[name.rsplit('/').next().unwrap()], defs);
+        }
+        node.get("properties")
+            .and_then(Value::as_object)
+            .map_or(0, |p| p.values().map(|v| count_defaults(v, defs)).sum())
+    }
+    fn count_leaves(node: &Value) -> usize {
+        match node.as_object() {
+            Some(object) => object.values().map(count_leaves).sum(),
+            None => 1,
+        }
+    }
+
+    let document = default_document();
+    assert_eq!(document["$schema"], SCHEMA_URL);
+    assert_eq!(document["launcher"]["hotkey"], config::DEFAULT_HOTKEY);
+    assert_eq!(
+        document["launcher"]["max_results"],
+        config::DEFAULT_MAX_RESULTS
+    );
+    assert_eq!(
+        document["launcher"]["appearance"]["theme"],
+        config::DEFAULT_THEME
+    );
+    assert_eq!(
+        document["fallbacks"],
+        serde_json::json!(Config::default().fallback_ids())
+    );
+
+    // Every default the schema documents, at any depth, is in the document:
+    // counted in the schema independently of how the document was built.
+    let schema = json_schema();
+    let expected = count_defaults(&schema, &schema["$defs"]);
+    assert!(expected >= 13, "the schema documents its defaults");
+    // `$schema` and `fallbacks` are the two leaves the schema does not default.
+    assert_eq!(count_leaves(&document), expected + 2);
+
+    // And the engine reads the document back as the defaults it has anyway.
+    let text = serde_json::to_string_pretty(&document).unwrap();
+    let parsed = Config::parse(&text, std::path::Path::new("default.json")).unwrap();
+    assert_eq!(parsed.launcher().max_results(), config::DEFAULT_MAX_RESULTS);
+    assert_eq!(parsed.launcher().hotkey(), config::DEFAULT_HOTKEY);
+    assert_eq!(parsed.fallback_ids(), Config::default().fallback_ids());
+}

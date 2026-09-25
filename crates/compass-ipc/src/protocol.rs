@@ -54,8 +54,13 @@ use serde::{Deserialize, Serialize};
 /// pane, keywords, remove-all and monitoring switch
 /// ([`Request::ClipboardHistoryOfKind`], [`Request::ClipboardDetail`],
 /// [`Request::ClipboardSetKeywords`], [`Request::ClipboardRemoveAll`],
-/// [`Request::ClipboardMonitoring`]), and the root row's favourite, alias, disable
-/// and reset-ranking actions ([`Request::RootItemEdit`]).
+/// [`Request::ClipboardMonitoring`]), the root row's favourite, alias, disable
+/// and reset-ranking actions ([`Request::RootItemEdit`]), and the rest of
+/// the C++ CLI's requests: listing and launching root commands
+/// ([`Request::ListCommands`], [`Request::LaunchCommand`]), launching or
+/// focusing an application ([`Request::LaunchApp`]), whether the window is
+/// open ([`Request::DescribeWindow`], [`WindowCommand::Describe`]) and the
+/// file index's own query ([`Request::FsQuery`]).
 pub const PROTOCOL_VERSION: u16 = 17;
 
 /// A client-to-server frame.
@@ -710,6 +715,54 @@ pub enum Request {
         /// What to change.
         edit: RootItemEdit,
     },
+    /// Every root item's id and title, sorted by id, as the C++
+    /// `listCommands` answers `vicinae cmd ls`. Answered with
+    /// [`Response::Commands`]. (v17.)
+    ListCommands,
+    /// Run a root item as if it had been picked in root search: an
+    /// application is launched by the engine, anything else is pushed to the
+    /// window as [`WindowCommand::Launch`]. `args` fill the command's
+    /// arguments in order, checked as the C++ `buildLaunchArguments` checks
+    /// them; `query` is its fallback text. Answered with [`Response::Ack`];
+    /// an unknown id or ill-fitting arguments are a bad request. (v17.)
+    LaunchCommand {
+        /// The item's [`QueryHit::id`], e.g. `commands:clipboard-history`.
+        id: String,
+        /// The command's arguments, positionally.
+        args: Vec<String>,
+        /// The caller's working directory, for the command's context.
+        cwd: Option<String>,
+        /// Fallback text: what the command's search starts with.
+        query: Option<String>,
+    },
+    /// Launch an application, or focus its first open window unless
+    /// `new_instance`. Answered with [`Response::AppLaunched`]; an unknown
+    /// id is a bad request. (v17.)
+    LaunchApp {
+        /// The application's desktop id, e.g. `firefox.desktop`, or its root
+        /// id, `applications:firefox`.
+        id: String,
+        /// Passed to it as `%U`/`%F` arguments.
+        args: Vec<String>,
+        /// Always start a new instance.
+        new_instance: bool,
+    },
+    /// Whether the launcher window is open. Answered with
+    /// [`Response::WindowState`]; with no window attached it is closed. (v17.)
+    DescribeWindow,
+    /// The file index, queried directly as `vicinae fs query` does: no
+    /// recent files, no direct paths. Answered with [`Response::Files`];
+    /// refused as [`ErrorKind::Unsupported`] while the indexer is not
+    /// running. (v17.)
+    FsQuery {
+        /// Search text.
+        query: String,
+        /// At most this many files.
+        limit: u32,
+        /// Only this category, as `compass_core::file_search::CATEGORY_FILTER_KEYS`
+        /// spells it.
+        category: Option<String>,
+    },
 }
 
 /// One change [`Request::RootItemEdit`] makes (`RootSearchActionGenerator`).
@@ -979,6 +1032,31 @@ pub enum Response {
         /// Whether it is recording them.
         enabled: bool,
     },
+    /// Answer to [`Request::ListCommands`]. (v17.)
+    Commands {
+        /// Sorted by id.
+        commands: Vec<CommandInfo>,
+    },
+    /// Answer to [`Request::LaunchApp`]. (v17.)
+    AppLaunched {
+        /// The title of the window focused instead of launching, if one was.
+        focused_window_title: Option<String>,
+    },
+    /// Answer to [`Request::DescribeWindow`]. (v17.)
+    WindowState {
+        /// Whether the launcher window is on screen.
+        open: bool,
+    },
+    /// Answer to [`Request::ExtensionLaunchFetch`] for a launch that carries
+    /// fallback text (`vicinae cmd launch --query`). (v17.)
+    CommandLaunch {
+        /// The item's [`QueryHit::id`].
+        id: String,
+        /// Its arguments, as a JSON object, when any were given.
+        arguments_json: Option<String>,
+        /// What its search starts with.
+        fallback_text: Option<String>,
+    },
 }
 
 /// Which system default a picker sets.
@@ -1025,6 +1103,15 @@ pub struct ClipboardDetail {
     pub keywords: String,
     /// Whether it is pinned.
     pub pinned: bool,
+}
+
+/// One root item, as `vicinae cmd ls` lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandInfo {
+    /// Its [`QueryHit::id`].
+    pub id: String,
+    /// Its title.
+    pub name: String,
 }
 
 /// What the user has allowed one Rhai script.
@@ -1295,6 +1382,9 @@ pub enum WindowCommand {
     /// Show, at what the deeplink names (a store extension's detail page).
     /// Answered, like `Show`, with [`WindowOutcome::Shown`]. (v16.)
     Deeplink(String),
+    /// Change nothing; answer [`WindowOutcome::Shown`] if the window is on
+    /// screen and [`WindowOutcome::Hidden`] if not. (v17.)
+    Describe,
 }
 
 /// What `vicinae dmenu` asks the launcher to show: its stdin as a list, and

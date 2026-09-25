@@ -6493,6 +6493,7 @@ dependencies = [
  "jiff",
  "landlock",
  "libc",
+ "nix",
  "notify",
  "notify-rust",
  "oo7",

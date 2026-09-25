@@ -58,13 +58,13 @@ pub use codec::{FrameCodec, LENGTH_PREFIX_LEN, MAX_FRAME_LEN};
 pub use error::{Error, Result};
 pub use path::{SocketPath, ensure_private_dir};
 pub use protocol::{
-    ClipboardDetail, ClipboardEntry, ClipboardKind, DefaultAppEntry, DefaultAppKind, DmenuSpec,
-    DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert, ExtensionToast, ExtensionToastStyle,
-    FileHit, FontEntry, InputServerStatus, MediaPlayerAction, MediaPlayerEntry, PROTOCOL_VERSION,
-    PreferenceField, PreferenceFieldKind, ProtocolError, QueryHit, Request, RequestEnvelope,
-    Response, ResponseEnvelope, RhaiScriptEntry, RootItemEdit, ScriptArgumentEntry, ScriptEntry,
-    ScriptGrantEntry, ShortcutEntry, SnippetEntry, StoreDetail, StoreEntry, StoreKind,
-    WindowCommand, WindowInfo, WindowOutcome,
+    ClipboardDetail, ClipboardEntry, ClipboardKind, CommandInfo, DefaultAppEntry, DefaultAppKind,
+    DmenuSpec, DoctorCheck, DoctorStatus, ErrorKind, ExtensionAlert, ExtensionToast,
+    ExtensionToastStyle, FileHit, FontEntry, InputServerStatus, MediaPlayerAction,
+    MediaPlayerEntry, PROTOCOL_VERSION, PreferenceField, PreferenceFieldKind, ProtocolError,
+    QueryHit, Request, RequestEnvelope, Response, ResponseEnvelope, RhaiScriptEntry, RootItemEdit,
+    ScriptArgumentEntry, ScriptEntry, ScriptGrantEntry, ShortcutEntry, SnippetEntry, StoreDetail,
+    StoreEntry, StoreKind, WindowCommand, WindowInfo, WindowOutcome,
 };
 pub use transport::{
     Client, Listener, WindowClient, WindowLink, is_listening, serve_connection,

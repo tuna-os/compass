@@ -106,6 +106,15 @@ impl Runtime {
     ///
     /// A sentence naming what is missing, for the launcher to show.
     pub fn locate() -> Result<Self, String> {
+        if std::env::var_os(crate::cli_commands::NO_EXTENSION_RUNTIME_ENV)
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Err(
+                "TypeScript extensions are off: the engine was started with \
+                        --no-extension-runtime"
+                    .to_owned(),
+            );
+        }
         let bundle = std::env::var_os(RUNTIME_ENV)
             .map(PathBuf::from)
             .or_else(installed_bundle)

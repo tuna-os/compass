@@ -53,6 +53,8 @@ pub enum UiCommand {
     Launch(u64),
     /// Show, at what a deeplink names: a store extension's detail page.
     Deeplink(String),
+    /// Change nothing; answer whether the window is on screen.
+    Describe,
 }
 
 /// What the window reports back, as the state it ended in.

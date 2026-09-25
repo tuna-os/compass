@@ -204,7 +204,7 @@ pub fn recent_files(category: Option<FileCategory>) -> Vec<PathBuf> {
 
 /// One row: the path, its last component, and its category — the one the
 /// index recorded when it has one, else read from the path.
-fn hit(path: &Path, category: Option<FileCategory>) -> FileHit {
+pub fn hit(path: &Path, category: Option<FileCategory>) -> FileHit {
     let category = category.unwrap_or_else(|| file_category(path, path.is_dir()));
     FileHit {
         path: path.to_string_lossy().into_owned(),

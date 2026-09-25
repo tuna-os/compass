@@ -2457,14 +2457,16 @@ where it is.
 #### Remaining parity work (after the ledger truth pass)
 
 The ledger is at **116 of 156 (74%)** after the truth pass of 2026-09-25 (§11.4, and `PARITY.md`,
-"The ledger truth pass"). These are the 40 cells still amber, by row, and nothing else: each is what
+"The ledger truth pass"). The gaps pass that followed (`PARITY.md`, "The gaps pass") closes rows
+from this table one at a time and strikes them through here; `scripts/ci/parity-score.py` has the
+current figure. These are the 40 cells still amber, by row, and nothing else: each is what
 the row's `Still C++-only:` sentence names, checked against the code. Sizes: **small** is under
 about 150 lines with its tests, **medium** a few hundred or several small pieces, **large** a
 subsystem. "None" under *blocked by* means only the work.
 
 | Row | Missing | Size | Blocked by |
 |---|---|---|---|
-| `src/cli` | `launch`, `app ls`, `cmd ls`/`launch`, `version`, `logs`, `state open`, `server`, `fs query`, `theme check`/`template`/`paths`, `script template`/`check`, `config default` | medium (a dozen small subcommands; `script template` needs the generator's 185 lines) | none; `state open` and `logs` need an IPC request and an engine log file |
+| ~~`src/cli`~~ | **Done in the gaps pass** (`PARITY.md`, "The gaps pass"): every C++ subcommand, over IPC v17 | — | — |
 | `src/services/app-runtime` | Quit and Force Quit, and the running/frontmost answers they use | medium | none on GNOME, wlroots, Hyprland, niri (close exists; a pid only on the last two) |
 | ~~`src/services/app-service`~~ | **Done** (`vicinae::catalog_watch`, `EngineApps`' lookups and `set_web_browser`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/calculator-service`, `src/builtins/calculator` | the history view (model and store ported), currency conversion, refresh-rates | medium | currency needs a decision on a rate source (fend has none); the backend dropdown is not wanted (fend by design) |

@@ -27,6 +27,13 @@ pub fn run(command: ConfigCommand) -> Result<ExitCode> {
             print!("{}", json_schema_pretty());
             Ok(ExitCode::from(EXIT_OK))
         }
+        ConfigCommand::Default => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&config::default_document())?
+            );
+            Ok(ExitCode::from(EXIT_OK))
+        }
         ConfigCommand::Migrate {
             from,
             to,

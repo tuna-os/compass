@@ -1651,6 +1651,17 @@ impl LauncherApp {
         // one reply. Set before any branch so every path answers exactly once.
         self.awaiting = true;
 
+        if command == UiCommand::Describe {
+            let open = (self.is_visible() && !self.closing)
+                || (self.pending_window.is_some() && !self.pending_hide);
+            self.answer(if open {
+                UiOutcome::Shown
+            } else {
+                UiOutcome::Hidden
+            });
+            return Task::none();
+        }
+
         let opened = match &command {
             UiCommand::Dmenu(token) => self.start_dmenu(*token),
             UiCommand::Launch(token) => self.start_launch(*token),
@@ -1670,6 +1681,8 @@ impl LauncherApp {
             | UiCommand::Launch(_)
             | UiCommand::Deeplink(_) => true,
             UiCommand::Hide => false,
+            // Answered in `obey` without touching the window.
+            UiCommand::Describe => return Task::none(),
             UiCommand::Toggle => {
                 !((self.is_visible() && !self.closing)
                     || (self.pending_window.is_some() && !self.pending_hide)
@@ -3121,27 +3134,10 @@ impl LauncherApp {
         }
     }
 
-    /// View the application.
-    ///
-    /// A card: a search field over a list of rows, each row an icon, a title
-    /// and a subtitle, with the selection drawn as a filled rounded rectangle
-    /// rather than a caret.
-    ///
-    /// **The caret is gone and that is deliberate.** It was there because a
-    /// comment said "under llvmpipe at 1280x800 a background tint is not
-    /// identifiable in a captured frame". `framediff.py` compares raw RGB
-    /// bytes for exact inequality, with no threshold, so a tinted row of
-    /// roughly 600x30 is about 18,000 changed pixels -- some seven times the
-    /// 2,697 the action-panel assertion already detects reliably. A highlight
-    /// is *easier* for the tier to see than a caret, not harder.
-    pub fn view(&self) -> Element<'_, Message> {
-        let geometry = self.geometry;
-        let palette = self.palette();
-
-        // One field, whose meaning follows the view: the root query, or a
-        // command's own filter. Same id either way, so focus survives the
-        // switch and `focus_search` needs no second target.
-        let (placeholder, value, on_input): (&str, &str, Option<OnInput>) = match &self.page {
+    /// The search field as the page on screen has it: its placeholder, its
+    /// text, and the message typing sends (none where it is read-only).
+    fn search_field(&self) -> (&str, &str, Option<OnInput>) {
+        match &self.page {
             Page::Root => (
                 "Search…",
                 &self.query,
@@ -3231,7 +3227,30 @@ impl LauncherApp {
                 &page.query,
                 Some(Message::ExtensionQueryChanged as OnInput),
             ),
-        };
+        }
+    }
+
+    /// View the application.
+    ///
+    /// A card: a search field over a list of rows, each row an icon, a title
+    /// and a subtitle, with the selection drawn as a filled rounded rectangle
+    /// rather than a caret.
+    ///
+    /// **The caret is gone and that is deliberate.** It was there because a
+    /// comment said "under llvmpipe at 1280x800 a background tint is not
+    /// identifiable in a captured frame". `framediff.py` compares raw RGB
+    /// bytes for exact inequality, with no threshold, so a tinted row of
+    /// roughly 600x30 is about 18,000 changed pixels -- some seven times the
+    /// 2,697 the action-panel assertion already detects reliably. A highlight
+    /// is *easier* for the tier to see than a caret, not harder.
+    pub fn view(&self) -> Element<'_, Message> {
+        let geometry = self.geometry;
+        let palette = self.palette();
+
+        // One field, whose meaning follows the view: the root query, or a
+        // command's own filter. Same id either way, so focus survives the
+        // switch and `focus_search` needs no second target.
+        let (placeholder, value, on_input) = self.search_field();
         let input = text_input(placeholder, value)
             .id(SEARCH_INPUT)
             .font(self.font())
@@ -5394,6 +5413,59 @@ mod tests {
     }
 
     #[test]
+    fn describe_answers_whether_the_window_is_open_and_changes_nothing() {
+        let (_commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, mut outcomes) = tokio::sync::mpsc::unbounded_channel();
+        let (mut app, _) = LauncherApp::boot(AppFlags {
+            start_hidden: true,
+            link: Some(EngineLink::new(receiver, sender)),
+            ..AppFlags::default()
+        });
+        let _ = app.update(Message::Command(UiCommand::Describe));
+        assert_eq!(outcomes.try_recv(), Ok(UiOutcome::Hidden));
+        assert!(app.pending_window.is_none(), "asking opened nothing");
+        assert!(!app.is_awaiting());
+
+        let _ = app.update(Message::Command(UiCommand::Show));
+        let _ = app.update(Message::Command(UiCommand::Describe));
+        assert_eq!(
+            outcomes.try_recv(),
+            Ok(UiOutcome::Shown),
+            "a window on its way counts as open"
+        );
+    }
+
+    #[test]
+    fn a_command_line_launch_opens_the_builtin_and_types_its_fallback_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = Arc::new(TestBackend::default());
+        let mut app = LauncherApp::with_index(index(dir.path()));
+        app.backend = Some(backend);
+        let launch = crate::backend::ExtensionLaunch {
+            id: "commands:search-files".into(),
+            arguments: None,
+            preferences: false,
+            fallback_text: Some("report".into()),
+        };
+        // Not settled: the search waits out its debounce on a timer.
+        let _ = app.update(Message::LaunchFetched(Ok(launch)));
+        assert_eq!(files_page(&app).query, "report", "{}", app.state_line());
+
+        let launch = crate::backend::ExtensionLaunch {
+            id: "commands:manage-snippets".into(),
+            arguments: None,
+            preferences: false,
+            fallback_text: None,
+        };
+        let _ = app.update(Message::LaunchFetched(Ok(launch)));
+        assert!(
+            matches!(app.page, Page::Snippets(_)),
+            "{}",
+            app.state_line()
+        );
+    }
+
+    #[test]
     fn hide_during_initial_open_waits_until_the_window_is_closed() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = app(dir.path());
@@ -6378,6 +6450,7 @@ mod tests {
             id: "@someone/hello:write".into(),
             arguments: Some(arguments.clone()),
             preferences: false,
+            fallback_text: None,
         };
         for message in task_messages(app.update(Message::LaunchFetched(Ok(launch)))) {
             let _ = app.update(message);

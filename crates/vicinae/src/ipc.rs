@@ -176,6 +176,11 @@ fn describe(request: &Request) -> &'static str {
         Request::ExtensionAlertAnswer { .. } => "ExtensionAlertAnswer",
         Request::CloseExtension { .. } => "CloseExtension",
         Request::OAuthRedirect { .. } => "OAuthRedirect",
+        Request::ListCommands => "ListCommands",
+        Request::LaunchCommand { .. } => "LaunchCommand",
+        Request::LaunchApp { .. } => "LaunchApp",
+        Request::DescribeWindow => "DescribeWindow",
+        Request::FsQuery { .. } => "FsQuery",
     }
 }
 

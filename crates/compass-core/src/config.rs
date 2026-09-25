@@ -1150,12 +1150,60 @@ pub fn json_schema_pretty() -> String {
     out
 }
 
-/// `$XDG_CONFIG_HOME/vicinae/vicinae.json`, falling back to `~/.config`.
+/// The configuration every unset key amounts to, as `vicinae config default`
+/// prints it: each `default` the [`json_schema`] documents, nested as the
+/// file nests it, plus the fallbacks and the `$schema` line.
+///
+/// Read from the schema rather than written out a second time, so a default
+/// changed in one place cannot be printed stale from another.
+#[must_use]
+pub fn default_document() -> Value {
+    fn defaults(node: &Value, defs: &Value) -> Option<Value> {
+        if let Some(default) = node.get("default") {
+            return Some(default.clone());
+        }
+        if let Some(name) = node
+            .get("$ref")
+            .and_then(Value::as_str)
+            .and_then(|r| r.rsplit('/').next())
+        {
+            return defaults(defs.get(name)?, defs);
+        }
+        let properties = node.get("properties")?.as_object()?;
+        let object: serde_json::Map<String, Value> = properties
+            .iter()
+            .filter_map(|(key, property)| Some((key.clone(), defaults(property, defs)?)))
+            .collect();
+        (!object.is_empty()).then_some(Value::Object(object))
+    }
+    let schema = json_schema();
+    let defs = schema.get("$defs").cloned().unwrap_or(Value::Null);
+    let mut document = serde_json::Map::new();
+    document.insert("$schema".to_owned(), Value::String(SCHEMA_URL.to_owned()));
+    if let Some(Value::Object(found)) = defaults(&schema, &defs) {
+        document.extend(found);
+    }
+    document.insert(
+        "fallbacks".to_owned(),
+        serde_json::json!(Config::default().fallback_ids()),
+    );
+    Value::Object(document)
+}
+
+/// Overrides where `vicinae.json` is read and written, as the C++ server's
+/// `--config`; `vicinae server --config` sets it for the engine it starts.
+pub const CONFIG_PATH_ENV: &str = "COMPASS_CONFIG";
+
+/// `$XDG_CONFIG_HOME/vicinae/vicinae.json`, falling back to `~/.config`; or
+/// [`CONFIG_PATH_ENV`] when that is set.
 ///
 /// # Errors
 ///
 /// [`ConfigError::NoConfigDir`] when neither `$XDG_CONFIG_HOME` nor `$HOME` is usable.
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
+    if let Some(path) = std::env::var_os(CONFIG_PATH_ENV).filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
     let dir = dirs::config_dir().ok_or(ConfigError::NoConfigDir)?;
     Ok(dir.join(CONFIG_RELATIVE_PATH))
 }

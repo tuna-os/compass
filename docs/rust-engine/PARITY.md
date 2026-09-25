@@ -126,7 +126,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/lib/common` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/lib/linux-utils` | `compass-platform-linux` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/lib/soulver` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
-| `src/cli` | `crates/vicinae` | Phase 2 | ✅ | 🟡 | ✅ | ❌ |
+| `src/cli` | `crates/vicinae` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/file-indexer` | `compass-db`, `vicinae-file-indexer` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/snippet` | `compass-input-server` (`vicinae-input-server`), `compass-core::snippet` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -313,9 +313,7 @@ shortcuts, the power commands' two preferences, and a notification's urgency and
 **Rows still amber that had no note saying why.** Each sentence names only what is genuinely missing;
 PLAN §12.0 sizes them and says what blocks each.
 
-- `src/cli`: Still C++-only: `launch`, `app ls`, `cmd ls`/`cmd launch`, `version`, `logs`, `state
-  open`, `server`, the file-index `query`, `theme check`/`template`/`paths`, `script
-  template`/`check` and `config default`.
+- `src/cli`: closed in the gaps pass below.
 - `src/services/app-runtime`: Still C++-only: Quit and Force Quit for a running application, and the
   running and frontmost answers the root row would use for them.
 - `src/services/calculator-service`: see `src/builtins/calculator` above.
@@ -444,6 +442,46 @@ copy, copy name, codepoint and category, the keyword form (Ctrl+E), reset rankin
 and the skin-tone section. Not ported, and deliberately: the one-off migration from the legacy
 `visited_emoji` table of `omni.db`, which only a database from before the JSON file holds; and the
 picker's paste action, which the `src/builtins/vicinae` note carries.
+
+### The gaps pass (2026-09-25)
+
+Genuine gaps from the list above, closed one row at a time, each flip with the module that does it
+and the tests that fail on a regression (IPC v17).
+
+| Row | Flipped | Rust | Tests that would fail on a regression |
+|---|---|---|---|
+| `src/cli` | Rust ✅ | `vicinae::{cli, cli_commands, logs}`, `serve::launch`; `compass_core::{script_template, extension_commands::launch_arguments, config::default_document, file_search::CLI_CATEGORY_NAMES}` | `cmd_ls_lists_every_root_item_by_id_and_cmd_launch_hands_the_window_a_launch`, `app_launch_and_cmd_launch_start_the_application_with_its_arguments`, `state_open_asks_the_window_and_exits_by_the_answer`, `the_engine_keeps_a_log_file_and_logs_prints_its_last_lines`, `fs_query_asks_the_index_alone_and_names_categories_as_the_cpp_does`, `server_refuses_a_running_engine_and_replace_kills_it_and_serves_in_its_place`, `config_cli::{script_template_*, theme_template_check_and_paths, config_default_*, version_*}`, `positional_launch_arguments_are_checked_as_the_cpp_checks_them`, `a_command_line_launch_opens_the_builtin_and_types_its_fallback_text`, `describe_answers_whether_the_window_is_open_and_changes_nothing` |
+
+**`src/cli`.** Every subcommand `CommandLineInterface::execute` registers now has a counterpart:
+`version` (`ver`), `server`, `ping`, `query`, `toggle`/`open`/`close`, `cmd ls` (`list`, `--json`)
+and `cmd launch` (positional arguments, `--cwd`, `--query`), `deeplink` (`link`), `dmenu`, `theme
+set`/`template` (`th`, `tmpl`), `fs query` (`q`, `--limit`, `--category`, `--json`), `app launch`
+(`--new`), `config default`, `script template`/`check`, `state open` and `logs` (`-n`, `--follow`).
+The engine answers the five that need it with IPC v17's `ListCommands`, `LaunchCommand`,
+`LaunchApp`, `DescribeWindow` (the window answers a new `WindowCommand::Describe` without changing)
+and `FsQuery`. `cmd launch` checks its arguments with the C++'s `buildLaunchArguments` sentences,
+launches an application itself, and hands anything else to the window as a launch, whose
+`--query` the window types into the view it opens (`Response::CommandLaunch`). `app launch` focuses
+the application's first window unless `--new`, matched by `findAppWindows`'s class-or-title rule,
+and launches it with its arguments otherwise. Declared differences:
+
+- `logs` reads `$XDG_STATE_HOME/vicinae/compass.log`, which the engine writes (rotated to `.1` past
+  five mebibytes, as the C++'s), not `vicinae.log`: two engines appending to one file would
+  interleave, and ADR-0017 gives Compass its own files. The file is opened once the socket is bound,
+  so a refused second engine writes nothing.
+- `server` starts `serve` in the foreground (`start`, the engine and its window, with `--open`);
+  `--config` reaches the engine as `COMPASS_CONFIG` and `--no-extension-runtime` as
+  `COMPASS_NO_EXTENSION_RUNTIME`, which makes extension commands refuse by name. `--replace` sends
+  `SIGKILL`, as the C++ does.
+- `fs query --json` prints each file's `path` and `category` (the C++'s category names); the score
+  and MIME type the C++ adds are not on the wire.
+- `cmd launch --cwd` is carried to the engine and logged; no Linux command reads a working
+  directory from its launch.
+- `config default` prints this engine's `vicinae.json` at its defaults, read from the schema's
+  `default`s, rather than the C++'s `settings.json` template.
+- `theme check` and `theme paths` are registered in the C++ but commented out; here they work.
+- `version`'s commit and provenance come from `COMPASS_GIT_COMMIT` and `COMPASS_PROVENANCE` at build
+  time, `unknown` and `local` without them.
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
 value, reader and exec layers (47 C++ cases, verbatim inputs); the `DesktopFile` layer

@@ -530,11 +530,19 @@ impl ApplicationBackend for DaemonBackend {
                     preferences,
                 } => Ok(compass_ui::backend::ExtensionLaunch {
                     id,
-                    arguments: arguments_json
-                        .map(|json| serde_json::from_str(&json))
-                        .transpose()
-                        .map_err(|err| format!("The launch's arguments are unreadable: {err}"))?,
+                    arguments: launch_arguments(arguments_json)?,
                     preferences,
+                    fallback_text: None,
+                }),
+                compass_ipc::Response::CommandLaunch {
+                    id,
+                    arguments_json,
+                    fallback_text,
+                } => Ok(compass_ui::backend::ExtensionLaunch {
+                    id,
+                    arguments: launch_arguments(arguments_json)?,
+                    preferences: false,
+                    fallback_text,
                 }),
                 other => Err(format!("Unexpected answer from the engine: {other:?}")),
             }
@@ -1446,6 +1454,15 @@ fn preference_input(field: compass_ipc::PreferenceField) -> compass_ui::backend:
         placeholder: field.placeholder,
         required: field.required,
     }
+}
+
+/// A launch's arguments, from the JSON object the engine carries them as.
+fn launch_arguments(
+    json: Option<String>,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, String> {
+    json.map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|err| format!("The launch's arguments are unreadable: {err}"))
 }
 
 #[cfg(test)]

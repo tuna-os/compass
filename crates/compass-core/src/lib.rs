@@ -94,6 +94,7 @@ pub mod scan_roots;
 pub mod script_command;
 pub mod script_output;
 pub mod script_scan;
+pub mod script_template;
 pub mod selection;
 pub mod semver;
 pub mod shortcut;

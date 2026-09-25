@@ -702,6 +702,8 @@ pub struct ExtensionLaunch {
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
     /// Open its preferences form rather than run it.
     pub preferences: bool,
+    /// What its search starts with (`vicinae cmd launch --query`).
+    pub fallback_text: Option<String>,
 }
 
 /// How an extension command began.

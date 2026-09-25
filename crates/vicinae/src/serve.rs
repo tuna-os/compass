@@ -40,6 +40,8 @@ use tokio::sync::{Mutex, RwLock};
 use crate::doctor;
 use crate::engine::Engine;
 
+mod launch;
+
 /// The at-most-one launcher window this engine drives.
 ///
 /// # Last window wins
@@ -2320,6 +2322,63 @@ pub(crate) async fn forward(slot: &WindowSlot, command: WindowCommand, what: &st
     }
 }
 
+/// `ListWindows`: over Wayland on a wlroots compositor, through the Shell
+/// extension everywhere else.
+pub(crate) async fn list_windows(state: &Arc<RwLock<EngineState>>) -> Response {
+    // wlroots compositors list windows over Wayland; never on GNOME.
+    if crate::wlroots::detect().await.is_some() {
+        let state = state.read().await;
+        if let Some(response) = crate::window_service::wlroots_list(&state.index).await {
+            return response;
+        }
+    }
+    let (shell, index_state) = (state.read().await.shell.clone(), Arc::clone(state));
+    let Some(shell) = shell else {
+        return Response::Error(crate::window_service::no_bus("Window switching"));
+    };
+    match shell.list_windows().await {
+        Ok(windows) => {
+            let state = index_state.read().await;
+            Response::Windows {
+                windows: crate::window_service::rows(
+                    windows.into_iter().map(Into::into).collect(),
+                    &state.index,
+                ),
+            }
+        }
+        Err(err) => Response::Error(crate::window_service::refusal(&err, "Window switching")),
+    }
+}
+
+/// `ActivateWindow` or, with `close`, `CloseWindow`.
+pub(crate) async fn act_on_window(
+    state: &Arc<RwLock<EngineState>>,
+    id: u32,
+    close: bool,
+) -> Response {
+    let what = if close {
+        "Closing a window"
+    } else {
+        "Switching to a window"
+    };
+    if let Some(response) = crate::window_service::wlroots_act(id, close, what).await {
+        return response;
+    }
+    let Some(shell) = state.read().await.shell.clone() else {
+        return Response::Error(crate::window_service::no_bus(what));
+    };
+    let id = compass_shell::WindowId(id);
+    let done = if close {
+        shell.close_window(id).await
+    } else {
+        shell.activate_window(id).await
+    };
+    match done {
+        Ok(()) => Response::Ack,
+        Err(err) => Response::Error(crate::window_service::refusal(&err, what)),
+    }
+}
+
 /// Answers one request.
 ///
 /// Separated from the serve loop so the whole request surface is testable
@@ -2518,58 +2577,35 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             }
         }
 
-        Request::ListWindows => {
-            // wlroots compositors list windows over Wayland; never on GNOME.
-            if crate::wlroots::detect().await.is_some() {
-                let state = state.read().await;
-                if let Some(response) = crate::window_service::wlroots_list(&state.index).await {
-                    return response;
-                }
-            }
-            let (shell, index_state) = (state.read().await.shell.clone(), Arc::clone(state));
-            let Some(shell) = shell else {
-                return Response::Error(crate::window_service::no_bus("Window switching"));
-            };
-            match shell.list_windows().await {
-                Ok(windows) => {
-                    let state = index_state.read().await;
-                    Response::Windows {
-                        windows: crate::window_service::rows(
-                            windows.into_iter().map(Into::into).collect(),
-                            &state.index,
-                        ),
-                    }
-                }
-                Err(err) => {
-                    Response::Error(crate::window_service::refusal(&err, "Window switching"))
-                }
-            }
-        }
+        Request::ListWindows => list_windows(state).await,
 
         Request::ActivateWindow { id } | Request::CloseWindow { id } => {
-            let close = matches!(request, Request::CloseWindow { .. });
-            let what = if close {
-                "Closing a window"
-            } else {
-                "Switching to a window"
-            };
-            if let Some(response) = crate::window_service::wlroots_act(id, close, what).await {
-                return response;
-            }
-            let Some(shell) = state.read().await.shell.clone() else {
-                return Response::Error(crate::window_service::no_bus(what));
-            };
-            let id = compass_shell::WindowId(id);
-            let done = if close {
-                shell.close_window(id).await
-            } else {
-                shell.activate_window(id).await
-            };
-            match done {
-                Ok(()) => Response::Ack,
-                Err(err) => Response::Error(crate::window_service::refusal(&err, what)),
+            act_on_window(state, id, matches!(request, Request::CloseWindow { .. })).await
+        }
+
+        Request::ListCommands => {
+            let state = state.read().await;
+            Response::Commands {
+                commands: launch::commands(&state.index),
             }
         }
+        Request::LaunchCommand {
+            id,
+            args,
+            cwd,
+            query,
+        } => launch::launch_command(state, id, &args, cwd, query).await,
+        Request::LaunchApp {
+            id,
+            args,
+            new_instance,
+        } => launch::launch_app(state, &id, &args, new_instance).await,
+        Request::DescribeWindow => launch::describe_window(state).await,
+        Request::FsQuery {
+            query,
+            limit,
+            category,
+        } => launch::fs_query(state, query, limit, category).await,
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id, None).await,
@@ -3058,10 +3094,17 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
             set_extension_preferences(state, id, values_json).await
         }
         Request::ExtensionLaunchFetch { token } => match state.read().await.launches.take(token) {
-            Some(launch) => Response::ExtensionLaunch {
-                id: launch.id,
-                arguments_json: launch.arguments_json,
-                preferences: launch.preferences,
+            Some(launch) => match launch.fallback_text {
+                Some(fallback_text) => Response::CommandLaunch {
+                    id: launch.id,
+                    arguments_json: launch.arguments_json,
+                    fallback_text: Some(fallback_text),
+                },
+                None => Response::ExtensionLaunch {
+                    id: launch.id,
+                    arguments_json: launch.arguments_json,
+                    preferences: launch.preferences,
+                },
             },
             None => Response::Error(ProtocolError::new(
                 ErrorKind::BadRequest,
@@ -3302,6 +3345,7 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
     let listener = Listener::bind(socket.as_path())
         .await
         .with_context(|| format!("binding the engine socket at {socket}"))?;
+    crate::logs::activate_engine_log();
 
     let state = Arc::new(RwLock::new(EngineState::from_environment(socket.clone())));
     tracing::info!(socket = %socket, "engine listening");

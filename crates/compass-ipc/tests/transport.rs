@@ -139,7 +139,17 @@ async fn echo_handler(request: Request) -> Response {
         | Request::StopScript { .. }
         | Request::RunProgram { .. }
         | Request::DmenuChoose { .. }
+        | Request::LaunchCommand { .. }
         | Request::SetTheme { .. } => Response::Ack,
+        Request::ListCommands => Response::Commands { commands: vec![] },
+        Request::LaunchApp { .. } => Response::AppLaunched {
+            focused_window_title: None,
+        },
+        Request::DescribeWindow => Response::WindowState { open: false },
+        Request::FsQuery { .. } => Response::Files {
+            heading: "Results".into(),
+            files: vec![],
+        },
         Request::Dmenu { .. } => Response::DmenuOutput {
             output: String::new(),
         },

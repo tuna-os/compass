@@ -289,6 +289,30 @@ fn all_requests() -> Vec<Request> {
             id: "commands:clipboard-history".into(),
             edit: compass_ipc::RootItemEdit::ResetRanking,
         },
+        Request::ListCommands,
+        Request::LaunchCommand {
+            id: "@zoë/notes:new".into(),
+            args: vec!["first ✓".into(), String::new()],
+            cwd: Some("/home/zoë".into()),
+            query: Some("groceries 🛒".into()),
+        },
+        Request::LaunchCommand {
+            id: "commands:clipboard-history".into(),
+            args: vec![],
+            cwd: None,
+            query: None,
+        },
+        Request::LaunchApp {
+            id: "org.gnome.Nautilus.desktop".into(),
+            args: vec!["/home/zoë/Téléchargements".into()],
+            new_instance: true,
+        },
+        Request::DescribeWindow,
+        Request::FsQuery {
+            query: "résumé".into(),
+            limit: 10_000,
+            category: Some("Documents".into()),
+        },
         Request::ControlMediaPlayer {
             player: "org.mpris.MediaPlayer2.spotify".into(),
             action: compass_ipc::MediaPlayerAction::Next,
@@ -396,6 +420,25 @@ fn all_responses() -> Vec<Response> {
         Response::Window(WindowCommand::Deeplink(
             "vicinae://extensions/zoë/clock".into(),
         )),
+        Response::Window(WindowCommand::Describe),
+        Response::Commands {
+            commands: vec![compass_ipc::CommandInfo {
+                id: "@zoë/notes:new".into(),
+                name: "New Note ✍".into(),
+            }],
+        },
+        Response::AppLaunched {
+            focused_window_title: Some("Téléchargements — Files".into()),
+        },
+        Response::AppLaunched {
+            focused_window_title: None,
+        },
+        Response::WindowState { open: true },
+        Response::CommandLaunch {
+            id: "commands:search-files".into(),
+            arguments_json: Some(r#"{"a":"ü"}"#.into()),
+            fallback_text: Some("résumé".into()),
+        },
         Response::ClipboardHistory { entries: vec![] },
         Response::ClipboardHistory {
             entries: vec![
@@ -807,6 +850,11 @@ fn request_variants_are_exhaustive() {
             | Request::ClipboardMonitoring { .. }
             | Request::RootItemEdit { .. }
             | Request::ControlMediaPlayer { .. }
+            | Request::ListCommands
+            | Request::LaunchCommand { .. }
+            | Request::LaunchApp { .. }
+            | Request::DescribeWindow
+            | Request::FsQuery { .. }
             | Request::WindowOutcome(_) => {}
         }
     }
@@ -855,6 +903,10 @@ fn response_variants_are_exhaustive() {
             | Response::InputServerStatus(_)
             | Response::ExtensionLaunch { .. }
             | Response::ExtensionSubtitles { .. }
+            | Response::Commands { .. }
+            | Response::AppLaunched { .. }
+            | Response::WindowState { .. }
+            | Response::CommandLaunch { .. }
             | Response::Window(_) => {}
         }
     }

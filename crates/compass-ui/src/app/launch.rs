@@ -21,6 +21,44 @@ impl LauncherApp {
         )
     }
 
+    /// Opens a shortcut, a script command or a Rhai script by its root id,
+    /// as picking its row does; `None` when the id is none of those.
+    fn open_root_item(&mut self, id: &str) -> Option<Task<Message>> {
+        let index = &self.app_index;
+        if let Some(index) = index.shortcut_by_entrypoint(id).and_then(|found| {
+            index
+                .shortcuts()
+                .iter()
+                .position(|s| std::ptr::eq(s, found))
+        }) {
+            return Some(self.open_shortcut_at(index));
+        }
+        if let Some(index) = index
+            .script_by_entrypoint(id)
+            .and_then(|found| index.scripts().iter().position(|s| std::ptr::eq(s, found)))
+        {
+            return Some(self.run_script_at(index));
+        }
+        let found = index.rhai_script_by_entrypoint(id)?;
+        let position = index
+            .rhai_scripts()
+            .iter()
+            .position(|s| std::ptr::eq(s, found))?;
+        Some(self.open_rhai_script_at(position))
+    }
+
+    /// Types `text` into whatever search field the view just opened shows,
+    /// as the C++ gives a command its launch's `fallbackText`.
+    pub(super) fn type_fallback(&mut self, text: Option<String>) -> Task<Message> {
+        let Some(text) = text.filter(|text| !text.is_empty()) else {
+            return Task::none();
+        };
+        match self.search_field().2 {
+            Some(on_input) => self.update(on_input(text)),
+            None => Task::none(),
+        }
+    }
+
     /// Asks the engine for the subtitles extensions set.
     pub(super) fn refresh_subtitles_task(&self) -> Task<Message> {
         let Some(backend) = self.backend.clone() else {
@@ -56,6 +94,14 @@ impl LauncherApp {
                             },
                         ),
                     ]);
+                }
+                if let Some(command) = compass_core::commands::by_id(&launch.id) {
+                    let opened = self.open_command(command);
+                    let typed = self.type_fallback(launch.fallback_text);
+                    return Task::batch([close, opened, typed]);
+                }
+                if let Some(opened) = self.open_root_item(&launch.id) {
+                    return Task::batch([close, opened]);
                 }
                 let run = match self
                     .app_index
