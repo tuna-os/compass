@@ -52,10 +52,6 @@ jiff = { version = "0.2", default-features = false, features = ["std", "tz-syste
 # does through the Settings portal.
 [target.'cfg(target_os = "linux")'.dependencies]
 iced_layershell = { version = "0.19", default-features = false }
-# The launcher's own Wayland connection, handed to `iced_layershell` and
-# shared with the shortcut inhibitor (the same 0.31 the toolkit uses).
-wayland-client = "0.31"
-compass-wayland = { path = "../compass-wayland" }
 
 [dev-dependencies]
 tempfile.workspace = true

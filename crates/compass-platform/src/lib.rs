@@ -19,5 +19,7 @@
 #![deny(missing_docs)]
 
 pub mod launch;
+pub mod shortcut_inhibit;
 
 pub use launch::{AppLauncher, LaunchError, LaunchFuture, LaunchMethod, NullLauncher};
+pub use shortcut_inhibit::ShortcutInhibitor;

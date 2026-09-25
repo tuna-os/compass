@@ -347,6 +347,16 @@ impl Dispatch<ZwpKeyboardShortcutsInhibitManagerV1, ()> for Dispatcher {
     }
 }
 
+impl compass_platform::ShortcutInhibitor for ShortcutInhibit {
+    fn set_wanted(&mut self, wanted: bool) {
+        ShortcutInhibit::set_wanted(self, wanted);
+    }
+
+    fn dispatch_pending(&mut self) -> Result<(), String> {
+        ShortcutInhibit::dispatch_pending(self).map_err(|error| error.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

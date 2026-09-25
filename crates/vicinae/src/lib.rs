@@ -368,7 +368,7 @@ pub fn run(cli: Cli) -> Result<ExitCode> {
         match launcher_surface() {
             compass_wayland::SurfaceKind::LayerShell => {
                 tracing::info!("presenting the launcher as a wlr-layer-shell surface");
-                compass_ui::run_resident_layer_shell(flags)
+                compass_ui::run_resident_layer_shell(flags, layer_shell_connection())
                     .map_err(|err| anyhow::anyhow!("the launcher could not start: {err}"))?;
             }
             compass_wayland::SurfaceKind::XdgToplevel => {
@@ -940,6 +940,31 @@ fn init_tracing(verbose: u8, log_file: Option<logs::LogFile>) {
         .with(stderr.with_filter(filter))
         .with(file)
         .try_init();
+}
+
+/// The launcher's own Wayland connection, shared with `iced_layershell`, and
+/// the shortcut inhibitor bound on it, so the inhibitor is told which of the
+/// launcher's surfaces holds the keyboard. Without a connection the toolkit
+/// connects itself and reports why it could not.
+fn layer_shell_connection() -> compass_ui::LayerShellConnection {
+    let connection = match wayland_client::Connection::connect_to_env() {
+        Ok(connection) => connection,
+        Err(error) => {
+            tracing::info!(%error, "no Wayland connection to share with the layer shell");
+            return compass_ui::LayerShellConnection::default();
+        }
+    };
+    let inhibitor = match compass_wayland::ShortcutInhibit::bind(&connection) {
+        Ok(inhibit) => Some(Box::new(inhibit) as Box<dyn compass_platform::ShortcutInhibitor>),
+        Err(error) => {
+            tracing::info!(%error, "the shortcut recorder cannot inhibit shortcuts");
+            None
+        }
+    };
+    compass_ui::LayerShellConnection {
+        connection: Some(connection.into()),
+        inhibitor,
+    }
 }
 
 #[cfg(test)]

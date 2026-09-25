@@ -54,6 +54,9 @@ notify-rust = { version = "4.18", default-features = false, features = ["z-with-
 compass-sandbox = { path = "../compass-sandbox" }
 compass-shell.workspace = true
 compass-wayland.workspace = true
+# The launcher's Wayland connection, shared with `iced_layershell` and the
+# shortcut inhibitor (the same 0.31 the toolkit uses).
+wayland-client = "0.31"
 compass-crypto.workspace = true
 compass-sqlcipher-sys.workspace = true
 getrandom.workspace = true
