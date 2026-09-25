@@ -29,3 +29,7 @@ vm-tier jobs="all" checks="":
     if [ -n "$2" ]; then args+=(-f checks="$2"); fi
     gh workflow run vm-tier.yaml --ref "$branch" "${args[@]}"
     echo "Dispatched the VM tier on $branch; follow it with: gh run watch \$(gh run list --workflow vm-tier.yaml --branch $branch --limit 1 --json databaseId --jq '.[0].databaseId')"
+
+# Render the store-listing screenshots into packaging/screenshots/ through the paint tier.
+screenshots:
+    cargo test -p compass-ui --test screenshots -- --ignored
