@@ -2469,7 +2469,7 @@ subsystem. "None" under *blocked by* means only the work.
 | ~~`src/services/app-service`~~ | **Done** (`vicinae::catalog_watch`, `EngineApps`' lookups and `set_web_browser`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/calculator-service`, `src/builtins/calculator` | the history view (model and store ported), currency conversion, refresh-rates | medium | currency needs a decision on a rate source (fend has none); the backend dropdown is not wanted (fend by design) |
 | `src/services/clipboard`, `src/builtins/clipboard` | eviction by age and its timer; the monitoring switch and the ignore-passwords and record-all-offers preferences; the kind filter, keyword editing, open actions and remove-all (small each); the detail pane (medium); the drag payload | medium overall | drag needs drag-and-drop out of an Iced window, which Iced does not offer |
-| `src/services/desktop-notification` | rendering a non-file icon to a PNG so it can be passed | small | none |
+| ~~`src/services/desktop-notification`~~ | **Done** (`vicinae::notification_icon`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | ~~`src/services/extension-registry`~~ | **Done** (`vicinae::catalog_watch::watch_extensions`; PARITY.md, "Gaps closed after the truth pass") | — | — |
 | `src/services/global-shortcuts` | per-command global shortcuts from the config, conflict detection, `vicinae-hotkey-v1`, X11 | medium (X11 large) | a compositor: GNOME's portal grant is VM-tier only, no released compositor has the hotkey protocols; X11 needs a decision on whether it is supported |
 | `src/services/glyph-service`, `src/builtins/vicinae` (picker half) | visits, pins, keywords and per-glyph tones wired into the emoji picker | medium | none (model ported) |

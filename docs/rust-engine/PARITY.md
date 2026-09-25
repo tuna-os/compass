@@ -145,7 +145,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/calculator-service` | `compass-local-storage` | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
-| `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -320,8 +320,8 @@ PLAN §12.0 sizes them and says what blocks each.
   running and frontmost answers the root row would use for them.
 - `src/services/calculator-service`: see `src/builtins/calculator` above.
 - `src/services/desktop-notification`: the urgency and an icon that is a file are passed since this
-  pass (`a_notification_carries_the_urgency_and_an_icon_file`). Still C++-only: rendering any other
-  icon (a builtin one, a remote one) to a temporary PNG so that it can be passed too.
+  pass (`a_notification_carries_the_urgency_and_an_icon_file`); rendering any other icon (a builtin
+  one, a remote one) to a temporary PNG landed after it (see "Gaps closed after the truth pass").
 - `src/services/global-shortcuts`: Still C++-only: per-command global shortcuts from the
   configuration, the `vicinae-hotkey-v1` and X11 backends, and conflict detection.
 - `src/services/glyph-service`: Still C++-only: wiring its model into the emoji picker, so that
@@ -356,6 +356,7 @@ named Rust module and named tests that fail on a regression.
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/builtins/system` | Rust ✅ | Browse Apps (`compass_ui::apps_page` over `compass_core::browse_apps`, with `AppIndex::hidden_applications` for `showHidden` and `BuiltinCommand::default_disabled` for `isDefaultDisabled`); Set Default Browser and Set Default Terminal (`compass_core::default_app`'s pickers, served by the engine over `Request::{ListDefaultApps, SetDefaultApp}`, IPC v17, writing through `compass_xdg::{mimeapps_writer, terminal}`) | `browse_apps_lists_filters_opens_and_copies`, `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one`, `the_default_browser_and_terminal_are_listed_and_set_in_the_users_files` (a real engine, temp XDG dirs), `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request`, `browse_apps_is_disabled_until_the_configuration_enables_it`, `apps_page::tests` |
+| `src/services/desktop-notification` | Rust ✅ | `vicinae::notification_icon`: a builtin icon drawn from its SVG with `resvg` (already in the tree through iced) into a 128×128 `vicinae-notif-*.png` in the temporary directory, tinted when asked; a remote image fetched through `compass_ui::remote_image`'s cache; an SVG file drawn, a PNG or JPEG passed; the fallback when the source cannot be drawn | `a_builtin_icon_is_drawn_into_a_tinted_square_png` (decodes the PNG and checks its size, centring and tint), `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` (a fake fetch; no network), `a_notification_carries_the_urgency_and_an_icon_file` |
 | `src/services/extension-registry` | Rust ✅ | `vicinae::catalog_watch::watch_extensions` (debounced 100 ms as the registry's `m_rescanDebounce`), `EngineState::rescan_extensions`, `AppIndex::extension_dirs`; the window follows through the catalog generation, as for applications | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` (a real engine over temp XDG dirs: the directory, then the manifest, then removal), `only_an_entry_of_an_extension_directory_or_a_manifest_matters` |
 | `src/services/app-service` | Rust ✅ | `vicinae::catalog_watch` (the directory watch, debounced 500 ms as `m_rescanDebounce`), `AppIndex::{rescan_applications, replace_applications}`, `EngineApps::{web_browser, file_browser, text_editor, terminal_emulator, set_web_browser}`; the window rescans its own copy when `Request::CatalogGeneration` (IPC v17) moves | `an_application_installed_while_the_engine_runs_is_found_without_a_restart` (a real engine over temp XDG dirs), `a_rescan_takes_installed_and_removed_applications_and_keeps_the_rest`, `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none`, `a_moved_catalog_generation_rescans_and_the_same_one_does_not`, `the_browser_file_manager_and_editor_are_the_defaults_then_the_category_then_a_claim` |
 
@@ -368,6 +369,7 @@ What differs, by row:
 | `builtins/system` | Browse Apps reads `showHidden` and `sortAlphabetically` each time it opens. | Read when the window starts, like the power commands' preferences; a change applies after a restart of the window. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
 | `builtins/system` | Unsorted, the list is `m_apps` in scan order, hidden entries among the rest. | Unsorted, the shown applications in scan order, then the hidden ones. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
 | `builtins/system` | The current default carries a green check icon. | A `✓ Default` accessory in text, the drawn icon set being `ui/image`'s gap. | `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one` |
+| `desktop-notification` | Every icon is rendered to a 128×128 PNG, with the theme's side of a themed image, and a file icon or `data:` URL drawn as the launcher would. | A PNG or JPEG file (on disk, an asset, or fetched) is passed as it is and scaled by the notification server; a themed image uses its light side (a notification has no theme); a file icon and a `data:` URL go without an icon. | `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` |
 | `extension-registry` | `QFileSystemWatcher` on each extension directory: an extension appearing is seen, a `package.json` written into it afterwards is not, so `vicinae develop` (which creates the directory before building) waits for the next change or its own deeplink. | Each extension's directory is watched too, for its `package.json` only; a bundle being written is not a rescan. | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` |
 | `app-service` | One process: `appsChanged` reloads the root items the window shows. | Two: the engine rescans on the watch; the window asks for the catalog generation on every summon and rescans its own index when it moved, so an open window catches up on its next summon. | `a_moved_catalog_generation_rescans_and_the_same_one_does_not` |
 

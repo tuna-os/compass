@@ -496,6 +496,7 @@ pub fn start(
     let name = command.name.clone();
     let namespace = compass_local_storage::namespace_for(&command.extension_id);
     let extension_id = command.extension_id.clone();
+    let assets = command.extension_dir.join("assets");
     let handle = tokio::runtime::Handle::try_current().ok();
     let started = view
         .as_ref()
@@ -514,6 +515,7 @@ pub fn start(
                     apps,
                     files,
                     commands,
+                    assets,
                 },
                 storage,
                 ShellClipboard {
@@ -611,6 +613,7 @@ struct Served {
     apps: Option<crate::extension_apps::EngineApps>,
     files: Option<Arc<crate::file_search::FileSearch>>,
     commands: Option<crate::extension_commands::EngineCommands>,
+    assets: PathBuf,
 }
 
 fn serve(
@@ -631,6 +634,7 @@ fn serve(
         apps,
         files,
         commands,
+        assets,
     } = served;
     let title = title.as_str();
     let clipboard_handle = clipboard.handle.clone();
@@ -660,6 +664,7 @@ fn serve(
             alert: std::sync::Mutex::new(None),
             view: view.as_ref().map(|view| view.state.clone()),
             selection,
+            assets: Some(assets),
         },
         CommandInfo {
             name: name.to_owned(),
@@ -1059,6 +1064,9 @@ struct HeadlessShell {
     view: Option<tokio::sync::watch::Sender<ViewState>>,
     /// Where `getSelectedText` reads from.
     selection: Selection,
+    /// The extension's `assets` directory, which a notification's icon may
+    /// name a file in.
+    assets: Option<PathBuf>,
 }
 
 /// `getSelectedText`'s answer, verbatim from the C++, when nothing is
@@ -1098,14 +1106,12 @@ impl Selection {
 
 /// The notification `FreedesktopNotificationClient::send` posts: from
 /// `Vicinae`, with the extension's urgency as the `urgency` hint when it gave
-/// one, and its icon when that is a file on disk. The C++ also renders any
-/// other image (a builtin icon, a remote one) to a temporary PNG first; that
-/// is not done here, so such an icon is left out.
+/// one, and its icon as the file [`crate::notification_icon`] made of it.
 fn desktop_notification(
     title: &str,
     body: &str,
     urgency: Option<compass_worker_host::ui_shell_service::Urgency>,
-    icon: Option<&serde_json::Value>,
+    icon: Option<&Path>,
 ) -> notify_rust::Notification {
     use compass_worker_host::ui_shell_service::Urgency;
     let mut notification = notify_rust::Notification::new();
@@ -1117,16 +1123,8 @@ fn desktop_notification(
             Urgency::High => notify_rust::Urgency::Critical,
         });
     }
-    let source = icon.and_then(|icon| match icon {
-        serde_json::Value::String(path) => Some(path.as_str()),
-        serde_json::Value::Object(image) => image.get("source").and_then(serde_json::Value::as_str),
-        _ => None,
-    });
-    if let Some(path) = source.map(|source| source.strip_prefix("file://").unwrap_or(source))
-        && std::path::Path::new(path).is_absolute()
-        && std::path::Path::new(path).is_file()
-    {
-        notification.icon(path);
+    if let Some(path) = icon {
+        notification.icon(&path.to_string_lossy());
     }
     notification
 }
@@ -1211,11 +1209,17 @@ impl Shell for HeadlessShell {
     }
 
     fn send_notification(&self, notification: &Notification) {
+        let icon = notification.icon.as_ref().and_then(|icon| {
+            crate::notification_icon::icon_path(
+                icon,
+                &crate::notification_icon::Sources::from_environment(self.assets.as_deref()),
+            )
+        });
         self.post(desktop_notification(
             &notification.title,
             &notification.body,
             Some(notification.urgency),
-            notification.icon.as_ref(),
+            icon.as_deref(),
         ));
     }
 
@@ -1757,23 +1761,11 @@ mod tests {
         let plain = desktop_notification("T", "B", None, None);
         assert!(plain.hints.is_empty(), "a HUD sends no urgency, as before");
 
-        let icon =
-            |value: serde_json::Value| desktop_notification("T", "B", None, Some(&value)).icon;
-        assert_eq!(icon(serde_json::json!(png)), png);
         assert_eq!(
-            icon(serde_json::json!({ "source": format!("file://{png}") })),
+            desktop_notification("T", "B", None, Some(Path::new(&png))).icon,
             png
         );
-        assert_eq!(
-            icon(serde_json::json!("bell.png")),
-            "",
-            "not a path on disk"
-        );
-        assert_eq!(icon(serde_json::json!("/nonexistent/bell.png")), "");
-        assert_eq!(
-            icon(serde_json::json!({ "source": "https://x.test/a.png" })),
-            ""
-        );
+        assert_eq!(plain.icon, "", "no icon, none passed");
     }
 
     #[test]

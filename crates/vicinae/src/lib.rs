@@ -37,6 +37,7 @@ pub mod indexer_service;
 pub mod indexer_watch;
 pub mod input_server;
 pub mod ipc;
+pub mod notification_icon;
 pub mod programs;
 pub mod rhai_host;
 pub mod rhai_scripts;
