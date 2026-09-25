@@ -65,17 +65,15 @@ use serde::{Deserialize, Serialize};
 /// [`Request::QuitWindowApp`]); and the calculator's history
 /// ([`Request::CalculatorHistory`], [`Request::AddCalculatorRecord`],
 /// [`Request::EditCalculatorHistory`]); version 18, other applications'
-/// tray icons, as the StatusNotifierItem host sees them
-/// ([`Request::TrayItems`], [`Request::TrayActivate`], [`Request::TrayMenu`],
-/// [`Request::TrayTriggerMenu`]), and a root item's keyboard shortcut from the
-/// action panel's recorder ([`RootItemEdit::Shortcut`]),
-/// and pasting text the engine did not store ([`Request::PasteText`]), and the
-/// window-management commands' capabilities, Switch Workspaces and the
-/// fullscreen, floating and overview toggles
+/// tray icons ([`Request::TrayItems`], [`Request::TrayActivate`],
+/// [`Request::TrayMenu`], [`Request::TrayTriggerMenu`]), a root item's
+/// keyboard shortcut ([`RootItemEdit::Shortcut`]), pasting text the engine
+/// did not store ([`Request::PasteText`]), the window-management commands'
+/// capabilities, workspaces and toggles
 /// ([`Request::WindowManagerCapabilities`], [`Request::ListWorkspaces`],
-/// [`Request::FocusWorkspace`], [`Request::ToggleWindowState`]), and "Open with…"'s applications
-/// ([`Request::ListOpeners`], [`Request::OpenWith`]), and a file's action
-/// panel ([`Request::FileActions`], [`Request::CopyFile`],
+/// [`Request::FocusWorkspace`], [`Request::ToggleWindowState`]), "Open
+/// with…" ([`Request::ListOpeners`], [`Request::OpenWith`]) and a file's
+/// action panel ([`Request::FileActions`], [`Request::CopyFile`],
 /// [`Request::RunExecutable`], [`Request::SetWallpaper`]).
 pub const PROTOCOL_VERSION: u16 = 18;
 
