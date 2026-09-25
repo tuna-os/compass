@@ -26,3 +26,4 @@ drifting away from a recorded decision is not.
 | [0016](./0016-a11y-gap.md) | Screen-reader gap — Orca cannot see the Rust launcher | Amended by ADR-0018 |
 | [0017](./0017-a-new-launcher-not-a-reimplementation.md) | Compass is a new launcher, not a reimplementation; quality asserted absolutely, crates first, user data imported | Accepted |
 | [0018](./0018-the-open-calls-decided.md) | Screen-reader users keep the accessible engine until the Rust one has a tree; Phase 1's gate reworded; one-person plan; rustcast was a seed; the parity gate keeps blocking; nothing reported upstream | Accepted |
+| [0019](./0019-an-unsafe-bridge-for-the-launchers-surface.md) | One `unsafe` bridge from a toolkit window's raw handles to wayland-client proxies, in `compass-wayland-foreign`, for blur behind the launcher | Accepted |

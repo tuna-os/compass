@@ -20,6 +20,10 @@
 
 pub mod launch;
 pub mod shortcut_inhibit;
+pub mod window_material;
 
 pub use launch::{AppLauncher, LaunchError, LaunchFuture, LaunchMethod, NullLauncher};
 pub use shortcut_inhibit::ShortcutInhibitor;
+pub use window_material::{
+    MaterialOutcome, MaterialRegion, NativeWindow, WindowMaterial, raw_window_handle,
+};

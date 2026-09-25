@@ -1,0 +1,4 @@
+commit: a037d829a948535800769e8cf7eb199634987635 (dirty)
+rustc 1.94.1 (e408947bf 2026-03-25)
+c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+sway version 1.9

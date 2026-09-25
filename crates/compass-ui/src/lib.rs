@@ -32,6 +32,7 @@ pub mod fonts_page;
 pub mod grants_page;
 pub mod hud;
 pub mod icons;
+mod material;
 pub mod media_page;
 pub mod message;
 pub mod onboarding_page;
@@ -100,11 +101,18 @@ pub use resident::{EngineLink, UiCommand, UiOutcome};
 ///
 /// Takes over the calling thread for the same reason [`run`] does.
 ///
+/// `material` is the platform's blur behind the window, which the binary
+/// chooses (on Wayland, `ext-background-effect-v1` on winit's own surface);
+/// `None` draws the card without one.
+///
 /// # Errors
 ///
 /// Returns Iced's error when the event loop cannot start, which on a machine
 /// with no compositor is the normal outcome rather than a bug.
-pub fn run_resident(flags: AppFlags) -> iced::Result {
+pub fn run_resident(
+    flags: AppFlags,
+    material: Option<Box<dyn compass_platform::WindowMaterial>>,
+) -> iced::Result {
     // `iced::daemon`, NOT `iced::application`, AND THE DIFFERENCE IS THE WHOLE
     // FEATURE.
     //
@@ -132,6 +140,9 @@ pub fn run_resident(flags: AppFlags) -> iced::Result {
         app.theme()
     }
 
+    if let Some(material) = material {
+        material::install(material);
+    }
     iced::daemon(
         move || LauncherApp::boot(flags.clone()),
         LauncherApp::update,

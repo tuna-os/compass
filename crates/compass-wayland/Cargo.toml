@@ -34,3 +34,6 @@ tempfile.workspace = true
 compass-wayland-protocols = { path = "../compass-wayland-protocols", features = ["server"] }
 tempfile.workspace = true
 wayland-server = "0.31"
+# The compositor side of ext-background-effect-v1, for a fake that blurs
+# (`tests/background_effect.rs`); Sway has no such protocol.
+wayland-protocols = { version = "0.32", features = ["server", "staging"] }

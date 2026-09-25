@@ -9,7 +9,9 @@
 
 use iced::{
     Alignment, Border, Color, Element, Length, Padding, Task, Theme,
-    widget::{Space, column, container, image, mouse_area, row, stack, svg, text, text_input},
+    widget::{
+        Space, column, container, image, mouse_area, row, sensor, stack, svg, text, text_input,
+    },
     window,
 };
 
@@ -1084,6 +1086,9 @@ pub struct LauncherApp {
     parked_store: Option<crate::store_page::StorePage>,
     /// The card size a dmenu list resized the open window to, while it is.
     resized_to: Option<(u32, u32)>,
+    /// The blur region last asked for behind the open window's card, so a
+    /// layout that changes nothing asks nothing. `None` is none asked for.
+    material_asked: Option<compass_platform::MaterialRegion>,
     /// A compact or inline script run the root list is waiting on.
     following_script: Option<scripts::FollowedScript>,
     /// Subtitles extensions set for their commands (`updateCommandMetadata`),
@@ -1386,6 +1391,7 @@ impl LauncherApp {
             parked_fonts: None,
             parked_store: None,
             resized_to: None,
+            material_asked: None,
             following_script: None,
             extension_subtitles: std::collections::HashMap::new(),
             update: None,
@@ -2360,6 +2366,7 @@ impl LauncherApp {
             Message::Opened(id) if self.hud.owns(id) => Task::none(),
             Message::Closed(id) if self.hud.closed(id) => Task::none(),
             Message::HudTick(now) => self.hud_tick(now),
+            Message::CardMeasured(card) => self.card_measured(card),
             Message::FallbacksQueryChanged(_) | Message::FallbackSelected(_) => {
                 self.fallbacks_message(message)
             }
@@ -2423,6 +2430,8 @@ impl LauncherApp {
                     self.cancel_search();
                     self.window = None;
                     self.resized_to = None;
+                    // The next window is a new surface, with no blur yet.
+                    self.material_asked = None;
                     self.closing = false;
                     if std::mem::take(&mut self.reopen_after_close) {
                         return self.open_window();
@@ -3816,6 +3825,28 @@ impl LauncherApp {
         }
     }
 
+    /// Asks for blur behind the card as it was just laid out, or for none
+    /// when the card is opaque; nothing when that is what was last asked.
+    fn card_measured(&mut self, card: iced::Size) -> Task<Message> {
+        let Some(id) = self.window else {
+            return Task::none();
+        };
+        if crate::surface::presentation() != crate::surface::Presentation::Toplevel {
+            return Task::none();
+        }
+        let wanted = crate::material::region(
+            self.tint,
+            card,
+            design::SHADOW_PADDING,
+            self.geometry.card_radius,
+        );
+        if wanted == self.material_asked {
+            return Task::none();
+        }
+        self.material_asked = wanted;
+        crate::material::apply(id, wanted)
+    }
+
     /// View the application.
     ///
     /// A card: a search field over a list of rows, each row an icon, a title
@@ -4160,32 +4191,38 @@ impl LauncherApp {
             Some((width, height)) => (width as f32, Length::Fixed(height as f32)),
             None => (f32::from(geometry.card_width), Length::Shrink),
         };
-        container(
-            container(card_body)
-                .width(Length::Fixed(card_width))
-                .height(card_height)
-                .padding(geometry.card_padding)
-                .style(move |_: &Theme| container::Style {
-                    background: Some(card_background.into()),
-                    border: Border {
-                        color: palette.border.to_iced(),
-                        width: 1.0,
-                        radius: f32::from(geometry.card_radius).into(),
-                    },
-                    shadow: iced::Shadow {
-                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                        offset: iced::Vector::new(0.0, 16.0),
-                        blur_radius: design::SHADOW_BLUR,
-                    },
-                    ..container::Style::default()
-                }),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(design::SHADOW_PADDING)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Start)
-        .into()
+        let card = container(card_body)
+            .width(Length::Fixed(card_width))
+            .height(card_height)
+            .padding(geometry.card_padding)
+            .style(move |_: &Theme| container::Style {
+                background: Some(card_background.into()),
+                border: Border {
+                    color: palette.border.to_iced(),
+                    width: 1.0,
+                    radius: f32::from(geometry.card_radius).into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                    offset: iced::Vector::new(0.0, 16.0),
+                    blur_radius: design::SHADOW_BLUR,
+                },
+                ..container::Style::default()
+            });
+        // Reports the card's size when it is shown, when it resizes, and
+        // again when the look the blur depends on changes (the key), so the
+        // blur behind it follows the card (`crate::material`).
+        let card = sensor(card)
+            .key((self.tint, geometry.card_radius))
+            .on_show(Message::CardMeasured)
+            .on_resize(Message::CardMeasured);
+        container(card)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(design::SHADOW_PADDING)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Start)
+            .into()
     }
 
     /// The window switcher's body: its state, or its rows.
@@ -15746,6 +15783,59 @@ mod tint_tests {
             ..AppFlags::default()
         });
         assert!(!app.tint);
+    }
+
+    #[test]
+    fn a_translucent_card_asks_for_blur_behind_itself_and_an_opaque_one_takes_it_away() {
+        // `WindowMaterial.enabled: blurEnabled`, `radius: cornerRadius`,
+        // `region: (shadowPadding, shadowPadding, w, h)`.
+        let mut app = LauncherApp::with_index(AppIndex::default());
+        let card = iced::Size::new(768.0, 312.0);
+
+        let _ = app.update(Message::CardMeasured(card));
+        assert_eq!(app.material_asked, None, "no window, nothing to blur");
+
+        app.apply(AppFlags {
+            appearance_preset: preset::resolve(Some("raycast"), None, None),
+            ..AppFlags::default()
+        });
+        app.window = Some(window::Id::unique());
+        let _ = app.update(Message::CardMeasured(card));
+        let asked = app.material_asked.expect("a translucent card is blurred");
+        assert_eq!(
+            (asked.x, asked.y, asked.width, asked.height),
+            (
+                i32::from(design::SHADOW_PADDING),
+                i32::from(design::SHADOW_PADDING),
+                768,
+                312
+            )
+        );
+        assert_eq!(asked.radius, i32::from(app.geometry.card_radius));
+
+        // The card grows: the region follows it.
+        let _ = app.update(Message::CardMeasured(iced::Size::new(768.0, 560.0)));
+        assert_eq!(app.material_asked.map(|region| region.height), Some(560));
+
+        // Tint turned off: the blur is taken away.
+        app.tint = false;
+        let _ = app.update(Message::CardMeasured(iced::Size::new(768.0, 560.0)));
+        assert_eq!(app.material_asked, None);
+    }
+
+    #[test]
+    fn a_closed_window_forgets_its_blur() {
+        let mut app = LauncherApp::with_index(AppIndex::default());
+        let id = window::Id::unique();
+        app.window = Some(id);
+        app.tint = true;
+        let _ = app.update(Message::CardMeasured(iced::Size::new(768.0, 560.0)));
+        assert!(app.material_asked.is_some());
+        let _ = app.update(Message::Closed(id));
+        assert_eq!(
+            app.material_asked, None,
+            "the next window is a new surface and must be asked again"
+        );
     }
 
     #[test]

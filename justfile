@@ -9,10 +9,16 @@ default:
 bench-head-to-head output="target/head-to-head":
     python3 scripts/bench/run.py --output "$1"
 
+# Compass against the pinned upstream AppImage on this machine, on headless Sway:
+# cold start, first frame, typing, memory, threads, scorer throughput and size.
+# See docs/rust-engine/BENCHMARKS.md. Needs sway, grim, wtype and dbus-daemon.
+bench-compare output="" runs="5":
+    scripts/bench/compare.sh "$1" "$2"
+
 # Fast checks for the benchmark orchestration, without downloading/building engines.
 bench-check:
     python3 -m unittest discover -s scripts/bench -p 'test_*.py'
-    python3 -m py_compile scripts/bench/run.py scripts/bench/session.py
+    python3 -m py_compile scripts/bench/run.py scripts/bench/session.py scripts/bench/compare.py
 
 # Drive already-running engines with a hand-written advanced workload.
 bench-attached config report:

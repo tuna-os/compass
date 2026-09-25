@@ -1030,6 +1030,7 @@ name = "compass-platform"
 version = "0.1.0"
 dependencies = [
  "compass-xdg",
+ "raw-window-handle",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -1217,6 +1218,20 @@ dependencies = [
  "wayland-protocols-wlr",
  "wayland-server",
  "wl-clipboard-rs",
+]
+
+[[package]]
+name = "compass-wayland-foreign"
+version = "0.1.0"
+dependencies = [
+ "compass-wayland",
+ "raw-window-handle",
+ "tempfile",
+ "thiserror 2.0.20",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-sys",
 ]
 
 [[package]]
@@ -6622,6 +6637,7 @@ dependencies = [
  "compass-testkit",
  "compass-ui",
  "compass-wayland",
+ "compass-wayland-foreign",
  "compass-worker-host",
  "compass-xdg",
  "data-url",
@@ -6840,6 +6856,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-scanner",
+ "wayland-server",
 ]
 
 [[package]]

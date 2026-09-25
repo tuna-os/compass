@@ -34,6 +34,12 @@ const MAY_BE_LINUX_BOUND: &[&str] = &[
     // (xx-hotkey-v1), split out of compass-wayland only because the
     // generated code needs `unsafe`.
     "compass-wayland-protocols",
+    // Turns a toolkit window's raw `wl_display*` and `wl_surface*` into
+    // wayland-client proxies (background blur on the launcher's own surface).
+    // libwayland's handles are the Linux mechanism, and the crate is split out
+    // only because the bridge needs `unsafe` (ADR-0019). Other platforms'
+    // `WindowMaterial` implementations would be their own crates.
+    "compass-wayland-foreign",
     "vicinae",
     // The test harness drives Linux surfaces on purpose.
     "compass-testkit",
@@ -60,11 +66,14 @@ const LINUX_ONLY_CRATES: &[&str] = &[
     "compass-shell",
     "compass-wayland",
     "compass-wayland-protocols",
+    "compass-wayland-foreign",
     "compass-platform-linux",
     // The direct ones, in case a shared crate reaches past our wrappers.
     "zbus",
     "ashpd",
     "wayland-client",
+    "wayland-backend",
+    "wayland-sys",
     "wayland-protocols",
     "smithay",
 ];

@@ -489,6 +489,10 @@ pub enum Message {
     /// Distinct from [`Message::Dismiss`]: this is the window telling us it is
     /// gone, not a request to make it go.
     Closed(iced::window::Id),
+    /// The card was laid out at this size: shown, resized, or its
+    /// translucency or corner radius changed. Where the blur goes (see
+    /// `crate::material`).
+    CardMeasured(iced::Size),
     /// Leave for good.
     ///
     /// The one thing that still ends the process, now that dismissing only

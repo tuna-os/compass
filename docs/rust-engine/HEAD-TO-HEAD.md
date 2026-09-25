@@ -1,5 +1,9 @@
 # Comparing the port with upstream
 
+> For the user-facing comparison the README quotes (cold start, first frame, typing latency,
+> memory, scorer throughput and size, on headless Sway), see [BENCHMARKS.md](./BENCHMARKS.md)
+> and `just bench-compare`. This page covers the containerised IPC harness.
+
 The selected baseline is **Vicinae v0.29.0**, upstream commit
 `c3415a3ed56676d2960d90975ab319ae8a7aba6e`:
 [release](https://github.com/vicinaehq/vicinae/releases/tag/v0.29.0).
