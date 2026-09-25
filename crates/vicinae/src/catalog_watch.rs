@@ -8,6 +8,10 @@
 //! `notify`, with the same debounce: every event restarts the wait, so a
 //! package manager writing forty desktop files costs one scan.
 //!
+//! The extension directories are watched the same way, as
+//! `ExtensionRegistry` does with its own 100 ms debounce: see
+//! [`watch_extensions`].
+//!
 //! One declared difference: the C++ watch is on each directory itself, so a
 //! file added to a subdirectory (`applications/kde4/`) is only noticed with
 //! the next change at the top. The watch here is recursive, since the scan it
@@ -24,6 +28,12 @@ use crate::serve::EngineState;
 
 /// `AppService`'s `m_rescanDebounce`.
 pub const APPLICATIONS_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// `ExtensionRegistry`'s `m_rescanDebounce`.
+pub const EXTENSIONS_DEBOUNCE: Duration = Duration::from_millis(100);
+
+/// The file whose arrival makes a directory an extension.
+const MANIFEST: &str = "package.json";
 
 /// A debounced watch over a set of directories.
 #[derive(Debug)]
@@ -139,6 +149,74 @@ pub async fn watch_applications_with(state: Arc<RwLock<EngineState>>, debounce: 
     }
 }
 
+/// What the extension watch covers: each extension directory, and each
+/// extension in it, one level deep.
+fn extension_watch_dirs(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut dirs = roots.to_vec();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        dirs.extend(
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+                .map(|entry| entry.path()),
+        );
+    }
+    dirs
+}
+
+/// Whether an event at `path` can change what the registry scans: an entry
+/// appearing in or leaving an extension directory, or a manifest written.
+/// A build writing its bundle is neither, until its `package.json` lands.
+fn extension_event_matters(roots: &[PathBuf], path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == MANIFEST)
+        || path
+            .parent()
+            .is_some_and(|parent| roots.iter().any(|root| root == parent))
+}
+
+/// Rescans the installed extensions whenever their directories change, as
+/// `ExtensionRegistry` does with its `QFileSystemWatcher` and 100 ms
+/// debounce, so an extension a developer builds into place joins the root
+/// search without a restart.
+///
+/// The C++ watches each extension directory itself. That sees an extension
+/// appear, and not the manifest a build writes into it afterwards; `vicinae
+/// develop` creates the directory before it builds, so the rescan comes too
+/// early and the extension waits for the next change. Each extension's own
+/// directory is watched here too, for its `package.json` only.
+pub async fn watch_extensions(state: Arc<RwLock<EngineState>>) {
+    watch_extensions_with(state, EXTENSIONS_DEBOUNCE).await;
+}
+
+/// [`watch_extensions`] with its debounce given, for tests.
+pub async fn watch_extensions_with(state: Arc<RwLock<EngineState>>, debounce: Duration) {
+    let roots = state.read().await.app_index().extension_dirs().to_vec();
+    if roots.is_empty() {
+        return;
+    }
+    let relevant = {
+        let roots = roots.clone();
+        move |path: &Path| extension_event_matters(&roots, path)
+    };
+    let mut watch = match DirWatch::new(RecursiveMode::NonRecursive, debounce, relevant) {
+        Ok(watch) => watch,
+        Err(error) => {
+            tracing::warn!(%error, "cannot watch the extension directories; new extensions need a restart");
+            return;
+        }
+    };
+    watch.watch(&extension_watch_dirs(&roots));
+    tracing::info!(roots = ?roots, "watching the extension directories");
+    while watch.changed().await {
+        state.write().await.rescan_extensions();
+        watch.watch(&extension_watch_dirs(&roots));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +258,28 @@ mod tests {
                 .await
                 .is_err(),
             "the burst was reported once"
+        );
+    }
+
+    #[test]
+    fn only_an_entry_of_an_extension_directory_or_a_manifest_matters() {
+        let roots = [PathBuf::from("/data/vicinae/extensions")];
+        let matters = |path: &str| extension_event_matters(&roots, Path::new(path));
+        assert!(matters("/data/vicinae/extensions/clock"));
+        assert!(matters("/data/vicinae/extensions/clock/package.json"));
+        assert!(!matters("/data/vicinae/extensions/clock/list.js"));
+        assert!(!matters("/data/vicinae/extensions/clock/assets/icon.png"));
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("clock")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".staging-clock")).unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "").unwrap();
+        let mut dirs = extension_watch_dirs(&[dir.path().to_path_buf()]);
+        dirs.sort();
+        assert_eq!(
+            dirs,
+            [dir.path().to_path_buf(), dir.path().join("clock")],
+            "an install's staging directory is not an extension"
         );
     }
 }

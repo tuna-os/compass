@@ -1108,6 +1108,13 @@ impl AppIndex {
         &self.hidden
     }
 
+    /// Where installed extensions are looked for, highest precedence first:
+    /// what the registry watches.
+    #[must_use]
+    pub fn extension_dirs(&self) -> &[PathBuf] {
+        &self.extension_dirs
+    }
+
     /// Scans the extension directories the index was built with again and
     /// takes what is installed now, as `ExtensionRegistry::requestScan`
     /// does after an install or an uninstall.

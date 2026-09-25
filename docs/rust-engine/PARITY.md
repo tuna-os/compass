@@ -147,7 +147,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | 🟡 | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | 🟡 | ✅ | ❌ |
+| `src/services/extension-registry` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-store` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -356,6 +356,7 @@ named Rust module and named tests that fail on a regression.
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/builtins/system` | Rust ✅ | Browse Apps (`compass_ui::apps_page` over `compass_core::browse_apps`, with `AppIndex::hidden_applications` for `showHidden` and `BuiltinCommand::default_disabled` for `isDefaultDisabled`); Set Default Browser and Set Default Terminal (`compass_core::default_app`'s pickers, served by the engine over `Request::{ListDefaultApps, SetDefaultApp}`, IPC v17, writing through `compass_xdg::{mimeapps_writer, terminal}`) | `browse_apps_lists_filters_opens_and_copies`, `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one`, `the_default_browser_and_terminal_are_listed_and_set_in_the_users_files` (a real engine, temp XDG dirs), `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request`, `browse_apps_is_disabled_until_the_configuration_enables_it`, `apps_page::tests` |
+| `src/services/extension-registry` | Rust ✅ | `vicinae::catalog_watch::watch_extensions` (debounced 100 ms as the registry's `m_rescanDebounce`), `EngineState::rescan_extensions`, `AppIndex::extension_dirs`; the window follows through the catalog generation, as for applications | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` (a real engine over temp XDG dirs: the directory, then the manifest, then removal), `only_an_entry_of_an_extension_directory_or_a_manifest_matters` |
 | `src/services/app-service` | Rust ✅ | `vicinae::catalog_watch` (the directory watch, debounced 500 ms as `m_rescanDebounce`), `AppIndex::{rescan_applications, replace_applications}`, `EngineApps::{web_browser, file_browser, text_editor, terminal_emulator, set_web_browser}`; the window rescans its own copy when `Request::CatalogGeneration` (IPC v17) moves | `an_application_installed_while_the_engine_runs_is_found_without_a_restart` (a real engine over temp XDG dirs), `a_rescan_takes_installed_and_removed_applications_and_keeps_the_rest`, `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none`, `a_moved_catalog_generation_rescans_and_the_same_one_does_not`, `the_browser_file_manager_and_editor_are_the_defaults_then_the_category_then_a_claim` |
 
 What differs, by row:
@@ -367,6 +368,7 @@ What differs, by row:
 | `builtins/system` | Browse Apps reads `showHidden` and `sortAlphabetically` each time it opens. | Read when the window starts, like the power commands' preferences; a change applies after a restart of the window. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
 | `builtins/system` | Unsorted, the list is `m_apps` in scan order, hidden entries among the rest. | Unsorted, the shown applications in scan order, then the hidden ones. | `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request` |
 | `builtins/system` | The current default carries a green check icon. | A `✓ Default` accessory in text, the drawn icon set being `ui/image`'s gap. | `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one` |
+| `extension-registry` | `QFileSystemWatcher` on each extension directory: an extension appearing is seen, a `package.json` written into it afterwards is not, so `vicinae develop` (which creates the directory before building) waits for the next change or its own deeplink. | Each extension's directory is watched too, for its `package.json` only; a bundle being written is not a rescan. | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` |
 | `app-service` | One process: `appsChanged` reloads the root items the window shows. | Two: the engine rescans on the watch; the window asks for the catalog generation on every summon and rescans its own index when it moved, so an open window catches up on its next summon. | `a_moved_catalog_generation_rescans_and_the_same_one_does_not` |
 
 **`src/lib/xdgpp` → `compass-xdg`** — ported whole, so the row is green. The desktop-entry, locale,
@@ -778,8 +780,10 @@ one failure that happens after the target is removed — because "the install di
 extension is now missing" send someone looking in different places.
 
 The download, the install and uninstall and the rescan after either now run through the stores
-(`the_vicinae_store_lists_installs_into_root_search_and_uninstalls`). Still C++-only: the directory
-watch that notices an extension appearing outside the store, such as a developer's build.
+(`the_vicinae_store_lists_installs_into_root_search_and_uninstalls`). The directory watch that
+notices an extension appearing outside the store, such as a developer's build, landed after the
+truth pass and turns the row green (`vicinae::catalog_watch::watch_extensions`; see "Gaps closed
+after the truth pass").
 
 **`src/builtins/internal` → `compass-core::internal_commands`** — a hidden extension holding one
 command: a fixed Markdown document rendered to check that every construct the renderer claims to

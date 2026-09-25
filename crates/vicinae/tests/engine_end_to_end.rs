@@ -331,6 +331,65 @@ fn an_application_installed_while_the_engine_runs_is_found_without_a_restart() {
     }
 }
 
+/// `ExtensionRegistry`'s directory watch: an extension a developer builds
+/// into place (the directory first, the manifest after, as `vicinae develop`
+/// does) joins root search without a restart, and leaves it when removed.
+#[test]
+fn an_extension_built_into_place_while_the_engine_runs_joins_root_search() {
+    use compass_ipc::{Request, Response};
+    let daemon = Daemon::start_prepared(&[], "{}", |root| {
+        std::fs::create_dir_all(root.join("data-home/vicinae/extensions")).unwrap();
+        Vec::new()
+    });
+    let ids = |query: &str| -> Vec<String> {
+        let Response::QueryResults { hits } = daemon.request(Request::Query { text: query.into() })
+        else {
+            panic!("expected query results");
+        };
+        hits.into_iter()
+            .map(|hit| hit.id)
+            .filter(|id| id.starts_with('@'))
+            .collect()
+    };
+    let generation = || match daemon.request(Request::CatalogGeneration) {
+        Response::CatalogGeneration { generation } => generation,
+        other => panic!("unexpected answer: {other:?}"),
+    };
+    assert!(ids("Zulu Clock").is_empty());
+
+    let extension = daemon
+        ._dirs
+        .path()
+        .join("data-home/vicinae/extensions/zulu-clock");
+    std::fs::create_dir_all(&extension).unwrap();
+    // Long enough for the first rescan to find no manifest yet.
+    std::thread::sleep(Duration::from_millis(400));
+    std::fs::write(
+        extension.join("package.json"),
+        r#"{"name": "zulu-clock", "title": "Zulu Clock", "author": "dev",
+            "commands": [{"name": "show", "title": "Zulu Clock", "mode": "view"}]}"#,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while ids("Zulu Clock").is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the built extension never appeared"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(ids("Zulu Clock"), ["@dev/zulu-clock:show"]);
+    let seen = generation();
+    assert!(seen >= 1);
+
+    std::fs::remove_dir_all(&extension).unwrap();
+    while !ids("Zulu Clock").is_empty() {
+        assert!(Instant::now() < deadline, "the removed extension stayed");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(generation() > seen);
+}
+
 /// Set Default Browser and Set Default Terminal against a real engine: the
 /// candidates with the current default first, and a choice written to the
 /// user's `mimeapps.list` or `xdg-terminals.list` under the temp config home.

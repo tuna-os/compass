@@ -3141,6 +3141,8 @@ pub async fn run(socket: &SocketPath, hotkey: bool) -> Result<()> {
 
     // Applications installed or removed while the engine runs.
     tokio::spawn(crate::catalog_watch::watch_applications(Arc::clone(&state)));
+    // An extension a developer builds into place.
+    tokio::spawn(crate::catalog_watch::watch_extensions(Arc::clone(&state)));
 
     // Snippet keyword expansion: the input server, when `input_server.enabled`.
     {
