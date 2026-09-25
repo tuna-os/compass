@@ -100,6 +100,7 @@ pub mod script_scan;
 pub mod script_template;
 pub mod selection;
 pub mod semver;
+pub mod settings_catalog;
 pub mod shortcut;
 pub mod shortcut_form;
 pub mod shortcut_service;

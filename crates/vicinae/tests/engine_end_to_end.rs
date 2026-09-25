@@ -4040,6 +4040,145 @@ fn create_extension_writes_the_boilerplate_under_home() {
 }
 
 #[test]
+fn the_settings_view_writes_each_setting_and_switch_into_the_configuration() {
+    use compass_ipc::{ErrorKind, Request, Response};
+    let entries = [
+        ("alpha.desktop", entry("Alpha Editor", "")),
+        ("beta.desktop", entry("Beta Editor", "")),
+    ];
+    let entries = entries
+        .iter()
+        .map(|(id, body)| (*id, body.as_str()))
+        .collect::<Vec<_>>();
+    let config_file = std::sync::OnceLock::new();
+    let daemon = Daemon::start_prepared(&entries, r#"{"mystery": {"kept": true}}"#, |root| {
+        config_file
+            .set(root.join("config/vicinae/vicinae.json"))
+            .unwrap();
+        Vec::new()
+    });
+    let saved = || {
+        compass_core::Config::load_from(config_file.get().unwrap())
+            .expect("the file stays a configuration")
+    };
+    let set = |key: &str, value: serde_json::Value| {
+        daemon.request(Request::SetSetting {
+            key: key.into(),
+            value_json: value.to_string(),
+        })
+    };
+
+    assert_eq!(
+        set("launcher.wrap_navigation", serde_json::json!(true)),
+        Response::Ack
+    );
+    assert_eq!(
+        set("launcher.keybinding", serde_json::json!("emacs")),
+        Response::Ack
+    );
+    assert_eq!(
+        set("launcher.hotkey", serde_json::json!("alt+space")),
+        Response::Ack
+    );
+    assert_eq!(
+        set("launcher.appearance.theme", serde_json::json!("Nord")),
+        Response::Ack
+    );
+    assert_eq!(
+        set(
+            "providers.clipboard.preferences.evictionThreshold",
+            serde_json::json!("86400")
+        ),
+        Response::Ack
+    );
+    let config = saved();
+    assert!(config.launcher().wrap_navigation());
+    assert_eq!(config.launcher().keybinding(), "emacs");
+    assert_eq!(config.launcher().hotkey(), "alt+space");
+    assert_eq!(config.launcher().appearance().theme(), "nord");
+    assert_eq!(
+        config.get_path("providers.clipboard.preferences.evictionThreshold"),
+        Some(serde_json::json!("86400"))
+    );
+    assert_eq!(
+        config.get_path("mystery.kept"),
+        Some(serde_json::json!(true))
+    );
+
+    assert_eq!(
+        set("launcher.wrap_navigation", serde_json::Value::Null),
+        Response::Ack
+    );
+    assert!(!saved().launcher().wrap_navigation(), "null resets it");
+
+    for (key, value) in [
+        ("launcher.keybinding", serde_json::json!("qwerty")),
+        (
+            "launcher.appearance.theme",
+            serde_json::json!("no-such-theme"),
+        ),
+        ("launcher.window_opacity", serde_json::json!(0.5)),
+    ] {
+        let Response::Error(err) = set(key, value) else {
+            panic!("{key} should be refused");
+        };
+        assert_eq!(err.kind, ErrorKind::BadRequest, "{key}: {}", err.message);
+    }
+    assert_eq!(
+        saved().launcher().keybinding(),
+        "emacs",
+        "a refusal writes nothing"
+    );
+
+    let ids = |query: &str| -> Vec<String> {
+        let Response::QueryResults { hits } = daemon.request(Request::Query { text: query.into() })
+        else {
+            panic!("expected query results");
+        };
+        hits.into_iter()
+            .map(|hit| hit.id)
+            .filter(|id| id.starts_with("applications:"))
+            .collect()
+    };
+    assert_eq!(
+        daemon.request(Request::RootItemEdit {
+            id: "applications:alpha".into(),
+            edit: compass_ipc::RootItemEdit::Disable,
+        }),
+        Response::Ack
+    );
+    assert_eq!(ids("Editor"), ["applications:beta"]);
+    assert_eq!(
+        daemon.request(Request::RootItemEdit {
+            id: "applications:alpha".into(),
+            edit: compass_ipc::RootItemEdit::Enabled(true),
+        }),
+        Response::Ack
+    );
+    assert_eq!(ids("Editor").len(), 2, "the switch turns it back on");
+    assert_eq!(
+        daemon.request(Request::SetProviderEnabled {
+            provider: "applications".into(),
+            enabled: false,
+        }),
+        Response::Ack
+    );
+    assert!(ids("Editor").is_empty(), "the whole provider is off");
+    assert_eq!(
+        saved().root_config().providers["applications"].enabled,
+        Some(false)
+    );
+    assert_eq!(
+        daemon.request(Request::SetProviderEnabled {
+            provider: "applications".into(),
+            enabled: true,
+        }),
+        Response::Ack
+    );
+    assert_eq!(ids("Editor").len(), 2);
+}
+
+#[test]
 fn set_theme_keeps_the_theme_in_the_configuration() {
     use compass_ipc::{ErrorKind, Request, Response};
     let config_file = std::sync::OnceLock::new();

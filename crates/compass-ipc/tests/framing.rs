@@ -297,6 +297,22 @@ fn all_requests() -> Vec<Request> {
             id: "scripts:hello".into(),
             edit: compass_ipc::RootItemEdit::Shortcut(String::new()),
         },
+        Request::RootItemEdit {
+            id: "scripts:hello".into(),
+            edit: compass_ipc::RootItemEdit::Enabled(true),
+        },
+        Request::SetSetting {
+            key: "launcher.appearance.theme".into(),
+            value_json: "\"tokyo-night\"".into(),
+        },
+        Request::SetSetting {
+            key: "providers.files.preferences.indexingPaths".into(),
+            value_json: "[\"/home/ä/Docs\"]".into(),
+        },
+        Request::SetProviderEnabled {
+            provider: "@zoë/notes".into(),
+            enabled: false,
+        },
         Request::ListCommands,
         Request::LaunchCommand {
             id: "@zoë/notes:new".into(),
@@ -1054,6 +1070,8 @@ fn request_variants_are_exhaustive() {
             | Request::SetWallpaper { .. }
             | Request::PreviewSnippet { .. }
             | Request::ScriptIcons
+            | Request::SetSetting { .. }
+            | Request::SetProviderEnabled { .. }
             | Request::WindowOutcome(_) => {}
         }
     }

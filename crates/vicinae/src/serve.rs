@@ -45,6 +45,7 @@ mod calculator;
 mod files;
 mod launch;
 mod openers;
+mod settings;
 mod workspaces;
 
 /// The at-most-one launcher window this engine drives.
@@ -1039,6 +1040,7 @@ fn edit_root_item(
         compass_ipc::RootItemEdit::Disable => RootEdit::Disable,
         compass_ipc::RootItemEdit::ResetRanking => RootEdit::ResetRanking,
         compass_ipc::RootItemEdit::Shortcut(shortcut) => RootEdit::Shortcut(shortcut),
+        compass_ipc::RootItemEdit::Enabled(enabled) => RootEdit::Enabled(enabled),
     };
     let mut state = state.blocking_write();
     if state.index.root(id).is_none() {
@@ -2685,6 +2687,9 @@ pub async fn handle(state: &Arc<RwLock<EngineState>>, request: Request) -> Respo
         | Request::CopyFile { .. }
         | Request::RunExecutable { .. }
         | Request::SetWallpaper { .. }) => files::handle(state, request).await,
+        request @ (Request::SetSetting { .. } | Request::SetProviderEnabled { .. }) => {
+            settings::handle(state, request).await
+        }
 
         Request::RunPowerCommand { id } => run_power_command(&id).await,
         Request::RunMediaCommand { id } => run_media_command(&id, None).await,

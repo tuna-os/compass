@@ -76,7 +76,10 @@ use serde::{Deserialize, Serialize};
 /// action panel ([`Request::FileActions`], [`Request::CopyFile`],
 /// [`Request::RunExecutable`], [`Request::SetWallpaper`]); version 19,
 /// Manage Snippets' detail pane and script commands' icons in root search
-/// ([`Request::PreviewSnippet`], [`Request::ScriptIcons`]).
+/// ([`Request::PreviewSnippet`], [`Request::ScriptIcons`]), and the settings
+/// view's writes: one setting of `vicinae.json` ([`Request::SetSetting`]),
+/// a provider's switch ([`Request::SetProviderEnabled`]) and turning a root
+/// item back on ([`RootItemEdit::Enabled`]).
 pub const PROTOCOL_VERSION: u16 = 19;
 
 /// A client-to-server frame.
@@ -944,6 +947,25 @@ pub enum Request {
     /// The icon of each script command, as `ScriptCommandFile::icon` resolves
     /// its `@raycast.icon`. Answered with [`Response::ScriptIcons`]. (v19.)
     ScriptIcons,
+    /// Write one setting the settings view edits into `vicinae.json` and
+    /// apply it: `key` is its dotted path, as `compass_core::settings_catalog`
+    /// lists it, and `value_json` its new value, `null` to reset it. Answered
+    /// with [`Response::Ack`]; a key that is not a setting, or a value it
+    /// does not take, is a bad request with the sentence to show. (v19.)
+    SetSetting {
+        /// The setting's dotted path (`launcher.wrap_navigation`).
+        key: String,
+        /// The value, as JSON.
+        value_json: String,
+    },
+    /// Turn a whole provider's items on or off in root search
+    /// (`setProviderEnabled`). Answered with [`Response::Ack`]. (v19.)
+    SetProviderEnabled {
+        /// The provider's id (`applications`).
+        provider: String,
+        /// Whether its items are offered.
+        enabled: bool,
+    },
 }
 
 /// Answer to [`Request::FileActions`]. (v18.)
@@ -1079,6 +1101,9 @@ pub enum RootItemEdit {
     /// Give it a keyboard shortcut (`control+shift+A`), or clear it with an
     /// empty one. Version 18.
     Shortcut(String),
+    /// Put it in root search or take it out, as the settings view's switch
+    /// does. Version 19.
+    Enabled(bool),
 }
 
 /// What the engine answers.

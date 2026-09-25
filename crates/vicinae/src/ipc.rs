@@ -204,6 +204,8 @@ fn describe(request: &Request) -> &'static str {
         Request::SetWallpaper { .. } => "SetWallpaper",
         Request::PreviewSnippet { .. } => "PreviewSnippet",
         Request::ScriptIcons => "ScriptIcons",
+        Request::SetSetting { .. } => "SetSetting",
+        Request::SetProviderEnabled { .. } => "SetProviderEnabled",
     }
 }
 

@@ -644,6 +644,9 @@ pub enum RootEdit {
     /// Give it a keyboard shortcut, in `KeyCombo::to_config_string`'s
     /// spelling, or take it away with an empty one (`setShortcut`).
     Shortcut(String),
+    /// Put it in root search or take it out (`setItemEnabled`), as the
+    /// settings window's switch does both ways.
+    Enabled(bool),
 }
 
 /// Applies `edit` to `config` for the item `id`, as the C++ root item
@@ -720,6 +723,13 @@ pub fn apply_edit(config: &mut RootConfig, id: &str, edit: &RootEdit) -> bool {
                 .entry(entrypoint.to_owned())
                 .or_default();
             entry.shortcut = (!shortcut.is_empty()).then(|| shortcut.clone());
+            true
+        }
+        RootEdit::Enabled(enabled) => {
+            let Some((provider, entrypoint)) = split_entrypoint_id(id) else {
+                return false;
+            };
+            set_item_enabled(config, provider, entrypoint, *enabled);
             true
         }
     }

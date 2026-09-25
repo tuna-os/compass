@@ -53,6 +53,20 @@ pub trait ApplicationBackend: std::fmt::Debug + Send + Sync {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
     }
 
+    /// Writes one setting of `vicinae.json` (a key of
+    /// `compass_core::settings_catalog`), `null` resetting it. An error is
+    /// the sentence to show.
+    fn set_setting(&self, key: String, value: serde_json::Value) -> BackendFuture<'_, ()> {
+        let _ = (key, value);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
+    /// Turns a whole provider's items on or off in root search.
+    fn set_provider_enabled(&self, provider: String, enabled: bool) -> BackendFuture<'_, ()> {
+        let _ = (provider, enabled);
+        Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })
+    }
+
     /// What the user has allowed their own Rhai scripts.
     fn list_script_grants(&self) -> BackendFuture<'_, Vec<ScriptGrant>> {
         Box::pin(async { Err(NEEDS_ENGINE.to_owned()) })

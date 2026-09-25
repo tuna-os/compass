@@ -111,6 +111,7 @@ impl ApplicationBackend for DaemonBackend {
             RootEdit::Disable => compass_ipc::RootItemEdit::Disable,
             RootEdit::ResetRanking => compass_ipc::RootItemEdit::ResetRanking,
             RootEdit::Shortcut(shortcut) => compass_ipc::RootItemEdit::Shortcut(shortcut),
+            RootEdit::Enabled(enabled) => compass_ipc::RootItemEdit::Enabled(enabled),
         };
         Box::pin(async move {
             match self
@@ -418,6 +419,37 @@ impl ApplicationBackend for DaemonBackend {
         Box::pin(async move {
             match self
                 .ask(Request::SetFont { family }, "Setting the font")
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_setting(&self, key: String, value: serde_json::Value) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            let value_json = value.to_string();
+            match self
+                .ask(
+                    Request::SetSetting { key, value_json },
+                    "Saving the setting",
+                )
+                .await?
+            {
+                compass_ipc::Response::Ack => Ok(()),
+                other => Err(format!("Unexpected answer from the engine: {other:?}")),
+            }
+        })
+    }
+
+    fn set_provider_enabled(&self, provider: String, enabled: bool) -> BackendFuture<'_, ()> {
+        Box::pin(async move {
+            match self
+                .ask(
+                    Request::SetProviderEnabled { provider, enabled },
+                    "Changing the provider",
+                )
                 .await?
             {
                 compass_ipc::Response::Ack => Ok(()),

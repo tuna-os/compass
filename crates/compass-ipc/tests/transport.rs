@@ -153,6 +153,8 @@ async fn echo_handler(request: Request) -> Response {
         | Request::CopyFile { .. }
         | Request::RunExecutable { .. }
         | Request::SetWallpaper { .. }
+        | Request::SetSetting { .. }
+        | Request::SetProviderEnabled { .. }
         | Request::SetTheme { .. } => Response::Ack,
         Request::TrayItems => Response::TrayItems { items: vec![] },
         Request::TrayMenu { .. } => Response::TrayMenu { entries: vec![] },

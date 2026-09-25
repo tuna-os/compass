@@ -829,6 +829,22 @@ impl Config {
                 }
                 true
             }
+            RootEdit::Enabled(enabled) => {
+                let Some((provider, entrypoint)) = crate::root_items::split_entrypoint_id(id)
+                else {
+                    return false;
+                };
+                self.providers
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry(provider.to_owned())
+                    .or_default()
+                    .entrypoints
+                    .get_or_insert_with(BTreeMap::new)
+                    .entry(entrypoint.to_owned())
+                    .or_default()
+                    .enabled = Some(*enabled);
+                true
+            }
             RootEdit::ResetRanking => false,
             // Cleared as `None` rather than the C++'s `""` (see
             // `root_items::set_shortcut`).
@@ -849,6 +865,17 @@ impl Config {
                 true
             }
         }
+    }
+
+    /// Turns a whole provider on or off in root search
+    /// (`providers.<provider>.enabled`), as `setProviderEnabled` writes it.
+    pub fn set_provider_enabled(&mut self, provider: &str, enabled: bool) -> &mut Self {
+        self.providers
+            .get_or_insert_with(BTreeMap::new)
+            .entry(provider.to_owned())
+            .or_default()
+            .enabled = Some(enabled);
+        self
     }
 
     /// The fallback commands a query with no better answer offers: the
@@ -1105,6 +1132,71 @@ impl Config {
     pub fn set_schema(&mut self, value: Option<String>) -> &mut Self {
         self.schema = value;
         self
+    }
+
+    /// The value the file holds at a dotted `path` (`launcher.clock.format`),
+    /// unknown sections included; `None` when the file does not set it.
+    #[must_use]
+    pub fn get_path(&self, path: &str) -> Option<Value> {
+        let document = serde_json::to_value(self).ok()?;
+        path.split('.')
+            .try_fold(&document, |node, segment| node.get(segment))
+            .cloned()
+    }
+
+    /// Sets the dotted `path` to `value`, creating the objects on the way,
+    /// or removes it with `None` (dropping the objects that leaves empty).
+    /// Every other key, unknown ones included, is kept.
+    ///
+    /// # Errors
+    ///
+    /// A sentence when a segment on the way holds something that is not an
+    /// object, or when the result is not a valid configuration (a known key
+    /// given a value of the wrong type).
+    pub fn set_path(&mut self, path: &str, value: Option<Value>) -> Result<(), String> {
+        fn remove(node: &mut serde_json::Map<String, Value>, segments: &[&str]) {
+            match segments {
+                [] => {}
+                [last] => {
+                    node.remove(*last);
+                }
+                [first, rest @ ..] => {
+                    if let Some(Value::Object(child)) = node.get_mut(*first) {
+                        remove(child, rest);
+                        if child.is_empty() {
+                            node.remove(*first);
+                        }
+                    }
+                }
+            }
+        }
+        let segments: Vec<&str> = path.split('.').collect();
+        if segments.iter().any(|segment| segment.is_empty()) {
+            return Err(format!("{path:?} is not a configuration key"));
+        }
+        let mut document = serde_json::to_value(&*self).map_err(|err| err.to_string())?;
+        let Value::Object(root) = &mut document else {
+            return Err("the configuration is not an object".to_owned());
+        };
+        match value {
+            None => remove(root, &segments),
+            Some(value) => {
+                let (last, parents) = segments.split_last().unwrap_or((&"", &[]));
+                let mut node = root;
+                for segment in parents {
+                    let child = node
+                        .entry((*segment).to_owned())
+                        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+                    node = child
+                        .as_object_mut()
+                        .ok_or_else(|| format!("{segment:?} in {path:?} is not an object"))?;
+                }
+                node.insert((*last).to_owned(), value);
+            }
+        }
+        *self = serde_json::from_value(document)
+            .map_err(|err| format!("{path:?} cannot take that value: {err}"))?;
+        Ok(())
     }
 
     /// Serialises the configuration, unknown fields included.
