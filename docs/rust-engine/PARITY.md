@@ -67,7 +67,7 @@ that. The plan has been corrected.
 | Crate | Tests | State |
 |---|---|---|
 | `compass-core` | 1,743 | app index, frecency, config, root search, glyphs, snippets, toasts, quicklinks, the extension boilerplate generator, the image fetch queue, the confirm dialog, volume and mute, the paste handoff, the telemetry record, update checks, the news notices, the selected text, the file dialog, both extension stores, emoji metadata, the snippet input server's framing, the icon URL scheme, contrast colours, the two per-window Wayland registries, six desktops' wallpaper vocabularies, the font browser's grouping, snippet expansion, the tray menu and the StatusNotifierItem host, the script-command scan, the calculator history view, the window and workspace switchers, the media and volume commands, the file search command, the Markdown showcase, the Raycast store views, the root list's clock and shortcuts, the emoji picker's skin tones, the bug report and fallback manager, the window-manager dispatch and focus memory, the indexer's entry filter, query policy and result ranking, the staged extension install, the quicklink list, and the indexer's tree walk, incremental rules, scan scheduling, root compaction, the index reconciliation, the watch policy and script output styling |
-| `vicinae` | 184 | CLI, a 14-check `doctor`, and **the engine daemon** |
+| `compass` | 184 | CLI, a 14-check `doctor`, and **the engine daemon** |
 | `compass-worker-host` | 187 | the extension host: framing, sandboxed spawn, 45 of tsapi's 49 methods, and the real runtime |
 | `compass-xdg` | 229 | desktop entries, locale, exec, reader, mimeapps, bookmarks — scope gaps listed below |
 | `compass-clipboard` | 114 | history store, ingest, migrations, and the history command's own decisions; stored enums pinned to the C++ header |
@@ -126,8 +126,8 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/lib/common` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/lib/linux-utils` | `compass-platform-linux` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/lib/soulver` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
-| `src/cli` | `crates/vicinae` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
-| `src/file-indexer` | `compass-db`, `vicinae-file-indexer` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/cli` | `crates/compass` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
+| `src/file-indexer` | `compass-db`, `compass-file-indexer` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/data-control-server` | `compass-wayland` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/snippet` | `compass-input-server` (`vicinae-input-server`), `compass-core::snippet` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
@@ -136,14 +136,14 @@ whether a real GNOME session grants the shortcut we ask for.
 
 | C++ source | Rust home | Phase | C++ ✓ | Rust ✓ | parity test ✓ | C++ deleted ✓ |
 |---|---|---|:-:|:-:|:-:|:-:|
-| `src/services/app-runtime` | `compass-core`, `vicinae::serve::app_runtime` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/app-runtime` | `compass-core`, `compass::serve::app_runtime` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/app-service` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ⏳ |
 | `src/services/asset-resolver` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/audio-control` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/autostart` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/browser-extension` | — | **out of scope** | ✅ | n/a | n/a | never |
 | `src/services/builtin-icon` | `compass-core` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/calculator-service` | `compass-local-storage`, `compass-core::exchange_rates`, `vicinae::exchange_rates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/calculator-service` | `compass-local-storage`, `compass-core::exchange_rates`, `compass::exchange_rates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/clipboard` | `compass-clipboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/desktop-notification` | `notify-rust` (crate) | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/extension-boilerplate-generator` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -152,10 +152,10 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/file-chooser` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/files-service` | `compass-xdg` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/font-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/global-shortcuts` | `compass-core::global_shortcuts`, `compass-wayland::hotkey`, `compass-portals`, `vicinae::global_shortcuts` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/global-shortcuts` | `compass-core::global_shortcuts`, `compass-wayland::hotkey`, `compass-portals`, `compass::global_shortcuts` | Phase 1 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/glyph-service` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/image-fetcher` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/input-server` | `vicinae::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/input-server` | `compass::input_server`, `compass-core::input_server` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/keybinding` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/local-storage` | `compass-local-storage` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/media-control` | `compass-media` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
@@ -163,7 +163,7 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/navigation` | `compass-core` | Phase 2 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/news` | `—` | n/a (decision) | ✅ | n/a | n/a | ❌ |
 | `src/services/oauth` | `compass-oauth-store` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/paste` | `compass-core`, `vicinae::paste`, `compass-wayland::virtual_keyboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/paste` | `compass-core`, `compass::paste`, `compass-wayland::virtual_keyboard` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/permissions` | `—` | n/a (macOS) | ✅ | n/a | n/a | ❌ |
 | `src/services/power-manager` | `compass-power` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/raycast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
@@ -175,13 +175,13 @@ whether a real GNOME session grants the shortcut we ask for.
 | `src/services/snippet` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/telemetry` | `—` | n/a (decision) | ✅ | n/a | n/a | ❌ |
 | `src/services/toast` | `compass-core` | Phase 4 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/tray` | `compass-core`, `vicinae::tray_icon` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/tray-host` | `compass-core`, `vicinae::tray_host` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/update` | `compass-core::update`, `vicinae::updates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/tray` | `compass-core`, `compass::tray_icon` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/tray-host` | `compass-core`, `compass::tray_host` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/update` | `compass-core::update`, `compass::updates` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/url-scheme` | `—` | n/a (Windows) | ✅ | n/a | n/a | ❌ |
 | `src/services/wallpaper` | `compass-core` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 | `src/services/window-manager` | `compass-core` | Phase 3 | ✅ | ✅ | ✅ | ❌ |
-| `src/services/window-material` | `compass-core`, `compass_wayland::material`, `compass-wayland-foreign`, `vicinae::window_material`, `compass_ui::material` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
+| `src/services/window-material` | `compass-core`, `compass_wayland::material`, `compass-wayland-foreign`, `compass::window_material`, `compass_ui::material` | Phase 5 | ✅ | ✅ | ✅ | ❌ |
 
 ## Builtins
 
@@ -277,27 +277,27 @@ shortcuts, the power commands' two preferences, and a notification's urgency and
 | `src/lib/xdgpp` | Rust ✅ | `compass_xdg::{mimeapps_writer, terminal}` joined the rest | `mimeapps_writer::tests` (`mime.cpp`'s writer cases), `a_chosen_terminal_*` and `choosing_again_replaces_the_previous_choice_and_keeps_comments` (`xdg-terminal-exec.cpp`), `tests/special.rs` (`special.cpp`) |
 | `src/lib/glyph` | Rust ✅ | `compass_core::glyph::is_emoji`, a declared difference in method | `tests/glyph.rs`: `special-cases.cpp` and `tones.cpp` verbatim |
 | `src/lib/vicinae-ipc` | parity ✅ | `compass-ipc` | `framing` (`every_request_variant_round_trips`, `an_oversized_length_prefix_is_rejected_without_allocating`), `transport` (`a_stale_socket_is_reclaimed`), `proptests`; the C++ suite is one case with no assertion |
-| `src/lib/common` | Rust ✅ | `compass_ipc::path` (`ensurePrivateDir`, the per-user fallback), `compass_core::file_category`, `vicinae::cli` (`isAppDeeplink`), `vicinae::indexer_client` (`findHelperProgram`); `clipboard-protocol.hpp` framed a helper process the Rust does not have | `socket_dir::a_symlink_is_refused_without_being_followed`, `a_world_writable_directory_is_refused`, `file_category::every_list_is_the_cpps_exactly`, `a_bare_deeplink_becomes_the_deeplink_command`, `helper_search_covers_the_installed_layout` |
+| `src/lib/common` | Rust ✅ | `compass_ipc::path` (`ensurePrivateDir`, the per-user fallback), `compass_core::file_category`, `compass::cli` (`isAppDeeplink`), `compass::indexer_client` (`findHelperProgram`); `clipboard-protocol.hpp` framed a helper process the Rust does not have | `socket_dir::a_symlink_is_refused_without_being_followed`, `a_world_writable_directory_is_refused`, `file_category::every_list_is_the_cpps_exactly`, `a_bare_deeplink_becomes_the_deeplink_command`, `helper_search_covers_the_installed_layout` |
 | `src/lib/linux-utils` | Rust ✅ | `compass_platform_linux::keyboard`, and the device and keymap in `compass-input-server` | `the_virtual_keyboard_is_created_and_the_server_does_not_read_itself`, `xkbcommon_agrees_with_the_table`, `a_shifted_keystroke_is_exactly_this_sequence` |
 | `src/lib/soulver` | n/a | macOS only | — |
-| `src/cli` | parity ✅ | `vicinae::cli` | `window_commands_send_the_matching_request`, `ping_reports_the_protocol_version_and_pid`, `commands_without_a_daemon_explain_themselves`, `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
-| `src/file-indexer` | both ✅ | `compass-db`, `vicinae::{indexer_service, indexer_watch}`, `vicinae-file-indexer` | `query_quality.rs` (23/23), `query_round_trips_through_a_fake_helper`, `configure_replies_null_and_scans_notify`, `search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query` |
+| `src/cli` | parity ✅ | `compass::cli` | `window_commands_send_the_matching_request`, `ping_reports_the_protocol_version_and_pid`, `commands_without_a_daemon_explain_themselves`, `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
+| `src/file-indexer` | both ✅ | `compass-db`, `compass::{indexer_service, indexer_watch}`, `compass-file-indexer` | `query_quality.rs` (23/23), `query_round_trips_through_a_fake_helper`, `configure_replies_null_and_scans_notify`, `search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query` |
 | `src/data-control-server` | Rust ✅ | `compass_wayland::{data_control, clipboard}` | `a_copy_is_seen_by_the_watcher_and_round_trips_through_wl_clipboard_rs`, `a_password_manager_copy_is_marked_concealed` (headless Sway) |
 | `src/services/audio-control` | Rust ✅ | `compass_core::audio_control` over the engine's host `pactl` | `compass-core/tests/audio_control.rs`, `a_volume_command_runs_pactl_with_the_cpp_arguments` |
-| `src/services/clipboard` | parity ✅ | `compass-clipboard`, `vicinae::clipboard_service` | see "Why `parity test ✓` is now ✅" below |
-| `src/services/extension-store` | Rust ✅ | `compass_core::extension_store`, `vicinae::stores` | `the_vicinae_store_lists_installs_into_root_search_and_uninstalls`, `a_search_containing_an_ampersand_stays_one_parameter` |
+| `src/services/clipboard` | parity ✅ | `compass-clipboard`, `compass::clipboard_service` | see "Why `parity test ✓` is now ✅" below |
+| `src/services/extension-store` | Rust ✅ | `compass_core::extension_store`, `compass::stores` | `the_vicinae_store_lists_installs_into_root_search_and_uninstalls`, `a_search_containing_an_ampersand_stays_one_parameter` |
 | `src/services/file-chooser` | Rust ✅ | `compass_portals::file_chooser`, served to extensions' `FilePicker` | `file_chooser::tests` (`outcomes_expose_paths_only_when_selected`, `percent_escapes_decode`) |
-| `src/services/files-service` | Rust ✅ | `compass_xdg::bookmarks` (recent files), `vicinae::indexer_client` (the indexer) | `recording_an_access_adds_then_bumps_and_keeps_the_rest`, `search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly` |
-| `src/services/font-service` | Rust ✅ | `compass_core::font_service`, `vicinae::fonts` | `a_font_file_is_found_and_classified_by_what_it_covers`, `browse_fonts_lists_families_and_previews_one` |
+| `src/services/files-service` | Rust ✅ | `compass_xdg::bookmarks` (recent files), `compass::indexer_client` (the indexer) | `recording_an_access_adds_then_bumps_and_keeps_the_rest`, `search_files_lists_recent_files_for_the_empty_query_and_a_typed_path_directly` |
+| `src/services/font-service` | Rust ✅ | `compass_core::font_service`, `compass::fonts` | `a_font_file_is_found_and_classified_by_what_it_covers`, `browse_fonts_lists_families_and_previews_one` |
 | `src/services/image-fetcher` | Rust ✅ | `compass_ui::remote_image` (declared under "Extension views" #1) | `a_stored_image_is_found_again_and_a_different_url_is_not`, `pruning_removes_the_oldest_until_the_budget_holds` |
 | `src/services/media-control` | Rust ✅ | `compass-media`, Now Playing | `now_playing_lists_the_players_and_controls_the_selected_one`, `a_player_argument_picks_the_player_and_now_playing_lists_and_drives_them` |
 | `src/services/oauth` | Rust ✅ | `compass-oauth-store`, `compass_worker_host::oauth_service` (authorize) | `a_token_set_round_trips`, `one_extension_cannot_read_anothers_tokens`, `an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it` |
 | `src/services/power-manager` | Rust ✅ | `compass_power::PowerManager` (every call the abstract manager declares) | `logind_replies_are_read_rather_than_counted`, `the_capability_reply_is_read_and_not_merely_counted` |
-| `src/services/raycast` | Rust ✅ | `compass_core::raycast_store`, `vicinae::stores` | `the_raycast_store_badges_compatibility_and_notices_an_update` |
-| `src/services/script-command` | Rust ✅ | `compass_core::script_scan`, `vicinae::scripts` (rescan on summon, declared) | `script_commands_are_scanned_searched_and_run_in_their_modes` |
+| `src/services/raycast` | Rust ✅ | `compass_core::raycast_store`, `compass::stores` | `the_raycast_store_badges_compatibility_and_notices_an_update` |
+| `src/services/script-command` | Rust ✅ | `compass_core::script_scan`, `compass::scripts` (rescan on summon, declared) | `script_commands_are_scanned_searched_and_run_in_their_modes` |
 | `src/services/selection` | Rust ✅ | data-control on wlroots, the Shell extension on GNOME | `the_primary_selection_is_its_text_or_nothing`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `on_sway_a_shortcut_expands_the_selected_text` |
 | `src/services/snippet` | Rust ✅ | `compass_core::{snippet_store, snippet_expander}`, `compass-input-server` | `snippets_are_imported_created_expanded_edited_and_removed`, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
-| `src/services/wallpaper` | Rust ✅ | `compass_core::wallpaper`, `vicinae::extension_wallpaper` (all six Linux backends) | `compass-core/tests/wallpaper.rs`, `a_failing_command_says_its_stderr_else_its_code` |
+| `src/services/wallpaper` | Rust ✅ | `compass_core::wallpaper`, `compass::extension_wallpaper` (all six Linux backends) | `compass-core/tests/wallpaper.rs`, `a_failing_command_says_its_stderr_else_its_code` |
 | `src/services/window-manager` | Rust ✅, parity ✅ | dispatch plus GNOME, wlroots, Hyprland, niri and KDE (KWin, "The gaps pass, KDE"), and GNOME's workspaces ("The gaps pass, GNOME workspaces and shortcut probes"); X11 is n/a ("Product decisions") | `compass-core/tests/window_manager.rs`, `on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension`, `compositor_ipc.rs`, `compass-platform-linux/tests/kwin.rs`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `on_sway_the_engine_lists_focuses_and_closes_windows_without_the_shell_extension` |
 | `src/builtins/developer` | both ✅ | Create Extension end to end | `a_valid_form_writes_the_boilerplate_and_an_invalid_one_says_why`, `create_extension_sends_the_form_and_shows_where_it_went` |
 | `src/builtins/font` | parity ✅ | Browse Fonts | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font` |
@@ -380,11 +380,11 @@ Four rows waited on a decision rather than on work. The maintainer decided them 
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/update` | Rust 🟡 → ✅ | `compass_core::update` (`ReleaseCheck`, `CheckCache`, `load_cache`/`save_cache`, the feed at `repos/tuna-os/compass/releases/latest`), `vicinae::updates` (`Updates`, `GithubFeed` over the engine's `ureq` agent, `ReleaseFeed`), IPC v21 `Request::UpdateStatus`/`Response::UpdateStatus` and `Request::SkipUpdate`, `launcher.check_for_updates`, `compass_ui::app::release_check` (the root search's Update row and its panel) | `a_release_check_offers_any_newer_published_release_without_an_asset`, `a_release_check_keeps_every_other_gate`, `a_check_is_fresh_for_six_hours_and_not_after`, `the_check_cache_round_trips_and_a_bad_one_is_empty`, `compass_reads_its_own_releases`; `a_newer_release_is_offered_and_asked_for_once_in_six_hours`, `checking_off_asks_nothing`, `a_build_that_is_not_a_release_asks_nothing`, `a_skipped_release_is_not_offered_but_the_next_one_is`, `an_unreachable_feed_keeps_the_last_answer_and_waits_six_hours`, `the_github_feed_reads_the_release_from_its_url` (a local `tiny_http` feed), `the_github_feed_reports_a_refusal`; `a_newer_release_is_offered_once_checked_and_skipping_it_is_remembered`, `with_update_checks_off_the_feed_is_never_asked` (a real engine against a local feed); `a_newer_release_leads_the_empty_query_and_its_panel_opens_or_skips_it` |
+| `src/services/update` | Rust 🟡 → ✅ | `compass_core::update` (`ReleaseCheck`, `CheckCache`, `load_cache`/`save_cache`, the feed at `repos/tuna-os/compass/releases/latest`), `compass::updates` (`Updates`, `GithubFeed` over the engine's `ureq` agent, `ReleaseFeed`), IPC v21 `Request::UpdateStatus`/`Response::UpdateStatus` and `Request::SkipUpdate`, `launcher.check_for_updates`, `compass_ui::app::release_check` (the root search's Update row and its panel) | `a_release_check_offers_any_newer_published_release_without_an_asset`, `a_release_check_keeps_every_other_gate`, `a_check_is_fresh_for_six_hours_and_not_after`, `the_check_cache_round_trips_and_a_bad_one_is_empty`, `compass_reads_its_own_releases`; `a_newer_release_is_offered_and_asked_for_once_in_six_hours`, `checking_off_asks_nothing`, `a_build_that_is_not_a_release_asks_nothing`, `a_skipped_release_is_not_offered_but_the_next_one_is`, `an_unreachable_feed_keeps_the_last_answer_and_waits_six_hours`, `the_github_feed_reads_the_release_from_its_url` (a local `tiny_http` feed), `the_github_feed_reports_a_refusal`; `a_newer_release_is_offered_once_checked_and_skipping_it_is_remembered`, `with_update_checks_off_the_feed_is_never_asked` (a real engine against a local feed); `a_newer_release_leads_the_empty_query_and_its_panel_opens_or_skips_it` |
 | `src/services/news` | Rust, parity 🟡/✅ → n/a | — | — |
 | `src/services/telemetry` | Rust, parity 🟡/✅ → n/a | — | — |
 
-No test reaches the network: the engine tests point `VICINAE_UPDATE_FEED_URL` at a local
+No test reaches the network: the engine tests point `COMPASS_UPDATE_FEED_URL` at a local
 `tiny_http` feed or a closed local port, and an engine built around a test's index has a feed that
 is never reached (`Updates::offline`).
 
@@ -393,8 +393,8 @@ What differs from `UpdateService`:
 | Row | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | `update` | Checks only where it can install (`checksSupported` needs the installer): macOS; on Linux the `NullUpdateInstaller` turns checking off. | Checks on Linux, installing nothing (`ReleaseCheck`): any newer published release is an offer, whatever its assets. | `a_release_check_offers_any_newer_published_release_without_an_asset` |
-| `update` | The feed is `vicinaehq/vicinae`'s releases. | `tuna-os/compass`'s, compared against Compass's own version (`v` and `CARGO_PKG_VERSION`); `VICINAE_UPDATE_FEED_URL` and `VICINAE_UPDATE_VERSION` still override both. | `compass_reads_its_own_releases`, `a_newer_release_is_offered_once_checked_and_skipping_it_is_remembered` |
-| `update` | Checks at start-up and every six hours on a timer, whether or not anyone looks; nothing is kept between runs but the skipped version. | Checks when the launcher opens and the last check is six hours old or more; the last answer (and when it was asked) is kept in `$XDG_CACHE_HOME/vicinae/latest-release.json`, so a restarted engine does not ask again, and a failed check waits six hours too, keeping the release from the one before. An engine nobody opens a launcher on never asks. | `a_newer_release_is_offered_and_asked_for_once_in_six_hours`, `an_unreachable_feed_keeps_the_last_answer_and_waits_six_hours` |
+| `update` | The feed is `vicinaehq/vicinae`'s releases. | `tuna-os/compass`'s, compared against Compass's own version (`v` and `CARGO_PKG_VERSION`); `COMPASS_UPDATE_FEED_URL` and `COMPASS_UPDATE_VERSION` still override both. | `compass_reads_its_own_releases`, `a_newer_release_is_offered_once_checked_and_skipping_it_is_remembered` |
+| `update` | Checks at start-up and every six hours on a timer, whether or not anyone looks; nothing is kept between runs but the skipped version. | Checks when the launcher opens and the last check is six hours old or more; the last answer (and when it was asked) is kept in `$XDG_CACHE_HOME/compass/latest-release.json`, so a restarted engine does not ask again, and a failed check waits six hours too, keeping the release from the one before. An engine nobody opens a launcher on never asks. | `a_newer_release_is_offered_and_asked_for_once_in_six_hours`, `an_unreachable_feed_keeps_the_last_answer_and_waits_six_hours` |
 | `update` | No switch. | `launcher.check_for_updates` (on by default, on the settings view's General page): off, nothing is asked. | `checking_off_asks_nothing`, `with_update_checks_off_the_feed_is_never_asked` |
 | `update` | The Update row's primary action installs (Install Update); View Release Notes second; Skip This Version (`Keybind::RemoveAction`) toasts "Skipped %1". | View Release Notes is primary (Enter), Skip This Version on Ctrl+X; the row going is the answer, without a toast (the launcher has none that leaves it open). The title says "Compass %1 is available". | `a_newer_release_leads_the_empty_query_and_its_panel_opens_or_skips_it` |
 | `update` | The tray's "Check for Updates…" item. | Not offered: Compass has no tray icon of its own (`src/services/tray`). | — |
@@ -410,9 +410,9 @@ named Rust module and named tests that fail on a regression.
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/builtins/system` | Rust ✅ | Browse Apps (`compass_ui::apps_page` over `compass_core::browse_apps`, with `AppIndex::hidden_applications` for `showHidden` and `BuiltinCommand::default_disabled` for `isDefaultDisabled`); Set Default Browser and Set Default Terminal (`compass_core::default_app`'s pickers, served by the engine over `Request::{ListDefaultApps, SetDefaultApp}`, IPC v17, writing through `compass_xdg::{mimeapps_writer, terminal}`) | `browse_apps_lists_filters_opens_and_copies`, `a_default_picker_lists_the_engines_candidates_and_sets_the_chosen_one`, `the_default_browser_and_terminal_are_listed_and_set_in_the_users_files` (a real engine, temp XDG dirs), `the_list_hides_no_display_entries_unless_asked_and_sorts_on_request`, `browse_apps_is_disabled_until_the_configuration_enables_it`, `apps_page::tests` |
-| `src/services/desktop-notification` | Rust ✅ | `vicinae::notification_icon`: a builtin icon drawn from its SVG with `resvg` (already in the tree through iced) into a 128×128 `vicinae-notif-*.png` in the temporary directory, tinted when asked; a remote image fetched through `compass_ui::remote_image`'s cache; an SVG file drawn, a PNG or JPEG passed; the fallback when the source cannot be drawn | `a_builtin_icon_is_drawn_into_a_tinted_square_png` (decodes the PNG and checks its size, centring and tint), `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` (a fake fetch; no network), `a_notification_carries_the_urgency_and_an_icon_file` |
-| `src/services/extension-registry` | Rust ✅ | `vicinae::catalog_watch::watch_extensions` (debounced 100 ms as the registry's `m_rescanDebounce`), `EngineState::rescan_extensions`, `AppIndex::extension_dirs`; the window follows through the catalog generation, as for applications | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` (a real engine over temp XDG dirs: the directory, then the manifest, then removal), `only_an_entry_of_an_extension_directory_or_a_manifest_matters` |
-| `src/services/app-service` | Rust ✅ | `vicinae::catalog_watch` (the directory watch, debounced 500 ms as `m_rescanDebounce`), `AppIndex::{rescan_applications, replace_applications}`, `EngineApps::{web_browser, file_browser, text_editor, terminal_emulator, set_web_browser}`; the window rescans its own copy when `Request::CatalogGeneration` (IPC v17) moves | `an_application_installed_while_the_engine_runs_is_found_without_a_restart` (a real engine over temp XDG dirs), `a_rescan_takes_installed_and_removed_applications_and_keeps_the_rest`, `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none`, `a_moved_catalog_generation_rescans_and_the_same_one_does_not`, `the_browser_file_manager_and_editor_are_the_defaults_then_the_category_then_a_claim` |
+| `src/services/desktop-notification` | Rust ✅ | `compass::notification_icon`: a builtin icon drawn from its SVG with `resvg` (already in the tree through iced) into a 128×128 `vicinae-notif-*.png` in the temporary directory, tinted when asked; a remote image fetched through `compass_ui::remote_image`'s cache; an SVG file drawn, a PNG or JPEG passed; the fallback when the source cannot be drawn | `a_builtin_icon_is_drawn_into_a_tinted_square_png` (decodes the PNG and checks its size, centring and tint), `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` (a fake fetch; no network), `a_notification_carries_the_urgency_and_an_icon_file` |
+| `src/services/extension-registry` | Rust ✅ | `compass::catalog_watch::watch_extensions` (debounced 100 ms as the registry's `m_rescanDebounce`), `EngineState::rescan_extensions`, `AppIndex::extension_dirs`; the window follows through the catalog generation, as for applications | `an_extension_built_into_place_while_the_engine_runs_joins_root_search` (a real engine over temp XDG dirs: the directory, then the manifest, then removal), `only_an_entry_of_an_extension_directory_or_a_manifest_matters` |
+| `src/services/app-service` | Rust ✅ | `compass::catalog_watch` (the directory watch, debounced 500 ms as `m_rescanDebounce`), `AppIndex::{rescan_applications, replace_applications}`, `EngineApps::{web_browser, file_browser, text_editor, terminal_emulator, set_web_browser}`; the window rescans its own copy when `Request::CatalogGeneration` (IPC v17) moves | `an_application_installed_while_the_engine_runs_is_found_without_a_restart` (a real engine over temp XDG dirs), `a_rescan_takes_installed_and_removed_applications_and_keeps_the_rest`, `a_burst_of_changes_is_one_change_and_an_ignored_path_is_none`, `a_moved_catalog_generation_rescans_and_the_same_one_does_not`, `the_browser_file_manager_and_editor_are_the_defaults_then_the_category_then_a_claim` |
 
 What differs, by row:
 
@@ -436,8 +436,8 @@ flips only with a named Rust module and named tests that would fail on a regress
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `ui/image` | none (see its note) | `compass_ui::icons::{Glyph, command_glyph, file_glyph, clipboard_glyph, default_mark, FileGlyphCache, tile_tone, on_tile}`; `compass_core::commands::{Tile, CommandKind::tile, CommandKind::badge}`; `LauncherApp::glyph` draws a builtin in the row's colour, or on the command's tile (`applyBackdrop`'s rounded square, the glyph inset 19% in `getTonalContrastColor(tile, 5, 0.1)`) with `applyBadge`'s black disc | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial`, `search_files_rows_draw_their_file_type_icons`, `a_window_row_draws_its_applications_icon_or_the_app_window_builtin`, `the_default_pickers_mark_is_the_green_check_icon`, `clipboard_rows_draw_the_builtin_for_their_kind`, `icons::tests::{a_file_takes_its_mime_icon_then_the_generic_one_then_a_builtin, a_command_is_drawn_on_its_tile_with_a_light_glyph, a_grey_tile_stays_grey_and_accent_follows_the_palette, clipboard_rows_and_the_default_mark_use_the_cpps_builtins, file_glyphs_are_resolved_once_per_path}`, `each_command_keeps_the_cpps_tile_and_badge` |
-| `src/services/tray-host` | Rust ✅ | `vicinae::tray_host::TrayHost` over the `system-tray` crate (its `StatusNotifierWatcher` when none owns the name, host registration, item and menu tracking), started with the engine; an item's own object path read back from the watcher for `Activate`/`SecondaryActivate`; `IconThemePath` searched (`find_in_theme_path`, with `compass_core::tray_host::best_icon`); the largest pixmap made a PNG (`pixmap_png`). Served over IPC v18 `TrayItems`, `TrayActivate`, `TrayMenu`, `TrayTriggerMenu`; drawn by Search Tray (`commands:search-tray`, `compass_ui::{tray_page, app::tray}`) with the C++ panel (Activate, Browse Menu, Secondary Activate; a menu-only item only browses), the Attention accessory, and the flattened menu (`compass_core::tray_host::flatten_menu`) whose toggles keep it open | `the_tray_host_lists_activates_and_browses_another_applications_item` (a private `dbus-daemon`, a fake item at a non-default path with a `dbusmenu`), `with_no_session_bus_the_tray_is_refused_by_name`, `tray_host::tests::{an_items_path_is_read_back_from_the_watchers_list, the_largest_pixmap_becomes_a_png_with_its_channels_reordered, an_icon_shipped_in_the_items_theme_path_is_found_there_svg_first}`, `search_tray_lists_activates_and_browses_an_items_menu`, `tray_page::tests::*`, `a_tray_menu_is_flattened_with_its_submenus_labels`, `a_tray_rows_title_falls_back_to_its_id_and_its_subtitle_to_the_tooltip_body` |
-| `src/services/desktop-notification` | already ✅; its declared difference closed | `vicinae::notification_icon`: a `data:` URL decoded with `data-url` (already in the tree through usvg), a file icon through `compass_ui::icons::file_glyph`, and a PNG or JPEG fitted into the 128×128 PNG with `image` | `a_data_url_is_decoded_and_drawn_into_the_square`, `a_file_icon_is_the_themes_mime_icon_or_the_builtin_document`, `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` |
+| `src/services/tray-host` | Rust ✅ | `compass::tray_host::TrayHost` over the `system-tray` crate (its `StatusNotifierWatcher` when none owns the name, host registration, item and menu tracking), started with the engine; an item's own object path read back from the watcher for `Activate`/`SecondaryActivate`; `IconThemePath` searched (`find_in_theme_path`, with `compass_core::tray_host::best_icon`); the largest pixmap made a PNG (`pixmap_png`). Served over IPC v18 `TrayItems`, `TrayActivate`, `TrayMenu`, `TrayTriggerMenu`; drawn by Search Tray (`commands:search-tray`, `compass_ui::{tray_page, app::tray}`) with the C++ panel (Activate, Browse Menu, Secondary Activate; a menu-only item only browses), the Attention accessory, and the flattened menu (`compass_core::tray_host::flatten_menu`) whose toggles keep it open | `the_tray_host_lists_activates_and_browses_another_applications_item` (a private `dbus-daemon`, a fake item at a non-default path with a `dbusmenu`), `with_no_session_bus_the_tray_is_refused_by_name`, `tray_host::tests::{an_items_path_is_read_back_from_the_watchers_list, the_largest_pixmap_becomes_a_png_with_its_channels_reordered, an_icon_shipped_in_the_items_theme_path_is_found_there_svg_first}`, `search_tray_lists_activates_and_browses_an_items_menu`, `tray_page::tests::*`, `a_tray_menu_is_flattened_with_its_submenus_labels`, `a_tray_rows_title_falls_back_to_its_id_and_its_subtitle_to_the_tooltip_body` |
+| `src/services/desktop-notification` | already ✅; its declared difference closed | `compass::notification_icon`: a `data:` URL decoded with `data-url` (already in the tree through usvg), a file icon through `compass_ui::icons::file_glyph`, and a PNG or JPEG fitted into the 128×128 PNG with `image` | `a_data_url_is_decoded_and_drawn_into_the_square`, `a_file_icon_is_the_themes_mime_icon_or_the_builtin_document`, `a_remote_image_is_fetched_and_a_file_is_passed_or_drawn` |
 
 What differs, by row:
 
@@ -448,7 +448,7 @@ What differs, by row:
 | `ui/image` | A clipboard link row shows the site's favicon. | The same since "The gaps pass, UI": the favicon, the builtin link icon until it has been fetched. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn` |
 | `tray-host` | `SniWatcher` claims the watcher name only after a three-second grace, releases it when another connection queues for it, and accepts an item registered as `busname/path`. | The `system-tray` crate's watcher claims the name at once when it is free and keeps it; it accepts a bus name or an object path (what libappindicator and KDE send) and refuses the combined `busname/path` form. A desktop's own watcher (a bar, KDE, GNOME's AppIndicator extension) is used when it is already there. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
 | `tray-host` | An item is keyed by bus name and path, and its menu fetched with `GetLayout` when the view opens. | Keyed by the bus name it registered from, as the crate keeps it (one item per connection); the menu is the layout the crate follows through `LayoutUpdated`, after an `AboutToShow`. | `the_tray_host_lists_activates_and_browses_another_applications_item` |
-| `ui/image` | Builtin icons are compiled into the binary as Qt resources. | Read from the installed `vicinae/builtin-icons` directory (`compass_core::builtin_icon::directory`); where it is missing a row keeps its initial, as before. | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial` |
+| `ui/image` | Builtin icons are compiled into the binary as Qt resources. | Read from the installed `compass/builtin-icons` directory (`compass_core::builtin_icon::directory`); where it is missing a row keeps its initial, as before. | `a_builtin_command_draws_its_tiled_icon_and_without_the_set_its_initial` |
 
 ### The gaps pass: glyphs, clipboard, root (2026-09-25)
 
@@ -458,7 +458,7 @@ with a named module and named tests that fail on a regression.
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
 | `src/services/glyph-service` | Rust ✅ | `compass_core::glyph_service` (file I/O, `score`), `compass_ui::emoji_page`, `compass_ui::app::emoji` | `tests/glyph_service.rs` (`the_cpp_file_is_read_with_its_camel_case_keys`, `the_file_is_written_and_read_back_and_a_missing_one_is_empty`, `a_visit_raises_a_glyph_among_matches_and_a_keyword_makes_it_match`), `emoji_page::tests` (pins and visits head the empty query, keywords, per-glyph tones, the panel), `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
-| `src/services/clipboard` | Rust ✅ | `compass_clipboard::retention`, `compass_clipboard::store::entry`, `vicinae::clipboard_service::{Settings, Control, run_eviction}`, `ClipboardStore::{evict, remove_all, detail, set_keywords, history_of_kind}` | `retention::tests`, `eviction_removes_what_is_older_than_the_threshold_and_reports_the_next`, `remove_all_spares_tagged_entries_when_asked_and_unlinks_the_rest`, `nothing_is_recorded_while_monitoring_is_off`, `the_preferences_are_read_with_the_cpp_defaults`, `pausing_the_clipboard_is_answered_and_kept_as_the_monitoring_preference` |
+| `src/services/clipboard` | Rust ✅ | `compass_clipboard::retention`, `compass_clipboard::store::entry`, `compass::clipboard_service::{Settings, Control, run_eviction}`, `ClipboardStore::{evict, remove_all, detail, set_keywords, history_of_kind}` | `retention::tests`, `eviction_removes_what_is_older_than_the_threshold_and_reports_the_next`, `remove_all_spares_tagged_entries_when_asked_and_unlinks_the_rest`, `nothing_is_recorded_while_monitoring_is_off`, `the_preferences_are_read_with_the_cpp_defaults`, `pausing_the_clipboard_is_answered_and_kept_as_the_monitoring_preference` |
 | `src/builtins/clipboard` | — (the open actions landed in the views pass; drag is declared there) | `compass_ui::clipboard_page`, `compass_ui::app::clipboard` | `clipboard_page::tests` (filter vocabulary, `format_size`, the pane's content, stale answers), `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
 | `src/builtins/root`, `src/services/root-item-manager` | — (the provider search view; per-item shortcuts and other fallbacks remain) | `compass_core::root_items::{apply_edit, deeplink}`, `Config::{favorite_ids, apply_root_edit}`, `root_view::SearchHistory`, `ClockConfig`, `compass_ui::app::root`, IPC `RootItemEdit` | `favouriting_inserts_first_and_moving_swaps_within_the_list_only`, `an_alias_and_the_switch_are_written_under_the_items_provider_and_merged`, `the_root_panel_writes_favorites_whole_and_an_items_alias_and_switch`, `the_search_history_keeps_one_of_each_newest_first_in_the_cpp_shape`, `the_clock_is_on_every_minute_in_hh_mm_unless_set`, `the_root_panel_favourites_aliases_and_the_up_arrow_recalls_searches` |
 
@@ -487,10 +487,10 @@ not suggested twice (`queryFavorites`). Unset, `favorites` is the C++ default fi
 favorites, Move up / down in favorites (only where there is room), Set alias (the one-field form of
 `AliasFormViewHost`), Copy ID and Disable item (asks first). The window applies each change at once
 and the engine keeps it (IPC v17 `RootItemEdit`): favourites and alias and switch in
-`vicinae.json`, the ranking in the launch history. A space typed after exactly the selected
+`compass.json`, the ranking in the launch history. A space typed after exactly the selected
 command's alias opens it when the command opens a view. Up at the top of the list (navigation not
 wrapping) walks back through past searches, kept in the C++'s own file,
-`$XDG_DATA_HOME/vicinae/search-history.json` (`{"entries":[{"q","ts"}]}`, one of each, newest
+`$XDG_DATA_HOME/compass/search-history.json` (`{"entries":[{"q","ts"}]}`, one of each, newest
 first, 1000 at most), which a search is added to when a row runs from it. The clock shows under the
 list in `launcher.clock`'s format (`hh:mm` unless set; `settings.json`'s
 `launcher_window.clock` migrates to it), redrawn on multiples of its interval. The provider search
@@ -509,7 +509,7 @@ encryption and keywords). Keyword editing is a one-field form over the entry's s
 is `actionPanel`'s paste/copy, pin/unpin, edit keywords, remove, remove all, plus pause/resume.
 
 **`src/services/glyph-service` → the emoji picker.** The picker reads and writes the C++'s own file,
-`$XDG_DATA_HOME/vicinae/emojis/emojis.json`, so both engines remember the same visits, pins, tones
+`$XDG_DATA_HOME/compass/emojis/emojis.json`, so both engines remember the same visits, pins, tones
 and keywords. That file turned up a bug: the port serialised `visit_count`, `pinned_at`,
 `last_visited_at` and `skin_tone`, where glaze writes the members as declared (`visitCount`,
 `pinnedAt`, …), so neither engine could read the other's file. The keys are camelCase now, and the
@@ -533,13 +533,13 @@ and named tests that fail on a regression.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/builtins/root`, `src/services/root-item-manager` | Rust ✅ (the per-item shortcut in the row below) | `compass_core::root_items::{parse_launch_link, LaunchLink::target}`, `AppIndex::{search_root_with, has_provider, provider_title}`, `compass_ui::app::{Fallback, ProviderScope}`, `compass_ui::app::root::{open_launch_link, open_provider_search, has_completer}`, `vicinae::serve::launch::open_launch_link` | `a_launch_link_names_a_provider_or_an_item_with_its_text`, `a_launch_deeplink_to_a_provider_searches_its_items_alone`, `a_launch_deeplink_to_an_item_launches_it_with_its_text`, `fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query`, `an_alias_and_a_space_open_an_items_arguments` |
+| `src/builtins/root`, `src/services/root-item-manager` | Rust ✅ (the per-item shortcut in the row below) | `compass_core::root_items::{parse_launch_link, LaunchLink::target}`, `AppIndex::{search_root_with, has_provider, provider_title}`, `compass_ui::app::{Fallback, ProviderScope}`, `compass_ui::app::root::{open_launch_link, open_provider_search, has_completer}`, `compass::serve::launch::open_launch_link` | `a_launch_link_names_a_provider_or_an_item_with_its_text`, `a_launch_deeplink_to_a_provider_searches_its_items_alone`, `a_launch_deeplink_to_an_item_launches_it_with_its_text`, `fallbacks_open_a_one_argument_shortcut_and_an_extension_with_the_query`, `an_alias_and_a_space_open_an_items_arguments` |
 | `ui/action-panel`, and the per-item shortcuts of `src/builtins/root` and `src/services/root-item-manager` | Rust ✅ | `compass_core::key_combo` (`Keyboard::Shortcut`'s spelling and parser, the capture's chord tracking, `shortcut_conflict::validate`), `compass_ui::shortcut_recorder`, `compass_ui::app::root::recorder_event`, `RootEdit::Shortcut` over IPC v18 `RootItemEdit::Shortcut`, `Config::apply_root_edit`, `RootItem::merge_config` | `a_combination_is_stored_in_the_cpps_spelling_and_read_back`, `a_recording_is_a_key_with_modifiers_or_modifiers_released_alone`, `a_combination_needs_a_modifier_and_must_not_be_anothers`, `the_badge_names_the_modifiers_then_the_key`, `shortcut_recorder::tests` (four), `the_root_panel_records_an_items_shortcut_and_backspace_removes_it`, `a_root_items_shortcut_is_written_in_the_cpps_spelling_and_cleared` |
-| `src/builtins/vicinae` | — (the picker half is done; the other views remain) | `compass_ui::app::emoji::{paste_selected_emoji, emoji_pasted}`, `EmojiPage::{supports_paste, default_action}` over `compass_core::emoji_grid::main_actions`, `vicinae::serve::paste_text` over IPC v18 `Request::PasteText` | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot`, `window_requests_without_a_session_bus_are_refused_by_name` |
-| `src/builtins/system` | — (already Rust ✅; two declared differences closed) | `compass_ui::app::apps::{open_browse_apps, apps_runtime_task}`, `AppsPage::running`, `AppFlags::config_path`, over `vicinae::serve::app_runtime` (IPC v17 `AppRuntime`) | `browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening` |
+| `src/builtins/vicinae` | — (the picker half is done; the other views remain) | `compass_ui::app::emoji::{paste_selected_emoji, emoji_pasted}`, `EmojiPage::{supports_paste, default_action}` over `compass_core::emoji_grid::main_actions`, `compass::serve::paste_text` over IPC v18 `Request::PasteText` | `the_picker_pastes_the_glyph_and_copies_where_the_engine_cannot`, `window_requests_without_a_session_bus_are_refused_by_name` |
+| `src/builtins/system` | — (already Rust ✅; two declared differences closed) | `compass_ui::app::apps::{open_browse_apps, apps_runtime_task}`, `AppsPage::running`, `AppFlags::config_path`, over `compass::serve::app_runtime` (IPC v17 `AppRuntime`) | `browse_apps_offers_focus_window_first_and_reads_its_preferences_on_opening` |
 
 **The provider search view (`ProviderSearchViewHost`).** `vicinae://launch/<provider>` — the link
-`vicinae deeplink` sends and a desktop shortcut can carry — opens root search over that provider's
+`compass deeplink` sends and a desktop shortcut can carry — opens root search over that provider's
 items alone (`search(text, {.providerId})`), every one of them for the empty query, with no
 favourites, calculator or fallbacks, the field reading `Search <provider>` and the link's
 `fallbackText` typed in. Leaving it closes the window, as the deeplink's `setInstantDismiss` does.
@@ -566,7 +566,7 @@ item's title, the shortcut it has (or the chord being held), and a status line. 
 modifier, a function key, or modifiers pressed and let go on their own is a combination
 (`handleKey`); a bare key is refused with "Modifier required", and one another root item has with
 `Already bound to "<title>"`. An accepted one is written as `Shortcut::toString` spells it
-(`super+control+alt+shift+KEY`) to `providers.<p>.entrypoints.<e>.shortcut` in `vicinae.json`, and
+(`super+control+alt+shift+KEY`) to `providers.<p>.entrypoints.<e>.shortcut` in `compass.json`, and
 the panel closes; Escape goes back to the actions; Backspace, while the item has a shortcut,
 removes it. Binding the shortcut to the desktop is `src/services/global-shortcuts`' row, which is
 where it stays: the configuration is written as the C++ writes it, so either engine binds it.
@@ -587,7 +587,7 @@ when the view opens) the window asks the engine whether the selected application
 (`Request::AppRuntime`, the app runtime's `isRunning`); when it has a window open, the panel starts
 with Focus Window, which Enter runs, raising its first window as `activeWindows.front()` does; an
 answer for a row no longer selected is dropped, and one that arrives with the panel open joins it.
-`showHidden` and `sortAlphabetically` are read from `vicinae.json` each time the view opens, as
+`showHidden` and `sortAlphabetically` are read from `compass.json` each time the view opens, as
 `BrowseAppsView` reads them, rather than when the window starts; a file that cannot be read keeps
 the ones the window started with.
 
@@ -617,9 +617,9 @@ and the tests that fail on a regression (IPC v17).
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/builtins/calculator` | Rust ✅ | `compass_ui::{calculator_page, app::calculator}`, `vicinae::serve::calculator` over `compass-local-storage::calculator` | `copied_answers_are_remembered_grouped_filtered_pinned_and_removed`, `the_boundaries_are_the_cpps_monday_weeks_and_calendar_months`, `a_copied_answer_is_remembered_and_calculator_history_lists_pins_and_removes_it`, `the_live_result_leads_and_a_stale_answer_is_dropped`, `calculator_history_is_a_builtin_and_without_a_keyring_is_refused_by_name`, `conversions_are_told_from_arithmetic_by_their_keyword` |
-| `src/services/app-runtime` | Rust ✅ | `vicinae::serve::app_runtime` (`isRunning`, `frontmostApp`, `quit`, `forceQuit`), `compass_ui::app::runtime` (the root row's and the window switcher's actions) | `quit_closes_an_applications_windows_and_force_quit_kills_their_processes` (a private `dbus-daemon`, the mock Shell extension, and `sleep`s the test started), `force_quit_kills_each_process_once_and_closes_the_windows_that_name_none`, `killing_a_process_this_test_started_ends_it_with_sigkill`, `a_running_applications_panel_offers_quit_and_force_quit_and_they_reach_the_engine`, `the_window_switchers_panel_quits_a_known_windows_application`, `a_quit_that_does_nothing_says_so` |
-| `src/cli` | Rust ✅ | `vicinae::{cli, cli_commands, logs}`, `serve::launch`; `compass_core::{script_template, extension_commands::launch_arguments, config::default_document, file_search::CLI_CATEGORY_NAMES}` | `cmd_ls_lists_every_root_item_by_id_and_cmd_launch_hands_the_window_a_launch`, `app_launch_and_cmd_launch_start_the_application_with_its_arguments`, `state_open_asks_the_window_and_exits_by_the_answer`, `the_engine_keeps_a_log_file_and_logs_prints_its_last_lines`, `fs_query_asks_the_index_alone_and_names_categories_as_the_cpp_does`, `server_refuses_a_running_engine_and_replace_kills_it_and_serves_in_its_place`, `config_cli::{script_template_*, theme_template_check_and_paths, config_default_*, version_*}`, `positional_launch_arguments_are_checked_as_the_cpp_checks_them`, `a_command_line_launch_opens_the_builtin_and_types_its_fallback_text`, `describe_answers_whether_the_window_is_open_and_changes_nothing` |
+| `src/builtins/calculator` | Rust ✅ | `compass_ui::{calculator_page, app::calculator}`, `compass::serve::calculator` over `compass-local-storage::calculator` | `copied_answers_are_remembered_grouped_filtered_pinned_and_removed`, `the_boundaries_are_the_cpps_monday_weeks_and_calendar_months`, `a_copied_answer_is_remembered_and_calculator_history_lists_pins_and_removes_it`, `the_live_result_leads_and_a_stale_answer_is_dropped`, `calculator_history_is_a_builtin_and_without_a_keyring_is_refused_by_name`, `conversions_are_told_from_arithmetic_by_their_keyword` |
+| `src/services/app-runtime` | Rust ✅ | `compass::serve::app_runtime` (`isRunning`, `frontmostApp`, `quit`, `forceQuit`), `compass_ui::app::runtime` (the root row's and the window switcher's actions) | `quit_closes_an_applications_windows_and_force_quit_kills_their_processes` (a private `dbus-daemon`, the mock Shell extension, and `sleep`s the test started), `force_quit_kills_each_process_once_and_closes_the_windows_that_name_none`, `killing_a_process_this_test_started_ends_it_with_sigkill`, `a_running_applications_panel_offers_quit_and_force_quit_and_they_reach_the_engine`, `the_window_switchers_panel_quits_a_known_windows_application`, `a_quit_that_does_nothing_says_so` |
+| `src/cli` | Rust ✅ | `compass::{cli, cli_commands, logs}`, `serve::launch`; `compass_core::{script_template, extension_commands::launch_arguments, config::default_document, file_search::CLI_CATEGORY_NAMES}` | `cmd_ls_lists_every_root_item_by_id_and_cmd_launch_hands_the_window_a_launch`, `app_launch_and_cmd_launch_start_the_application_with_its_arguments`, `state_open_asks_the_window_and_exits_by_the_answer`, `the_engine_keeps_a_log_file_and_logs_prints_its_last_lines`, `fs_query_asks_the_index_alone_and_names_categories_as_the_cpp_does`, `server_refuses_a_running_engine_and_replace_kills_it_and_serves_in_its_place`, `config_cli::{script_template_*, theme_template_check_and_paths, config_default_*, version_*}`, `positional_launch_arguments_are_checked_as_the_cpp_checks_them`, `a_command_line_launch_opens_the_builtin_and_types_its_fallback_text`, `describe_answers_whether_the_window_is_open_and_changes_nothing` |
 
 **`src/cli`.** Every subcommand `CommandLineInterface::execute` registers now has a counterpart:
 `version` (`ver`), `server`, `ping`, `query`, `toggle`/`open`/`close`, `cmd ls` (`list`, `--json`)
@@ -634,7 +634,7 @@ launches an application itself, and hands anything else to the window as a launc
 the application's first window unless `--new`, matched by `findAppWindows`'s class-or-title rule,
 and launches it with its arguments otherwise. Declared differences:
 
-- `logs` reads `$XDG_STATE_HOME/vicinae/compass.log`, which the engine writes (rotated to `.1` past
+- `logs` reads `$XDG_STATE_HOME/compass/compass.log`, which the engine writes (rotated to `.1` past
   five mebibytes, as the C++'s), not `vicinae.log`: two engines appending to one file would
   interleave, and ADR-0017 gives Compass its own files. The file is opened once the socket is bound,
   so a refused second engine writes nothing.
@@ -646,7 +646,7 @@ and launches it with its arguments otherwise. Declared differences:
   and MIME type the C++ adds are not on the wire.
 - `cmd launch --cwd` is carried to the engine and logged; no Linux command reads a working
   directory from its launch.
-- `config default` prints this engine's `vicinae.json` at its defaults, read from the schema's
+- `config default` prints this engine's `compass.json` at its defaults, read from the schema's
   `default`s, rather than the C++'s `settings.json` template.
 - `theme check` and `theme paths` are registered in the C++ but commented out; here they work.
 - `version`'s commit and provenance come from `COMPASS_GIT_COMMIT` and `COMPASS_PROVENANCE` at build
@@ -692,10 +692,10 @@ fail on a regression.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/builtins/shortcut` | Rust ✅ | `compass_ui::{open_with_page, app::open_with}` (the app-selector), `vicinae::serve::openers` over `EngineApps` (IPC v18 `ListOpeners`, `OpenWith`), `compass_ui::shortcuts_page::{Detail, detail_fields, suitable_for_fallback}`, `compass_ui::app::shortcuts` (the pane, Open with…), `RootRow::ShortcutFallback` | `open_with_lists_what_opens_a_target_the_default_first` (a real engine over temp XDG dirs), `the_default_opener_comes_first_and_is_marked`, `open_with_launches_the_chosen_application_and_refuses_an_unknown_one`, `open_with_page::tests`, `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `the_pane_lists_what_load_detail_lists_in_its_order` |
-| `src/builtins/file` | Rust ✅ | `compass_ui::app::file_actions` (`file_panel_sections`, the actions), `compass_ui::files_page::{runs_as_executable, FilesPage::searching}`, `vicinae::serve::files` (IPC v18 `FileActions`, `CopyFile`, `RunExecutable`, `SetWallpaper`), Open with… through `compass_ui::app::open_with` | `search_files_panel_is_the_cpps_file_actions`, `a_files_panel_learns_its_mime_type_and_an_appimage_is_made_executable_and_run` (a real engine; the AppImage is a script in the test's tempdir), `an_executable_is_given_the_owners_execute_permission`, `a_file_is_copied_as_its_escaped_file_uri`, `a_superseded_answer_is_dropped` |
+| `src/builtins/shortcut` | Rust ✅ | `compass_ui::{open_with_page, app::open_with}` (the app-selector), `compass::serve::openers` over `EngineApps` (IPC v18 `ListOpeners`, `OpenWith`), `compass_ui::shortcuts_page::{Detail, detail_fields, suitable_for_fallback}`, `compass_ui::app::shortcuts` (the pane, Open with…), `RootRow::ShortcutFallback` | `open_with_lists_what_opens_a_target_the_default_first` (a real engine over temp XDG dirs), `the_default_opener_comes_first_and_is_marked`, `open_with_launches_the_chosen_application_and_refuses_an_unknown_one`, `open_with_page::tests`, `manage_shortcuts_shows_the_detail_pane_and_opens_with_a_chosen_application`, `a_one_argument_shortcut_named_as_a_fallback_opens_with_the_query`, `the_pane_lists_what_load_detail_lists_in_its_order` |
+| `src/builtins/file` | Rust ✅ | `compass_ui::app::file_actions` (`file_panel_sections`, the actions), `compass_ui::files_page::{runs_as_executable, FilesPage::searching}`, `compass::serve::files` (IPC v18 `FileActions`, `CopyFile`, `RunExecutable`, `SetWallpaper`), Open with… through `compass_ui::app::open_with` | `search_files_panel_is_the_cpps_file_actions`, `a_files_panel_learns_its_mime_type_and_an_appimage_is_made_executable_and_run` (a real engine; the AppImage is a script in the test's tempdir), `an_executable_is_given_the_owners_execute_permission`, `a_file_is_copied_as_its_escaped_file_uri`, `a_superseded_answer_is_dropped` |
 | `src/builtins/clipboard` | Rust ✅ | `compass_ui::clipboard_page::{open_target, OpenTarget}`, `compass_ui::app::clipboard` (Open, Open with… through `compass_ui::app::open_with`) | `a_link_or_one_existing_file_is_what_open_acts_on`, `a_copied_link_opens_and_opens_with_a_chosen_application`, `plain_text_offers_no_open`, with the gaps pass's `clipboard_page::tests` and `the_kind_filter_the_pane_keywords_remove_all_and_monitoring` |
-| `src/builtins/wm` | Rust ✅ | `compass_platform_linux::compositor` (`Provider::{capabilities, toggle_fullscreen, toggle_floating, toggle_overview}`), `vicinae::serve::workspaces`, `compass_core::window_switcher::command_offered`, `AppIndex::set_window_capabilities`, `compass_ui::{workspaces_page, app::workspaces}` | `niri_toggles_fullscreen_floating_and_the_overview`, `hyprland_toggles_a_window_and_has_no_overview` (fake sockets replaying captured replies), `workspaces_count_their_windows_and_name_their_applications_once`, `a_toggle_acts_on_the_active_window_and_refuses_one_elsewhere`, `a_window_on_another_workspace_is_not_on_the_active_one`, `without_a_compositor_everything_is_refused_and_nothing_is_offered`, `a_window_command_is_offered_only_where_it_is_registered`, `workspaces_page::tests`, `workspaces_and_the_toggles_are_offered_where_the_compositor_has_them`, `a_refused_toggle_says_why` |
+| `src/builtins/wm` | Rust ✅ | `compass_platform_linux::compositor` (`Provider::{capabilities, toggle_fullscreen, toggle_floating, toggle_overview}`), `compass::serve::workspaces`, `compass_core::window_switcher::command_offered`, `AppIndex::set_window_capabilities`, `compass_ui::{workspaces_page, app::workspaces}` | `niri_toggles_fullscreen_floating_and_the_overview`, `hyprland_toggles_a_window_and_has_no_overview` (fake sockets replaying captured replies), `workspaces_count_their_windows_and_name_their_applications_once`, `a_toggle_acts_on_the_active_window_and_refuses_one_elsewhere`, `a_window_on_another_workspace_is_not_on_the_active_one`, `without_a_compositor_everything_is_refused_and_nothing_is_offered`, `a_window_command_is_offered_only_where_it_is_registered`, `workspaces_page::tests`, `workspaces_and_the_toggles_are_offered_where_the_compositor_has_them`, `a_refused_toggle_says_why` |
 
 **`src/builtins/shortcut`.** "Open with…" is a view of its own, the app-selector the
 `ui/views` row names: the applications that open a target, the default first and marked, filtered
@@ -770,8 +770,8 @@ The rest of `ui/image`, the snippet view and the Markdown detail's images, again
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `ui/image` | Rust ✅ | `compass_core::image_url::{ImageUrl::from_source, SourceLookup}` (`ImageURL(const ImageLikeModel &)` for a bare string: an `icon://`, `file:`, `data:` or `http(s):` URL, an emoji, a glyph of the table, a builtin, a file, an asset, a theme icon); `compass_core::favicon::Service` (`favicon_service`: `twenty`, `google`, `none`); `compass_core::extension_commands::ExtensionCommand::icon_url` (`ExtensionCommand::iconUrl`); `compass_ui::icons::{url_glyph, UrlLookup, remote_source, semantic_color, Glyph::Text, tile_gradient, apply_mask, rasterize, MaskedCache}`; `LauncherApp::{url_icon, warm_urls, root_icon_arrived}` with `shortcut_url` (`RootShortcutItem::iconUrl`'s purple tile) and `clipboard_url` (the favicon with the link builtin as fallback); script icons over IPC v19 `ScriptIcons` (`vicinae::scripts::Scripts::icons`); `Image.mask` read by `compass_worker_host::view_model` and kept per row (`ExtensionPage::mask`) | `a_bare_source_is_read_as_image_url_reads_one`, `a_remote_images_own_query_survives_the_round_trip`, `each_service_asks_for_the_cpps_url_and_none_asks_nothing`, `the_configuration_names_the_service_and_twenty_is_the_default`, `the_icon_is_the_commands_then_the_extensions_then_the_hammer`, `an_image_url_is_drawn_as_its_type_says`, `a_tile_is_a_gradient_lighter_at_the_top_and_deeper_at_the_bottom`, `a_circle_mask_clears_the_corners_and_keeps_the_middle`, `a_rounded_mask_rounds_a_quarter_of_the_side`, `a_masked_image_is_drawn_once_from_a_png_or_an_svg`, `extension_script_and_shortcut_rows_draw_their_icons_in_root_search`, `a_favicon_is_fetched_once_into_the_cache_and_then_drawn`, `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept`, `an_images_mask_is_kept_in_either_spelling`, `script_commands_are_scanned_searched_and_run_in_their_modes` (a real engine) |
-| `src/builtins/snippet` | Rust ✅ | `compass_core::placeholder::{parse_snippet_text, parse}` (`PlaceholderString::parse`, with its backslash escape), used by `vicinae::snippets`, the save path's cursor count and `snippets_page::arguments_form`; the detail pane: `compass_ui::snippets_page::{Detail, detail_fields}`, `compass_ui::app::snippets::{snippet_detail_task, snippet_detail_pane}`, `vicinae::snippets::preview` over IPC v19 `PreviewSnippet` | `an_escaped_brace_is_text_and_not_a_placeholder`, `a_doubled_backslash_is_one_and_the_brace_after_it_opens_a_placeholder`, `another_escaped_character_loses_its_backslash_and_a_trailing_one_stays`, `without_a_backslash_it_reads_as_a_quicklink_does`, `an_escaped_brace_expands_as_a_brace`, `an_escaped_brace_asks_for_no_argument`, `a_preview_shows_a_shell_placeholder_instead_of_running_it`, `the_pane_lists_what_load_detail_lists_in_its_order`, `manage_snippets_shows_the_selected_snippets_detail_pane`, `snippets_are_imported_created_expanded_edited_and_removed` (a real engine) |
+| `ui/image` | Rust ✅ | `compass_core::image_url::{ImageUrl::from_source, SourceLookup}` (`ImageURL(const ImageLikeModel &)` for a bare string: an `icon://`, `file:`, `data:` or `http(s):` URL, an emoji, a glyph of the table, a builtin, a file, an asset, a theme icon); `compass_core::favicon::Service` (`favicon_service`: `twenty`, `google`, `none`); `compass_core::extension_commands::ExtensionCommand::icon_url` (`ExtensionCommand::iconUrl`); `compass_ui::icons::{url_glyph, UrlLookup, remote_source, semantic_color, Glyph::Text, tile_gradient, apply_mask, rasterize, MaskedCache}`; `LauncherApp::{url_icon, warm_urls, root_icon_arrived}` with `shortcut_url` (`RootShortcutItem::iconUrl`'s purple tile) and `clipboard_url` (the favicon with the link builtin as fallback); script icons over IPC v19 `ScriptIcons` (`compass::scripts::Scripts::icons`); `Image.mask` read by `compass_worker_host::view_model` and kept per row (`ExtensionPage::mask`) | `a_bare_source_is_read_as_image_url_reads_one`, `a_remote_images_own_query_survives_the_round_trip`, `each_service_asks_for_the_cpps_url_and_none_asks_nothing`, `the_configuration_names_the_service_and_twenty_is_the_default`, `the_icon_is_the_commands_then_the_extensions_then_the_hammer`, `an_image_url_is_drawn_as_its_type_says`, `a_tile_is_a_gradient_lighter_at_the_top_and_deeper_at_the_bottom`, `a_circle_mask_clears_the_corners_and_keeps_the_middle`, `a_rounded_mask_rounds_a_quarter_of_the_side`, `a_masked_image_is_drawn_once_from_a_png_or_an_svg`, `extension_script_and_shortcut_rows_draw_their_icons_in_root_search`, `a_favicon_is_fetched_once_into_the_cache_and_then_drawn`, `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept`, `an_images_mask_is_kept_in_either_spelling`, `script_commands_are_scanned_searched_and_run_in_their_modes` (a real engine) |
+| `src/builtins/snippet` | Rust ✅ | `compass_core::placeholder::{parse_snippet_text, parse}` (`PlaceholderString::parse`, with its backslash escape), used by `compass::snippets`, the save path's cursor count and `snippets_page::arguments_form`; the detail pane: `compass_ui::snippets_page::{Detail, detail_fields}`, `compass_ui::app::snippets::{snippet_detail_task, snippet_detail_pane}`, `compass::snippets::preview` over IPC v19 `PreviewSnippet` | `an_escaped_brace_is_text_and_not_a_placeholder`, `a_doubled_backslash_is_one_and_the_brace_after_it_opens_a_placeholder`, `another_escaped_character_loses_its_backslash_and_a_trailing_one_stays`, `without_a_backslash_it_reads_as_a_quicklink_does`, `an_escaped_brace_expands_as_a_brace`, `an_escaped_brace_asks_for_no_argument`, `a_preview_shows_a_shell_placeholder_instead_of_running_it`, `the_pane_lists_what_load_detail_lists_in_its_order`, `manage_snippets_shows_the_selected_snippets_detail_pane`, `snippets_are_imported_created_expanded_edited_and_removed` (a real engine) |
 | `ui/bridges` | Rust ✅ | `ExtensionPage::{wanted_images, image_arrived, markdown_art}` fetch a detail's Markdown images through `compass_ui::remote_image`'s cache, drawn by the store page's viewer (`app::stores::StoreMarkdown`) | `a_details_markdown_images_are_fetched_and_drawn` |
 | `ui/views` | Rust ✅ | `compass_search::term_ranges` (`MatchHighlighter`: each search word found literally, ignoring case and accents) with `compass_ui::clipboard_page::highlighted`, drawn as `rich_text` spans behind the accent at 35% in clipboard history's detail text; Markdown code blocks highlighted by their language (Iced's `highlighter` feature, syntect through `two-face`); an extension's grid drawn as a grid (`ExtensionPage::{grid_columns, grid_groups, section_columns, grid_step}`, `LauncherApp::extension_grid`), each section in its own columns, the arrows moving as `SectionGridModel::navigate*`; the edit-keywords view is clipboard history's and the emoji picker's keyword form | `every_occurrence_of_each_term_is_found_ignoring_case_and_accents`, `a_term_does_not_overlap_itself_and_overlapping_terms_merge`, `the_searched_words_are_marked_in_the_detail_text`, `a_code_block_is_highlighted_by_its_language`, `a_grid_moves_by_cell_and_by_its_sections_columns`, `an_extension_grid_is_drawn_as_tiles_and_the_arrows_move_by_cell_and_row`, `the_kind_filter_the_pane_keywords_remove_all_and_monitoring`, `the_picker_remembers_a_pick_a_pin_and_a_keyword_in_its_file` |
 
@@ -820,7 +820,7 @@ What differs, by row:
 | `ui/image` | A masked image is clipped at the size it is drawn. | Drawn into at most 128 px, clipped, and scaled to the slot. | `a_masked_image_is_drawn_once_from_a_png_or_an_svg` |
 | `ui/image` | An `ImageURL`'s `badge` is drawn on any icon. | On builtin commands' tiles, as before; a badge in a stored `ImageURL` is not drawn. | — |
 | `ui/image` | `ImageURL(source)` tests a relative path against the working directory (`QFile(source).exists()`). | Only an absolute path is a file; a relative one is an asset or a theme name. | `a_bare_icon_string_is_an_emoji_a_theme_icon_or_an_asset_and_masks_are_kept` |
-| `ui/image` | Remote icons are fetched by every build. | By the launcher `vicinae` starts (`AppFlags::remote_icons`); off in tests, which never reach the network. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn` |
+| `ui/image` | Remote icons are fetched by every build. | By the launcher `compass` starts (`AppFlags::remote_icons`); off in tests, which never reach the network. | `a_favicon_is_fetched_once_into_the_cache_and_then_drawn` |
 | `ui/image` | `QUrl::toString()` escapes a name's `?`, `#` and `%` in an `icon://` URL. | The same (`ImageUrl::to_url`); before this pass an `https` image with a query string did not survive the round trip. | `a_remote_images_own_query_survives_the_round_trip` |
 | `ui/views` | `TextViewer` scrolls to the first match. | The matches are marked; the pane is not scrolled to them. | `the_searched_words_are_marked_in_the_detail_text` |
 | `ui/views` | Code blocks are coloured by KSyntaxHighlighting in the theme's semantic colours. | By syntect's grammars in the Base16 Ocean theme, which Iced's Markdown fixes. | `a_code_block_is_highlighted_by_its_language` |
@@ -838,7 +838,7 @@ The C++ settings window (`src/server/src/ui/settings`, `ui/windows/settings-wind
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/server/src/ui/settings` | Rust ✅, parity ✅ | `compass_core::settings_catalog` (every setting's key, kind, default and C++ property; the C++ settings with no reader, declared; `parse_settings_link`), `Config::{get_path, set_path, set_provider_enabled}`, `RootEdit::Enabled`; `vicinae::serve::settings` (IPC v19 `SetSetting`, `SetProviderEnabled`, `RootItemEdit::Enabled`); `compass_ui::settings_page` over `compass_ui::settings::SidebarModel`, `compass_ui::app::settings_view` | `the_settings_view_writes_each_setting_and_switch_into_the_configuration` (a real engine over temp XDG dirs: settings written where the engine reads them, refusals write nothing, the switches change root search), `every_cpp_general_settings_property_is_ported_or_declared`, `a_default_the_schema_documents_is_the_same_here`, `applying_writes_the_key_the_engine_reads_and_keeps_the_rest`, `a_value_the_setting_does_not_take_is_refused_and_nothing_changes`, `each_control_writes_the_file_and_the_launcher_follows_at_once`, `the_extension_page_switches_aliases_and_records_shortcuts`, `the_hotkey_is_recorded_into_the_launcher_section`, `with_an_engine_the_engine_writes_and_a_theme_is_kept_or_put_back`, `a_commands_preferences_open_over_the_settings_and_go_back_to_them`, `a_root_rows_open_preferences_opens_the_settings_at_its_provider`, `open_settings_is_a_root_command_and_ctrl_comma_and_escape_leaves`, `a_deeplink_opens_the_tab_it_names`, `settings_page::tests`, `the_settings_switches_turn_an_item_and_a_provider_back_on` |
+| `src/server/src/ui/settings` | Rust ✅, parity ✅ | `compass_core::settings_catalog` (every setting's key, kind, default and C++ property; the C++ settings with no reader, declared; `parse_settings_link`), `Config::{get_path, set_path, set_provider_enabled}`, `RootEdit::Enabled`; `compass::serve::settings` (IPC v19 `SetSetting`, `SetProviderEnabled`, `RootItemEdit::Enabled`); `compass_ui::settings_page` over `compass_ui::settings::SidebarModel`, `compass_ui::app::settings_view` | `the_settings_view_writes_each_setting_and_switch_into_the_configuration` (a real engine over temp XDG dirs: settings written where the engine reads them, refusals write nothing, the switches change root search), `every_cpp_general_settings_property_is_ported_or_declared`, `a_default_the_schema_documents_is_the_same_here`, `applying_writes_the_key_the_engine_reads_and_keeps_the_rest`, `a_value_the_setting_does_not_take_is_refused_and_nothing_changes`, `each_control_writes_the_file_and_the_launcher_follows_at_once`, `the_extension_page_switches_aliases_and_records_shortcuts`, `the_hotkey_is_recorded_into_the_launcher_section`, `with_an_engine_the_engine_writes_and_a_theme_is_kept_or_put_back`, `a_commands_preferences_open_over_the_settings_and_go_back_to_them`, `a_root_rows_open_preferences_opens_the_settings_at_its_provider`, `open_settings_is_a_root_command_and_ctrl_comma_and_escape_leaves`, `a_deeplink_opens_the_tab_it_names`, `settings_page::tests`, `the_settings_switches_turn_an_item_and_a_provider_back_on` |
 
 **What it is.** Open Settings (the vicinae extension's `settings` command, a root command here),
 Ctrl+, from the root (`Keybind::OpenSettings`), a root row's Open Preferences
@@ -848,7 +848,7 @@ the settings: the C++ sidebar (its five pages, a divider, the providers, filtere
 search field) and the selected page. The pages draw `settings_catalog`'s settings by kind — a
 switch, a list, a number or text field kept on Enter, a folder list, the shortcut recorder for the
 launcher hotkey, the theme list — and every control writes its dotted key through `SetSetting`,
-which the engine checks against the catalogue, writes into `vicinae.json` (a file that does not
+which the engine checks against the catalogue, writes into `compass.json` (a file that does not
 parse is left alone) and applies where it holds the value (the clipboard's preferences, Run
 Terminal Program's default action, the input server, the result count). The window applies what it
 holds itself: the navigation scheme and wrapping, quick launch, the layout preset, icons and tint,
@@ -890,7 +890,7 @@ Declared differences:
 - A provider's provenance is Built-in, Raycast or Extension; the C++ also tells the Vicinae store
   from a local build.
 - The file index, snippet and script preferences are read where they are used or when the engine
-  next starts, as `vicinae.json` edited by hand is.
+  next starts, as `compass.json` edited by hand is.
 
 ### The gaps pass, KDE (2026-09-25)
 
@@ -912,7 +912,7 @@ and unloaded under a unique plugin name. Chosen as the C++ chooses it: `kde` in
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/window-manager` | — (stays `Rust ✓` 🟡: GNOME's workspace list remains; X11 has since been decided n/a, "Product decisions") | `compass_platform_linux::compositor::kwin` (`Kwin`, the tracker object, the scripts), `Provider::Kwin`, `vicinae::wlroots::{start_kwin, stop_kwin}`, `vicinae::window_service::{kwin_list, kwin_windows, kwin_act}`, the `kde.kwin` doctor check | `the_tracker_lists_kwins_normal_windows_and_which_is_active`, `focus_close_and_fullscreen_are_one_shot_scripts_unloaded_after`, `virtual_desktops_are_the_workspaces_and_the_overview_is_kwins_shortcut`, `a_kwin_restart_forgets_its_windows_and_reloads_the_tracker`, `a_second_tracker_is_refused_the_name_and_stop_gives_it_up`, `plasma_on_wayland_is_a_kde_entry_and_a_display`, `a_one_shot_script_quotes_its_target`, `handles_are_numbered_once_and_never_reused`, `kwin_windows_leave_out_the_launcher_and_number_their_desktop`, `kwin_with_its_desktops_passes_and_counts_them`, `kwin_absent_on_plasma_warns_and_elsewhere_is_not_asked`, `kwin_without_virtual_desktops_warns_that_there_are_no_workspaces` |
+| `src/services/window-manager` | — (stays `Rust ✓` 🟡: GNOME's workspace list remains; X11 has since been decided n/a, "Product decisions") | `compass_platform_linux::compositor::kwin` (`Kwin`, the tracker object, the scripts), `Provider::Kwin`, `compass::wlroots::{start_kwin, stop_kwin}`, `compass::window_service::{kwin_list, kwin_windows, kwin_act}`, the `kde.kwin` doctor check | `the_tracker_lists_kwins_normal_windows_and_which_is_active`, `focus_close_and_fullscreen_are_one_shot_scripts_unloaded_after`, `virtual_desktops_are_the_workspaces_and_the_overview_is_kwins_shortcut`, `a_kwin_restart_forgets_its_windows_and_reloads_the_tracker`, `a_second_tracker_is_refused_the_name_and_stop_gives_it_up`, `plasma_on_wayland_is_a_kde_entry_and_a_display`, `a_one_shot_script_quotes_its_target`, `handles_are_numbered_once_and_never_reused`, `kwin_windows_leave_out_the_launcher_and_number_their_desktop`, `kwin_with_its_desktops_passes_and_counts_them`, `kwin_absent_on_plasma_warns_and_elsewhere_is_not_asked`, `kwin_without_virtual_desktops_warns_that_there_are_no_workspaces` |
 
 The tests run against a private `dbus-daemon` with a fake `org.kde.KWin`
 (`compass-platform-linux/tests/kwin.rs`): it answers the scripting interface as KWin does (a number
@@ -946,7 +946,7 @@ Declared differences, beyond the C++:
   `org.vicinae.WindowTracker`. And the script file is written to the temporary directory, as the
   C++ writes it; inside the Flatpak that is the sandbox's own `/tmp`, which KWin cannot read, so
   KDE window management there needs a path KWin can see (VM tier, with the Flatpak).
-- `vicinae doctor` gains `kde.kwin` (the C++ has no doctor): whether KWin owns its name and how many
+- `compass doctor` gains `kde.kwin` (the C++ has no doctor): whether KWin owns its name and how many
   virtual desktops it reports, a warning without either, and a warning for KDE on X11.
 
 **X11 is not implemented**, and since "Product decisions" (2026-09-25) will not be: Compass is
@@ -983,7 +983,7 @@ before.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `ui/qml`, `ui/quick`, `ui/windows` | — (the HUD is closed; the settings window keeps each amber) | `compass_ui::hud`, `compass_ui::app::hud` (`show_hud`, `copy_with_hud`, `view_for`), `compass_ui::surface::{open_hud, layer::hud_settings}`, `vicinae::serve::show_hud` over `WindowCommand::Hud` | `a_second_message_reuses_the_surface_and_restarts_the_timer`, `a_surface_closed_under_it_is_forgotten`, `the_hud_surface_takes_no_keyboard_and_no_pointer`, `a_toplevel_presentation_opens_no_hud_surface`, `quit_and_force_quit_hide_with_the_cpps_hud`, `a_copied_answer_shows_the_calculators_hud_until_its_time_is_up`, `without_a_hud_a_copy_only_hides_and_an_exiting_launcher_shows_none`, `the_hud_surface_is_not_taken_for_the_launcher_window`, `the_engines_hud_is_refused_where_the_presentation_has_none`, `a_refused_paste_copies_the_glyph_with_the_copy_hud`, `a_set_wallpaper_and_a_copied_file_say_so_and_running_does_not`, `the_engines_hud_reaches_the_launchers_hud` (a real engine and a fake window) |
+| `ui/qml`, `ui/quick`, `ui/windows` | — (the HUD is closed; the settings window keeps each amber) | `compass_ui::hud`, `compass_ui::app::hud` (`show_hud`, `copy_with_hud`, `view_for`), `compass_ui::surface::{open_hud, layer::hud_settings}`, `compass::serve::show_hud` over `WindowCommand::Hud` | `a_second_message_reuses_the_surface_and_restarts_the_timer`, `a_surface_closed_under_it_is_forgotten`, `the_hud_surface_takes_no_keyboard_and_no_pointer`, `a_toplevel_presentation_opens_no_hud_surface`, `quit_and_force_quit_hide_with_the_cpps_hud`, `a_copied_answer_shows_the_calculators_hud_until_its_time_is_up`, `without_a_hud_a_copy_only_hides_and_an_exiting_launcher_shows_none`, `the_hud_surface_is_not_taken_for_the_launcher_window`, `the_engines_hud_is_refused_where_the_presentation_has_none`, `a_refused_paste_copies_the_glyph_with_the_copy_hud`, `a_set_wallpaper_and_a_copied_file_say_so_and_running_does_not`, `the_engines_hud_reaches_the_launchers_hud` (a real engine and a fake window) |
 
 Declared differences:
 
@@ -998,20 +998,20 @@ Declared differences:
 
 **Onboarding** (`ui/windows/onboarding-window.*`, `ui/qml/onboarding`). `compass_core::onboarding`
 is `OnboardingWindow`'s gate and record and the QML's step logic: the flow is due when
-`$XDG_STATE_HOME/vicinae/onboarding.json` records a version older than `ONBOARDING_VERSION` (1) or
+`$XDG_STATE_HOME/compass/onboarding.json` records a version older than `ONBOARDING_VERSION` (1) or
 cannot be read, and finishing writes `{"version":1,"completedAt":"…"}` there, the C++'s own file,
 so a person who finished it under either engine is not asked again. The steps are the QML's on
 Linux: "Welcome to Vicinae", "Make it your own" (the theme, kept as Set Theme keeps it, and the
 global hotkey row) and "Setup complete" (GitHub and Sponsor), with Back, the step dots (a click
 jumps), Continue and Finish; Enter continues and Escape closes without recording, so the next start
-asks again. `vicinae` passes the state file to the window when the flow is due
+asks again. `compass` passes the state file to the window when the flow is due
 (`AppFlags::onboarding`), and the window opens on it at start even when started hidden, as the C++
 shows its window at server start. `COMPASS_NO_ONBOARDING` is the C++'s `ENABLE_ONBOARDING=OFF`, and
 the VM tier, the sway harness and the session bench set it.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `ui/qml`, `ui/quick`, `ui/windows` | — (onboarding is closed; the settings window keeps each amber) | `compass_core::onboarding` (`should_show`, `mark_completed`, `Flow`), `compass_ui::onboarding_page`, `compass_ui::app::onboarding`, `vicinae::onboarding_due` | `it_is_due_until_the_current_version_is_recorded`, `the_cpps_own_file_is_read`, `linux_has_three_steps_and_continue_finishes_on_the_last`, `the_permissions_step_is_macos_only`, `the_switch_reads_like_a_boolean_environment_variable`, `a_due_onboarding_opens_the_window_even_when_started_hidden`, `finishing_the_onboarding_records_it_and_hides`, `escape_closes_the_onboarding_without_recording_it`, `every_onboarding_step_draws_its_heading_and_buttons` |
+| `ui/qml`, `ui/quick`, `ui/windows` | — (onboarding is closed; the settings window keeps each amber) | `compass_core::onboarding` (`should_show`, `mark_completed`, `Flow`), `compass_ui::onboarding_page`, `compass_ui::app::onboarding`, `compass::onboarding_due` | `it_is_due_until_the_current_version_is_recorded`, `the_cpps_own_file_is_read`, `linux_has_three_steps_and_continue_finishes_on_the_last`, `the_permissions_step_is_macos_only`, `the_switch_reads_like_a_boolean_environment_variable`, `a_due_onboarding_opens_the_window_even_when_started_hidden`, `finishing_the_onboarding_records_it_and_hides`, `escape_closes_the_onboarding_without_recording_it`, `every_onboarding_step_draws_its_heading_and_buttons` |
 
 Declared differences:
 
@@ -1019,7 +1019,7 @@ Declared differences:
   one surface, and a second toplevel would be a second window for the compositor to place. Finishing
   hides the card, as finishing hides the C++'s window.
 - The global hotkey row takes the C++'s branch for a platform without global shortcuts ("Bind a key
-  to "vicinae toggle"" and Open Docs): the window cannot know whether the engine found a backend,
+  to "compass toggle"" and Open Docs): the window cannot know whether the engine found a backend,
   and the hotkey is changed from Settings, General (`launcher.hotkey`, bound as it changes since
   "The gaps pass, global shortcuts"). The last step's sentence follows.
 - The macOS permissions step and Launch at login are not offered, as on the C++'s Linux build.
@@ -1032,7 +1032,7 @@ its C++ id (`commands:<id>`, and `core:<id>` names it too), as `CommandKind::Vic
   admits (Search Files, every extension command, every quicklink with one argument) in "Enabled", in
   the configured order (`bug_report::order_enabled`), and "Available"; fuzzy over the title and, at
   0.3, the keywords. Enter or the panel's one action enables an item first in `fallbacks` or disables
-  it, at once in the window and in `vicinae.json` through IPC v19 `RootItemEdit::Fallback`
+  it, at once in the window and in `compass.json` through IPC v19 `RootItemEdit::Fallback`
   (`compass_core::root_items::set_fallback`, as `enableFallback` and `disableFallback`). Search Files
   is written by the C++'s id, `files:search`, and disabled by whichever id names it. A root fallback
   row's panel is Open (command) and Manage Fallback Actions (`fallbackActionPanel`).
@@ -1044,7 +1044,7 @@ its C++ id (`commands:<id>`, and `core:<id>` names it too), as `CommandKind::Vic
   then a namespace's keys with Show value; the token sets with "Expired", Remove token set (asking
   first) and the copies (access, refresh and ID token, scopes, expiration date), over IPC v19
   `LocalStorageNamespaces`, `LocalStorageItems`, `OAuthTokenSets` and `RemoveOAuthTokenSet`
-  (`vicinae::serve::storage`), refused by name without a keyring as calculator history is.
+  (`compass::serve::storage`), refused by name without a keyring as calculator history is.
 - **Refresh Apps**, **Reload Script Directories**: rescan and say so, with the C++'s sentences.
 - **Report a Vicinae Bug**, **Donate to Vicinae**, **Join the Discord Server**: open the link and
   hide with "Opened in browser"; the report is pre-filled from this build and `/etc/os-release`
@@ -1056,7 +1056,7 @@ its C++ id (`commands:<id>`, and `core:<id>` names it too), as `CommandKind::Vic
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/builtins/vicinae` | Rust ✅ | `compass_ui::{app::vicinae, fallbacks_page, vicinae_pages}`, `compass_core::commands::CommandKind::Vicinae`, `compass_core::root_items::set_fallback`, `compass_core::bug_report::{report_url, parse_os_release}`, `vicinae::serve::storage` | `configure_fallback_commands_moves_items_between_its_sections`, `enabled_come_first_in_the_configured_order_then_the_available`, `the_filter_narrows_both_sections_and_an_available_row_enables`, `a_fallback_is_enabled_first_and_disabled_as_the_cpp_writes_them`, `the_fallback_manager_writes_the_users_fallbacks` (a real engine), `installed_extensions_are_listed_copied_and_uninstalled_after_asking`, `search_builtin_icons_copies_the_name`, `inspect_local_storage_browses_a_namespace_and_shows_a_value`, `manage_oauth_token_sets_copies_and_removes_after_asking`, `local_storage_lists_its_namespaces_and_their_items_as_text`, `token_sets_are_listed_with_their_expiry_and_removed`, `the_link_and_refresh_commands_do_what_their_cpp_ones_do`, `the_default_config_is_written_read_only_and_replaced`, `the_vicinae_extensions_commands_keep_their_cpp_ids`, `os_release_gives_the_pretty_name_and_version_unquoted`, `the_report_link_carries_the_title_body_and_type`, `the_extension_store_installs_into_root_search_and_uninstalls_after_asking` (the intro) |
+| `src/builtins/vicinae` | Rust ✅ | `compass_ui::{app::vicinae, fallbacks_page, vicinae_pages}`, `compass_core::commands::CommandKind::Vicinae`, `compass_core::root_items::set_fallback`, `compass_core::bug_report::{report_url, parse_os_release}`, `compass::serve::storage` | `configure_fallback_commands_moves_items_between_its_sections`, `enabled_come_first_in_the_configured_order_then_the_available`, `the_filter_narrows_both_sections_and_an_available_row_enables`, `a_fallback_is_enabled_first_and_disabled_as_the_cpp_writes_them`, `the_fallback_manager_writes_the_users_fallbacks` (a real engine), `installed_extensions_are_listed_copied_and_uninstalled_after_asking`, `search_builtin_icons_copies_the_name`, `inspect_local_storage_browses_a_namespace_and_shows_a_value`, `manage_oauth_token_sets_copies_and_removes_after_asking`, `local_storage_lists_its_namespaces_and_their_items_as_text`, `token_sets_are_listed_with_their_expiry_and_removed`, `the_link_and_refresh_commands_do_what_their_cpp_ones_do`, `the_default_config_is_written_read_only_and_replaced`, `the_vicinae_extensions_commands_keep_their_cpp_ids`, `os_release_gives_the_pretty_name_and_version_unquoted`, `the_report_link_carries_the_title_body_and_type`, `the_extension_store_installs_into_root_search_and_uninstalls_after_asking` (the intro) |
 
 Declared differences:
 
@@ -1098,7 +1098,7 @@ where a test window records every keyboard event it is sent; no real device or s
 No IPC change: the existing requests (`PasteText`, `PasteSnippet`, `ClipboardPaste`, `CopyFile`,
 `FileActions.can_paste`) now succeed on wlroots where they were refused.
 
-**Paste** (`LinuxPasteService`, `PasteService`). `vicinae::paste` is the engine's one paste path, and
+**Paste** (`LinuxPasteService`, `PasteService`). `compass::paste` is the engine's one paste path, and
 the emoji picker, snippets, clipboard history, a file's Paste and an extension's `Clipboard.paste`
 all go through it. On GNOME it is the Shell extension's, as before. On a wlroots compositor with
 data-control the content goes on the clipboard, and `compass_core::paste::PasteService` (the C++'s
@@ -1111,7 +1111,7 @@ capability: its own three-key keymap, Control and Shift with the modifier masks 
 the client to send, released in reverse. With neither the content is copied and the request refused
 by name ("the content was copied instead"), which the launcher already answers by copying, as the
 C++ copies first and then says the platform cannot paste. A newer paste cancels one still waiting.
-`vicinae doctor` names `virtual-keyboard` and `shortcuts-inhibit` in `wlroots.capabilities`.
+`compass doctor` names `virtual-keyboard` and `shortcuts-inhibit` in `wlroots.capabilities`.
 
 **Shortcut inhibit** (`WaylandShortcutInhibitManager`, `ShortcutInhibitorAttached`).
 `compass_wayland::keyboard_inhibit::ShortcutInhibit` is the protocol client, replacing the stub. The
@@ -1129,7 +1129,7 @@ version of the Sway test caught as a hang).
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/paste` | Rust ✅ | `vicinae::paste` (`paste`, `can_paste`, `injector`, `paste_blocking`), `compass_core::paste::PasteService`, `compass_wayland::virtual_keyboard::{VirtualKeyboard, paste_steps}`, `compass_wayland::compositor::Capabilities::virtual_keyboard` | `on_sway_a_paste_is_copied_and_pressed_into_the_focused_window`, `on_sway_a_terminal_is_pasted_into_with_ctrl_shift_v`, `on_sway_the_input_server_presses_the_paste_when_it_runs` (engine on Sway), `on_sway_the_paste_chord_reaches_the_focused_window`, `on_sway_a_terminal_is_sent_ctrl_shift_v`, `ctrl_v_holds_control_around_the_v`, `a_terminal_gets_shift_as_well_released_in_reverse`, `the_keymap_names_the_codes_the_steps_press` |
+| `src/services/paste` | Rust ✅ | `compass::paste` (`paste`, `can_paste`, `injector`, `paste_blocking`), `compass_core::paste::PasteService`, `compass_wayland::virtual_keyboard::{VirtualKeyboard, paste_steps}`, `compass_wayland::compositor::Capabilities::virtual_keyboard` | `on_sway_a_paste_is_copied_and_pressed_into_the_focused_window`, `on_sway_a_terminal_is_pasted_into_with_ctrl_shift_v`, `on_sway_the_input_server_presses_the_paste_when_it_runs` (engine on Sway), `on_sway_the_paste_chord_reaches_the_focused_window`, `on_sway_a_terminal_is_sent_ctrl_shift_v`, `ctrl_v_holds_control_around_the_v`, `a_terminal_gets_shift_as_well_released_in_reverse`, `the_keymap_names_the_codes_the_steps_press` |
 | `src/services/shortcut-inhibit` | Rust ✅ | `compass_wayland::keyboard_inhibit::{ShortcutInhibit, InhibitHandle, InhibitState}`, `compass_ui::shortcut_inhibit`, `LauncherApp::recording_shortcut` | `on_sway_shortcuts_are_inhibited_on_the_focused_surface_while_wanted` (created, active, destroyed, created again without a protocol error), `on_sway_the_inhibitor_goes_with_the_keyboard`, `the_root_panel_records_an_items_shortcut_and_backspace_removes_it`, `the_hotkey_is_recorded_into_the_launcher_section` |
 
 Declared differences:
@@ -1139,7 +1139,7 @@ Declared differences:
   chord's own, so a layout without a V key on that position still pastes; the focused window is
   sent that small keymap with the chord and the seat's own again with the next real key.
 - Focus handoff is watched on the foreign-toplevel list only where the launcher is itself a toplevel
-  (`VICINAE_LAYER_SHELL=0`, or no layer shell). A layer-shell launcher is not in the list, so the
+  (`COMPASS_LAYER_SHELL=0`, or no layer shell). A layer-shell launcher is not in the list, so the
   window under it reads as focused before the launcher closes; there the C++'s blind delay (150 ms)
   is used instead of the poll.
 - The clipboard is not restored after a wlroots paste (`scheduleClipboardRestore`), as on the GNOME
@@ -1147,7 +1147,7 @@ Declared differences:
 - The inhibitor is made when a launcher surface takes the keyboard and destroyed when it leaves,
   rather than kept for the window's life and deactivated by the compositor; the person's keyboard
   is the same. It needs the layer-shell presentation: under the `xdg_toplevel` one (GNOME, KDE,
-  `VICINAE_LAYER_SHELL=0`) winit makes its connection itself and offers no way to share it, and a
+  `COMPASS_LAYER_SHELL=0`) winit makes its connection itself and offers no way to share it, and a
   raw-pointer bridge is `unsafe`, so the recorder does not inhibit there. The C++ inhibits on any
   Wayland session.
 - An extension host run without the engine (none today) copies rather than pastes.
@@ -1178,7 +1178,7 @@ turned off and reads as a combination, each described by its item's title. A `Re
 what is bound and what each bound id does (`m_appliedTriggers`, `m_actions`): a shortcut no longer
 asked for, or asked for with another trigger, is released; a new one is bound; one the desktop
 refused counts as applied, so it is not asked for again until it changes, and does nothing when
-pressed. `vicinae::global_shortcuts::Service` runs that against a backend, from the engine's start
+pressed. `compass::global_shortcuts::Service` runs that against a backend, from the engine's start
 and again on each `SetSetting` and root-item edit (`configChanged`), so the settings view's
 hotkey recorder and the action panel's Set Global Shortcut take effect at once.
 
@@ -1214,7 +1214,7 @@ hides when it loses a focus it had, and not when the focus goes to the file choo
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/global-shortcuts` | `parity test ✓` 🟡 → ✅ (`Rust ✓` stays 🟡: X11, `inhibitApps`, `probeBind`) | `compass_core::global_shortcuts` (`desired`, `Reconciler`, `validate`, `find_conflict`, `launcher_keybind`, `keysym`, `modifier_mask`, `portal_trigger`), `compass_wayland::hotkey::HotkeyClient`, `compass_wayland_protocols::vicinae_hotkey_v1`, `compass_portals::ShortcutBinder`, `vicinae::global_shortcuts` (`Service`, `WaylandBackend`, `PortalBackend`, `activate`, `serve`, `Control`), `compass_ui::app::global_shortcuts`, `compass_ui::shortcut_recorder` | `the_launcher_and_every_enabled_items_shortcut_are_desired`, `the_launcher_hotkey_defaults_to_super_space_and_an_empty_one_binds_nothing`, `reconciling_binds_what_is_new_rebinds_what_changed_and_keeps_the_rest`, `a_refused_bind_does_nothing_when_pressed_and_is_not_asked_for_again`, `a_bound_shortcut_runs_its_action`, `the_recorder_refuses_the_launchers_own_keys`, `the_recorder_refuses_the_launcher_hotkey_except_for_itself`, `the_recorder_refuses_another_items_shortcut_by_its_title`, `keys_become_the_keysyms_the_cpp_asks_for`, `modifiers_become_the_protocols_mask`, `the_portal_is_asked_in_the_specifications_spelling`; `vicinae_hotkey_binds_presses_refuses_and_releases`, `xx_hotkey_is_preferred_and_speaks_its_own_requests`, `a_compositor_with_neither_protocol_is_unsupported` (a fake compositor over `wayland-server`); `the_binder_binds_a_changed_set_on_a_new_session_and_closes_the_old_one`, `the_binder_delivers_the_current_sessions_activations`, `an_empty_set_closes_the_session_and_binds_nothing`, `a_denied_set_is_reported_as_denied` (a private `dbus-daemon` and a fake GlobalShortcuts portal); `the_launcher_hotkey_and_a_commands_shortcut_are_bound_and_rebound_when_changed`, `a_refused_shortcut_does_nothing_when_pressed`, `capturing_releases_everything_and_binds_it_again_after`, `pressing_the_launcher_hotkey_reaches_the_window`, `pressing_a_commands_shortcut_launches_it_as_cmd_launch_does`, `a_reload_binds_what_the_configuration_now_says`, `the_recorders_capture_reaches_the_service_over_ipc`, `the_portal_is_asked_for_the_configured_trigger`, `a_release_is_not_a_press`; `losing_the_focus_hides_the_launcher_when_close_on_focus_loss_is_on`, `losing_the_focus_keeps_the_launcher_when_close_on_focus_loss_is_off`, `only_losing_a_focus_the_launcher_had_hides_it`, `the_recorder_suspends_the_global_shortcuts_while_it_captures`, `the_launchers_own_keys_and_its_hotkey_are_taken`, `recording_the_launcher_hotkey_does_not_conflict_with_itself` |
+| `src/services/global-shortcuts` | `parity test ✓` 🟡 → ✅ (`Rust ✓` stays 🟡: X11, `inhibitApps`, `probeBind`) | `compass_core::global_shortcuts` (`desired`, `Reconciler`, `validate`, `find_conflict`, `launcher_keybind`, `keysym`, `modifier_mask`, `portal_trigger`), `compass_wayland::hotkey::HotkeyClient`, `compass_wayland_protocols::vicinae_hotkey_v1`, `compass_portals::ShortcutBinder`, `compass::global_shortcuts` (`Service`, `WaylandBackend`, `PortalBackend`, `activate`, `serve`, `Control`), `compass_ui::app::global_shortcuts`, `compass_ui::shortcut_recorder` | `the_launcher_and_every_enabled_items_shortcut_are_desired`, `the_launcher_hotkey_defaults_to_super_space_and_an_empty_one_binds_nothing`, `reconciling_binds_what_is_new_rebinds_what_changed_and_keeps_the_rest`, `a_refused_bind_does_nothing_when_pressed_and_is_not_asked_for_again`, `a_bound_shortcut_runs_its_action`, `the_recorder_refuses_the_launchers_own_keys`, `the_recorder_refuses_the_launcher_hotkey_except_for_itself`, `the_recorder_refuses_another_items_shortcut_by_its_title`, `keys_become_the_keysyms_the_cpp_asks_for`, `modifiers_become_the_protocols_mask`, `the_portal_is_asked_in_the_specifications_spelling`; `vicinae_hotkey_binds_presses_refuses_and_releases`, `xx_hotkey_is_preferred_and_speaks_its_own_requests`, `a_compositor_with_neither_protocol_is_unsupported` (a fake compositor over `wayland-server`); `the_binder_binds_a_changed_set_on_a_new_session_and_closes_the_old_one`, `the_binder_delivers_the_current_sessions_activations`, `an_empty_set_closes_the_session_and_binds_nothing`, `a_denied_set_is_reported_as_denied` (a private `dbus-daemon` and a fake GlobalShortcuts portal); `the_launcher_hotkey_and_a_commands_shortcut_are_bound_and_rebound_when_changed`, `a_refused_shortcut_does_nothing_when_pressed`, `capturing_releases_everything_and_binds_it_again_after`, `pressing_the_launcher_hotkey_reaches_the_window`, `pressing_a_commands_shortcut_launches_it_as_cmd_launch_does`, `a_reload_binds_what_the_configuration_now_says`, `the_recorders_capture_reaches_the_service_over_ipc`, `the_portal_is_asked_for_the_configured_trigger`, `a_release_is_not_a_press`; `losing_the_focus_hides_the_launcher_when_close_on_focus_loss_is_on`, `losing_the_focus_keeps_the_launcher_when_close_on_focus_loss_is_off`, `only_losing_a_focus_the_launcher_had_hides_it`, `the_recorder_suspends_the_global_shortcuts_while_it_captures`, `the_launchers_own_keys_and_its_hotkey_are_taken`, `recording_the_launcher_hotkey_does_not_conflict_with_itself` |
 
 Declared differences:
 
@@ -1226,7 +1226,7 @@ Declared differences:
   desktop may override, and GNOME keeps the one the user chose in its own settings. Suspending
   for the recorder closes the portal session, and the set is bound on a new one after.
 - A configuration edited by hand is bound at the next start or the next change made through the
-  settings view or the action panel: the engine does not watch `vicinae.json` as `config::Manager`
+  settings view or the action panel: the engine does not watch `compass.json` as `config::Manager`
   does.
 - The recorder cannot tell the compositor refused a combination (`probeBind`): the engine logs the
   refusal when it binds, and the shortcut stays in the configuration. (Closed in "The gaps pass,
@@ -1260,10 +1260,10 @@ not the ECB's shape is refused by name. `RateCache` holds what was fetched and c
 the fetch as a closure, keeps and caches a good answer and leaves the rates in hand after a failed
 fetch or an unreadable answer. Rates are stale a day after they were fetched.
 
-**The engine** (`vicinae::exchange_rates::ExchangeRateService`). It reads the cache the first time
-the rates are asked for, fetches through the engine's HTTP client (`vicinae::stores::get`, the
+**The engine** (`compass::exchange_rates::ExchangeRateService`). It reads the cache the first time
+the rates are asked for, fetches through the engine's HTTP client (`compass::stores::get`, the
 stores' `ureq` agent) at start when there are none or they are stale, and looks hourly after that,
-as the C++'s hourly timer; `VICINAE_DISABLE_AUTO_RATE_REFRESH` turns the automatic refresh off, as
+as the C++'s hourly timer; `COMPASS_DISABLE_AUTO_RATE_REFRESH` turns the automatic refresh off, as
 `Environment::isAutoRateRefreshDisabled`. `COMPASS_EXCHANGE_RATES_URL` points it at another copy
 of the file (tests, mirrors). It answers IPC v21 `Request::ExchangeRates` with what it holds and
 `Request::RefreshExchangeRates` with a fresh fetch or the reason it failed, both as
@@ -1282,7 +1282,7 @@ refreshed" or the error.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/calculator-service` | `Rust ✓` 🟡 → ✅ | `compass_core::exchange_rates` (`parse_ecb`, `ExchangeRates`, `RateCache`, `cache_path`, `source_url`), `compass_core::calculator` (`set_exchange_rates`, `compute_with_rates`, `RateHandler`), `vicinae::exchange_rates` (`ExchangeRateService`, `run`), `compass_ui::app::calculator` (`exchange_rates_task`, `refresh_exchange_rates`), `CommandKind::RefreshExchangeRates` | `the_ecb_daily_file_is_read_with_its_date_and_the_euro`, `a_file_that_is_not_the_ecbs_is_refused_by_name`, `currency_expressions_are_answered_with_the_rates`, `a_currency_the_rates_do_not_list_answers_nothing`, `without_rates_currency_expressions_answer_nothing`, `the_fixture_s_rates_convert_through_the_euro`, `the_process_rates_reach_root_search`, `rates_go_stale_after_a_day_or_when_the_clock_goes_back`, `a_refresh_keeps_and_caches_the_rates_and_a_restart_reads_them_back`, `a_failed_refresh_keeps_the_rates_in_hand`, `an_unreadable_cache_is_no_rates` (`compass-core/tests/exchange_rates.rs`, over a checked-in ECB file and fake fetches); `the_engine_fetches_the_ecb_rates_at_start_caches_them_and_keeps_them_when_a_refresh_fails`, `an_offline_engine_answers_with_the_cached_rates_or_none` (a real engine against a local fake ECB); `refresh_exchange_rates_installs_the_fresh_rates_and_says_so_or_why_not` |
+| `src/services/calculator-service` | `Rust ✓` 🟡 → ✅ | `compass_core::exchange_rates` (`parse_ecb`, `ExchangeRates`, `RateCache`, `cache_path`, `source_url`), `compass_core::calculator` (`set_exchange_rates`, `compute_with_rates`, `RateHandler`), `compass::exchange_rates` (`ExchangeRateService`, `run`), `compass_ui::app::calculator` (`exchange_rates_task`, `refresh_exchange_rates`), `CommandKind::RefreshExchangeRates` | `the_ecb_daily_file_is_read_with_its_date_and_the_euro`, `a_file_that_is_not_the_ecbs_is_refused_by_name`, `currency_expressions_are_answered_with_the_rates`, `a_currency_the_rates_do_not_list_answers_nothing`, `without_rates_currency_expressions_answer_nothing`, `the_fixture_s_rates_convert_through_the_euro`, `the_process_rates_reach_root_search`, `rates_go_stale_after_a_day_or_when_the_clock_goes_back`, `a_refresh_keeps_and_caches_the_rates_and_a_restart_reads_them_back`, `a_failed_refresh_keeps_the_rates_in_hand`, `an_unreadable_cache_is_no_rates` (`compass-core/tests/exchange_rates.rs`, over a checked-in ECB file and fake fetches); `the_engine_fetches_the_ecb_rates_at_start_caches_them_and_keeps_them_when_a_refresh_fails`, `an_offline_engine_answers_with_the_cached_rates_or_none` (a real engine against a local fake ECB); `refresh_exchange_rates_installs_the_fresh_rates_and_says_so_or_why_not` |
 
 Declared differences:
 
@@ -1301,7 +1301,7 @@ Declared differences:
   window opens.
 - `€` before a number is moved after it before fend evaluates (`€5` is asked as `5€`), since fend
   reads `€5` as a word; the question remembered is the one typed.
-- `VICINAE_DISABLE_AUTO_RATE_REFRESH` set to the empty string does not disable the refresh (the C++
+- `COMPASS_DISABLE_AUTO_RATE_REFRESH` set to the empty string does not disable the refresh (the C++
   counts any value); the tests use this to turn it back on for one engine.
 - As in the C++, remembered conversions are not re-evaluated after a refresh:
   `CalculatorService::updateConversionRecords` exists there but nothing calls it.
@@ -1315,11 +1315,11 @@ engine a test starts has the automatic refresh turned off.
 Two decisions the maintainer took. No IPC change: the tray's
 entries reach the window over the `WindowCommand`s it already has, and its switch is a setting.
 
-**Compass's own tray icon** (`src/services/tray`). `vicinae::tray_icon` serves a
+**Compass's own tray icon** (`src/services/tray`). `compass::tray_icon` serves a
 StatusNotifierItem over the `ksni` crate with the C++'s menu (`compass_core::tray`): Toggle
 (also what `Activate` and `SecondaryActivate` do), the version, About (the settings view's About
 page), Settings… (the settings view, as `vicinae://settings/open` opens it), the three community
-links, and Quit, which stops the engine as `vicinae shutdown` does and is left out under systemd
+links, and Quit, which stops the engine as `compass shutdown` does and is left out under systemd
 (`INVOCATION_ID`). It owns `org.kde.StatusNotifierItem-<pid>-<n>` and registers with the
 desktop's `StatusNotifierWatcher`, again whenever one appears. `tray.enabled` (the C++'s
 `config::Tray`, on by default) moved from `settings_catalog::NOT_IN_COMPASS` to an offered setting
@@ -1328,14 +1328,14 @@ on the Advanced page; the engine reads it at start and applies it at once when t
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/tray` | `Rust ✓` 🟡 → ✅ | `vicinae::tray_icon` (`Control`, `run`, `perform`, `pixmaps`, `settings_link`) over `ksni`, `compass_core::tray` (the menu model), `compass_core::config::TrayConfig`, `settings_catalog`'s `tray.enabled`, `serve::settings::apply_live`, `config_migration`'s `tray.enabled` | `compass_shows_its_own_tray_icon_with_the_cpp_menu_as_the_setting_says` (a private `dbus-daemon` and a fake `StatusNotifierWatcher`: off in the file registers nothing; turned on it registers under the specification's name with `Id`, `Title` and the menu's labels; `Activate` and the entries reach the window as `Toggle` and the settings deeplinks; off it leaves the bus, on it registers again; Quit stops the engine), `the_tray_host_lists_activates_and_browses_another_applications_item` (Compass's own icon is not among Search Tray's), `tray_icon::tests::{the_menu_is_the_models_with_its_labels_and_actions, a_supervised_engine_offers_no_quit, the_pixmaps_are_the_cpp_sizes_in_argb_network_order, the_settings_entries_open_the_settings_view_by_its_deeplink, turning_the_setting_on_and_off_is_seen_once_each}`, `the_labels_are_the_cpp_ones_under_the_compass_name`, `applying_writes_the_key_the_engine_reads_and_keeps_the_rest`, `every_cpp_general_settings_property_is_ported_or_declared`, `every_documented_key_is_in_the_schema_with_its_default`, `migrate_writes_vicinae_json_and_leaves_the_cpp_file_alone` |
+| `src/services/tray` | `Rust ✓` 🟡 → ✅ | `compass::tray_icon` (`Control`, `run`, `perform`, `pixmaps`, `settings_link`) over `ksni`, `compass_core::tray` (the menu model), `compass_core::config::TrayConfig`, `settings_catalog`'s `tray.enabled`, `serve::settings::apply_live`, `config_migration`'s `tray.enabled` | `compass_shows_its_own_tray_icon_with_the_cpp_menu_as_the_setting_says` (a private `dbus-daemon` and a fake `StatusNotifierWatcher`: off in the file registers nothing; turned on it registers under the specification's name with `Id`, `Title` and the menu's labels; `Activate` and the entries reach the window as `Toggle` and the settings deeplinks; off it leaves the bus, on it registers again; Quit stops the engine), `the_tray_host_lists_activates_and_browses_another_applications_item` (Compass's own icon is not among Search Tray's), `tray_icon::tests::{the_menu_is_the_models_with_its_labels_and_actions, a_supervised_engine_offers_no_quit, the_pixmaps_are_the_cpp_sizes_in_argb_network_order, the_settings_entries_open_the_settings_view_by_its_deeplink, turning_the_setting_on_and_off_is_seen_once_each}`, `the_labels_are_the_cpp_ones_under_the_compass_name`, `applying_writes_the_key_the_engine_reads_and_keeps_the_rest`, `every_cpp_general_settings_property_is_ported_or_declared`, `every_documented_key_is_in_the_schema_with_its_default`, `migrate_writes_vicinae_json_and_leaves_the_cpp_file_alone` |
 
 Declared differences:
 
 - The product's name in the menu is Compass (ADR-0012): Toggle Compass, About Compass,
   Quit Compass, and the version as `Compass <version>` (the C++ passes its git tag and commit).
   The three community links are upstream Vicinae's, as the C++ has them.
-- The item's `Id` and `IconName` are the application id `com.vicinae.Vicinae`, the icon the
+- The item's `Id` and `IconName` are the application id `org.tunaos.compass`, the icon the
   package installs; the C++ uses `vicinae`. Its pixmaps are drawn from `extra/compass.svg`, where
   the C++ draws `vicinae.svg` over a white disc.
 - Turned off, the item leaves the bus; the C++ keeps it and reports `Passive`, which some hosts
@@ -1396,19 +1396,19 @@ and `GetActiveWorkspace` as JSON strings; here the active one is a key of each e
 still speaks contract 3 (`compass_shell::OLDEST_CONTRACT_VERSION`): an extension a release behind
 switches windows, reads the clipboard and pastes as before, and a workspace call is refused before
 it reaches the bus (`ShellError::TooOld`), which the engine words as "update the extension".
-`vicinae doctor`'s `gnome.shell-extension` reports `extension present, contract v4`, and warns
+`compass doctor`'s `gnome.shell-extension` reports `extension present, contract v4`, and warns
 for v3 that Switch Workspaces needs the update. With no compositor IPC (Hyprland, niri, KWin) and
 the extension answering, `WindowManagerCapabilities`, `ListWorkspaces` and `FocusWorkspace` go to
-the extension (`vicinae::serve::workspaces::{gnome, gnome_workspace, gnome_window}`): each
+the extension (`compass::serve::workspaces::{gnome, gnome_workspace, gnome_window}`): each
 workspace counts its windows and names each application on it once, as on the other compositors.
 
-**`globalShortcuts.inhibitApps`** is `global_shortcuts.inhibit_apps` in `vicinae.json` (schema,
+**`globalShortcuts.inhibitApps`** is `global_shortcuts.inhibit_apps` in `compass.json` (schema,
 the migration from `settings.json` carries it, and the settings view's General page lists it as
 "Pause shortcuts in", a list of application ids). While the focused application's desktop id is
 listed, every global shortcut is released so its keys reach it (`Service::set_inhibited`, as
 `updateInhibition`): nothing binds while paused, not a reload and not the end of a recording,
 and the configuration is bound again once it is not. The focused application comes from the
-window-manager providers (`vicinae::frontmost`, factored out of snippet expansion, which uses the
+window-manager providers (`compass::frontmost`, factored out of snippet expansion, which uses the
 same answer): the toplevel list on wlroots, KWin's tracker, the Shell extension on GNOME, each
 window recognised in the app index as `AppRuntime::frontmostApp` recognises it.
 
@@ -1421,8 +1421,8 @@ the desktop takes is saved.
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/window-manager` | — (stays `Rust ✓` 🟡: the X11 provider) | `compass_shell` contract v4 (`ShellClient::{list_workspaces, activate_workspace}`, `Workspace`, `Availability::supports`, `ShellError::TooOld`, `OLDEST_CONTRACT_VERSION`, `WORKSPACES_SINCE`), the extension's `ListWorkspaces` and `ActivateWorkspace`, `vicinae::serve::workspaces::{gnome, gnome_workspace, gnome_window}`, `vicinae::window_service::refusal`, the `gnome.shell-extension` doctor check | `workspaces_are_listed_and_switched_through_the_extension`, `an_extension_a_release_behind_switches_windows_but_refuses_workspaces`, `every_contract_member_is_reached_through_the_proxy`, `the_contract_is_exactly_these_members`, `served_interfaces_match_the_checked_in_xml` (a private `dbus-daemon` and the mock Shell); `an_extension_a_release_behind_is_available_without_workspaces`, `a_workspace_needs_its_index_and_defaults_the_rest`; `list_workspaces_fills_every_key_the_client_decodes`, `a_workspace_switch_tells_the_client_to_look_again`, `the_vm_tier_asks_for_the_workspaces`, `the_extension_speaks_this_contract_version`, `the_vm_tier_waits_for_this_contract_version`; `on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension`, `an_extension_a_release_behind_offers_no_switch_workspaces_and_says_to_update` (the engine against the mock Shell); `an_extension_too_old_for_workspaces_is_asked_to_update`, `extension_at_contract_v4_passes_and_one_a_release_behind_warns_about_workspaces` |
-| `src/services/global-shortcuts` | — (stays `Rust ✓` 🟡: the X11 backend) | `compass_core::config::GlobalShortcutsConfig`, `compass_core::global_shortcuts::{inhibited, probe, PROBE_ID}`, `compass_core::settings_catalog::Kind::Names`, `vicinae::global_shortcuts` (`Service::{set_inhibited, probe}`, `Backend::probe`, `Control::{set_frontmost, probe}`), `vicinae::frontmost`, `compass_ui::shortcut_recorder` (`Outcome::Probe`, `probed`), `compass_ui::app::global_shortcuts::{probe_shortcut, shortcut_probed}` | `a_listed_frontmost_application_pauses_the_shortcuts`, `a_probe_binds_the_combination_under_its_own_id`, `the_apps_that_pause_the_shortcuts_are_names_the_engine_reads`, `the_migrated_file_round_trips_through_the_rust_reader`, `every_shared_setting_is_carried_across`; `a_listed_application_in_front_releases_every_shortcut_until_it_leaves`, `the_frontmost_application_pauses_the_shortcuts_the_configuration_names`, `a_probe_binds_and_releases_the_combination_and_says_why_it_was_refused`, `the_recorders_probe_reaches_the_backend_over_ipc`; `a_combination_the_desktop_refuses_is_shown_and_recording_goes_on`, `the_recorder_shows_the_desktops_refusal_and_keeps_what_it_takes`, `a_chord_is_recorded_in_the_cpps_spelling`; `every_request_variant_round_trips`, `request_variants_are_exhaustive`, `response_variants_are_exhaustive` |
+| `src/services/window-manager` | — (stays `Rust ✓` 🟡: the X11 provider) | `compass_shell` contract v4 (`ShellClient::{list_workspaces, activate_workspace}`, `Workspace`, `Availability::supports`, `ShellError::TooOld`, `OLDEST_CONTRACT_VERSION`, `WORKSPACES_SINCE`), the extension's `ListWorkspaces` and `ActivateWorkspace`, `compass::serve::workspaces::{gnome, gnome_workspace, gnome_window}`, `compass::window_service::refusal`, the `gnome.shell-extension` doctor check | `workspaces_are_listed_and_switched_through_the_extension`, `an_extension_a_release_behind_switches_windows_but_refuses_workspaces`, `every_contract_member_is_reached_through_the_proxy`, `the_contract_is_exactly_these_members`, `served_interfaces_match_the_checked_in_xml` (a private `dbus-daemon` and the mock Shell); `an_extension_a_release_behind_is_available_without_workspaces`, `a_workspace_needs_its_index_and_defaults_the_rest`; `list_workspaces_fills_every_key_the_client_decodes`, `a_workspace_switch_tells_the_client_to_look_again`, `the_vm_tier_asks_for_the_workspaces`, `the_extension_speaks_this_contract_version`, `the_vm_tier_waits_for_this_contract_version`; `on_gnome_switch_workspaces_lists_and_switches_through_the_shell_extension`, `an_extension_a_release_behind_offers_no_switch_workspaces_and_says_to_update` (the engine against the mock Shell); `an_extension_too_old_for_workspaces_is_asked_to_update`, `extension_at_contract_v4_passes_and_one_a_release_behind_warns_about_workspaces` |
+| `src/services/global-shortcuts` | — (stays `Rust ✓` 🟡: the X11 backend) | `compass_core::config::GlobalShortcutsConfig`, `compass_core::global_shortcuts::{inhibited, probe, PROBE_ID}`, `compass_core::settings_catalog::Kind::Names`, `compass::global_shortcuts` (`Service::{set_inhibited, probe}`, `Backend::probe`, `Control::{set_frontmost, probe}`), `compass::frontmost`, `compass_ui::shortcut_recorder` (`Outcome::Probe`, `probed`), `compass_ui::app::global_shortcuts::{probe_shortcut, shortcut_probed}` | `a_listed_frontmost_application_pauses_the_shortcuts`, `a_probe_binds_the_combination_under_its_own_id`, `the_apps_that_pause_the_shortcuts_are_names_the_engine_reads`, `the_migrated_file_round_trips_through_the_rust_reader`, `every_shared_setting_is_carried_across`; `a_listed_application_in_front_releases_every_shortcut_until_it_leaves`, `the_frontmost_application_pauses_the_shortcuts_the_configuration_names`, `a_probe_binds_and_releases_the_combination_and_says_why_it_was_refused`, `the_recorders_probe_reaches_the_backend_over_ipc`; `a_combination_the_desktop_refuses_is_shown_and_recording_goes_on`, `the_recorder_shows_the_desktops_refusal_and_keeps_what_it_takes`, `a_chord_is_recorded_in_the_cpps_spelling`; `every_request_variant_round_trips`, `request_variants_are_exhaustive`, `response_variants_are_exhaustive` |
 
 Declared differences:
 
@@ -1433,7 +1433,7 @@ Declared differences:
   arrives first anyway).
 - **Contract negotiation is a range, not an equality.** Before this pass the engine used an
   extension only at exactly its own contract version; it now uses any version from 3 to 4 and
-  refuses per call what an older one lacks. `vicinae doctor` warns rather than fails for v3.
+  refuses per call what an older one lacks. `compass doctor` warns rather than fails for v3.
 - **`inhibit_apps` accepts an id with or without `.desktop`.** The C++ compares the desktop file id
   exactly (`org.gnome.Boxes.desktop`); `org.gnome.Boxes` matches it too here.
 - **KWin's focus is looked at twice a second** for inhibition (and for snippet expansion, which
@@ -1486,7 +1486,7 @@ connection, holds because the window is resident (ADR-0015) and the connection i
 `iced::window::run`.
 
 **Applying it.** `compass_platform::WindowMaterial` is the seam (`apply(window, region)`, the region
-`None` to take the blur away), implemented by `vicinae::window_material::LauncherMaterial` over the
+`None` to take the blur away), implemented by `compass::window_material::LauncherMaterial` over the
 bridge and `compass_wayland::material::BackgroundEffects`, and handed to `compass_ui::run_resident`
 by the binary as the shortcut inhibitor is to the layer shell. `compass-ui` wraps the card in a
 sensor keyed on translucency and corner radius, so the card's size is reported when it is shown,
@@ -1500,7 +1500,7 @@ the effects of destroyed surfaces before sending anything, since `set_blur_regio
 
 | Row | Flipped | Rust | Tests that would fail on a regression |
 |---|---|---|---|
-| `src/services/window-material` | Rust ✅ | `compass_wayland_foreign::bridge`, `vicinae::window_material::LauncherMaterial`, `compass_ui::material`, `LauncherApp::card_measured`, `compass_platform::WindowMaterial`, `compass_wayland::material::BackgroundEffects` | `a_toolkits_surface_is_bridged_into_a_usable_proxy`, `a_pointer_that_is_not_a_surface_is_refused`, `on_sway_the_bridged_connection_reports_no_blur_without_an_error` (headless Sway), `a_withheld_display_is_the_toolkits_error`, `a_display_of_another_platform_is_not_wayland`, `a_blurring_compositor_gets_the_region_once_per_change`, `a_destroyed_surface_is_never_sent_a_region`, `without_the_blur_capability_nothing_is_asked` (in-process compositor), `a_translucent_card_asks_for_blur_behind_itself_and_an_opaque_one_takes_it_away`, `a_closed_window_forgets_its_blur`, `a_translucent_card_is_blurred_where_it_is_drawn`, `a_window_that_is_not_wayland_is_unsupported_and_not_asked_again`, `what_the_client_did_is_what_the_window_is_told`, with the earlier `the_corners_are_cut_as_the_cpp_cuts_them` and `background_effect_is_bound_where_advertised_and_refused_by_name_where_not` |
+| `src/services/window-material` | Rust ✅ | `compass_wayland_foreign::bridge`, `compass::window_material::LauncherMaterial`, `compass_ui::material`, `LauncherApp::card_measured`, `compass_platform::WindowMaterial`, `compass_wayland::material::BackgroundEffects` | `a_toolkits_surface_is_bridged_into_a_usable_proxy`, `a_pointer_that_is_not_a_surface_is_refused`, `on_sway_the_bridged_connection_reports_no_blur_without_an_error` (headless Sway), `a_withheld_display_is_the_toolkits_error`, `a_display_of_another_platform_is_not_wayland`, `a_blurring_compositor_gets_the_region_once_per_change`, `a_destroyed_surface_is_never_sent_a_region`, `without_the_blur_capability_nothing_is_asked` (in-process compositor), `a_translucent_card_asks_for_blur_behind_itself_and_an_opaque_one_takes_it_away`, `a_closed_window_forgets_its_blur`, `a_translucent_card_is_blurred_where_it_is_drawn`, `a_window_that_is_not_wayland_is_unsupported_and_not_asked_again`, `what_the_client_did_is_what_the_window_is_told`, with the earlier `the_corners_are_cut_as_the_cpp_cuts_them` and `background_effect_is_bound_where_advertised_and_refused_by_name_where_not` |
 
 Declared differences:
 
@@ -1530,7 +1530,7 @@ pieces, documented with the measurement behind them in
   runtime's clipboard, `osascript` and other macOS-only programs fail by name
   rather than with `ENOENT`, and Homebrew's macOS paths resolve to Linuxbrew's.
   `process.platform` stays `linux`.
-- The host-command broker (`vicinae::host_commands`, `HostCommand/run`): `brew`,
+- The host-command broker (`compass::host_commands`, `HostCommand/run`): `brew`,
   for any extension, runs on the host as the engine's child once the person
   allows it (Allow Once, Always Allow, Deny), never by widening the
   extension's Landlock policy. "Always Allow" is kept in
@@ -1931,7 +1931,7 @@ One line was written and then removed because a control could not make it fail: 
 printing a whole number without its fraction. Rust's `f64` `Display` already does that, the same way
 `QString::arg(float)` does.
 
-**The row is green**: the HTTP calls are the engine's (`vicinae::stores`, over `ureq`) and the views
+**The row is green**: the HTTP calls are the engine's (`compass::stores`, over `ureq`) and the views
 the launcher's, with what differs declared under "Extension Store and Raycast Store" below
 (`the_raycast_store_badges_compatibility_and_notices_an_update`,
 `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog`). The install-from-zip path
@@ -1962,7 +1962,7 @@ extension is now missing" send someone looking in different places.
 The download, the install and uninstall and the rescan after either now run through the stores
 (`the_vicinae_store_lists_installs_into_root_search_and_uninstalls`). The directory watch that
 notices an extension appearing outside the store, such as a developer's build, landed after the
-truth pass and turns the row green (`vicinae::catalog_watch::watch_extensions`; see "Gaps closed
+truth pass and turns the row green (`compass::catalog_watch::watch_extensions`; see "Gaps closed
 after the truth pass").
 
 **`src/builtins/internal` → `compass-core::internal_commands`** — a hidden extension holding one
@@ -2215,9 +2215,9 @@ opens, it just gets no title, directory or hold. Guessing more would not be an i
 `findCuratedOpeners`' dedupe by display name, and `list`'s case-insensitive sort. Launching, the
 file browser (`ShowItems`) and the terminal (`compass-xdg::terminal`) are the engine's now.
 The rest landed after the ledger truth pass, which turns the row green (see "Gaps closed after
-the truth pass" above): the watch on the application directories (`vicinae::catalog_watch`,
+the truth pass" above): the watch on the application directories (`compass::catalog_watch`,
 `AppIndex::rescan_applications`), and the text-editor, file-browser and web-browser lookups with
-`setWebBrowser` (`vicinae::extension_apps::EngineApps`). Two things differ, both declared there.
+`setWebBrowser` (`compass::extension_apps::EngineApps`). Two things differ, both declared there.
 
 `findOpeners` / `findDefaultOpener` are no longer among them. The per-type lookup was already in
 `compass-xdg::mimeapps`; what was missing was the **parent-chain walk**, which the C++ gets from
@@ -2293,7 +2293,7 @@ new request from older peers, with the variant appended to preserve existing
 discriminants. The existing unreadable-store fallback remains in-memory for that
 session.
 
-Attached UI windows now use a socket-free backend interface supplied by `vicinae`
+Attached UI windows now use a socket-free backend interface supplied by `compass`
 to query the same daemon ranking and report successful launches. The adapter
 bounds each IPC operation, and Iced explicitly uses its Tokio executor. The UI
 cancels superseded queries, rejects late generations, and clears stale rows while
@@ -2419,7 +2419,7 @@ application meant nothing at all. The menu itself is the root node's *children*:
 would put an unnamed entry above every menu.
 
 The DBus plumbing (the StatusNotifierWatcher registration, the menu layout and the property-change
-signals) landed in "The gaps pass, icons and tray", as `vicinae::tray_host` over the `system-tray`
+signals) landed in "The gaps pass, icons and tray", as `compass::tray_host` over the `system-tray`
 crate.
 
 **`vendor/sqlcipher` + `vendor/fuzzy-trigram` → `compass-sqlcipher-sys`** — the storage engine
@@ -2456,7 +2456,7 @@ It runs on `compass-sqlcipher-sys`: SQLCipher 4 through `rusqlite`, and `vendor/
 same tokenizer C the C++ engine links ([ADR-0014](./adr/0014-clipboard-storage-is-sqlcipher-plus-a-vendored-tokenizer.md)),
 so both engines read and write the same encrypted files with the same tokenizer.
 
-The layer above the database is the engine's now (`vicinae::clipboard_service`): the selection is
+The layer above the database is the engine's now (`compass::clipboard_service`): the selection is
 watched through the Shell extension on GNOME and over data-control on wlroots, and payloads are
 stored on disk encrypted under Compass's own keyring key (`a_recorded_copy_is_listed_and_found`, the
 encrypted-at-rest assertions beside it). Eviction by age and its timer, the monitoring switch and
@@ -2905,9 +2905,9 @@ what catches a window the compositor destroyed and replaced rather than moved.
 missing four fifths has landed: the SQLite schema and writer (`compass_db::db_writer`,
 `sqlite_writer`), the query engine and its pool (`query_engine`, `query_reader`, `query_pool`), the
 scanners and dispatcher (`indexer_scanner`, `incremental_scanner`, `scan_dispatcher`), the indexer
-itself (`compass_db::file_indexer`), the watcher (`vicinae::indexer_watch` over
-`compass_platform_linux::dir_watcher`), the JSON-RPC service (`vicinae::indexer_service`) and the
-process (`vicinae-file-indexer`). `query-quality.cpp` is `compass-db/tests/query_quality.rs`
+itself (`compass_db::file_indexer`), the watcher (`compass::indexer_watch` over
+`compass_platform_linux::dir_watcher`), the JSON-RPC service (`compass::indexer_service`) and the
+process (`compass-file-indexer`). `query-quality.cpp` is `compass-db/tests/query_quality.rs`
 (23/23), `main.cpp`'s cases are spread over `compass-core`'s `vocabulary`, `query_policy`,
 `io_pacer` and `scan_roots` suites, and the whole path is driven end to end by
 `search_files_indexes_the_home_directory_and_finds_a_file_by_a_misspelled_query`. The one
@@ -3422,8 +3422,8 @@ wrong in a way a test can name — it is unspecified, and this is a choice withi
 
 ### Search Files — what the port does not have yet
 
-The command runs end to end: the engine starts `vicinae-file-indexer` with the file extension's
-preferences (`providers.files.preferences` in `vicinae.json`: `autoIndexing`, `indexingPaths`,
+The command runs end to end: the engine starts `compass-file-indexer` with the file extension's
+preferences (`providers.files.preferences` in `compass.json`: `autoIndexing`, `indexingPaths`,
 `excludedIndexingPaths`, defaulting to on, the home directory, nothing), restarts it with the C++'s
 backoff, answers `SearchFiles` with recent files, a direct path or ranked index matches, and opens
 a file with its default application (Enter) or shows it in the file browser (Ctrl+Enter). What
@@ -3464,11 +3464,11 @@ them and three places where the answer an extension gets differs.
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | The UI receives an extension's view in-process, whatever its size. | The launcher and `vicinae conformance` receive it over IPC as `ExtensionView`, whose frames were capped at 1 MiB — about a thousand list items with their actions. The cap is now 32 MiB (`compass_ipc::MAX_FRAME_LEN`), still checked from the prefix before anything is reserved. No wire change and no protocol bump: an older peer refuses a large frame as it always did. | `an_extension_view_of_several_mebibytes_is_carried` |
+| 1 | The UI receives an extension's view in-process, whatever its size. | The launcher and `compass conformance` receive it over IPC as `ExtensionView`, whose frames were capped at 1 MiB — about a thousand list items with their actions. The cap is now 32 MiB (`compass_ipc::MAX_FRAME_LEN`), still checked from the prefix before anything is reserved. No wire change and no protocol bump: an older peer refuses a large frame as it always did. | `an_extension_view_of_several_mebibytes_is_carried` |
 | 2 | `Storage/get` of a missing key answers `null`. Raycast resolves `undefined`, and Google Search tests `=== undefined` before `JSON.parse`, so on the C++ host it crashes on `null.filter` with an empty history. **A C++ bug not reproduced.** | The reply carries no `result` member, which the generated client resolves as `undefined`. A stored value cannot be `null`, so nothing else changes. | `a_missing_key_reads_as_undefined_not_null` |
 | 3 | `getSelectedText` reads the primary selection the data-control clipboard server last reported, else Qt's (which needs the launcher focused), else fails "Unable to get selected text". | The primary selection over data-control on a wlroots compositor (`compass_wayland::clipboard::read_primary_text`), and through the Shell extension on GNOME (`GetPrimarySelection`, contract version 3: Mutter has no data-control and a Wayland client may read the primary selection only while it has keyboard focus, which the engine never has). The failure is the C++'s, verbatim. | `the_primary_selection_reads_back_and_is_not_the_clipboard`, `on_sway_an_extension_reads_the_selection_the_windows_and_the_monitors`, `the_primary_selection_is_its_text_or_nothing` |
 | 4 | `WindowManagement` is the window manager provider's: windows, workspaces, screens, bounds. | Served by the engine (`extension_windows`), over the window switcher's backends in the C++ order: **Hyprland's or niri's own IPC** first (the C++ providers, ported: windows with their workspace and pid, Hyprland's with geometry; the workspace list; the active workspace; focus through the compositor), then the foreign-toplevel list on other wlroots compositors (no bounds, no workspace), then the Shell extension on GNOME (whose `ListWindows` gained a frame and `fullscreen` in contract 3). Screens come from `wl_output`, with `zxdg_output_manager_v1` for the logical layout, on any compositor; the active one is the one under the active window, or the only one. The *active window* is the focused one, or — with the launcher focused, as it is when an extension asks — the one before it in most-recently-used order, which is the window the C++'s focus memory returns; on Hyprland it is the C++'s `getFrontmostWindowSync` (lowest focus history on the active workspace). **Not served** off Hyprland and niri: workspaces (`getActiveWorkspace` fails "No active workspace", `getWorkspaces` is `[]`). `setWindowBounds` is refused everywhere ("Failed to set window bounds"), as the C++ Hyprland and niri providers refuse it. | `the_focused_window_is_active_unless_it_is_the_launcher`, `with_the_launcher_focused_the_window_before_it_is_active`, `the_screen_under_the_focused_window_is_the_active_one`, `the_headless_output_is_listed_with_its_name_and_mode`, `without_a_desktop_the_selection_and_window_apis_answer_as_the_cpp_does`, `on_hyprland_windows_workspaces_and_focus_come_from_its_socket`, `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces` |
-| 5 | `FileSearch/search` asks the file indexer's `queryAsync`. | The same helper Search Files asks (`vicinae-file-indexer`, supervised by the engine), its rows only — no recent files, no direct path — with the adapter's C++ quirks (an omitted `limit` asks for none). With indexing off or the helper not running the answer is `[]`, and `environment.canAccess(FileSearch)` is `false`. | `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces` |
+| 5 | `FileSearch/search` asks the file indexer's `queryAsync`. | The same helper Search Files asks (`compass-file-indexer`, supervised by the engine), its rows only — no recent files, no direct path — with the adapter's C++ quirks (an omitted `limit` asks for none). With indexing off or the helper not running the answer is `[]`, and `environment.canAccess(FileSearch)` is `false`. | `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces` |
 | 6 | `Wallpaper/set` goes to `WallpaperManager`: the first activatable of hyprpaper, swww/awww, GNOME, KDE, Cinnamon, MATE. | The same order and the same tests of activatability (`hyprctl hyprpaper listactive`, `swww query`, the desktop name with `gsettings` on the path, `org.kde.plasmashell` on the bus), resolved once per engine; the commands and the Plasma script are `compass_core::wallpaper`'s, run on the host (`flatpak-spawn --host` in the Flatpak). The C++'s messages, verbatim: "Setting the wallpaper is not supported in the current environment", "No such file: …", a failing program's stderr else "… exited with code N". Inside the Flatpak the host's path cannot be searched, so a program counts as present and running it decides. | `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces`, `a_failing_command_says_its_stderr_else_its_code`, `compass-core/tests/wallpaper.rs` |
 | 7 | `BrowserExtension/*` reads the tabs the browser extension's native host reported. | No browser ever connects (ADR-0008 took browser control out of the port), so the engine answers as the C++ does with none connected: `getTabs` is `[]`, `focusTab` succeeds and reaches nothing, and `canAccess(BrowserExtension)` is `false` (the C++'s own test: `!browsers().empty()`). | `an_extension_searches_files_sets_the_wallpaper_and_sees_hyprland_workspaces` |
 | 8 | `Command/launchCommand` pushes the sibling on the navigation stack, over the view that asked; `openCommandPreferences`/`openExtensionPreferences` open the settings window at the command; `updateCommandMetadata` overrides the root row's subtitle in memory. | The launcher is another process, so a launch is kept under a token and the window is told to take it (`WindowCommand::Launch`, IPC v15), then runs the command as if it had been picked in root search — its arguments form, preferences form and view included. **The view that asked is closed**, not kept beneath: the launcher shows one extension view at a time. The launch context and fallback text ride along to the command's next run (within five minutes). With no window attached a no-view sibling runs in the engine; a view sibling has nowhere to go and is dropped with a warning. Preferences open the command's preferences form in the launcher (saved, not run) rather than a settings window. The subtitle override is in memory as in the C++, shown by root search and served to the window (`ExtensionSubtitles`). "No such command", verbatim, for a command that is not installed. | `an_extension_launches_a_sibling_relabels_itself_and_opens_its_preferences`, `a_sibling_is_launched_through_the_window_with_its_arguments_and_context`, `an_extension_s_launch_runs_its_command_and_its_subtitle_override_shows`, `preferences_an_extension_opens_are_saved_without_running_it` |
@@ -3488,13 +3488,13 @@ them and three places where the answer an extension gets differs.
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
 | 1 | An overlay names the provider and waits for "Open browser". | The browser opens at once, with the default `x-scheme-handler/https` application, and the view shows a toast ("Continue in your browser to connect …") until the redirect arrives; then "Connected to …" or the provider's refusal. | `an_oauth_authorization_opens_the_browser_and_the_redirect_answers_it` |
-| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `vicinae deeplink <url>`, which sends `OAuthRedirect` (IPC v12); the Flatpak exports `com.vicinae.Vicinae.UrlHandler.desktop` for `raycast:`, `com.raycast:` and `vicinae:`. The store's extensions links open a detail page (IPC v16 `OpenDeeplink`, "Extension Store and Raycast Store" #13); every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
+| 2 | `vicinae raycast://oauth?code=…&state=…` reaches the running server through the C++ IPC `oauth` command. | `vicinae <url>` becomes `compass deeplink <url>`, which sends `OAuthRedirect` (IPC v12); the Flatpak exports `org.tunaos.compass.UrlHandler.desktop` for `compass:`, `raycast:`, `com.raycast:` and `vicinae:`. The store's extensions links open a detail page (IPC v16 `OpenDeeplink`, "Extension Store and Raycast Store" #13); every other deeplink the C++ takes is refused by name. | `a_bare_deeplink_becomes_the_deeplink_command`, `every_redirect_shape_raycast_uses_parses` |
 | 3 | An authorize URL without a `state` waits for ever. | Refused at once: nothing could match a redirect to it. | `a_url_without_a_state_is_refused_rather_than_waited_on` |
 | 4 | A redirect with `error=` leaves the request waiting. | The extension's `authorize()` rejects with `error_description` (else `error`). | `every_redirect_shape_raycast_uses_parses` |
 ### Shortcuts — what the port does not have yet
 
 Create Shortcut, Manage Shortcuts and shortcuts in root search run end to end: the engine keeps
-the list in `$XDG_DATA_HOME/vicinae/compass-shortcuts.json` (ADR-0017 decision 3; the first start
+the list in `$XDG_DATA_HOME/compass/compass-shortcuts.json` (ADR-0017 decision 3; the first start
 with no such file copies Vicinae's `shortcuts/shortcuts.json`, whose shape is the same), answers
 `ListShortcuts`/`SaveShortcut`/`RemoveShortcut`/`OpenShortcut`/`ExpandShortcut` (IPC v13), ranks
 shortcuts in root search by name and link, resolves the opener and the `default` icon, and counts
@@ -3516,7 +3516,7 @@ visits. What differs:
 ### Snippets — what the port does not have yet
 
 Create Snippet and Manage Snippets run end to end: the engine keeps snippets in
-`$XDG_DATA_HOME/vicinae/compass-snippets.json` (the first start without one copies Vicinae's
+`$XDG_DATA_HOME/compass/compass-snippets.json` (the first start without one copies Vicinae's
 `snippets/snippets.json`, which glaze writes in the same shape), answers
 `ListSnippets`/`SaveSnippet`/`RemoveSnippet`/`ExpandSnippet`/`PasteSnippet` (IPC v13), validates
 with the form's rules and the store's (a keyword belongs to one snippet), and expands with the
@@ -3526,7 +3526,7 @@ arguments by name. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | Typing a keyword anywhere expands the snippet: `vicinae-input-server` reads `/dev/input` (libudev, xkbcommon), injects through uinput and the clipboard, with undo on backspace, per-app limits and the extension's delay/layout preferences. | **Ported** (`compass-input-server`, `vicinae::snippet_expansion`); the differences are in "Input server and keyword expansion" below. | `compass-input-server` tests, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
+| 1 | Typing a keyword anywhere expands the snippet: `vicinae-input-server` reads `/dev/input` (libudev, xkbcommon), injects through uinput and the clipboard, with undo on backspace, per-app limits and the extension's delay/layout preferences. | **Ported** (`compass-input-server`, `compass::snippet_expansion`); the differences are in "Input server and keyword expansion" below. | `compass-input-server` tests, `the_input_server_is_told_the_keywords_and_follows_the_setting` |
 | 2 | Arguments are completion fields beside the search text. | A form with one field per argument (named once, in order of first use); an empty optional one takes its default. | `manage_snippets_copies_asking_for_arguments_first` |
 | 3 | Copy to clipboard copies text as transient (not recorded in history), and a file snippet as the file. | The launcher writes the expanded text to the clipboard itself; a file snippet copies its path as text. No form creates file snippets (the C++ form does not either). | — |
 | 4 | — | Paste, which the C++ list does not offer: the expansion is put on the clipboard and pasted through the Shell extension, as clipboard history pastes. | `snippets_are_imported_created_expanded_edited_and_removed` |
@@ -3537,14 +3537,14 @@ arguments by name. What differs:
 
 ### Input server and keyword expansion — what differs
 
-`vicinae-input-server` is `crates/compass-input-server`: the same process split, permissions
+`compass-input-server` (the C++ `vicinae-input-server`) is `crates/compass-input-server`: the same process split, permissions
 (`cap_dac_override`, packaging/README.md "The input server") and wire as the C++ — figura's
 JSON-RPC, byte for byte, in little-endian frames — so either engine can drive either helper. The
 engine starts it when `input_server.enabled` (default on), restarts it with the C++ backoff,
 registers every keyword on ready and diffs them on each save or removal, and carries out
-`handleKeywordTrigger`/`handleUndo` (`vicinae::snippet_expansion`). IPC v15 adds
-`InputServerStatus` and `SetInputServerEnabled` (`vicinae input-server status|enable|disable`), and
-`vicinae doctor` has an `input-server` check. What differs:
+`handleKeywordTrigger`/`handleUndo` (`compass::snippet_expansion`). IPC v15 adds
+`InputServerStatus` and `SetInputServerEnabled` (`compass input-server status|enable|disable`), and
+`compass doctor` has an `input-server` check. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
@@ -3557,14 +3557,14 @@ registers every keyword on ready and diffs them on each save or removal, and car
 | 7 | The expansion is copied as a concealed selection, so history skips it. | Concealed on wlroots (data-control's marker type); the GNOME Shell extension's `SetClipboard` carries no marker, so there it depends on the extension. | — |
 | 8 | The focused application comes from the window manager, nulled while Vicinae itself is focused without focus-handoff detection. | The focused window from the Shell extension (GNOME) or the foreign-toplevel list (wlroots), recognised in the app index by `WM_CLASS`/`app_id`. With neither, the app is unknown: keywords limited to apps do not expand, terminals paste with Ctrl+V. | `a_keyword_limited_to_apps_expands_only_in_them` |
 | 9 | Focus changes reset the typed text and the undo. | The same, from the Shell extension's window signal or the toplevel list's changes; without either, nothing resets it. | — |
-| 10 | The Snippets extension's preferences (`enabled`, `undo`, `layout`, `prePasteDelay`, `keyDelay`) apply when changed in settings. | Read from `providers.snippets.preferences` in `vicinae.json` on every trigger (layout and key delay are pushed to the helper when they change); there is no settings page to edit them yet. | `preferences_are_read_and_clamped` |
+| 10 | The Snippets extension's preferences (`enabled`, `undo`, `layout`, `prePasteDelay`, `keyDelay`) apply when changed in settings. | Read from `providers.snippets.preferences` in `compass.json` on every trigger (layout and key delay are pushed to the helper when they change); there is no settings page to edit them yet. | `preferences_are_read_and_clamped` |
 | 11 | Clipboard-history and extension paste inject Ctrl+V through the input server (`LinuxPasteService`). | On wlroots the same, through `injectPaste` when the helper runs with injection, else a `zwp_virtual_keyboard_v1` keyboard; GNOME pastes through the Shell extension. | `on_sway_the_input_server_presses_the_paste_when_it_runs`, `on_sway_a_paste_is_copied_and_pressed_into_the_focused_window` |
 | 12 | Without a clipboard there is no case to handle: the C++ always has Qt's. | With neither the Shell extension nor data-control, a typed keyword is logged and not expanded. | — |
 | 13 | — | Inside a Flatpak the helper is not started (no `/dev/input` or `/dev/uinput` there) and `doctor` says so; the C++ has no Flatpak. | `a_flatpak_is_told_keyword_expansion_cannot_work_there` |
 
 ### Script commands — what the port does not have yet
 
-Script commands run end to end: the engine scans `vicinae/scripts` under the data home and each
+Script commands run end to end: the engine scans `compass/scripts` under the data home and each
 data directory, after the `customDirs` in `providers.scripts.preferences`, lists them in root search
 (title, package name, keywords; `scripts:<id>`), rescans whenever the launcher lists them, re-reads
 a script before running it, and runs it in its mode (IPC v13 `ListScripts`, `RunScript`,
@@ -3606,7 +3606,7 @@ What differs:
 
 ### dmenu — what the port does not have yet
 
-`vicinae dmenu` runs end to end with the C++ CLI's options: it reads stdin, the engine keeps the
+`compass dmenu` runs end to end with the C++ CLI's options: it reads stdin, the engine keeps the
 list under a token and pushes `WindowCommand::Dmenu(token)` to the resident window (IPC v13), which
 fetches the list, shows it (non-empty lines, fuzzy filter keeping input order among equals, a path
 shown by its name and folder, the `{count}` section heading, the placeholder and initial query), and
@@ -3619,19 +3619,19 @@ nothing printed, as the C++ does. What differs:
 | 1 | `--width`/`--height` resize the window for the list (`requestWindowSize`, the side not given keeping the configured one), and `--navigation-title` sets the title in the status bar. | The same: the card takes the asked size and the window is resized around it (`window::resize`, or a size change on a layer surface), and back when a list without a size replaces it; the title is the footer's left side. A width under 500 turns quick look and the footer off, as in the C++. | `a_dmenu_size_resizes_the_window_until_a_list_without_one` |
 | 2 | Quick look previews a highlighted file (name, path, MIME type over the image, the first 10 KiB of a text file up to 2 MiB, or the file's icon); `--no-metadata` hides the metadata; `--no-footer` hides the status bar; with quick look off a path row shows its folder instead. | The same pane beside the list (`compass_ui::file_preview`), the same limits and flags, and a footer with the title, the primary action and the panel chord. The MIME type comes from the extension (`mime_guess`), not from shared-mime-info's content sniffing, and a file that is neither image nor text shows its type where the C++ draws its icon. | `quick_look_previews_a_selected_file_and_the_size_is_asked_for`, `a_path_shows_its_name_and_folder`, `a_text_file_shows_its_start_and_an_image_itself` |
 | 3 | A path entry shows its file icon. | The initial badge, like every row without resolved art. | — |
-| 4 | Without a running launcher the C++ server starts showing its own window. | Refused like `vicinae show` is, when no window is attached. | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
+| 4 | Without a running launcher the C++ server starts showing its own window. | Refused like `compass show` is, when no window is attached. | `dmenu_shows_stdin_in_the_attached_window_and_prints_the_choice` |
 
 ### Set Theme — what the port does not have yet
 
 Set Theme runs end to end: the view lists the themes in the ported sections ("Current Theme", then
 "Available Themes", fuzzy over name and description), previews a theme as soon as its row is
 selected, and puts the configured one back when it is left, as `ThemeViewHost` does; Enter keeps
-the selected theme through the engine (`SetTheme`, IPC v13), which writes it to `vicinae.json` as
-`vicinae theme set` does. What differs:
+the selected theme through the engine (`SetTheme`, IPC v13), which writes it to `compass.json` as
+`compass theme set` does. What differs:
 
 | # | C++ behaviour | What we do | Pinned by |
 |---|---|---|---|
-| 1 | The themes are TOML files found in the theme directories (`$XDG_DATA_HOME/vicinae/themes`, then each `$XDG_DATA_DIRS/vicinae/themes`, the first id winning), each with its own palette, icon and path, over the built-in Vicinae Inkwell and Sandstone. | Compass's curated themes (System, Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized), then the same theme files, read by `compass_core::theme_file` with the C++'s rules (`[meta]`'s three strings, `colors.<key>` references, `opacity`/`lighter`/`darker`, `inherits`, circular references refused) and resolved to the launcher's nine palette slots through the ported `deriveSemantic` steps and the two built-in bases, which are inheritance bases here rather than listed themes. Colours are hex only: an SVG colour name (`red`) is a diagnostic, where `QColor` accepts it. The engine and `vicinae theme set`/`list` read the same directories, so a file's id is a theme everywhere. The files are read when Set Theme opens rather than watched. | `a_theme_file_is_read_and_resolved_with_its_derivations`, `a_child_inherits_from_its_parent_and_bad_files_are_refused`, `the_first_directory_wins_and_the_bases_cannot_be_replaced`, `theme_files_are_offered_after_the_curated_themes`, `set_theme_keeps_the_theme_in_the_configuration` |
+| 1 | The themes are TOML files found in the theme directories (`$XDG_DATA_HOME/compass/themes`, then each `$XDG_DATA_DIRS/compass/themes`, the first id winning), each with its own palette, icon and path, over the built-in Vicinae Inkwell and Sandstone. | Compass's curated themes (System, Catppuccin, Dracula, Nord, Gruvbox, Tokyo Night, Solarized), then the same theme files, read by `compass_core::theme_file` with the C++'s rules (`[meta]`'s three strings, `colors.<key>` references, `opacity`/`lighter`/`darker`, `inherits`, circular references refused) and resolved to the launcher's nine palette slots through the ported `deriveSemantic` steps and the two built-in bases, which are inheritance bases here rather than listed themes. Colours are hex only: an SVG colour name (`red`) is a diagnostic, where `QColor` accepts it. The engine and `compass theme set`/`list` read the same directories, so a file's id is a theme everywhere. The files are read when Set Theme opens rather than watched. | `a_theme_file_is_read_and_resolved_with_its_derivations`, `a_child_inherits_from_its_parent_and_bad_files_are_refused`, `the_first_directory_wins_and_the_bases_cannot_be_replaced`, `theme_files_are_offered_after_the_curated_themes`, `set_theme_keeps_the_theme_in_the_configuration` |
 | 2 | The action panel opens the theme file in the text editor, and copies its id or path; rows show the palette's colour dots. | The same panel (`theme_picker::action_panel`: Set theme, Open theme file, Copy ID, Copy path), the file opened with its default application; a theme file's row shows its eight swatches. The curated themes have no file and no swatches. | `set_theme_keeps_the_chosen_theme` |
 | 3 | Choosing a theme applies it to every window at once through the theme service. | This window applies it at once; another launcher process picks it up from the configuration when it next reads it. | `set_theme_keeps_the_theme_in_the_configuration` |
 
@@ -3663,8 +3663,8 @@ panel offers "Preview font" and "Copy font family". What differs:
 |---|---|---|---|
 | 1 | A family's scripts come from `QFontDatabase::writingSystems`, which on Linux is fontconfig's language coverage. | Read from the font's character map (`ttf-parser`), one or two sample characters per script (`font_service::SCRIPT_SAMPLES`), over the fonts `fontdb` finds on the fontconfig path. A font whose coverage claims and cmap disagree can land in a different category. | `a_font_file_is_found_and_classified_by_what_it_covers`, `browse_fonts_lists_families_and_previews_one` |
 | 2 | A six-column grid of glyph tiles. | The same (`font_browser::COLUMNS`): each tile the glyph in the family over its name; arrows move along a row and between rows keeping the column (`fonts_page::grid_step`). | `the_grid_moves_by_tile_and_by_row`, `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font` |
-| 3 | "Set as vicinae font" merges `font.normal.family` into `vicinae.json`, and the launcher redraws in it. | The same write (IPC v16 `SetFont`, keeping the rest of `font`), and this window switches at once. A configured family now wins over the desktop's interface font at start, which the launcher then stops following; `auto` and `system` mean the desktop's (the C++'s `auto` is its bundled Inter, which Compass does not ship). Markdown views (an extension's detail, the store's detail page and intros, the created-extension page) are drawn in it too, code still monospace; they used to fall back to Iced's generic sans-serif, which cosmic-text resolves to a hard-coded "Open Sans" and, where that is missing, through its fallback list. | `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font`, `set_theme_keeps_the_theme_in_the_configuration`, `markdown_is_drawn_in_the_launchers_font` |
-| 4 | The chosen category is remembered across openings (`fontCategory` in the command's local storage), restored only when some font still has it. | Remembered across openings and restarts with the same restore rule (`index_for_saved`), in `$XDG_STATE_HOME/vicinae/compass-view-state.json` rather than the command's local storage: that is the engine's encrypted database, which needs the login keyring, and a filter is not a secret. | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `a_value_survives_a_new_process` |
+| 3 | "Set as vicinae font" merges `font.normal.family` into `compass.json`, and the launcher redraws in it. | The same write (IPC v16 `SetFont`, keeping the rest of `font`), and this window switches at once. A configured family now wins over the desktop's interface font at start, which the launcher then stops following; `auto` and `system` mean the desktop's (the C++'s `auto` is its bundled Inter, which Compass does not ship). Markdown views (an extension's detail, the store's detail page and intros, the created-extension page) are drawn in it too, code still monospace; they used to fall back to Iced's generic sans-serif, which cosmic-text resolves to a hard-coded "Open Sans" and, where that is missing, through its fallback list. | `set_as_vicinae_font_writes_the_family_and_keeps_the_rest_of_font`, `set_theme_keeps_the_theme_in_the_configuration`, `markdown_is_drawn_in_the_launchers_font` |
+| 4 | The chosen category is remembered across openings (`fontCategory` in the command's local storage), restored only when some font still has it. | Remembered across openings and restarts with the same restore rule (`index_for_saved`), in `$XDG_STATE_HOME/compass/compass-view-state.json` rather than the command's local storage: that is the engine's encrypted database, which needs the login keyring, and a filter is not a secret. | `browse_fonts_is_a_grid_that_remembers_its_category_and_sets_the_font`, `a_value_survives_a_new_process` |
 | 5 | The specimen is Markdown rendered in the family. | The same Markdown read back line by line (heading, regular, bold, italic, rule) and drawn in the family; bold and italic ask the renderer for that face, which synthesises nothing when the family has none. | `a_specimen_reads_back_as_lines` |
 
 ### Rhai scripts — a Compass addition, with no C++ counterpart
@@ -3713,9 +3713,9 @@ root search forgets it. What differs:
 | 8 | "Uninstall Extension" is on every row's panel, and fails for one that is not installed. | Offered only on an installed row. The confirmation is the C++'s alert ("Are you sure?" and its message) as a dialog over the page with Cancel and Uninstall buttons, also answered with Enter or Escape. | `the_extension_store_installs_into_root_search_and_uninstalls_after_asking`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
 | 9 | A failed list fetch shows a toast and leaves the spinner running (`FAILED_FETCH_CLEARS_LOADING`). | The failure is said under the list (or in place of it, when nothing has loaded), and loading stops. | `a_failure_after_rows_keeps_them` |
 | 10 | The list is fetched with `PreferCache` and reused while Qt's disk cache keeps it. | The Vicinae list is kept in memory for ten minutes; the Raycast pages for the session, as the C++. | — |
-| 11 | The Raycast API is always `backend.raycast.com`. | `COMPASS_RAYCAST_API_URL` overrides it, as `VICINAE_API_URL` already overrides the Vicinae API, so tests serve both stores locally. | `raycast_store::api_base_url` |
+| 11 | The Raycast API is always `backend.raycast.com`. | `COMPASS_RAYCAST_API_URL` overrides it, as `COMPASS_API_URL` already overrides the Vicinae API, so tests serve both stores locally. | `raycast_store::api_base_url` |
 | 12 | Only the store builtins' links open (`openTarget`). | `OpenUrl` opens any `http(s)` link with the default browser (anything else is refused), and the launcher now uses it for links clicked in Markdown, including an extension view's, which were only logged before. | `only_web_urls_are_opened` |
-| 13 | Deep links (`vicinae://extensions/<author>/<name>` into a detail host; `raycast://` and `com.raycast:` into the Raycast store's) exist, and a link with the wrong number of segments answers the usage sentence. | The same: `vicinae deeplink <url>` (or a bare `vicinae <url>`) sends IPC v16 `OpenDeeplink`, the engine pushes `WindowCommand::Deeplink` to the window, which opens the detail page; Escape goes to that store's list rather than the root. | `an_extensions_link_names_the_store_author_and_extension`, `an_extensions_deeplink_goes_to_the_window_and_a_malformed_one_is_refused`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
+| 13 | Deep links (`vicinae://extensions/<author>/<name>` into a detail host; `raycast://` and `com.raycast:` into the Raycast store's) exist, and a link with the wrong number of segments answers the usage sentence. | The same: `compass deeplink <url>` (or a bare `compass <url>`) sends IPC v16 `OpenDeeplink`, the engine pushes `WindowCommand::Deeplink` to the window, which opens the detail page; Escape goes to that store's list rather than the root. | `an_extensions_link_names_the_store_author_and_extension`, `an_extensions_deeplink_goes_to_the_window_and_a_malformed_one_is_refused`, `a_deeplink_opens_the_detail_page_and_uninstalling_asks_in_a_dialog` |
 
 ### `compass-crypto` — one error variant the C++ API cannot express
 
@@ -3836,7 +3836,7 @@ socket (`on_sway_with_a_hyprland_socket_windows_learn_their_pid_and_workspace`).
 1. **Launcher surface.** A layer surface through `iced_layershell`, centred, `top` layer,
    `exclusive` keyboard, namespace `vicinae` — the C++ `LayerShellConfig` defaults. The C++ keys
    that change them (`launcherWindow.layerShell.enabled`/`.layer`/`.keyboardInteractivity`) are
-   **not ported**; `VICINAE_LAYER_SHELL=0` stands in for `enabled = false`. The C++ drops
+   **not ported**; `COMPASS_LAYER_SHELL=0` stands in for `enabled = false`. The C++ drops
    exclusive focus while a file chooser opened from the launcher is up; the Rust launcher has no
    such flow yet.
 2. **Which sessions get it.** The C++ asks only whether the compositor advertises the layer shell
@@ -3859,7 +3859,7 @@ socket (`on_sway_with_a_hyprland_socket_windows_learn_their_pid_and_workspace`).
    Hyprland older than the Lua dispatchers refuses it, the classic `focuswindow address:…`; niri's
    replies are read with `niri-ipc` 26.4's types, so a niri older than 25.08 (no `layout` or
    `focus_timestamp`) is unreadable and counts as no windows. Order is most-recently-activated
-   first, with the focused window last, as on GNOME. `vicinae doctor` reports which of the
+   first, with the focused window last, as on GNOME. `compass doctor` reports which of the
    protocols this track uses are advertised (`wlroots.capabilities`: layer-shell,
    foreign-toplevel, data-control, xx-hotkey, the portal's GlobalShortcuts, compositor IPC).
 4. **Clipboard history.** Watched over `ext-data-control-v1`, else `zwlr_data_control_manager_v1`,
@@ -3870,13 +3870,13 @@ socket (`on_sway_with_a_hyprland_socket_windows_learn_their_pid_and_workspace`).
    selection is not recorded. The source application is unknown (data-control does not say).
 5. **Paste.** The C++ injects Ctrl+V through its uinput input server. The Rust engine does too
    when the helper runs with injection, and otherwise presses the chord on a
-   `zwp_virtual_keyboard_v1` keyboard (`vicinae::paste`, "The gaps pass, wlroots paste and
+   `zwp_virtual_keyboard_v1` keyboard (`compass::paste`, "The gaps pass, wlroots paste and
    inhibit"); with neither, the content is copied and the launcher told so. Copy, read and clear
    work, over `wl-clipboard-rs`; an HTML copy keeps its plain-text alternative, which the GNOME
    path cannot.
 6. **Global hotkey.** The C++ tries `xx-hotkey-v1` and then `vicinae-hotkey-v1`. The Rust engine
    tries `xx-hotkey-v1` (fixed `Super+Space`), then the GlobalShortcuts portal, and otherwise logs
-   how to bind `vicinae toggle` in the running compositor's config. `vicinae-hotkey-v1` is not
+   how to bind `compass toggle` in the running compositor's config. `vicinae-hotkey-v1` is not
    ported, and the trigger's input serial is not yet passed to `xdg-activation`. No released
    compositor carries `xx-hotkey-v1`, so the manual binding is what users have today.
 7. **Flatpak.** Nothing beyond `--socket=wayland` is needed, and nothing can add more: a compositor

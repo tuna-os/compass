@@ -1,7 +1,7 @@
 {
 	"name": "@vicinae/raycast-api-compat",
 	"version": "0.0.0",
-	"description": "Raycast compatible entrypoint to the vicinae API",
+	"description": "Raycast compatible entrypoint to the Compass extension API",
 	"main": "index.js",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1"

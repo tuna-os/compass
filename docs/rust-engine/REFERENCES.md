@@ -260,7 +260,7 @@ package manager** — GUI apps are Flatpaks, CLI tools are Homebrew.
 - [awesome-wayland](https://github.com/rcalixte/awesome-wayland) — curated index; useful for finding
   the current implementation of a given protocol.
 - [ArchWiki: XDG Desktop Portal](https://wiki.archlinux.org/title/XDG_Desktop_Portal) — which backend
-  provides which interface, and the `portals.conf` mechanics we'll need for `vicinae doctor`.
+  provides which interface, and the `portals.conf` mechanics we'll need for `compass doctor`.
 - [xdg-desktop-portal-hyprland](https://github.com/hyprwm/xdg-desktop-portal-hyprland) — the most
   complete non-GNOME/KDE portal backend; read its GlobalShortcuts implementation.
 - [Raycast extensions monorepo](https://github.com/raycast/extensions) — the Suite-1 conformance

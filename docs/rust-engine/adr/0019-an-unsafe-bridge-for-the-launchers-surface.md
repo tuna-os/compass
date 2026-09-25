@@ -51,7 +51,7 @@ Turning the pointers into proxies is `wayland-backend`'s `Backend::from_foreign_
 
 ## Consequences
 
-- The `xdg_toplevel` launcher (KDE, GNOME, `VICINAE_LAYER_SHELL=0`) is blurred where the compositor
+- The `xdg_toplevel` launcher (KDE, GNOME, `COMPASS_LAYER_SHELL=0`) is blurred where the compositor
   offers `ext-background-effect-v1` (KWin; Mutter does not). Real blur is verified in the VM tier;
   headless Sway and an in-process fake compositor verify the bridge and the protocol traffic.
 - The layer-shell launcher is not blurred yet: `iced_layershell` 0.19 drops `window::run`, so it

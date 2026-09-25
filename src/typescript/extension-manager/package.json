@@ -13,8 +13,8 @@
 		"lint": "biome lint src/linux-shim test scripts"
 	},
 	"keywords": [
-		"vicinae",
-		"vicinae-extensions"
+		"compass",
+		"compass-extensions"
 	],
 	"author": "",
 	"license": "ISC",

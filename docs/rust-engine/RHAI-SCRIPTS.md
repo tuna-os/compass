@@ -309,7 +309,7 @@ thread, so a slow one makes its own results late but never freezes the launcher.
 
 ## For host developers
 
-The tier is the `compass-script` crate; the engine's side is `crates/vicinae/src/rhai_scripts.rs`
+The tier is the `compass-script` crate; the engine's side is `crates/compass/src/rhai_scripts.rs`
 (loading, the grant policy, the view session, hot reload) and `rhai_host.rs` (the real
 `ScriptHost`). A script's root entry is `rhai:script.<name>`; the launcher lists them with
 `ListRhaiScripts` (IPC v14) and opens one with `RunExtensionCommand`, after which it is followed

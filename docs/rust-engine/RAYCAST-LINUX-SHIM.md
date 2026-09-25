@@ -10,7 +10,7 @@ act:
 1. **The runtime's shim** (`src/typescript/extension-manager/src/linux-shim/`):
    a generic, invisible layer between an extension and Node's `child_process`
    and `fs`, which fixes what every macOS extension gets wrong the same way.
-2. **The host-command broker** (`crates/vicinae/src/host_commands.rs`,
+2. **The host-command broker** (`crates/compass/src/host_commands.rs`,
    `HostCommand/run` in `figura/tsapi.fig`): the few programs an extension may
    ask the engine to run on the host, outside its sandbox, once the person
    allows it. Homebrew's `brew` first.
@@ -263,7 +263,7 @@ broker was built for and proven on.
 
 ## 5. Brew, proven
 
-- `crates/vicinae/tests/engine_end_to_end.rs`
+- `crates/compass/tests/engine_end_to_end.rs`
   `raycasts_brew_runs_homebrew_on_the_host_once_the_person_allows_it`: a
   Raycast-store stand-in doing exactly what Brew's Show Installed does
   (`execSync("brew --prefix")` at load, then the promisified `exec` of
@@ -278,7 +278,7 @@ broker was built for and proven on.
   `pbcopy`/`pbpaste`, `xdg-open`, the `fs` mapping, the blocking-call port, and
   load-time patches.
 - **Raycast's real Brew bundle** (the store's build of 2026-09-25), run by hand
-  through `vicinae conformance` behind the sandbox with a fake `brew` first on
+  through `compass conformance` behind the sandbox with a fake `brew` first on
   `PATH` and "Always Allow" recorded: **Show Installed: rendered, Search:
   rendered**; the fake saw `brew --prefix`, `brew --cache`,
   `brew info --json=v2 --installed` (and `brew --version` from Search), and the

@@ -49,7 +49,7 @@ function parseFlags(
 }
 
 function printHelp(commands: Record<string, CommandDef>) {
-	console.log("vici - Vicinae extension development CLI\n");
+	console.log("vici - Compass and Vicinae extension development CLI\n");
 	console.log("USAGE");
 	console.log("  $ vici <command> [flags]\n");
 	console.log("COMMANDS");

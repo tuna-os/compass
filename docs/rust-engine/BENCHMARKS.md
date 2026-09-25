@@ -22,7 +22,7 @@ It needs the pinned Rust toolchain, a C++23 compiler, `python3`, `sway`, `grim`,
    [`scripts/bench/baseline.json`](../../scripts/bench/baseline.json) and refuses it unless its
    SHA-256 matches (`4d32f758…fe86bc`). It extracts the AppImage and does not mount it, so FUSE is
    not needed. The binary is unmodified.
-2. Builds `vicinae`, `vicinae-file-indexer`, `compass-sandbox-exec` and `fuzzy-throughput` in
+2. Builds `compass`, `compass-file-indexer`, `compass-sandbox-exec` and `fuzzy-throughput` in
    release mode, and builds upstream's header-only fuzzy scorer into
    [`scripts/bench/fuzzy/cpp_rank.cpp`](../../scripts/bench/fuzzy/cpp_rank.cpp) with `-O2`.
 3. Runs [`scripts/bench/compare.py`](../../scripts/bench/compare.py). It starts a private
@@ -34,13 +34,13 @@ It needs the pinned Rust toolchain, a C++23 compiler, `python3`, `sway`, `grim`,
 4. Writes `report.json` (every run, every sample and the machine details), `versions.txt` and
    per-run logs and screenshots.
 
-Each run cold-starts one engine with its window open: `vicinae start` for Compass and
+Each run cold-starts one engine with its window open: `compass start` for Compass and
 `AppRun server --open --no-extension-runtime` for upstream, with onboarding marked complete. Neither
 engine runs TypeScript extensions. The measurements are:
 
 | Metric | Definition |
 |---|---|
-| Engine ready | exec until the first successful IPC ping (upstream: JSON-RPC `Ipc/ping`; Compass: `vicinae ping`, which pays a CLI spawn on every poll, so the figure is conservative) |
+| Engine ready | exec until the first successful IPC ping (upstream: JSON-RPC `Ipc/ping`; Compass: `compass ping`, which pays a CLI spawn on every poll, so the figure is conservative) |
 | First frame | exec until the first screenshot that differs from the empty output |
 | Launcher populated | exec until the last change to the picture before it idles. Rows that change on their own (the footer clock, the caret) are learned per run and excluded |
 | Keystroke to frame | `wtype fire` until the first changed screenshot outside those rows |
@@ -119,7 +119,7 @@ is a real target for optimisation, and the README does not claim it.
 | | Compass | Vicinae 0.29.0 AppImage |
 |---|---:|---:|
 | Download | not yet published as a single artifact | 101.5 MB (AppImage) |
-| Program files, uncompressed | 72.4 MB: `vicinae` 62.3 MB + file indexer 9.7 MB + sandbox launcher 0.5 MB, stripped | 310.1 MB extracted |
+| Program files, uncompressed | 72.4 MB: `compass` 62.3 MB + file indexer 9.7 MB + sandbox launcher 0.5 MB, stripped | 310.1 MB extracted |
 | Libraries linked (`DT_NEEDED`, main binary) | 6 (libc, libm, libgcc_s, libssl, libcrypto, ld.so) | 32 for `vicinae-server`, 16 of them Qt/KF6 |
 | Libraries bundled | 0 | 122 |
 | Qt | none | Qt 6 (Quick, QML, Widgets, Wayland, DBus, Network, Svg…) |
