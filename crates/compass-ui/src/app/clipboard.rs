@@ -402,8 +402,11 @@ impl LauncherApp {
         Some(focus_search())
     }
 
-    /// The kind filter, right-aligned above the list.
+    /// The kind filter, right-aligned above the list: the card's own dropdown
+    /// look (#239), in the launcher's font, rather than Iced's default
+    /// pick-list chrome.
     pub(super) fn clipboard_filter<'a>(&self, page: &ClipboardPage) -> Element<'a, Message> {
+        let palette = self.palette();
         container(
             iced::widget::pick_list(
                 clipboard_page::KIND_FILTERS
@@ -413,7 +416,10 @@ impl LauncherApp {
                 Some(clipboard_page::filter_for_kind(page.kind).0.to_owned()),
                 Message::ClipboardKindChanged,
             )
-            .text_size(12),
+            .text_size(12)
+            .font(self.font())
+            .style(move |_, status| crate::design::dropdown(palette, status))
+            .menu_style(move |_| crate::design::dropdown_menu(palette)),
         )
         .width(Length::Fill)
         .align_x(Alignment::End)

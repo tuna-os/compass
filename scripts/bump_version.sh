@@ -4,8 +4,12 @@ set -euo pipefail
 
 # Atomically bump the project version:
 #   1. write the new tag + the commit it is based on into the manifest
-#   2. commit the manifest change
-#   3. tag *that* commit
+#   2. move every version source to the tag (workspace Cargo.toml, Nix, the
+#      Flatpak metainfo, the Arch pkgver prefix): `compass --version` reports
+#      CARGO_PKG_VERSION, and crates/compass/tests/version_sync.rs fails while
+#      it disagrees with the manifest tag
+#   3. commit the version changes
+#   4. tag *that* commit
 #
 # The tag must land on the commit that carries the updated manifest, otherwise
 # anyone checking out the tag gets a manifest pointing at the previous release.
@@ -50,7 +54,29 @@ bump_version() {
 
     yq -i ".release.tag = \"${new_version}\" | .release.rev = \"${rev}\" | .release.short_rev = \"${short_rev}\"" "$manifest"
 
-    git add "$manifest"
+    # The tag without its `v`: the form every version source carries.
+    local bare=${new_version#v}
+    local repo_root
+    repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    # Workspace Cargo.toml: the `^version` anchor is the [workspace.package]
+    # line alone; dependency versions are indented.
+    sed -i "s/^version = \".*\"/version = \"${bare}\"/" "$repo_root/Cargo.toml"
+    sed -i "s/^\(\s*\)version = \"[^\"]*\";/\1version = \"${bare}\";/" \
+        "$repo_root/packaging/nix/compass.nix" \
+        "$repo_root/packaging/nix/extension-runtime.nix"
+    sed -i "s|<release version=\"[^\"]*\" date=\"[^\"]*\"|<release version=\"${bare}\" date=\"$(date +%F)\"|" \
+        "$repo_root/packaging/flatpak/org.tunaos.compass.metainfo.xml"
+    sed -i "s/^pkgver=.*/pkgver=${bare}.r0.g0000000/" "$repo_root/packaging/arch/PKGBUILD"
+    sed -i "s/printf '[0-9.]*\.r%s\.g%s'/printf '${bare}.r%s.g%s'/" \
+        "$repo_root/packaging/arch/PKGBUILD"
+    if command -v cargo >/dev/null 2>&1; then
+        (cd "$repo_root" && cargo metadata --format-version=1 --offline >/dev/null)
+    fi
+
+    git add "$manifest" Cargo.toml Cargo.lock \
+        packaging/nix/compass.nix packaging/nix/extension-runtime.nix \
+        packaging/flatpak/org.tunaos.compass.metainfo.xml \
+        packaging/arch/PKGBUILD
     git commit -m "chore: bump to ${new_version}"
     git tag "${new_version}"
 

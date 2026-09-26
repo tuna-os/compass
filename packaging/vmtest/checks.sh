@@ -342,6 +342,93 @@ PY
     fi
     ;;
 
+  # Clipboard history end to end (#238): the extension watches the clipboard,
+  # the engine records it, and `query --provider clipboard` finds it.
+  #
+  # SetClipboard over the session bus is the injection point: it replaces the
+  # selection the way a copy presents it, and the extension emits the same
+  # change signal the engine records. Two distinct markers separate "recorded
+  # at all" from "recorded twice". The engine serves on a private socket with
+  # --no-hotkey, so no portal permission prompt can stall the check.
+  clipboard-history)
+    u="$(uid)"
+    sock=/tmp/compass-clipboard-history.sock
+    engine_log=/tmp/compass-clipboard-history-engine.log
+    engine_done=/tmp/compass-clipboard-history-engine.done
+    marker_a="compass-vmtest-clipboard-alpha"
+    marker_b="compass-vmtest-clipboard-beta"
+    as_user() {
+      runuser -u "$SESSION_USER" -- env \
+        XDG_RUNTIME_DIR="/run/user/$u" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$u/bus" \
+        "$@"
+    }
+    engine() {
+      as_user env \
+        WAYLAND_DISPLAY="$(wayland_display)" \
+        XDG_SESSION_TYPE=wayland \
+        flatpak run --installation="$INSTALLATION" "$APP" \
+          --socket "$sock" "$@"
+    }
+    # $1: marker text. Gio over python3 carries the exact bytes; spelling a
+    # GVariant byte array through gdbus quoting is how subtle bugs get in.
+    set_clipboard() {
+      as_user python3 - "$1" <<'PY'
+import sys
+from gi.repository import Gio, GLib
+proxy = Gio.DBusProxy.new_sync(
+    Gio.bus_get_sync(Gio.BusType.SESSION, None),
+    Gio.DBusProxyFlags.NONE, None,
+    'org.gnome.Shell',
+    '/org/tunaos/compass/Shell/Clipboard',
+    'org.tunaos.compass.Shell.Clipboard', None)
+proxy.call_sync('SetClipboard',
+    GLib.Variant('(ay,s)', (sys.argv[1].encode(), 'text/plain')),
+    Gio.DBusCallFlags.NONE, -1, None)
+PY
+    }
+    history_has_both() {
+      out="$(engine query compass-vmtest-clipboard --provider clipboard --json 2>/dev/null)" || return 1
+      case "$out" in
+        *"$marker_a"*"$marker_b"*|*"$marker_b"*"$marker_a"*) return 0 ;;
+      esac
+      return 1
+    }
+
+    # Detached like spike-a-start: ssh waits for the channel otherwise, and
+    # this check would never return.
+    rm -f "$sock" "$engine_done"
+    : > "$engine_log"
+    setsid bash -c '
+      runuser -u "$1" -- env \
+        XDG_RUNTIME_DIR="/run/user/$2" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$2/bus" \
+        WAYLAND_DISPLAY="$3" \
+        XDG_SESSION_TYPE=wayland \
+        flatpak run --installation="$4" "$5" \
+          --socket "$6" serve --no-hotkey > "$7" 2>&1
+      echo "$?" > "$8"
+    ' _ "$SESSION_USER" "$u" "$(wayland_display)" "$INSTALLATION" "$APP" \
+      "$sock" "$engine_log" "$engine_done" < /dev/null >> "$engine_log" 2>&1 &
+
+    if ! wait_for "the engine to answer ping" 120 engine ping; then
+      echo "the engine never answered; its log:" >&2
+      cat "$engine_log" >&2 || true
+      exit 1
+    fi
+    set_clipboard "$marker_a" || { echo "SetClipboard failed for marker_a" >&2; engine shutdown || true; exit 1; }
+    set_clipboard "$marker_b" || { echo "SetClipboard failed for marker_b" >&2; engine shutdown || true; exit 1; }
+    if ! wait_for "both markers in clipboard history" 60 history_has_both; then
+      echo "the markers never landed in history; the engine log tail:" >&2
+      tail -30 "$engine_log" >&2 || true
+      engine shutdown || true
+      exit 1
+    fi
+    echo "clipboard history recorded both markers:"
+    engine query compass-vmtest-clipboard --provider clipboard --json
+    engine shutdown
+    ;;
+
   # Spike B (#3): the same question on the target kernel. The Flatpak CI job
   # answers it in three minutes on the runner's kernel; this one answers it on
   # Bluefin's, which is what actually ships, and Landlock's ABI is a kernel

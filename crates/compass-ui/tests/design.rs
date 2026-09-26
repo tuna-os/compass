@@ -136,3 +136,44 @@ fn both_appearances_have_a_theme() {
 fn the_font_stack_starts_with_gnomes_interface_font() {
     assert_eq!(design::FONT_STACK.first().copied(), Some("Cantarell"));
 }
+
+#[test]
+fn a_dropdown_reads_as_part_of_the_card() {
+    // #239: the kind filter wore Iced's default pick-list chrome — square
+    // corners, a full border, generic colors — and its menu read as a foreign
+    // box. Both now come from the palette, in both appearances.
+    use iced::widget::{overlay::menu, pick_list};
+
+    for appearance in Appearance::ALL {
+        let palette = design::palette(appearance);
+        for status in [
+            pick_list::Status::Active,
+            pick_list::Status::Hovered,
+            pick_list::Status::Opened { is_hovered: false },
+            pick_list::Status::Opened { is_hovered: true },
+        ] {
+            let closed = design::dropdown(palette, status);
+            assert_eq!(
+                closed.background,
+                iced::Background::Color(palette.field.to_iced())
+            );
+            assert_eq!(closed.text_color, palette.text.to_iced());
+            assert_eq!(
+                closed.border.radius,
+                f32::from(design::GEOMETRY.row_radius).into()
+            );
+            assert_eq!(closed.border.width, 0.0);
+        }
+        let open: menu::Style = design::dropdown_menu(palette);
+        assert_eq!(
+            open.background,
+            iced::Background::Color(palette.surface.to_iced())
+        );
+        assert_eq!(
+            open.selected_background,
+            iced::Background::Color(palette.selection.to_iced())
+        );
+        assert_eq!(open.selected_text_color, palette.selection_text.to_iced());
+        assert_eq!(open.text_color, palette.text.to_iced());
+    }
+}
