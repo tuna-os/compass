@@ -4,10 +4,7 @@ class Compass < Formula
   # Linux-only: the engine targets Linux sessions (Wayland, portals, logind);
   # there is no macOS or Windows backend (see ADR-0007 in the repo).
   url "https://github.com/tuna-os/compass/archive/refs/tags/v0.28.2.tar.gz"
-  # Fill in after the tag is pushed: the GitHub-generated tarball hash is only
-  # known once the release exists. Download the tarball and run
-  # `shasum -a 256 <file>` to complete this line.
-  sha256 "REPLACE_WITH_RELEASE_TARBALL_SHA256"
+  sha256 "0d6e30f4607c139cdcca509546fcdb30f07a87b6849cab8d664de0a60edb0547"
   license "GPL-3.0-only"
   head "https://github.com/tuna-os/compass.git", branch: "main"
 
